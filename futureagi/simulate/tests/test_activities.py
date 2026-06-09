@@ -27,6 +27,17 @@ from simulate.models.simulator_agent import SimulatorAgent
 # ============================================================================
 
 
+def _ee_voice_mapper():
+    return pytest.importorskip("ee.voice.constants.voice_mapper")
+
+
+@pytest.fixture
+def allow_ee_feature_checks():
+    """These tests target workflow behavior, not plan entitlement checks."""
+    with patch("tfc.ee_gating.check_ee_feature", return_value=None):
+        yield
+
+
 @pytest.fixture
 def agent_definition(db, organization, workspace):
     """Create a test agent definition."""
@@ -71,8 +82,8 @@ def source_dataset(db, organization, workspace, user):
     dataset.column_order = [str(col1.id), str(col2.id)]
     dataset.save()
 
-    # Create rows with cells
-    for i in range(3):
+    # Seed >= scenario-create min rows so the Import Dataset path validates.
+    for i in range(10):
         row = Row.objects.create(dataset=dataset, order=i)
         Cell.objects.create(dataset=dataset, column=col1, row=row, value=f"Input {i}")
         Cell.objects.create(dataset=dataset, column=col2, row=row, value=f"Output {i}")
@@ -198,7 +209,12 @@ class TestCreateScenarioAPIWithMockedWorkflow:
 
     @patch("simulate.views.scenarios.start_create_dataset_scenario_workflow_sync")
     def test_create_dataset_scenario_starts_workflow(
-        self, mock_workflow, auth_client, source_dataset, agent_definition
+        self,
+        mock_workflow,
+        auth_client,
+        source_dataset,
+        agent_definition,
+        allow_ee_feature_checks,
     ):
         """Creating a dataset scenario should trigger the workflow."""
         mock_workflow.return_value = "workflow-id-123"
@@ -234,7 +250,7 @@ class TestCreateScenarioAPIWithMockedWorkflow:
 
     @patch("simulate.views.scenarios.start_create_script_scenario_workflow_sync")
     def test_create_script_scenario_starts_workflow(
-        self, mock_workflow, auth_client, agent_definition
+        self, mock_workflow, auth_client, agent_definition, allow_ee_feature_checks
     ):
         """Creating a script scenario should trigger the script workflow."""
         mock_workflow.return_value = "workflow-id-456"
@@ -258,7 +274,7 @@ class TestCreateScenarioAPIWithMockedWorkflow:
 
     @patch("simulate.views.scenarios.start_create_graph_scenario_workflow_sync")
     def test_create_graph_scenario_starts_workflow(
-        self, mock_workflow, auth_client, agent_definition
+        self, mock_workflow, auth_client, agent_definition, allow_ee_feature_checks
     ):
         """Creating a graph scenario should trigger the graph workflow."""
         mock_workflow.return_value = "workflow-id-789"
@@ -288,7 +304,12 @@ class TestCreateScenarioAPIWithMockedWorkflow:
 
     @patch("simulate.views.scenarios.start_create_dataset_scenario_workflow_sync")
     def test_create_scenario_creates_simulator_agent(
-        self, mock_workflow, auth_client, source_dataset, agent_definition
+        self,
+        mock_workflow,
+        auth_client,
+        source_dataset,
+        agent_definition,
+        allow_ee_feature_checks,
     ):
         """Creating a scenario with agent fields should create SimulatorAgent."""
         mock_workflow.return_value = "workflow-id-123"
@@ -328,7 +349,12 @@ class TestCreateScenarioAPIWithMockedWorkflow:
 
     @patch("simulate.views.scenarios.start_create_dataset_scenario_workflow_sync")
     def test_create_scenario_workflow_failure_handling(
-        self, mock_workflow, auth_client, source_dataset, agent_definition
+        self,
+        mock_workflow,
+        auth_client,
+        source_dataset,
+        agent_definition,
+        allow_ee_feature_checks,
     ):
         """When workflow starter fails, scenario should still be created but may fail later."""
         mock_workflow.side_effect = Exception("Temporal connection failed")
@@ -359,14 +385,14 @@ class TestAddRowsAPIWithMockedWorkflow:
 
     @patch("simulate.views.scenarios.start_add_scenario_rows_workflow_sync")
     def test_add_rows_starts_generation_workflow(
-        self, mock_workflow, auth_client, existing_scenario
+        self, mock_workflow, auth_client, existing_scenario, allow_ee_feature_checks
     ):
         """Adding rows should trigger the generation workflow."""
         mock_workflow.return_value = "generation-workflow-123"
 
         payload = {
-            "num_rows": 5,
-            "description": "Generate 5 new rows",
+            "num_rows": 10,
+            "description": "Generate 10 new rows",
         }
 
         response = auth_client.post(
@@ -452,7 +478,7 @@ class TestGetPersonasByLanguage:
 
     def test_get_english_personas_default(self):
         """English should be the default language for personas."""
-        from ee.voice.constants.voice_mapper import get_personas_by_language
+        get_personas_by_language = _ee_voice_mapper().get_personas_by_language
 
         personas = get_personas_by_language("en")
         assert isinstance(personas, list)
@@ -460,14 +486,14 @@ class TestGetPersonasByLanguage:
 
     def test_get_english_personas_for_none(self):
         """None language should return English personas."""
-        from ee.voice.constants.voice_mapper import get_personas_by_language
+        get_personas_by_language = _ee_voice_mapper().get_personas_by_language
 
         personas = get_personas_by_language(None)
         assert isinstance(personas, list)
 
     def test_get_hindi_personas(self):
         """Hindi language code should return Hindi personas."""
-        from ee.voice.constants.voice_mapper import get_personas_by_language
+        get_personas_by_language = _ee_voice_mapper().get_personas_by_language
 
         personas = get_personas_by_language("hi")
         assert isinstance(personas, list)
@@ -478,7 +504,7 @@ class TestGetPersonasByLanguage:
 
     def test_get_personas_unknown_language_returns_english(self):
         """Unknown language should default to English personas."""
-        from ee.voice.constants.voice_mapper import get_personas_by_language
+        get_personas_by_language = _ee_voice_mapper().get_personas_by_language
 
         personas = get_personas_by_language("xx")  # Unknown language code
         assert isinstance(personas, list)

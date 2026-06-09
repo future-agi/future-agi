@@ -4,20 +4,32 @@ import React, { useEffect } from "react";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import NumericCell from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
+import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 
 const ExperimentEvalCellRenderer = ({ value, eGridCell, ...rest }) => {
   const column = rest?.colDef?.col;
   const reverseOutput = column?.reverseOutput;
-  const isNumeric = column?.output_type === OutputTypes.NUMERIC;
-  const numericValue = parseFloat(value);
-  const formattedValue = reverseOutput
-    ? 100 - (isNaN(numericValue) ? 0 : numericValue)
-    : isNaN(numericValue)
-      ? 0
-      : numericValue;
+  const outputType = column?.output_type;
+  const isNumeric = outputType === OutputTypes.NUMERIC;
+
+  const result = normalizeEvalResult(value, outputType);
+
+  // Score percentage drives the background color tint.
+  const pct =
+    result.kind === "score"
+      ? result.score <= 1
+        ? result.score * 100
+        : result.score
+      : result.kind === "choices" && typeof result.score === "number"
+        ? result.score * 100
+        : 0;
   const backgroundColor = isNumeric
     ? null
-    : interpolateColorBasedOnScore(formattedValue, 100, reverseOutput);
+    : interpolateColorBasedOnScore(
+        reverseOutput ? 100 - pct : pct,
+        100,
+        reverseOutput,
+      );
 
   useEffect(() => {
     if (eGridCell?.style) {
@@ -39,20 +51,27 @@ const ExperimentEvalCellRenderer = ({ value, eGridCell, ...rest }) => {
     );
   }
 
+  const renderText = () => {
+    switch (result.kind) {
+      case "choices":
+        return result.items.join(", ");
+      case "passfail":
+        return result.label;
+      case "score":
+        return `${Math.round(pct)}%`;
+      case "empty":
+      default:
+        return "";
+    }
+  };
+
   return (
-    <Box
-      sx={{
-        paddingX: 2,
-        color: "text.primary",
-      }}
-    >
-      {formattedValue}%
-    </Box>
+    <Box sx={{ paddingX: 2, color: "text.primary" }}>{renderText()}</Box>
   );
 };
 
 ExperimentEvalCellRenderer.propTypes = {
-  value: PropTypes.string,
+  value: PropTypes.any,
   eGridCell: PropTypes.object,
 };
 

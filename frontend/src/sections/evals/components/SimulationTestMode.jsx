@@ -26,6 +26,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries, canonicalKeys } from "src/utils/utils";
 import CustomAudioPlayer from "src/components/custom-audio/CustomAudioPlayer";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import DraggableColResizer from "src/components/draggable-col-resizer";
 import { JsonValueTree } from "./DatasetTestMode";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
@@ -183,6 +184,7 @@ const SimulationTestMode = React.forwardRef(
       initialRunTestId = "",
       isComposite = false,
       compositeAdhocConfig = null,
+      initialExecutionId=null
     },
     ref,
   ) => {
@@ -202,7 +204,10 @@ const SimulationTestMode = React.forwardRef(
 
     // Test executions (runs within a simulation)
     const [executions, setExecutions] = useState([]);
-    const [selectedExecutionId, setSelectedExecutionId] = useState("");
+    const [executionsFetched, setExecutionsFetched] = useState(false);
+    const [selectedExecutionId, setSelectedExecutionId] = useState(
+      initialExecutionId || "",
+    );
 
     // Call executions (individual calls)
     const [calls, setCalls] = useState([]);
@@ -325,8 +330,11 @@ const SimulationTestMode = React.forwardRef(
         setExecutions([]);
         setSelectedExecutionId("");
         setRunTestContext(null);
-        return;
+        setExecutionsFetched(false);
+        return undefined;
       }
+      setExecutionsFetched(false);
+      let cancelled = false;
       const fetchAll = async () => {
         try {
           // Fetch detail (agent def, scenarios, persona, evals) and executions in parallel
@@ -339,21 +347,34 @@ const SimulationTestMode = React.forwardRef(
               params: { page: 1, limit: 100 },
             }),
           ]);
+          if (cancelled) return;
           // Detail: flat serializer data
           setRunTestContext(detailRes.data || null);
           // Executions: paginated {results: [...]}
           const items = execRes.data?.results || [];
           setExecutions(items);
+          setExecutionsFetched(true);
           if (items.length > 0) {
-            setSelectedExecutionId(items[0].id || "");
+  
+            const preferred =
+              initialExecutionId &&
+              items.some((it) => it.id === initialExecutionId)
+                ? initialExecutionId
+                : items[0].id || "";
+            setSelectedExecutionId(preferred);
           }
         } catch {
+          if (cancelled) return;
           setExecutions([]);
           setRunTestContext(null);
+          setExecutionsFetched(true);
         }
       };
       fetchAll();
-    }, [selectedRunTestId]);
+      return () => {
+        cancelled = true;
+      };
+    }, [selectedRunTestId, initialExecutionId]);
 
     // 3. Fetch call executions for the selected execution
     useEffect(() => {
@@ -363,32 +384,40 @@ const SimulationTestMode = React.forwardRef(
         setCurrentCallIndex(0);
         setCallDetail(null);
         setLastFetchedCallsKey(null);
-        return;
+        return undefined;
       }
       // Flip loading synchronously so the spinner shows as soon as the
       // user picks a run. Empty-state visibility comes from the
       // render-time `isPendingCallsFetch` comparison.
       setLoadingCalls(true);
+      let cancelled = false;
       const fetchCalls = async () => {
         try {
           const { data } = await axios.get(
             endpoints.testExecutions.list(selectedExecutionId),
             { params: { page: 1, limit: 50 } },
           );
+          if (cancelled) return;
           const items = data?.results || [];
           const total = data?.count || items.length;
           setCalls(items);
           setTotalCalls(total);
           setCurrentCallIndex(0);
         } catch {
+          if (cancelled) return;
           setCalls([]);
           setTotalCalls(0);
         } finally {
-          setLoadingCalls(false);
-          setLastFetchedCallsKey(selectedExecutionId);
+          if (!cancelled) {
+            setLoadingCalls(false);
+            setLastFetchedCallsKey(selectedExecutionId);
+          }
         }
       };
       fetchCalls();
+      return () => {
+        cancelled = true;
+      };
     }, [selectedExecutionId]);
 
     // Current call
@@ -398,7 +427,7 @@ const SimulationTestMode = React.forwardRef(
     useEffect(() => {
       if (!currentCall) {
         setCallDetail(null);
-        return;
+        return undefined;
       }
 
       const cacheKey = currentCall.id || "";
@@ -406,9 +435,10 @@ const SimulationTestMode = React.forwardRef(
       if (cached) {
         setCallDetail(cached.detail);
         setLoadingDetail(false);
-        return;
+        return undefined;
       }
 
+      let cancelled = false;
       const fetchDetail = async () => {
         setLoadingDetail(true);
         try {
@@ -418,6 +448,7 @@ const SimulationTestMode = React.forwardRef(
             const { data } = await axios.get(
               endpoints.runTests.callExecutionDetail(callId),
             );
+            if (cancelled) return;
             callData = data || currentCall;
           }
 
@@ -670,17 +701,22 @@ const SimulationTestMode = React.forwardRef(
             flat[k] = v;
           }
 
+          if (cancelled) return;
           if (cacheKey) {
             detailCacheRef.current.set(cacheKey, { detail: flat });
           }
           setCallDetail(flat);
         } catch {
+          if (cancelled) return;
           setCallDetail(currentCall);
         } finally {
-          setLoadingDetail(false);
+          if (!cancelled) setLoadingDetail(false);
         }
       };
       fetchDetail();
+      return () => {
+        cancelled = true;
+      };
     }, [currentCall, runTestContext]);
 
     // Field names for variable mapping. Expand nested object keys into
@@ -801,8 +837,7 @@ const SimulationTestMode = React.forwardRef(
     const isReady = useMemo(
       () =>
         !!selectedRunTestId &&
-        variables.length > 0 &&
-        variables.every((v) => !!mapping[v]),
+        (variables.length === 0 || variables.every((v) => !!mapping[v])),
       [selectedRunTestId, variables, mapping],
     );
 
@@ -978,8 +1013,11 @@ const SimulationTestMode = React.forwardRef(
       totalCalls === 0 &&
       !loadingCalls &&
       !isPendingCallsFetch;
+    const hasNoExecutions =
+      !!selectedRunTestId && executionsFetched && executions.length === 0;
     const isMappingPending =
       !isConfirmedEmpty &&
+      !hasNoExecutions &&
       (loadingRunTests ||
         loadingCalls ||
         isPendingCallsFetch ||
@@ -1001,7 +1039,20 @@ const SimulationTestMode = React.forwardRef(
             options={runTests}
             getOptionLabel={getRunTestLabel}
             value={runTests.find((rt) => rt.id === selectedRunTestId) || null}
-            onChange={(_, val) => setSelectedRunTestId(val?.id || "")}
+            onChange={(_, val) => {
+              setSelectedRunTestId(val?.id || "");
+              setMapping({});
+              setRunTestContext(null);
+              setExecutions([]);
+              setExecutionsFetched(false);
+              setSelectedExecutionId("");
+              setCalls([]);
+              setTotalCalls(0);
+              setCurrentCallIndex(0);
+              setCallDetail(null);
+              setLastFetchedCallsKey(null);
+              detailCacheRef.current.clear();
+            }}
             loading={loadingRunTests || loadingMoreRunTests}
             disabled={!!initialRunTestId}
             openOnFocus
@@ -1102,7 +1153,14 @@ const SimulationTestMode = React.forwardRef(
               size="small"
               fullWidth
               value={selectedExecutionId}
-              onChange={(e) => setSelectedExecutionId(e.target.value)}
+              onChange={(e) => {
+                setSelectedExecutionId(e.target.value);
+                setCalls([]);
+                setTotalCalls(0);
+                setCurrentCallIndex(0);
+                setCallDetail(null);
+              }}
+              disabled={!!initialExecutionId}
               sx={{ fontSize: "13px" }}
             >
               {executions.map((ex, i) => (
@@ -1114,6 +1172,34 @@ const SimulationTestMode = React.forwardRef(
                 </MenuItem>
               ))}
             </Select>
+          </Box>
+        )}
+
+        {/* Empty state — simulation has no executions */}
+        {hasNoExecutions && (
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 0.75,
+              py: 3,
+              border: "1px dashed",
+              borderColor: "divider",
+              borderRadius: "8px",
+            }}
+          >
+            <Iconify
+              icon="mdi:table-off"
+              width={28}
+              sx={{ color: "text.disabled" }}
+            />
+            <Typography variant="body2" fontWeight={600} color="text.secondary">
+              This simulation has no data
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Run the simulation first to generate call data for testing
+            </Typography>
           </Box>
         )}
 
@@ -1142,7 +1228,7 @@ const SimulationTestMode = React.forwardRef(
             <Typography variant="body2" fontWeight={600} color="text.secondary">
               No calls in this simulation
             </Typography>
-            <Typography variant="caption" color="text.disabled">
+            <Typography variant="caption" color="text.secondary">
               Add calls to the simulation before running a test
             </Typography>
           </Box>
@@ -1580,44 +1666,11 @@ const SimulationTestMode = React.forwardRef(
               Variable Mapping
             </Typography>
             <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
-              {variables.map((variable) => (
-                <Box
-                  key={variable}
-                  sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                >
-                  <Box
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 0.5,
-                      px: 1,
-                      py: 0.25,
-                      borderRadius: "4px",
-                      border: "1px solid",
-                      borderColor: "divider",
-                      minWidth: 120,
-                    }}
-                  >
-                    <Iconify
-                      icon="mdi:code-braces"
-                      width={14}
-                      sx={{ color: "text.secondary" }}
-                    />
-                    <Typography
-                      variant="caption"
-                      fontWeight={600}
-                      sx={{ fontSize: "12px" }}
-                    >
-                      {variable}
-                    </Typography>
-                  </Box>
-                  <Iconify
-                    icon="mdi:arrow-right"
-                    width={14}
-                    sx={{ color: "text.disabled" }}
-                  />
+              {variables.map((variable) => {
+                const autocomplete = (
                   <Autocomplete
                     size="small"
+                    disabled={isMappingPending}
                     options={
                       mapping[variable] &&
                       !fieldNames.includes(mapping[variable])
@@ -1641,7 +1694,11 @@ const SimulationTestMode = React.forwardRef(
                     renderInput={(params) => (
                       <TextField
                         {...params}
-                        placeholder="Search field..."
+                        placeholder={
+                          isMappingPending
+                            ? "Loading columns..."
+                            : "Search field..."
+                        }
                         InputProps={{
                           ...params.InputProps,
                           sx: {
@@ -1651,6 +1708,13 @@ const SimulationTestMode = React.forwardRef(
                             height: 28,
                             py: 0,
                           },
+                          endAdornment: isMappingPending ? (
+                            <InputAdornment position="end">
+                              <CircularProgress size={14} />
+                            </InputAdornment>
+                          ) : (
+                            params.InputProps.endAdornment
+                          ),
                         }}
                       />
                     )}
@@ -1682,8 +1746,60 @@ const SimulationTestMode = React.forwardRef(
                       );
                     }}
                   />
-                </Box>
-              ))}
+                );
+                return (
+                  <Box
+                    key={variable}
+                    sx={{ display: "flex", alignItems: "center", gap: 1 }}
+                  >
+                    <Box
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 0.5,
+                        px: 1,
+                        py: 0.25,
+                        borderRadius: "4px",
+                        border: "1px solid",
+                        borderColor: "divider",
+                        minWidth: 120,
+                      }}
+                    >
+                      <Iconify
+                        icon="mdi:code-braces"
+                        width={14}
+                        sx={{ color: "text.secondary" }}
+                      />
+                      <Typography
+                        variant="caption"
+                        fontWeight={600}
+                        sx={{ fontSize: "12px" }}
+                      >
+                        {variable}
+                      </Typography>
+                    </Box>
+                    <Iconify
+                      icon="mdi:arrow-right"
+                      width={14}
+                      sx={{ color: "text.disabled" }}
+                    />
+                    {isMappingPending ? (
+                      <CustomTooltip
+                        show
+                        type="black"
+                        size="small"
+                        title="Columns are being fetched"
+                        placement="top"
+                        arrow
+                      >
+                        <Box sx={{ flex: 1 }}>{autocomplete}</Box>
+                      </CustomTooltip>
+                    ) : (
+                      autocomplete
+                    )}
+                  </Box>
+                );
+              })}
             </Box>
           </Box>
         )}
@@ -1744,6 +1860,7 @@ SimulationTestMode.propTypes = {
   initialRunTestId: PropTypes.string,
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,
+  initialExecutionId :PropTypes.string
 };
 
 export default SimulationTestMode;

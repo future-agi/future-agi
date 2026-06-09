@@ -63,11 +63,15 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
+
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices, OrganizationSubscription, SubscriptionTierChoices
+    from ee.usage.models.usage import (
+        OrganizationSubscription,
+        SubscriptionTierChoices,
+    )
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
     OrganizationSubscription = None
     SubscriptionTierChoices = None
 try:
@@ -201,6 +205,14 @@ class WorkspaceListAPIView(APIView):
                 user=user, organization=organization, is_active=True
             ).first()
             org_level = org_membership.level_or_legacy if org_membership else 0
+            ws_memberships = {
+                str(wm.workspace_id): wm
+                for wm in WorkspaceMembership.no_workspace_objects.filter(
+                    user=user,
+                    workspace__in=[w["id"] for w in data],
+                    is_active=True,
+                )
+            }
 
             if org_level and org_level >= Level.ADMIN:
                 # Org Admin+ auto-have WS Admin in all workspaces
@@ -209,14 +221,6 @@ class WorkspaceListAPIView(APIView):
                     ws_data["user_ws_role"] = "Workspace Admin"
             else:
                 # Look up actual workspace memberships
-                ws_memberships = {
-                    str(wm.workspace_id): wm
-                    for wm in WorkspaceMembership.no_workspace_objects.filter(
-                        user=user,
-                        workspace__in=[w["id"] for w in data],
-                        is_active=True,
-                    )
-                }
                 for ws_data in data:
                     wm = ws_memberships.get(str(ws_data["id"]))
                     if wm:
@@ -2058,12 +2062,9 @@ class ManageTeamView(APIView):
                 )
             else:
                 call_log_row = None
-            if (
-                log_and_deduct_cost_for_resource_request is not None
-                and (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                )
+            if log_and_deduct_cost_for_resource_request is not None and (
+                call_log_row is None
+                or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
             ):
                 config = json.loads(call_log_row.config)
                 return self._gm.too_many_requests(

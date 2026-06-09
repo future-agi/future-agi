@@ -60,6 +60,7 @@ class Level:
     }
 
     LEVEL_TO_WS_STRING = {
+        OWNER: "Workspace Admin",
         WORKSPACE_ADMIN: "Workspace Admin",
         WORKSPACE_MEMBER: "Workspace Member",
         WORKSPACE_VIEWER: "Workspace Viewer",
@@ -67,6 +68,7 @@ class Level:
 
     # DB-safe values matching OrganizationRoles choices for CharField storage
     LEVEL_TO_WS_ROLE = {
+        OWNER: "workspace_admin",
         WORKSPACE_ADMIN: "workspace_admin",
         WORKSPACE_MEMBER: "workspace_member",
         WORKSPACE_VIEWER: "workspace_viewer",

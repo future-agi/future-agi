@@ -31,6 +31,7 @@ import LLMPromptEditor from "./LLMPromptEditor";
 import OutputTypeConfig from "./OutputTypeConfig";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TestPlayground from "./TestPlayground";
+import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
 import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys";
 import CodeEditor from "./CodeEditor";
 import CodeEvalEditor, {
@@ -40,6 +41,7 @@ import CodeEvalEditor, {
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
 import { extractVariables } from "src/utils/utils";
+import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 
 const EVAL_TYPE_TABS = [
   { value: "agent", label: "Agents" },
@@ -115,12 +117,14 @@ const resolveContextOptions = (dataInjection) => {
   if (!dataInjection || typeof dataInjection !== "object") {
     return ["variables_only"];
   }
-  if (
-    dataInjection.full_row ||
-    dataInjection.fullRow ||
-    dataInjection.variables_only === false ||
-    dataInjection.variablesOnly === false
-  ) {
+  const opts = [];
+  if (dataInjection.full_row || dataInjection.fullRow) opts.push("dataset_row");
+  if (dataInjection.span_context || dataInjection.spanContext) opts.push("span_context");
+  if (dataInjection.trace_context || dataInjection.traceContext) opts.push("trace_context");
+  if (dataInjection.session_context || dataInjection.sessionContext) opts.push("session_context");
+  if (dataInjection.call_context || dataInjection.callContext) opts.push("call_context");
+  if (opts.length > 0) return opts;
+  if (dataInjection.variables_only === false || dataInjection.variablesOnly === false) {
     return ["full_row"];
   }
   return ["variables_only"];
@@ -170,6 +174,17 @@ const EvalCreatePage = () => {
   const handleColumnsLoaded = useCallback((cols, jsonSchemas) => {
     setDatasetColumns(cols || []);
     setDatasetJsonSchemas(jsonSchemas || {});
+  }, []);
+
+  // Active test-tab variable→column mapping. Threaded into the
+  // InstructionEditor so mapped variables render green; otherwise the
+  // {{var}} tokens stay red even after the user binds them in the test
+  // panel.
+  const [playgroundMapping, setPlaygroundMapping] = useState({});
+  const handlePlaygroundReadyChange = useCallback((_ready, mapping) => {
+    if (mapping && typeof mapping === "object") {
+      setPlaygroundMapping(mapping);
+    }
   }, []);
 
   // --- Composite eval state ---
@@ -311,11 +326,7 @@ const EvalCreatePage = () => {
   const autoSaveTimer = useRef(null);
   const autoSaveSkipFirst = useRef(!!urlDraftId); // skip first trigger when loading existing draft
   const buildUpdatePayload = useCallback(() => {
-    const dataInjection =
-      contextOptions.length === 0 ||
-      (contextOptions.length === 1 && contextOptions[0] === "variables_only")
-        ? { variables_only: true }
-        : { full_row: true };
+    const dataInjection = buildDataInjection(contextOptions);
 
     const summary =
       summaryType === "custom"
@@ -350,8 +361,9 @@ const EvalCreatePage = () => {
       summary: evalType === "agent" ? summary : undefined,
       error_localizer_enabled: errorLocalizerEnabled,
       messages: evalType === "llm" ? messages : undefined,
+      // Send [] for LLM evals so the BE can persist a user-cleared list.
       few_shot_examples:
-        evalType === "llm" && fewShotExamples.length > 0
+        evalType === "llm"
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
@@ -471,6 +483,7 @@ const EvalCreatePage = () => {
         name: compositeName.trim(),
         description: compositeDescription || null,
         child_template_ids: childIds,
+        child_configs: buildCompositeChildConfigs(selectedChildren),
         aggregation_enabled: aggregationEnabled,
         aggregation_function: aggregationFunction,
         composite_child_axis: compositeChildAxis,
@@ -774,7 +787,7 @@ const EvalCreatePage = () => {
                       fontWeight={600}
                       sx={{ mb: 0.5 }}
                     >
-                      Eval Name<span style={{ color: "red" }}>*</span>
+                      Eval Name<Box component="span" sx={{ color: "error.main", ml: 0.25 }}>*</Box>
                     </Typography>
                     <TextField
                       fullWidth
@@ -867,6 +880,8 @@ const EvalCreatePage = () => {
                       onTemplateFormatChange={setTemplateFormat}
                       datasetColumns={datasetColumns}
                       datasetJsonSchemas={datasetJsonSchemas}
+                      mappedVariables={playgroundMapping}
+                      modelSelectorDisabled={false}
                       mode={agentMode}
                       onModeChange={setAgentMode}
                       useInternet={checkInternet}
@@ -965,7 +980,7 @@ const EvalCreatePage = () => {
                       >
                         <Typography variant="caption">0</Typography>
                         <Slider
-                          value={passThreshold * 100}
+                          value={Math.round(passThreshold * 100)}
                           onChange={(_, val) => setPassThreshold(val / 100)}
                           min={0}
                           max={100}
@@ -1191,6 +1206,8 @@ const EvalCreatePage = () => {
                         : instructions
                   }
                   evalType={mode === "composite" ? "llm" : evalType}
+                  code={code}
+                  codeLanguage={codeLanguage}
                   requiredKeys={
                     mode === "composite" ? compositeUnionKeys : undefined
                   }
@@ -1201,6 +1218,8 @@ const EvalCreatePage = () => {
                           child_template_ids: selectedChildren.map(
                             (c) => c.child_id,
                           ),
+                          child_configs:
+                            buildCompositeChildConfigs(selectedChildren),
                           aggregation_enabled: aggregationEnabled,
                           aggregation_function: aggregationFunction,
                           composite_child_axis: compositeChildAxis || "",
@@ -1215,6 +1234,7 @@ const EvalCreatePage = () => {
                   showVersions={false}
                   onTestResult={handleTestResult}
                   onColumnsLoaded={handleColumnsLoaded}
+                  onReadyChange={handlePlaygroundReadyChange}
                   errorLocalizerEnabled={
                     mode === "composite" ? false : errorLocalizerEnabled
                   }

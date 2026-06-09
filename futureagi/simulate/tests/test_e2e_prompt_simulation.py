@@ -22,16 +22,16 @@ from rest_framework import status
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.models import Organization
+from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.workspace import Workspace, WorkspaceMembership
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.run_test import RunTest
 from simulate.models.scenarios import Scenarios
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
-from simulate.serializers.run_test import (
-    CreatePromptSimulationSerializer,
-    RunTestSerializer,
-)
+from simulate.serializers.requests.run_test import CreatePromptSimulationSerializer
+from simulate.serializers.run_test import RunTestSerializer
 from simulate.serializers.scenarios import ScenariosSerializer
 from simulate.views.prompt_simulation import (
     ExecutePromptSimulationView,
@@ -39,6 +39,8 @@ from simulate.views.prompt_simulation import (
     PromptSimulationListCreateView,
     PromptSimulationScenariosView,
 )
+from tfc.constants.roles import OrganizationRoles
+from tfc.middleware.workspace_context import clear_workspace_context, set_workspace_context
 
 User = get_user_model()
 
@@ -64,6 +66,28 @@ class E2EPromptSimulationTestCase(TestCase):
         )
         self.user.organization = self.org
         self.user.save()
+        self.workspace = Workspace.objects.create(
+            name="Default Workspace",
+            organization=self.org,
+            is_default=True,
+            created_by=self.user,
+        )
+        self.organization_membership = OrganizationMembership.no_workspace_objects.create(
+            user=self.user,
+            organization=self.org,
+            role=OrganizationRoles.OWNER,
+            is_active=True,
+        )
+        WorkspaceMembership.no_workspace_objects.create(
+            workspace=self.workspace,
+            user=self.user,
+            role=OrganizationRoles.WORKSPACE_ADMIN,
+            organization_membership=self.organization_membership,
+            is_active=True,
+        )
+        set_workspace_context(
+            workspace=self.workspace, organization=self.org, user=self.user
+        )
 
         # Create prompt template
         self.prompt_template = PromptTemplate.objects.create(
@@ -135,6 +159,10 @@ class E2EPromptSimulationTestCase(TestCase):
         )
 
         self.factory = APIRequestFactory()
+
+    def tearDown(self):
+        clear_workspace_context()
+        super().tearDown()
 
     # =========================================================================
     # FLOW 1: Prompt Template & Version Tests

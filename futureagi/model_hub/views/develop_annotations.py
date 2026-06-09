@@ -21,6 +21,7 @@ from accounts.models import User
 from agentic_eval.core.embeddings.embedding_manager import (
     EmbeddingManager,
 )
+from tfc.constants.levels import Level
 
 logger = structlog.get_logger(__name__)
 from model_hub.models.choices import (
@@ -42,6 +43,7 @@ from model_hub.utils.auto_annotate import generate_annotations_task
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.utils.utils import corpus_builder
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
+from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -61,9 +63,24 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
         include_usage_count = (
             self.request.query_params.get("include_usage_count", "").lower() == "true"
         )
+        # ``include_archived=true`` returns soft-deleted labels alongside live
+        # ones so the frontend can offer a "show archived" toggle. The mixin's
+        # default queryset filters ``deleted=False``; using
+        # ``AnnotationsLabels.all_objects`` bypasses that.
+        include_archived = (
+            self.request.query_params.get("include_archived", "").lower() == "true"
+        )
 
-        # Get base queryset with automatic filtering from mixin
-        queryset = super().get_queryset().select_related("project")
+        if include_archived:
+            queryset = AnnotationsLabels.all_objects.select_related("project")
+            # Re-apply the mixin's organization filter manually since we
+            # bypassed its get_queryset.
+            org = getattr(self.request, "organization", None)
+            if org is not None:
+                queryset = queryset.filter(organization=org)
+        else:
+            # Get base queryset with automatic filtering from mixin
+            queryset = super().get_queryset().select_related("project")
 
         if project_id:
             queryset = queryset.filter(project_id=project_id)
@@ -240,6 +257,13 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
             detail = exc.detail
             logger.warning(f"Annotation label save failed: {detail}")
             return self._gm.bad_request(f"Annotation label creation failed: {detail}")
+        except ValidationError as exc:
+            # AnnotationsLabels.save() calls full_clean() which raises Django's
+            # ValidationError on bad settings (e.g. numeric min >= max). Catch
+            # it here so the API returns 400 instead of bubbling up to a 500.
+            detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+            logger.warning(f"Annotation label save failed (model validation): {detail}")
+            return self._gm.bad_request(f"Annotation label creation failed: {detail}")
 
         return self._gm.success_response("Annotation label created successfully")
 
@@ -383,6 +407,8 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
             return self._gm.success_response("Annotation created successfully")
         except ValidationError:
             return self._gm.bad_request(get_error_message("ANNOTATION_CREATION_FAILED"))
+        except FeatureUnavailable:
+            raise
         except Exception as e:
             logger.exception(f"Error in creating annotation: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -1452,9 +1478,19 @@ class UserViewSet(viewsets.ModelViewSet):
             # Prefer workspace-level filtering when workspace context is available
             workspace = getattr(self.request, "workspace", None)
             if workspace:
-                user_ids = WorkspaceMembership.objects.filter(
+                explicit_workspace_user_ids = WorkspaceMembership.objects.filter(
                     workspace=workspace, is_active=True
                 ).values_list("user_id", flat=True)
+                auto_access_user_ids = OrganizationMembership.no_workspace_objects.filter(
+                    organization_id=organization_id,
+                    is_active=True,
+                ).filter(
+                    Q(level__gte=Level.ADMIN)
+                    | Q(level__isnull=True, role__in=["Admin", "Owner"])
+                ).values_list("user_id", flat=True)
+                user_ids = list(explicit_workspace_user_ids) + list(
+                    auto_access_user_ids
+                )
             else:
                 # Fallback to org membership
                 user_ids = OrganizationMembership.no_workspace_objects.filter(
@@ -1716,25 +1752,24 @@ class AnnotationSummaryView(APIView):
                 Dataset, id=dataset_id, organization=organization
             )
 
-            header_df = SQLQueryHandler.get_annotation_summary_stats(
-                dataset_id, r_type="header_data"
+            # Score-only data path. Reads the unified Score model
+            # (`source_type='dataset_row'`) instead of the legacy
+            # ``model_hub_annotations`` + ``Cell.feedback_info['annotation']``
+            # CTEs. Returns DataFrames in the same shape so the pandas
+            # aggregation logic below is unchanged.
+            from model_hub.services.annotation_summary_service import (
+                get_annotation_summary_data,
             )
-            metric_df = SQLQueryHandler.get_annotation_summary_stats(
-                dataset_id, r_type="metric_calc"
+
+            summary_data = get_annotation_summary_data(
+                dataset_id, organization_id=organization.id
             )
-            graph_df = SQLQueryHandler.get_annotation_summary_stats(
-                dataset_id, r_type="graph"
-            )
-            heatmap_df = SQLQueryHandler.get_annotation_summary_stats(
-                dataset_id, r_type="heatmap"
-            )
-            annotator_performance_df = SQLQueryHandler.get_annotation_summary_stats(
-                dataset_id, r_type="annotator_performance"
-            )
-            dataset_coverage_df = SQLQueryHandler.get_annotation_summary_stats(
-                dataset_id, r_type="dataset_annot_summary"
-            )
-            # texts = SQLQueryHandler.get_annotation_summary_stats(dataset_id, r_type="get_text_data")
+            header_df = summary_data["header_data"]
+            metric_df = summary_data["metric_calc"]
+            graph_df = summary_data["graph"]
+            heatmap_df = summary_data["heatmap"]
+            annotator_performance_df = summary_data["annotator_performance"]
+            dataset_coverage_df = summary_data["dataset_annot_summary"]
             dataset_coverage = round(
                 (
                     dataset_coverage_df["fully_annotated_rows"].iloc[0]

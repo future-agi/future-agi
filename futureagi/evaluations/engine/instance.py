@@ -14,6 +14,47 @@ from evaluations.constants import FUTUREAGI_EVAL_TYPES
 logger = structlog.get_logger(__name__)
 
 
+# Per-evaluator allow-list for per-binding ``run_config`` overrides. Caps
+# the runtime-tunable surface — both evaluators accept ``**kwargs`` so
+# unknown keys would silently pass through rather than raise. ``model`` is
+# excluded from CustomPromptEvaluator: ``prepare_eval_config`` derives
+# api_key / provider from the resolved model upstream (see line ~301-320),
+# and overwriting ``config["model"]`` after that derivation would leave
+# stale auth on the config dict. ``error_localizer_enabled`` is handled at
+# the surface-runner layer (Temporal activities, inline-eval polling,
+# dataset runner), not on the evaluator instance — kept out of both
+# allow-lists.
+_RUNTIME_ALLOWED_KEYS = {
+    "AgentEvaluator": {
+        "model",
+        "agent_mode",
+        "check_internet",
+        "knowledge_base_id",
+        "knowledge_bases",
+        "tools",
+        "data_injection",
+        "summary",
+        "pass_threshold",
+        "output_type",
+        "choices",
+        "choice_scores",
+        "reverse_output",
+        "multi_choice",
+    },
+    "CustomPromptEvaluator": {
+        "check_internet",
+        "multi_choice",
+        "pass_threshold",
+        "output_type",
+        "choices",
+        "choice_scores",
+        "reverse_output",
+        "knowledge_base_id",
+        "knowledge_bases",
+    },
+}
+
+
 def resolve_version(eval_template, version_number=None, organization=None):
     """
     Resolve the eval template version to use.
@@ -235,6 +276,7 @@ def prepare_eval_config(
         config["knowledge_bases"] = eval_template.config.get("knowledge_bases", [])
         config["data_injection"] = eval_template.config.get("data_injection", {})
         config["summary"] = eval_template.config.get("summary", {"type": "concise"})
+        config["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
         # Pass org/workspace context for tool resolution
         config["organization_id"] = (
             str(eval_template.organization.id) if eval_template.organization else None
@@ -259,7 +301,14 @@ def prepare_eval_config(
         if eval_template.config.get("messages"):
             config["messages"] = eval_template.config.get("messages")
         if eval_template.config.get("few_shot_examples"):
-            config["few_shot_examples"] = eval_template.config.get("few_shot_examples")
+            from model_hub.utils.few_shot_examples import (
+                expand_static_few_shot_examples,
+            )
+
+            config["few_shot_examples"] = expand_static_few_shot_examples(
+                eval_template.config.get("few_shot_examples"),
+                organization=eval_template.organization,
+            )
 
         # Resolve model
         raw_model = model or eval_template.config.get("model")
@@ -293,6 +342,7 @@ def prepare_eval_config(
             else []
         )
         config["choice_scores"] = eval_template.choice_scores
+        config["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
 
     # FutureAGI evals (DeterministicEvaluator, RankingEvaluator)
     if is_futureagi:
@@ -364,36 +414,25 @@ def create_eval_instance(
     # Apply version overrides
     config, criteria = apply_version_overrides(config, resolved_version, criteria)
 
-    # Runtime override merge for AgentEvaluator.
+    # Runtime override merge.
     #
     # Priority (lowest to highest): template default → UserEvalMetric.run_config
     #                              → API-level runtime_config.run_config
     #
-    # The caller passes the merged UserEvalMetric.config as `runtime_config`,
-    # so any `run_config` sub-dict it contains is the user's per-attachment
-    # override. Additional API-level overrides can be stacked on top by the
-    # caller before invoking create_eval_instance — callers should merge those
-    # into runtime_config["run_config"] themselves.
+    # The caller passes the merged binding config (UserEvalMetric.config /
+    # CustomEvalConfig.config / SimulateEvalConfig.config) as `runtime_config`,
+    # so any `run_config` sub-dict it contains holds the user's per-attachment
+    # toggles from the EvalPicker (model, agent_mode, check_internet, tools,
+    # knowledge_bases, data_injection, summary, pass_threshold, choice_scores,
+    # multi_choice, reverse_output, error_localizer_enabled).
+    #
+    # We use an explicit `is not None` check rather than truthy `or` so that
+    # explicit False / 0 / "" overrides survive (e.g. check_internet=False on
+    # a binding when the template default is True).
     eval_type_id_for_overrides = eval_template.config.get("eval_type_id", "")
-    if eval_type_id_for_overrides == "AgentEvaluator" and runtime_config:
+    _allowed = _RUNTIME_ALLOWED_KEYS.get(eval_type_id_for_overrides)
+    if _allowed and runtime_config:
         _overrides = (runtime_config or {}).get("run_config") or {}
-        # Whitelist: only keys that AgentEvaluator actually accepts.
-        _allowed = {
-            "model",
-            "agent_mode",
-            "check_internet",
-            "knowledge_base_id",
-            "knowledge_bases",
-            "tools",
-            "data_injection",
-            "summary",
-            "pass_threshold",
-            "output_type",
-            "choices",
-            "choice_scores",
-            "reverse_output",
-            "error_localizer_enabled",
-        }
         for key, value in _overrides.items():
             if key in _allowed and value is not None:
                 config[key] = value

@@ -7,8 +7,6 @@ in high-concurrency scenarios.
 Uses httpx for async HTTP operations (already available in the project).
 """
 
-import uuid
-
 import httpx
 import structlog
 
@@ -89,6 +87,61 @@ async def download_audio_from_url_async(
     raise last_error or httpx.HTTPError(f"Failed to download {audio_url}")
 
 
+async def _convert_audio_url_to_s3_async_with_size(
+    call_id: str,
+    audio_url: str,
+    url_type: str = "audio",
+) -> tuple[str, int]:
+    """Internal worker that does the download + upload and reports size.
+
+    Returns (s3_url_or_original_on_failure, bytes_uploaded_to_s3). The
+    bytes count is 0 when the source URL was already on S3 or the upload
+    did not succeed; callers can use that to decide whether to bill.
+    """
+    if not audio_url:
+        return audio_url, 0
+
+    # Check if already an S3 URL
+    if "amazonaws.com" in str(audio_url) or "minio" in str(audio_url):
+        logger.info(f"{url_type} URL is already S3: {audio_url}")
+        return audio_url, 0
+
+    try:
+        logger.info(f"Converting {url_type} URL to S3: {audio_url}")
+
+        # Async download
+        audio_bytes = await download_audio_from_url_async(audio_url)
+
+        # S3 upload (still sync - minio client doesn't have async support)
+        # We use run_in_executor for just the upload, which is faster than download
+        import asyncio
+
+        # Use get_running_loop() to get the loop with the worker's large thread pool
+        # (set in worker.py via loop.set_default_executor)
+        loop = asyncio.get_running_loop()
+
+        def do_upload():
+            from tfc.utils.storage import upload_audio_to_s3
+
+            # Deterministic key per (call_id, url_type) so retries overwrite
+            # the same object instead of creating orphans. Required for
+            # idempotent rehost.
+            object_key = f"call-recordings/{call_id}/{url_type}.mp3"
+            audio_data = {"bytes": audio_bytes}
+            return upload_audio_to_s3(audio_data, object_key=object_key)
+
+        # Run upload in thread pool (small operation compared to download)
+        s3_url = await loop.run_in_executor(None, do_upload)
+
+        logger.info(f"Successfully converted {url_type} URL to S3: {s3_url}")
+        return s3_url, len(audio_bytes)
+
+    except Exception as e:
+        logger.error(f"Error converting {url_type} URL to S3: {e}")
+        # Return original URL on failure
+        return audio_url, 0
+
+
 async def convert_audio_url_to_s3_async(
     call_id: str,
     audio_url: str,
@@ -110,49 +163,23 @@ async def convert_audio_url_to_s3_async(
     Returns:
         str: S3 URL or original URL if conversion fails
     """
-    if not audio_url:
-        return audio_url
+    s3_url, _ = await _convert_audio_url_to_s3_async_with_size(
+        call_id, audio_url, url_type
+    )
+    return s3_url
 
-    # Check if already an S3 URL
-    if "amazonaws.com" in str(audio_url) or "minio" in str(audio_url):
-        logger.info(f"{url_type} URL is already S3: {audio_url}")
-        return audio_url
 
-    # Check if it's a Vapi URL (we only convert Vapi URLs)
-    if "vapi.ai" not in str(audio_url):
-        logger.info(
-            f"{url_type} URL is not a Vapi URL, skipping conversion: {audio_url}"
-        )
-        return audio_url
+async def convert_audio_url_to_s3_async_with_size(
+    call_id: str,
+    audio_url: str,
+    url_type: str = "audio",
+) -> tuple[str, int]:
+    """Like `convert_audio_url_to_s3_async` but also reports uploaded bytes.
 
-    try:
-        logger.info(f"Converting {url_type} URL from Vapi to S3: {audio_url}")
-
-        # Async download
-        audio_bytes = await download_audio_from_url_async(audio_url)
-
-        # S3 upload (still sync - minio client doesn't have async support)
-        # We use run_in_executor for just the upload, which is faster than download
-        import asyncio
-
-        # Use get_running_loop() to get the loop with the worker's large thread pool
-        # (set in worker.py via loop.set_default_executor)
-        loop = asyncio.get_running_loop()
-
-        def do_upload():
-            from tfc.utils.storage import upload_audio_to_s3
-
-            object_key = f"call-recordings/{call_id}/{uuid.uuid4()}.mp3"
-            audio_data = {"bytes": audio_bytes}
-            return upload_audio_to_s3(audio_data, object_key=object_key)
-
-        # Run upload in thread pool (small operation compared to download)
-        s3_url = await loop.run_in_executor(None, do_upload)
-
-        logger.info(f"Successfully converted {url_type} URL to S3: {s3_url}")
-        return s3_url
-
-    except Exception as e:
-        logger.error(f"Error converting {url_type} URL to S3: {e}")
-        # Return original URL on failure
-        return audio_url
+    Returns (s3_url_or_original_on_failure, bytes_uploaded). The bytes
+    value is 0 when nothing was uploaded (already-on-S3 / failure), so
+    billing call sites can sum it directly without re-checking the URL.
+    """
+    return await _convert_audio_url_to_s3_async_with_size(
+        call_id, audio_url, url_type
+    )

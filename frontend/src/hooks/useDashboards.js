@@ -285,10 +285,16 @@ export function useDashboardFilterValues({
     select: (res) => res.data?.result?.values || [],
     enabled: enabled && Boolean(metricName),
     retry: false,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
   });
 }
 
-export function useDatasetColumnValues({ datasetId, columnId, enabled = true }) {
+export function useDatasetColumnValues({
+  datasetId,
+  columnId,
+  enabled = true,
+}) {
   // Distinct non-empty cell values for a single (dataset, column) pair.
   // Backs the dataset filter panel's Basic-tab value dropdown and seeds
   // the AI-filter smart-mode value grounding indirectly (smart mode

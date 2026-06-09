@@ -1098,6 +1098,56 @@ class TestAddApiColumnViewHelpers(DynamicColumnsBaseTestCase):
 
         assert result == cell.value
 
+    def test_replace_variables_with_dot_notation(self):
+        """Test _replace_variables resolves nested JSON paths."""
+        view = AddApiColumnView()
+        dataset, column, rows = self.create_json_dataset()
+
+        result = view._replace_variables(f"{{{{{column.id}.name}}}}", rows[0])
+        assert result == "User0"
+
+        result = view._replace_variables(f"{{{{{column.id}.nested.key}}}}", rows[0])
+        assert result == "value0"
+
+    def test_replace_variables_with_missing_path(self):
+        """Test _replace_variables returns empty string for missing JSON path."""
+        view = AddApiColumnView()
+        dataset, column, rows = self.create_json_dataset()
+
+        result = view._replace_variables(f"{{{{{column.id}.nonexistent}}}}", rows[0])
+        assert result == ""
+
+    def test_resolve_cell_value_plain_uuid(self):
+        """Test _resolve_cell_value with a plain column UUID (no path)."""
+        dataset, columns, rows = self.create_test_dataset()
+        cell = Cell.objects.get(row=rows[0], column=columns[0])
+
+        result = AddApiColumnView._resolve_cell_value(str(columns[0].id), rows[0])
+        assert result == cell.value
+
+    def test_resolve_cell_value_with_json_path(self):
+        """Test _resolve_cell_value with UUID.dotted.path."""
+        dataset, column, rows = self.create_json_dataset()
+
+        result = AddApiColumnView._resolve_cell_value(f"{column.id}.age", rows[0])
+        assert result == "20"
+
+    def test_resolve_cell_value_nested_path(self):
+        """Test _resolve_cell_value with deeply nested path."""
+        dataset, column, rows = self.create_json_dataset()
+
+        result = AddApiColumnView._resolve_cell_value(f"{column.id}.nested.key", rows[1])
+        assert result == "value1"
+
+    def test_replace_variables_multiple_in_string(self):
+        """Test _replace_variables with multiple variables in one string."""
+        view = AddApiColumnView()
+        dataset, column, rows = self.create_json_dataset()
+
+        template = f"name={{{{{column.id}.name}}}}&age={{{{{column.id}.age}}}}"
+        result = view._replace_variables(template, rows[0])
+        assert result == "name=User0&age=20"
+
 
 # =============================================================================
 # AddVectorDBColumnView Tests

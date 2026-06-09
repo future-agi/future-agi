@@ -126,6 +126,17 @@ export const RESPONSE_CODES = {
   MAINTENANCE: 503,
 };
 
+export const LOGIN_ERROR_CODES = {
+  IP_BLOCKED: "LOGIN_IP_BLOCKED",
+  IP_RATE_LIMITED: "LOGIN_IP_RATE_LIMITED",
+  ACCOUNT_BLOCKED: "LOGIN_ACCOUNT_BLOCKED",
+  RECAPTCHA_FAILED: "LOGIN_RECAPTCHA_FAILED",
+  INVALID_CREDENTIALS: "LOGIN_INVALID_CREDENTIALS",
+  ACCOUNT_DEACTIVATED: "LOGIN_ACCOUNT_DEACTIVATED",
+  TOO_MANY_ATTEMPTS: "LOGIN_TOO_MANY_ATTEMPTS",
+  UNEXPECTED_ERROR: "LOGIN_UNEXPECTED_ERROR",
+};
+
 //Prompt Constants
 
 export const PromptRoles = {
@@ -295,4 +306,11 @@ export const APP_CONSTANTS = {
 
 export const ORIGIN_OF_COLUMNS = {
   EXPERIMENT: "experiment",
+};
+
+export const ROW_TYPE_LABELS = {
+  spans: "Spans",
+  traces: "Traces",
+  sessions: "Sessions",
+  voiceCalls: "Voice Calls",
 };

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mcp_server.exceptions import RateLimitExceededError
+from mcp_server.constants import RATE_LIMITS
 from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
 
 
@@ -103,8 +104,8 @@ class TestCheckRateLimit:
     def test_allows_calls_up_to_limit_minus_one(self, mock_cache):
         """Calls right below the per-minute limit should succeed."""
         now = time.time()
-        # 19 timestamps in the window (free limit is 20/min)
-        timestamps = [now - i for i in range(19)]
+        limit = RATE_LIMITS["free"]["per_minute"]
+        timestamps = [now - i * 0.1 for i in range(limit - 1)]
 
         def side_effect(key, default=None):
             if "min" in key:
@@ -119,8 +120,8 @@ class TestCheckRateLimit:
     def test_raises_when_per_minute_exceeded(self, mock_cache):
         """Exceeding per-minute limit raises RateLimitExceededError."""
         now = time.time()
-        # 20 timestamps in the window (free limit is 20/min)
-        timestamps = [now - i for i in range(20)]
+        limit = RATE_LIMITS["free"]["per_minute"]
+        timestamps = [now - i * 0.1 for i in range(limit)]
 
         def side_effect(key, default=None):
             if "min" in key:
@@ -132,7 +133,7 @@ class TestCheckRateLimit:
         with pytest.raises(RateLimitExceededError) as exc_info:
             check_rate_limit("org-123", "free")
 
-        assert "20 calls/minute" in str(exc_info.value)
+        assert f"{limit} calls/minute" in str(exc_info.value)
         assert exc_info.value.retry_after >= 1
 
     @patch("mcp_server.rate_limiter.cache")
@@ -142,21 +143,21 @@ class TestCheckRateLimit:
         def side_effect(key, default=None):
             if "min" in key:
                 return []  # empty minute window
-            return 500  # day count at limit (free = 500/day)
+            return RATE_LIMITS["free"]["per_day"]
 
         mock_cache.get.side_effect = side_effect
 
         with pytest.raises(RateLimitExceededError) as exc_info:
             check_rate_limit("org-123", "free")
 
-        assert "500 calls/day" in str(exc_info.value)
+        assert f"{RATE_LIMITS['free']['per_day']} calls/day" in str(exc_info.value)
         assert exc_info.value.retry_after > 0
 
     @patch("mcp_server.rate_limiter.cache")
     def test_retry_after_is_reasonable_per_minute(self, mock_cache):
         """retry_after for per-minute limit should be between 1 and 61 seconds."""
         now = time.time()
-        timestamps = [now - i for i in range(20)]
+        timestamps = [now - i * 0.1 for i in range(RATE_LIMITS["free"]["per_minute"])]
 
         def side_effect(key, default=None):
             if "min" in key:
@@ -225,7 +226,7 @@ class TestCheckRateLimit:
     def test_falls_back_to_free_for_unknown_tier(self, mock_cache):
         """Unknown tier falls back to free tier limits."""
         now = time.time()
-        timestamps = [now - i for i in range(20)]
+        timestamps = [now - i * 0.1 for i in range(RATE_LIMITS["free"]["per_minute"])]
 
         def side_effect(key, default=None):
             if "min" in key:
@@ -234,6 +235,6 @@ class TestCheckRateLimit:
 
         mock_cache.get.side_effect = side_effect
 
-        # "unknown" tier falls back to free (20/min), so 20 timestamps should raise
+        # "unknown" tier falls back to free, so a full free window should raise
         with pytest.raises(RateLimitExceededError):
             check_rate_limit("org-123", "unknown")

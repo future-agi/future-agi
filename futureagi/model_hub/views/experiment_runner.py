@@ -871,7 +871,8 @@ class ExperimentRunner:
                                 f"{user_eval_metric.name}-reason",
                                 parent_column=eval_column,
                             )
-                            cols_ids_to_update.append(reason_column.id)
+                            if reason_column is not None:
+                                cols_ids_to_update.append(reason_column.id)
 
                     cols_ids_to_update.append(eval_column.id)
 

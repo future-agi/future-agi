@@ -25,25 +25,27 @@ class TestLoginAPI:
         assert "refresh" in response.json()
 
     def test_login_with_invalid_password(self, api_client, user):
-        """Login fails with wrong password."""
+        """Login fails with wrong password and returns LOGIN_INVALID_CREDENTIALS."""
         response = api_client.post(
             "/accounts/token/",
             {"email": user.email, "password": "wrongpassword"},
             format="json",
         )
-        # API returns 400 Bad Request for invalid credentials
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
 
-    def test_login_with_nonexistent_email(self, api_client):
-        """Login fails with email that doesn't exist."""
+    def test_login_with_nonexistent_email(self, api_client, db):
+        """Login fails with email that doesn't exist and returns LOGIN_INVALID_CREDENTIALS."""
         response = api_client.post(
             "/accounts/token/",
             # Use futureagi email to bypass recaptcha
             {"email": "nonexistent@futureagi.com", "password": "anypassword"},
             format="json",
         )
-        # API returns 400 Bad Request for nonexistent user
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
 
     def test_login_with_missing_email(self, api_client):
         """Login fails when email is missing."""

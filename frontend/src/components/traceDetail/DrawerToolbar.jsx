@@ -96,6 +96,9 @@ const TabPill = ({
           fontWeight: isActive ? 600 : 400,
           color: isActive ? "primary.main" : "text.secondary",
           whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          maxWidth: 200,
         }}
       >
         {label}
@@ -121,11 +124,12 @@ const TabPill = ({
     </Box>
   );
 
-  if (!tooltip) return pill;
+  const effectiveTooltip = tooltip || (!isDefault ? label : undefined);
+  if (!effectiveTooltip) return pill;
   return (
     <CustomTooltip
       show
-      title={tooltip}
+      title={effectiveTooltip}
       placement="bottom"
       arrow
       size="small"

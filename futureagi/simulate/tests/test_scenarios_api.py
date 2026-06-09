@@ -30,6 +30,18 @@ from simulate.models.simulator_agent import SimulatorAgent
 
 
 @pytest.fixture
+def allow_ee_feature_checks():
+    """Scenario API tests exercise validation/workflow behavior, not plan gates."""
+    with patch("tfc.ee_gating.check_ee_feature", return_value=None):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _allow_ee_feature_checks_for_scenario_api(allow_ee_feature_checks):
+    yield
+
+
+@pytest.fixture
 def agent_definition(db, organization, workspace):
     """Create a test agent definition."""
     return AgentDefinition.objects.create(
@@ -60,7 +72,9 @@ def simulator_agent(db, organization, workspace):
 
 @pytest.fixture
 def dataset(db, organization, user, workspace):
-    """Create a test dataset."""
+    """Create a test dataset (no rows). Use ``dataset_min_rows`` when the test
+    exercises the scenario-create Import Dataset path (which enforces a row
+    floor)."""
     return Dataset.no_workspace_objects.create(
         name="Test Dataset",
         organization=organization,
@@ -68,6 +82,17 @@ def dataset(db, organization, user, workspace):
         user=user,
         source=DatasetSourceChoices.SCENARIO.value,
     )
+
+
+@pytest.fixture
+def dataset_min_rows(db, dataset):
+    """Dataset seeded with the scenario-create minimum number of rows
+    (``no_of_rows.min_value``) for tests that exercise the Import Dataset path.
+    """
+    Row.objects.bulk_create(
+        [Row(dataset=dataset, order=i) for i in range(10)]
+    )
+    return dataset
 
 
 @pytest.fixture
@@ -491,13 +516,13 @@ class TestCreateScenarioView:
 
     @patch("simulate.views.scenarios.start_create_dataset_scenario_workflow_sync")
     def test_create_scenario_dataset_success(
-        self, mock_workflow, auth_client, agent_definition, dataset
+        self, mock_workflow, auth_client, agent_definition, dataset_min_rows
     ):
         """Test creating a dataset scenario successfully."""
         payload = {
             "name": "New Dataset Scenario",
             "description": "A new scenario from dataset",
-            "dataset_id": str(dataset.id),
+            "dataset_id": str(dataset_min_rows.id),
             "kind": "dataset",
             "agent_definition_id": str(agent_definition.id),
         }
@@ -706,12 +731,12 @@ class TestCreateScenarioView:
 
     @patch("simulate.views.scenarios.start_create_dataset_scenario_workflow_sync")
     def test_create_scenario_with_custom_columns(
-        self, mock_workflow, auth_client, agent_definition, dataset
+        self, mock_workflow, auth_client, agent_definition, dataset_min_rows
     ):
         """Test creating scenario with custom columns."""
         payload = {
             "name": "New Scenario with Custom Cols",
-            "dataset_id": str(dataset.id),
+            "dataset_id": str(dataset_min_rows.id),
             "kind": "dataset",
             "agent_definition_id": str(agent_definition.id),
             "custom_columns": [
@@ -1055,7 +1080,7 @@ class TestAddScenarioRowsView:
         scenario.dataset = dataset_with_rows
         scenario.save()
 
-        payload = {"num_rows": 5, "description": "Additional test rows"}
+        payload = {"num_rows": 10, "description": "Additional test rows"}
 
         response = auth_client.post(
             f"/simulate/scenarios/{scenario.id}/add-rows/", payload, format="json"
@@ -1063,12 +1088,12 @@ class TestAddScenarioRowsView:
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         data = response.json()
-        assert data["num_rows"] == 5
+        assert data["num_rows"] == 10
         mock_workflow.assert_called_once()
 
     def test_add_rows_unauthenticated(self, api_client, scenario):
         """Test adding rows without authentication returns 401/403."""
-        payload = {"num_rows": 5}
+        payload = {"num_rows": 10}
 
         response = api_client.post(
             f"/simulate/scenarios/{scenario.id}/add-rows/", payload, format="json"
@@ -1082,7 +1107,7 @@ class TestAddScenarioRowsView:
     def test_add_rows_scenario_not_found(self, auth_client):
         """Test adding rows to non-existent scenario returns 404."""
         fake_id = uuid.uuid4()
-        payload = {"num_rows": 5}
+        payload = {"num_rows": 10}
 
         response = auth_client.post(
             f"/simulate/scenarios/{fake_id}/add-rows/", payload, format="json"
@@ -1101,7 +1126,7 @@ class TestAddScenarioRowsView:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "does not have an associated dataset" in response.json()["error"]
+        assert "does not have an associated dataset" in response.json()["result"]
 
     def test_add_rows_invalid_num_rows_zero(
         self, auth_client, scenario, dataset_with_rows
@@ -1447,3 +1472,44 @@ class TestGetMultiDatasetsColumnConfigs:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["column_configs"] == []
+
+
+@pytest.mark.django_db
+class TestGetDatasetsNamesRowCount:
+    """Regression for the FE picker — the dataset-names endpoint must
+    include ``row_count`` on every dataset entry so the scenario import
+    picker can warn when a source dataset is below the row floor."""
+
+    def test_row_count_returned_per_dataset(
+        self, auth_client, organization, workspace, user
+    ):
+        from model_hub.models.choices import DatasetSourceChoices
+        from model_hub.models.develop_dataset import Dataset, Row
+
+        small = Dataset.no_workspace_objects.create(
+            name="Small ds",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        Row.objects.bulk_create([Row(dataset=small, order=i) for i in range(3)])
+
+        big = Dataset.no_workspace_objects.create(
+            name="Big ds",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        Row.objects.bulk_create([Row(dataset=big, order=i) for i in range(15)])
+
+        response = auth_client.get("/model-hub/develops/get-datasets-names/")
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        datasets = body.get("result", body).get("datasets", [])
+        by_id = {d["dataset_id"]: d for d in datasets}
+
+        assert "row_count" in by_id[str(small.id)]
+        assert by_id[str(small.id)]["row_count"] == 3
+        assert by_id[str(big.id)]["row_count"] == 15

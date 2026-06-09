@@ -40,11 +40,11 @@ class TestAgentccSessionStats:
         assert response.status_code == status.HTTP_200_OK
         payload = response.json()
         session = next(
-            item for item in payload["results"] if item["sessionId"] == "sess-stats"
+            item for item in payload["results"] if item["session_id"] == "sess-stats"
         )
-        assert session["stats"]["requestCount"] == 2
-        assert session["stats"]["totalTokens"] == 93
-        assert session["stats"]["avgLatencyMs"] == pytest.approx(1645.0)
+        assert session["stats"]["request_count"] == 2
+        assert session["stats"]["total_tokens"] == 93
+        assert session["stats"]["avg_latency_ms"] == pytest.approx(1645.0)
 
     def test_session_detail_includes_total_tokens_and_avg_latency(
         self, auth_client, user
@@ -76,6 +76,6 @@ class TestAgentccSessionStats:
 
         assert response.status_code == status.HTTP_200_OK
         payload = response.json()["result"]
-        assert payload["stats"]["requestCount"] == 2
-        assert payload["stats"]["totalTokens"] == 109
-        assert payload["stats"]["avgLatencyMs"] == pytest.approx(685.5)
+        assert payload["stats"]["request_count"] == 2
+        assert payload["stats"]["total_tokens"] == 109
+        assert payload["stats"]["avg_latency_ms"] == pytest.approx(685.5)

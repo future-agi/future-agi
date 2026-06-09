@@ -33,7 +33,7 @@
   <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0 License"></a>
   <a href="https://pypi.org/project/ai-evaluation/"><img src="https://img.shields.io/pypi/v/ai-evaluation?style=flat-square&label=pypi" alt="PyPI"></a>
   <a href="https://www.npmjs.com/package/@traceai/fi-core"><img src="https://img.shields.io/npm/v/@traceai/fi-core?style=flat-square&label=npm" alt="npm"></a>
-  <a href="https://discord.gg/UjZ2gRT5p"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square" alt="Discord"></a>
+  <a href="https://discord.com/invite/n2tCUKBkAw"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square" alt="Discord"></a>
 </p>
 
 <p>
@@ -41,7 +41,7 @@
   <a href="#-quickstart-60-seconds"><b>Self-Host</b></a> ·
   <a href="https://docs.futureagi.com"><b>Docs</b></a> ·
   <a href="https://futureagi.com/blog"><b>Blog</b></a> ·
-  <a href="https://discord.gg/UjZ2gRT5p"><b>Discord</b></a> ·
+  <a href="https://discord.com/invite/n2tCUKBkAw"><b>Discord</b></a> ·
   <a href="https://github.com/orgs/future-agi/discussions"><b>Discussions</b></a>
 </p>
 
@@ -50,19 +50,15 @@
 ---
 
 <!--
-  [MARKETING] hero-demo.gif
-  What:    8–12 second product loop. Suggested flow:
-             1. Open a trace → expand a span
-             2. Click "Run Eval" → score appears
-             3. Navigate to Simulate → a voice agent conversation plays
-             4. Navigate to Gateway → cost + guardrail dashboard
-  Size:    1600 × 900, GIF ≤ 4 MB (use `gifski` to compress).
-  Fallback: hero-demo.png (first frame) for users who disable GIFs.
-  Why here: carries the "what is this?" answer in 3 seconds; biggest
-            single lift on time-on-page across flagship OSS READMEs.
+  [MARKETING] hero-demo (YouTube)
+  GitHub markdown does not render inline <iframe>/<video>, so we use a
+  clickable YouTube thumbnail that opens the video in a new tab.
+  Video: https://www.youtube.com/watch?v=Mdpn8ekFwQ0
 -->
 <div align="center">
-  <img alt="Future AGI — trace an agent, run evals, simulate, and guardrail in one platform" src="frontend/public/assets/readme/self-host.gif" width="720">
+  <a href="https://www.youtube.com/watch?v=Mdpn8ekFwQ0&t=1s">
+    <img alt="Future AGI — trace an agent, run evals, simulate, and guardrail in one platform (watch on YouTube)" src="https://img.youtube.com/vi/Mdpn8ekFwQ0/maxresdefault.jpg" width="720">
+  </a>
 </div>
 
 ---
@@ -100,16 +96,15 @@ Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**
 
 ## 🚀 Quickstart (60 seconds)
 
-Three ways, picked by how much you want to install:
+Two ways, picked by how much you want to install:
 
 <table width="100%">
 <tr>
-<th width="34%">Cloud (fastest)</th>
-<th width="36%">Self-host (Docker)</th>
-<th width="30%">Self-host (Kubernetes)</th>
+<th width="50%">Cloud (fastest)</th>
+<th width="50%">Self-host (Docker)</th>
 </tr>
 <tr valign="top">
-<td width="34%">
+<td width="50%">
 
 **No install. Free tier.**
 
@@ -123,30 +118,24 @@ pip install ai-evaluation
 <sub>SOC 2 Type II · HIPAA · data stays in your region.</sub>
 
 </td>
-<td width="36%">
+<td width="50%">
 
-**One command, full stack.**
+**One command, full stack. Published images, no source build.**
 
 ```bash
+# macOS / Linux / WSL
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
-cp futureagi/.env.example futureagi/.env
-docker compose up -d
+./bin/install
+
+# Windows (PowerShell)
+git clone https://github.com/future-agi/future-agi.git
+cd future-agi
+.\bin\install.ps1
 ```
 
-Open [http://localhost:3031](http://localhost:3031).
-
-</td>
-<td width="30%">
-
-**Production-grade, HA.**
-
-```bash
-helm repo add futureagi \
-helm install fagi futureagi/future-agi
-```
-
-<sub>Helm chart — v1 in progress. Until then, kubectl manifests in `deploy/`.</sub>
+Open [http://localhost:3000](http://localhost:3000).
+<sub>For production, use `./deploy/setup.sh` to generate required secrets and pin the image version.</sub>
 
 </td>
 </tr>
@@ -244,7 +233,7 @@ OpenTelemetry-native tracing across 50+ frameworks (LangChain, LlamaIndex, CrewA
 ### 🎛️ Agent Command Center
 OpenAI-compatible gateway. 100+ providers, 15 routing strategies, semantic caching, virtual keys, MCP, A2A. **~29k req/s, P99 ≤ 21ms with guardrails on.**
 
-<sub>[Docs →](https://docs.futureagi.com/docs/command-center) · [Benchmarks →](./futureagi/agentcc-gateway/README.md#-benchmarks)</sub>
+<sub>[Docs →](https://docs.futureagi.com/docs/command-center) · [Benchmarks →](./agentcc-gateway/README.md#-benchmarks)</sub>
 
 </td>
 <td width="33%" valign="top">
@@ -277,9 +266,10 @@ Six prompt-optimization algorithms (GEPA, PromptWizard, ProTeGi, Bayesian, Meta-
 -->
 | Target | Status | Notes |
 |---|:---:|---|
-|  Docker Compose | ✅ | `docker compose up -d` from a fresh clone |
-|  Kubernetes | ✅ | Plain manifests today; Helm chart v1 in progress |
-|  AWS / GCP / Azure | ✅ | Runs on any container runtime — ECS · Cloud Run · AKS · EKS · GKE |
+|  Docker Compose | ✅ | Published images with `docker compose up -d` from a fresh clone |
+|  Production Compose overlay | ✅ | `./deploy/setup.sh` generates secrets, pins image tags, pulls images, and starts the stack |
+|  Kubernetes / Helm | ⏳ | Official manifests and Helm charts are coming soon |
+|  AWS / GCP / Azure | ✅ | Run Docker Compose on a VM today; managed Kubernetes support is coming soon |
 |  AWS Marketplace | ⏳ | Coming soon |
 |  Air-gapped / on-prem | ✅ | No phone-home — [contact sales](mailto:sales@futureagi.com) |
 
@@ -308,7 +298,7 @@ Every arrow is an open, documented interface: **OpenTelemetry OTLP** for traces,
 | Layer | Component | Code |
 |---|---|---|
 |  Edge | **traceAI** — OpenTelemetry instrumentation | [`future-agi/traceAI`](https://github.com/future-agi/traceAI) |
-|  Edge | **Agent Command Center** — OpenAI-compatible proxy | [`futureagi/agentcc-gateway/`](./futureagi/agentcc-gateway) |
+|  Edge | **Agent Command Center** — OpenAI-compatible proxy | [`agentcc-gateway/`](./agentcc-gateway) |
 |  Platform | **tracer** — OTLP ingest, span graph | [`futureagi/tracer/`](./futureagi/tracer) |
 |  Platform | **agentic_eval** — 50+ metrics, LLM-as-judge | [`futureagi/agentic_eval/`](./futureagi/agentic_eval) |
 |  Platform | **simulate** — persona-driven scenario generation | [`futureagi/simulate/`](./futureagi/simulate) |
@@ -444,7 +434,7 @@ Future AGI is an **open-source ecosystem** — each SDK is independently usable,
 - [x] Dashboards
 - [x] Access platform via MCP
 - [x] Annotation Queues
-- [x] Command Center (Prism)
+- [x] Command Center
 - [x] Open source Future AGI stack
 - [x] Eval Explanation Output Size Control 
 
@@ -484,7 +474,7 @@ We love contributions — bug fixes, new evaluators, framework integrations, doc
 
 1.  [Browse `good first issue`](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 2.  Read the [Contributing Guide](CONTRIBUTING.md)
-3.  Say hi on [Discord](https://discord.gg/UjZ2gRT5p) or [Discussions](https://github.com/orgs/future-agi/discussions)
+3.  Say hi on [Discord](https://discord.com/invite/n2tCUKBkAw) or [Discussions](https://github.com/orgs/future-agi/discussions)
 4.  Sign the CLA on your first PR (automatic bot)
 
 <!--
@@ -499,7 +489,7 @@ We love contributions — bug fixes, new evaluators, framework integrations, doc
 
 | | |
 |---|---|
-| 💬 [**Discord**](https://discord.gg/UjZ2gRT5p) | Real-time help from the team and community |
+| 💬 [**Discord**](https://discord.com/invite/n2tCUKBkAw) | Real-time help from the team and community |
 | 🗨️ [**GitHub Discussions**](https://github.com/orgs/future-agi/discussions) | Ideas, questions, roadmap input |
 | 🐦 [**Twitter / X**](https://x.com/FutureAGI_) | Release announcements |
 | 📝 [**Blog**](https://futureagi.com/blog) | Engineering & research posts |

@@ -31,10 +31,7 @@ from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_error_message
-try:
-    from ee.usage.models.usage import APICallTypeChoices
-except ImportError:
-    APICallTypeChoices = None
+from tfc.constants.api_calls import APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
@@ -188,9 +185,10 @@ class AutoAnnotation:
             except ImportError:
                 check_usage = None
 
-            usage_check = check_usage(str(org.id), BillingEventType.AUTO_ANNOTATION)
-            if not usage_check.allowed:
-                raise ValueError(usage_check.reason or "Usage limit exceeded")
+            if check_usage is not None and BillingEventType is not None:
+                usage_check = check_usage(str(org.id), BillingEventType.AUTO_ANNOTATION)
+                if not usage_check.allowed:
+                    raise ValueError(usage_check.reason or "Usage limit exceeded")
 
             for _index, row in enumerate(rows):
                 if (
@@ -223,13 +221,14 @@ class AutoAnnotation:
                         inputs, input_type, strict=False
                     ):
                         if input_type_item == "image":
-                            tokens = count_tiktoken_tokens("", input_item)
+                            tokens = (count_tiktoken_tokens("", input_item) if count_tiktoken_tokens else 0)
                         else:
-                            tokens = count_tiktoken_tokens(input_item)
+                            tokens = (count_tiktoken_tokens(input_item) if count_tiktoken_tokens else 0)
                         api_call_type = APICallTypeChoices.AUTO_ANNOTATION.value
                         config = {}
                         config["input_tokens"] = tokens
-                        log_and_deduct_cost_for_api_request(
+                        if log_and_deduct_cost_for_api_request is not None:
+                            log_and_deduct_cost_for_api_request(
                             org,
                             api_call_type,
                             config,
@@ -300,15 +299,26 @@ class AutoAnnotation:
                             from ee.usage.services.emitter import emit
                         except ImportError:
                             emit = None
+                        try:
+                            from ee.usage.utils.event_properties import (
+                                llm_usage_properties,
+                            )
+                        except ImportError:
+                            llm_usage_properties = lambda obj: {}
 
                         actual_cost = 0
                         if hasattr(agent, "llm") and agent.llm:
                             actual_cost = getattr(agent.llm, "cost", {}).get(
                                 "total_cost", 0
                             )
-                        credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+                        if BillingConfig is not None:
 
-                        emit(
+                            credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+
+                        if emit is not None and UsageEvent is not None and BillingEventType is not None:
+
+
+                            emit(
                             UsageEvent(
                                 org_id=str(org.id),
                                 event_type=BillingEventType.AUTO_ANNOTATION,
@@ -318,6 +328,7 @@ class AutoAnnotation:
                                     "annotation_id": str(self.annotation.id),
                                     "row_id": str(row.id),
                                     "raw_cost_usd": str(actual_cost),
+                                    **llm_usage_properties(agent),
                                 },
                             )
                         )

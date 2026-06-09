@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 import structlog
-from django.db import connection, models, transaction
+from django.db import IntegrityError, connection, models, transaction
 from django.utils import timezone
 
 logger = structlog.get_logger(__name__)
@@ -26,6 +26,7 @@ from tracer.utils.otel import bulk_convert_otel_spans_to_observation_spans
 from tracer.utils.parsers import deserialize_trace_payload
 from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
 from tracer.utils.pii_settings import get_pii_settings_for_projects
+from tracer.utils.usage_emit import emit_span_ingestion_usage
 
 OTLP_STATUS_MAP = {
     "STATUS_CODE_UNSET": "UNSET",
@@ -91,6 +92,25 @@ def _serialize_json_field_value(val: Any) -> str | None:
             return json.dumps(val)
 
     return json.dumps(val)
+
+
+def _is_pk_unique_violation(exc: BaseException, table_name: str) -> bool:
+    """True iff exc represents a unique violation on ``{table_name}_pkey``.
+
+    Handles both Django-wrapped IntegrityError (psycopg cause on __cause__)
+    and the raw psycopg UniqueViolation that escapes from ``cursor.copy()``
+    contexts (which bypass Django's exception translation).
+    """
+    from psycopg.errors import UniqueViolation as PgUniqueViolation
+
+    pg_exc: Any = exc if isinstance(exc, PgUniqueViolation) else getattr(
+        exc, "__cause__", None
+    )
+    if not isinstance(pg_exc, PgUniqueViolation):
+        return False
+    diag = getattr(pg_exc, "diag", None)
+    constraint = getattr(diag, "constraint_name", None) if diag else None
+    return constraint == f"{table_name}_pkey"
 
 
 def _bulk_create_with_copy(model: models.Model, objects: list[models.Model]):
@@ -580,7 +600,13 @@ def _prepare_observation_spans_and_trace_updates(
 
 
 def _bulk_insert_observation_spans(spans_to_create: list[ObservationSpan]):
-    """Sets timestamps and bulk inserts observation spans using the COPY command."""
+    """Sets timestamps and bulk inserts observation spans.
+
+    Fast path: PostgreSQL COPY (all-or-nothing). On unique-key collision (e.g.
+    a client double-submitting an OTLP batch), the savepoint rolls back and we
+    re-insert via bulk_create(ignore_conflicts=True), which emits
+    INSERT ... ON CONFLICT DO NOTHING and skips only the duplicate rows.
+    """
     if not spans_to_create:
         return
 
@@ -592,7 +618,23 @@ def _bulk_insert_observation_spans(spans_to_create: list[ObservationSpan]):
         if not span.updated_at:
             span.updated_at = now
 
-    _bulk_create_with_copy(ObservationSpan, spans_to_create)
+    from psycopg.errors import UniqueViolation as PgUniqueViolation
+
+    try:
+        with transaction.atomic():
+            _bulk_create_with_copy(ObservationSpan, spans_to_create)
+    except (IntegrityError, PgUniqueViolation) as e:
+        if not _is_pk_unique_violation(e, "tracer_observation_span"):
+            raise
+        logger.warning(
+            "observation_span_copy_pk_violation_falling_back",
+            batch_size=len(spans_to_create),
+        )
+        ObservationSpan.objects.bulk_create(
+            spans_to_create,
+            ignore_conflicts=True,
+            batch_size=500,
+        )
 
 
 def _bulk_update_traces(
@@ -773,51 +815,16 @@ def bulk_create_observation_span_task(
             # 5. Trigger scanner for completed traces (root span with end_time)
             _trigger_trace_scanner(observation_spans_to_create)
 
-        # 6. Usage metering (after commit, outside transaction)
-        try:
-            try:
-                from ee.usage.deployment import DeploymentMode
-            except ImportError:
-                DeploymentMode = None
-
-            if not DeploymentMode.is_oss():
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
-                num_traces = len(
-                    set(p.get("trace") for p in parsed_data_list if p.get("trace"))
-                )
-                num_spans = len(observation_spans_to_create)
-                if num_traces:
-                    emit(
-                        UsageEvent(
-                            org_id=str(organization_id),
-                            event_type=BillingEventType.TRACING_EVENT,
-                            amount=num_traces,
-                            properties={"traces": num_traces},
-                        )
-                    )
-                if num_spans:
-                    emit(
-                        UsageEvent(
-                            org_id=str(organization_id),
-                            event_type=BillingEventType.OBSERVE_ADD,
-                            amount=len(payload_bytes) if payload_bytes else 0,
-                            properties={"source": "trace_span", "spans": num_spans},
-                        )
-                    )
-        except Exception:
-            logger.debug("usage_metering_skipped", exc_info=True)
+        num_traces = len(
+            set(p.get("trace") for p in parsed_data_list if p.get("trace"))
+        )
+        emit_span_ingestion_usage(
+            organization_id=organization_id,
+            num_traces=num_traces,
+            num_spans=len(observation_spans_to_create),
+            payload_bytes=len(payload_bytes) if payload_bytes else 0,
+            source="trace_span",
+        )
 
     except Exception as exc:
         logger.exception(

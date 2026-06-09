@@ -11,13 +11,17 @@ import React, { useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
 import CompositeResultView from "./CompositeResultView";
+import { canonicalEntries } from "src/utils/utils";
+import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
 
 /**
  * Shared eval result display component.
  * Handles all output types: choices, scoring, pass/fail.
  * Includes Formatted / JSON toggle.
+ * Used in TestPlayground
  */
 const EvalResultDisplay = ({ result }) => {
+
   const [viewMode, setViewMode] = useState("formatted");
 
   // Support multiple shapes:
@@ -92,8 +96,29 @@ const EvalResultDisplay = ({ result }) => {
 
 const FormattedResult = ({ result }) => {
   // For code evals, result.output is missing — use result.score as the raw value
-  const raw = result.output != null ? result.output : result.score;
+  const rawInput = result.output != null ? result.output : result.score;
   const outputType = result.output_type;
+
+  const normalizedRaw = normalizeEvalCellValue(rawInput);
+
+  let raw = normalizedRaw;
+  if (
+    normalizedRaw &&
+    typeof normalizedRaw === "object" &&
+    !Array.isArray(normalizedRaw) &&
+    !normalizedRaw.label
+  ) {
+    if (normalizedRaw.choice != null || normalizedRaw.choices != null) {
+      const choiceVal = normalizedRaw.choices ?? normalizedRaw.choice;
+      raw = Array.isArray(choiceVal)
+        ? choiceVal.map(( c) => ({ label: c }))
+        : { label: choiceVal };
+    } else if (typeof normalizedRaw.score === "number") {
+      raw = normalizedRaw.score;
+    } else if (outputType === "choices" || outputType === "choice") {
+      raw = rawInput;
+    }
+  }
 
   // ── Choices: output is {label, score, category} or [{...}, ...] ──
   const isChoiceObj =
@@ -143,22 +168,19 @@ const FormattedResult = ({ result }) => {
                 typeof c.label === "string"
                   ? c.label.charAt(0).toUpperCase() + c.label.slice(1)
                   : String(c.label);
-              const useCategoryColor =
-                c.category === "pass" || c.category === "fail";
               return (
                 <Chip
                   key={i}
                   label={label}
                   size="small"
-                  variant={useCategoryColor ? "filled" : "outlined"}
-                  color={
-                    c.category === "pass"
-                      ? "success"
-                      : c.category === "fail"
-                        ? "error"
-                        : "primary"
-                  }
-                  sx={{ fontSize: "12px", height: 24, fontWeight: 600 }}
+                  variant="outlined"
+                  sx={{
+                    borderRadius: "4px",
+                    borderColor: "purple.500",
+                    color: "purple.500",
+                    fontWeight: 400,
+                    typography: "s3",
+                  }}
                 />
               );
             })}
@@ -206,7 +228,9 @@ const FormattedResult = ({ result }) => {
 
     // Scoring (numeric)
     const score = typeof raw === "number" ? raw : parseFloat(raw);
+
     if (!isNaN(score)) {
+
       return (
         <Box
           sx={{
@@ -386,7 +410,18 @@ function normalizeLocalizerEntries(val) {
  * Handles three states: running (spinner), completed (ErrorLocalizeCard), or absent (nothing).
  */
 const ErrorLocalizationSection = ({ result }) => {
-  const errorDetails = result?.error_details || result?.error_analysis;
+  const rawErrorDetails = result?.error_details || result?.error_analysis;
+  const detailsEnvelope =
+    rawErrorDetails &&
+    !Array.isArray(rawErrorDetails) &&
+    typeof rawErrorDetails === "object" &&
+    (rawErrorDetails.error_analysis || rawErrorDetails.errorAnalysis)
+      ? rawErrorDetails
+      : null;
+  const errorDetails =
+    detailsEnvelope?.error_analysis ||
+    detailsEnvelope?.errorAnalysis ||
+    rawErrorDetails;
   const errorLocalizerStatus = result?.error_localizer_status;
   const errorLocalizerMessage = result?.error_localizer_message;
 
@@ -438,6 +473,44 @@ const ErrorLocalizationSection = ({ result }) => {
       </Box>
     );
   }
+    if (errorLocalizerStatus === "skipped") {
+    return (
+      <Box
+        sx={{
+          mx: 1.5,
+          my: 1,
+          px: 1.5,
+          py: 1,
+          borderRadius: "6px",
+          border: "1px solid",
+          borderColor: "divider",
+          backgroundColor: (theme) =>
+            theme.palette.mode === "dark"
+              ? "rgba(145, 158, 171, 0.08)"
+              : "rgba(145, 158, 171, 0.04)",
+        }}
+      >
+        <Typography
+      
+          typography="s3"
+          color="text.secondary"
+          sx={{ display: "block" }}
+        >
+          Error localization skipped
+        </Typography>
+        {errorLocalizerMessage && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: "block", fontSize: "11px", mt: 0.25 }}
+          >
+            {errorLocalizerMessage}
+          </Typography>
+        )}
+      </Box>
+    );
+  }
+
 
   // Surface a clear failed state so users don't assume the feature is
   // just silently broken.
@@ -459,8 +532,8 @@ const ErrorLocalizationSection = ({ result }) => {
         }}
       >
         <Typography
-          variant="caption"
-          fontWeight={600}
+          typography="s3"
+     
           color="error.main"
           sx={{ display: "block" }}
         >
@@ -479,6 +552,7 @@ const ErrorLocalizationSection = ({ result }) => {
     );
   }
 
+
   if (!errorDetails) return null;
 
   // errorDetails can be { inputKey: [...entries] } or [...entries]
@@ -488,16 +562,28 @@ const ErrorLocalizationSection = ({ result }) => {
   const entriesMap =
     !Array.isArray(errorDetails) && typeof errorDetails === "object"
       ? Object.fromEntries(
-          Object.entries(errorDetails).map(([k, v]) => [
+          canonicalEntries(errorDetails).map(([k, v]) => [
             k,
             normalizeLocalizerEntries(v),
           ]),
         )
       : null;
 
-  const selectedInputKey = result?.selected_input_key;
-  const inputData = result?.input_data;
-  const inputTypes = result?.input_types;
+  const selectedInputKey =
+    result?.selected_input_key ||
+    result?.selectedInputKey ||
+    detailsEnvelope?.selected_input_key ||
+    detailsEnvelope?.selectedInputKey;
+  const inputData =
+    result?.input_data ||
+    result?.inputData ||
+    detailsEnvelope?.input_data ||
+    detailsEnvelope?.inputData;
+  const inputTypes =
+    result?.input_types ||
+    result?.inputTypes ||
+    detailsEnvelope?.input_types ||
+    detailsEnvelope?.inputTypes;
 
   // ErrorLocalizeCard reads a mix of camelCase (`datapoint.selectedInputKey`)
   // and snake_case (`datapoint.input_data[datapoint.selected_input_key]`).

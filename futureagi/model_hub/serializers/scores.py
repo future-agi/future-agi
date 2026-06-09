@@ -19,6 +19,7 @@ class ScoreSerializer(serializers.ModelSerializer):
         source="annotator.email", read_only=True, default=None
     )
     source_id = serializers.SerializerMethodField()
+    queue_id = serializers.SerializerMethodField()
 
     class Meta:
         model = Score
@@ -38,6 +39,7 @@ class ScoreSerializer(serializers.ModelSerializer):
             "annotator_name",
             "annotator_email",
             "queue_item",
+            "queue_id",
             "created_at",
             "updated_at",
         ]
@@ -45,6 +47,9 @@ class ScoreSerializer(serializers.ModelSerializer):
 
     def get_source_id(self, obj):
         return str(obj.get_source_id()) if obj.get_source_id() else None
+
+    def get_queue_id(self, obj):
+        return str(obj.queue_item.queue_id) if obj.queue_item_id else None
 
 
 class CreateScoreSerializer(serializers.Serializer):
@@ -78,8 +83,13 @@ class BulkCreateScoresSerializer(serializers.Serializer):
         min_length=1,
     )
     notes = serializers.CharField(required=False, allow_blank=True, default="")
-    span_notes = serializers.CharField(required=False, allow_blank=True, allow_null=True, default=None)
-    
+    span_notes = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, default=None
+    )
+    span_notes_source_id = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, default=None
+    )
+
     def validate_scores(self, value):
         for score in value:
             if "label_id" not in score or "value" not in score:

@@ -53,15 +53,20 @@ class TestEvalTemplateTool(BaseTool):
 
         config = template.config or {}
         required_keys = config.get("required_keys", [])
+        is_user_custom_eval = bool(config.get("custom_eval", False))
 
-        # Validate required keys are present in mapping
-        missing_keys = [k for k in required_keys if k not in params.mapping]
-        if missing_keys:
-            return ToolResult.error(
-                f"Missing required keys in mapping: {', '.join(f'`{k}`' for k in missing_keys)}. "
-                f"Required: {', '.join(f'`{k}`' for k in required_keys)}",
-                error_code="VALIDATION_ERROR",
-            )
+        # System evals stay strict — every required key must be mapped.
+        # Custom evals let missing keys flow through; the shared validator
+        # at execute time decides whether to fail (all empty) or run with
+        # a partial_input warning.
+        if not is_user_custom_eval:
+            missing_keys = [k for k in required_keys if k not in params.mapping]
+            if missing_keys:
+                return ToolResult.error(
+                    f"Missing required keys in mapping: {', '.join(f'`{k}`' for k in missing_keys)}. "
+                    f"Required: {', '.join(f'`{k}`' for k in required_keys)}",
+                    error_code="VALIDATION_ERROR",
+                )
 
         # Build eval config
         eval_config = {
@@ -78,20 +83,10 @@ class TestEvalTemplateTool(BaseTool):
         model = params.model or template.model
 
         try:
-            from model_hub.models.evals_metric import EvalTemplate as ET
             from model_hub.views.separate_evals import (
                 prepare_user_eval_config,
                 run_eval_func,
             )
-
-            # Get the base template for eval execution
-            try:
-                base_template = ET.no_workspace_objects.get(name="deterministic_evals")
-            except ET.DoesNotExist:
-                return ToolResult.error(
-                    "System eval template 'deterministic_evals' not found.",
-                    error_code="CONFIGURATION_ERROR",
-                )
 
             # Resolve eval_type_id from the template's eval_type or config
             eval_type_id = config.get("eval_type_id", "")
@@ -122,7 +117,7 @@ class TestEvalTemplateTool(BaseTool):
             response = run_eval_func(
                 prepared_config,
                 params.mapping,
-                base_template,
+                template,
                 context.organization,
                 input_data_types={},
                 type="user_built",

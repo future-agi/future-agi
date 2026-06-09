@@ -127,6 +127,36 @@ class ModelServingClient:
             logger.error(f"Text embedding failed: {e}")
             raise
 
+    def embed_text_batch(self, texts: list[str]) -> list[list[float]]:
+        """
+        Batch text embedding: send N texts in one request, get N vectors back.
+
+        Deliberately does NOT go through _make_request — that path unwraps
+        embeddings[0] for single-input convenience, which silently drops all
+        but the first vector for a batch. The /embed endpoint already returns
+        one vector per input in order, so we return it as-is.
+        """
+        if not texts:
+            return []
+        if not all(isinstance(t, str) for t in texts):
+            raise ValueError("All text inputs must be strings")
+
+        data = {"text": texts, "input_type": "text"}
+        response = self.session.post(
+            f"{self.base_url}/model/v1/embed", json=data, timeout=self.default_timeout
+        )
+        if response.status_code != 200:
+            response.raise_for_status()
+        embeddings = response.json().get("embeddings", [])
+        if len(embeddings) != len(texts):
+            # Contract violation — caller decides how to fall back rather
+            # than us silently returning misaligned vectors.
+            raise ValueError(
+                f"serving returned {len(embeddings)} embeddings for "
+                f"{len(texts)} texts"
+            )
+        return embeddings
+
     def embed_image(self, image: str | Image.Image | bytes, model_name: str = "image_embedding") -> list[float]:
         """
         ✅ IMPROVED: Get image embeddings from the serving service with better image handling.
@@ -171,7 +201,13 @@ class ModelServingClient:
 
     def embed_image_text(self, content: str | Image.Image | bytes, model_name: str = "image_text_embedding") -> list[float]:
         """
-        ✅ IMPROVED: Get image-text embeddings from the serving service.
+        Get image-text embeddings from the serving service.
+
+        Routes URL / data-URI strings to the *image* branch (so CLIP encodes
+        the pixels) and plain strings to the *text* branch (so CLIP encodes
+        the caption). Treating every string as text — the previous behaviour
+        — embedded the URL/base64 literal in the text encoder, producing
+        garbage similarities that hovered near the noise floor.
         """
         if content is None:
             raise ValueError("Content input cannot be None")
@@ -179,12 +215,14 @@ class ModelServingClient:
         data = {"input_type": "image-text"}
 
         if isinstance(content, str):
-            # Assume it's text
-            data["text"] = content
+            stripped = content.strip()
+            if stripped.startswith(("http://", "https://", "data:")):
+                data["image"] = self._process_image_input(content)
+            else:
+                data["text"] = content
         else:
-            # Process as image
-            processed_image = self._process_image_input(content)
-            data["image"] = processed_image
+            # PIL Image, bytes — always the image branch.
+            data["image"] = self._process_image_input(content)
 
         try:
             response = self._make_request("/embed/image-text", data)

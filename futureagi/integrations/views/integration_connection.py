@@ -10,7 +10,11 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.utils import get_request_organization
-from integrations.models import ConnectionStatus, IntegrationConnection
+from integrations.models import (
+    ACTION_ONLY_PLATFORMS,
+    ConnectionStatus,
+    IntegrationConnection,
+)
 from integrations.serializers.integration_connection import (
     IntegrationConnectionCreateSerializer,
     IntegrationConnectionDetailSerializer,
@@ -212,10 +216,30 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 backfill_from = data.get("backfill_from_date")
                 backfill_completed = False
 
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+
+            # Action-only platforms (Linear, etc.) use org-wide credentials
+            # with no per-project mapping. The partial unique constraint
+            # restricts them to one live row per (org, workspace, platform).
+            if data["platform"] in ACTION_ONLY_PLATFORMS:
+                try:
+                    IntegrationConnection.objects.get(
+                        organization=organization,
+                        workspace=workspace,
+                        platform=data["platform"],
+                    )
+                    return self._gm.bad_request(
+                        f"{data['platform'].title()} is already connected for this workspace. "
+                        "Edit the existing connection in Settings > Integrations to rotate keys."
+                    )
+                except IntegrationConnection.DoesNotExist:
+                    pass
+
             # 5. Create connection
             connection = IntegrationConnection.objects.create(
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=organization,
                 workspace=workspace,
                 created_by=request.user,
                 platform=data["platform"],
@@ -250,8 +274,14 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             return self._gm.success_response(result, status=status.HTTP_201_CREATED)
 
         except IntegrityError:
+            platform = (request.data or {}).get("platform")
+            if platform in ACTION_ONLY_PLATFORMS:
+                return self._gm.bad_request(
+                    f"{platform.title()} is already connected for this workspace. "
+                    "Edit the existing connection in Settings > Integrations to rotate keys."
+                )
             return self._gm.bad_request(
-                "A connection to this project already exists in this workspace."
+                "A connection with these settings already exists in this workspace."
             )
         except Exception as e:
             logger.exception("Error creating integration connection", error=str(e))

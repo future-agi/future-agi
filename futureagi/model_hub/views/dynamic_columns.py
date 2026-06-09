@@ -36,6 +36,7 @@ from model_hub.models.develop_dataset import (
     Dataset,
     Row,
 )
+from model_hub.utils.json_path_resolver import parse_json_safely, resolve_json_path
 from model_hub.utils.utils import (
     contains_sql,
     remove_empty_text_from_messages,
@@ -905,16 +906,32 @@ class AddApiColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _resolve_cell_value(variable_id, row):
+        """Resolve a column reference (UUID, optionally followed by a JSON path) to its value."""
+        base_col_id = variable_id
+        json_path = None
+        if len(variable_id) > 36 and variable_id[36] in ('.', '['):
+            base_col_id = variable_id[:36]
+            json_path = variable_id[37:] if variable_id[36] == '.' else variable_id[36:]
+
+        cell = Cell.objects.get(column__id=base_col_id, row=row)
+        if json_path and cell.value is not None:
+            parsed, is_valid = parse_json_safely(cell.value)
+            if is_valid:
+                return resolve_json_path(parsed, json_path)
+        return cell.value
+
     def _replace_variables(self, value, row):
         """Replace variables in a string with actual cell values"""
         if isinstance(value, str) and re.search(r"\{{.*?\}}", value):
             matches = re.findall(r"\{{(.*?)\}}", value)
             for match in matches:
                 try:
-                    cell = Cell.objects.get(column__id=match, row=row)
+                    cell_value = self._resolve_cell_value(match, row)
                     value = value.replace(
                         f"{{{{{match}}}}}",
-                        str(cell.value) if cell.value is not None else "",
+                        str(cell_value) if cell_value is not None else "",
                     )
                 except Exception as e:
                     logger.error(f"Error replacing variable: {str(e)}")
@@ -934,13 +951,11 @@ class AddApiColumnView(APIView):
                     ).actual_key
                 elif param_config["type"] == "Variable":
                     try:
-                        param_cell = Cell.objects.get(
-                            column__id=self._replace_variables(
-                                param_config["value"], cell.row
-                            ),
-                            row=cell.row,
-                        )
-                        processed_params[param_name] = param_cell.value
+                        raw_val = param_config["value"]
+                        if "{{" in raw_val:
+                            processed_params[param_name] = self._replace_variables(raw_val, cell.row)
+                        else:
+                            processed_params[param_name] = self._resolve_cell_value(raw_val, cell.row) or ""
                     except Exception as e:
                         logger.error(f"Error replacing variable: {str(e)}")
 
@@ -956,24 +971,31 @@ class AddApiColumnView(APIView):
                     ).actual_key
                 elif header_config["type"] == "Variable":
                     try:
-                        header_cell = Cell.objects.get(
-                            column__id=self._replace_variables(
-                                header_config["value"], cell.row
-                            ),
-                            row=cell.row,
-                        )
-                        processed_headers[header_name] = header_cell.value
+                        raw_val = header_config["value"]
+                        if "{{" in raw_val:
+                            processed_headers[header_name] = self._replace_variables(raw_val, cell.row)
+                        else:
+                            processed_headers[header_name] = self._resolve_cell_value(raw_val, cell.row)
                     except Exception as e:
                         logger.error(f"Error replacing variable: {str(e)}")
 
             # Process body if it exists
             body = {}
             if "body" in config:
-                for key, values in config["body"].items():
-                    if not cell:
-                        body[key] = values
-                    else:
-                        body[key] = self._replace_variables(values, cell.row)
+                raw_body = config["body"]
+                if isinstance(raw_body, str):
+                    if cell and cell.row:
+                        raw_body = self._replace_variables(raw_body, cell.row)
+                    try:
+                        body = json.loads(raw_body)
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        body = raw_body
+                else:
+                    for key, values in raw_body.items():
+                        if not cell:
+                            body[key] = values
+                        else:
+                            body[key] = self._replace_variables(values, cell.row)
 
             # Process URL — apply variable substitution if a cell/row is available
             url = config["url"]
@@ -986,7 +1008,7 @@ class AddApiColumnView(APIView):
                 url=url,
                 params=processed_params,
                 headers=processed_headers,
-                json=body if isinstance(body, dict) else None,
+                json=body if isinstance(body, (dict, list)) else None,
                 data=body if isinstance(body, str) else None,
                 timeout=30,
             )

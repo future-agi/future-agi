@@ -16,6 +16,7 @@ import {
   TextField,
   Tooltip,
   Typography,
+  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useMemo, useState } from "react";
@@ -24,7 +25,7 @@ import { useSnackbar } from "notistack";
 import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
-import { canonicalKeys } from "src/utils/utils";
+import { canonicalEntries } from "src/utils/utils";
 
 import {
   useDevelopDatasetList,
@@ -45,6 +46,7 @@ import {
   useUpdateVariableMapping,
   useUploadGroundTruth,
 } from "../hooks/useGroundTruth";
+import SwitchComponent from "src/components/Switch/SwitchComponent";
 
 // ═══════════════════════════════════════════════════════════════
 // Status Badge
@@ -948,7 +950,7 @@ const EmptyState = ({ onUpload }) => (
       Upload annotated data to calibrate evaluations with human-scored reference
       examples.
     </Typography>
-    <Typography variant="caption" color="text.disabled">
+    <Typography variant="caption" color="text.secondary">
       Click anywhere to upload
     </Typography>
   </Box>
@@ -1153,6 +1155,7 @@ const ConfigPanel = ({ templateId, gtId }) => {
   const [maxExamples, setMaxExamples] = useState(
     config?.maxExamples ?? config?.max_examples ?? 3,
   );
+  const theme = useTheme()
   const [threshold, setThreshold] = useState(
     config?.similarityThreshold ?? config?.similarity_threshold ?? 0.7,
   );
@@ -1203,15 +1206,19 @@ const ConfigPanel = ({ templateId, gtId }) => {
         <Typography variant="body2" fontWeight={600} sx={{ fontSize: "12px" }}>
           Injection Settings
         </Typography>
-        <Button
-          size="small"
-          variant={enabled ? "contained" : "outlined"}
-          color={enabled ? "success" : "inherit"}
-          onClick={handleToggle}
-          sx={{ fontSize: "11px", height: 26 }}
-        >
-          {enabled ? "Enabled" : "Disabled"}
-        </Button>
+
+        <SwitchComponent
+          label={enabled ? "Enabled" : "Disabled"}
+          labelPlacement={"start"}
+          labelStyle={{
+            fontSize: theme.spacing(1.5),
+          }}
+          size={"small"}
+          checked={enabled}
+          disableRipple
+          onChange={handleToggle}
+        />
+
       </Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
         <Typography
@@ -1351,7 +1358,7 @@ const TestRetrieval = ({ gtId }) => {
                   sx={{ fontSize: "10px", height: 18 }}
                 />
               </Box>
-              {Object.entries(r.row_data || r.rowData || {})
+              {canonicalEntries(r.row_data || r.rowData || {})
                 .slice(0, 4)
                 .map(([k, v]) => (
                   <Typography

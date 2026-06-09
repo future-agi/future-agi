@@ -28,7 +28,12 @@ from accounts.serializers.rbac import (
     WorkspaceMemberRemoveSerializer,
     WorkspaceMemberRoleUpdateSerializer,
 )
-from accounts.utils import generate_password, resolve_org, send_invite_email
+from accounts.utils import (
+    existing_member_access_will_change,
+    generate_password,
+    resolve_org,
+    send_invite_email,
+)
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.permissions.rbac import (
@@ -153,6 +158,12 @@ class InviteCreateAPIView(APIView):
                         is_active=True,
                         deleted=False,
                     ).exists():
+                        access_will_change = existing_member_access_will_change(
+                            existing_user,
+                            organization,
+                            target_org_level,
+                            workspace_access,
+                        )
                         with transaction.atomic():
                             self._dual_write_legacy(
                                 email,
@@ -161,6 +172,8 @@ class InviteCreateAPIView(APIView):
                                 target_org_level,
                                 workspace_access,
                             )
+                        if access_will_change:
+                            send_invite_email(email, organization, user)
                         already_members.append(email)
                         continue
 
@@ -320,12 +333,7 @@ class InviteCreateAPIView(APIView):
             ws_level = ws_entry.get("level", Level.WORKSPACE_VIEWER)
             try:
                 workspace = Workspace.objects.get(id=ws_id, organization=organization)
-                # Map level to OrganizationRoles value (DB value, not display label)
-                ws_role = {
-                    Level.WORKSPACE_ADMIN: OrganizationRoles.WORKSPACE_ADMIN,
-                    Level.WORKSPACE_MEMBER: OrganizationRoles.WORKSPACE_MEMBER,
-                    Level.WORKSPACE_VIEWER: OrganizationRoles.WORKSPACE_VIEWER,
-                }.get(ws_level, OrganizationRoles.WORKSPACE_MEMBER)
+                ws_role = Level.to_ws_role(ws_level)
                 unfiltered_ws_qs.update_or_create(
                     workspace=workspace,
                     user=target_user,

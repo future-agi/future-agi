@@ -118,7 +118,7 @@ const AddScenarioModal = ({ open, onClose, onCreateSuccess }) => {
       });
 
       await axios.post(endpoints.scenarios.create, payload);
-      enqueueSnackbar("Scenario created successfully", { variant: "success" });
+      enqueueSnackbar("Scenario created successfully", { variant: "warning" });
       onCreateSuccess?.();
       handleClose();
     } catch (error) {

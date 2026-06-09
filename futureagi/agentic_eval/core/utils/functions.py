@@ -50,6 +50,7 @@ except ImportError:
     summary_judgement_prompt_ragrank_v2 = ""
 
 model_name = "anthropic"
+_MEDIA_DOWNLOAD_TIMEOUT_SECONDS = 30
 
 
 def encode_image(image_path):
@@ -422,7 +423,7 @@ def generate_combined_subcriterias(client, criterias, user_defined_metrics):
 
 def download_image_to_base64(url):
     # Download the image
-    response = requests.get(url)
+    response = requests.get(url, timeout=_MEDIA_DOWNLOAD_TIMEOUT_SECONDS)
 
     # Check if the request was successful
     if response.status_code == 200:
@@ -445,7 +446,7 @@ def download_image_to_base64(url):
         )
 
 def download_audio_to_base64(url):
-    response = requests.get(url)
+    response = requests.get(url, timeout=_MEDIA_DOWNLOAD_TIMEOUT_SECONDS)
     if response.status_code == 200:
         audio_base64 = base64.b64encode(response.content).decode("utf-8")
         return audio_base64

@@ -766,13 +766,195 @@ export const getStatusColor = (value, theme) => {
   };
 };
 
+
+
+export const parsePythonReprIfNeeded = (value) => {
+  if (typeof value !== "string") return value;
+  const isDict = value.startsWith("{") && value.endsWith("}");
+  const isList = value.startsWith("[") && value.endsWith("]");
+  if (!isDict && !isList) return value;
+  try {
+    return JSON.parse(value.replace(/'/g, '"'));
+  } catch {
+    return value;
+  }
+};
+
+const extractChoiceArray = (obj) => {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  if (Array.isArray(obj.choices)) return obj.choices;
+  if (Array.isArray(obj.choice)) return obj.choice;
+  return null;
+};
+
+// Display label for a choice-shaped value ({ choice } / { choices });
+// joins arrays, returns null when the value isn't choice-shaped.
+export const extractChoiceLabel = (/** @type {any} */ obj) => {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  if (Array.isArray(obj.choices)) return obj.choices.join(", ");
+  if (Array.isArray(obj.choice)) return obj.choice.join(", ");
+  if (typeof obj.choices === "string") return obj.choices;
+  if (typeof obj.choice === "string") return obj.choice;
+  return null;
+};
+
+// Numeric score from an already-normalized eval value.
+export const extractScore = (/** @type {any} */ normalized) => {
+  if (typeof normalized === "number") return normalized;
+  if (
+    normalized &&
+    typeof normalized === "object" &&
+    typeof normalized.score === "number"
+  ) {
+    return normalized.score;
+  }
+  return parseFloat(normalized);
+};
+
+export const normalizeEvalCellValue = (value) => {
+  const v = parsePythonReprIfNeeded(value);
+  if (Array.isArray(v)) return v;
+  const arr = extractChoiceArray(v);
+  if (arr) return arr;
+  return v;
+};
+
+
+export const cleanChoiceLabel = (value) => {
+  const parsed = parsePythonReprIfNeeded(value);
+  if (Array.isArray(parsed)) return parsed.map((v) => String(v)).join(", ");
+  return String(parsed ?? value);
+};
+
+
+// Map an outputType string (with all its casing/spelling variants) to a canonical
+// kind. Returns null when no type was given or it isn't recognized.
+const canonicalKindFromOutputType = (/** @type {any} */ outputType) => {
+  const t = String(outputType || "").toLowerCase();
+  if (!t) return null;
+  if (t === "pass/fail" || t === "pass_fail") return "passfail";
+  if (t === "choices" || t === "choice") return "choices";
+  if (t === "score" || t === "percentage" || t === "numeric") return "score";
+  return null;
+};
+
+// Infer the kind from the value's shape alone, used when no outputType is known.
+const inferKindFromValue = (/** @type {any} */ v) => {
+  if (typeof v === "number") return "score";
+  if (typeof v === "string") {
+    const trimmed = v.trim();
+    const lowered = trimmed.toLowerCase();
+    if (lowered === "passed" || lowered === "failed" || lowered === "pass" || lowered === "fail") {
+      return "passfail";
+    }
+    // numeric-looking string → score
+    if (trimmed !== "" && !Number.isNaN(parseFloat(trimmed))) return "score";
+    // any other string is treated as a single choice label
+    return "choices";
+  }
+  if (Array.isArray(v)) return "choices";
+  if (v && typeof v === "object") {
+    if (extractChoiceArray(v) || extractChoiceLabel(v)) return "choices";
+    if (typeof v.score === "number") return "score";
+  }
+  return null;
+};
+
+/**
+ * @param {any} value
+ * @param {string} [outputType] - optional; when omitted, the kind is inferred from the value shape
+ */
+export const normalizeEvalResult = (value, outputType) => {
+  const v = parsePythonReprIfNeeded(value);
+
+  if (
+    v === null ||
+    v === undefined ||
+    v === "" ||
+    (Array.isArray(v) && v.length === 0)
+  ) {
+    return { kind: "empty" };
+  }
+
+  let kind = canonicalKindFromOutputType(outputType) ?? inferKindFromValue(v);
+
+  // If the value clearly carries choice information (e.g. {score, choice: "x"}
+  // or {score, choices: [...]}), prefer rendering as choices even when the
+  // declared output_type was "score". Backend evals with choice_scores
+  // configured produce this hybrid shape while still reporting output: "score".
+  const hasChoiceShape =
+    v &&
+    typeof v === "object" &&
+    !Array.isArray(v) &&
+    (extractChoiceArray(v) || extractChoiceLabel(v));
+  if (hasChoiceShape) kind = "choices";
+
+  if (kind === "passfail") {
+    const items = Array.isArray(v) ? v : [v];
+    const label = items.map((x) => String(x ?? "")).join(", ");
+    const passed = !label.toLowerCase().includes("fail") && !!label;
+    return { kind: "passfail", label, pass: passed };
+  }
+
+  if (kind === "choices") {
+    let items;
+    if (Array.isArray(v)) items = v;
+    else if (v && typeof v === "object") {
+      items = extractChoiceArray(v) ?? [extractChoiceLabel(v) ?? ""];
+    } else {
+      items = [v];
+    }
+    items = items
+      .map((/** @type {any} */ x) =>
+        x && typeof x === "object" ? (x.choice ?? x.label ?? x.value ?? "") : x,
+      )
+      .map((/** @type {any} */ x) => String(x ?? ""))
+      .filter(Boolean);
+    if (items.length === 0) return { kind: "empty" };
+    const score =
+      v && typeof v === "object" && !Array.isArray(v) && typeof v.score === "number"
+        ? v.score
+        : null;
+    return { kind: "choices", items, score };
+  }
+
+  if (kind === "score") {
+    const num =
+      typeof v === "number"
+        ? v
+        : v && typeof v === "object" && typeof v.score === "number"
+          ? v.score
+          : parseFloat(v);
+    if (Number.isNaN(num)) return { kind: "empty" };
+    return { kind: "score", score: num };
+  }
+
+  // Couldn't classify — fall back to a displayable label.
+  if (typeof v === "string" || typeof v === "number") {
+    return { kind: "passfail", label: String(v), pass: null };
+  }
+  return { kind: "empty" };
+};
+
 export const getLabel = (value) => {
-  if (Array.isArray(value) && value[0]) return value[0];
-  const numericValue = parseFloat(value);
+  const v = parsePythonReprIfNeeded(value);
+  if (Array.isArray(v) && v[0]) return v[0];
+
+  if (v && typeof v === "object") {
+    const arr = extractChoiceArray(v);
+    if (arr && arr[0]) return arr[0];
+    const choiceStr = extractChoiceLabel(v);
+    if (choiceStr) return choiceStr;
+    if (typeof v.score === "number") {
+      return `${(v.score * 100).toFixed(0)}%`;
+    }
+    return "";
+  }
+  const numericValue = parseFloat(v);
   if (!isNaN(numericValue)) {
     return `${(numericValue * 100).toFixed(0)}%`;
   }
-  return value;
+  return v;
 };
 
 export const DATASET_TYPES = {

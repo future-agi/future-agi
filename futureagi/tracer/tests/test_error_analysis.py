@@ -48,40 +48,46 @@ class TestTraceErrorAnalysisAPI:
 @pytest.mark.integration
 @pytest.mark.api
 class TestErrorClusterFeedAPI:
-    """Tests for GET /tracer/trace-error-analysis/clusters/feed/ endpoint."""
+    """Tests for GET /tracer/feed/issues/ endpoint."""
+
+    url = "/tracer/feed/issues/"
 
     def test_get_cluster_feed_unauthenticated(self, api_client, project):
         """Unauthenticated requests should be rejected."""
         response = api_client.get(
-            "/tracer/trace-error-analysis/clusters/feed/",
+            self.url,
             {"project_id": str(project.id)},
         )
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
     def test_get_cluster_feed_missing_project(self, auth_client):
         """Get cluster feed without project ID returns empty or default."""
-        response = auth_client.get("/tracer/trace-error-analysis/clusters/feed/")
-        # API may return 200 with empty data when no project specified
-        assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
+        response = auth_client.get(self.url)
+        # Org-scoped feed requires the user to have accessible projects.
+        assert response.status_code in [
+            status.HTTP_200_OK,
+            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_403_FORBIDDEN,
+        ]
 
     def test_get_cluster_feed_success(self, auth_client, project):
         """Get error cluster feed for a project."""
         response = auth_client.get(
-            "/tracer/trace-error-analysis/clusters/feed/",
+            self.url,
             {"project_id": str(project.id)},
         )
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
-        assert "clusters" in data or isinstance(data, list) or "pagination" in data
+        assert "data" in data and "total" in data
 
     def test_get_cluster_feed_with_pagination(self, auth_client, project):
         """Get cluster feed with pagination."""
         response = auth_client.get(
-            "/tracer/trace-error-analysis/clusters/feed/",
+            self.url,
             {
                 "project_id": str(project.id),
-                "page_number": 0,
-                "page_size": 10,
+                "offset": 0,
+                "limit": 10,
             },
         )
         assert response.status_code == status.HTTP_200_OK
@@ -90,13 +96,13 @@ class TestErrorClusterFeedAPI:
 @pytest.mark.integration
 @pytest.mark.api
 class TestErrorClusterDetailAPI:
-    """Tests for GET /tracer/trace-error-analysis/clusters/{cluster_id}/ endpoint."""
+    """Tests for GET /tracer/feed/issues/{cluster_id}/ endpoint."""
 
     def test_get_cluster_detail_unauthenticated(self, api_client):
         """Unauthenticated requests should be rejected."""
         fake_cluster_id = "cluster_123"
         response = api_client.get(
-            f"/tracer/trace-error-analysis/clusters/{fake_cluster_id}/"
+            f"/tracer/feed/issues/{fake_cluster_id}/"
         )
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
@@ -104,7 +110,7 @@ class TestErrorClusterDetailAPI:
         """Get cluster detail for non-existent cluster."""
         fake_cluster_id = "nonexistent_cluster"
         response = auth_client.get(
-            f"/tracer/trace-error-analysis/clusters/{fake_cluster_id}/"
+            f"/tracer/feed/issues/{fake_cluster_id}/"
         )
         assert response.status_code in [
             status.HTTP_200_OK,  # May return empty

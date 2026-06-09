@@ -25,6 +25,7 @@ from drf_yasg import openapi
 from drf_yasg.views import get_schema_view
 
 from tfc.ee_loader import ee_feature_enabled, has_ee
+from tfc.views.deployment import DeploymentInfoView
 from tfc.views.health import (
     AuthenticatedHealthView,
     HealthCheckView,
@@ -128,6 +129,11 @@ urlpatterns = [
         "api/traces/span-attribute-detail/",
         SpanAttributeDetailView.as_view(),
         name="span-attribute-detail",
+    ),
+    path(
+        "api/deployment-info/",
+        DeploymentInfoView.as_view(),
+        name="deployment-info",
     ),
 ]
 

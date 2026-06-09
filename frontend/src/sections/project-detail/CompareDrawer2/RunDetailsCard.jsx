@@ -20,6 +20,7 @@ import {
   AccordionSummary,
 } from "src/components/traceDetailDrawer/DrawerRightRenderer/SpanAccordianElements";
 import CellMarkdown from "src/sections/common/CellMarkdown";
+import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
 
 const RunDetailsCard = ({ value, column, allowCopy = false }) => {
   const [tabValue, setTabValue] = useState("markdown");
@@ -42,7 +43,16 @@ const RunDetailsCard = ({ value, column, allowCopy = false }) => {
 
   const formattedValue = useMemo(() => {
     if (dataType === "float") {
-      return `${getScorePercentage(parseFloat(value?.cellValue) * 10)}%`;
+      // LLM evals may pass {score, choice} (object) or a Python-repr string.
+      const normalized = normalizeEvalCellValue(value?.cellValue);
+      const rawScore =
+        normalized && typeof normalized === "object" && !Array.isArray(normalized)
+          ? typeof normalized.score === "number"
+            ? normalized.score
+            : NaN
+          : parseFloat(normalized);
+      if (isNaN(rawScore)) return "";
+      return `${getScorePercentage(rawScore * 10)}%`;
     }
     return value?.cellValue;
   }, [value?.cellValue, dataType]);

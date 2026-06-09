@@ -414,6 +414,9 @@ class LLM:
         except (ImportError, Exception):
             pass
 
+    GATEWAY_MAX_ATTEMPTS = 3
+    GATEWAY_RETRY_BACKOFF = (0.5, 1.0, 2.0)
+
     def _try_gateway_completion(
         self, payload: dict, tools: Optional[list] = None
     ) -> Optional[Any]:
@@ -422,24 +425,31 @@ class LLM:
             return None
         if getattr(self, "api_key", None):
             return None
-        try:
-            extra_headers = {}
-            if getattr(self, "org_id", None):
-                extra_headers["X-Org-Id"] = self.org_id
-            kwargs = self._build_gateway_request_kwargs(
-                payload=payload,
-                extra_headers=extra_headers or None,
-            )
-            if tools:
-                kwargs["tools"] = tools
-            return self._gateway_client.chat.completions.create(**kwargs)
-        except Exception as gw_err:
-            logger.debug(
-                "gateway_call_failed_falling_back_to_litellm",
-                error=str(gw_err),
-                model=payload.get("model", self.model_name),
-            )
-            return None
+
+        extra_headers = {}
+        if getattr(self, "org_id", None):
+            extra_headers["X-Org-Id"] = self.org_id
+        kwargs = self._build_gateway_request_kwargs(
+            payload=payload,
+            extra_headers=extra_headers or None,
+        )
+        if tools:
+            kwargs["tools"] = tools
+
+        for attempt in range(self.GATEWAY_MAX_ATTEMPTS):
+            try:
+                return self._gateway_client.chat.completions.create(**kwargs)
+            except Exception as gw_err:
+                logger.warning(
+                    "gateway_attempt_failed",
+                    error=str(gw_err),
+                    model=payload.get("model", self.model_name),
+                    attempt=attempt + 1,
+                    max_attempts=self.GATEWAY_MAX_ATTEMPTS,
+                )
+                if attempt < self.GATEWAY_MAX_ATTEMPTS - 1:
+                    time.sleep(self.GATEWAY_RETRY_BACKOFF[attempt])
+        return None
 
     def _build_gateway_request_kwargs(
         self,
@@ -468,24 +478,31 @@ class LLM:
             return None
         if getattr(self, "api_key", None):
             return None
-        try:
-            extra_headers = {}
-            if getattr(self, "org_id", None):
-                extra_headers["X-Org-Id"] = self.org_id
-            kwargs = self._build_gateway_request_kwargs(
-                payload=payload,
-                extra_headers=extra_headers or None,
-            )
-            if tools:
-                kwargs["tools"] = tools
-            return await self._async_gateway_client.chat.completions.create(**kwargs)
-        except Exception as gw_err:
-            logger.debug(
-                "async_gateway_call_failed_falling_back_to_litellm",
-                error=str(gw_err),
-                model=payload.get("model", self.model_name),
-            )
-            return None
+
+        extra_headers = {}
+        if getattr(self, "org_id", None):
+            extra_headers["X-Org-Id"] = self.org_id
+        kwargs = self._build_gateway_request_kwargs(
+            payload=payload,
+            extra_headers=extra_headers or None,
+        )
+        if tools:
+            kwargs["tools"] = tools
+
+        for attempt in range(self.GATEWAY_MAX_ATTEMPTS):
+            try:
+                return await self._async_gateway_client.chat.completions.create(**kwargs)
+            except Exception as gw_err:
+                logger.warning(
+                    "async_gateway_attempt_failed",
+                    error=str(gw_err),
+                    model=payload.get("model", self.model_name),
+                    attempt=attempt + 1,
+                    max_attempts=self.GATEWAY_MAX_ATTEMPTS,
+                )
+                if attempt < self.GATEWAY_MAX_ATTEMPTS - 1:
+                    await asyncio.sleep(self.GATEWAY_RETRY_BACKOFF[attempt])
+        return None
 
     def _update_token_usage(self, response: Any) -> None:
         """
@@ -520,11 +537,17 @@ class LLM:
                 )
 
     def _update_cost(self, response: Any = None) -> None:
-        """Update cost statistics. Prioritizes response-level cost from litellm,
-        falls back to calculate_total_cost from token counts."""
+        """
+        Update cost statistics.
+        """
+        catalog = calculate_total_cost(self.model_name, self.token_usage)
+
+        if catalog.get("pricing_source") != "default":
+            self.cost.update(catalog)
+            return
+
         response_cost = 0.0
         if response is not None:
-            # litellm ModelResponse stores cost in _hidden_params
             hidden = getattr(response, "_hidden_params", None)
             if hidden and isinstance(hidden, dict):
                 response_cost = hidden.get("response_cost", 0) or 0
@@ -532,7 +555,7 @@ class LLM:
         if response_cost > 0:
             self.cost["total_cost"] = self.cost.get("total_cost", 0) + response_cost
         else:
-            self.cost.update(calculate_total_cost(self.model_name, self.token_usage))
+            self.cost.update(catalog)
 
     def _set_last_finish_reason_from_response(self, response: Any) -> None:
         self.last_finish_reason = None
@@ -1989,7 +2012,7 @@ class LLM:
         )
         return response.text
 
-    def call_llm(self, prompt: Messages, provider: str) -> str:
+    def call_llm(self, prompt: Messages, provider: str, response_format: dict | None = None) -> str:
         """
         Call the LLM with the given prompt.
 
@@ -1998,6 +2021,8 @@ class LLM:
 
         Args:
             prompt: List of message dictionaries.
+            provider: Provider name.
+            response_format: Optional response format spec (e.g. {"type": "json_object"}).
 
         Returns:
             The LLM response text.
@@ -2024,12 +2049,15 @@ class LLM:
                 gateway = get_gateway_client()
                 if gateway is not None:
                     logger.info("llm_call_routing", route="agentcc_gateway", model=self.model_name)
-                    response = gateway.chat.completions.create(
-                        model=self.model_name,
-                        messages=prompt,
-                        temperature=self.temperature,
-                        max_tokens=self.max_tokens,
-                    )
+                    gateway_kwargs = {
+                        "model": self.model_name,
+                        "messages": prompt,
+                        "temperature": self.temperature,
+                        "max_tokens": self.max_tokens,
+                    }
+                    if response_format:
+                        gateway_kwargs["response_format"] = response_format
+                    response = gateway.chat.completions.create(**gateway_kwargs)
                     self._update_token_usage(response)
                     self._update_cost(response)
                     content = response.choices[0].message.content
@@ -2057,6 +2085,8 @@ class LLM:
             }
             if not getattr(self, "api_key", None):
                 payload["max_tokens"] = self.max_tokens
+            if response_format:
+                payload["response_format"] = response_format
 
             # Handle API key scenarios
             if isinstance(self.api_key, dict):
@@ -2092,6 +2122,7 @@ class LLM:
                     **payload,
                     num_retries=LITELLM_NUM_RETRIES,
                     retry_strategy=LITELLM_RETRY_STRATEGY,
+                    drop_params=True,
                 )
             else:
                 response = litellm.completion(
@@ -2099,6 +2130,7 @@ class LLM:
                     api_key=self.api_key,
                     num_retries=LITELLM_NUM_RETRIES,
                     retry_strategy=LITELLM_RETRY_STRATEGY,
+                    drop_params=True,
                 )
 
             self._update_token_usage(response)

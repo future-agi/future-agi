@@ -1,0 +1,80 @@
+# Manual trigger only. Run from the Actions tab when ready to cut a backend release.
+# Publishes futureagi/future-agi:<version>, :<minor>, :latest (linux/amd64).
+# Required secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN.
+
+name: Release backend
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to publish (e.g. v1.22.43)'
+        required: true
+        type: string
+      branch:
+        description: 'Branch to build from'
+        required: true
+        default: 'main'
+        type: choice
+        options:
+          - main
+          - dev
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: futureagi/future-agi
+  CONTEXT: ./futureagi
+  DOCKERFILE: ./futureagi/Dockerfile.oss
+
+jobs:
+  release:
+    name: Build & push backend
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: false
+
+      - name: Resolve version & minor
+        id: version
+        run: |
+          set -eu
+          v="${{ inputs.version }}"
+          if ! printf '%s' "$v" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
+            echo "::error::Version '$v' does not match expected vX.Y.Z[-suffix] form"
+            exit 1
+          fi
+          base="${v%%-*}"
+          minor="${base%.*}"
+          { echo "version=$v"; echo "minor=$minor"; } >> "$GITHUB_OUTPUT"
+          echo "Resolved: version=$v, minor=$minor"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ env.CONTEXT }}
+          file: ${{ env.DOCKERFILE }}
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE }}:${{ steps.version.outputs.minor }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max

@@ -378,7 +378,7 @@ class TestUsersViewAPI(APITestCase):
         # Verify defaults were applied
         mock_get_spans.assert_called_once()
         call_args = mock_get_spans.call_args[1]
-        self.assertEqual(call_args["limit"], 10)  # Default page_size
+        self.assertEqual(call_args["limit"], 30)  # Default page_size
         self.assertEqual(call_args["offset"], 0)  # Default current_page_index
         self.assertEqual(call_args["org_id"], self.organization.id)
 

@@ -14,17 +14,17 @@ def download_audio_from_url(audio_url, max_retries=5, timeout=200):
     Downloads an audio file from the provided URL with retries and error handling.
     Processes audio data in memory and converts to MP3 format if needed.
     """
-    # headers = {
-    #     "User-Agent": (
-    #         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    #         "AppleWebKit/537.36 (KHTML, like Gecko) "
-    #         "Chrome/91.0.4472.124 Safari/537.36"
-    #     )
-    # }
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0 Safari/537.36"
+        )
+    }
 
     for attempt in range(max_retries):
         try:
-            response = requests.get(audio_url, timeout=timeout)
+            response = requests.get(audio_url, timeout=timeout, headers=headers)
             if response.status_code == 200:
                 # Get the content directly
                 audio_data = response.content

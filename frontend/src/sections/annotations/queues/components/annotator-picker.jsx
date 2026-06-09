@@ -4,9 +4,9 @@ import {
   Box,
   Checkbox,
   CircularProgress,
+  FormControlLabel,
   InputAdornment,
-  MenuItem,
-  Select,
+  Stack,
   TextField,
   Typography,
 } from "@mui/material";
@@ -14,18 +14,44 @@ import Iconify from "src/components/iconify";
 import { useAuthContext } from "src/auth/hooks";
 import { useOrgMembersInfinite } from "src/api/annotation-queues/annotation-queues";
 import { useDebounce } from "src/hooks/use-debounce";
+import { QUEUE_ROLES, ROLE_PRIORITY } from "../constants";
 
 const ROLE_OPTIONS = [
-  { value: "annotator", label: "Annotator" },
-  { value: "reviewer", label: "Reviewer" },
-  { value: "manager", label: "Manager" },
+  { value: QUEUE_ROLES.ANNOTATOR, label: "Annotator" },
+  { value: QUEUE_ROLES.REVIEWER, label: "Reviewer" },
+  { value: QUEUE_ROLES.MANAGER, label: "Manager" },
 ];
+const DEFAULT_MEMBER_ROLES = [QUEUE_ROLES.ANNOTATOR];
+const CREATOR_DEFAULT_ROLES = [
+  QUEUE_ROLES.MANAGER,
+  QUEUE_ROLES.REVIEWER,
+  QUEUE_ROLES.ANNOTATOR,
+];
+
+function normalizeRoles(entry, fallback = DEFAULT_MEMBER_ROLES) {
+  const rawRoles = Array.isArray(entry?.roles)
+    ? entry.roles
+    : entry?.role
+      ? [entry.role]
+      : fallback;
+  const uniqueRoles = rawRoles.filter(
+    (role, index) =>
+      ROLE_OPTIONS.some((opt) => opt.value === role) &&
+      rawRoles.indexOf(role) === index,
+  );
+  return uniqueRoles.length > 0 ? uniqueRoles : fallback;
+}
+
+function primaryRole(roles) {
+  return ROLE_PRIORITY.find((role) => roles.includes(role)) || roles[0];
+}
 
 AnnotatorPicker.propTypes = {
   value: PropTypes.arrayOf(
     PropTypes.shape({
       userId: PropTypes.string.isRequired,
-      role: PropTypes.string.isRequired,
+      role: PropTypes.string,
+      roles: PropTypes.arrayOf(PropTypes.string),
     }),
   ),
   onChange: PropTypes.func.isRequired,
@@ -52,7 +78,7 @@ export default function AnnotatorPicker({
   } = useOrgMembersInfinite(user?.organization?.id, debouncedSearch);
 
   const selectedMap = useMemo(
-    () => new Map(value.map((a) => [a.userId, a.role])),
+    () => new Map(value.map((a) => [a.userId, normalizeRoles(a)])),
     [value],
   );
 
@@ -60,12 +86,41 @@ export default function AnnotatorPicker({
     if (selectedMap.has(userId)) {
       onChange(value.filter((a) => a.userId !== userId));
     } else {
-      onChange([...value, { userId, role: "annotator" }]);
+      onChange([
+        ...value,
+        {
+          userId,
+          role: QUEUE_ROLES.ANNOTATOR,
+          roles: DEFAULT_MEMBER_ROLES,
+        },
+      ]);
     }
   };
 
-  const handleRoleChange = (userId, role) => {
-    onChange(value.map((a) => (a.userId === userId ? { ...a, role } : a)));
+  const handleRoleToggle = (userId, role, { isCreator = false } = {}) => {
+    if (isCreator && role === QUEUE_ROLES.MANAGER) return;
+
+    const currentRoles = selectedMap.get(userId) || [];
+    const nextRoles = currentRoles.includes(role)
+      ? currentRoles.filter((r) => r !== role)
+      : [...currentRoles, role];
+
+    if (nextRoles.length === 0) {
+      onChange(value.filter((a) => a.userId !== userId));
+      return;
+    }
+
+    const nextEntry = {
+      userId,
+      role: primaryRole(nextRoles),
+      roles: nextRoles,
+    };
+
+    if (selectedMap.has(userId)) {
+      onChange(value.map((a) => (a.userId === userId ? nextEntry : a)));
+    } else {
+      onChange([...value, nextEntry]);
+    }
   };
 
   const handleScroll = useCallback(() => {
@@ -114,14 +169,13 @@ export default function AnnotatorPicker({
         {members.map((m) => {
           const isSelected = selectedMap.has(m.id);
           const isCreator = creatorId && m.id === creatorId;
-          // Creator is always selected as Manager; role and selection are locked
-          const currentRole = isCreator
-            ? "manager"
-            : selectedMap.get(m.id) || "annotator";
-          const rowReadOnly = !isManager || isCreator;
+          const currentRoles =
+            selectedMap.get(m.id) || (isCreator ? CREATOR_DEFAULT_ROLES : []);
+          const rowReadOnly = !isManager;
           return (
             <Box
               key={m.id}
+              data-testid={`annotator-row-${m.id}`}
               sx={{
                 display: "flex",
                 alignItems: "center",
@@ -143,8 +197,10 @@ export default function AnnotatorPicker({
             >
               <Checkbox
                 checked={isCreator || isSelected}
-                onChange={() => !rowReadOnly && handleToggle(m.id)}
-                disabled={rowReadOnly}
+                onChange={() =>
+                  !rowReadOnly && !isCreator && handleToggle(m.id)
+                }
+                disabled={rowReadOnly || isCreator}
                 size="small"
                 sx={{ p: 0.5 }}
               />
@@ -169,28 +225,43 @@ export default function AnnotatorPicker({
                 )}
               </Box>
 
-              <Select
-                size="small"
-                variant="standard"
-                value={currentRole}
-                disabled={rowReadOnly}
-                onChange={(e) => {
-                  e.stopPropagation();
-                  if (!rowReadOnly) handleRoleChange(m.id, e.target.value);
-                }}
+              <Stack
+                direction="row"
+                spacing={0.5}
                 onClick={(e) => e.stopPropagation()}
-                sx={{ fontSize: 12, minWidth: 90 }}
+                sx={{ flexShrink: 0 }}
               >
                 {ROLE_OPTIONS.map((opt) => (
-                  <MenuItem
+                  <FormControlLabel
                     key={opt.value}
-                    value={opt.value}
-                    sx={{ fontSize: 12 }}
-                  >
-                    {opt.label}
-                  </MenuItem>
+                    label={opt.label}
+                    control={
+                      <Checkbox
+                        size="small"
+                        checked={currentRoles.includes(opt.value)}
+                        disabled={
+                          rowReadOnly ||
+                          (isCreator && opt.value === QUEUE_ROLES.MANAGER) ||
+                          (isSelected &&
+                            currentRoles.length === 1 &&
+                            currentRoles.includes(opt.value))
+                        }
+                        onChange={() =>
+                          handleRoleToggle(m.id, opt.value, { isCreator })
+                        }
+                        sx={{ p: 0.25 }}
+                      />
+                    }
+                    sx={{
+                      m: 0,
+                      "& .MuiFormControlLabel-label": {
+                        fontSize: 12,
+                        color: rowReadOnly ? "text.disabled" : "text.secondary",
+                      },
+                    }}
+                  />
                 ))}
-              </Select>
+              </Stack>
             </Box>
           );
         })}

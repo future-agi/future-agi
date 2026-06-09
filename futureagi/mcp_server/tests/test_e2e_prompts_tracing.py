@@ -19,6 +19,8 @@ from simulate.models.simulator_agent import SimulatorAgent
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 
+pytestmark = pytest.mark.e2e
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

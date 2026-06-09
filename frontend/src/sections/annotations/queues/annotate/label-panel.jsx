@@ -6,22 +6,29 @@ import React, {
   forwardRef,
   useImperativeHandle,
   useRef,
+  useMemo,
 } from "react";
 import {
+  Alert,
   Box,
   Button,
+  Chip,
   CircularProgress,
   Collapse,
   Divider,
   IconButton,
+  MenuItem,
+  Select,
   Stack,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CellMarkdown from "src/sections/common/CellMarkdown";
+import { fDateTime, fToNowStrict } from "src/utils/format-time";
 import LabelInput from "./label-input";
 import AnnotationHistory from "./annotation-history";
 
@@ -63,6 +70,182 @@ const Kbd = ({ children }) => (
 Kbd.propTypes = {
   children: PropTypes.node,
 };
+
+function reviewAuthorName(comment) {
+  return comment?.reviewer_name || comment?.reviewer_email || "Reviewer";
+}
+
+function formatReviewTime(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+
+  let exact = String(value);
+  let relative = exact;
+  try {
+    exact = fDateTime(date) || exact;
+  } catch {
+    exact = String(value);
+  }
+  try {
+    relative = fToNowStrict(date) || exact;
+  } catch {
+    relative = exact;
+  }
+  return { relative, exact };
+}
+
+function reviewThreadStatusLabel(status) {
+  return (
+    {
+      open: "Open",
+      reopened: "Reopened",
+      addressed: "Addressed",
+      resolved: "Resolved",
+    }[status] || null
+  );
+}
+
+function reviewThreadStatusColor(status) {
+  return (
+    {
+      open: "warning",
+      reopened: "warning",
+      addressed: "info",
+      resolved: "success",
+    }[status] || "default"
+  );
+}
+
+function quietSurface(theme, opacity = 0.035) {
+  return alpha(theme.palette.text.primary, opacity);
+}
+
+function statusTone(theme, color = "warning") {
+  const paletteColor = theme.palette[color] || theme.palette.info;
+  return {
+    border: alpha(
+      paletteColor.main,
+      theme.palette.mode === "dark" ? 0.32 : 0.24,
+    ),
+    bg: alpha(paletteColor.main, theme.palette.mode === "dark" ? 0.12 : 0.055),
+    text:
+      theme.palette.mode === "dark"
+        ? paletteColor.light || paletteColor.main
+        : paletteColor.dark || paletteColor.main,
+  };
+}
+
+function statusChipSx(color) {
+  return (theme) => {
+    const tone = statusTone(theme, color);
+    return {
+      height: 20,
+      fontSize: 11,
+      fontWeight: 700,
+      borderColor: tone.border,
+      bgcolor: tone.bg,
+      color: tone.text,
+      "& .MuiChip-label": { px: 0.75 },
+    };
+  };
+}
+
+function focusedScopeSx(isFocused) {
+  if (!isFocused) return {};
+  return {
+    outline: "2px solid",
+    outlineOffset: -2,
+    outlineColor: (theme) => theme.palette.primary.main,
+    boxShadow: (theme) =>
+      `0 0 0 5px ${alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.28 : 0.16)}`,
+    bgcolor: (theme) =>
+      alpha(
+        theme.palette.primary.main,
+        theme.palette.mode === "dark" ? 0.1 : 0.06,
+      ),
+    scrollMarginBlock: 96,
+    transition:
+      "outline-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease",
+  };
+}
+
+function ReviewStatusChip({ comment }) {
+  const label = reviewThreadStatusLabel(comment?.thread_status);
+  if (!label) return null;
+  return (
+    <Chip
+      size="small"
+      label={label}
+      variant="outlined"
+      sx={(theme) => ({
+        ...statusChipSx(reviewThreadStatusColor(comment.thread_status))(theme),
+        height: 18,
+        fontSize: 10,
+        ml: 0.75,
+      })}
+    />
+  );
+}
+
+ReviewStatusChip.propTypes = {
+  comment: PropTypes.object,
+};
+
+function isDiscussionComment(comment) {
+  return comment?.action === "comment";
+}
+
+function isOpenReviewStatus(status) {
+  return status === "open" || status === "reopened";
+}
+
+function isBlockingReviewFeedback(comment) {
+  return comment?.blocking || comment?.action === "request_changes";
+}
+
+function isActionableReviewComment(comment) {
+  if (isDiscussionComment(comment)) return false;
+  if (comment?.thread_status && !isOpenReviewStatus(comment.thread_status)) {
+    return false;
+  }
+  return isBlockingReviewFeedback(comment);
+}
+
+function reviewCommentTargetLabel(comment) {
+  const parts = [];
+  if (comment?.label_name) parts.push(comment.label_name);
+  if (comment?.target_annotator_name || comment?.target_annotator_email) {
+    parts.push(comment.target_annotator_name || comment.target_annotator_email);
+  }
+  return parts.join(" / ") || "Whole item";
+}
+
+function normalizeMentionMarkdown(text) {
+  return String(text || "").replace(
+    /@\[([^[\]]{1,100})\]\(user:[^)]+\)/g,
+    "@$1",
+  );
+}
+
+function groupReviewCommentsByLabel(reviewComments) {
+  const map = new Map();
+  for (const comment of reviewComments || []) {
+    if (isDiscussionComment(comment)) continue;
+    const labelId = comment?.label_id;
+    if (!labelId) continue;
+    const key = String(labelId);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(comment);
+  }
+  return map;
+}
+
+function reviewCommentVisibleToAnnotator(comment, currentUserId) {
+  if (!comment?.target_annotator_id) return true;
+  if (!currentUserId) return false;
+  return String(comment.target_annotator_id) === String(currentUserId);
+}
 
 function ShortcutsOverlay({ onClose }) {
   return (
@@ -147,23 +330,65 @@ const LabelPanel = forwardRef(function LabelPanel(
   {
     labels = [],
     annotations = [],
+    initialItemNotes = "",
     instructions,
     onSubmit,
     isPending,
     queueId,
     itemId,
+    detailItemId = null,
     onDirtyChange,
     readOnly = false,
     readOnlyReason = null,
+    reviewFeedback = "",
+    reviewComments = [],
+    annotators = null,
+    viewingAnnotatorId = null,
+    currentUserId = null,
+    focusedCommentScope = null,
+    onViewingAnnotatorChange,
+    isAnnotatorSwitchPending = false,
+    submitLabel = "Submit & Next",
   },
   ref,
 ) {
   const [values, setValues] = useState({});
-  const [notes, setNotes] = useState("");
+  const [labelNotes, setLabelNotes] = useState({});
+  const [itemNotes, setItemNotes] = useState(initialItemNotes || "");
   const [showInstructions, setShowInstructions] = useState(!!instructions);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [errorLabels, setErrorLabels] = useState(new Set());
+  const detailBelongsToItem =
+    !detailItemId || !itemId || String(detailItemId) === String(itemId);
+  const visibleReviewComments = useMemo(
+    () =>
+      (reviewComments || []).filter((comment) =>
+        reviewCommentVisibleToAnnotator(comment, currentUserId),
+      ),
+    [reviewComments, currentUserId],
+  );
+  const reviewCommentsByLabel = useMemo(
+    () => groupReviewCommentsByLabel(visibleReviewComments),
+    [visibleReviewComments],
+  );
+  const overallReviewComments = useMemo(
+    () =>
+      visibleReviewComments.filter(
+        (comment) =>
+          !isDiscussionComment(comment) &&
+          !comment?.label_id &&
+          !isActionableReviewComment(comment),
+      ),
+    [visibleReviewComments],
+  );
+  const actionableReviewComments = useMemo(
+    () => visibleReviewComments.filter(isActionableReviewComment),
+    [visibleReviewComments],
+  );
+  const hasReviewCommentTrail = (reviewComments || []).some(
+    (comment) => !isDiscussionComment(comment),
+  );
 
   // Refs for flushing debounced text inputs before submit
   const textFlushRefs = useRef({});
@@ -171,25 +396,67 @@ const LabelPanel = forwardRef(function LabelPanel(
   const valuesRef = useRef(values);
   valuesRef.current = values;
 
-  // Initialize values from existing annotations
+  // Reset form state immediately when the loaded item changes — without
+  // this, navigating to a new un-annotated item can leave the previous
+  // item's values pre-filled while the new item's annotations are still
+  // fetching, and the user can accidentally re-submit those values onto
+  // the wrong trace or annotator.
   useEffect(() => {
+    const emptyValues = {};
+    setValues(emptyValues);
+    valuesRef.current = emptyValues;
+    setLabelNotes({});
+    setItemNotes("");
+    setErrorLabels(new Set());
+    onDirtyChange?.(false);
+  }, [itemId, viewingAnnotatorId, onDirtyChange]);
+
+  // Initialize values from existing annotations once they arrive (or
+  // re-arrive after a refetch). Runs after the itemId-change reset above,
+  // so values land on the correct item's prior annotations.
+  useEffect(() => {
+    if (!detailBelongsToItem) {
+      const emptyValues = {};
+      setValues(emptyValues);
+      valuesRef.current = emptyValues;
+      setLabelNotes({});
+      setErrorLabels(new Set());
+      onDirtyChange?.(false);
+      return;
+    }
+
     const initial = {};
+    const initialNotes = {};
     for (const ann of annotations) {
       const labelId = ann.label_id;
       if (labelId) {
         initial[labelId] = ann.value;
+        if (Object.prototype.hasOwnProperty.call(ann, "notes")) {
+          initialNotes[labelId] = ann.notes || "";
+        }
       }
     }
     setValues(initial);
-    const withNotes = annotations.find((a) => a.notes);
-    setNotes(withNotes?.notes || "");
-    setErrorLabels(new Set()); // Clear errors when annotations change
+    valuesRef.current = initial;
+    setLabelNotes(initialNotes);
+    setErrorLabels(new Set());
     onDirtyChange?.(false);
-  }, [annotations, onDirtyChange]);
+  }, [annotations, detailBelongsToItem, onDirtyChange]);
+
+  useEffect(() => {
+    if (!detailBelongsToItem) {
+      setItemNotes("");
+      onDirtyChange?.(false);
+      return;
+    }
+
+    setItemNotes(initialItemNotes || "");
+    onDirtyChange?.(false);
+  }, [initialItemNotes, detailBelongsToItem, onDirtyChange]);
 
   const handleChange = useCallback(
     (labelId, value) => {
-      if (readOnly) return;
+      if (readOnly || !detailBelongsToItem) return;
       setValues((prev) => {
         const next = { ...prev, [labelId]: value };
         valuesRef.current = next;
@@ -203,11 +470,39 @@ const LabelPanel = forwardRef(function LabelPanel(
       });
       onDirtyChange?.(true);
     },
-    [onDirtyChange, readOnly],
+    [detailBelongsToItem, onDirtyChange, readOnly],
   );
 
+  const handleLabelNotesChange = useCallback(
+    (labelId, value) => {
+      if (readOnly || !detailBelongsToItem) return;
+      setLabelNotes((prev) => ({ ...prev, [labelId]: value }));
+      onDirtyChange?.(true);
+    },
+    [detailBelongsToItem, onDirtyChange, readOnly],
+  );
+
+  const handleItemNotesChange = useCallback(
+    (value) => {
+      if (readOnly || !detailBelongsToItem) return;
+      setItemNotes(value);
+      onDirtyChange?.(true);
+    },
+    [detailBelongsToItem, onDirtyChange, readOnly],
+  );
+
+  const displayValues = useMemo(
+    () => (detailBelongsToItem ? values : {}),
+    [detailBelongsToItem, values],
+  );
+  const displayLabelNotes = useMemo(
+    () => (detailBelongsToItem ? labelNotes : {}),
+    [detailBelongsToItem, labelNotes],
+  );
+  const displayItemNotes = detailBelongsToItem ? itemNotes : "";
+
   const handleSubmit = useCallback(() => {
-    if (readOnly) return;
+    if (readOnly || !detailBelongsToItem) return;
     // Flush any pending debounced text inputs so valuesRef is up-to-date
     Object.values(textFlushRefs.current).forEach((r) => r?.flush?.());
 
@@ -241,21 +536,36 @@ const LabelPanel = forwardRef(function LabelPanel(
       return;
     }
 
+    const labelsById = new Map(labels.map((label) => [label.label_id, label]));
     const annotationsList = Object.entries(currentValues)
       .filter(([_, v]) => v !== null && v !== undefined)
-      .map(([labelId, value]) => ({
-        label_id: labelId,
-        value,
-      }));
+      .map(([labelId, value]) => {
+        const annotation = {
+          label_id: labelId,
+          value,
+        };
+        if (labelsById.get(labelId)?.allow_notes) {
+          annotation.notes = labelNotes[labelId] ?? "";
+        }
+        return annotation;
+      });
     if (annotationsList.length > 0) {
       onDirtyChange?.(false);
-      onSubmit({ annotations: annotationsList, notes });
+      onSubmit({ annotations: annotationsList, itemNotes });
     }
-  }, [notes, onSubmit, labels, onDirtyChange, readOnly]);
+  }, [
+    itemNotes,
+    labelNotes,
+    onSubmit,
+    labels,
+    onDirtyChange,
+    readOnly,
+    detailBelongsToItem,
+  ]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
 
-  const hasValues = Object.values(values).some(
+  const hasValues = Object.values(displayValues).some(
     (v) => v !== null && v !== undefined && v !== "",
   );
 
@@ -298,7 +608,7 @@ const LabelPanel = forwardRef(function LabelPanel(
         const ql = labels[focusedIndex];
         if (!ql) return;
         const labelId = ql.label_id;
-        const currentVal = values[labelId] ?? null;
+        const currentVal = displayValues[labelId] ?? null;
 
         e.preventDefault();
 
@@ -347,7 +657,7 @@ const LabelPanel = forwardRef(function LabelPanel(
 
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [labels, focusedIndex, values, handleChange, readOnly]);
+  }, [labels, focusedIndex, displayValues, handleChange, readOnly]);
 
   return (
     <Box
@@ -390,6 +700,167 @@ const LabelPanel = forwardRef(function LabelPanel(
         </Box>
       )}
 
+      {actionableReviewComments.length > 0 && (
+        <Box
+          data-testid="feedback-to-address-panel"
+          sx={(theme) => {
+            const tone = statusTone(theme, "warning");
+            return {
+              flexShrink: 0,
+              mb: 2,
+              p: 1.25,
+              border: "1px solid",
+              borderColor: tone.border,
+              borderRadius: 0.75,
+              bgcolor: tone.bg,
+              minWidth: 0,
+              overflowX: "hidden",
+            };
+          }}
+        >
+          <Stack direction="row" alignItems="center" spacing={0.75}>
+            <Iconify
+              icon="solar:flag-bold"
+              width={18}
+              sx={(theme) => ({ color: statusTone(theme, "warning").text })}
+            />
+            <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0 }}>
+              Feedback to address
+            </Typography>
+            <Chip
+              size="small"
+              variant="outlined"
+              label={actionableReviewComments.length}
+              sx={(theme) => statusChipSx("warning")(theme)}
+            />
+          </Stack>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: "block", mt: 0.5, overflowWrap: "anywhere" }}
+          >
+            Update the matching labels, then submit for review. Open feedback is
+            marked addressed automatically.
+          </Typography>
+          <Stack spacing={0.75} sx={{ mt: 1, minWidth: 0 }}>
+            {actionableReviewComments.map((comment) => {
+              const timestamp = formatReviewTime(comment?.created_at);
+              const targetLabel = reviewCommentTargetLabel(comment);
+              return (
+                <Box
+                  key={comment.id || comment.created_at}
+                  sx={{
+                    p: 1,
+                    borderRadius: 0.75,
+                    bgcolor: "background.paper",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    minWidth: 0,
+                    overflow: "hidden",
+                  }}
+                >
+                  <Stack
+                    direction="row"
+                    spacing={0.75}
+                    alignItems="center"
+                    useFlexGap
+                    sx={{ minWidth: 0, flexWrap: "wrap", rowGap: 0.5 }}
+                  >
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      label={targetLabel}
+                      title={targetLabel}
+                      sx={(theme) => ({
+                        ...statusChipSx("warning")(theme),
+                        maxWidth: "100%",
+                        minWidth: 0,
+                        "& .MuiChip-label": {
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          minWidth: 0,
+                        },
+                      })}
+                    />
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      noWrap
+                      sx={{ ml: "auto", minWidth: 0, maxWidth: "45%" }}
+                    >
+                      {reviewAuthorName(comment)}
+                    </Typography>
+                    {timestamp && (
+                      <Tooltip title={timestamp.exact}>
+                        <Typography
+                          variant="caption"
+                          color="text.disabled"
+                          noWrap
+                          sx={{ flexShrink: 0 }}
+                        >
+                          {timestamp.relative}
+                        </Typography>
+                      </Tooltip>
+                    )}
+                  </Stack>
+                  <Typography
+                    variant="body2"
+                    sx={{ mt: 0.5, overflowWrap: "anywhere" }}
+                  >
+                    {normalizeMentionMarkdown(comment.comment)}
+                  </Typography>
+                </Box>
+              );
+            })}
+          </Stack>
+        </Box>
+      )}
+
+      {overallReviewComments.length > 0 ? (
+        <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
+          <Typography variant="caption" fontWeight={700} display="block">
+            Reviewer feedback
+          </Typography>
+          <Stack spacing={0.75} sx={{ mt: 0.75 }}>
+            {overallReviewComments.map((comment) => {
+              const timestamp = formatReviewTime(comment?.created_at);
+              return (
+                <Box key={comment.id || comment.created_at}>
+                  <Stack direction="row" alignItems="center" spacing={0.5}>
+                    <Typography variant="caption" color="text.secondary">
+                      {reviewAuthorName(comment)}
+                    </Typography>
+                    <ReviewStatusChip comment={comment} />
+                    {timestamp && (
+                      <Tooltip title={timestamp.exact}>
+                        <Typography
+                          variant="caption"
+                          color="text.disabled"
+                          sx={{ ml: "auto" }}
+                        >
+                          {timestamp.relative}
+                        </Typography>
+                      </Tooltip>
+                    )}
+                  </Stack>
+                  <Typography variant="body2">
+                    {normalizeMentionMarkdown(comment.comment)}
+                  </Typography>
+                </Box>
+              );
+            })}
+          </Stack>
+        </Alert>
+      ) : reviewFeedback && !hasReviewCommentTrail ? (
+        <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
+          <Typography variant="caption" fontWeight={700} display="block">
+            Reviewer feedback
+          </Typography>
+          <Typography variant="body2">{reviewFeedback}</Typography>
+        </Alert>
+      ) : null}
+
       {/* Shortcuts toggle + Instructions row */}
       <Stack
         direction="row"
@@ -406,9 +877,15 @@ const LabelPanel = forwardRef(function LabelPanel(
             onClick={() => setShowShortcuts((p) => !p)}
             sx={{
               color: showShortcuts ? "primary.main" : "text.secondary",
-              bgcolor: showShortcuts ? "primary.lighter" : "transparent",
+              bgcolor: (theme) =>
+                showShortcuts
+                  ? alpha(theme.palette.primary.main, 0.12)
+                  : "transparent",
               "&:hover": {
-                bgcolor: showShortcuts ? "primary.lighter" : "action.hover",
+                bgcolor: (theme) =>
+                  showShortcuts
+                    ? alpha(theme.palette.primary.main, 0.18)
+                    : theme.palette.action.hover,
               },
             }}
           >
@@ -470,24 +947,104 @@ const LabelPanel = forwardRef(function LabelPanel(
         </Box>
       )}
 
+      {Array.isArray(annotators) && annotators.length > 1 && (
+        <Box sx={{ mb: 2 }}>
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+            <Iconify
+              icon="solar:user-id-bold"
+              width={16}
+              sx={{ color: "text.secondary" }}
+            />
+            <Typography variant="subtitle2" color="text.secondary">
+              Viewing annotator
+            </Typography>
+            {isAnnotatorSwitchPending && (
+              <CircularProgress size={12} thickness={5} sx={{ ml: 0.5 }} />
+            )}
+          </Stack>
+          <Select
+            fullWidth
+            size="small"
+            value={viewingAnnotatorId || ""}
+            onChange={(e) => onViewingAnnotatorChange?.(e.target.value || null)}
+            inputProps={{ "aria-label": "Viewing annotator" }}
+            sx={{
+              borderRadius: 0.5,
+              "& .MuiSelect-select": { py: 1 },
+            }}
+          >
+            {annotators.map((annotator) => {
+              const isSelf =
+                currentUserId &&
+                String(annotator.user_id) === String(currentUserId);
+              return (
+                <MenuItem
+                  key={String(annotator.user_id)}
+                  value={String(annotator.user_id)}
+                >
+                  {annotator.name || annotator.email || "Unknown"}
+                  {isSelf ? " (you)" : ""}
+                </MenuItem>
+              );
+            })}
+          </Select>
+          {viewingAnnotatorId &&
+            (() => {
+              const selected = annotators.find(
+                (annotator) =>
+                  String(annotator.user_id) === String(viewingAnnotatorId),
+              );
+              const isSelf =
+                currentUserId &&
+                String(viewingAnnotatorId) === String(currentUserId);
+              const name =
+                selected?.name || selected?.email || "this annotator";
+              return (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", mt: 0.75 }}
+                >
+                  {isSelf
+                    ? "You are viewing your own annotations"
+                    : `You are viewing annotations of ${name}`}
+                </Typography>
+              );
+            })()}
+          <Divider sx={{ mt: 2 }} />
+        </Box>
+      )}
+
       {/* Label inputs */}
       <Stack
         spacing={2}
         sx={{
-          flex: 1,
-          ...(readOnly && {
+          flexShrink: 0,
+          ...((readOnly || isAnnotatorSwitchPending) && {
             pointerEvents: "none",
-            opacity: 0.7,
+            opacity: isAnnotatorSwitchPending ? 0.4 : 0.7,
+            transition: "opacity 120ms ease-out",
           }),
         }}
       >
         {labels.map((ql, i) => {
           const labelId = ql.label_id;
+          const labelReviewComments =
+            reviewCommentsByLabel.get(String(labelId)) || [];
+          const labelFocused =
+            focusedCommentScope === `label:${labelId}` ||
+            String(focusedCommentScope || "").startsWith(`${labelId}:`);
           return (
             <Box
               key={ql.id}
+              data-review-label-id={labelId}
+              data-comment-focus={labelFocused ? "true" : undefined}
               onClick={() => !readOnly && setFocusedIndex(i)}
-              sx={{ cursor: "default" }}
+              sx={{
+                borderRadius: 0.75,
+                cursor: "default",
+                ...focusedScopeSx(labelFocused),
+              }}
             >
               <LabelInput
                 label={{
@@ -496,12 +1053,17 @@ const LabelPanel = forwardRef(function LabelPanel(
                   settings: ql.settings || {},
                   description: ql.description,
                   required: ql.required,
+                  allow_notes: ql.allow_notes ?? false,
                 }}
-                value={values[labelId] ?? null}
+                value={displayValues[labelId] ?? null}
                 onChange={(val) => handleChange(labelId, val)}
                 index={i}
                 focused={focusedIndex === i}
                 hasError={errorLabels.has(labelId)}
+                labelNotes={displayLabelNotes[labelId] ?? ""}
+                onLabelNotesChange={(val) =>
+                  handleLabelNotesChange(labelId, val)
+                }
                 textFlushRef={
                   ql.type === "text"
                     ? (el) => {
@@ -510,30 +1072,103 @@ const LabelPanel = forwardRef(function LabelPanel(
                     : undefined
                 }
               />
+              {labelReviewComments.length > 0 && (
+                <Box
+                  sx={(theme) => {
+                    const tone = statusTone(theme, "warning");
+                    return {
+                      mt: 1,
+                      p: 1.25,
+                      borderRadius: 0.5,
+                      border: "1px solid",
+                      borderColor: tone.border,
+                      bgcolor: tone.bg,
+                    };
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    fontWeight={700}
+                    sx={(theme) => ({
+                      display: "block",
+                      mb: 0.75,
+                      color: statusTone(theme, "warning").text,
+                    })}
+                  >
+                    Reviewer feedback
+                  </Typography>
+                  <Stack spacing={0.75}>
+                    {labelReviewComments.map((comment) => {
+                      const timestamp = formatReviewTime(comment?.created_at);
+                      return (
+                        <Box key={comment.id || comment.created_at}>
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            spacing={0.5}
+                          >
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              {reviewAuthorName(comment)}
+                            </Typography>
+                            <ReviewStatusChip comment={comment} />
+                            {timestamp && (
+                              <Tooltip title={timestamp.exact}>
+                                <Typography
+                                  variant="caption"
+                                  color="text.disabled"
+                                  sx={{ ml: "auto" }}
+                                >
+                                  {timestamp.relative}
+                                </Typography>
+                              </Tooltip>
+                            )}
+                          </Stack>
+                          <Typography variant="body2">
+                            {normalizeMentionMarkdown(comment.comment)}
+                          </Typography>
+                        </Box>
+                      );
+                    })}
+                  </Stack>
+                </Box>
+              )}
             </Box>
           );
         })}
-      </Stack>
 
-      {/* Notes */}
-      <Box sx={{ mt: 2 }}>
-        <TextField
-          fullWidth
-          size="small"
-          multiline
-          minRows={2}
-          maxRows={4}
-          placeholder="Notes (optional)"
-          value={notes}
-          onChange={(e) => {
-            if (readOnly) return;
-            setNotes(e.target.value);
-            onDirtyChange?.(true);
+        <Box
+          data-review-item-summary="true"
+          data-comment-focus={
+            focusedCommentScope === "item" ? "true" : undefined
+          }
+          sx={{
+            borderRadius: 0.75,
+            ...focusedScopeSx(focusedCommentScope === "item"),
           }}
-          InputProps={{ readOnly }}
-          sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-        />
-      </Box>
+        >
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: "block", mb: 0.75 }}
+          >
+            Notes (optional)
+          </Typography>
+          <TextField
+            fullWidth
+            size="small"
+            multiline
+            minRows={3}
+            maxRows={6}
+            placeholder="Add notes for this item..."
+            value={displayItemNotes}
+            onChange={(e) => handleItemNotesChange(e.target.value)}
+            disabled={readOnly}
+          />
+        </Box>
+      </Stack>
 
       {/* Annotation History */}
       <AnnotationHistory queueId={queueId} itemId={itemId} />
@@ -545,8 +1180,34 @@ const LabelPanel = forwardRef(function LabelPanel(
             <Button
               variant="contained"
               fullWidth
-              color="primary"
-              sx={{ mt: 2 }}
+              color="inherit"
+              sx={{
+                mt: 2,
+                borderRadius: 0.75,
+                minHeight: 42,
+                fontWeight: 800,
+                bgcolor: (theme) =>
+                  theme.palette.mode === "dark"
+                    ? theme.palette.common.white
+                    : theme.palette.grey[900],
+                color: (theme) =>
+                  theme.palette.mode === "dark"
+                    ? theme.palette.grey[900]
+                    : theme.palette.common.white,
+                boxShadow: "none",
+                "&:hover": {
+                  bgcolor: (theme) =>
+                    theme.palette.mode === "dark"
+                      ? alpha(theme.palette.common.white, 0.92)
+                      : theme.palette.grey[800],
+                  boxShadow: (theme) =>
+                    `0 12px 24px ${alpha(theme.palette.text.primary, 0.14)}`,
+                },
+                "&.Mui-disabled": {
+                  color: "text.disabled",
+                  bgcolor: (theme) => quietSurface(theme, 0.08),
+                },
+              }}
               onClick={handleSubmit}
               disabled={isPending || !hasValues}
               startIcon={
@@ -555,7 +1216,7 @@ const LabelPanel = forwardRef(function LabelPanel(
                 ) : null
               }
             >
-              Submit & Next
+              {submitLabel}
             </Button>
           </span>
         </Tooltip>
@@ -567,14 +1228,25 @@ const LabelPanel = forwardRef(function LabelPanel(
 LabelPanel.propTypes = {
   labels: PropTypes.array,
   annotations: PropTypes.array,
+  initialItemNotes: PropTypes.string,
   instructions: PropTypes.string,
   onSubmit: PropTypes.func.isRequired,
   isPending: PropTypes.bool,
   queueId: PropTypes.string,
   itemId: PropTypes.string,
+  detailItemId: PropTypes.string,
   onDirtyChange: PropTypes.func,
   readOnly: PropTypes.bool,
   readOnlyReason: PropTypes.string,
+  reviewFeedback: PropTypes.string,
+  reviewComments: PropTypes.array,
+  annotators: PropTypes.array,
+  viewingAnnotatorId: PropTypes.string,
+  currentUserId: PropTypes.string,
+  focusedCommentScope: PropTypes.string,
+  onViewingAnnotatorChange: PropTypes.func,
+  isAnnotatorSwitchPending: PropTypes.bool,
+  submitLabel: PropTypes.string,
 };
 
 export default LabelPanel;

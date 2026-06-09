@@ -1,0 +1,59 @@
+# Production overlay. Layered on top of docker-compose.yml.
+# Re-binds required env vars with ${VAR:?error} so compose refuses to boot
+# if any are still unset. Pair with deploy/.env.production.
+
+services:
+  backend:
+    environment:
+      ENV_TYPE: production
+      SECRET_KEY: ${SECRET_KEY:?must be set for production}
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?must be set for production}
+      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:?must be set for production}
+      PG_PASSWORD: ${PG_PASSWORD:?must be set for production}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?must be set for production}
+      RABBITMQ_USER: ${RABBITMQ_USER:?must be set for production}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?must be set for production}
+      FRONTEND_URL: ${FRONTEND_URL:?must be set for production}
+    restart: always
+
+  worker:
+    environment:
+      ENV_TYPE: production
+      SECRET_KEY: ${SECRET_KEY:?must be set for production}
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?must be set for production}
+      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:?must be set for production}
+      PG_PASSWORD: ${PG_PASSWORD:?must be set for production}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?must be set for production}
+      RABBITMQ_USER: ${RABBITMQ_USER:?must be set for production}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?must be set for production}
+    restart: always
+
+  agentcc-gateway:
+    environment:
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?must be set for production}
+      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:?must be set for production}
+    restart: always
+
+  frontend:
+    environment:
+      VITE_HOST_API: ${VITE_HOST_API:?set to your backend URL — e.g. https://api.example.com}
+    restart: always
+
+  serving:
+    environment:
+      ENV_TYPE: production
+      SECRET_KEY: ${SECRET_KEY:?must be set for production}
+    restart: always
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?must be set for production}
+    restart: always
+
+  minio:
+    environment:
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?must be set for production}
+    restart: always
+
+  code-executor:
+    restart: always

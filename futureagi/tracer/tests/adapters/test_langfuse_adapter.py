@@ -117,7 +117,7 @@ class TestLangfuseNormalizeGeneration:
 
     def test_sets_trace_source(self, adapter, langfuse_generation_attrs):
         result = adapter.normalize(langfuse_generation_attrs)
-        assert result["fi.trace.source"] == "langfuse"
+        assert result["gen_ai.trace.source"] == "langfuse"
 
 
 # ---------------------------------------------------------------------------

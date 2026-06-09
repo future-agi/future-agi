@@ -210,9 +210,6 @@ const VoiceFullPage = lazyWithRetry(
 const SessionsView = lazyWithRetry(
   () => import("src/sections/projects/SessionsView/Sessions-view"),
 );
-const ChartsView = lazyWithRetry(
-  () => import("src/sections/projects/ChartsView/ChartsViewWrapper"),
-);
 const LLMTracingView = lazyWithRetry(
   () => import("src/sections/projects/LLMTracing/LLMTracingView"),
 );
@@ -224,10 +221,6 @@ const CrossProjectUserDetailPage = lazyWithRetry(
     import(
       "src/sections/projects/UsersView/CrossProjectUserDetailPage/CrossProjectUserDetailPage"
     ),
-);
-
-const Alerts = lazyWithRetry(
-  () => import("src/sections/projects/Alerts/Alerts.jsx"),
 );
 
 const GetStarted = lazyWithRetry(
@@ -247,9 +240,6 @@ const TaskDetail = lazyWithRetry(
 );
 const UsersView = lazyWithRetry(
   () => import("src/sections/projects/UsersView/UsersView"),
-);
-const EvalsInside = lazyWithRetry(
-  () => import("src/pages/dashboard/projects/EvalsInside"),
 );
 const KnowledgeBase = lazyWithRetry(
   () => import("src/pages/dashboard/knowledge-base/KnowledgeBase"),
@@ -648,22 +638,26 @@ export const dashboardRoutes = (
         </RoleProtection>
       ),
     },
-    {
-      path: "falcon-ai-connectors",
-      element: (
-        <RoleProtection
-          allowedRoles={[
-            "Owner",
-            "Admin",
-            "Member",
-            "workspace_admin",
-            "workspace_member",
-          ]}
-        >
-          <FalconAIConnectorsPage />
-        </RoleProtection>
-      ),
-    },
+    ...(!isOSS
+      ? [
+          {
+            path: "falcon-ai-connectors",
+            element: (
+              <RoleProtection
+                allowedRoles={[
+                  "Owner",
+                  "Admin",
+                  "Member",
+                  "workspace_admin",
+                  "workspace_member",
+                ]}
+              >
+                <FalconAIConnectorsPage />
+              </RoleProtection>
+            ),
+          },
+        ]
+      : []),
   ];
 
   // Conditionally include billing routes:
@@ -846,10 +840,14 @@ export const dashboardRoutes = (
     //   ],
     // },
 
-    {
-      path: "falcon-ai/:conversationId?",
-      element: <FalconAIPage />,
-    },
+    ...(!isOSS
+      ? [
+          {
+            path: "falcon-ai/:conversationId?",
+            element: <FalconAIPage />,
+          },
+        ]
+      : []),
     {
       path: "tasks",
       children: [
@@ -1073,18 +1071,6 @@ export const dashboardRoutes = (
           element: <SessionsView />,
         },
         {
-          path: "evals-tasks",
-          element: <EvalsInside />,
-        },
-        {
-          path: "charts",
-          element: <ChartsView />,
-        },
-        {
-          path: "alerts",
-          element: <Alerts />,
-        },
-        {
           path: "users",
           element: <UsersView />,
         },
@@ -1097,14 +1083,18 @@ export const dashboardRoutes = (
           index: true,
           element: <Develop />,
         },
-        {
-          path: "create-synthetic-dataset",
-          element: <CreateSyntheticData />,
-        },
-        {
-          path: "edit-synthetic-dataset/:dataset",
-          element: <EditSyntheticDataDrawer />,
-        },
+        ...(!isOSS
+          ? [
+              {
+                path: "create-synthetic-dataset",
+                element: <CreateSyntheticData />,
+              },
+              {
+                path: "edit-synthetic-dataset/:dataset",
+                element: <EditSyntheticDataDrawer />,
+              },
+            ]
+          : []),
 
         {
           path: ":dataset",

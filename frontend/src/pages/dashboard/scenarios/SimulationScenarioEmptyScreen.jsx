@@ -192,14 +192,14 @@ const SimulationScenarioEmptyScreen = () => {
               <Typography
                 variant="s1"
                 fontWeight={"fontWeightMedium"}
-                color="text.disabled"
+                color="text.secondary"
               >
                 For more instructions, check out our{" "}
                 <Link
                   target="_blank"
                   variant="s1"
                   fontWeight={"fontWeightSemiBold"}
-                  href="https://docs.futureagi.com/docs/simulation/scenarios"
+                  href="https://docs.futureagi.com/docs/simulation/concepts/scenarios"
                   sx={{ textDecoration: "underline", color: "blue.500" }}
                 >
                   Docs

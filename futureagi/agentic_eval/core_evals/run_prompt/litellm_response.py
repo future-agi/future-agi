@@ -62,6 +62,7 @@ from agentic_eval.core_evals.run_prompt.other_services.elevenlabs_response impor
 )
 from model_hub.utils.utils import get_model_mode
 from agentic_eval.core_evals.run_prompt.error_handler import (
+    ErrorContext,
     handle_api_error,
     litellm_try_except,
 )
@@ -319,7 +320,7 @@ class RunPrompt:
 
         # Token usage: prompt (text) via tiktoken helper, completion (audio) via 32 tokens/sec
         try:
-            prompt_tokens = count_tiktoken_tokens(input_text)
+            prompt_tokens = (count_tiktoken_tokens(input_text) if count_tiktoken_tokens else 0)
         except Exception:
             prompt_tokens = None
         completion_tokens = int(duration_seconds * 32) if duration_seconds else None
@@ -966,8 +967,8 @@ class RunPrompt:
                 completion_text = response_content
 
                 # Use tiktoken for accurate token counting (handles both text and images)
-                estimated_prompt_tokens = count_tiktoken_tokens(prompt_text, image_urls)
-                estimated_completion_tokens = count_tiktoken_tokens(completion_text)
+                estimated_prompt_tokens = (count_tiktoken_tokens(prompt_text, image_urls) if count_tiktoken_tokens else 0)
+                estimated_completion_tokens = (count_tiktoken_tokens(completion_text) if count_tiktoken_tokens else 0)
                 total_tokens = estimated_prompt_tokens + estimated_completion_tokens
 
                 # Use calculate_total_cost with custom model pricing as fallback
@@ -1270,16 +1271,16 @@ class RunPrompt:
                 raise Exception(str(e))
 
             # Build context for error logging
-            context = {
-                "model": self.model,
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-                "message_count": len(self.messages) if self.messages else 0,
-                "output_format": self.output_format,
-                "organization_id": self.organization_id,
-                "workspace_id": self.workspace_id,
-                "template_id": template_id,
-            }
+            context = ErrorContext(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                message_count=len(self.messages) if self.messages else 0,
+                output_format=self.output_format,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+                template_id=template_id,
+            )
 
             # Use error handler for concise message and verbose logging
             concise_error = handle_api_error(e, logger, context)
@@ -1844,6 +1845,8 @@ class RunPrompt:
             else:
                 payload["api_key"] = api_key
         else:
+            if provider != "openai":
+                payload["custom_llm_provider"] = provider
             payload["api_key"] = api_key
 
         return payload
@@ -2122,15 +2125,15 @@ class RunPrompt:
 
         except Exception as e:
             # Build context for error logging
-            context = {
-                "model": self.model,
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-                "message_count": len(self.messages) if self.messages else 0,
-                "output_format": self.output_format,
-                "organization_id": self.organization_id,
-                "workspace_id": self.workspace_id,
-            }
+            context = ErrorContext(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                message_count=len(self.messages) if self.messages else 0,
+                output_format=self.output_format,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+            )
 
             logger.info(f"Original messages: {payload.get('messages', [])}")
 
@@ -2699,15 +2702,15 @@ class RunPrompt:
                 return await sync_to_async(self._regular_response)(payload, start_time)
         except Exception as e:
             # Build context for error logging
-            context = {
-                "model": self.model,
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-                "message_count": len(self.messages) if self.messages else 0,
-                "output_format": self.output_format,
-                "organization_id": self.organization_id,
-                "workspace_id": self.workspace_id,
-            }
+            context = ErrorContext(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                message_count=len(self.messages) if self.messages else 0,
+                output_format=self.output_format,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+            )
 
             logger.info(f"Original messages: {payload.get('messages', [])}")
 
@@ -2965,16 +2968,16 @@ class RunPrompt:
                 raise Exception(str(e))
 
             # Build context for error logging
-            context = {
-                "model": self.model,
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-                "message_count": len(self.messages) if self.messages else 0,
-                "output_format": self.output_format,
-                "organization_id": self.organization_id,
-                "workspace_id": self.workspace_id,
-                "template_id": template_id,
-            }
+            context = ErrorContext(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                message_count=len(self.messages) if self.messages else 0,
+                output_format=self.output_format,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+                template_id=template_id,
+            )
 
             # Use error handler for concise message and verbose logging
             concise_error = handle_api_error(e, logger, context)
@@ -3183,8 +3186,19 @@ class RunPrompt:
             return handler_response.to_value_info()
 
         except Exception as e:
-            logger.error(f"[NEW] An error occurred: {str(e)}")
-            raise Exception(str(e))
+            context = ErrorContext(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                message_count=len(self.messages) if self.messages else 0,
+                output_format=self.output_format,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+                template_id=template_id,
+            )
+            concise_error = handle_api_error(e, logger, context)
+            logger.error(f"[NEW] An error occurred: {concise_error}")
+            raise Exception(concise_error) from e
 
     async def _litellm_response_async_new(
         self,
@@ -3268,8 +3282,19 @@ class RunPrompt:
             return handler_response.to_value_info()
 
         except Exception as e:
-            logger.error(f"[NEW] An error occurred: {str(e)}")
-            raise Exception(str(e))
+            context = ErrorContext(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                message_count=len(self.messages) if self.messages else 0,
+                output_format=self.output_format,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+                template_id=template_id,
+            )
+            concise_error = handle_api_error(e, logger, context)
+            logger.error(f"[NEW] An error occurred: {concise_error}")
+            raise Exception(concise_error) from e
 
     # =========================================================================
     # PUBLIC API - WRAPPER METHODS THAT TOGGLE BETWEEN OLD AND NEW

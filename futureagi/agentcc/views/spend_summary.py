@@ -66,7 +66,10 @@ class SpendSummaryView(APIView):
             period = request.query_params.get("period", "monthly")
             start = _period_start(period)
 
-            logs = AgentccRequestLog.objects.filter(started_at__gte=start, deleted=False)
+            logs = AgentccRequestLog.no_workspace_objects.filter(
+                started_at__gte=start,
+                deleted=False,
+            )
 
             cost_sum = Coalesce(Sum("cost"), Value(0), output_field=DecimalField())
 

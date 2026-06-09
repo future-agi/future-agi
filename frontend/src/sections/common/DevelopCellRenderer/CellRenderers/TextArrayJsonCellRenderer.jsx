@@ -115,6 +115,7 @@ const TextArrayJsonCellRenderer = ({
           display: "flex",
           flexDirection: "column",
           height: "100%",
+          minHeight: 0,
           justifyContent: metadata?.responseTimeMs ? "space-between" : "start",
           padding: "4px 8px",
         }}
@@ -124,10 +125,9 @@ const TextArrayJsonCellRenderer = ({
             sx={{
               whiteSpace: "pre-wrap",
               lineHeight: "1.5",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              WebkitLineClamp: metadata?.responseTimeMs ? "5" : "6",
-              WebkitBoxOrient: "vertical",
+              flex: 1,
+              minHeight: 0,
+              overflowY: "auto",
             }}
           >
             {isValueArray ? (

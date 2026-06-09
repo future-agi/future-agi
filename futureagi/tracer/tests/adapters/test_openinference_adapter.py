@@ -68,7 +68,7 @@ class TestOpenInferenceNormalize:
     def test_sets_trace_source(self, adapter):
         attrs = {"openinference.span.kind": "LLM"}
         result = adapter.normalize(attrs)
-        assert result["fi.trace.source"] == "openinference"
+        assert result["gen_ai.trace.source"] == "openinference"
 
     def test_retriever_span(self, adapter, openinference_retriever_attrs):
         result = adapter.normalize(openinference_retriever_attrs)

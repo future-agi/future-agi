@@ -35,6 +35,7 @@ function MockAgGridReact({
   onCellClicked,
   noRowsOverlayComponent: NoRowsOverlay,
   rowSelection,
+  selectionColumnDef,
   onSelectionChanged,
 }) {
   if (!rowData || rowData.length === 0) {
@@ -42,6 +43,14 @@ function MockAgGridReact({
   }
   return (
     <div data-testid="ag-grid">
+      {rowSelection && selectionColumnDef && (
+        <div
+          data-testid="selection-column-def"
+          data-width={selectionColumnDef.width}
+          data-min-width={selectionColumnDef.minWidth}
+          data-max-width={selectionColumnDef.maxWidth}
+        />
+      )}
       <div data-testid="ag-grid-header">
         {rowSelection && <input type="checkbox" aria-label="select-all" />}
         {columnDefs
@@ -98,6 +107,7 @@ MockAgGridReact.propTypes = {
   onCellClicked: PropTypes.func,
   noRowsOverlayComponent: PropTypes.elementType,
   rowSelection: PropTypes.object,
+  selectionColumnDef: PropTypes.object,
   onSelectionChanged: PropTypes.func,
 };
 
@@ -112,6 +122,7 @@ describe("ItemStatusBadge", () => {
   it.each([
     ["pending", "Pending"],
     ["in_progress", "In Progress"],
+    ["in_review", "In Review"],
     ["completed", "Completed"],
     ["skipped", "Skipped"],
   ])("renders %s status as '%s'", (status, label) => {
@@ -163,6 +174,16 @@ describe("QueueItemsEmpty", () => {
     await user.click(screen.getByRole("button", { name: /add items/i }));
     expect(onClick).toHaveBeenCalledOnce();
   });
+
+  it("hides add action when the user cannot manage queue items", () => {
+    render(<QueueItemsEmpty />);
+    expect(
+      screen.getByText("A queue manager can add items to this queue."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /add items/i }),
+    ).not.toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -186,7 +207,10 @@ const MOCK_ITEMS = [
   {
     id: "item-2",
     source_type: "trace",
-    source_preview: { type: "trace", name: "Hello trace" },
+    source_preview: {
+      type: "trace",
+      name: "Hello trace",
+    },
     status: "completed",
     assigned_to_name: "Alice",
     assigned_users: [{ id: "user-1", name: "Alice" }],
@@ -217,6 +241,9 @@ describe("QueueItemsTable", () => {
     expect(screen.getByText("Status")).toBeInTheDocument();
     expect(screen.getByText("Assigned To")).toBeInTheDocument();
     expect(screen.getByText("Review")).toBeInTheDocument();
+    expect(screen.queryByText("Latency")).not.toBeInTheDocument();
+    expect(screen.queryByText("Response Time")).not.toBeInTheDocument();
+    expect(screen.queryByText("Duration")).not.toBeInTheDocument();
   });
 
   it("renders item rows with source badges and previews", () => {
@@ -233,11 +260,78 @@ describe("QueueItemsTable", () => {
     expect(screen.getByText("Completed")).toBeInTheDocument();
   });
 
+  it("shows pending review items as in review in the workflow status", () => {
+    render(
+      <QueueItemsTable
+        {...tableProps}
+        data={[
+          {
+            ...MOCK_ITEMS[0],
+            status: "in_progress",
+            review_status: "pending_review",
+          },
+        ]}
+        totalCount={1}
+      />,
+    );
+    expect(screen.getByText("In Review")).toBeInTheDocument();
+  });
+
+  it("hides selection and remove controls for non-managers", () => {
+    render(<QueueItemsTable {...tableProps} canManageItems={false} />);
+    expect(screen.queryByLabelText("select-all")).not.toBeInTheDocument();
+    expect(
+      screen
+        .queryAllByTestId("iconify")
+        .some((el) => el.getAttribute("data-icon") === "mingcute:close-line"),
+    ).toBe(false);
+  });
+
   it("shows assigned-to avatars or assign chip", () => {
     render(<QueueItemsTable {...tableProps} />);
     expect(screen.getByText("+ Assign")).toBeInTheDocument();
     // Assigned user shows as avatar with initials
     expect(screen.getByText("A")).toBeInTheDocument();
+  });
+
+  it("does not show source metrics in the queue item list", () => {
+    render(<QueueItemsTable {...tableProps} />);
+    expect(screen.queryByText("120ms")).not.toBeInTheDocument();
+    expect(screen.queryByText("240ms")).not.toBeInTheDocument();
+  });
+
+  it("shows all annotators in auto-assign mode", () => {
+    render(
+      <QueueItemsTable
+        {...tableProps}
+        autoAssign
+        annotators={[
+          { user_id: "user-1", name: "Alice", role: "annotator" },
+          { user_id: "user-2", name: "Bob", role: "annotator" },
+          { user_id: "user-3", name: "Reviewer", role: "reviewer" },
+        ]}
+      />,
+    );
+    expect(screen.getAllByText("All annotators").length).toBeGreaterThan(0);
+    expect(screen.queryByText("+ Assign")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reviewer")).not.toBeInTheDocument();
+  });
+
+  it("shows the annotator name in auto-assign mode when only one annotator exists", () => {
+    render(
+      <QueueItemsTable
+        {...tableProps}
+        autoAssign
+        annotators={[
+          { user_id: "user-1", name: "Alice", role: "annotator" },
+          { user_id: "user-3", name: "Reviewer", role: "reviewer" },
+        ]}
+      />,
+    );
+    expect(screen.getAllByText("Alice").length).toBeGreaterThan(0);
+    expect(screen.queryByText("All annotators")).not.toBeInTheDocument();
+    expect(screen.queryByText("+ Assign")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reviewer")).not.toBeInTheDocument();
   });
 
   it("shows review status chip when present", () => {
@@ -286,5 +380,14 @@ describe("QueueItemsTable", () => {
     // First checkbox is select-all, subsequent ones are per-row
     await user.click(checkboxes[1]);
     expect(onSelectToggle).toHaveBeenCalledWith("item-1");
+  });
+
+  it("keeps the selection checkbox column at a stable width", () => {
+    render(<QueueItemsTable {...tableProps} />);
+
+    const selectionColumn = screen.getByTestId("selection-column-def");
+    expect(selectionColumn).toHaveAttribute("data-width", "44");
+    expect(selectionColumn).toHaveAttribute("data-min-width", "44");
+    expect(selectionColumn).toHaveAttribute("data-max-width", "44");
   });
 });

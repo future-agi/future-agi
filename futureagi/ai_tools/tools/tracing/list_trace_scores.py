@@ -45,9 +45,12 @@ class ListTraceScoresTool(BaseTool):
     input_model = ListTraceScoresInput
 
     def execute(self, params: ListTraceScoresInput, context: ToolContext) -> ToolResult:
-
+        # Reads from the unified ``Score`` model (one row per (source, label,
+        # annotator) tuple, with a JSON ``value`` field). Pre-deprecation
+        # this tool read ``TraceAnnotation``; once Phase 2 deletes the
+        # dual-write, that path returns nothing.
+        from model_hub.models.score import Score
         from tracer.models.trace import Trace
-        from tracer.models.trace_annotation import TraceAnnotation
 
         if not params.trace_id and not params.observation_span_id:
             return ToolResult.error(
@@ -55,10 +58,8 @@ class ListTraceScoresTool(BaseTool):
                 error_code="VALIDATION_ERROR",
             )
 
-        # Build base filter with org scoping
-        filters = {}
+        filters = {"deleted": False}
         if params.trace_id:
-            # Verify trace exists and belongs to the user's organization
             try:
                 trace = Trace.objects.get(
                     id=params.trace_id,
@@ -66,27 +67,49 @@ class ListTraceScoresTool(BaseTool):
                 )
             except Trace.DoesNotExist:
                 return ToolResult.not_found("Trace", str(params.trace_id))
-            filters["trace"] = trace
+            # Match scores attached either directly to the trace OR to one
+            # of its observation_spans (Score has both source FKs).
+            from django.db.models import Q
+
+            org_scope = Q(
+                trace=trace, organization=context.organization
+            ) | Q(
+                observation_span__trace=trace,
+                observation_span__project__organization=context.organization,
+            )
+            scores = Score.objects.filter(org_scope, **filters)
+        else:
+            scores = Score.objects.none()
 
         if params.observation_span_id:
-            filters["observation_span_id"] = params.observation_span_id
-            filters["observation_span__project__organization"] = context.organization
+            # If both trace_id and observation_span_id are provided, the user
+            # means "scores for this specific span on this specific trace" —
+            # intersect, don't OR. ORing would surface scores for spans
+            # belonging to a DIFFERENT trace under the requested trace's
+            # title (codex review finding).
+            if params.trace_id:
+                scores = scores.filter(
+                    observation_span_id=params.observation_span_id,
+                )
+            else:
+                scores = Score.objects.filter(
+                    observation_span_id=params.observation_span_id,
+                    observation_span__project__organization=context.organization,
+                    deleted=False,
+                )
 
-        annotations = (
-            TraceAnnotation.objects.filter(**filters)
-            .select_related("annotation_label", "user", "observation_span")
-            .order_by("-created_at")
+        scores = scores.select_related("label", "annotator", "observation_span").order_by(
+            "-created_at"
         )
 
-        # Apply annotator filters
         if params.annotators:
-            annotations = annotations.filter(user_id__in=params.annotators)
+            scores = scores.filter(annotator_id__in=params.annotators)
         if params.exclude_annotators:
-            annotations = annotations.exclude(user_id__in=params.exclude_annotators)
+            scores = scores.exclude(annotator_id__in=params.exclude_annotators)
 
-        total = annotations.count()
+        total = scores.count()
 
-        if not annotations:
+        if not scores:
             return ToolResult(
                 content=section(
                     "Trace Annotations",
@@ -95,59 +118,74 @@ class ListTraceScoresTool(BaseTool):
                 data={"annotations": [], "total": 0},
             )
 
+        def _render_value(score):
+            """Convert Score.value JSON to the legacy display string."""
+            v = score.value or {}
+            if not isinstance(v, dict):
+                return str(v)
+            label_type = score.label.type if score.label else None
+            if label_type == "numeric":
+                return format_number(v.get("value")) if v.get("value") is not None else "—"
+            if label_type == "star":
+                return format_number(v.get("rating")) if v.get("rating") is not None else "—"
+            if label_type == "thumbs_up_down":
+                inner = v.get("value")
+                if inner == "up":
+                    return "True"
+                if inner == "down":
+                    return "False"
+                return "—"
+            if label_type == "categorical":
+                sel = v.get("selected") or []
+                if not isinstance(sel, list):
+                    sel = [sel]
+                return ", ".join(str(s) for s in sel[:3]) if sel else "—"
+            if label_type == "text":
+                return v.get("text") or "—"
+            return str(v)
+
         rows = []
         data_list = []
-        for ann in annotations[:50]:
-            label_name = ann.annotation_label.name if ann.annotation_label else "—"
-            label_type = ann.annotation_label.type if ann.annotation_label else "—"
+        for score in scores[:50]:
+            label_name = score.label.name if score.label else "—"
+            label_type = score.label.type if score.label else "—"
 
-            # Determine value based on type
-            if ann.annotation_value is not None:
-                value = ann.annotation_value
-            elif ann.annotation_value_float is not None:
-                value = format_number(ann.annotation_value_float)
-            elif ann.annotation_value_bool is not None:
-                value = "True" if ann.annotation_value_bool else "False"
-            elif ann.annotation_value_str_list:
-                value = ", ".join(str(v) for v in ann.annotation_value_str_list[:3])
-            else:
-                value = "—"
-
+            value = _render_value(score)
             span_id = (
-                f"`{str(ann.observation_span_id)[:12]}...`"
-                if ann.observation_span_id
+                f"`{str(score.observation_span_id)[:12]}...`"
+                if score.observation_span_id
                 else "—"
             )
-            user_name = ann.user.email if ann.user else (ann.updated_by or "—")
+            user_name = (
+                score.annotator.email
+                if score.annotator
+                else (score.score_source or "—")
+            )
 
             rows.append(
                 [
-                    f"`{ann.id}`",
+                    f"`{score.id}`",
                     label_name,
                     label_type,
                     truncate(str(value), 40),
                     span_id,
                     user_name,
-                    format_datetime(ann.created_at),
+                    format_datetime(score.created_at),
                 ]
             )
             data_list.append(
                 {
-                    "id": str(ann.id),
+                    "id": str(score.id),
                     "label_name": label_name,
                     "label_type": label_type,
-                    "value": ann.annotation_value,
-                    "value_float": ann.annotation_value_float,
-                    "value_bool": ann.annotation_value_bool,
+                    "value": score.value,
                     "observation_span_id": (
-                        str(ann.observation_span_id)
-                        if ann.observation_span_id
+                        str(score.observation_span_id)
+                        if score.observation_span_id
                         else None
                     ),
                     "annotation_label_id": (
-                        str(ann.annotation_label_id)
-                        if ann.annotation_label_id
-                        else None
+                        str(score.label_id) if score.label_id else None
                     ),
                 }
             )

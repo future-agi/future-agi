@@ -13,6 +13,7 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import CallAnalyticsView from "./CallAnalyticsView";
 import { isLiveKitProvider } from "src/sections/agents/constants";
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
+import { buildVoiceCallScoreSource } from "src/components/voiceAnnotationSources";
 import EvalsTabView from "src/components/traceDetail/EvalsTabView";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import VoiceLogsView from "./VoiceLogsView";
@@ -37,7 +38,19 @@ const TABS = {
   SCENARIO: "scenario",
 };
 
-const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab }) => {
+const hasAttributeContent = (value) => {
+  if (!value) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+};
+
+const VoiceRightPanel = ({
+  data,
+  onCompareBaseline,
+  onAction,
+  hideAnnotationTab,
+}) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
   const isSimulate = data?.module === "simulate";
   // Prefer the conversation root span (where voice-call attributes/raw_log
@@ -54,10 +67,7 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
       spans[0]
     );
   }, [data?.observation_span]);
-  const canCompare =
-    isSimulate &&
-    !!onCompareBaseline &&
-    !!data?.session_id;
+  const canCompare = isSimulate && !!onCompareBaseline && !!data?.session_id;
 
   const { isCallInProgress, message: loadingMessage } =
     getLoadingStateWithRespectiveStatus(
@@ -135,7 +145,7 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
       });
     }
     return t;
-  }, [hasLogs, hasScenarioData]);
+  }, [hasLogs, hasScenarioData, hideAnnotationTab]);
 
   const analyticsProps = useMemo(() => {
     // API-provided per-call metrics (prefer over client-computed values)
@@ -143,8 +153,7 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
       turnCount: data?.turn_count,
       talkRatio: data?.talk_ratio,
       agentTalkPercentage: data?.agent_talk_percentage,
-      avgAgentLatencyMs:
-        data?.avg_agent_latency_ms ?? data?.avg_agent_latency,
+      avgAgentLatencyMs: data?.avg_agent_latency_ms ?? data?.avg_agent_latency,
       userWpm: data?.user_wpm,
       botWpm: data?.bot_wpm,
       userInterruptionCount: data?.user_interruption_count,
@@ -172,9 +181,11 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
     return {
       transcript: data?.transcript,
       latencies:
-        customerLatencies || extractLatencies(rawLog?.artifact?.performanceMetrics),
+        customerLatencies ||
+        extractLatencies(rawLog?.artifact?.performanceMetrics),
       analysisSummary: rawLog?.summary || data?.call_summary,
-      costBreakdown: customerCost || extractCostBreakdown(rawLog?.costBreakdown),
+      costBreakdown:
+        customerCost || extractCostBreakdown(rawLog?.costBreakdown),
       isLiveKit: isLiveKitProvider(data?.provider),
       apiMetrics,
     };
@@ -184,9 +195,7 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
     if (isSimulate) {
       return data?.eval_metrics || data?.eval_outputs || null;
     }
-    return (
-      data?.eval_outputs || observationSpan?.evals_metrics || null
-    );
+    return data?.eval_outputs || observationSpan?.evals_metrics || null;
   }, [isSimulate, data, observationSpan]);
 
   // Normalize voice eval payloads into the shape EvalsTabView expects.
@@ -206,6 +215,7 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
       const rawValue = e?.score ?? e?.output ?? e?.value;
       let score = null;
       let scoreLabel;
+      let scoreItems;
 
       if (typeof rawValue === "number") {
         // Numbers in [0, 1] → percent. Numbers already in [0, 100] → as-is.
@@ -227,6 +237,10 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
           scoreLabel =
             rawValue.length > 24 ? `${rawValue.slice(0, 24)}…` : rawValue;
         }
+      } else if (Array.isArray(rawValue) && rawValue.length > 0) {
+        // Choices-type results surface their selected labels as an array —
+        // keep them as items so the table can render one chip per label.
+        scoreItems = rawValue.map((v) => String(v));
       }
 
       return {
@@ -234,7 +248,10 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
         eval_name: e?.name || e?.metric || String(id),
         score,
         score_label: scoreLabel,
+        score_items: scoreItems,
         explanation: e?.reason || e?.explanation,
+        error: e?.error === true,
+        skipped: e?.skipped === true,
         // Error localization fields — pulled from whatever key the
         // backend used. Makes the shared EvalsTabView render the
         // dropdown / "Run" UX for failed voice evals.
@@ -258,22 +275,15 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
 
   const traceId = data?.trace_id || data?.id;
   const annotationSources = useMemo(() => {
-    if (isSimulate) {
-      return {
-        sourceType: "call_execution",
-        sourceId: data?.id,
-      };
-    }
     // observationSpan is already computed above: finds root by parent_span_id === null
     // and observation_type === "conversation", so use it directly instead of [0].
-    const span = observationSpan;
-    return {
-      sourceType: span?.id ? "observation_span" : "trace",
-      sourceId: span?.id || traceId,
-      secondarySourceType: span?.id ? "trace" : undefined,
-      secondarySourceId: span?.id ? traceId : undefined,
-    };
-  }, [isSimulate, data, traceId, observationSpan]);
+    return buildVoiceCallScoreSource({
+      traceId,
+      rootSpanId: observationSpan?.id,
+      isSimulate,
+      callExecutionId: data?.id,
+    });
+  }, [isSimulate, data?.id, traceId, observationSpan?.id]);
 
   const attributesObj = useMemo(() => {
     // Source-of-truth chain, in order of richness:
@@ -285,11 +295,12 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
     //  3. Legacy `trace_details.attributes` for older cached payloads.
     //  4. The span object itself as a last resort.
     return (
-      observationSpan?.span_attributes ||
-      data?.attributes ||
-      data?.trace_details?.attributes ||
-      observationSpan ||
-      null
+      [
+        observationSpan?.span_attributes,
+        data?.attributes,
+        data?.trace_details?.attributes,
+        observationSpan,
+      ].find(hasAttributeContent) || null
     );
   }, [data, observationSpan]);
 
@@ -391,10 +402,8 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
                     context: {
                       trace_id: traceId,
                       call_id: callId,
-                      span_id:
-                        ev.spanId || ev.observation_span_id,
-                      eval_log_id:
-                        ev.eval_log_id || ev.cell_id || ev.log_id,
+                      span_id: ev.spanId || ev.observation_span_id,
+                      eval_log_id: ev.eval_log_id || ev.cell_id || ev.log_id,
                       custom_eval_config_id:
                         ev.custom_eval_config_id || ev.eval_config_id,
                       eval_name: ev.eval_name,
@@ -451,6 +460,7 @@ const VoiceRightPanel = ({ data, onCompareBaseline, onAction, hideAnnotationTab 
               sourceId={annotationSources.sourceId}
               secondarySourceType={annotationSources.secondarySourceType}
               secondarySourceId={annotationSources.secondarySourceId}
+              openQueueItemOnRowClick={!isSimulate}
               title=""
               renderActions={
                 onAction ? (
@@ -492,7 +502,7 @@ VoiceRightPanel.propTypes = {
   data: PropTypes.object.isRequired,
   onCompareBaseline: PropTypes.func,
   onAction: PropTypes.func,
-  hideAnnotationTab: PropTypes.bool
+  hideAnnotationTab: PropTypes.bool,
 };
 
 export default VoiceRightPanel;

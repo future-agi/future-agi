@@ -255,7 +255,7 @@ const CreateKnowledgeBaseDrawerChild = ({
                   {knowledgeId ? "Add files" : "Create knowledge base"}
                 </Typography>
                 <Link
-                  href="https://docs.futureagi.com/docs/knowledge-base/overview"
+                  href="https://docs.futureagi.com/docs/knowledge-base"
                   underline="always"
                   color="blue.500"
                   target="_blank"

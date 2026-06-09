@@ -76,7 +76,7 @@ const ConfigureConversationNode = ({ node, onChange }) => {
             <Typography typography="s1" fontWeight="fontWeightMedium">
               Enable Global Node
             </Typography>
-            <Typography typography="s1" color="text.disabled">
+            <Typography typography="s1" color="text.secondary">
               Make this node available from any point in the conversation
             </Typography>
           </Box>

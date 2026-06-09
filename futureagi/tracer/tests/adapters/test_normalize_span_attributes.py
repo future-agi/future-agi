@@ -38,19 +38,19 @@ class TestNormalizeSpanAttributes:
         normalize_span_attributes(otel_data_list)
 
         # Langfuse
-        assert otel_data_list[0]["attributes"]["fi.trace.source"] == "langfuse"
+        assert otel_data_list[0]["attributes"]["gen_ai.trace.source"] == "langfuse"
         assert otel_data_list[0]["attributes"]["gen_ai.span.kind"] == "LLM"
         assert not any(
             k.startswith("langfuse.") for k in otel_data_list[0]["attributes"]
         )
 
         # OTEL GenAI (gen_ai.* without traceloop.* now goes to otel_genai adapter)
-        assert otel_data_list[1]["attributes"]["fi.trace.source"] == "traceai"
+        assert otel_data_list[1]["attributes"]["gen_ai.trace.source"] == "traceai"
         assert otel_data_list[1]["attributes"]["gen_ai.span.kind"] == "LLM"
         # otel_genai adapter preserves gen_ai.* keys (adds llm.* aliases)
 
         # FI Native
-        assert otel_data_list[2]["attributes"]["fi.trace.source"] == "traceai"
+        assert otel_data_list[2]["attributes"]["gen_ai.trace.source"] == "traceai"
         assert otel_data_list[2]["attributes"]["fi.span.kind"] == "LLM"
 
     def test_empty_list(self):
@@ -72,14 +72,14 @@ class TestNormalizeSpanAttributes:
         normalize_span_attributes(otel_data_list)
         # No adapter matched, attributes unchanged
         assert otel_data_list[0]["attributes"]["custom.key"] == "val"
-        assert "fi.trace.source" not in otel_data_list[0]["attributes"]
+        assert "gen_ai.trace.source" not in otel_data_list[0]["attributes"]
 
     def test_in_place_mutation(self):
         """Verify the attributes dict is modified in-place."""
         attrs = {"fi.span.kind": "LLM", "llm.model_name": "gpt-4"}
         otel_data_list = [{"attributes": attrs}]
         normalize_span_attributes(otel_data_list)
-        assert attrs["fi.trace.source"] == "traceai"  # Same object was mutated
+        assert attrs["gen_ai.trace.source"] == "traceai"  # Same object was mutated
 
 
 @pytest.mark.unit

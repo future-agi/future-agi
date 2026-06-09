@@ -22,8 +22,9 @@ from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
 from accounts.models.organization import Organization
+from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
-from accounts.models.workspace import Workspace
+from accounts.models.workspace import Workspace, WorkspaceMembership
 from model_hub.models.custom_models import CustomAIModel
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import (
@@ -74,16 +75,51 @@ class CustomModelsAPITestCase(APITestCase):
             is_default=True,
             created_by=cls.other_user,
         )
+        cls.organization_membership = OrganizationMembership.no_workspace_objects.create(
+            user=cls.user,
+            organization=cls.organization,
+            role=OrganizationRoles.OWNER,
+            is_active=True,
+        )
+        cls.other_organization_membership = (
+            OrganizationMembership.no_workspace_objects.create(
+                user=cls.other_user,
+                organization=cls.other_organization,
+                role=OrganizationRoles.OWNER,
+                is_active=True,
+            )
+        )
+        WorkspaceMembership.no_workspace_objects.create(
+            workspace=cls.workspace,
+            user=cls.user,
+            role=OrganizationRoles.WORKSPACE_ADMIN,
+            organization_membership=cls.organization_membership,
+            is_active=True,
+        )
+        WorkspaceMembership.no_workspace_objects.create(
+            workspace=cls.other_workspace,
+            user=cls.other_user,
+            role=OrganizationRoles.WORKSPACE_ADMIN,
+            organization_membership=cls.other_organization_membership,
+            is_active=True,
+        )
 
     def setUp(self):
         """Set up for each test method."""
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
+        self._model_volume_patcher = patch(
+            "model_hub.views.custom_model.get_model_volume", return_value=(0, 0)
+        )
+        self._model_volume_patcher.start()
         # Set workspace context for API requests (used by signals)
-        set_workspace_context(workspace=self.workspace, organization=self.organization)
+        set_workspace_context(
+            workspace=self.workspace, organization=self.organization, user=self.user
+        )
 
     def tearDown(self):
         """Clean up workspace context after each test."""
+        self._model_volume_patcher.stop()
         clear_workspace_context()
 
     def create_custom_model(

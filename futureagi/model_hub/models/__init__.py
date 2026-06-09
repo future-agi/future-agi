@@ -7,6 +7,9 @@ from .annotation_queues import (
     AutomationRule,
     ItemAnnotation,
     QueueItem,
+    QueueItemNote,
+    QueueItemReviewComment,
+    QueueItemReviewThread,
 )
 from .column_config import ColumnConfig
 from .conversations import Conversation, Message, Node

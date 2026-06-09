@@ -572,12 +572,13 @@ def run_single_prompt_chat(call_execution_id: str):
         except ImportError:
             check_usage = None
 
-        usage_check = check_usage(str(organization.id), BillingEventType.TEXT_CALL)
-        if not usage_check.allowed:
-            call_execution.status = CallExecution.CallStatus.FAILED
-            call_execution.ended_reason = usage_check.reason or "Usage limit exceeded"
-            call_execution.save(update_fields=["status", "ended_reason"])
-            return False
+        if check_usage is not None and BillingEventType is not None:
+            usage_check = check_usage(str(organization.id), BillingEventType.TEXT_CALL)
+            if not usage_check.allowed:
+                call_execution.status = CallExecution.CallStatus.FAILED
+                call_execution.ended_reason = usage_check.reason or "Usage limit exceeded"
+                call_execution.save(update_fields=["status", "ended_reason"])
+                return False
 
         logger.info(
             "prompt_chat_simulation_starting",

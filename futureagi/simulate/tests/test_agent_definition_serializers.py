@@ -446,6 +446,11 @@ class TestAgentDefinitionResponseSerializer:
             "updated_at",
             "model",
             "model_details",
+            "livekit_url",
+            "livekit_api_key",
+            "livekit_agent_name",
+            "livekit_config_json",
+            "livekit_max_concurrency",
         }
         assert set(data.keys()) == expected_fields
 

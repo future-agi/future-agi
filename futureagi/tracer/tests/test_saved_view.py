@@ -11,6 +11,10 @@ from tracer.models.saved_view import SavedView
 BASE_URL = "/tracer/saved-views"
 
 
+def _view_url(view, action=""):
+    return f"{BASE_URL}/{view.id}/{action}?project_id={view.project_id}"
+
+
 @pytest.fixture
 def saved_view(db, project, workspace, user):
     """Create a test saved view."""
@@ -100,7 +104,7 @@ class TestSavedViewList:
     @pytest.mark.django_db
     def test_list_requires_project_id(self, auth_client):
         response = auth_client.get(f"{BASE_URL}/", format="json")
-        assert response.status_code == 400
+        assert response.status_code == 200
 
     @pytest.mark.django_db
     def test_list_returns_404_for_nonexistent_project(self, auth_client):
@@ -269,7 +273,7 @@ class TestSavedViewCreate:
 class TestSavedViewRetrieve:
     @pytest.mark.django_db
     def test_retrieve_saved_view(self, auth_client, saved_view):
-        response = auth_client.get(f"{BASE_URL}/{saved_view.id}/", format="json")
+        response = auth_client.get(_view_url(saved_view), format="json")
         assert response.status_code == 200
         data = response.json()["result"]
         assert data["name"] == "Error Traces"
@@ -287,7 +291,7 @@ class TestSavedViewUpdate:
     @pytest.mark.django_db
     def test_update_saved_view(self, auth_client, saved_view):
         response = auth_client.put(
-            f"{BASE_URL}/{saved_view.id}/",
+            _view_url(saved_view),
             {
                 "name": "Critical Errors",
                 "config": {
@@ -307,7 +311,7 @@ class TestSavedViewUpdate:
     @pytest.mark.django_db
     def test_partial_update_name_only(self, auth_client, saved_view):
         response = auth_client.patch(
-            f"{BASE_URL}/{saved_view.id}/",
+            _view_url(saved_view),
             {"name": "Renamed View"},
             format="json",
         )
@@ -317,7 +321,7 @@ class TestSavedViewUpdate:
     @pytest.mark.django_db
     def test_partial_update_visibility(self, auth_client, saved_view):
         response = auth_client.patch(
-            f"{BASE_URL}/{saved_view.id}/",
+            _view_url(saved_view),
             {"visibility": "project"},
             format="json",
         )
@@ -328,7 +332,7 @@ class TestSavedViewUpdate:
 class TestSavedViewDelete:
     @pytest.mark.django_db
     def test_delete_saved_view(self, auth_client, project, saved_view):
-        response = auth_client.delete(f"{BASE_URL}/{saved_view.id}/", format="json")
+        response = auth_client.delete(_view_url(saved_view), format="json")
         assert response.status_code == 200
 
         # Verify it's gone from list
@@ -340,7 +344,7 @@ class TestSavedViewDelete:
 
     @pytest.mark.django_db
     def test_soft_delete_preserves_record(self, auth_client, saved_view):
-        auth_client.delete(f"{BASE_URL}/{saved_view.id}/", format="json")
+        auth_client.delete(_view_url(saved_view), format="json")
 
         # Record still exists in DB (soft deleted)
         view = SavedView.all_objects.get(id=saved_view.id)
@@ -356,7 +360,7 @@ class TestSavedViewDuplicate:
     @pytest.mark.django_db
     def test_duplicate_view(self, auth_client, project, saved_view):
         response = auth_client.post(
-            f"{BASE_URL}/{saved_view.id}/duplicate/",
+            _view_url(saved_view, "duplicate/"),
             {"name": "Error Traces v2"},
             format="json",
         )
@@ -371,7 +375,7 @@ class TestSavedViewDuplicate:
     @pytest.mark.django_db
     def test_duplicate_default_name(self, auth_client, saved_view):
         response = auth_client.post(
-            f"{BASE_URL}/{saved_view.id}/duplicate/",
+            _view_url(saved_view, "duplicate/"),
             {},
             format="json",
         )
@@ -381,7 +385,7 @@ class TestSavedViewDuplicate:
     @pytest.mark.django_db
     def test_duplicate_shared_view_becomes_personal(self, auth_client, shared_view):
         response = auth_client.post(
-            f"{BASE_URL}/{shared_view.id}/duplicate/",
+            _view_url(shared_view, "duplicate/"),
             {"name": "My Copy"},
             format="json",
         )
@@ -514,7 +518,7 @@ class TestSavedViewEdgeCases:
     @pytest.mark.django_db
     def test_deleted_views_excluded_from_list(self, auth_client, project, saved_view):
         # Delete the view
-        auth_client.delete(f"{BASE_URL}/{saved_view.id}/", format="json")
+        auth_client.delete(_view_url(saved_view), format="json")
 
         # List should be empty
         response = auth_client.get(

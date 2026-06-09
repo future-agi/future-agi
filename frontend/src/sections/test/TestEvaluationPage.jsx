@@ -277,7 +277,7 @@ const TestEvaluationPage = ({
             <Typography fontSize={15} fontWeight={600} mb={0.5}>
               No evaluations added
             </Typography>
-            <Typography fontSize={12} color="text.disabled" mb={2}>
+            <Typography fontSize={12} color="text.secondary" mb={2}>
               Add evaluations to measure test quality
             </Typography>
             <Button
@@ -372,7 +372,7 @@ const TestEvaluationPage = ({
             show={
               executionIds ? executionIds?.length === 0 : selectedCount === 0
             }
-            title="Please select at least one Test Run to run"
+            title="Please select at least one Test Run from grid to run evaluation"
             arrow
             placement="top"
             size="small"
@@ -430,8 +430,8 @@ const TestEvaluationPage = ({
         open={openConfirmDialog}
         onClose={() => setOpenConfirmDialog(false)}
         onConfirm={() => {}}
-        title="Confirm Delete eval"
-        message="Are you sure you want to proceed?"
+        title="Delete Evaluation"
+        content="This will also remove all its results. This action cannot be undone."
         action={
           <LoadingButton
             variant="contained"

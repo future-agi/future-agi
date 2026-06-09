@@ -54,12 +54,13 @@ class TestRecoveryCodes:
         device = UserTOTPDevice.objects.get(user=user)
         decrypted = decrypt_message(device.secret_encrypted)
         totp = pyotp.TOTP(decrypted["secret"])
+        user.refresh_from_db()
+        auth_client.force_authenticate(user=user)
 
         response = auth_client.post(
             "/accounts/2fa/recovery-codes/regenerate/",
             {"code": totp.now()},
         )
-        print("DEBUG BODY:", response.content)
         assert response.status_code == 200
         data = response.json()
         assert len(data["recovery_codes"]) == 10

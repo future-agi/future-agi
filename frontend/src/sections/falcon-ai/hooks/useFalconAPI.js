@@ -1,4 +1,5 @@
 import axiosInstance, { endpoints } from "src/utils/axios";
+import { useQuery } from "@tanstack/react-query";
 
 export async function fetchConversations({
   limit = 20,
@@ -62,6 +63,26 @@ export async function fetchConnectors() {
   return data;
 }
 
+export const falconAIQueryKeys = {
+  connector: (id) => ["falcon-ai", "connector", id],
+};
+
+export function useConnector(id, options = {}) {
+  const { enabled = true, ...queryOptions } = options;
+
+  return useQuery({
+    queryKey: falconAIQueryKeys.connector(id),
+    queryFn: async () => {
+      const { data } = await axiosInstance.get(
+        endpoints.falconAI.connector(id),
+      );
+      return data?.result || data;
+    },
+    enabled: Boolean(id) && enabled,
+    ...queryOptions,
+  });
+}
+
 export async function createConnector(payload) {
   const { data } = await axiosInstance.post(
     endpoints.falconAI.connectors,
@@ -104,10 +125,10 @@ export async function authenticateConnector(id) {
   return data;
 }
 
-export async function updateConnectorTools(id, tools) {
+export async function updateConnectorTools(id, enabledToolNames) {
   const { data } = await axiosInstance.patch(
     endpoints.falconAI.connectorTools(id),
-    { tools },
+    { enabled_tool_names: enabledToolNames },
   );
   return data;
 }

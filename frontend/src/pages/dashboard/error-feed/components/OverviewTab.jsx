@@ -3,12 +3,9 @@ import ApexCharts from "apexcharts";
 import { format } from "date-fns";
 import {
   Box,
-  Button,
   Chip,
-  IconButton,
   Skeleton,
   Stack,
-  Tooltip,
   Typography,
   alpha,
   useTheme,
@@ -18,7 +15,11 @@ import Iconify from "src/components/iconify";
 import AgentGraph from "src/sections/projects/LLMTracing/GraphSection/AgentGraph";
 import { buildTraceGraph } from "src/components/traceDetail/buildTraceGraph";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
+import { useGetProjectDetails } from "src/api/project/project-detail";
+import { PROJECT_SOURCE } from "src/utils/constants";
+import TraceVoicePanel from "./TraceVoicePanel";
 import {
+  DEEP_ANALYSIS_STATUS,
   useErrorFeedDeepAnalysis,
   useErrorFeedOverview,
 } from "src/api/errorFeed/error-feed";
@@ -798,19 +799,24 @@ TraceList.propTypes = {
   onSelect: PropTypes.func.isRequired,
 };
 
-function PatternSummary({ summary }) {
+function PatternSummary({ summary, clusterId }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const insights = summary?.insights ?? [];
 
   if (!insights.length) {
+    // Cluster ID prefix is canonical: E-* = eval-source, S-* = scanner-source.
+    const isEvalCluster = typeof clusterId === "string" && clusterId.startsWith("E-");
+    const message = isEvalCluster
+      ? "No eval scores aggregated yet — this cluster's evaluations are still landing."
+      : "Not enough data yet — waiting for more scanner results.";
     return (
       <Typography
         fontSize="11px"
         color="text.disabled"
         sx={{ py: 2, textAlign: "center" }}
       >
-        Not enough data yet — waiting for more scanner results.
+        {message}
       </Typography>
     );
   }
@@ -822,7 +828,7 @@ function PatternSummary({ summary }) {
 
   return (
     <Box
-      sx={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 1 }}
+      sx={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 1, overflowX: "auto" }}
     >
       {slots.map((insight, i) => (
         <Box
@@ -874,6 +880,7 @@ PatternSummary.propTypes = {
       }),
     ),
   }),
+  clusterId: PropTypes.string,
 };
 
 // ── Agent flow from real span tree ────────────────────────────────────────────
@@ -918,6 +925,7 @@ function TraceAgentFlow({ traceId }) {
   );
 }
 TraceAgentFlow.propTypes = { traceId: PropTypes.string };
+
 
 // ── Trace evidence reel (fail / pass tabs) ───────────────────────────────────
 
@@ -1598,6 +1606,10 @@ export default function OverviewTab({ _error: currentError }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const clusterId = currentError?.clusterId;
+  const projectId = currentError?.projectId;
+  const { data: projectDetail } = useGetProjectDetails(projectId, !!projectId);
+  const isVoiceProject =
+    projectDetail?.source === PROJECT_SOURCE.SIMULATOR;
   const { data: overview, isLoading: isOverviewLoading } =
     useErrorFeedOverview(clusterId);
   const traces = useMemo(
@@ -1639,11 +1651,11 @@ export default function OverviewTab({ _error: currentError }) {
   // currently-selected trace. When status flips to ``done`` we smooth-
   // scroll to the results panel.
   const { data: deepAnalysis } = useErrorFeedDeepAnalysis(clusterId, trace?.id);
-  const deepAnalysisState = deepAnalysis?.status ?? "idle";
+  const deepAnalysisState = deepAnalysis?.status ?? DEEP_ANALYSIS_STATUS.IDLE;
   const deepAnalysisRef = useRef(null);
 
   useEffect(() => {
-    if (deepAnalysisState === "done" && deepAnalysisRef.current) {
+    if (deepAnalysisState === DEEP_ANALYSIS_STATUS.DONE && deepAnalysisRef.current) {
       deepAnalysisRef.current.scrollIntoView({
         behavior: "smooth",
         block: "start",
@@ -1879,16 +1891,19 @@ export default function OverviewTab({ _error: currentError }) {
               icon="mdi:information-outline"
               collapsible
             >
-              <PatternSummary summary={patternSummary} />
+              <PatternSummary summary={patternSummary} clusterId={clusterId} />
             </SectionCard>
 
-            {/* Agent Flow */}
             <SectionCard
-              title="Agent Flow"
-              icon="mdi:graph-outline"
+              title={isVoiceProject ? "Call Recording" : "Agent Flow"}
+              icon={isVoiceProject ? "mdi:phone-outline" : "mdi:graph-outline"}
               collapsible
             >
-              <TraceAgentFlow traceId={trace.id} />
+              {isVoiceProject ? (
+                <TraceVoicePanel traceId={trace.id} projectId={projectId} />
+              ) : (
+                <TraceAgentFlow traceId={trace.id} />
+              )}
             </SectionCard>
 
             {/* Trace Evidence — scanner clusters only (evals don't have scanner steps) */}
@@ -1903,7 +1918,7 @@ export default function OverviewTab({ _error: currentError }) {
             )}
 
             {/* Deep analysis results — shown only when done */}
-            {deepAnalysisState === "done" && (
+            {deepAnalysisState === DEEP_ANALYSIS_STATUS.DONE && (
               <Box ref={deepAnalysisRef}>
                 <Stack direction="row" alignItems="center" gap={1} mb={1.75}>
                   <Box sx={{ flex: 1, height: "1px", bgcolor: "divider" }} />
@@ -1944,5 +1959,6 @@ OverviewTab.propTypes = {
   _error: PropTypes.shape({
     clusterId: PropTypes.string,
     source: PropTypes.string,
+    projectId: PropTypes.string,
   }),
 };

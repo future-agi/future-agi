@@ -11,6 +11,7 @@ from accounts.utils import get_request_organization
 from simulate.models import CallExecution, CallTranscript
 from simulate.serializers.test_execution import CallTranscriptSerializer
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
+from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 
 
 class CallTranscriptView(APIView):
@@ -39,12 +40,10 @@ class CallTranscriptView(APIView):
                 test_execution__organization=user_organization,
             )
 
-            from ee.voice.utils.transcript_roles import SpeakerRoleResolver
-
             # Get all transcripts for this call
             transcripts = CallTranscript.objects.filter(
                 call_execution=call_execution,
-                speaker_role__in=SpeakerRoleResolver.get_displayable_roles(),
+                speaker_role__in=get_displayable_transcript_roles(),
             ).order_by("start_time_ms")
 
             # Serialize the transcripts
@@ -97,9 +96,7 @@ class TestExecutionTranscriptsView(APIView):
             for call_execution in call_executions:
                 # Filter transcripts by speaker role and order by start_time_ms
                 # Since we prefetched, this filtering happens in Python
-                from ee.voice.utils.transcript_roles import SpeakerRoleResolver
-
-                displayable = SpeakerRoleResolver.get_displayable_roles()
+                displayable = get_displayable_transcript_roles()
                 transcripts = [
                     t
                     for t in call_execution.transcripts.all()

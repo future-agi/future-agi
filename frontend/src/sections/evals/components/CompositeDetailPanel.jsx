@@ -21,6 +21,8 @@ import PropTypes from "prop-types";
 import React, { useState } from "react";
 import Iconify from "src/components/iconify";
 import EvalPickerDrawer from "src/sections/common/EvalPicker/EvalPickerDrawer";
+import { useCompositeChildrenSchemas } from "../hooks/useCompositeChildrenKeys";
+import { canonicalEntries } from "src/utils/utils";
 import CompositeAxisTabs, { axisToLockedFilters } from "./CompositeAxisTabs";
 
 const AGGREGATION_OPTIONS = [
@@ -62,12 +64,19 @@ const CompositeDetailPanel = ({
   // overrides without exposing the full composite edit surface
   // (add/remove children, switch axis, rename, etc.).
   weightEditable = false,
-  // Forward dataset context to the inner child picker so the EvalPicker
+  // Forward source context to the inner child picker so the EvalPicker
   // can show its mapping screen for each child. When omitted (e.g. when
-  // editing a composite from /evals/create with no dataset bound), the
+  // editing a composite from /evals/create with no source bound), the
   // child picker falls back to the original direct-add behaviour.
+  // pickerSource carries the parent's source type ("dataset", "task",
+  // "tracing", ...) so children re-use the same test mode instead of
+  // getting forced into DatasetTestMode.
+  pickerSource = "",
   pickerSourceId = "",
+  pickerSourceRowType = null,
   pickerSourceColumns = [],
+  pickerSourceFilters = null,
+  pickerOnFiltersChange = null,
   onNameChange,
   onDescriptionChange,
   onAggregationEnabledChange,
@@ -115,6 +124,14 @@ const CompositeDetailPanel = ({
       setPickerOpen(false);
       return;
     }
+    const params =
+      evalMeta?.params ||
+      evalMeta?.config?.params ||
+      evalMeta?.config?.run_config?.params;
+    const childConfig =
+      params && typeof params === "object" && Object.keys(params).length > 0
+        ? { params }
+        : {};
     const next = [
       ...childrenList,
       {
@@ -136,6 +153,7 @@ const CompositeDetailPanel = ({
         ...(evalMeta.mapping && Object.keys(evalMeta.mapping).length
           ? { mapping: evalMeta.mapping }
           : {}),
+        ...(Object.keys(childConfig).length ? { config: childConfig } : {}),
       },
     ];
     onChildrenChange?.(next);
@@ -159,6 +177,51 @@ const CompositeDetailPanel = ({
       ...childWeights,
       [childId]: parseFloat(value) || 0,
     });
+  };
+
+  // Per-child function_params_schema / config_params_desc, fetched from
+  // the child template detail endpoint. Shares the react-query cache
+  // with useCompositeChildrenUnionKeys, so the only cost is one request
+  // per unique child id across both hooks.
+  const childSchemas = useCompositeChildrenSchemas(childrenList);
+  const paramsInteractive = !disabled && (editable || weightEditable);
+
+  const handleChildParamChange = (childId, paramKey, rawValue) => {
+    const next = childrenList.map((c) => {
+      if (c.child_id !== childId) return c;
+      const prevConfig =
+        c.config && typeof c.config === "object" ? c.config : {};
+      const prevParams =
+        prevConfig.params && typeof prevConfig.params === "object"
+          ? prevConfig.params
+          : {};
+      const nextParams = { ...prevParams };
+      if (rawValue === "" || rawValue === null || rawValue === undefined) {
+        delete nextParams[paramKey];
+      } else {
+        nextParams[paramKey] = rawValue;
+      }
+      const nextConfig = { ...prevConfig };
+      if (Object.keys(nextParams).length > 0) {
+        nextConfig.params = nextParams;
+      } else {
+        delete nextConfig.params;
+      }
+      return { ...c, config: nextConfig };
+    });
+    onChildrenChange?.(next);
+  };
+
+  // Schema entries the user can override on the composite binding.
+  // Variables that are already mapped via the picker are excluded — they
+  // come from the dataset row, not as static params.
+  const visibleParamEntries = (child) => {
+    const schema = childSchemas[child.child_id];
+    if (!schema?.functionParamsSchema) return [];
+    const requiredVars = new Set(schema.requiredKeys || []);
+    return canonicalEntries(schema.functionParamsSchema).filter(
+      ([key]) => !requiredVars.has(key),
+    );
   };
 
   return (
@@ -348,87 +411,149 @@ const CompositeDetailPanel = ({
           Children ({childrenList.length})
         </Typography>
         <Stack spacing={1}>
-          {childrenList.map((child) => (
-            <Box
-              key={child.child_id}
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                p: 1.25,
-                borderRadius: 1,
-                border: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <Typography
-                variant="body2"
+          {childrenList.map((child) => {
+            const paramEntries = visibleParamEntries(child);
+            const childParams =
+              (child?.config && typeof child.config === "object"
+                ? child.config.params
+                : null) || {};
+            const schemaDesc =
+              childSchemas[child.child_id]?.configParamsDesc || {};
+            return (
+              <Box
+                key={child.child_id}
                 sx={{
-                  color: "primary.main",
-                  fontWeight: 600,
-                  minWidth: 24,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 1,
+                  p: 1.25,
+                  borderRadius: 1,
+                  border: "1px solid",
+                  borderColor: "divider",
                 }}
               >
-                #{child.order + 1}
-              </Typography>
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography
-                  variant="body2"
+                <Box
                   sx={{
-                    fontWeight: 600,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
                   }}
                 >
-                  {child.child_name}
-                </Typography>
-                {child.eval_type && (
-                  <Typography variant="caption" color="text.secondary">
-                    {child.eval_type}
-                    {child.pinned_version_number != null
-                      ? ` · v${child.pinned_version_number}`
-                      : ""}
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: "primary.main",
+                      fontWeight: 600,
+                      minWidth: 24,
+                    }}
+                  >
+                    #{child.order + 1}
                   </Typography>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontWeight: 600,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {child.child_name}
+                    </Typography>
+                    {child.eval_type && (
+                      <Typography variant="caption" color="text.secondary">
+                        {child.eval_type}
+                        {child.pinned_version_number != null
+                          ? ` · v${child.pinned_version_number}`
+                          : ""}
+                      </Typography>
+                    )}
+                  </Box>
+                  {showWeightInput && (
+                    <TextField
+                      size="small"
+                      type="number"
+                      label="Weight"
+                      inputProps={{ min: 0, step: 0.1 }}
+                      value={
+                        childWeights[child.child_id] ??
+                        (child.weight != null ? child.weight : 1.0)
+                      }
+                      onChange={(e) =>
+                        handleWeightChange(child.child_id, e.target.value)
+                      }
+                      disabled={!weightsInteractive}
+                      sx={{ width: 90 }}
+                    />
+                  )}
+                  {!showWeightInput &&
+                    child.weight != null &&
+                    child.weight !== 1 && (
+                      <Chip
+                        size="small"
+                        label={`weight: ${child.weight}`}
+                        variant="outlined"
+                      />
+                    )}
+                  {editable && (
+                    <IconButton
+                      size="small"
+                      onClick={() => handleRemoveChild(child.child_id)}
+                      disabled={disabled}
+                    >
+                      <Iconify icon="solar:trash-bin-trash-bold" width={16} />
+                    </IconButton>
+                  )}
+                </Box>
+                {paramEntries.length > 0 && (
+                  <Box
+                    sx={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 0.75,
+                      pl: 4,
+                      pr: 0.5,
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ fontWeight: 600 }}
+                    >
+                      Parameters
+                    </Typography>
+                    {paramEntries.map(([key, schema]) => {
+                      const isNumeric =
+                        schema?.type === "integer" ||
+                        schema?.type === "number";
+                      const value = childParams[key];
+                      return (
+                        <TextField
+                          key={key}
+                          size="small"
+                          type={isNumeric ? "number" : "text"}
+                          label={key}
+                          placeholder={`Enter ${key}`}
+                          required={Boolean(schema?.required)}
+                          helperText={schemaDesc[key]}
+                          value={value ?? ""}
+                          onChange={(e) =>
+                            handleChildParamChange(
+                              child.child_id,
+                              key,
+                              e.target.value,
+                            )
+                          }
+                          disabled={!paramsInteractive}
+                        />
+                      );
+                    })}
+                  </Box>
                 )}
               </Box>
-              {showWeightInput && (
-                <TextField
-                  size="small"
-                  type="number"
-                  label="Weight"
-                  inputProps={{ min: 0, step: 0.1 }}
-                  value={
-                    childWeights[child.child_id] ??
-                    (child.weight != null ? child.weight : 1.0)
-                  }
-                  onChange={(e) =>
-                    handleWeightChange(child.child_id, e.target.value)
-                  }
-                  disabled={!weightsInteractive}
-                  sx={{ width: 90 }}
-                />
-              )}
-              {!showWeightInput &&
-                child.weight != null &&
-                child.weight !== 1 && (
-                  <Chip
-                    size="small"
-                    label={`weight: ${child.weight}`}
-                    variant="outlined"
-                  />
-                )}
-              {editable && (
-                <IconButton
-                  size="small"
-                  onClick={() => handleRemoveChild(child.child_id)}
-                  disabled={disabled}
-                >
-                  <Iconify icon="solar:trash-bin-trash-bold" width={16} />
-                </IconButton>
-              )}
-            </Box>
-          ))}
+            );
+          })}
 
           {editable && (
             <Button
@@ -463,9 +588,12 @@ const CompositeDetailPanel = ({
           // skipConfig=true bypassed all of that and added the child
           // straight to the list with template defaults.
           skipConfig={false}
-          source={pickerSourceId ? "dataset" : "composite"}
+          source={pickerSource || (pickerSourceId ? "dataset" : "composite")}
           sourceId={pickerSourceId || ""}
+          sourceRowType={pickerSourceRowType}
           sourceColumns={pickerSourceColumns || []}
+          sourceFilters={pickerSourceFilters}
+          onFiltersChange={pickerOnFiltersChange}
           lockedFilters={axisToLockedFilters(compositeChildAxis)}
         />
       )}
@@ -520,8 +648,12 @@ CompositeDetailPanel.propTypes = {
   editable: PropTypes.bool,
   disabled: PropTypes.bool,
   weightEditable: PropTypes.bool,
+  pickerSource: PropTypes.string,
   pickerSourceId: PropTypes.string,
+  pickerSourceRowType: PropTypes.string,
   pickerSourceColumns: PropTypes.array,
+  pickerSourceFilters: PropTypes.array,
+  pickerOnFiltersChange: PropTypes.func,
   onNameChange: PropTypes.func,
   onDescriptionChange: PropTypes.func,
   onAggregationEnabledChange: PropTypes.func,

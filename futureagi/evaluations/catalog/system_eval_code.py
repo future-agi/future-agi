@@ -614,6 +614,56 @@ def evaluate(real_images, fake_images, **kwargs):
 '''
 
 
+DEAD_AIR_DETECTION = '''def evaluate(input, output, expected, context, **kwargs):
+    """Detect dead air (silence) in an audio conversation.
+
+    Audio decoding + RMS / silence-gap computation runs in the API-server
+    preprocessor (librosa is not in the sandbox allowlist and the sandbox
+    has no network access). This body just reads pre-computed numbers and
+    applies user-tunable thresholds.
+
+    Kwargs from preprocessor:
+        _dead_air_percentage: float, % of audio below the silence threshold
+        _dead_air_max_gap_ms: float, longest single silent run in ms
+        _dead_air_duration_sec: float, total audio duration
+        _dead_air_error: str, populated if preprocessing failed
+
+    User-tunable kwargs (see eval template config):
+        dead_air_threshold: float, max acceptable % of dead air (default 20.0)
+        gap_threshold_ms: float, max acceptable single silence gap in ms (default 3000)
+    """
+    err = kwargs.get("_dead_air_error")
+    if err:
+        return {"score": 0.0, "reason": f"Dead air analysis unavailable: {err}"}
+
+    dead_air_pct = kwargs.get("_dead_air_percentage")
+    max_gap_ms = kwargs.get("_dead_air_max_gap_ms")
+    if dead_air_pct is None or max_gap_ms is None:
+        return {"score": 0.0, "reason": "Dead air analysis unavailable: preprocessing did not run"}
+
+    try:
+        dead_air_threshold = float(kwargs.get("dead_air_threshold", 20.0))
+    except (TypeError, ValueError):
+        dead_air_threshold = 20.0
+    try:
+        gap_threshold_ms = float(kwargs.get("gap_threshold_ms", 3000.0))
+    except (TypeError, ValueError):
+        gap_threshold_ms = 3000.0
+
+    dead_air_passed = dead_air_pct <= dead_air_threshold
+    gap_passed = max_gap_ms <= gap_threshold_ms
+    passed = dead_air_passed and gap_passed
+
+    reason = (
+        f"Dead air: {dead_air_pct:.1f}% "
+        f"({'pass' if dead_air_passed else 'fail'}, threshold {dead_air_threshold:.1f}%). "
+        f"Max silence gap: {max_gap_ms:.0f}ms "
+        f"({'pass' if gap_passed else 'fail'}, threshold {gap_threshold_ms:.0f}ms)."
+    )
+    return {"score": 1.0 if passed else 0.0, "reason": reason}
+'''
+
+
 # =============================================================================
 # Registry: eval_name → code string
 # =============================================================================
@@ -653,4 +703,5 @@ CODE_REGISTRY = {
     "answer_similarity": ANSWER_SIMILARITY,
     "clip_score": CLIP_SCORE,
     "fid_score": FID_SCORE,
+    "dead_air_detection": DEAD_AIR_DETECTION,
 }

@@ -10,6 +10,8 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import CellMarkdown from "src/sections/common/CellMarkdown";
 import PropTypes from "prop-types";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
@@ -23,6 +25,11 @@ import { useTaskUsageChart, useTaskUsageLogs } from "../hooks/useTaskUsage";
 import UsageChart from "src/sections/evals/components/UsageChart";
 import { JsonValueTree } from "src/sections/evals/components/DatasetTestMode";
 import { classifyTaskError } from "src/sections/common/EvalsTasks/classifyTaskError";
+import PartialInputWarningDetails, {
+  PARTIAL_INPUT_WARNING_TYPE,
+} from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
+import { isEditableElement } from "src/utils/keyboardUtils";
+import { parsePythonReprIfNeeded } from "src/sections/develop-detail/DataTab/common";
 
 // ── Inline stat ──
 const StatPill = ({ label, value, color }) => (
@@ -138,29 +145,72 @@ const useColumns = () =>
         accessorKey: "score",
         header: "Score",
         size: 80,
-        cell: ({ getValue }) => <ScoreCell value={getValue()} />,
+        cell: ({ getValue, row }) => {
+          const score = getValue();
+          const rawResult = row.original?.result;
+          let resultScore = null;
+          // Only parse the result when there's no direct score to fall back on.
+          if (score == null && rawResult != null) {
+            const parsed = parsePythonReprIfNeeded(rawResult);
+            resultScore =
+              parsed && typeof parsed === "object" && !Array.isArray(parsed)
+                ? parsed.score
+                : null;
+          }
+          return <ScoreCell value={score ?? resultScore ?? null} />;
+        },
       },
       {
         id: "result",
         accessorKey: "result",
         header: "Result",
         size: 100,
-        cell: ({ getValue }) => {
-          const v = getValue();
-          if (!v) return null;
+        cell: ({ getValue, row }) => {
+          const raw = getValue();
+          if (!raw) return null;
+          const parsed = parsePythonReprIfNeeded(raw);
+          const v =
+            parsed && typeof parsed === "object" && !Array.isArray(parsed)
+              ? parsed.choice ?? parsed.score ?? raw
+              : parsed;
           const isPassed = v === "Passed" || v === "Pass";
           const isFailed = v === "Failed" || v === "Fail";
           const isError = v === "Error";
+          const warnings = row.original.warnings || [];
+          const partialWarning = warnings.find(
+            (w) => w?.type === PARTIAL_INPUT_WARNING_TYPE,
+          );
           return (
-            <Chip
-              label={v}
-              size="small"
-              color={
-                isPassed ? "success" : isFailed || isError ? "error" : "default"
-              }
-              variant="outlined"
-              sx={{ fontSize: "11px", height: 20 }}
-            />
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <Chip
+                label={v}
+                size="small"
+                color={
+                  isPassed
+                    ? "success"
+                    : isFailed || isError
+                      ? "error"
+                      : "default"
+                }
+                variant="outlined"
+                sx={{ fontSize: "11px", height: 20 }}
+              />
+              {partialWarning && (
+                <Tooltip
+                  title={
+                    partialWarning.message ||
+                    "Eval ran with some inputs empty. Result may be less reliable. Ignore if this is intentional."
+                  }
+                  arrow
+                >
+                  <Iconify
+                    icon="solar:danger-triangle-bold"
+                    width={14}
+                    sx={{ color: "warning.main", cursor: "help" }}
+                  />
+                </Tooltip>
+              )}
+            </Box>
           );
         },
       },
@@ -288,9 +338,25 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
   // so users can drill into nested keys (e.g. `prompt.messages.0.content`)
   // instead of seeing "[object Object]". Strings, numbers, booleans, and
   // null still render as plain text.
-  const isJsonValue =
-    !chip && value !== null && value !== undefined && typeof value === "object";
+  
 
+  const isResultRow =
+    typeof label === "string" && label.trim().toLowerCase() === "result";
+  // The result may arrive as a string like "{'score': 0.0, 'choice': 'Low'}"
+  // — parse it, then surface the choice/score rather than the literal text.
+  const parsedValue = isResultRow ? parsePythonReprIfNeeded(value) : value;
+  const resolvedValue =
+    isResultRow &&
+    parsedValue &&
+    typeof parsedValue === "object" &&
+    !Array.isArray(parsedValue)
+      ? parsedValue.choice ?? parsedValue.score ?? parsedValue
+      : parsedValue;
+  const isJsonValue =
+    !chip &&
+    resolvedValue !== null &&
+    resolvedValue !== undefined &&
+    typeof resolvedValue === "object";
   return (
     <Box
       sx={{
@@ -301,24 +367,40 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
         borderColor: "divider",
       }}
     >
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ width: 90, flexShrink: 0, pt: 0.25 }}
+      <CustomTooltip
+        show
+        title={label}
+        placement="top-start"
+        enterDelay={300}
+        size="small"
       >
-        {label}
-      </Typography>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{
+            width: 90,
+            flexShrink: 0,
+            pt: 0.25,
+            pr: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </Typography>
+      </CustomTooltip>
       <Box sx={{ flex: 1, minWidth: 0 }}>
         {chip ? (
           <Chip
-            label={value}
+            label={resolvedValue}
             size="small"
             color={chipColor || "default"}
             variant="outlined"
             sx={{ fontSize: "11px", height: 20 }}
           />
         ) : isJsonValue ? (
-          <ExpandableJson value={value} />
+          <ExpandableJson value={resolvedValue} />
         ) : (
           <Typography
             variant="body2"
@@ -329,7 +411,7 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
               wordBreak: "break-word",
             }}
           >
-            {value}
+            {resolvedValue}
           </Typography>
         )}
       </Box>
@@ -543,12 +625,25 @@ ErrorDetails.propTypes = {
   rawError: PropTypes.string,
 };
 
+
+PartialInputWarningDetails.propTypes = {
+  warnings: PropTypes.arrayOf(PropTypes.object),
+};
+
 // ── Detail panel content (Formatted / JSON toggle) ──
 const DetailPanelContent = ({ row, isDark }) => {
   const [viewMode, setViewMode] = useState("formatted");
   const detail = row.detail || {};
+  const warnings = row.warnings || detail.warnings || [];
   const json = useMemo(() => JSON.stringify(detail, null, 2), [detail]);
-
+  const parsedResult = parsePythonReprIfNeeded(row.result);
+  const resultScore =
+    parsedResult &&
+    typeof parsedResult === "object" &&
+    !Array.isArray(parsedResult)
+      ? parsedResult.score
+      : null;
+  const effectiveScore = row.score ?? resultScore ?? null;
   return (
     <Box
       sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
@@ -626,17 +721,17 @@ const DetailPanelContent = ({ row, isDark }) => {
               <DetailRow
                 label="Score"
                 value={
-                  row.score != null
-                    ? typeof row.score === "number"
-                      ? row.score.toFixed(2)
-                      : String(row.score)
+                  effectiveScore != null
+                    ? typeof effectiveScore === "number"
+                      ? effectiveScore.toFixed(2)
+                      : String(effectiveScore)
                     : "—"
                 }
                 color={
-                  typeof row.score === "number"
-                    ? row.score >= 0.7
+                  typeof effectiveScore === "number"
+                    ? effectiveScore >= 0.7
                       ? "success.main"
-                      : row.score >= 0.3
+                      : effectiveScore >= 0.3
                         ? "warning.main"
                         : "error.main"
                     : undefined
@@ -670,20 +765,51 @@ const DetailPanelContent = ({ row, isDark }) => {
                       : "default"
                 }
               />
+              <PartialInputWarningDetails warnings={warnings} />
               {detail.eval_name && (
                 <DetailRow label="Eval" value={detail.eval_name} />
               )}
               {detail.model && (
                 <DetailRow label="Model" value={detail.model} mono />
               )}
-              {detail.span_name && (
-                <DetailRow label="Span" value={detail.span_name} mono />
-              )}
-              {detail.span_id && (
-                <DetailRow label="Span ID" value={detail.span_id} mono />
-              )}
-              {detail.trace_id && (
-                <DetailRow label="Trace ID" value={detail.trace_id} mono />
+
+              {detail.target_type === "session" ? (
+                <>
+                  {detail.session_name && (
+                    <DetailRow
+                      label="Session"
+                      value={detail.session_name}
+                      mono
+                    />
+                  )}
+                  {detail.session_id && (
+                    <DetailRow
+                      label="Session ID"
+                      value={detail.session_id}
+                      mono
+                    />
+                  )}
+                </>
+              ) : (
+                <>
+                  {detail.target_type === "trace" && (
+                    <DetailRow
+                      label="Type"
+                      value="Trace eval"
+                      chip
+                      chipColor="info"
+                    />
+                  )}
+                  {detail.span_name && (
+                    <DetailRow label="Span" value={detail.span_name} mono />
+                  )}
+                  {detail.span_id && (
+                    <DetailRow label="Span ID" value={detail.span_id} mono />
+                  )}
+                  {detail.trace_id && (
+                    <DetailRow label="Trace ID" value={detail.trace_id} mono />
+                  )}
+                </>
               )}
               {row.created_at && (
                 <DetailRow
@@ -748,17 +874,15 @@ const DetailPanelContent = ({ row, isDark }) => {
                     >
                       Explanation
                     </Typography>
-                    <Typography
-                      variant="body2"
+                    <Box
                       sx={{
                         fontSize: "12px",
                         color: "text.secondary",
                         lineHeight: 1.6,
-                        whiteSpace: "pre-wrap",
                       }}
                     >
-                      {row.reason}
-                    </Typography>
+                      <CellMarkdown spacing={0} text={row.reason} />
+                    </Box>
                   </>
                 )
               )}
@@ -800,8 +924,8 @@ const TaskUsageTab = ({ taskId }) => {
   const stats = chartData?.stats || {};
   const chart = chartData?.chart || [];
   const evalsList = chartData?.evals || [];
-  const logItems = logsData?.items || [];
-  const totalLogs = logsData?.total || 0;
+  const logItems = logsData?.results || [];
+  const totalLogs = logsData?.count || 0;
   // Backend may have widened the window to "all time" if the requested
   // period excluded every run. Surface that to the user as a hint so
   // they don't think the date filter is broken.
@@ -847,6 +971,8 @@ const TaskUsageTab = ({ taskId }) => {
   useEffect(() => {
     if (detailIndex === null) return undefined;
     const handler = (e) => {
+      if (e.repeat) return;
+      if (isEditableElement(e)) return;
       if (e.key === "k") {
         e.preventDefault();
         setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));
@@ -1100,7 +1226,7 @@ const TaskUsageTab = ({ taskId }) => {
               height. Without it the DataGrid renders every row at
               natural height and the table grows past the viewport,
               hiding the pagination footer and breaking internal scroll. */}
-          <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
+          <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex" }}>
             <DataTable
               columns={columns}
               data={visibleLogs}

@@ -413,8 +413,11 @@ ANYMAIL = {
         "MAILGUN_SENDER_DOMAIN"
     ),  # your Mailgun domain, if needed
 }
-EMAIL_BACKEND = (
-    "anymail.backends.mailgun.EmailBackend"  # or sendgrid.EmailBackend, or...
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "anymail.backends.mailgun.EmailBackend"
+    if os.getenv("MAILGUN_API_KEY")
+    else "django.core.mail.backends.console.EmailBackend",
 )
 DEFAULT_FROM_EMAIL = os.getenv(
     "DEFAULT_FROM_EMAIL"
@@ -607,7 +610,8 @@ UPLOAD_BUCKET_NAME = os.getenv(
     "UPLOAD_BUCKET_NAME", "fi-content-dev" if _is_local else "fi-content"
 )
 
-# Storage backend: "s3" (default/US) or "gcs" (EU via S3-interop HMAC keys)
+# Storage backend: "s3" (default/US), "gcs" (EU via S3-interop HMAC keys),
+# or "minio" (self-hosted OSS local stack)
 STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "s3")
 GCS_HMAC_ACCESS_KEY = os.getenv("GCS_HMAC_ACCESS_KEY", "")
 GCS_HMAC_SECRET_KEY = os.getenv("GCS_HMAC_SECRET_KEY", "")

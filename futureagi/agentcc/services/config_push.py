@@ -3,6 +3,8 @@ Config Push Service — pushes per-org configs from Django to the Go gateway.
 Called when org configs are created, activated, or deleted.
 """
 
+import copy
+
 import structlog
 from django.conf import settings as django_settings
 
@@ -49,6 +51,32 @@ _RULE_PROVIDER_DEFAULTS = {
     "tool-permissions": "tool_permissions",
     "mcp-security": "mcp_security",
 }
+
+
+def _normalize_eval_ids(cfg):
+    """
+    Normalize futureagi eval id config so the gateway receives both shapes:
+    - eval_ids: ["76", "15", "22"] — array, what the new gateway iterates
+    - eval_id: "76" — first id, fallback for older gateway builds
+
+    Accepts either input shape. No-op if neither is present.
+    """
+    if not isinstance(cfg, dict):
+        return
+    raw = cfg.get("eval_ids")
+    if raw is None and "eval_id" in cfg:
+        raw = [cfg.get("eval_id")]
+    if raw is None:
+        return
+    if not isinstance(raw, (list, tuple)):
+        raw = [raw]
+    eval_ids = [str(i) for i in raw if i not in (None, "")]
+    if eval_ids:
+        cfg["eval_ids"] = eval_ids
+        cfg["eval_id"] = eval_ids[0]
+    else:
+        cfg.pop("eval_ids", None)
+        cfg.pop("eval_id", None)
 
 
 def _inject_guardrail_credentials(checks):
@@ -119,10 +147,16 @@ def _transform_guardrails(guardrails_data, org_id=None):
 
     Django stores: {"rules": [{"name": "pii-detector", "action": "block", ...}], "enabled": true}
     Gateway expects: {"checks": {"pii-detection": {"enabled": true, "action": "block", ...}}}
+
+    Deep-copies the input because downstream helpers (_inject_guardrail_credentials,
+    _inject_fi_credentials) mutate sub-dicts in place — without the copy those
+    mutations would leak back into the caller's Django model instance and the
+    next AgentccOrgConfigSerializer(config).data would render decrypted secrets.
     """
     if not guardrails_data:
         return guardrails_data
 
+    guardrails_data = copy.deepcopy(guardrails_data)
     raw_checks = guardrails_data.get("checks")
     rules = guardrails_data.get("rules")
 
@@ -138,10 +172,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
             cfg = dict(rule.get("config") or {})
             if rule_name in _RULE_PROVIDER_DEFAULTS and "provider" not in cfg:
                 cfg["provider"] = _RULE_PROVIDER_DEFAULTS[rule_name]
-            if "eval_ids" in cfg and "eval_id" not in cfg:
-                ids = cfg.pop("eval_ids", [])
-                if ids:
-                    cfg["eval_id"] = str(ids[0])
+            _normalize_eval_ids(cfg)
             checks[registry_name] = {
                 "enabled": rule.get("enabled", True),
                 "action": rule.get("action", "block"),
@@ -176,14 +207,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
                 else cfg
             )
             inner = clean_cfg.get("config") if isinstance(clean_cfg, dict) else None
-            if (
-                isinstance(inner, dict)
-                and "eval_ids" in inner
-                and "eval_id" not in inner
-            ):
-                ids = inner.pop("eval_ids", [])
-                if ids:
-                    inner["eval_id"] = str(ids[0])
+            _normalize_eval_ids(inner)
             mapped[registry_name] = clean_cfg
         if org_id:
             _inject_fi_credentials(mapped, org_id)
@@ -203,10 +227,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
         cfg = dict(rule.get("config") or {})
         if rule_name in _RULE_PROVIDER_DEFAULTS and "provider" not in cfg:
             cfg["provider"] = _RULE_PROVIDER_DEFAULTS[rule_name]
-        if "eval_ids" in cfg and "eval_id" not in cfg:
-            ids = cfg.pop("eval_ids", [])
-            if ids:
-                cfg["eval_id"] = str(ids[0])
+        _normalize_eval_ids(cfg)
         checks[registry_name] = {
             "enabled": rule.get("enabled", True),
             "action": rule.get("action", "block"),
@@ -230,13 +251,29 @@ def _transform_guardrails(guardrails_data, org_id=None):
     return result
 
 
+def _normalize_url(url):
+    """Strip trailing slash and lowercase scheme+host for comparison."""
+    if not url or not isinstance(url, str):
+        return ""
+    return url.strip().rstrip("/").lower()
+
+
 def _inject_fi_credentials(checks, org_id):
     """
-    Auto-inject the org's FI platform API credentials into futureagi-eval config.
-    Since FutureAGI IS the platform, the org's own api_key/secret_key are already
-    stored in the OrgApiKey model — no need for users to configure them manually.
+    Inject the org's FI platform credentials into futureagi-eval config.
+
+    Behavior:
+    - base_url missing → fill with django_settings.BASE_URL, force-inject the
+      org's OrgApiKey for api_key/secret_key. This is the common case: the
+      guardrail is calling its own platform, and the user shouldn't have to
+      know their own platform's API key.
+    - base_url present and matches this platform's BASE_URL → same as above,
+      force-inject (heals user-typed wrong keys for the local platform).
+    - base_url points at a *different* environment (e.g. local gateway
+      explicitly targeting https://dev.api.futureagi.com) → respect whatever
+      api_key/secret_key the user provided. Local keys would 401 against the
+      remote env, so auto-injecting would break this case.
     """
-    # Check both possible names (pre and post registry mapping)
     fi_check = checks.get("futureagi-eval")
     if fi_check is None:
         return
@@ -246,8 +283,19 @@ def _inject_fi_credentials(checks, org_id):
 
     cfg = fi_check.get("config") or {}
 
-    # Only inject if not already set (don't overwrite explicit config)
-    if cfg.get("api_key") and cfg.get("secret_key"):
+    cfg.setdefault("call_type", "protect")
+    cfg.setdefault("base_url", django_settings.BASE_URL)
+    fi_check["config"] = cfg
+
+    targets_local_platform = _normalize_url(cfg.get("base_url")) == _normalize_url(
+        django_settings.BASE_URL
+    )
+    if not targets_local_platform:
+        logger.info(
+            "fi_credentials_skipped_cross_env",
+            org_id=str(org_id),
+            base_url=cfg.get("base_url"),
+        )
         return
 
     try:
@@ -260,11 +308,8 @@ def _inject_fi_credentials(checks, org_id):
             deleted=False,
         ).first()
         if org_key:
-            cfg.setdefault("api_key", org_key.api_key)
-            cfg.setdefault("secret_key", org_key.secret_key)
-            cfg.setdefault("base_url", django_settings.BASE_URL)
-            cfg.setdefault("call_type", "protect")
-            fi_check["config"] = cfg
+            cfg["api_key"] = org_key.api_key
+            cfg["secret_key"] = org_key.secret_key
             logger.info(
                 "fi_credentials_injected",
                 org_id=str(org_id),

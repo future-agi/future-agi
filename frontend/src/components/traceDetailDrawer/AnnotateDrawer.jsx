@@ -330,7 +330,7 @@ const AnnotateDrawer = ({
                 }}
               >
                 <Link
-                  href="https://docs.futureagi.com/docs/tracing/manual/annotating-using-api"
+                  href="https://docs.futureagi.com/docs/observe/features/manual-tracing/annotating-using-api"
                   underline="always"
                   color="blue.500"
                   target="_blank"

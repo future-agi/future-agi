@@ -1,6 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
+// Mirrors `DeepAnalysisResponse.status` on the backend
+// (futureagi/tracer/types/feed_types.py:DeepAnalysisResponse).
+export const DEEP_ANALYSIS_STATUS = Object.freeze({
+  IDLE: "idle",
+  RUNNING: "running",
+  DONE: "done",
+  FAILED: "failed",
+});
+
 const KEYS = {
   list: (params) => ["errorFeed", "list", params],
   stats: (params) => ["errorFeed", "stats", params],
@@ -15,7 +24,7 @@ const KEYS = {
     clusterId,
     traceId,
   ],
-  linearTeams: ["errorFeed", "linearTeams"],
+  linearTeams: (orgId) => ["errorFeed", "linearTeams", orgId ?? null],
   projects: ["errorFeed", "projects"],
 };
 
@@ -180,7 +189,13 @@ export const useErrorFeedDeepAnalysis = (clusterId, traceId, options = {}) => {
       }),
     select: (res) => res?.data?.result,
     enabled,
-    refetchInterval: (data) => (data?.status === "running" ? 5000 : false),
+    // React Query v5 passes the Query instance to this callback, not the
+    // selected data. Read the running flag off `query.state.data` (the raw
+    // axios response — `select` doesn't apply here).
+    refetchInterval: (query) =>
+      query.state.data?.data?.result?.status === DEEP_ANALYSIS_STATUS.RUNNING
+        ? 5000
+        : false,
     refetchIntervalInBackground: true,
   });
 };
@@ -205,7 +220,38 @@ export const useRunDeepAnalysis = () => {
         trace_id: traceId,
         force,
       }),
-    onSuccess: (_data, variables) => {
+    onSuccess: (res, variables) => {
+      const dispatched = res?.data?.result;
+      if (dispatched?.status) {
+        const key = KEYS.rootCause(variables.clusterId, variables.traceId);
+        const previous = queryClient.getQueryData(key);
+        const previousResult = previous?.data?.result;
+        const traceIdValue =
+          dispatched.trace_id ?? previousResult?.trace_id ?? null;
+        const wipeOnRunning =
+          dispatched.status === DEEP_ANALYSIS_STATUS.RUNNING
+            ? {
+                root_causes: [],
+                rootCauses: [],
+                recommendations: [],
+                immediate_fix: null,
+                immediateFix: null,
+              }
+            : {};
+        queryClient.setQueryData(key, {
+          ...(previous ?? {}),
+          data: {
+            ...(previous?.data ?? {}),
+            result: {
+              ...(previousResult ?? {}),
+              status: dispatched.status,
+              trace_id: traceIdValue,
+              traceId: traceIdValue,
+              ...wipeOnRunning,
+            },
+          },
+        });
+      }
       queryClient.invalidateQueries({
         queryKey: KEYS.rootCause(variables.clusterId, variables.traceId),
       });
@@ -216,13 +262,19 @@ export const useRunDeepAnalysis = () => {
 /**
  * Fetch Linear teams for the team picker dropdown.
  * Returns { connected, teams } — connected=false if no Linear integration.
+ *
+ * The query key is scoped by organization so switching workspaces doesn't
+ * serve the previous workspace's connection state. Connect/update/delete
+ * from the integrations page cross-invalidates this key — see
+ * `invalidateCrossFeatureIntegrationCaches` in `api/integrations`.
  */
-export const useLinearTeams = (options = {}) => {
+export const useLinearTeams = (orgId, options = {}) => {
   return useQuery({
     ...options,
-    queryKey: KEYS.linearTeams,
+    queryKey: KEYS.linearTeams(orgId),
     queryFn: () => axios.get(endpoints.errorFeed.linearTeams),
     select: (res) => res?.data?.result,
+    enabled: !!orgId && (options.enabled ?? true),
     staleTime: 30 * 1000,
   });
 };
@@ -235,9 +287,10 @@ export const useCreateLinearIssue = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ clusterId, teamId, title, description, priority }) =>
+    mutationFn: ({ clusterId, teamId, traceId, title, description, priority }) =>
       axios.post(endpoints.errorFeed.createLinearIssue(clusterId), {
         team_id: teamId,
+        ...(traceId && { trace_id: traceId }),
         ...(title && { title }),
         ...(description && { description }),
         ...(priority !== undefined && { priority }),

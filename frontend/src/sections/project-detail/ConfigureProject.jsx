@@ -230,13 +230,13 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                         fontSize={"12px"}
                         typography={"s2_1"}
                         fontWeight={"fontWeightRegular"}
-                        color={"text.disabled"}
+                        color={"text.secondary"}
                       >
                         Defines the percentage of data processed for agent
                         compass
                       </Typography>
                       <a
-                        href="https://docs.futureagi.com/docs/error-feed/features/using-error-feed/#sampling-rate"
+                        href="https://docs.futureagi.com/docs/error-feed/features/sampling"
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ textDecoration: "none" }}

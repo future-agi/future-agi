@@ -69,7 +69,7 @@ export function useGroundTruthStatus(gtId, { enabled = true } = {}) {
     enabled: !!gtId && enabled,
     refetchInterval: (data) => {
       // Poll every 3s while processing
-      if (data?.embedding_status === "processing") return 3000;
+      if (data?.state?.data?.embedding_status === "processing") return 3000;
       return false;
     },
   });

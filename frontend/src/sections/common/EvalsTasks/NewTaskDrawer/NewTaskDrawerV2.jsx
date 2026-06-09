@@ -39,7 +39,7 @@ import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectFie
 import { useNavigate } from "react-router";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import { objectCamelToSnake } from "src/utils/utils";
-import { EvalPickerDrawer } from "../../EvalPicker";
+import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
 
 // ── Configured Eval Card ──
 
@@ -138,6 +138,7 @@ const NewTaskDrawerV2 = ({
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(sub(new Date(), { months: 6 })),
       endDate: formatDate(endOfToday()),
       runType: "historical",
@@ -151,6 +152,7 @@ const NewTaskDrawerV2 = ({
   }, [onClose, reset]);
 
   const project = useWatch({ control, name: "project" });
+  const rowType = useWatch({ control, name: "rowType" }) || "spans";
   const isProjectSelected = !!project;
 
   const {
@@ -194,6 +196,7 @@ const NewTaskDrawerV2 = ({
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(sub(new Date(), { months: 6 })),
       endDate: formatDate(endOfToday()),
       runType: "historical",
@@ -220,6 +223,7 @@ const NewTaskDrawerV2 = ({
   const onSubmit = (data) => {
     const {
       runType,
+      rowType,
       spansLimit,
       samplingRate,
       evalsDetails,
@@ -230,6 +234,7 @@ const NewTaskDrawerV2 = ({
     const payload = {
       ...restData,
       run_type: runType,
+      row_type: rowType,
       ...(runType !== "continuous" && spansLimit
         ? { spans_limit: spansLimit }
         : {}),
@@ -243,11 +248,12 @@ const NewTaskDrawerV2 = ({
 
   // Fetch eval attributes for variable mapping
   const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, filtersWithoutDate],
+    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
     queryFn: () =>
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
           project_id: project,
+          row_type: rowType,
           filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
         },
       }),
@@ -279,6 +285,8 @@ const NewTaskDrawerV2 = ({
     async (evalConfig) => {
       const tplId = evalConfig.templateId || evalConfig.template_id;
       const existingId = evalConfig.id;
+      // Use serializeEvalConfig so function-params land at config.params.
+      const serialized = serializeEvalConfig(evalConfig);
       try {
         let id;
         if (existingId) {
@@ -289,7 +297,7 @@ const NewTaskDrawerV2 = ({
               name: evalConfig.name,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: evalConfig.config || {},
+              config: serialized.config,
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
           );
@@ -303,7 +311,7 @@ const NewTaskDrawerV2 = ({
               name: evalConfig.name,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: evalConfig.config || {},
+              config: serialized.config,
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
           );
@@ -315,9 +323,13 @@ const NewTaskDrawerV2 = ({
           template_id: tplId,
           templateId: tplId,
         });
-      } catch {
-        // If backend save fails, still add locally
-        addEval({ ...evalConfig, template_id: tplId, templateId: tplId });
+      } catch (err) {
+        enqueueSnackbar(
+          err?.response?.data?.result ||
+            err?.message ||
+            "Failed to save evaluation",
+          { variant: "error" },
+        );
       }
     },
     [project, addEval],
@@ -520,7 +532,7 @@ const NewTaskDrawerV2 = ({
                       {!isProjectSelected && (
                         <Typography
                           variant="caption"
-                          color="text.disabled"
+                          color="text.secondary"
                           sx={{ fontSize: "12px" }}
                         >
                           Select a project first to add evaluations.

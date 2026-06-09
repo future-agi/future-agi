@@ -72,14 +72,13 @@ const IndividualExperimentSummaryView = () => {
         evalsList={data?.column_config || data?.columnConfig}
       />
       <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {data?.column_config ||
-          data?.columnConfig.map((col) => (
-            <ExperimentEvaluationChart
-              key={col.id}
-              col={col}
-              rows={data?.table_data || data?.tableData}
-            />
-          ))}
+        {(data?.column_config || data?.columnConfig)?.map((col) => (
+          <ExperimentEvaluationChart
+            key={col.id}
+            col={col}
+            rows={data?.table_data || data?.tableData}
+          />
+        ))}
       </Box>
     </Box>
   );

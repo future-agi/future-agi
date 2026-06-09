@@ -295,18 +295,92 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
   const imageData = useMemo(() => getImageUrlFromData(datapoint), [datapoint]);
   const isImage = imageData?.format === "image";
   const isText = imageData?.format === "text";
-  const showMoreCondition =
-    !datapoint?.data?.imageUrl &&
-    imageData?.dataFile?.length > 150 &&
-    !expanded;
+  const selectedInputKey =
+    datapoint?.selected_input_key ??
+    datapoint?.cell_metadata?.selected_input_key;
+  const renderedText =
+    datapoint?.input_data?.[selectedInputKey] ??
+    datapoint?.cell_metadata?.input_data?.[selectedInputKey] ??
+    imageData?.dataFile ??
+    "";
+  const isLongText = renderedText.length > 150;
 
-  const showLessCondition =
-    !datapoint?.data?.imageUrl && imageData?.dataFile?.length > 150 && expanded;
+  const showMoreCondition = isLongText && !expanded && !isImage;
+
+  const showLessCondition = isLongText && expanded;
 
   useEffect(() => {
     setExpanded(false);
     setHoveredData(null);
-  }, [value, datapoint, column]);
+  }, [column, selectedInputKey, value?.length]);
+
+
+  const renderLocalizerDetails = (item) => {
+    const reason = item?.reason;
+    const improvement = item?.improvement;
+    const rankReason = item?.rank_reason || item?.rankReason;
+
+    if (!reason && !improvement && !rankReason) return null;
+
+    return (
+      <Box
+        sx={{
+          mt: 1,
+          p: 1.25,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "6px",
+          backgroundColor: "background.paper",
+        }}
+      >
+        {reason && (
+          <Box sx={{ mb: improvement || rankReason ? 1 : 0 }}>
+            <Typography
+              variant="caption"
+              fontWeight={600}
+              color="text.primary"
+              sx={{ display: "block", mb: 0.25 }}
+            >
+              Reason
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {reason}
+            </Typography>
+          </Box>
+        )}
+        {improvement && (
+          <Box sx={{ mb: rankReason ? 1 : 0 }}>
+            <Typography
+              variant="caption"
+              fontWeight={600}
+              color="text.primary"
+              sx={{ display: "block", mb: 0.25 }}
+            >
+              Suggested fix
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {improvement}
+            </Typography>
+          </Box>
+        )}
+        {rankReason && (
+          <Box>
+            <Typography
+              variant="caption"
+              fontWeight={600}
+              color="text.primary"
+              sx={{ display: "block", mb: 0.25 }}
+            >
+              Severity
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {rankReason}
+            </Typography>
+          </Box>
+        )}
+      </Box>
+    );
+  };
 
   const highlightText = (text, startEx, endEx, weight, data) => {
     if (!text) return "";
@@ -375,70 +449,6 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
         {afterHighlight}
       </>
     );
-  };
-
-  const renderTextWithAllHighlights = (text, highlights) => {
-    if (!text || !highlights || highlights.length === 0) {
-      return text;
-    }
-
-    const getStartIdx = (highlight) =>
-      highlight?.orgSen?.startIdx ?? highlight?.orgSen?.start_idx ?? 0;
-    const getEndIdx = (highlight) =>
-      highlight?.orgSen?.endIdx ??
-      highlight?.orgSen?.end_idx ??
-      getStartIdx(highlight);
-
-    const sortedHighlights = [...highlights].sort(
-      (a, b) => getStartIdx(a) - getStartIdx(b),
-    );
-
-    const result = [];
-    let lastIndex = 0;
-
-    sortedHighlights.forEach((highlight, index) => {
-      const startIdx = getStartIdx(highlight);
-      const endIdx = getEndIdx(highlight);
-
-      if (startIdx > lastIndex) {
-        result.push(text.slice(lastIndex, startIdx));
-      }
-
-      const highlightedText = text.slice(startIdx, endIdx);
-      result.push(
-        <CustomTooltip
-          key={`highlight-${index}`}
-          show={Boolean(hoveredData)}
-          title={
-            <Box sx={{ maxHeight: "100px", overflow: "auto" }}>
-              {highlight?.reason}
-            </Box>
-          }
-          enterDelay={500}
-        >
-          <span
-            onMouseEnter={() => setHoveredData(highlight.reason)}
-            onMouseLeave={() => setHoveredData(null)}
-            style={{
-              backgroundColor: getMarkColor(highlight.weight),
-              fontWeight: "",
-              display: "inline",
-            }}
-          >
-            {highlightedText}
-          </span>
-        </CustomTooltip>,
-      );
-
-      lastIndex = endIdx;
-    });
-
-    // Add remaining text after the last highlight
-    if (lastIndex < text.length) {
-      result.push(text.slice(lastIndex));
-    }
-
-    return result;
   };
 
   return (
@@ -511,20 +521,42 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
                         </React.Fragment>
                       ))
                     ) : (
-                      // Show single paragraph with all highlights when expanded
-                      <Typography
-                        sx={{
-                          marginY: theme.spacing(1.5),
-                          overflowY: "auto",
-                          ...sx,
-                        }}
-                        variant="s2"
-                      >
-                        {renderTextWithAllHighlights(
-                          datapoint?.input_data[datapoint.selected_input_key],
-                          value,
-                        )}
-                      </Typography>
+                      value.map((item, index) => {
+                        const fullText =
+                          datapoint?.input_data[datapoint.selected_input_key];
+                        const startIdx =
+                          item?.orgSen?.startIdx ?? item?.orgSen?.start_idx;
+                        const endIdx =
+                          item?.orgSen?.endIdx ?? item?.orgSen?.end_idx;
+                        const segment =
+                          fullText?.slice(startIdx, endIdx) ||
+                          item?.orgSen?.text ||
+                          "";
+
+                        return (
+                          <React.Fragment
+                            key={item.unitKey || item.unit_key || index}
+                          >
+                            <Typography
+                              sx={{ marginY: theme.spacing(1.5), ...sx }}
+                              variant="s2"
+                            >
+                              <span
+                                style={{
+                                  backgroundColor: getMarkColor(item.weight),
+                                  display: "inline",
+                                }}
+                              >
+                                {segment}
+                              </span>
+                            </Typography>
+                            {renderLocalizerDetails(item)}
+                            {value.length > 1 && index < value.length - 1 && (
+                              <Divider sx={{ my: 1.5 }} />
+                            )}
+                          </React.Fragment>
+                        );
+                      })
                     )}
                     <ShowComponent condition={showMoreCondition}>
                       <Box
@@ -623,7 +655,7 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
                             textDecoration: "underline",
                             cursor: "pointer",
                           }}
-                          onClick={handleShowMore}
+                          onClick={() => handleShowMore(true)}
                         >
                           Show More
                         </Typography>
@@ -655,7 +687,7 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
                     key={imageKey}
                     imageUrl={imageData?.dataFile}
                     value={value}
-                    weight={datapoint?.errorAnalysis[0]?.weight}
+                    weight={value?.[0]?.weight}
                     boxWidth={400}
                     boxHeight={400}
                   />
@@ -670,7 +702,7 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
 };
 
 ErrorLocalizeCard.propTypes = {
-  value: PropTypes.object,
+  value: PropTypes.oneOfType([PropTypes.array, PropTypes.object]),
   column: PropTypes.string,
   sx: PropTypes.object,
   datapoint: PropTypes.object,

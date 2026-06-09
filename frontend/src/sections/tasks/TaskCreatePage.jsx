@@ -123,6 +123,7 @@ const TaskCreatePage = () => {
   const onSubmit = (data) => {
     const {
       runType,
+      rowType,
       spansLimit,
       samplingRate,
       evalsDetails,
@@ -133,6 +134,7 @@ const TaskCreatePage = () => {
     const payload = {
       ...restData,
       run_type: runType,
+      row_type: rowType,
       ...(runType !== "continuous" && spansLimit
         ? { spans_limit: spansLimit }
         : {}),

@@ -100,6 +100,7 @@ export default function CreateNewPrompt({ open, onClose, isLoading }) {
         },
       );
       onClose();
+      setSelectTemplateDrawerOpen(false);
     },
   });
 

@@ -31,7 +31,11 @@ const DeleteConfirmation = ({
     };
   }, [open]);
 
-  const confirmationMessage = `Are you sure you want to delete  ${deleteCount > 1 ? `the selected ${deleteCount} tasks?` : `this task?`} `;
+  const confirmationMessage = `Are you sure you want to delete ${
+    deleteCount > 1 ? `the selected ${deleteCount} tasks` : `this task`
+  }? All evaluation results for ${
+    deleteCount > 1 ? "them" : "it"
+  } will also be deleted.`;
 
   return (
     <Dialog
@@ -76,7 +80,7 @@ const DeleteConfirmation = ({
       </DialogTitle>
 
       <DialogContent>
-        <Typography color="text.disabled">{confirmationMessage}</Typography>
+        <Typography color="text.secondary">{confirmationMessage}</Typography>
       </DialogContent>
 
       <DialogActions>

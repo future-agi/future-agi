@@ -38,11 +38,12 @@ from tfc.temporal.agent_playground.types import (
     ExecuteNodeStandaloneInput,
     OutputSinkConfig,
 )
+
 from tfc.temporal.agent_playground.workflows import GraphExecutionWorkflow
 
 # All tests in this module must run on the same xdist worker (sequential).
 # This prevents DB flush failures from Temporal activity threads holding connections.
-pytestmark = pytest.mark.xdist_group("temporal_e2e")
+pytestmark = [pytest.mark.e2e, pytest.mark.xdist_group("temporal_e2e")]
 
 TASK_QUEUE = "test-agent-playground"
 

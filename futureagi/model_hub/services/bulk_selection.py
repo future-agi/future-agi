@@ -19,36 +19,51 @@ Future phases will add sibling resolvers for ``observation_span``,
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 from uuid import UUID
 
 import structlog
 from django.db import models
 from django.db.models import (
+    Avg,
+    Case,
+    CharField,
     Count,
     DurationField,
     Exists,
     ExpressionWrapper,
     F,
     FloatField,
+    IntegerField,
+    JSONField,
     Max,
     Min,
     OuterRef,
     Q,
     Subquery,
     Sum,
+    Value,
+    When,
 )
-from django.db.models.functions import Coalesce, Round
+from django.db.models.functions import Coalesce, JSONObject, Round
 
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
 from simulate.models.test_execution import CallExecution
-from tracer.models.observation_span import ObservationSpan
+from simulate.utils.persona_filtering import (
+    UnsupportedPersonaFilter,
+    apply_persona_filter,
+    is_persona_filter_column,
+)
+from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.filters import FilterEngine, apply_created_at_filters
+from tracer.utils.helper import get_annotation_labels_for_project
 
 logger = structlog.get_logger(__name__)
 
@@ -63,6 +78,155 @@ class ResolveResult:
 
 
 _USER_SCOPED_COLUMN_IDS = {"my_annotations", "annotator"}
+
+
+def _has_explicit_time_filter(filters: list[dict] | None) -> bool:
+    """Return True only when the saved filter payload includes a real time bound.
+
+    The ClickHouse list builders need a time range and default to an all-ish
+    window when the UI did not send one. That is correct for interactive lists,
+    but automation rules should not inherit an implicit time window: first run
+    means all matching source rows, and later runs rely on QueueItem duplicate
+    checks for the delta.
+    """
+    for filter_item in filters or []:
+        column_id = filter_item.get("column_id") or filter_item.get("columnId")
+        if column_id not in {"created_at", "start_time"}:
+            continue
+        config = (
+            filter_item.get("filter_config")
+            or filter_item.get("filterConfig")
+            or {}
+        )
+        filter_type = config.get("filter_type") or config.get("filterType")
+        if filter_type not in {"datetime", "date"}:
+            continue
+        value = config.get("filter_value", config.get("filterValue"))
+        if value not in (None, "", []):
+            return True
+    return False
+
+
+def _filter_col_type(filter_item: dict) -> str:
+    config = filter_item.get("filter_config") or filter_item.get("filterConfig") or {}
+    return config.get("col_type") or config.get("colType") or filter_item.get(
+        "col_type", filter_item.get("colType", "")
+    )
+
+
+def _needs_eval_metric_annotations(filters) -> bool:
+    return any(_filter_col_type(f) == "EVAL_METRIC" for f in filters or [])
+
+
+def _needs_annotation_field_annotations(filters) -> bool:
+    return any(_filter_col_type(f) == "ANNOTATION" for f in filters or [])
+
+
+def _annotate_eval_metrics(qs, *, project_id, organization, source_type: str):
+    """Mirror Observe PG list views' dynamic ``metric_<eval_id>`` annotations.
+
+    FilterEngine evaluates eval metric filters against JSON annotations named
+    ``metric_<custom_eval_config_id>`` with a nested ``score`` key. The grid
+    builds those annotations before filtering; queue filter-mode needs the
+    same shape so "select all matching filters" resolves the same rows.
+    """
+    if source_type == "observation_span":
+        eval_log_scope = EvalLogger.objects.filter(
+            observation_span__project_id=project_id,
+            observation_span__project__organization=organization,
+        )
+        outer_filter = {
+            "observation_span_id": OuterRef("id"),
+        }
+    else:
+        eval_log_scope = EvalLogger.objects.filter(
+            trace__project_id=project_id,
+            trace__project__organization=organization,
+        )
+        outer_filter = {
+            "trace_id": OuterRef("id"),
+        }
+
+    eval_configs = CustomEvalConfig.objects.filter(
+        id__in=eval_log_scope.values("custom_eval_config_id").distinct(),
+        deleted=False,
+    ).select_related("eval_template")
+
+    for config in eval_configs:
+        choices = (
+            config.eval_template.choices
+            if getattr(config, "eval_template", None)
+            and config.eval_template.choices
+            else None
+        )
+        metric_qs = (
+            EvalLogger.objects.filter(
+                **outer_filter,
+                custom_eval_config_id=config.id,
+            )
+            .exclude(Q(output_str="ERROR") | Q(error=True))
+            .values("custom_eval_config_id")
+            .annotate(
+                float_score=Round(Avg("output_float") * 100, 2),
+                bool_score=Round(
+                    Avg(
+                        Case(
+                            When(output_bool=True, then=100),
+                            When(output_bool=False, then=0),
+                            default=None,
+                            output_field=FloatField(),
+                        )
+                    ),
+                    2,
+                ),
+                str_list_score=JSONObject(
+                    **{
+                        f"{value}": JSONObject(
+                            score=Round(
+                                100.0
+                                * Count(
+                                    Case(
+                                        When(output_str_list__contains=[value], then=1),
+                                        default=None,
+                                        output_field=IntegerField(),
+                                    )
+                                )
+                                / Count("output_str_list"),
+                                2,
+                            )
+                        )
+                        for value in choices or []
+                    }
+                ),
+            )
+            .values("float_score", "bool_score", "str_list_score")[:1]
+        )
+
+        exists_qs = EvalLogger.objects.filter(
+            **outer_filter,
+            custom_eval_config_id=config.id,
+        )
+        qs = qs.annotate(
+            **{
+                f"metric_{config.id}": Case(
+                    When(
+                        Exists(exists_qs.filter(output_float__isnull=False)),
+                        then=JSONObject(score=Subquery(metric_qs.values("float_score"))),
+                    ),
+                    When(
+                        Exists(exists_qs.filter(output_bool__isnull=False)),
+                        then=JSONObject(score=Subquery(metric_qs.values("bool_score"))),
+                    ),
+                    When(
+                        Exists(exists_qs.filter(output_str_list__isnull=False)),
+                        then=Subquery(metric_qs.values("str_list_score")),
+                    ),
+                    default=None,
+                    output_field=JSONField(),
+                ),
+            }
+        )
+    return qs
 
 
 def _validate_user_scoped_filters(filters, user):
@@ -95,7 +259,44 @@ def _build_trace_base_queryset(project_id, organization, workspace=None):
     root_span_qs = ObservationSpan.objects.filter(
         trace_id=OuterRef("id"), parent_span_id__isnull=True
     )
+    all_span_qs = ObservationSpan.objects.filter(trace_id=OuterRef("id"))
     qs = Trace.objects.filter(project_id=project.id).annotate(
+        node_type=Case(
+            When(
+                Exists(root_span_qs),
+                then=Subquery(root_span_qs.values("observation_type")[:1]),
+            ),
+            default=Value("unknown"),
+            output_field=CharField(),
+        ),
+        trace_name=Case(
+            When(
+                Exists(root_span_qs),
+                then=Subquery(root_span_qs.values("name")[:1]),
+            ),
+            default=Value("[ Incomplete Trace ]"),
+            output_field=CharField(),
+        ),
+        latency=Subquery(root_span_qs.values("latency_ms")[:1]),
+        total_tokens=Coalesce(
+            Subquery(
+                all_span_qs.values("trace_id")
+                .annotate(total=Sum("total_tokens"))
+                .values("total")[:1]
+            ),
+            0,
+            output_field=IntegerField(),
+        ),
+        total_cost=Coalesce(
+            Subquery(
+                all_span_qs.values("trace_id")
+                .annotate(total=Sum("cost"))
+                .values("total")[:1]
+            ),
+            0.0,
+            output_field=FloatField(),
+        ),
+        trace_id=F("id"),
         # Pull span_attributes off the root span. Old rows only have
         # eval_attributes populated — Coalesce falls back to keep parity
         # with the list views.
@@ -103,6 +304,23 @@ def _build_trace_base_queryset(project_id, organization, workspace=None):
             root_span_qs.annotate(
                 _attrs=Coalesce("span_attributes", "eval_attributes")
             ).values("_attrs")[:1]
+        ),
+        user_id=Subquery(
+            ObservationSpan.objects.filter(
+                trace_id=OuterRef("id"), end_user__isnull=False
+            )
+            .order_by("start_time")
+            .values("end_user__user_id")[:1]
+        ),
+        start_time=Coalesce(
+            Subquery(root_span_qs.order_by("start_time").values("start_time")[:1]),
+            "created_at",
+        ),
+        status=Case(
+            When(Exists(root_span_qs.filter(status="ERROR")), then=Value("ERROR")),
+            When(Exists(root_span_qs.filter(status="OK")), then=Value("OK")),
+            default=Value("UNSET"),
+            output_field=CharField(),
         ),
     )
 
@@ -160,6 +378,7 @@ def _apply_trace_filters(
     *,
     user,
     organization,
+    annotation_label_ids: list[str] | None = None,
 ):
     """Apply the same FilterEngine branches as ``list_traces_of_session``.
 
@@ -169,9 +388,12 @@ def _apply_trace_filters(
     if not filters:
         return base_qs
 
-    annotation_labels = AnnotationsLabels.objects.filter(
-        organization=organization, deleted=False
-    )
+    if annotation_label_ids is None:
+        annotation_label_ids = list(
+            AnnotationsLabels.objects.filter(
+                organization=organization, deleted=False
+            ).values_list("id", flat=True)
+        )
 
     combined = Q()
     qs = base_qs
@@ -230,7 +452,7 @@ def _apply_trace_filters(
     has_ann = FilterEngine.get_filter_conditions_for_has_annotation(
         filters,
         observe_type="trace",
-        annotation_label_ids=[str(lbl.id) for lbl in annotation_labels],
+        annotation_label_ids=[str(label_id) for label_id in annotation_label_ids],
     )
     if has_ann:
         combined &= has_ann
@@ -503,7 +725,7 @@ def resolve_filtered_trace_ids(
     if workspace is not None and getattr(project, "workspace_id", None) != getattr(
         workspace, "id", None
     ):
-        raise Project.DoesNotExist
+        return ResolveResult(ids=[], total_matching=0, truncated=False)
 
     # Dispatch to ClickHouse when available so filter semantics
     # (especially SPAN_ATTRIBUTE filters translated through
@@ -511,35 +733,46 @@ def resolve_filtered_trace_ids(
     # (regular traces + voice calls) are CH-first in production, and
     # PG/CH diverge on JSON span_attribute semantics — the PG fallback
     # was matching the full project instead of the filtered subset.
-    annotation_label_ids = [
-        str(lbl.id)
-        for lbl in AnnotationsLabels.objects.filter(
-            organization=organization, deleted=False, project_id=project.id
-        )
-    ]
-    if is_voice_call:
-        ch_result = _resolve_voice_call_ids_clickhouse(
-            project_id=project_id,
-            filters=filters or [],
-            exclude_ids=set(exclude_ids or ()),
-            cap=cap,
-            remove_simulation_calls=remove_simulation_calls,
-            annotation_label_ids=annotation_label_ids,
-        )
-    else:
-        ch_result = _resolve_trace_ids_clickhouse(
-            project_id=project_id,
-            filters=filters or [],
-            exclude_ids=set(exclude_ids or ()),
-            cap=cap,
-            annotation_label_ids=annotation_label_ids,
-        )
+    annotation_labels = get_annotation_labels_for_project(project.id, organization)
+    annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
+    ch_result = None
+    if _has_explicit_time_filter(filters):
+        if is_voice_call:
+            ch_result = _resolve_voice_call_ids_clickhouse(
+                project_id=project_id,
+                filters=filters or [],
+                exclude_ids=set(exclude_ids or ()),
+                cap=cap,
+                remove_simulation_calls=remove_simulation_calls,
+                annotation_label_ids=annotation_label_ids,
+            )
+        else:
+            ch_result = _resolve_trace_ids_clickhouse(
+                project_id=project_id,
+                filters=filters or [],
+                exclude_ids=set(exclude_ids or ()),
+                cap=cap,
+                annotation_label_ids=annotation_label_ids,
+            )
     if ch_result is not None:
         return ch_result
 
     base = _build_trace_base_queryset(project_id, organization, workspace)
+    if _needs_eval_metric_annotations(filters or []):
+        base = _annotate_eval_metrics(
+            base,
+            project_id=project.id,
+            organization=organization,
+            source_type="trace",
+        )
+    if _needs_annotation_field_annotations(filters or []):
+        base = build_annotation_subqueries(base, annotation_labels, organization)
     qs = _apply_trace_filters(
-        base, filters or [], user=user, organization=organization
+        base,
+        filters or [],
+        user=user,
+        organization=organization,
+        annotation_label_ids=annotation_label_ids,
     )
 
     if is_voice_call:
@@ -604,6 +837,12 @@ def _build_span_base_queryset(project_id, organization, workspace=None):
         project_id=project.id,
         project__organization=organization,
         deleted=False,
+    ).annotate(
+        node_type=F("observation_type"),
+        span_id=F("id"),
+        span_name=F("name"),
+        trace_name=F("trace__name"),
+        user_id=F("end_user__user_id"),
     )
 
     if workspace is not None:
@@ -729,7 +968,24 @@ def resolve_filtered_span_ids(
     """
     _validate_user_scoped_filters(filters or [], user)
 
+    project = Project.objects.get(id=project_id, organization=organization)
+    annotation_labels = get_annotation_labels_for_project(project.id, organization)
+
     base = _build_span_base_queryset(project_id, organization, workspace)
+    if _needs_eval_metric_annotations(filters or []):
+        base = _annotate_eval_metrics(
+            base,
+            project_id=project.id,
+            organization=organization,
+            source_type="observation_span",
+        )
+    if _needs_annotation_field_annotations(filters or []):
+        base = build_annotation_subqueries(
+            base,
+            annotation_labels,
+            organization,
+            span_filter_kwargs={"observation_span_id": OuterRef("id")},
+        )
     qs = _apply_span_filters(
         base, filters or [], user=user, organization=organization
     )
@@ -1006,6 +1262,110 @@ def resolve_filtered_session_ids(
 # --------------------------------------------------------------------------
 
 
+# UI column id → CallExecution ORM lookup. Mirrors the simulation add-items and
+# rule filter fields. Structured persona fields are handled separately because
+# call_metadata.row_data.persona may store scalar or list-shaped JSON values.
+_CALL_EXECUTION_FIELD_MAP = {
+    "status": "status",
+    "simulation_call_type": "simulation_call_type",
+    "call_type": "simulation_call_type",
+    "duration_seconds": "duration_seconds",
+    "overall_score": "overall_score",
+    "agent_definition": "test_execution__agent_definition__agent_name",
+}
+
+
+def _apply_call_execution_filters(qs, filters):
+    """Translate UI-shaped filters into CallExecution ORM lookups.
+
+    Returns ``(qs, unsupported)`` where ``unsupported`` is the list of
+    column ids the resolver couldn't map. Caller is expected to fail
+    closed if any are returned.
+    """
+    unsupported: list[str] = []
+    for f in filters:
+        col = f.get("column_id") or f.get("columnId")
+        cfg = f.get("filter_config") or f.get("filterConfig") or {}
+        op = cfg.get("filter_op") or cfg.get("filterOp")
+        value = (
+            cfg.get("filter_value")
+            if "filter_value" in cfg
+            else cfg.get("filterValue")
+        )
+        if is_persona_filter_column(col):
+            try:
+                qs = apply_persona_filter(
+                    qs,
+                    col,
+                    op,
+                    value,
+                    cfg.get("filter_type") or cfg.get("filterType"),
+                )
+            except UnsupportedPersonaFilter:
+                unsupported.append(col or "<unknown>")
+            continue
+
+        orm_field = _CALL_EXECUTION_FIELD_MAP.get(col)
+        if not orm_field or not op:
+            unsupported.append(col or "<unknown>")
+            continue
+
+        if op in ("is_null", "is_not_null"):
+            qs = (
+                qs.filter(**{f"{orm_field}__isnull": True})
+                if op == "is_null"
+                else qs.filter(**{f"{orm_field}__isnull": False})
+            )
+            continue
+
+        try:
+            if op in ("equals", "eq"):
+                values = value if isinstance(value, list) else [value]
+                if len(values) == 1:
+                    qs = qs.filter(**{orm_field: values[0]})
+                else:
+                    qs = qs.filter(**{f"{orm_field}__in": values})
+            elif op in ("not_equals", "ne"):
+                values = value if isinstance(value, list) else [value]
+                if len(values) == 1:
+                    qs = qs.exclude(**{orm_field: values[0]})
+                else:
+                    qs = qs.exclude(**{f"{orm_field}__in": values})
+            elif op == "in":
+                values = value if isinstance(value, list) else [value]
+                qs = qs.filter(**{f"{orm_field}__in": values})
+            elif op == "not_in":
+                values = value if isinstance(value, list) else [value]
+                qs = qs.exclude(**{f"{orm_field}__in": values})
+            elif op in ("contains", "icontains"):
+                qs = qs.filter(**{f"{orm_field}__icontains": value})
+            elif op in ("not_contains",):
+                qs = qs.exclude(**{f"{orm_field}__icontains": value})
+            elif op in ("more_than", "gt"):
+                qs = qs.filter(**{f"{orm_field}__gt": value})
+            elif op in ("less_than", "lt"):
+                qs = qs.filter(**{f"{orm_field}__lt": value})
+            elif op in ("more_than_or_equal", "gte"):
+                qs = qs.filter(**{f"{orm_field}__gte": value})
+            elif op in ("less_than_or_equal", "lte"):
+                qs = qs.filter(**{f"{orm_field}__lte": value})
+            elif op == "between":
+                if isinstance(value, (list, tuple)) and len(value) >= 2:
+                    qs = qs.filter(**{f"{orm_field}__range": (value[0], value[1])})
+                else:
+                    unsupported.append(col)
+            elif op in ("not_between", "not_in_between"):
+                if isinstance(value, (list, tuple)) and len(value) >= 2:
+                    qs = qs.exclude(**{f"{orm_field}__range": (value[0], value[1])})
+                else:
+                    unsupported.append(col)
+            else:
+                unsupported.append(col)
+        except (TypeError, ValueError):
+            unsupported.append(col)
+    return qs, unsupported
+
+
 def resolve_filtered_call_execution_ids(
     *,
     project_id,
@@ -1040,7 +1400,17 @@ def resolve_filtered_call_execution_ids(
         qs = qs.filter(test_execution__agent_definition__workspace=workspace)
 
     if filters:
-        qs, _remaining = apply_created_at_filters(qs, filters)
+        qs, remaining = apply_created_at_filters(qs, filters)
+        if remaining:
+            qs, unsupported = _apply_call_execution_filters(qs, remaining)
+            if unsupported:
+                # Fail closed: a filter the resolver still can't apply
+                # must NOT silently broaden the result to the full
+                # agent_definition.
+                raise ValueError(
+                    "call_execution filter resolver cannot apply: "
+                    + ", ".join(unsupported)
+                )
 
     if exclude_ids:
         qs = qs.exclude(id__in=list(exclude_ids))

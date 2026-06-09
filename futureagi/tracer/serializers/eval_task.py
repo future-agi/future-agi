@@ -1,8 +1,29 @@
 from rest_framework import serializers
 
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
+from tracer.models.eval_task import (
+    EvalTask,
+    EvalTaskLogger,
+    EvalTaskStatus,
+    RowType,
+    RunType,
+)
 from tracer.models.project import Project
+
+
+class PaginationQuerySerializer(serializers.Serializer):
+    """Shared query-params validator for paginated eval-log endpoints.
+
+    DRF's ``PageNumberPagination`` is 1-indexed; the FE state is 0-indexed,
+    so consumers send ``page+1``. ``page_size`` is exposed under the
+    paginator's ``page_size_query_param='limit'`` alias too — this
+    serializer accepts either spelling to keep older FE callers working.
+    """
+
+    page = serializers.IntegerField(required=False, default=1, min_value=1)
+    page_size = serializers.IntegerField(
+        required=False, default=25, min_value=1, max_value=100
+    )
 
 
 class EvalTaskSerializer(serializers.ModelSerializer):
@@ -18,6 +39,11 @@ class EvalTaskSerializer(serializers.ModelSerializer):
         min_value=1, max_value=1000000, required=False, allow_null=True
     )
     run_type = serializers.ChoiceField(choices=RunType.choices)
+    row_type = serializers.ChoiceField(
+        choices=RowType.choices,
+        required=False,
+        default=RowType.SPANS,
+    )
     # Progress block so the UI can render an "X of Y complete" bar
     # while a historical task is draining. Not persisted — computed
     # on read from ``EvalTaskLogger.offset`` (dispatched) and the
@@ -37,6 +63,7 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             "last_run",
             "spans_limit",
             "run_type",
+            "row_type",
             "status",
             "start_time",
             "end_time",
@@ -60,9 +87,7 @@ class EvalTaskSerializer(serializers.ModelSerializer):
         state = compute_drain_state(obj)
         dispatched = state["dispatched"]
         completed = state["completed"]
-        percent = (
-            round(100.0 * completed / dispatched, 2) if dispatched else None
-        )
+        percent = round(100.0 * completed / dispatched, 2) if dispatched else None
         return {
             "dispatched": dispatched,
             "completed": completed,
@@ -109,6 +134,7 @@ class EditEvalTaskSerializer(serializers.Serializer):
         required=False, allow_null=True, min_value=1, max_value=1000000
     )
     run_type = serializers.ChoiceField(choices=RunType.choices, required=False)
+    row_type = serializers.ChoiceField(choices=RowType.choices, required=False)
     status = serializers.ChoiceField(
         choices=[(tag.value, tag.name) for tag in EvalTaskStatus], required=False
     )
@@ -117,6 +143,12 @@ class EditEvalTaskSerializer(serializers.Serializer):
         choices=[("edit_rerun", "edit_rerun"), ("fresh_run", "fresh_run")],
         required=True,
     )
+
+    def validate_row_type(self, value):
+        raise serializers.ValidationError(
+            "row_type cannot be changed after task creation. "
+            "Create a new evaluation task with the desired row_type instead."
+        )
 
     def validate_evals(self, value):
         try:

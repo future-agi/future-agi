@@ -188,7 +188,7 @@ const SimulationEvaluationPage = ({
             <Typography fontSize={15} fontWeight={600} mb={0.5}>
               No evaluations added
             </Typography>
-            <Typography fontSize={12} color="text.disabled" mb={2}>
+            <Typography fontSize={12} color="text.secondary" mb={2}>
               Add evaluations to measure simulation quality
             </Typography>
             <Button
@@ -329,8 +329,8 @@ const SimulationEvaluationPage = ({
       <ConfirmDialog
         open={Boolean(openConfirmDialog)}
         onClose={() => setOpenConfirmDialog(false)}
-        title="Confirm Delete eval"
-        content="Are you sure you want to delete this evaluation?"
+        title="Delete Evaluation"
+        content="This will also remove all its results. This action cannot be undone."
         action={
           <LoadingButton
             variant="contained"

@@ -13,6 +13,9 @@ export function checkbox(theme) {
             : theme.palette.grey?.[600],
           "&.Mui-checked": {
             color: theme.palette.purple?.[300],
+            ...(!lightMode && {
+              "& path[stroke]": { stroke: theme.palette.background.paper },
+            }),
           },
         },
       },

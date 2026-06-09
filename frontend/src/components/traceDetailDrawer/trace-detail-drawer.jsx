@@ -38,6 +38,7 @@ import SvgColor from "../svg-color";
 import { useTraceErrorAnalysis } from "./common";
 import ErrorAnalysis from "./ErrorAnalysis";
 import { objectCamelToSnake } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 
@@ -181,7 +182,11 @@ const TraceDetailDrawerChild = ({
           project_version_id: runId,
           trace_id: traceData?.trace_id,
           // only trace filters can be applied to this
-          filters: JSON.stringify(objectCamelToSnake(traceData?.filters)),
+          filters: JSON.stringify(
+            canonicalizeApiFilterColumnIds(
+              objectCamelToSnake(traceData?.filters),
+            ),
+          ),
         },
       });
     },
@@ -200,7 +205,11 @@ const TraceDetailDrawerChild = ({
         params: {
           trace_id: traceData.trace_id,
           // only trace filters can be applied to this
-          filters: JSON.stringify(objectCamelToSnake(traceData?.filters)),
+          filters: JSON.stringify(
+            canonicalizeApiFilterColumnIds(
+              objectCamelToSnake(traceData?.filters),
+            ),
+          ),
         },
       });
     },
@@ -217,7 +226,11 @@ const TraceDetailDrawerChild = ({
           span_id: traceData?.span_id,
           project_version_id: runId,
           // only span filters can be applied to this
-          filters: JSON.stringify(objectCamelToSnake(traceData?.filters)),
+          filters: JSON.stringify(
+            canonicalizeApiFilterColumnIds(
+              objectCamelToSnake(traceData?.filters),
+            ),
+          ),
         },
       });
     },
@@ -238,7 +251,11 @@ const TraceDetailDrawerChild = ({
           params: {
             span_id: traceData?.span_id,
             // only span filters can be applied to this
-            filters: JSON.stringify(objectCamelToSnake(traceData?.filters)),
+            filters: JSON.stringify(
+              canonicalizeApiFilterColumnIds(
+                objectCamelToSnake(traceData?.filters),
+              ),
+            ),
           },
         },
       );
@@ -477,7 +494,7 @@ const TraceDetailDrawerChild = ({
                       Span Kinds denote the possible types of spans you might
                       capture.{" "}
                       <Link
-                        href="https://docs.futureagi.com/docs/tracing/manual/instrument-with-traceai-helpers#fi-span-kinds"
+                        href="https://docs.futureagi.com/docs/observe/features/manual-tracing/instrument-with-traceai-helpers"
                         underline="always"
                         color="blue.500"
                         target="_blank"

@@ -13,7 +13,7 @@ ENV VITE_HOST_API=${VITE_HOST_API} \
 WORKDIR /app
 
 COPY package.json yarn.lock ./
-RUN yarn install
+RUN yarn install --network-timeout 600000
 
 COPY . ./
 RUN yarn build
@@ -36,7 +36,10 @@ COPY --from=build /app/dist /usr/share/nginx/html
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
+COPY --chmod=755 docker-entrypoint.sh /docker-entrypoint.sh
+
 EXPOSE 80
 EXPOSE 443
 
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]

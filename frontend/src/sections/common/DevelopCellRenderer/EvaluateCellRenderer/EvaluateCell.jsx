@@ -16,11 +16,15 @@ import RenderMeta from "../RenderMeta";
 import EvaluateArrayCellRenderer from "./EvaluateArrayCellRenderer";
 import NumericCell from "./NumericCell";
 import { OutputTypes } from "../CellRenderers/cellRendererHelper";
+import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 const getScorePercentage = (s, decimalPlaces = 0) => {
   if (s <= 0) s = 0;
   const score = s * 100;
   return Number(score.toFixed(decimalPlaces));
 };
+
+const hasRenderableValue = (value) =>
+  value !== undefined && value !== null && value !== "";
 
 // Normalise the `value_infos` blob into an object regardless of whether
 // the caller passed camelCase, snake_case, or a JSON string. The cell
@@ -39,6 +43,8 @@ const parseValueInfos = (cellData) => {
   return raw;
 };
 
+//Being used in experiments & Compare datasets
+//In compare dataset we are not getting choices map
 const EvaluateCell = ({
   value,
   dataType,
@@ -142,26 +148,28 @@ const EvaluateCell = ({
   }
   if (output === OutputTypes.SCORE) {
     const result = parsedValueInfos?.data?.result;
-    if (!result) return null;
-    return (
-      <Box sx={{ display: "inline-flex", p: 1, maxWidth: "100%" }}>
-        <Chip
-          label={result}
-          size="small"
-          variant="outlined"
-          sx={{
-            borderColor: "purple.500",
-            color: "purple.500",
-            fontWeight: 500,
-            maxWidth: 240,
-            "& .MuiChip-label": {
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            },
-          }}
-        />
-      </Box>
-    );
+
+    if (hasRenderableValue(result) && !Number.isNaN(result)) {
+      return (
+        <Box sx={{ display: "flex",alignItems:"flex-start", p: 1,height:"100%", maxWidth: "100%" }}>
+          <Chip
+            label={result}
+            size="small"
+            variant="outlined"
+            sx={{
+              borderColor: "purple.500",
+              color: "purple.500",
+              fontWeight: 500,
+              maxWidth: 240,
+              "& .MuiChip-label": {
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              },
+            }}
+          />
+        </Box>
+      );
+    }
   }
   if (dataType === "boolean") {
     const bgColor = value
@@ -194,9 +202,44 @@ const EvaluateCell = ({
     );
   }
   if (dataType === "float") {
-    // console.log("float", cellData.cellValue, value);
-    const bgColor = cellData?.cellValue
-      ? interpolateColorBasedOnScore(value, 1)
+ 
+    const normalized = normalizeEvalResult(value, output);
+    if (normalized.kind === "choices") {
+      return (
+        <Box
+          sx={{
+            p: 1,
+            display: "flex",
+            gap: 1,
+            flexWrap: "wrap",
+            overflow: "auto",
+            height: "100%",
+            alignItems: "flex-start",
+            alignContent: "flex-start",
+          }}
+        >
+          {normalized?.items?.map((item) => (
+            <Chip
+              key={item}
+              label={item}
+              size="small"
+              variant="outlined"
+              sx={{
+                borderRadius: "4px",
+                borderColor: "purple.500",
+                color: "purple.500",
+                fontWeight: 400,
+                typography: "s3",
+              }}
+            />
+          ))}
+        </Box>
+      );
+    }
+    const numericValue = Number.isFinite(value) ? value : normalized.score;
+    const hasValue = Number.isFinite(numericValue);
+    const bgColor = hasValue
+      ? interpolateColorBasedOnScore(numericValue, 1)
       : "";
     return (
       <>
@@ -210,7 +253,7 @@ const EvaluateCell = ({
             alignItems: "center",
           }}
         >
-          {cellData?.cellValue ? `${getScorePercentage(value)}%` : ""}
+          {hasValue ? `${getScorePercentage(numericValue)}%` : ""}
           {compositeBadge}
           <RenderMeta
             originType={originType}

@@ -114,10 +114,11 @@ function flattenLeaves(obj, prefix) {
     if (v && typeof v === "object") {
       if (Array.isArray(v)) {
         result.push(...flattenLeaves(v, path));
-      } else if (
-        canonicalKeys(v).length > 0 &&
-        canonicalKeys(v).length < FLATTEN_DICT_LIMIT
-      ) {
+      } else if (canonicalKeys(v).length === 0) {
+        // Empty group — skip entirely so it doesn't show up as a stray
+        // `path: {}` leaf in the vocabulary table.
+        continue;
+      } else if (canonicalKeys(v).length < FLATTEN_DICT_LIMIT) {
         result.push(...flattenLeaves(v, path));
       } else {
         // Empty dict or wider than the limit — emit as a leaf and let
@@ -162,10 +163,15 @@ const CreateSimulationPreviewMode = React.forwardRef(
       onReadyChange,
       onTestResult,
       previewData,
+      initialMapping = null,
     },
     ref,
   ) => {
-    const [mapping, setMapping] = useState({});
+    const [mapping, setMapping] = useState(
+      initialMapping && typeof initialMapping === "object"
+        ? { ...initialMapping }
+        : {},
+    );
     const [tableSearch, setTableSearch] = useState("");
     const [expandedCols, setExpandedCols] = useState({});
 

@@ -15,11 +15,11 @@ NC='\033[0m'
 
 # Test environment variables
 export DJANGO_SETTINGS_MODULE=tfc.settings.test
-export DATABASE_URL=postgres://test_user:test_password@localhost:5436/test_tfc
-export REDIS_URL=redis://localhost:6380/0
+export DATABASE_URL=postgres://test_user:test_password@localhost:15432/test_tfc
+export REDIS_URL=redis://localhost:16379/0
 export TEST_CLICKHOUSE_HOST=localhost
-export TEST_CLICKHOUSE_PORT=8124
-export MINIO_ENDPOINT=localhost:9007
+export TEST_CLICKHOUSE_PORT=18123
+export MINIO_ENDPOINT=localhost:19005
 export MINIO_ACCESS_KEY=minioadmin
 export MINIO_SECRET_KEY=minioadmin
 export DEBUG=1

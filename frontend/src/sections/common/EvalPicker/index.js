@@ -7,3 +7,4 @@ export { default as EvalPickerCreateNew } from "./EvalPickerCreateNew";
 export { useEvalPickerContext } from "./context/EvalPickerContext";
 export { default as EvalPickerProvider } from "./context/EvalPickerProvider";
 export { useEvalPickerData } from "./hooks/useEvalPickerData";
+export { serializeEvalConfig } from "./serializeEvalConfig";

@@ -21,7 +21,7 @@ import {
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 import { enhanceCol, getStatusColor } from "../common";
-import { getLabel } from "../common";
+import { getLabel, normalizeEvalCellValue } from "../common";
 import DatapointCard from "src/sections/common/DatapointCard";
 import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
 import ImagesDatapointCard from "src/sections/common/ImagesDatapointCard";
@@ -49,6 +49,7 @@ import ScoresListSection from "src/components/ScoresListSection/ScoresListSectio
 import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
 import { useEvalsList } from "src/sections/common/EvaluationDrawer/getEvalsList";
 import CompositeResultView from "src/sections/evals/components/CompositeResultView";
+import { canonicalEntries } from "src/utils/utils";
 
 const SkeletonLoader = () => (
   <Box
@@ -62,6 +63,9 @@ const SkeletonLoader = () => (
     <Skeleton sx={{ width: "100%", height: "10px" }} variant="rounded" />
   </Box>
 );
+
+const hasRenderableCellValue = (value) =>
+  value !== undefined && value !== null && value !== "";
 
 const ViewDetailsCellRenderer = (props) => {
   const { data = {}, node, setRunEval, disabled } = props;
@@ -270,19 +274,28 @@ const DatapointDrawerChild = () => {
     { eval_type: "user" },
     "dataset",
   );
-  const evalTypeBySourceId = useMemo(() => {
+  const evalMetaBySourceId = useMemo(() => {
     const map = {};
     (savedEvalsData?.evals || []).forEach((e) => {
       const key = e.id || e.user_eval_id;
-      if (key) map[key] = e.eval_type || e.evalType;
+      if (key)
+        map[key] = {
+          evalType: e.eval_type || e.evalType,
+          templateType: e.template_type || e.templateType,
+        };
     });
     return map;
   }, [savedEvalsData]);
   const isCodeEvalColumn = (col) => {
     const sourceId = col?.sourceId || col?.source_id;
-    return evalTypeBySourceId[sourceId] === "code";
+    return evalMetaBySourceId[sourceId]?.evalType === "code";
   };
   const evalOpenIsCode = isCodeEvalColumn(column?.col);
+
+  const isCompositeEval =
+    evalMetaBySourceId[column?.col?.sourceId || column?.col?.source_id]
+      ?.templateType === "composite";
+
 
   const runEvalData = useMemo(() => {
     const evalColumns = allColumns.filter((i) => i.originType === "evaluation");
@@ -440,13 +453,8 @@ const DatapointDrawerChild = () => {
   };
 
   const finalArray = useMemo(() => {
-    if (
-      evalOpen?.cellValue &&
-      evalOpen?.cellValue.startsWith("[") &&
-      evalOpen?.cellValue.endsWith("]")
-    ) {
-      return JSON.parse(evalOpen?.cellValue.replace(/'/g, '"'));
-    }
+    const v = normalizeEvalCellValue(evalOpen?.cellValue);
+    return Array.isArray(v) ? v : undefined;
   }, [evalOpen?.cellValue]);
 
   const onNavigate = async (direction) => {
@@ -762,8 +770,7 @@ const DatapointDrawerChild = () => {
                         Error
                       </Box>
                     ) : (
-                      evalOpen?.cellValue &&
-                      evalOpen?.cellValue !== "" && (
+                      hasRenderableCellValue(evalOpen?.cellValue) && (
                         <>
                           <ShowComponent condition={!Array.isArray(finalArray)}>
                             <Chip
@@ -801,7 +808,7 @@ const DatapointDrawerChild = () => {
                                 }}
                               />
                             </ShowComponent>
-                            <ShowComponent condition={finalArray?.length > 0}>
+                            <ShowComponent condition={(finalArray?.length ?? 0) > 0}>
                               {finalArray?.map((val) => (
                                 <Chip
                                   key={val}
@@ -897,9 +904,8 @@ const DatapointDrawerChild = () => {
                     )}
                   </Box>
                 </Box>
-                {/* Code evals don't produce model traces for the localizer
-                    to introspect — hide the section entirely. */}
-                {!evalOpenIsCode && (
+               
+                {!evalOpenIsCode && !isCompositeEval && (
                   <ErrorLocalizationCellSection
                     evalOpen={evalOpen}
                     onAnalysisLoaded={(details) => {
@@ -1363,19 +1369,9 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
   const renderAnalysis =
     inlineAnalysis ||
     (pollData?.status === "completed" ? pollData?.error_analysis : null);
-  const renderAnalysisEntries = Object.entries(renderAnalysis || {})
-    .filter(([key]) => {
-      // Keep canonical snake_case keys and drop alias-only keys like
-      // `input1` when `input_1` exists.
-      if (key.includes("_")) return true;
-      if (/[A-Z]/.test(key)) return false;
-      const snakeWithNumericBoundary = key.replace(
-        /([a-zA-Z])([0-9])/g,
-        "$1_$2",
-      );
-      return !renderAnalysis?.[snakeWithNumericBoundary];
-    })
-    .filter(([_, value]) => Array.isArray(value) && value.length > 0);
+  const renderAnalysisEntries = canonicalEntries(renderAnalysis || {}).filter(
+    ([_, value]) => Array.isArray(value) && value.length > 0,
+  );
   const hasRenderAnalysis = renderAnalysisEntries.length > 0;
   const renderAnalysisForDisplay = Object.fromEntries(renderAnalysisEntries);
   const renderSelectedInputKey =
@@ -1430,14 +1426,14 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
               );
             }
             return renderAnalysisEntries.map(([key, value]) => (
-                <ErrorLocalizeCard
-                  key={key}
-                  value={value}
-                  column={renderSelectedInputKey}
-                  tabValue="raw"
-                  datapoint={renderValueInfos}
-                />
-              ));
+              <ErrorLocalizeCard
+                key={key}
+                value={value}
+                column={renderSelectedInputKey}
+                tabValue="raw"
+                datapoint={renderValueInfos}
+              />
+            ));
           })()}
         </Box>
       </Box>

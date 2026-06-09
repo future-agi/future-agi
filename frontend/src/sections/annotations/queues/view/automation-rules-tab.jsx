@@ -23,7 +23,9 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import "src/styles/clean-data-table.css";
-import CreateRuleDialog from "./create-rule-dialog";
+import CreateRuleDialog, {
+  TRIGGER_FREQUENCY_OPTIONS,
+} from "./create-rule-dialog";
 import EditRuleDialog from "./edit-rule-dialog";
 
 // ---------------------------------------------------------------------------
@@ -72,6 +74,19 @@ function EnabledCellRenderer({ data, context }) {
         onChange={() => context?.onToggleEnabled(data)}
         size="small"
       />
+    </Box>
+  );
+}
+
+function TriggerFrequencyCellRenderer({ data }) {
+  if (!data) return null;
+  const label =
+    TRIGGER_FREQUENCY_OPTIONS.find(
+      (option) => option.value === (data.trigger_frequency || "manual"),
+    )?.label || "Manually";
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+      <Chip label={label} size="small" variant="outlined" />
     </Box>
   );
 }
@@ -130,7 +145,7 @@ function ActionsCellRenderer({ data, context }) {
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-export default function AutomationRulesTab({ queueId }) {
+export default function AutomationRulesTab({ queueId, queue }) {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
   const gridRef = useRef(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -166,6 +181,13 @@ export default function AutomationRulesTab({ queueId }) {
         flex: 0.8,
         minWidth: 100,
         cellRenderer: isLoading ? SkeletonCell : EnabledCellRenderer,
+      },
+      {
+        field: "trigger_frequency",
+        headerName: "Trigger",
+        flex: 1,
+        minWidth: 130,
+        cellRenderer: isLoading ? SkeletonCell : TriggerFrequencyCellRenderer,
       },
       {
         field: "trigger_count",
@@ -306,6 +328,7 @@ export default function AutomationRulesTab({ queueId }) {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         queueId={queueId}
+        queue={queue}
       />
 
       <EditRuleDialog
@@ -313,6 +336,7 @@ export default function AutomationRulesTab({ queueId }) {
         onClose={() => setEditTarget(null)}
         queueId={queueId}
         rule={editTarget}
+        queue={queue}
       />
 
       <ConfirmDialog

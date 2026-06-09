@@ -48,6 +48,16 @@ function TypeChip({ type }) {
   );
 }
 
+function mergeLabelsById(...labelLists) {
+  const labelsById = new Map();
+  labelLists.flat().forEach((label) => {
+    if (!label?.id) return;
+    const id = String(label.id);
+    labelsById.set(id, { ...(labelsById.get(id) || {}), ...label, id });
+  });
+  return Array.from(labelsById.values());
+}
+
 LabelPicker.propTypes = {
   selectedIds: PropTypes.array,
   onChange: PropTypes.func.isRequired,
@@ -56,11 +66,18 @@ LabelPicker.propTypes = {
 export default function LabelPicker({ selectedIds = [], onChange }) {
   const [search, setSearch] = useState("");
   const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
+  const [createdLabels, setCreatedLabels] = useState([]);
   const { data, refetch } = useAnnotationLabelsList({ search, limit: 100 });
   // Also fetch all labels (no search) to resolve selected label names
   const { data: allData } = useAnnotationLabelsList({ search: "", limit: 100 });
-  const allLabels = data?.results || [];
-  const allLabelsUnfiltered = useMemo(() => allData?.results || [], [allData]);
+  const allLabels = useMemo(
+    () => mergeLabelsById(data?.results || [], createdLabels),
+    [data, createdLabels],
+  );
+  const allLabelsUnfiltered = useMemo(
+    () => mergeLabelsById(allData?.results || [], createdLabels),
+    [allData, createdLabels],
+  );
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const handleToggle = (id) => {
@@ -69,6 +86,22 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
     } else {
       onChange([...selectedIds, id]);
     }
+  };
+
+  const handleCreatedLabel = (label) => {
+    const labelId = label?.id || label?.label_id;
+    if (!labelId) return;
+    const normalizedId = String(labelId);
+    const normalizedLabel = {
+      ...label,
+      id: normalizedId,
+    };
+    setCreatedLabels((prev) => mergeLabelsById(prev, [normalizedLabel]));
+    if (!selectedSet.has(normalizedId)) {
+      onChange([...selectedIds, normalizedId]);
+    }
+    setSearch("");
+    refetch();
   };
 
   // Selected labels always resolved from the unfiltered list
@@ -197,6 +230,7 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
           setCreateDrawerOpen(false);
           refetch();
         }}
+        onCreated={handleCreatedLabel}
       />
     </Box>
   );

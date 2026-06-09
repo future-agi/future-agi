@@ -10,7 +10,12 @@ from django.conf import settings as django_settings
 from rest_framework import status
 
 from accounts.models.user import User
-from model_hub.models.annotation_queues import QueueItem
+from model_hub.models.annotation_queues import (
+    AnnotationQueueAnnotator,
+    QueueItem,
+    QueueItemAssignment,
+)
+from model_hub.models.choices import AnnotatorRole, QueueItemStatus
 from model_hub.models.develop_dataset import Dataset, Row
 
 QUEUE_URL = "/model-hub/annotation-queues/"
@@ -165,3 +170,93 @@ class TestDistributedQueueProgress:
         assert progress["total"] == 4
         # Only current user's 2 completed items, not all 5
         assert progress["completed"] == 2
+
+    def test_manager_progress_falls_back_but_selected_annotator_stays_scoped(
+        self,
+        auth_client,
+        user,
+        second_user,
+        distributed_queue,
+        dataset_with_rows,
+        organization,
+    ):
+        """
+        Power-user review flow: managers can open items assigned to other
+        annotators. Without a selected annotator they should see full queue
+        progress, but selecting an annotator should scope progress to that
+        annotator's workload.
+        """
+        _, rows = dataset_with_rows
+        _add_rows_to_queue(auth_client, distributed_queue, rows)
+
+        third_user = User.objects.create_user(
+            email="annotator3@futureagi.com",
+            password="testpassword123",
+            name="Annotator Three",
+            organization=organization,
+        )
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue_id=distributed_queue,
+            user=user,
+            defaults={"role": AnnotatorRole.MANAGER.value},
+        )
+        AnnotationQueueAnnotator.objects.create(
+            queue_id=distributed_queue,
+            user=second_user,
+            role=AnnotatorRole.ANNOTATOR.value,
+        )
+        AnnotationQueueAnnotator.objects.create(
+            queue_id=distributed_queue,
+            user=third_user,
+            role=AnnotatorRole.ANNOTATOR.value,
+        )
+
+        queue_items = list(
+            QueueItem.objects.filter(
+                queue_id=distributed_queue, deleted=False
+            ).order_by("order")
+        )
+        # Exercise both ownership paths: newer multi-assignment rows for one
+        # annotator and the deprecated assigned_to column for another.
+        for qi in queue_items[:4]:
+            qi.assigned_to = None
+            qi.status = (
+                QueueItemStatus.COMPLETED.value
+                if qi == queue_items[0]
+                else QueueItemStatus.PENDING.value
+            )
+            qi.save(update_fields=["assigned_to", "status"])
+            QueueItemAssignment.objects.create(queue_item=qi, user=second_user)
+        for qi in queue_items[4:]:
+            qi.assigned_to = third_user
+            qi.status = (
+                QueueItemStatus.COMPLETED.value
+                if qi == queue_items[4]
+                else QueueItemStatus.PENDING.value
+            )
+            qi.save(update_fields=["assigned_to", "status"])
+
+        manager_resp = auth_client.get(
+            annotate_detail_url(distributed_queue, str(queue_items[0].id))
+        )
+        assert manager_resp.status_code == status.HTTP_200_OK
+        manager_progress = manager_resp.data.get("result", manager_resp.data)[
+            "progress"
+        ]
+        assert manager_progress["total"] == 10
+        assert manager_progress["completed"] == 2
+        assert manager_progress["user_progress"]["total"] == 0
+        assert manager_progress["user_progress"]["completed"] == 0
+
+        selected_resp = auth_client.get(
+            annotate_detail_url(distributed_queue, str(queue_items[0].id)),
+            {"annotator_id": str(second_user.id)},
+        )
+        assert selected_resp.status_code == status.HTTP_200_OK
+        selected_progress = selected_resp.data.get("result", selected_resp.data)[
+            "progress"
+        ]
+        assert selected_progress["total"] == 4
+        assert selected_progress["completed"] == 1
+        assert selected_progress["user_progress"]["total"] == 4
+        assert selected_progress["user_progress"]["completed"] == 1

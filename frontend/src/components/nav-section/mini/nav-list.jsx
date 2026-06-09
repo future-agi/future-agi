@@ -57,6 +57,7 @@ export default function NavList({ data, depth, slotProps }) {
         roles={data.roles}
         caption={data.caption}
         disabled={data.disabled}
+        disabledTooltip={data.disabledTooltip}
         //
         depth={depth}
         hasChild={!!data.children}

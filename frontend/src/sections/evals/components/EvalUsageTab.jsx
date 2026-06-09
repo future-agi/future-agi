@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import {
   Box,
+  ButtonBase,
   Chip,
   IconButton,
   Skeleton,
@@ -9,6 +10,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import React, { useCallback, useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
@@ -16,12 +18,18 @@ import { useQueryClient } from "@tanstack/react-query";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
 
+import PartialInputWarningDetails, {
+  PARTIAL_INPUT_WARNING_TYPE,
+} from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
+
 import { useEvalUsageChart, useEvalUsageLogs } from "../hooks/useEvalUsage";
+import { isEditableElement } from "src/utils/keyboardUtils";
 import UsageChart from "./UsageChart";
 
 // ── Inline stat ──
@@ -54,6 +62,8 @@ const DATE_OPTION_TO_PERIOD = {
   "7D": "7d",
   "30D": "30d",
   "3M": "90d",
+  "6M": "180d",
+  "12M": "365d",
   Custom: "30d",
 };
 
@@ -137,33 +147,81 @@ const useColumns = () =>
         id: "result",
         accessorKey: "result",
         header: "Result",
-        size: 100,
+        size: 130,
         cell: ({ getValue, row: tableRow }) => {
           const v = getValue();
+          const warnings = tableRow.original?.warnings || [];
+          const partial = warnings.find?.(
+            (w) => w?.type === PARTIAL_INPUT_WARNING_TYPE,
+          );
+          const partialBadge = partial ? (
+            <CustomTooltip
+              show
+              arrow
+              title={
+                partial.message ||
+                `Eval ran with some inputs empty: ${(partial.empty_keys || []).join(", ")}`
+              }
+            >
+              <Box
+                sx={(theme) => ({
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 18,
+                  height: 18,
+                  borderRadius: "50%",
+                  backgroundColor: alpha(
+                    theme.palette.warning.main,
+                    theme.palette.mode === "dark" ? 0.24 : 0.16,
+                  ),
+                  color:
+                    theme.palette.mode === "dark"
+                      ? theme.palette.warning.light
+                      : theme.palette.warning.dark,
+                  cursor: "help",
+                })}
+                data-testid="usage-partial-input-warning"
+              >
+                <Iconify
+                  icon="material-symbols:warning-rounded"
+                  width="14px"
+                  height="14px"
+                />
+              </Box>
+            </CustomTooltip>
+          ) : null;
+
           if (!v) {
             if (tableRow.original?.status === "error") {
               return (
-                <Chip
-                  label="Error"
-                  size="small"
-                  color="error"
-                  variant="outlined"
-                  sx={{ fontSize: "11px", height: 20 }}
-                />
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                  <Chip
+                    label="Error"
+                    size="small"
+                    color="error"
+                    variant="outlined"
+                    sx={{ fontSize: "11px", height: 20 }}
+                  />
+                  {partialBadge}
+                </Box>
               );
             }
-            return null;
+            return partialBadge;
           }
           const isPassed = v === "Passed" || v === "Pass";
           const isFailed = v === "Failed" || v === "Fail";
           return (
-            <Chip
-              label={v}
-              size="small"
-              color={isPassed ? "success" : isFailed ? "error" : "default"}
-              variant="outlined"
-              sx={{ fontSize: "11px", height: 20 }}
-            />
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <Chip
+                label={v}
+                size="small"
+                color={isPassed ? "success" : isFailed ? "error" : "default"}
+                variant="outlined"
+                sx={{ fontSize: "11px", height: 20 }}
+              />
+              {partialBadge}
+            </Box>
           );
         },
       },
@@ -173,15 +231,22 @@ const useColumns = () =>
         header: "Input",
         meta: { flex: 2 },
         minSize: 200,
-        cell: ({ getValue }) => (
-          <Typography
-            variant="body2"
-            noWrap
-            sx={{ fontSize: "12px", color: "text.secondary" }}
-          >
-            {getValue() || "—"}
-          </Typography>
-        ),
+        cell: ({ getValue }) => {
+          const v = getValue();
+          return (
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{
+                fontSize: "12px",
+                color: v ? "text.secondary" : "text.disabled",
+                fontStyle: v ? "normal" : "italic",
+              }}
+            >
+              {v || "No input"}
+            </Typography>
+          );
+        },
       },
       {
         id: "reason",
@@ -382,6 +447,8 @@ const EvalUsageTab = ({
   React.useEffect(() => {
     if (detailIndex === null) return;
     const handler = (e) => {
+      if (e.repeat) return;
+      if (isEditableElement(e)) return;
       if (e.key === "k") {
         e.preventDefault();
         setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));
@@ -397,7 +464,15 @@ const EvalUsageTab = ({
   }, [detailIndex, filteredLogs.length]);
 
   return (
-    <Box sx={{ display: "flex", height: "100%", minHeight: 0 }}>
+    <Box
+      sx={{
+        display: "flex",
+        height: "100%",
+        minHeight: 0,
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
       {/* ── Main content ── */}
       <Box
         sx={{
@@ -406,6 +481,7 @@ const EvalUsageTab = ({
           flexDirection: "column",
           minHeight: 0,
           minWidth: 0,
+          marginRight: detailIndex !== null ? "420px" : 0,
           transition: "margin-right 0.25s",
         }}
       >
@@ -466,7 +542,7 @@ const EvalUsageTab = ({
                 sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
               />
               <StatPill
-                label="Pass Rate"
+                label="Task Completion Rate"
                 value={`${stats.pass_rate ?? 0}%`}
                 color="info.main"
               />
@@ -504,7 +580,7 @@ const EvalUsageTab = ({
               }}
             >
               <Typography variant="caption" color="text.disabled">
-                No data for this period
+              No data to show for selected period, update filters to view graph/data when no data is available.
               </Typography>
             </Box>
           )}
@@ -550,7 +626,7 @@ const EvalUsageTab = ({
               />
             </Box>
           </Box>
-          <Box sx={{ flex: 1, minHeight: 0 }}>
+          <Box sx={{ flex: 1,overflowY: "auto", minHeight: 0 }}>
             <DataTable
               columns={columns}
               data={filteredLogs}
@@ -584,14 +660,17 @@ const EvalUsageTab = ({
       >
         <Box
           sx={{
+            position: "absolute",
+            top: 0,
+            right: 0,
+            bottom: 0,
             width: 420,
-            flexShrink: 0,
             borderLeft: "1px solid",
             borderColor: "divider",
             display: "flex",
             flexDirection: "column",
-            height: "100%",
             backgroundColor: "background.paper",
+            zIndex: 1,
           }}
         >
           {/* Header with prev/next */}
@@ -709,6 +788,7 @@ const EvalUsageTab = ({
   );
 };
 
+
 // ── Detail panel content with Formatted/JSON tabs + feedback ──
 const DetailPanelContent = ({
   row,
@@ -721,6 +801,7 @@ const DetailPanelContent = ({
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const detail = row.detail || {};
+  const warnings = row.warnings || detail.warnings || [];
   const json = useMemo(() => JSON.stringify(detail, null, 2), [detail]);
 
   return (
@@ -741,17 +822,17 @@ const DetailPanelContent = ({
         }}
       >
         {["formatted", "json"].map((m) => (
-          <Box
+          <ButtonBase
             key={m}
             onClick={() => setViewMode(m)}
+            disableRipple
             sx={{
               px: 1.5,
               py: 0.375,
               borderRadius: "5px",
               fontSize: "11px",
-              cursor: "pointer",
               fontWeight: viewMode === m ? 600 : 400,
-              color: viewMode === m ? "text.primary" : "text.disabled",
+              color: viewMode === m ? "text.primary" : "text.secondary",
               backgroundColor:
                 viewMode === m
                   ? (t) =>
@@ -759,10 +840,16 @@ const DetailPanelContent = ({
                         ? "rgba(255,255,255,0.08)"
                         : "action.hover"
                   : "transparent",
+              "&:hover": {
+                backgroundColor: (t) =>
+                  t.palette.mode === "dark"
+                    ? "rgba(255,255,255,0.04)"
+                    : "action.hover",
+              },
             }}
           >
             {m === "formatted" ? "Formatted" : "JSON"}
-          </Box>
+          </ButtonBase>
         ))}
       </Box>
 
@@ -863,6 +950,7 @@ const DetailPanelContent = ({
                       : "default"
                 }
               />
+              <PartialInputWarningDetails warnings={warnings} />
               <DetailRow
                 label="Source"
                 value={
@@ -1291,13 +1379,29 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
       borderColor: "divider",
     }}
   >
-    <Typography
-      variant="caption"
-      color="text.secondary"
-      sx={{ width: 90, flexShrink: 0, pt: 0.25 }}
+    <CustomTooltip
+      show
+      title={label}
+      placement="top-start"
+      enterDelay={300}
+      size="small"
     >
-      {label}
-    </Typography>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{
+          width: 90,
+          flexShrink: 0,
+          pt: 0.25,
+          pr: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+      </Typography>
+    </CustomTooltip>
     <Box sx={{ flex: 1, minWidth: 0 }}>
       {chip ? (
         <Chip

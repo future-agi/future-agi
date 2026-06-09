@@ -83,6 +83,37 @@ _original_apiview_initial = APIView.initial
 # (`_make_client` and friends) skip the cleanup step — centralising it here
 # makes the leak impossible regardless of how the client is instantiated.
 _LIVE_WORKSPACE_AWARE_CLIENTS: list = []
+_WORKSPACE_INITIAL_PATCH_ACTIVE = False
+
+
+def _initial_with_workspace(view_self, request, *args, **view_kwargs):
+    # Only inject workspace + organization for requests that carry the
+    # X-Workspace-Id header (set by set_workspace credentials). Resolve from
+    # the header so multiple clients in the same test can target different
+    # workspaces without nested client-specific APIView.initial patches.
+    ws_header = request.META.get("HTTP_X_WORKSPACE_ID")
+    if ws_header:
+        from accounts.models.workspace import Workspace
+
+        workspace = (
+            Workspace.no_workspace_objects.select_related("organization")
+            .filter(id=ws_header, is_active=True)
+            .first()
+        )
+    else:
+        workspace = None
+    if workspace:
+        request.workspace = workspace
+        request.organization = workspace.organization
+        # Also set thread-local context so permission checks (which use
+        # get_current_organization()) and model managers work correctly.
+        # This runs AFTER URL resolution/view import, so class-level viewset
+        # querysets are already evaluated cleanly.
+        set_workspace_context(
+            workspace=workspace,
+            organization=workspace.organization,
+        )
+    return _original_apiview_initial(view_self, request, *args, **view_kwargs)
 
 
 class WorkspaceAwareAPIClient(APIClient):
@@ -117,32 +148,14 @@ class WorkspaceAwareAPIClient(APIClient):
 
     def _start_workspace_injection(self):
         """Patch APIView.initial to inject workspace into requests."""
-        if self._patcher:
-            return  # Already patching
-
-        workspace = self._workspace
-
-        def initial_with_workspace(view_self, request, *args, **view_kwargs):
-            # Only inject workspace + organization for requests that carry the
-            # matching X-Workspace-Id header (set by set_workspace credentials).
-            # This prevents leaking context into other test clients (e.g. plain
-            # APIClient instances for cross-org security tests).
-            ws_header = request.META.get("HTTP_X_WORKSPACE_ID")
-            if ws_header and ws_header == str(workspace.id):
-                request.workspace = workspace
-                request.organization = workspace.organization
-                # Also set thread-local context so permission checks (which use
-                # get_current_organization()) and model managers work correctly.
-                # This runs AFTER URL resolution/view import, so class-level
-                # viewset querysets are already evaluated cleanly.
-                set_workspace_context(
-                    workspace=workspace,
-                    organization=workspace.organization,
-                )
-            return _original_apiview_initial(view_self, request, *args, **view_kwargs)
-
-        self._patcher = patch.object(APIView, "initial", initial_with_workspace)
-        self._patcher.start()
+        global _WORKSPACE_INITIAL_PATCH_ACTIVE
+        if (
+            _WORKSPACE_INITIAL_PATCH_ACTIVE
+            and APIView.__dict__.get("initial") is _initial_with_workspace
+        ):
+            return
+        APIView.initial = _initial_with_workspace
+        _WORKSPACE_INITIAL_PATCH_ACTIVE = True
 
     def _request_with_clean_context(self, method, *args, **kwargs):
         """Clear thread-local workspace context before and after each request.
@@ -159,6 +172,21 @@ class WorkspaceAwareAPIClient(APIClient):
 
         This mimics the production auth middleware lifecycle.
         """
+        if self._workspace is not None:
+            self._start_workspace_injection()
+            # Keep workspace routing tied to this client instance on every
+            # request. Some tests create multiple authenticated clients in the
+            # same function; passing headers per request avoids any process-
+            # global DRF client credential state from making both requests use
+            # the last-created workspace.
+            self.credentials(
+                HTTP_X_WORKSPACE_ID=str(self._workspace.id),
+                HTTP_X_ORGANIZATION_ID=str(self._workspace.organization_id),
+            )
+            kwargs.setdefault("HTTP_X_WORKSPACE_ID", str(self._workspace.id))
+            kwargs.setdefault(
+                "HTTP_X_ORGANIZATION_ID", str(self._workspace.organization_id)
+            )
         clear_workspace_context()
         try:
             return method(*args, **kwargs)
@@ -188,9 +216,13 @@ class WorkspaceAwareAPIClient(APIClient):
 
     def stop_workspace_injection(self):
         """Stop the workspace injection patch."""
-        if self._patcher:
-            self._patcher.stop()
-            self._patcher = None
+        from rest_framework.views import APIView
+
+        global _WORKSPACE_INITIAL_PATCH_ACTIVE
+        if APIView.__dict__.get("initial") is _initial_with_workspace:
+            APIView.initial = _original_apiview_initial
+            _WORKSPACE_INITIAL_PATCH_ACTIVE = False
+        self._patcher = None
 
 
 @pytest.fixture(autouse=True)
@@ -218,15 +250,16 @@ def _teardown_workspace_aware_clients():
     point at a workspace from a long-finished test, which typically surfaces
     as 404/400/403 responses where 200 was expected.
 
-    Snapshot ``APIView.initial`` before the test runs and forcibly restore
-    it afterwards. This is a belt-and-suspenders guard on top of individual
-    ``stop_workspace_injection`` calls — forceful restoration ensures the
-    class attribute is always clean regardless of how patches nested or
-    whether they were stopped in the correct order.
+    Forcibly restore ``APIView.initial`` to the original method captured when
+    this module was imported. Restoring to a per-test snapshot is insufficient:
+    if a prior test already leaked a patch, the snapshot itself is
+    contaminated and cross-org tests will keep using a stale workspace.
     """
     from rest_framework.views import APIView
 
-    original_initial = APIView.__dict__.get("initial")
+    global _WORKSPACE_INITIAL_PATCH_ACTIVE
+    APIView.initial = _original_apiview_initial
+    _WORKSPACE_INITIAL_PATCH_ACTIVE = False
     yield
     # Drain the registry, stopping each live patcher.
     while _LIVE_WORKSPACE_AWARE_CLIENTS:
@@ -239,11 +272,8 @@ def _teardown_workspace_aware_clients():
     # survived stop_workspace_injection (e.g. out-of-order stop or silent
     # exception). Restoring the class attribute directly is the only
     # reliable way to unwind it.
-    if (
-        original_initial is not None
-        and APIView.__dict__.get("initial") is not original_initial
-    ):
-        APIView.initial = original_initial
+    APIView.initial = _original_apiview_initial
+    _WORKSPACE_INITIAL_PATCH_ACTIVE = False
 
 
 @pytest.fixture

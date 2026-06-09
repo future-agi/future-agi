@@ -6,17 +6,26 @@ import logger from "../logger";
 import { Events } from "./EventNames";
 import { MIXPANEL_HOST } from "src/config-global";
 
-try {
-  mixpanel.init(import.meta.env.VITE_MIXPANEL_TOKEN, {
-    debug: true,
-    persistence: "localStorage",
-    ignore_dnt: true,
-    record_sessions_percent: 100,
-    record_mask_text_class: ".sensitive",
-    ...(MIXPANEL_HOST && { api_host: MIXPANEL_HOST }),
-  });
-} catch (error) {
-  logger.error("Failed to initialize Mixpanel:", error);
+// Mixpanel is opt-in: skip init entirely on OSS builds where no token
+// is set. mixpanel-browser's init(undefined, ...) silently produces a
+// half-broken object that throws on every track() — flooding the console
+// with "Cannot read properties of undefined (reading 'disable_all_events')".
+const MIXPANEL_TOKEN = import.meta.env.VITE_MIXPANEL_TOKEN;
+const MIXPANEL_ENABLED = Boolean(MIXPANEL_TOKEN);
+
+if (MIXPANEL_ENABLED) {
+  try {
+    mixpanel.init(MIXPANEL_TOKEN, {
+      debug: true,
+      persistence: "localStorage",
+      ignore_dnt: true,
+      record_sessions_percent: 100,
+      record_mask_text_class: ".sensitive",
+      ...(MIXPANEL_HOST && { api_host: MIXPANEL_HOST }),
+    });
+  } catch (error) {
+    logger.error("Failed to initialize Mixpanel:", error);
+  }
 }
 
 export const PropertyName = {
@@ -88,6 +97,7 @@ export const PropertyName = {
 };
 
 export const trackEvent = (eventName, properties) => {
+  if (!MIXPANEL_ENABLED) return;
   try {
     mixpanel.track(eventName, properties);
   } catch (error) {
@@ -96,6 +106,7 @@ export const trackEvent = (eventName, properties) => {
 };
 
 export const trackError = (properties, where) => {
+  if (!MIXPANEL_ENABLED) return;
   try {
     mixpanel.track(
       `Client Error : ${where || window.location.pathname}`,
@@ -113,6 +124,7 @@ export const identifyUser = (userData = {}) => {
     logger.error("User ID is required for identification");
     return;
   }
+  if (!MIXPANEL_ENABLED) return;
 
   try {
     // Mixpanel identification
@@ -152,6 +164,10 @@ export const identifyUser = (userData = {}) => {
 };
 
 export const resetUser = () => {
+  if (!MIXPANEL_ENABLED) {
+    if (window.Appcues) window.Appcues.reset();
+    return;
+  }
   try {
     mixpanel.reset();
     if (window.Appcues) {

@@ -31,6 +31,7 @@ import "@xyflow/react/dist/style.css";
 import Dagre from "@dagrejs/dagre";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import FullscreenGraphDialog from "./FullscreenGraphDialog";
 
 // ---------------------------------------------------------------------------
 // Node type → color + icon
@@ -529,7 +530,7 @@ const buildFlowData = (graphData, direction = "LR", theme = null) => {
 // ---------------------------------------------------------------------------
 // Zoom controls — top-right, appear on hover
 // ---------------------------------------------------------------------------
-const ZoomControls = () => {
+const ZoomControls = ({ isFullscreen, onToggleFullscreen }) => {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const btnSx = {
     p: 0.5,
@@ -579,13 +580,22 @@ const ZoomControls = () => {
       </IconButton>
       <IconButton
         size="small"
-        onClick={() => fitView({ duration: 300, padding: 0.2 })}
+        title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+        onClick={onToggleFullscreen}
         sx={btnSx}
       >
-        <Iconify icon="mdi:fullscreen" width={14} />
+        <Iconify
+          icon={isFullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen"}
+          width={14}
+        />
       </IconButton>
     </Box>
   );
+};
+
+ZoomControls.propTypes = {
+  isFullscreen: PropTypes.bool,
+  onToggleFullscreen: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------
@@ -597,6 +607,8 @@ const AgentGraphInner = ({
   isError,
   direction = "LR",
   onNodeClick,
+  isFullscreen = false,
+  onToggleFullscreen,
 }) => {
   const theme = useTheme();
   const [isHovering, setIsHovering] = useState(false);
@@ -671,6 +683,7 @@ const AgentGraphInner = ({
         minHeight: 120,
         width: "100%",
         position: "relative",
+        bgcolor: "background.paper",
       }}
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
@@ -699,7 +712,12 @@ const AgentGraphInner = ({
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
-        {isHovering && <ZoomControls />}
+        {(isHovering || isFullscreen) && (
+          <ZoomControls
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={onToggleFullscreen}
+          />
+        )}
       </ReactFlow>
     </Box>
   );
@@ -711,12 +729,24 @@ AgentGraphInner.propTypes = {
   isError: PropTypes.bool,
   direction: PropTypes.oneOf(["LR", "TB"]),
   onNodeClick: PropTypes.func,
+  isFullscreen: PropTypes.bool,
+  onToggleFullscreen: PropTypes.func,
 };
 
 const AgentGraph = (props) => (
-  <ReactFlowProvider>
-    <AgentGraphInner {...props} />
-  </ReactFlowProvider>
+  <FullscreenGraphDialog
+    onNodeClick={props.onNodeClick}
+    renderGraph={({ isFullscreen, onToggleFullscreen, onNodeClick }) => (
+      <ReactFlowProvider>
+        <AgentGraphInner
+          {...props}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={onToggleFullscreen}
+          onNodeClick={onNodeClick}
+        />
+      </ReactFlowProvider>
+    )}
+  />
 );
 
 AgentGraph.propTypes = {

@@ -650,3 +650,111 @@ class TestResponseFormats:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert "message" in data
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestAccountTakeoverVulnerabilityFixed:
+    """Regression tests for account takeover via update_true (reported 2026-04-28).
+
+    The signup endpoint previously accepted update_true/old_email params that
+    allowed an unauthenticated attacker to change any existing user's email and
+    password. These tests prove the vulnerability is fixed.
+    """
+
+    def test_update_true_cannot_modify_existing_user(self, api_client, user):
+        """Sending update_true=True with old_email must NOT modify an existing user."""
+        original_email = user.email
+        original_password_hash = user.password
+
+        response = api_client.post(
+            "/accounts/signup/",
+            {
+                "email": "attacker@futureagi.com",
+                "full_name": "Attacker",
+                "company_name": "Evil Corp",
+                "update_true": True,
+                "old_email": original_email,
+                "allow_email": True,
+            },
+            format="json",
+        )
+
+        # Verify the existing user was NOT modified
+        user.refresh_from_db()
+        assert user.email == original_email
+        assert user.password == original_password_hash
+
+    def test_signup_rejects_existing_email_even_with_update_true(
+        self, api_client, user
+    ):
+        """Signup must reject when target email exists, regardless of update_true."""
+        response = api_client.post(
+            "/accounts/signup/",
+            {
+                "email": user.email,
+                "full_name": "Attacker",
+                "company_name": "",
+                "update_true": True,
+                "old_email": user.email,
+                "allow_email": True,
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_old_email_param_is_stripped(self, api_client, user):
+        """The old_email parameter must be stripped and never reach first_signup."""
+        original_email = user.email
+        original_password_hash = user.password
+
+        response = api_client.post(
+            "/accounts/signup/",
+            {
+                "email": "newuser@futureagi.com",
+                "full_name": "New User",
+                "company_name": "",
+                "old_email": original_email,
+                "allow_email": True,
+            },
+            format="json",
+        )
+
+        # Regardless of response, the original user must be untouched
+        user.refresh_from_db()
+        assert user.email == original_email
+        assert user.password == original_password_hash
+
+    def test_full_attack_scenario(self, api_client, user):
+        """Full attack scenario: attacker cannot take over victim's account."""
+        victim_email = user.email
+        victim_name = user.name
+        victim_password_hash = user.password
+        attacker_email = "attacker-ato@futureagi.com"
+
+        # Attempt the exact attack from the security report
+        api_client.post(
+            "/accounts/signup/",
+            {
+                "email": attacker_email,
+                "full_name": "ATO Validation Controlled",
+                "company_name": "Audit",
+                "old_email": victim_email,
+                "update_true": True,
+                "allow_email": True,
+            },
+            format="json",
+        )
+
+        # Verify victim's account is completely untouched
+        user.refresh_from_db()
+        assert user.email == victim_email
+        assert user.name == victim_name
+        assert user.password == victim_password_hash
+
+        # Verify attacker email is NOT linked to victim's user ID
+        from accounts.models import User as UserModel
+
+        attacker_users = UserModel.objects.filter(email=attacker_email)
+        for u in attacker_users:
+            assert u.id != user.id

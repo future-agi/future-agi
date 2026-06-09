@@ -434,9 +434,10 @@ class TestBuildEvalMetricEntry:
             configured_output_type="choices",
         )
 
-        # Float path comes before bool fallback (unless Pass/Fail config)
+        # The configured choices output type is preserved even if the stored
+        # choice payload is malformed and rendering falls back to the float.
         assert score == 50.0
-        assert output_type == "float"
+        assert output_type == "choices"
 
         # With "Pass/Fail" config: falls through to bool (100.0 from True)
         score2, output_type2 = _build_eval_metric_entry(

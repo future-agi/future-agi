@@ -27,9 +27,9 @@ import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
 import { statusBar } from "src/components/run-insights/traces-tab/common";
 import { objectCamelToSnake } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import LLMTracingTraceDetailDrawer from "./LLMTracingTraceDetailDrawer";
 import { useLLMTracingStoreShallow, useTraceGridStore } from "./states";
-import _ from "lodash";
 import { APP_CONSTANTS } from "src/utils/constants";
 import { useReplaySessionsStoreShallow } from "../SessionsView/ReplaySessions/store";
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
@@ -132,6 +132,10 @@ const TraceGrid = React.forwardRef(
         window.removeEventListener("observe-reset-selection", handler);
     }, [gridRef]);
 
+    useEffect(() => {
+      gridRef?.current?.api?.hideOverlay?.();
+    }, [filters, extraFilters, hasEvalFilter, metricFilters, gridRef]);
+
     const defaultColDef = useMemo(
       () => ({
         lockVisible: true,
@@ -174,6 +178,7 @@ const TraceGrid = React.forwardRef(
             }
             try {
               setLoading(true);
+              params.api?.hideOverlay();
               const { request } = params;
 
               const pageSize = request.endRow - request.startRow;
@@ -186,14 +191,16 @@ const TraceGrid = React.forwardRef(
                 ...(projectId ? { project_id: projectId } : {}),
                 page_number: page,
                 page_size: ROWS_LIMIT,
-                filters: JSON.stringify([
-                  ...objectCamelToSnake([
-                    ...filters,
-                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                filters: JSON.stringify(
+                  canonicalizeApiFilterColumnIds([
+                    ...objectCamelToSnake([
+                      ...filters,
+                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                    ]),
+                    ...(extraFilters || EMPTY_EXTRA_FILTERS),
+                    ...(metricFilters || []),
                   ]),
-                  ...(extraFilters || EMPTY_EXTRA_FILTERS),
-                  ...(metricFilters || []),
-                ]),
+                ),
                 ...(dateInterval && { interval: dateInterval }),
               });
 
@@ -216,23 +223,45 @@ const TraceGrid = React.forwardRef(
                 const currentNonCustom = (columnsRef.current || []).filter(
                   (c) => c.groupBy !== "Custom Columns",
                 );
-                if (!_.isEqual(newCols, currentNonCustom)) {
-                  // Merge: existing custom cols + pending (from localStorage/saved view)
-                  const existingCustom = (columnsRef.current || []).filter(
-                    (c) => c.groupBy === "Custom Columns",
-                  );
-                  const pending = pendingCustomColumnsRef?.current || [];
-                  const existingIds = new Set(existingCustom.map((c) => c.id));
-                  const dedupedPending = pending.filter(
-                    (c) => !existingIds.has(c.id),
-                  );
+                const existingCustom = (columnsRef.current || []).filter(
+                  (c) => c.groupBy === "Custom Columns",
+                );
+                const pending = pendingCustomColumnsRef?.current || [];
+                const existingIds = new Set(existingCustom.map((c) => c.id));
+                const dedupedPending = pending.filter(
+                  (c) => !existingIds.has(c.id),
+                );
+                // Diff by ID set — order isn't a schema change (TH-4996).
+                const newIds = new Set(newCols.map((c) => c.id));
+                const currentIdSet = new Set(currentNonCustom.map((c) => c.id));
+                const idSetChanged =
+                  newIds.size !== currentIdSet.size ||
+                  [...newIds].some((id) => !currentIdSet.has(id));
+                const hasPending = dedupedPending.length > 0;
+                if (idSetChanged || hasPending) {
                   const allCustom = [...existingCustom, ...dedupedPending];
-                  // Clear pending after consuming
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
+                  let finalNonCustom;
+                  if (idSetChanged) {
+                    const newById = new Map(newCols.map((nc) => [nc.id, nc]));
+                    const seen = new Set();
+                    const kept = currentNonCustom
+                      .filter((cc) => newById.has(cc.id))
+                      .map((cc) => {
+                        seen.add(cc.id);
+                        return { ...newById.get(cc.id), isVisible: cc.isVisible };
+                      });
+                    const added = newCols.filter((nc) => !seen.has(nc.id));
+                    finalNonCustom = [...kept, ...added];
+                  } else {
+                    finalNonCustom = currentNonCustom;
+                  }
                   setColumns(
-                    allCustom.length > 0 ? [...newCols, ...allCustom] : newCols,
+                    allCustom.length > 0
+                      ? [...finalNonCustom, ...allCustom]
+                      : finalNonCustom,
                   );
                 }
               }

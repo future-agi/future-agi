@@ -48,11 +48,7 @@ from tfc.utils.storage_client import (
     extract_object_key,
     get_storage_client,
 )
-try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import ROW_LIMIT_REACHED_MESSAGE, log_and_deduct_cost_for_resource_request
 except ImportError:
@@ -127,15 +123,16 @@ def upload_file_to_minio(file_obj, object_key, org_id=None):
                 except ImportError:
                     emit = None
 
-                emit(
-                    UsageEvent(
-                        org_id=str(org_id),
-                        event_type=BillingEventType.OBSERVE_ADD,
-                        amount=len(file_content),
-                        properties={"source": "dataset_file"},
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                    emit(
+                        UsageEvent(
+                            org_id=str(org_id),
+                            event_type=BillingEventType.OBSERVE_ADD,
+                            amount=len(file_content),
+                            properties={"source": "dataset_file"},
+                        )
                     )
-                )
-            except ImportError:
+            except (ImportError, TypeError):
                 pass
 
         url = get_object_url(bucket_name, object_key)
@@ -940,24 +937,25 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
                     return self._gm.bad_request(str(validation_err.detail[0]))
 
             # Check usage limits
-            call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                sdk_source=True if source == DatasetSourceChoices.SDK.value else False,
-                workspace=request.workspace,
-            )
-            if (
-                call_log_row_entry is None
-                or call_log_row_entry.status
-                == APICallStatusChoices.RESOURCE_LIMIT.value
-                and source != DatasetSourceChoices.SDK.value
-            ):
-                return self._gm.too_many_requests(
-                    get_error_message("DATASET_CREATE_LIMIT_REACHED")
+            if log_and_deduct_cost_for_resource_request is not None:
+                call_log_row_entry = log_and_deduct_cost_for_resource_request(
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    api_call_type=APICallTypeChoices.DATASET_ADD.value,
+                    sdk_source=True if source == DatasetSourceChoices.SDK.value else False,
+                    workspace=request.workspace,
                 )
-            call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
-            call_log_row_entry.save()
+                if (
+                    call_log_row_entry is None
+                    or call_log_row_entry.status
+                    == APICallStatusChoices.RESOURCE_LIMIT.value
+                    and source != DatasetSourceChoices.SDK.value
+                ):
+                    return self._gm.too_many_requests(
+                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
+                    )
+                call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
+                call_log_row_entry.save()
 
             # Validate inputs
             from model_hub.validators.dataset_validators import (
@@ -981,19 +979,20 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
                 return self._gm.bad_request(error)
 
             rows_in_dataset = data.shape[0]
-            call_log_row = log_and_deduct_cost_for_resource_request(
-                getattr(request, "organization", None) or request.user.organization,
-                api_call_type=APICallTypeChoices.ROW_ADD.value,
-                config={"total_rows": rows_in_dataset},
-                workspace=request.workspace,
-            )
-            if (
-                call_log_row is None
-                or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
-                return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
-            call_log_row.status = APICallStatusChoices.SUCCESS.value
-            call_log_row.save()
+            if log_and_deduct_cost_for_resource_request is not None:
+                call_log_row = log_and_deduct_cost_for_resource_request(
+                    getattr(request, "organization", None) or request.user.organization,
+                    api_call_type=APICallTypeChoices.ROW_ADD.value,
+                    config={"total_rows": rows_in_dataset},
+                    workspace=request.workspace,
+                )
+                if (
+                    call_log_row is None
+                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+                ):
+                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+                call_log_row.status = APICallStatusChoices.SUCCESS.value
+                call_log_row.save()
 
             # Upload file to Minio immediately
             _org = getattr(request, "organization", None) or request.user.organization

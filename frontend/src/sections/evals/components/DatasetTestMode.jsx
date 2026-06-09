@@ -14,6 +14,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { TreeView, TreeItem } from "@mui/lab";
 import PropTypes from "prop-types";
 import React, {
@@ -26,12 +27,14 @@ import React, {
 } from "react";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
+import { canonicalEntries } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import EvalResultDisplay from "./EvalResultDisplay";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
+import { unwrapCellValue } from "./datasetCellValue";
 
 const DATASET_PAGE_SIZE = 25;
 
@@ -143,11 +146,11 @@ function JsonEntries({ data, depth = 0 }) {
 
   const entries = Array.isArray(data)
     ? data.map((v, i) => [String(i), v])
-    : Object.entries(data);
+    : canonicalEntries(data);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column" }}>
-      {entries.map(([key, val]) => {
+      {entries.map(([key, val], idx) => {
         const isObj = val !== null && typeof val === "object";
         return (
           <JsonEntryRow
@@ -156,6 +159,7 @@ function JsonEntries({ data, depth = 0 }) {
             entryValue={val}
             isObject={isObj}
             depth={depth}
+            isLast={idx === entries.length - 1}
           />
         );
       })}
@@ -163,8 +167,9 @@ function JsonEntries({ data, depth = 0 }) {
   );
 }
 
-function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
+function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
   const [open, setOpen] = useState(false);
+  const [valueExpanded, setValueExpanded] = useState(false);
 
   return (
     <Box sx={{ py: 0.25 }}>
@@ -180,7 +185,11 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
           px: 0.5,
           py: 0.15,
         }}
-        onClick={() => isObject && setOpen(!open)}
+        onClick={(e) => {
+          if (!isObject) return;
+          e.stopPropagation();
+          setOpen(!open);
+        }}
       >
         {isObject && (
           <Iconify
@@ -190,52 +199,71 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
           />
         )}
         {!isObject && <Box sx={{ width: 12, flexShrink: 0 }} />}
-        <Typography
-          variant="caption"
-          fontWeight={600}
+        <Box
           sx={{
-            fontSize: "11px",
-            minWidth: 60,
-            flexShrink: 0,
-            color: "text.secondary",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 0.5,
+            flex: 1,
+            minWidth: 0,
+            ...(isLast || (isObject && open)
+              ? {}
+              : { borderBottom: "1px solid", borderColor: "divider" }),
           }}
         >
-          {entryKey}
-        </Typography>
-        {!isObject && (
           <Typography
             variant="caption"
+            fontWeight={600}
             sx={{
               fontSize: "11px",
-              color: "primary.main",
-              wordBreak: "break-all",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              display: "-webkit-box",
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: "vertical",
+              minWidth: 60,
+              flexShrink: 0,
+              color: "text.secondary",
             }}
           >
-            {entryValue === null
-              ? "null"
-              : entryValue === true
-                ? "true"
-                : entryValue === false
-                  ? "false"
-                  : String(entryValue)}
+            {entryKey}
           </Typography>
-        )}
-        {isObject && !open && (
-          <Typography
-            variant="caption"
-            color="text.disabled"
-            sx={{ fontSize: "10px" }}
-          >
-            {Array.isArray(entryValue)
-              ? `[${entryValue.length}]`
-              : `{${Object.keys(entryValue).length}}`}
-          </Typography>
-        )}
+          {!isObject && (
+            <Typography
+              variant="caption"
+              onClick={(e) => {
+                e.stopPropagation();
+                setValueExpanded((v) => !v);
+              }}
+              sx={{
+                fontSize: "11px",
+                color: "primary.main",
+                wordBreak: "break-all",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                display: "-webkit-box",
+                WebkitLineClamp: valueExpanded ? 9999 : 2,
+                WebkitBoxOrient: "vertical",
+                cursor: "pointer",
+                "&:hover": { opacity: 0.85 },
+              }}
+            >
+              {entryValue === null
+                ? "null"
+                : entryValue === true
+                  ? "true"
+                  : entryValue === false
+                    ? "false"
+                    : String(entryValue)}
+            </Typography>
+          )}
+          {isObject && !open && (
+            <Typography
+              variant="caption"
+              color="text.disabled"
+              sx={{ fontSize: "10px" }}
+            >
+              {Array.isArray(entryValue)
+                ? `[${entryValue.length}]`
+                : `{${Object.keys(entryValue).length}}`}
+            </Typography>
+          )}
+        </Box>
       </Box>
       {isObject && open && (
         <Box
@@ -322,7 +350,10 @@ function renderTreeNode(node, onSelect) {
             color: hasKids ? "text.primary" : "text.secondary",
             py: 0.15,
           }}
-          onClick={(e) => { e.stopPropagation(); onSelect(node.path); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(node.path);
+          }}
         >
           {node.label}
         </Typography>
@@ -333,7 +364,14 @@ function renderTreeNode(node, onSelect) {
   );
 }
 
-function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
+function ColumnTreeSelect({
+  columnNames,
+  value,
+  onChange,
+  isUnmapped,
+  disabled = false,
+  disabledTooltip = "",
+}) {
   const [open, setOpen] = useState(false);
   const [typing, setTyping] = useState(false);
   const anchorRef = useRef(null);
@@ -344,19 +382,25 @@ function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
     if (!typing || !value) return tree;
     const q = value.toLowerCase();
     const filterNodes = (nodes) =>
-      nodes.map((node) => {
-        if (node.path.toLowerCase().startsWith(q)) return node;
-        const kids = filterNodes(node.children);
-        if (kids.length) return { ...node, children: kids };
-        return null;
-      }).filter(Boolean);
+      nodes
+        .map((node) => {
+          if (node.path.toLowerCase().startsWith(q)) return node;
+          const kids = filterNodes(node.children);
+          if (kids.length) return { ...node, children: kids };
+          return null;
+        })
+        .filter(Boolean);
     return filterNodes(tree);
   }, [tree, value, typing]);
 
   // Collect all node IDs for default expansion
   const allIds = useMemo(() => {
     const ids = [];
-    const walk = (nodes) => nodes.forEach((n) => { ids.push(n.id); walk(n.children); });
+    const walk = (nodes) =>
+      nodes.forEach((n) => {
+        ids.push(n.id);
+        walk(n.children);
+      });
     walk(filtered);
     return ids;
   }, [filtered]);
@@ -367,61 +411,115 @@ function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
     setTyping(false);
   };
 
-  return (
-    <Box sx={{ flex: 1 }}>
-      <TextField
-        ref={anchorRef}
-        size="small"
-        fullWidth
-        value={value}
-        placeholder="Select column"
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          setTyping(true);
-          onChange(e.target.value);
-          if (!open) setOpen(true);
-        }}
-        InputProps={{
-          sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },
-          endAdornment: (
-            <InputAdornment position="end">
+  const textField = (
+    <TextField
+      ref={anchorRef}
+      size="small"
+      fullWidth
+      value={value}
+      placeholder={disabled ? "Loading columns..." : "Select column"}
+      disabled={disabled}
+      onFocus={() => {
+        if (disabled) return;
+        setOpen(true);
+      }}
+      onChange={(e) => {
+        if (disabled) return;
+        setTyping(true);
+        onChange(e.target.value);
+        if (!open) setOpen(true);
+      }}
+      autoComplete="off"
+      inputProps={{
+        autoComplete: "off",
+        autoCorrect: "off",
+        spellCheck: false,
+      }}
+      InputProps={{
+        sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },
+        endAdornment: (
+          <InputAdornment position="end">
+            {disabled ? (
+              <CircularProgress size={14} />
+            ) : (
               <Iconify
                 icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
                 width={16}
                 sx={{ color: "text.disabled", cursor: "pointer" }}
-                onClick={() => { setOpen((p) => !p); setTyping(false); }}
+                onClick={() => {
+                  setOpen((p) => !p);
+                  setTyping(false);
+                }}
               />
-            </InputAdornment>
-          ),
-        }}
-        sx={{
-          ...(isUnmapped && {
-            "& .MuiOutlinedInput-notchedOutline": { borderColor: "warning.main" },
-          }),
-        }}
-      />
-      {open && filtered.length > 0 && (
+            )}
+          </InputAdornment>
+        ),
+      }}
+      sx={{
+        ...(isUnmapped && {
+          "& .MuiOutlinedInput-notchedOutline": { borderColor: "warning.main" },
+        }),
+      }}
+    />
+  );
+
+  return (
+    <Box sx={{ flex: 1 }}>
+      {disabled && disabledTooltip ? (
+        <CustomTooltip
+          show
+          type="black"
+          size="small"
+          title={disabledTooltip}
+          placement="top"
+          arrow
+        >
+          <Box>{textField}</Box>
+        </CustomTooltip>
+      ) : (
+        textField
+      )}
+      {!disabled && open && filtered.length > 0 && (
         <Popper
           open
           anchorEl={anchorRef.current}
           placement="bottom-start"
           style={{ zIndex: 1301, width: anchorRef.current?.offsetWidth || 240 }}
         >
-          <ClickAwayListener onClickAway={(e) => {
-            // Don't close if clicking the input field itself
-            if (anchorRef.current?.contains(e.target)) return;
-            setOpen(false);
-            setTyping(false);
-          }}>
+          <ClickAwayListener
+            onClickAway={(e) => {
+              // Don't close if clicking the input field itself
+              if (anchorRef.current?.contains(e.target)) return;
+              setOpen(false);
+              setTyping(false);
+            }}
+          >
             <Paper
               elevation={8}
-              sx={{ mt: 0.5, borderRadius: "8px", border: "1px solid", borderColor: "divider" }}
+              sx={{
+                mt: 0.5,
+                borderRadius: "8px",
+                border: "1px solid",
+                borderColor: "divider",
+              }}
             >
               <Box sx={{ maxHeight: 260, overflow: "auto", py: 0.5 }}>
                 <TreeView
                   defaultExpanded={allIds}
-                  defaultCollapseIcon={<Iconify icon="mdi:chevron-down" width={14} sx={{ color: "text.disabled" }} />}
-                  defaultExpandIcon={<Iconify icon="mdi:chevron-right" width={14} sx={{ color: "text.disabled" }} />}
+                  defaultCollapseIcon={
+                    <Iconify
+                      icon="mdi:chevron-down"
+                      width={14}
+                      sx={{ color: "text.disabled" }}
+                    />
+                  }
+                  defaultExpandIcon={
+                    <Iconify
+                      icon="mdi:chevron-right"
+                      width={14}
+                      sx={{ color: "text.disabled" }}
+                    />
+                  }
                   sx={{
                     "& .MuiTreeItem-content": { py: 0.1, borderRadius: "4px" },
                     "& .MuiTreeItem-content:hover": { bgcolor: "action.hover" },
@@ -443,7 +541,12 @@ function extractKeysFromValue(raw) {
   let parsed = null;
   if (raw && typeof raw === "object") parsed = raw;
   else if (typeof raw === "string" && raw.trim()) {
-    try { const p = JSON.parse(raw); if (p && typeof p === "object") parsed = p; } catch { /* not JSON */ }
+    try {
+      const p = JSON.parse(raw);
+      if (p && typeof p === "object") parsed = p;
+    } catch {
+      /* not JSON */
+    }
   }
   if (!parsed) return [];
   const keys = [];
@@ -476,14 +579,24 @@ function resolveNestedValue(raw, jsonPath) {
   let parsed = null;
   if (raw && typeof raw === "object") parsed = raw;
   else if (typeof raw === "string") {
-    try { parsed = JSON.parse(raw); } catch { return raw; }
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return raw;
+    }
   }
   if (!parsed) return raw;
   const parts = jsonPath.split(/[.[\]]/).filter(Boolean);
   let cur = parsed;
   for (const p of parts) {
     if (cur == null) return undefined;
-    cur = /^\d+$/.test(p) ? (Array.isArray(cur) ? cur[parseInt(p, 10)] : undefined) : (typeof cur === "object" ? cur[p] : undefined);
+    cur = /^\d+$/.test(p)
+      ? Array.isArray(cur)
+        ? cur[parseInt(p, 10)]
+        : undefined
+      : typeof cur === "object"
+        ? cur[p]
+        : undefined;
   }
   return cur;
 }
@@ -698,7 +811,7 @@ const DatasetTestMode = React.forwardRef(
         )
         .map((col) => {
           const cell = currentRow[col.id];
-          const value = cell?.cell_value ?? cell ?? "";
+          const value = unwrapCellValue(cell);
           // Don't pre-stringify objects/arrays — coercing them via
           // String(value) produces the literal text "[object Object]"
           // which then fails the downstream JSON.parse check, falls
@@ -783,7 +896,9 @@ const DatasetTestMode = React.forwardRef(
         // Collect sub-paths from backend schema + runtime cell values
         const schemaPaths = jsonSchemas?.[c.id]?.keys || [];
         const cell = currentRow?.[c.id];
-        const runtimePaths = cell ? extractKeysFromValue(cell?.cell_value ?? cell) : [];
+        const runtimePaths = cell
+          ? extractKeysFromValue(unwrapCellValue(cell))
+          : [];
         const allPaths = new Set([...schemaPaths, ...runtimePaths]);
         allPaths.forEach((path) => {
           // Bracket paths: "col[0]" not "col.[0]"
@@ -793,14 +908,25 @@ const DatasetTestMode = React.forwardRef(
       });
       if (!extraColumns?.length) return { columnNames: names, nameToId: n2id };
       const extras = (extraColumns || [])
-        .map((col) => (typeof col === "string" ? col : col.headerName || col.field || col.name || col.label || ""))
+        .map((col) =>
+          typeof col === "string"
+            ? col
+            : col.headerName || col.field || col.name || col.label || "",
+        )
         .filter(Boolean);
       const extraSet = new Set(extras);
       return {
         columnNames: [...extras, ...names.filter((n) => !extraSet.has(n))],
         nameToId: n2id,
       };
-    }, [columns, sourceColumns, extraColumns, isWorkbenchMode, jsonSchemas, currentRow]);
+    }, [
+      columns,
+      sourceColumns,
+      extraColumns,
+      isWorkbenchMode,
+      jsonSchemas,
+      currentRow,
+    ]);
 
     // Workbench mode: map display name → field identifier (e.g. "model_output" → "output_prompt")
     const sourceNameToField = useMemo(() => {
@@ -828,7 +954,9 @@ const DatasetTestMode = React.forwardRef(
         idToName[c.id] = c.name;
         // Reverse-map nested IDs: "uuid.path" → "col.path"
         const paths = jsonSchemas?.[c.id]?.keys || [];
-        paths.forEach((p) => { idToName[`${c.id}.${p}`] = `${c.name}.${p}`; });
+        paths.forEach((p) => {
+          idToName[`${c.id}.${p}`] = `${c.name}.${p}`;
+        });
       });
       setMapping((prev) => {
         const next = { ...prev };
@@ -836,8 +964,13 @@ const DatasetTestMode = React.forwardRef(
         Object.keys(next).forEach((variable) => {
           const val = next[variable];
           if (!val) return;
-          if (idToName[val]) { next[variable] = idToName[val]; changed = true; }
-          else if (extraFieldToName[val]) { next[variable] = extraFieldToName[val]; changed = true; }
+          if (idToName[val]) {
+            next[variable] = idToName[val];
+            changed = true;
+          } else if (extraFieldToName[val]) {
+            next[variable] = extraFieldToName[val];
+            changed = true;
+          }
         });
         if (changed) uuidResolutionDone.current = true;
         return changed ? next : prev;
@@ -852,7 +985,8 @@ const DatasetTestMode = React.forwardRef(
         const pruned = {};
         let changed = false;
         Object.keys(prev).forEach((k) => {
-          if (varSet.has(k)) pruned[k] = prev[k]; else changed = true;
+          if (varSet.has(k)) pruned[k] = prev[k];
+          else changed = true;
         });
         return changed ? pruned : prev;
       });
@@ -957,16 +1091,23 @@ const DatasetTestMode = React.forwardRef(
               const col = columns.find((c) => c.name === baseName);
               if (col) {
                 const cell = currentRow[col.id];
-                let cellValue = cell?.cell_value ?? cell ?? "";
+                let cellValue = unwrapCellValue(cell);
                 if (jsonPath) {
                   const resolved = resolveNestedValue(cellValue, jsonPath);
                   if (resolved !== undefined && resolved !== null) {
-                    cellValue = typeof resolved === "object" ? JSON.stringify(resolved) : String(resolved);
+                    cellValue =
+                      typeof resolved === "object"
+                        ? JSON.stringify(resolved)
+                        : String(resolved);
                   }
                 }
                 evalMapping[variable] = cellValue;
                 const dt = col.data_type || "text";
-                inputDataTypes[variable] = ["image", "images"].includes(dt) ? "image" : dt === "audio" ? "audio" : "text";
+                inputDataTypes[variable] = ["image", "images"].includes(dt)
+                  ? "image"
+                  : dt === "audio"
+                    ? "audio"
+                    : "text";
               }
             }
           }
@@ -979,7 +1120,7 @@ const DatasetTestMode = React.forwardRef(
               )
               .forEach((col) => {
                 const cell = currentRow[col.id];
-                const val = cell?.cell_value ?? cell ?? "";
+                const val = unwrapCellValue(cell);
                 const valStr =
                   typeof val === "object" ? JSON.stringify(val) : String(val);
                 rowContext[col.name] = valStr;
@@ -1020,14 +1161,17 @@ const DatasetTestMode = React.forwardRef(
                   }),
                 },
               }
-            : await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
-                mapping: evalMapping,
-                model,
-                config: compositeConfig,
-                error_localizer: errorLocalizerEnabled,
-                input_data_types: inputDataTypes,
-                row_context: rowContext,
-              })
+            : await axios.post(
+                endpoints.develop.eval.executeCompositeEval(tid),
+                {
+                  mapping: evalMapping,
+                  model,
+                  config: compositeConfig,
+                  error_localizer: errorLocalizerEnabled,
+                  input_data_types: inputDataTypes,
+                  row_context: rowContext,
+                },
+              )
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
               model,
@@ -1038,6 +1182,27 @@ const DatasetTestMode = React.forwardRef(
                   ? { params: codeParams }
                   : {}),
                 image_urls: imageUrls.length > 0 ? imageUrls : undefined,
+                // Send data_injection flags from contextOptions — same pattern
+                // as EvalPickerConfigFull (tracing tab) so the BE knows which
+                // context toggles are enabled.
+                ...(() => {
+                  const flags = {};
+                  if (contextOptions.includes("dataset_row"))
+                    flags.full_row = true;
+                  if (contextOptions.includes("full_row"))
+                    flags.full_row = true;
+                  if (contextOptions.includes("span_context"))
+                    flags.span_context = true;
+                  if (contextOptions.includes("trace_context"))
+                    flags.trace_context = true;
+                  if (contextOptions.includes("session_context"))
+                    flags.session_context = true;
+                  if (contextOptions.includes("call_context"))
+                    flags.call_context = true;
+                  return Object.keys(flags).length > 0
+                    ? { data_injection: flags }
+                    : {};
+                })(),
               },
               input_data_types: inputDataTypes,
               row_context: rowContext,
@@ -1116,22 +1281,42 @@ const DatasetTestMode = React.forwardRef(
       } else {
         Object.entries(mapping).forEach(([variable, colName]) => {
           if (!colName) return;
-          if (extraNameToField[colName]) { m[variable] = extraNameToField[colName]; return; }
-          if (nameToId[colName]) { m[variable] = nameToId[colName]; return; }
+          if (extraNameToField[colName]) {
+            m[variable] = extraNameToField[colName];
+            return;
+          }
+          if (nameToId[colName]) {
+            m[variable] = nameToId[colName];
+            return;
+          }
           // freeSolo: "col.typed_path" → "uuid.typed_path"
           const dot = colName.indexOf(".");
           const bracket = colName.indexOf("[");
-          const split = dot > 0 && (bracket < 0 || dot < bracket) ? dot : bracket > 0 ? bracket : -1;
+          const split =
+            dot > 0 && (bracket < 0 || dot < bracket)
+              ? dot
+              : bracket > 0
+                ? bracket
+                : -1;
           if (split > 0) {
             const base = colName.substring(0, split);
             const baseId = nameToId[base];
-            if (baseId) { m[variable] = `${baseId}${colName.substring(split)}`; return; }
+            if (baseId) {
+              m[variable] = `${baseId}${colName.substring(split)}`;
+              return;
+            }
           }
           m[variable] = colName;
         });
       }
       return m;
-    }, [mapping, nameToId, isWorkbenchMode, sourceNameToField, extraNameToField]);
+    }, [
+      mapping,
+      nameToId,
+      isWorkbenchMode,
+      sourceNameToField,
+      extraNameToField,
+    ]);
     const isReady = (!!selectedDatasetId || isWorkbenchMode) && allMapped;
 
     useEffect(() => {
@@ -1177,6 +1362,8 @@ const DatasetTestMode = React.forwardRef(
               onChange={(_, newValue) => {
                 setSelectedDataset(newValue);
                 setSelectedDatasetId(newValue?.id || "");
+                setMapping({});
+                setColumns([]);
               }}
               onInputChange={(_, newInput, reason) => {
                 if (reason === "input") setDatasetSearch(newInput);
@@ -1296,7 +1483,7 @@ const DatasetTestMode = React.forwardRef(
               >
                 No rows in this dataset
               </Typography>
-              <Typography variant="caption" color="text.disabled">
+              <Typography variant="caption" color="text.secondary">
                 Add rows to the dataset before running a test
               </Typography>
             </Box>
@@ -1492,7 +1679,7 @@ const DatasetTestMode = React.forwardRef(
               {filteredCells.length === 0 && (
                 <Typography
                   variant="caption"
-                  color="text.disabled"
+                  color="text.secondary"
                   sx={{ py: 2, textAlign: "center", display: "block" }}
                 >
                   No columns match your search
@@ -1519,10 +1706,7 @@ const DatasetTestMode = React.forwardRef(
                 fontWeight={600}
               >
                 Variable Mapping
-                <Box
-                  component="span"
-                  sx={{ color: "error.main", ml: 0.25 }}
-                >
+                <Box component="span" sx={{ color: "error.main", ml: 0.25 }}>
                   *
                 </Box>
               </Typography>
@@ -1584,6 +1768,8 @@ const DatasetTestMode = React.forwardRef(
                       }))
                     }
                     isUnmapped={isUnmapped}
+                    disabled={!isWorkbenchMode && loadingData}
+                    disabledTooltip="Columns are being fetched"
                   />
                 </Box>
               );

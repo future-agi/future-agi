@@ -27,6 +27,7 @@ const MultiTrackAudioPlayer = ({
   const multiTrackAudioRef = useRef(null);
   const mtRef = useRef(null);
   const onInstanceRef = useRef(onInstance);
+  const reportedInstanceRef = useRef(false);
   const [ready, setReady] = useState(0);
   const isReady = ready === trackUrls.length;
 
@@ -40,6 +41,7 @@ const MultiTrackAudioPlayer = ({
   useEffect(() => {
     if (!multiTrackAudioRef.current || trackUrls.length === 0) return;
     setReady(0);
+    reportedInstanceRef.current = false;
     const tracks = trackUrls.map(({ url, color, name, peaks }, index) => ({
       id: `track-${index}`,
       url,
@@ -71,21 +73,7 @@ const MultiTrackAudioPlayer = ({
       trackUrls.forEach((_, index) => {
         const currentWave = mtRef.current?.wavesurfers?.[index];
         currentWave?.on("ready", () => {
-          setReady((prev) => {
-            const next = prev + 1;
-            if (next === trackUrls.length && onInstanceRef.current) {
-              // Hand the instance up to parents once every track is loaded.
-              // Parents get access to the MultiTrack controller + individual
-              // WaveSurfer instances for time subscription and seek.
-              onInstanceRef.current({
-                multitrack: mtRef.current,
-                wavesurfers: trackUrls.map(
-                  (__, i) => mtRef.current?.wavesurfers?.[i],
-                ),
-              });
-            }
-            return next;
-          });
+          setReady((prev) => prev + 1);
         });
       });
     });
@@ -97,6 +85,19 @@ const MultiTrackAudioPlayer = ({
       mtRef.current = null;
     };
   }, [trackUrls, height, isDark]);
+
+  useEffect(() => {
+    if (!isReady || reportedInstanceRef.current || !mtRef.current) return;
+    reportedInstanceRef.current = true;
+
+    // Hand the instance up to parents once every track is loaded. This runs
+    // after render so parents can subscribe/seek without triggering React's
+    // "setState while rendering another component" warning.
+    onInstanceRef.current?.({
+      multitrack: mtRef.current,
+      wavesurfers: trackUrls.map((__, i) => mtRef.current?.wavesurfers?.[i]),
+    });
+  }, [isReady, trackUrls]);
 
   const togglePlay = useCallback(() => {
     if (!mtRef.current || !isReady) return;
@@ -200,10 +201,8 @@ const MultiTrackAudioPlayer = ({
                 audioUrls?.combined ||
                 (typeof audioUrls?.mono === "string" ? audioUrls.mono : ""),
               stereo: audioUrls?.stereoUrl || audioUrls?.stereo,
-              assistant:
-                audioUrls?.mono?.assistantUrl || audioUrls?.assistant,
-              customer:
-                audioUrls?.mono?.customerUrl || audioUrls?.customer,
+              assistant: audioUrls?.mono?.assistantUrl || audioUrls?.assistant,
+              customer: audioUrls?.mono?.customerUrl || audioUrls?.customer,
             }}
             filename={`recording-${id || "audio"}.wav`}
             size="small"

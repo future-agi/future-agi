@@ -1,23 +1,41 @@
 import { Box, Chip } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
+import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
 
 const StatusCellRenderer = ({ value }) => {
-    let color;
+    const normalized = normalizeEvalCellValue(value);
+    let displayValue = normalized;
+    if (Array.isArray(normalized)) {
+        displayValue = normalized[0];
+    } else if (normalized && typeof normalized === "object") {
+        displayValue =
+            typeof normalized.score === "number"
+                ? normalized.score * 100
+                : (normalized.choice ?? "");
+    }
 
-    if (value >= 0 && value <= 49) {
+    let color;
+    if (displayValue >= 0 && displayValue <= 49) {
         color = 'error';
-    } else if (value >= 50 && value <= 79) {
+    } else if (displayValue >= 50 && displayValue <= 79) {
         color = 'warning';
-    } else if (value >= 80 && value <= 100) {
+    } else if (displayValue >= 80 && displayValue <= 100) {
         color = 'success';
     }
+
+    const isNumeric = typeof displayValue === "number" && !isNaN(displayValue);
+    const label = isNumeric
+        ? `${displayValue}%`
+        : displayValue == null || displayValue === ""
+          ? "Error"
+          : String(displayValue);
 
     return (
         <Box>
             <Chip
                 variant="soft"
-                label={value ? value + "%" : value == null ? "Error" : value + "%"}
+                label={label}
                 size="small"
                 color={color}
                 sx={{

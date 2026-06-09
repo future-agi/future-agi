@@ -13,6 +13,22 @@ class RunType(models.TextChoices):
     HISTORICAL = "historical", _("Historical")
 
 
+class RowType(models.TextChoices):
+    """The unit of evaluation a task runs on.
+
+    Drives the dispatcher branch in ``process_eval_task`` (PR4) and the
+    ``EvalLogger.target_type`` written by the corresponding evaluator
+    (PR3/PR4). ``voice_calls`` is reserved for the existing voice pipeline,
+    which has its own evaluation flow upstream of ``EvalTask``; the value
+    is persisted here so the UI's voice-project tab round-trips on edit.
+    """
+
+    SPANS = "spans", _("Spans")
+    TRACES = "traces", _("Traces")
+    SESSIONS = "sessions", _("Sessions")
+    VOICE_CALLS = "voiceCalls", _("Voice Calls")
+
+
 class EvalTaskStatus(models.TextChoices):
     PENDING = "pending", _("Pending")
     RUNNING = "running", _("Running")
@@ -52,6 +68,16 @@ class EvalTask(BaseModel):
         CustomEvalConfig, related_name="eval_tasks", blank=True, null=True
     )
     failed_spans = models.JSONField(default=list, blank=True, null=True)
+    # Unit of evaluation. ``spans`` is the historical default and matches
+    # current dispatcher behaviour; ``traces`` and ``sessions`` are wired
+    # up in PR4. Stored on every task so the UI's row-type tab survives
+    # a round-trip through edit, and so PR4's dispatcher can branch on it.
+    row_type = models.CharField(
+        max_length=32,
+        choices=RowType.choices,
+        default=RowType.SPANS,
+        db_index=True,
+    )
 
     def __str__(self):
         return f"Eval Task {self.id}"

@@ -19,6 +19,7 @@ import { getChipColor, getChipLabel, getFontColor } from "../common";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
+import { canonicalEntries } from "src/utils/utils";
 
 const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
   const theme = useTheme();
@@ -27,7 +28,7 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
   const ids = selectedViewDetail?.id.split("**");
   const observationSpanId = ids?.pop();
   const customEvalConfigId = ids?.[0];
-  const { data, isPending } = useQuery({
+  const { data, isPending, isError, error } = useQuery({
     queryKey: ["span-details", customEvalConfigId, observationSpanId],
     queryFn: () =>
       axios.get(
@@ -35,7 +36,15 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
       ),
     enabled: !!customEvalConfigId && !!observationSpanId,
     select: (d) => d?.data?.result,
+    retry: false,
+    // Suppress global onError toast (app.jsx); inline empty state below.
+    meta: { errorHandled: true },
   });
+
+  const emptyStateMessage =
+    typeof error?.result === "string"
+      ? error.result
+      : "No evaluation details available for this row.";
   const input1 = useMemo(() => {
     if (!isPending) {
       const input1 = data?.errorAnalysis?.input1;
@@ -84,6 +93,43 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
             <Iconify icon="mingcute:close-line" />
           </IconButton>
         </Box>
+        {isError ? (
+          <Box
+            sx={{
+              flexGrow: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: theme.spacing(1),
+              padding: theme.spacing(3),
+              gap: 1,
+              flexDirection: "column",
+              textAlign: "center",
+            }}
+          >
+            <Iconify
+              icon="mdi:information-outline"
+              width={20}
+              color="text.secondary"
+            />
+            <Typography
+              fontSize={typographyTheme.body2.fontSize}
+              color="text.secondary"
+            >
+              {emptyStateMessage}
+            </Typography>
+            <Typography
+              fontSize={typographyTheme.caption.fontSize}
+              color="text.secondary"
+            >
+              This evaluation hasn&apos;t produced a result for this span yet,
+              or the previous result was removed.
+            </Typography>
+          </Box>
+        ) : (
+        <>
         <Box
           sx={{
             gap: "8px",
@@ -296,7 +342,11 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
                 typeof data === "object" &&
                 data?.errorAnalysis &&
                 (() => {
-                  const hasOrgSegment = Object.values(data?.errorAnalysis)
+                  const errorAnalysisEntries = canonicalEntries(
+                    data?.errorAnalysis,
+                  );
+                  const hasOrgSegment = errorAnalysisEntries
+                    .map(([, value]) => value)
                     .flat()
                     .some((entry) => entry?.orgSegment);
 
@@ -311,7 +361,7 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
                     );
                   }
 
-                  return Object.entries(data?.errorAnalysis)
+                  return errorAnalysisEntries
                     .filter(([_, value]) => value?.length)
                     .map(([key, value]) => (
                       <ErrorLocalizeCard
@@ -329,6 +379,8 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
             </Typography>
           )}
         </Box>
+        </>
+        )}
         {/* <Box
           sx={{
             display:'flex',

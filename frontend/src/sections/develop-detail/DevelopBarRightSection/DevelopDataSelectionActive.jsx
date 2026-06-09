@@ -246,13 +246,13 @@ const DevelopDataSelectionActive = () => {
 
   const unCheckedHandler = () => {
     resetSelectedRows();
-    gridApi.current.deselectAll();
+    gridApi.current?.deselectAll();
   };
 
   const selectedCount = useMemo(() => {
-    const context = gridApi.current.getGridOption("context");
+    const context = gridApi.current?.getGridOption("context");
     if (selectAll) {
-      return context.totalRowCount - toggledNodes.length;
+      return (context?.totalRowCount ?? 0) - toggledNodes.length;
     } else {
       return toggledNodes.length;
     }

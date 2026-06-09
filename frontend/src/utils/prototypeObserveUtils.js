@@ -202,7 +202,7 @@ export const getSystemMetricFilterDefinition = () => {
 };
 export const getAnnotationMetricFilterDefinition = (columns) => {
   const group = "Annotation Metrics";
-  const filteredColumns = columns.filter((col) => col.groupBy === group);
+  const filteredColumns = (columns || []).filter((col) => col.groupBy === group);
 
   if (filteredColumns.length === 0) {
     return [];

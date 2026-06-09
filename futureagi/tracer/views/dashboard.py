@@ -7,7 +7,7 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.dashboard import Dashboard, DashboardWidget
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
 from tracer.serializers.dashboard import (
     DashboardCreateUpdateSerializer,
     DashboardDetailSerializer,
@@ -68,6 +68,73 @@ def _suppress_customer_attribute_metric_aliases(metric_entries):
             and aliases.get(metric.get("name")) in exposed_metric_names
         )
     ]
+
+
+def _normalize_eval_output_type(template_config):
+    """Normalize EvalTemplate config.output → SCORE/PASS_FAIL/CHOICE(S)."""
+    if not isinstance(template_config, dict):
+        return "SCORE"
+    ot = (template_config.get("output", "") or "").upper().replace("/", "_").replace(" ", "_")
+    return ot if ot in ("PASS_FAIL", "CHOICE", "CHOICES", "SCORE") else "SCORE"
+
+
+def build_eval_metric_entries(
+    eval_templates,
+    project_ids,
+    workspace,
+    per_eval_config,
+):
+    """Build eval-metric entries; per-config when opted in, else per-template."""
+    entries = []
+
+    if per_eval_config:
+        eval_cfg_qs = CustomEvalConfig.objects.filter(
+            deleted=False
+        ).select_related("eval_template")
+        if project_ids:
+            eval_cfg_qs = eval_cfg_qs.filter(project_id__in=project_ids)
+        else:
+            eval_cfg_qs = eval_cfg_qs.filter(project__workspace=workspace)
+
+        for cfg in eval_cfg_qs:
+            tmpl = cfg.eval_template
+            if not tmpl or getattr(tmpl, "deleted", False):
+                continue
+            output_type = _normalize_eval_output_type(tmpl.config or {})
+            entry = {
+                "name": str(cfg.id),  # custom_eval_config_id
+                "display_name": cfg.name or tmpl.name,
+                "category": "eval_metric",
+                "source": "all",
+                "sources": ["all"],
+                "output_type": output_type,
+                "eval_template_id": str(tmpl.id),
+            }
+            if output_type in ("CHOICE", "CHOICES") and tmpl.choices:
+                entry["choices"] = tmpl.choices
+            elif output_type == "PASS_FAIL":
+                entry["choices"] = ["Passed", "Failed"]
+            entries.append(entry)
+        return entries
+
+    for et in eval_templates:
+        tid = str(et["id"])
+        output_type = _normalize_eval_output_type(et["config"] or {})
+        entry = {
+            "name": tid,  # eval_template_id
+            "display_name": et["name"],
+            "category": "eval_metric",
+            "source": "all",
+            "sources": ["all"],
+            "output_type": output_type,
+        }
+        choices = et.get("choices") or []
+        if output_type in ("CHOICE", "CHOICES") and choices:
+            entry["choices"] = choices
+        elif output_type == "PASS_FAIL":
+            entry["choices"] = ["Passed", "Failed"]
+        entries.append(entry)
+    return entries
 
 
 class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
@@ -621,7 +688,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     },
                     {
                         "name": "service_name",
-                        "display_name": "Service / Trace Name",
+                        "display_name": "Service Name",
                         "category": "system_metric",
                         "source": "traces",
                         "type": "string",
@@ -803,6 +870,22 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             filter_by_project = bool(req_project_ids and project_ids)
 
+            if filter_by_project and not Project.objects.filter(
+                id__in=project_ids,
+            ).exclude(
+                source=ProjectSourceChoices.SIMULATOR.value,
+            ).exists():
+                metrics.append(
+                    {
+                        "name": "agent_talk_percentage",
+                        "display_name": "Agent Talk %",
+                        "category": "system_metric",
+                        "source": "traces",
+                        "type": "number",
+                        "unit": "%",
+                    }
+                )
+
             # 3. Eval metrics — scoped to project(s) when project_ids provided
             try:
                 from model_hub.models.evals_metric import EvalTemplate
@@ -883,36 +966,20 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         deleted=False,
                     ).values("id", "name", "config", "choices")
 
-                for et in eval_templates:
-                    tid = str(et["id"])
-                    config = et["config"] or {}
-                    output_type = "SCORE"
-                    choices = et.get("choices") or []
-                    if isinstance(config, dict):
-                        ot = (
-                            config.get("output", "")
-                            .upper()
-                            .replace("/", "_")
-                            .replace(" ", "_")
-                        )
-                        if ot in ("PASS_FAIL", "CHOICE", "CHOICES", "SCORE"):
-                            output_type = ot
+                # Observe filter dropdowns opt in via ?per_eval_config=true.
+                # Query params are strings;
+                per_eval_config = (
+                    request.query_params.get("per_eval_config") == "true"
+                )
 
-                    metric_entry = {
-                        "name": tid,  # eval_template_id
-                        "display_name": et["name"],
-                        "category": "eval_metric",
-                        "source": "all",
-                        "sources": ["all"],
-                        "output_type": output_type,
-                    }
-                    # Include choices for choice-type evals
-                    if output_type in ("CHOICE", "CHOICES") and choices:
-                        metric_entry["choices"] = choices
-                    elif output_type == "PASS_FAIL":
-                        metric_entry["choices"] = ["Passed", "Failed"]
-
-                    metrics.append(metric_entry)
+                metrics.extend(
+                    build_eval_metric_entries(
+                        eval_templates=eval_templates,
+                        project_ids=project_ids if filter_by_project else [],
+                        workspace=workspace,
+                        per_eval_config=per_eval_config,
+                    )
+                )
             except (ImportError, Exception) as e:
                 logger.warning(f"Failed to load eval templates: {e}")
 
@@ -923,16 +990,15 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 from model_hub.models.develop_annotations import AnnotationsLabels
 
                 if filter_by_project:
-                    # Find annotation labels used in the given project(s) via
-                    # the Score model (the current write target for annotations).
-                    # Score.project_id may be NULL — scores are linked to traces,
-                    # so also look up via trace__project_id.
+    
                     from model_hub.models.score import Score
 
                     used_label_ids = list(
                         Score.objects.filter(
                             Q(project_id__in=project_ids)
-                            | Q(trace__project_id__in=project_ids),
+                            | Q(trace__project_id__in=project_ids)
+                            | Q(observation_span__project_id__in=project_ids)
+                            | Q(trace_session__project_id__in=project_ids),
                             deleted=False,
                         )
                         .values_list("label_id", flat=True)
@@ -1839,7 +1905,54 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             project_ids = list(workspace_project_ids)
 
         try:
-            if not is_clickhouse_enabled():
+            if metric_type == "annotation_metric" and metric_name == "annotator":
+                from django.db.models import Q
+
+                from model_hub.models.score import Score
+
+                rows = (
+                    Score.objects.filter(
+                        deleted=False,
+                        annotator_id__isnull=False,
+                    )
+                    .filter(
+                        Q(project_id__in=project_ids)
+                        | Q(trace__project_id__in=project_ids)
+                        | Q(observation_span__project_id__in=project_ids)
+                        | Q(trace_session__project_id__in=project_ids)
+                    )
+                    .values(
+                        "annotator_id",
+                        "annotator__name",
+                        "annotator__email",
+                    )
+                    .distinct()
+                    .order_by("annotator__name", "annotator__email")
+                )
+                values = []
+                seen = set()
+                for row in rows:
+                    user_id = str(row["annotator_id"])
+                    if user_id in seen:
+                        continue
+                    seen.add(user_id)
+                    name = (row.get("annotator__name") or "").strip()
+                    email = (row.get("annotator__email") or "").strip()
+                    label = name or email or user_id
+                    option = {"value": user_id, "label": label}
+                    if name:
+                        option["name"] = name
+                    if email:
+                        option["email"] = email
+                    if name and email and email != name:
+                        option["description"] = email
+                    values.append(option)
+                return self._gm.success_response({"values": values})
+
+            if not is_clickhouse_enabled() and metric_type not in (
+                "annotation_metric",
+                "eval_metric",
+            ):
                 return self._gm.success_response({"values": []})
 
             analytics = AnalyticsQueryService()
@@ -1855,13 +1968,47 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "observation_type": "observation_type",
                     "span_kind": "observation_type",  # span_kind maps to observation_type in CH
                     "service_name": "name",  # service_name maps to span name
-                    "session": "trace_session_id",
-                    "user": "toString(end_user_id)",
+                    "name": "name",
+                    "span_name": "name",
+                    "session": "toString(trace_session_id)",
                     "tag": "arrayJoin(trace_tags)",
                     "prompt_name": "dictGet('prompt_dict', 'prompt_name', prompt_version_id)",
                     "prompt_version": "dictGet('prompt_dict', 'template_version', prompt_version_id)",
                     "prompt_label": "dictGet('prompt_label_dict', 'name', prompt_label_id)",
                 }
+
+                enduser_string_cols = {
+                    "user": "user_id",
+                    "user_id_type": "user_id_type",
+                }
+
+                if metric_name in enduser_string_cols:
+                    enduser_col = enduser_string_cols[metric_name]
+                    try:
+                        sql = (
+                            f"SELECT DISTINCT {enduser_col} AS val "
+                            f"FROM tracer_enduser FINAL "
+                            f"WHERE project_id IN %(project_ids)s "
+                            f"AND _peerdb_is_deleted = 0 "
+                            f"AND {enduser_col} IS NOT NULL "
+                            f"AND {enduser_col} != '' "
+                            f"ORDER BY val "
+                            f"LIMIT 500"
+                        )
+                        result = analytics.execute_ch_query(
+                            sql, {"project_ids": project_ids}, timeout_ms=5000
+                        )
+                        values = [row["val"] for row in result.data]
+                    except Exception as e:
+                        logger.warning(
+                            "filter_values_ch_query_failed",
+                            metric_name=metric_name,
+                            error=str(e)[:200],
+                        )
+                        values = []
+                    values = [{"value": v, "label": v} for v in values]
+                    return self._gm.success_response({"values": values})
+
                 col_expr = col_map.get(metric_name)
                 if not col_expr:
                     return self._gm.success_response({"values": []})
@@ -1873,12 +2020,19 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     # type is non-nullable by default — the Nullable
                     # wrapper isn't always preserved through the MV chain.
                     null_uuid = "00000000-0000-0000-0000-000000000000"
+                    # Trace Name = root span name; restrict to root spans.
+                    root_only_clause = (
+                        "AND parent_span_id IS NULL "
+                        if metric_name == "name"
+                        else ""
+                    )
                     sql = (
                         f"SELECT DISTINCT {col_expr} AS val "
                         f"FROM spans "
                         f"WHERE project_id IN %(project_ids)s "
                         f"AND _peerdb_is_deleted = 0 "
                         f"AND {col_expr} NOT IN ('', '{null_uuid}') "
+                        f"{root_only_clause}"
                         f"ORDER BY val "
                         f"LIMIT 500"
                     )
@@ -1903,27 +2057,16 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     )
                     name_map = {str(k): v for k, v in name_map.items()}
                     values = [{"value": v, "label": name_map.get(v, v)} for v in values]
-                elif metric_name == "user":
-                    # Resolve end_user UUIDs to human-readable user_id
-                    # (the caller-provided identifier, e.g. an email).
-                    from tracer.models.observation_span import EndUser
-
-                    name_map = dict(
-                        EndUser.objects.filter(
-                            id__in=[v for v in values if v],
-                            project_id__in=project_ids,
-                        ).values_list("id", "user_id")
-                    )
-                    name_map = {str(k): v for k, v in name_map.items()}
-                    values = [
-                        {"value": v, "label": name_map.get(v, v)} for v in values
-                    ]
                 else:
                     values = [{"value": v, "label": v} for v in values]
 
             elif metric_type in ("annotation_metric", "eval_metric"):
                 # Annotation / eval filter values are derived from the label
-                # definition (settings) rather than scanning stored values.
+                # definition (settings) and, for categorical annotations, from
+                # stored scores. Older imported/backfilled labels can have
+                # real choices in Score.value without settings.options; relying
+                # only on settings makes the value dropdown empty even though
+                # the annotation metric itself is available.
                 from model_hub.models.develop_annotations import AnnotationsLabels
 
                 try:
@@ -1936,16 +2079,80 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 label_type = label.type
                 settings = label.settings or {}
 
-                if label_type == "categorical":
-                    options = settings.get("options", [])
-                    values = [
+                def add_value_option(options, seen, raw_value, raw_label=None):
+                    if raw_value in (None, ""):
+                        return
+                    value = str(raw_value)
+                    if not value or value in seen:
+                        return
+                    seen.add(value)
+                    options.append(
                         {
-                            "value": opt.get("label", ""),
-                            "label": opt.get("label", ""),
+                            "value": value,
+                            "label": str(raw_label or raw_value),
                         }
-                        for opt in options
-                        if isinstance(opt, dict) and opt.get("label")
-                    ]
+                    )
+
+                if label_type == "categorical":
+                    values = []
+                    seen_values = set()
+                    for opt in settings.get("options", []):
+                        if isinstance(opt, dict):
+                            option_value = (
+                                opt.get("value")
+                                or opt.get("label")
+                                or opt.get("name")
+                            )
+                            option_label = (
+                                opt.get("label")
+                                or opt.get("name")
+                                or option_value
+                            )
+                            add_value_option(
+                                values, seen_values, option_value, option_label
+                            )
+                        else:
+                            add_value_option(values, seen_values, opt)
+
+                    # Include actual stored categorical choices as a fallback
+                    # and as protection against stale label settings.
+                    from django.db.models import Q
+
+                    from model_hub.models.score import Score
+
+                    score_qs = Score.objects.filter(
+                        label_id=label.id,
+                        deleted=False,
+                    )
+                    if project_ids:
+                        score_qs = score_qs.filter(
+                            Q(project_id__in=project_ids)
+                            | Q(trace__project_id__in=project_ids)
+                            | Q(observation_span__project_id__in=project_ids)
+                            | Q(trace_session__project_id__in=project_ids)
+                        )
+
+                    for payload in score_qs.values_list("value", flat=True).order_by(
+                        "-updated_at"
+                    )[:5000]:
+                        raw_values = []
+                        if isinstance(payload, dict):
+                            selected = payload.get("selected")
+                            if isinstance(selected, list):
+                                raw_values.extend(selected)
+                            elif selected not in (None, ""):
+                                raw_values.append(selected)
+                            for key in ("value", "label", "text"):
+                                val = payload.get(key)
+                                if val not in (None, ""):
+                                    raw_values.append(val)
+                        elif isinstance(payload, list):
+                            raw_values.extend(payload)
+                        elif payload not in (None, ""):
+                            raw_values.append(payload)
+
+                        for raw_value in raw_values:
+                            add_value_option(values, seen_values, raw_value)
                 elif label_type == "star":
                     no_of_stars = settings.get("no_of_stars", 5)
                     values = [
@@ -1982,7 +2189,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 result = analytics.execute_ch_query(
                     sql,
                     {"project_ids": project_ids, "attr_key": metric_name},
-                    timeout_ms=5000,
+                    timeout_ms=15000,
                 )
                 values = [
                     {"value": row["val"], "label": row["val"]} for row in result.data
@@ -2269,6 +2476,25 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             dashboard_id=dashboard_id,
             dashboard__workspace=self.request.workspace,
         )
+
+    def _get_trace_query_timeout_ms(self, trace_config):
+        return DashboardViewSet._get_trace_query_timeout_ms(self, trace_config)
+
+    def _empty_simulation_metric_result(self, metric):
+        return DashboardViewSet._empty_simulation_metric_result(self, metric)
+
+    def _run_simulation_queries(self, simulation_config, fetch_rows):
+        return DashboardViewSet._run_simulation_queries(
+            self, simulation_config, fetch_rows
+        )
+
+    def _run_simulation_clickhouse_queries(self, ch_client, simulation_config):
+        return DashboardViewSet._run_simulation_clickhouse_queries(
+            self, ch_client, simulation_config
+        )
+
+    def _normalize_metric_sources(self, metrics):
+        return DashboardViewSet._normalize_metric_sources(self, metrics)
 
     def create(self, request, *args, **kwargs):
         try:

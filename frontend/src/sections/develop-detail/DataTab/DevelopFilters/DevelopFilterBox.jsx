@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /**
  * DevelopFilterBox — dataset row filter panel.
  *
@@ -12,9 +13,11 @@
 import {
   Autocomplete,
   Box,
+  Checkbox,
   Chip,
   InputAdornment,
   TextField,
+  Typography,
 } from "@mui/material";
 import { isEqual } from "lodash";
 import PropTypes from "prop-types";
@@ -58,6 +61,21 @@ const PANEL_TYPE_TO_STORE_TYPE = {
   date: "datetime",
   boolean: "boolean",
   array: "array",
+};
+
+const formatDateInputValue = (value) => {
+  if (!value) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 16);
+  }
+  const stringValue = String(value);
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(stringValue)) {
+    return stringValue.slice(0, 16);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(stringValue)) {
+    return `${stringValue}T00:00`;
+  }
+  return stringValue;
 };
 
 // Store filterOp → panel operator (per field type)
@@ -168,13 +186,23 @@ const valueStoreToPanel = (val, panelType) => {
     return panelType === "number" || panelType === "date" ? "" : [];
   if (panelType === "boolean")
     return val === true || val === "true" ? "true" : "false";
+  if (panelType === "date") {
+    return Array.isArray(val)
+      ? val.map((item) => formatDateInputValue(item))
+      : formatDateInputValue(val);
+  }
   return val;
 };
-
 
 const isNullish = (v) => v === undefined || v === null;
 const valuePanelToStore = (val, panelType) => {
   if (panelType === "boolean") return val === "true" || val === true;
+  if (panelType === "date") {
+    if (Array.isArray(val)) {
+      return val.map((item) => (item ? new Date(item) : item));
+    }
+    return val ? new Date(val) : "";
+  }
   if (Array.isArray(val)) {
     if (panelType === "array") {
       const clean = val.filter((v) => !isNullish(v) && v !== "");
@@ -189,7 +217,7 @@ const valuePanelToStore = (val, panelType) => {
   return val;
 };
 
-const storeFilterToPanel = (storeFilter, columnLookup) => {
+export const storeFilterToPanel = (storeFilter, columnLookup) => {
   const col = columnLookup[storeFilter.columnId];
   const panelType = col?.panelType || "string";
   const category =
@@ -225,6 +253,16 @@ export const unwrapScalarValue = (value, fieldType, operator) => {
   return isNullish(first) ? "" : first;
 };
 
+const FREE_TEXT_NO_OPTIONS_TEXT = "No suggestions yet — type a value to add it";
+
+function normalizePickerValues(values) {
+  const rawValues = Array.isArray(values) ? values : values ? [values] : [];
+  const cleanValues = rawValues
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean);
+  return Array.from(new Set(cleanValues));
+}
+
 export const panelFilterToStore = (panelFilter) => {
   const storeType = PANEL_TYPE_TO_STORE_TYPE[panelFilter.fieldType] || "text";
   const rawValue = valuePanelToStore(panelFilter.value, panelFilter.fieldType);
@@ -255,13 +293,14 @@ export const panelFilterToStore = (panelFilter) => {
 // serialized `["English","French"]` blob), so the dropdown lines up
 // with what the LLM/user actually reason about. freeSolo so users can
 // still type a substring that doesn't appear in the suggestion set.
-const DatasetColumnValuePicker = ({
+export const DatasetColumnValuePicker = ({
   fieldType,
   value,
   onChange,
   property,
   projectId, // TraceFilterPanel passes the scope id through this prop; for
   // datasets it's the dataset UUID (see DevelopFilterBox).
+  freeSoloValues = false,
 }) => {
   const columnId = property?.id;
   const { data: suggestions = [], isLoading } = useDatasetColumnValues({
@@ -269,24 +308,91 @@ const DatasetColumnValuePicker = ({
     columnId,
     enabled: Boolean(projectId && columnId),
   });
+  const [inputValue, setInputValue] = useState("");
 
-  if (fieldType === "array") {
-    const arrVal = Array.isArray(value) ? value : value ? [value] : [];
+  if (fieldType === "array" || freeSoloValues) {
+    const arrVal = normalizePickerValues(value);
+    const suggestionValues = normalizePickerValues(suggestions);
+    const customInputValue = inputValue.trim();
+    const showCustomOption = Boolean(
+      freeSoloValues &&
+        customInputValue &&
+        !suggestionValues.some(
+          (suggestion) =>
+            suggestion.toLowerCase() === customInputValue.toLowerCase(),
+        ),
+    );
+    const optionsWithCustom = showCustomOption
+      ? [...suggestionValues, customInputValue]
+      : suggestionValues;
+    const commitInputValue = (rawInput) => {
+      const typedValues = String(rawInput || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (!typedValues.length) return false;
+      onChange(Array.from(new Set([...arrVal, ...typedValues])));
+      setInputValue("");
+      return true;
+    };
+
     return (
       <Autocomplete
         multiple
         freeSolo
         size="small"
-        options={suggestions}
+        disableCloseOnSelect
+        options={optionsWithCustom}
         value={arrVal}
+        inputValue={inputValue}
+        onInputChange={(_, newInputValue, reason) => {
+          if (reason === "reset") return;
+          if (newInputValue.includes(",")) {
+            commitInputValue(newInputValue);
+            return;
+          }
+          setInputValue(newInputValue);
+        }}
         onChange={(_, newVal) => {
-          const clean = (newVal || [])
-            .map((v) => (typeof v === "string" ? v.trim() : ""))
-            .filter(Boolean);
-          onChange(Array.from(new Set(clean)));
+          onChange(normalizePickerValues(newVal));
         }}
         loading={isLoading}
+        noOptionsText={freeSoloValues ? FREE_TEXT_NO_OPTIONS_TEXT : undefined}
+        getOptionLabel={(option) => String(option ?? "")}
+        isOptionEqualToValue={(option, selectedValue) =>
+          String(option ?? "") === String(selectedValue ?? "")
+        }
         sx={{ flex: 1, minWidth: 160, maxWidth: 320 }}
+        renderOption={(props, option, { selected }) => {
+          const optionValue = String(option ?? "");
+          const isCustomOption =
+            showCustomOption &&
+            optionValue.toLowerCase() === customInputValue.toLowerCase();
+          return (
+            <Box
+              component="li"
+              {...props}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                px: 1.5,
+                py: 0.75,
+              }}
+            >
+              <Checkbox size="small" checked={selected} sx={{ p: 0 }} />
+              {isCustomOption ? (
+                <Typography sx={{ fontSize: 12 }}>
+                  + Specify: <strong>{customInputValue}</strong>
+                </Typography>
+              ) : (
+                <Typography noWrap sx={{ fontSize: 12 }}>
+                  {optionValue}
+                </Typography>
+              )}
+            </Box>
+          );
+        }}
         renderTags={(tagValue, getTagProps) =>
           tagValue.map((option, index) => (
             <Chip
@@ -307,7 +413,21 @@ const DatasetColumnValuePicker = ({
         renderInput={(params) => (
           <TextField
             {...params}
-            placeholder={arrVal.length ? "" : "Type or pick"}
+            placeholder={arrVal.length ? "" : "Select values..."}
+            helperText={
+              freeSoloValues ? "Select one or more values (multi-select)" : ""
+            }
+            onKeyDown={(event) => {
+              if (
+                (event.key === "Enter" || event.key === ",") &&
+                inputValue.trim()
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                commitInputValue(inputValue);
+              }
+            }}
+            onBlur={() => commitInputValue(inputValue)}
             InputProps={{
               ...params.InputProps,
               sx: { fontSize: 12, minHeight: 28, py: 0 },
@@ -354,7 +474,7 @@ const DatasetColumnValuePicker = ({
   );
 };
 
-const buildProperties = (allColumns) => {
+export const buildProperties = (allColumns) => {
   if (!Array.isArray(allColumns)) return [];
   return allColumns
     .map((column) => {
@@ -377,7 +497,7 @@ const buildProperties = (allColumns) => {
     .filter(Boolean);
 };
 
-const CATEGORIES = [
+export const DEVELOP_FILTER_CATEGORIES = [
   { key: "all", label: "All", icon: "mdi:view-grid-outline" },
   { key: "dataset", label: "Dataset", icon: "mdi:table" },
   { key: "evaluation", label: "Evals", icon: "mdi:check-circle-outline" },
@@ -549,7 +669,7 @@ const DevelopFilterBox = () => {
         source="dataset"
         showAi
         showQueryTab
-        categories={CATEGORIES}
+        categories={DEVELOP_FILTER_CATEGORIES}
         panelWidth={560}
       />
     </>
@@ -567,6 +687,7 @@ DatasetColumnValuePicker.propTypes = {
     name: PropTypes.string,
   }),
   projectId: PropTypes.string,
+  freeSoloValues: PropTypes.bool,
 };
 
 export default DevelopFilterBox;

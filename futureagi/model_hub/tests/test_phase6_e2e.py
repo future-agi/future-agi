@@ -1012,27 +1012,31 @@ class TestAutoCompleteViaScoring:
         self, auth_client, observation_span, star_label, thumbs_label, queue_with_items
     ):
         """Scoring all required labels auto-completes the queue item."""
+        from django.test import TestCase
+
         queue, item = queue_with_items
-        auth_client.post(
-            SCORE_URL,
-            {
-                "source_type": "observation_span",
-                "source_id": observation_span.id,
-                "label_id": str(star_label.id),
-                "value": {"rating": 4},
-            },
-            format="json",
-        )
-        auth_client.post(
-            SCORE_URL,
-            {
-                "source_type": "observation_span",
-                "source_id": observation_span.id,
-                "label_id": str(thumbs_label.id),
-                "value": {"value": "up"},
-            },
-            format="json",
-        )
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            auth_client.post(
+                SCORE_URL,
+                {
+                    "source_type": "observation_span",
+                    "source_id": observation_span.id,
+                    "label_id": str(star_label.id),
+                    "value": {"rating": 4},
+                },
+                format="json",
+            )
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            auth_client.post(
+                SCORE_URL,
+                {
+                    "source_type": "observation_span",
+                    "source_id": observation_span.id,
+                    "label_id": str(thumbs_label.id),
+                    "value": {"value": "up"},
+                },
+                format="json",
+            )
         item.refresh_from_db()
         assert item.status == QueueItemStatus.COMPLETED.value
 

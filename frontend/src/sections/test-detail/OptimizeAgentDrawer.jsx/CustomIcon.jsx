@@ -2,15 +2,16 @@ import { AgentPromptOptimizerStatus } from "../FixMyAgentDrawer/common";
 import { getStatusColor } from "./common";
 import SvgColor from "src/components/svg-color/svg-color";
 import PropTypes from "prop-types";
-import { Box, useTheme } from "@mui/material";
+import { Box, CircularProgress, useTheme } from "@mui/material";
 
 const CustomStepIcon = ({ step, isFailedStep }) => {
   const theme = useTheme();
-  const colors = getStatusColor(
-    isFailedStep ? AgentPromptOptimizerStatus.FAILED : step?.status,
-    theme,
-  );
+  const effectiveStatus = isFailedStep
+    ? AgentPromptOptimizerStatus.FAILED
+    : step?.status;
+  const colors = getStatusColor(effectiveStatus, theme);
   const iconColor = colors?.icon;
+  const isRunning = effectiveStatus === AgentPromptOptimizerStatus.RUNNING;
   return (
     <Box
       sx={{
@@ -24,14 +25,23 @@ const CustomStepIcon = ({ step, isFailedStep }) => {
         flexShrink: 0,
       }}
     >
-      <SvgColor
-        sx={{ color: iconColor, width: 14 }}
-        src={
-          isFailedStep
-            ? "/assets/icons/ic_failed.svg"
-            : "/assets/icons/ic_check_with_circle_tick.svg"
-        }
-      />
+      {isRunning ? (
+        <CircularProgress
+          size={14}
+          thickness={5}
+          sx={{ color: iconColor }}
+          aria-label="Step in progress"
+        />
+      ) : (
+        <SvgColor
+          sx={{ color: iconColor, width: 14 }}
+          src={
+            isFailedStep
+              ? "/assets/icons/ic_failed.svg"
+              : "/assets/icons/ic_check_with_circle_tick.svg"
+          }
+        />
+      )}
     </Box>
   );
 };

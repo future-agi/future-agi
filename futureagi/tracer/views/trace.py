@@ -13,6 +13,7 @@ from django.contrib.postgres.aggregates import ArrayAgg
 from django.db import models
 from django.db.models import (
     Avg,
+    BooleanField,
     Case,
     CharField,
     Count,
@@ -37,6 +38,8 @@ from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
+
+from tracer.services.clickhouse.query_builders.base import NIL_UUID
 
 logger = structlog.get_logger(__name__)
 from model_hub.models.choices import AnnotationTypeChoices
@@ -821,9 +824,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             FROM tracer_eval_logger FINAL
             WHERE trace_id = %(trace_id)s
               AND _peerdb_is_deleted = 0
+              AND (deleted = 0 OR deleted IS NULL)
             """
             eval_result = analytics.execute_ch_query(
-                eval_query, {"trace_id": str(trace_id)}, timeout_ms=5000
+                eval_query, {"trace_id": str(trace_id)}, timeout_ms=30000
             )
             # Collect unique config IDs for name lookup
             config_ids_set = set()
@@ -1075,6 +1079,37 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         self, qs, eval_configs, annotation_labels=None, *, detail_mode=False
     ):
         results = []
+        # Materialize qs so we can do a single bulk-fetch for the agent-eval
+        # output_str fallback below (otherwise we'd N×M query inside the loop —
+        # one lookup per (trace × choices/score config) pair).
+        qs = list(qs)
+
+        # Pre-fetch EvalLogger.output_str for traces × configs whose template
+        # output type is "choices" or "score". Agent-evaluator writes the result
+        # as a Python dict literal in output_str (e.g. "{'score': 0.0,
+        # 'choice': 'never'}") when output_float/output_str_list are empty.
+        # Keyed by (trace_id, config_id); only the most recent row per pair.
+        _str_lookup_configs = [
+            c for c in eval_configs
+            if ((getattr(getattr(c, "eval_template", None), "config", None) or {}).get("output"))
+            in (EvalOutputType.CHOICES.value, EvalOutputType.SCORE.value)
+        ]
+        output_str_map: dict[tuple, "EvalLogger"] = {}
+        if _str_lookup_configs and qs:
+            trace_ids_for_lookup = [t.id for t in qs]
+            for log in (
+                EvalLogger.objects.filter(
+                    trace_id__in=trace_ids_for_lookup,
+                    custom_eval_config_id__in=[c.id for c in _str_lookup_configs],
+                    deleted=False,
+                )
+                .order_by("trace_id", "custom_eval_config_id", "-created_at")
+                .only("trace_id", "custom_eval_config_id", "output_str")
+            ):
+                key = (log.trace_id, log.custom_eval_config_id)
+                if key not in output_str_map:  # first hit = most recent
+                    output_str_map[key] = log
+
         for trace in qs:
             attrs = getattr(trace, "span_attributes", None) or {}
             metadata = getattr(trace, "metadata", None) or {}
@@ -1089,7 +1124,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             raw_log = attrs.get("raw_log") or {}
             provider = trace.provider or "vapi"
 
-            processed_log = ObservabilityService.process_raw_logs(raw_log, provider)
+            processed_log = ObservabilityService.process_raw_logs(
+                raw_log, provider, span_attributes=attrs
+            )
             voice_metrics = self._extract_voice_turn_and_talk_metrics(attrs, raw_log)
 
             # Observation spans are served by the detail endpoint — skip
@@ -1168,6 +1205,49 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             per_choice.append(choice_key)
                     metric_entry["output"] = per_choice
 
+                # New agent-evaluator path: when the legacy fields are empty,
+                # read the chosen bucket (or numeric score) from
+                # EvalLogger.output_str — stored as a Python dict literal like
+                # "{'score': 0.0, 'choice': 'never'}". Uses the bulk-fetched
+                # map built before the trace loop (no per-row query).
+                if metric_entry.get("output") in (None, [], ""):
+                    tpl = getattr(config, "eval_template", None)
+                    tpl_output = (
+                        (getattr(tpl, "config", None) or {}).get("output")
+                        if tpl is not None
+                        else None
+                    )
+                    log = output_str_map.get((trace.id, config.id))
+                    if log and log.output_str and tpl_output in (
+                        EvalOutputType.CHOICES.value, EvalOutputType.SCORE.value,
+                    ):
+                        try:
+                            import ast as _ast_mod
+                            parsed = _ast_mod.literal_eval(log.output_str)
+                        except (ValueError, SyntaxError):
+                            parsed = None
+                        if isinstance(parsed, dict):
+                            if tpl_output == EvalOutputType.CHOICES.value:
+                                choice = parsed.get("choice")
+                                if choice:
+                                    metric_entry["output"] = [choice]
+                                    metric_entry["output_type"] = EvalOutputType.CHOICES.value
+                                    # Mirror as top-level `score` so the
+                                    # drawer's `e?.score ?? e?.output ?? e?.value`
+                                    # lookup hits a string and renders verbatim
+                                    # — avoids a frontend renderer change.
+                                    metric_entry["score"] = choice
+                            elif tpl_output == EvalOutputType.SCORE.value:
+                                score_val = parsed.get("score")
+                                if isinstance(score_val, (int, float)):
+                                    # output_str's score is 0–1; backend convention
+                                    # for score evals is 0–100 (consistent with the
+                                    # output_float * 100 branch above).
+                                    metric_entry["output"] = round(
+                                        float(score_val) * 100, 2
+                                    )
+                                    metric_entry["output_type"] = EvalOutputType.SCORE.value
+
                 metrics[str(config.id)] = metric_entry
             if metrics:
                 result["eval_outputs"] = metrics
@@ -1222,7 +1302,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
             metric_subquery = (
                 EvalLogger.objects.filter(
-                    trace_id=OuterRef("id"), custom_eval_config_id=config.id
+                    trace_id=OuterRef("id"),
+                    custom_eval_config_id=config.id,
+                    error=False,
                 )
                 .values("custom_eval_config_id")
                 .annotate(
@@ -1246,6 +1328,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 trace_id=OuterRef("id"),
                 custom_eval_config_id=config.id,
                 output_str_list__isnull=False,
+                error=False,
             ).values("output_str_list")[:1]
 
             base_query = base_query.annotate(
@@ -1325,7 +1408,27 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     f"metric_reason_{config.id}": Subquery(
                         metric_subquery.values("eval_explanation")
                     ),
-                    f"error_{config.id}": Subquery(metric_subquery.values("error")),
+                    f"error_{config.id}": Case(
+                        When(
+                            ~Exists(
+                                EvalLogger.objects.filter(
+                                    trace_id=OuterRef("id"),
+                                    custom_eval_config_id=config.id,
+                                    error=False,
+                                )
+                            )
+                            & Exists(
+                                EvalLogger.objects.filter(
+                                    trace_id=OuterRef("id"),
+                                    custom_eval_config_id=config.id,
+                                    error=True,
+                                )
+                            ),
+                            then=Value(True),
+                        ),
+                        default=Value(False),
+                        output_field=BooleanField(),
+                    ),
                 }
             )
         return eval_configs, base_query
@@ -1530,6 +1633,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     )
                     .annotate(_attrs=Coalesce("span_attributes", "eval_attributes"))
                     .values("_attrs")[:1]
+                ),
+                user_id=Subquery(
+                    ObservationSpan.objects.filter(
+                        trace_id=OuterRef("id"), end_user__isnull=False
+                    )
+                    .order_by("start_time")
+                    .values("end_user__user_id")[:1]
                 ),
                 start_time=Coalesce(
                     Subquery(
@@ -1801,6 +1911,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "trace_name": trace.trace_name or "",
                     "start_time": trace.start_time,
                     "status": trace.status,
+                    "user_id": trace.user_id,
                 }
 
                 # Add eval metrics from annotated fields
@@ -2133,7 +2244,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         interval=interval,
                     )
                     query, params = builder.build()
-                    result = analytics.execute_ch_query(query, params, timeout_ms=5000)
+                    result = analytics.execute_ch_query(query, params, timeout_ms=30000)
                     ch_data = builder.format_result(result.data, result.columns or [])
                     # CH now returns all metric keys directly
                     metric_key = metric_id if metric_id in ch_data else "latency"
@@ -2180,7 +2291,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         choices=choices,
                     )
                     query, params = builder.build()
-                    result = analytics.execute_ch_query(query, params, timeout_ms=5000)
+                    result = analytics.execute_ch_query(query, params, timeout_ms=30000)
                     graph_data = builder.format_result(
                         result.data, result.columns or []
                     )
@@ -3108,16 +3219,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             default=None,
                             output_field=JSONField(),
                         ),
-                        # Per-trace reason (latest EvalLogger for this config).
-                        # Feeds the "{eval} - Reason" column added in TH-4136.
-                        f"metric_reason_{config.id}": Subquery(
-                            EvalLogger.objects.filter(
-                                trace_id=OuterRef("id"),
-                                custom_eval_config_id=config.id,
-                            )
-                            .order_by("-created_at")
-                            .values("eval_explanation")[:1]
-                        ),
                     }
                 )
 
@@ -3249,15 +3350,20 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 for config in eval_configs:
                     data = getattr(trace, f"metric_{config.id}")
                     if data and "score" in data:
-                        result[str(config.id)] = round(data["score"], 2)
+                        score = data["score"]
+                        result[str(config.id)] = (
+                            round(score, 2) if score is not None else None
+                        )
                     elif data:
                         for key, value in data.items():
-                            result[str(config.id) + "**" + key] = round(
-                                value["score"], 2
+                            score = (
+                                value["score"]
+                                if isinstance(value, dict) and "score" in value
+                                else None
                             )
-                    reason = getattr(trace, f"metric_reason_{config.id}", None)
-                    if reason:
-                        result[f"{config.id}__reason"] = reason
+                            result[str(config.id) + "**" + key] = (
+                                round(score, 2) if score is not None else None
+                            )
 
                 # Add Root Span Annotations
                 for label in annotation_labels:
@@ -3339,13 +3445,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # ClickHouse for pagination + PG for span_attributes (hybrid)
             analytics = AnalyticsQueryService()
             if analytics.should_use_clickhouse(QueryType.VOICE_CALL_LIST):
-                return self._list_voice_calls_clickhouse(
-                    request,
-                    project_id,
-                    validated_data,
-                    remove_simulation_calls,
-                    analytics,
-                )
+                try:
+                    return self._list_voice_calls_clickhouse(
+                        request,
+                        project_id,
+                        validated_data,
+                        remove_simulation_calls,
+                        analytics,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "CH voice-call-list failed, falling back to PG",
+                        error=str(e),
+                    )
 
             # Build optimized base query: only traces whose root span is a conversation
             root_span_qs = ObservationSpan.objects.filter(
@@ -3521,6 +3633,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         except NotFound:
             raise
+        except ValueError as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error in fetching voice calls list: {str(e)}")
             return self._gm.bad_request("Failed to fetch voice calls")
@@ -3616,7 +3730,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             raw_log = attrs.get("raw_log") or {}
             provider = root_span.provider or "vapi"
 
-            processed_log = ObservabilityService.process_raw_logs(raw_log, provider)
+            processed_log = ObservabilityService.process_raw_logs(
+                raw_log, provider, span_attributes=attrs
+            )
             voice_metrics = self._extract_voice_turn_and_talk_metrics(attrs, raw_log)
 
             recording = self._build_recording_dict(attrs)
@@ -3679,13 +3795,47 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "output_type": output_type,
                     "reason": log.eval_explanation,
                     "error": log.error,
+                    "skipped": log.skipped_reason is not None,
                 }
                 if log.output_str_list:
+                    # Legacy categorical eval — pre-agent-evaluator path
                     metric_entry["output"] = log.output_str_list
-                elif output_type == "Pass/Fail" and log.output_bool is not None:
+                elif output_type == EvalOutputType.PASS_FAIL.value and log.output_bool is not None:
                     metric_entry["output"] = "Pass" if log.output_bool else "Fail"
                 elif log.output_float is not None:
+                    # Score evals on the legacy storage path.
                     metric_entry["output"] = round(log.output_float * 100, 2)
+                elif output_type in (
+                    EvalOutputType.CHOICES.value, EvalOutputType.SCORE.value,
+                ) and log.output_str:
+                    # New agent-evaluator path: output_str holds a Python dict
+                    # literal like "{'score': 0.0, 'choice': 'never'}". For
+                    # choices evals, use `choice`; for score evals, use `score`.
+                    # The drawer renderer falls back to top-level `score` →
+                    # mirror the choice there so categorical evals render
+                    # verbatim without a frontend change.
+                    try:
+                        import ast as _ast_mod
+                        parsed = _ast_mod.literal_eval(log.output_str)
+                    except (ValueError, SyntaxError):
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        if output_type == EvalOutputType.CHOICES.value:
+                            choice = parsed.get("choice")
+                            if choice:
+                                metric_entry["output"] = [choice]
+                                metric_entry["score"] = choice
+                            else:
+                                metric_entry["output"] = None
+                        else:  # SCORE
+                            score_val = parsed.get("score")
+                            metric_entry["output"] = (
+                                round(float(score_val) * 100, 2)
+                                if isinstance(score_val, (int, float))
+                                else None
+                            )
+                    else:
+                        metric_entry["output"] = None
                 else:
                     metric_entry["output"] = None
                 eval_outputs[config_id] = metric_entry
@@ -3789,7 +3939,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         if isinstance(metadata_map, dict):
             metadata = metadata_map
 
-        processed_log = ObservabilityService.process_raw_logs(raw_log, provider)
+        processed_log = ObservabilityService.process_raw_logs(
+            raw_log, provider, span_attributes=span_attrs
+        )
         voice_metrics = self._extract_voice_turn_and_talk_metrics(span_attrs, raw_log)
 
         attr_str = row.get("span_attr_str") or {}
@@ -3941,6 +4093,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 any(output_str_list) AS output_str_list
             FROM tracer_eval_logger FINAL
             WHERE _peerdb_is_deleted = 0
+              AND (deleted = 0 OR deleted IS NULL)
               AND trace_id = %(trace_id)s
               AND custom_eval_config_id IN %(eval_config_ids)s
             GROUP BY trace_id, custom_eval_config_id
@@ -3951,7 +4104,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "trace_id": str(trace_id),
                     "eval_config_ids": tuple(eval_config_ids),
                 },
-                timeout_ms=5000,
+                timeout_ms=30000,
             )
             eval_map = TraceListQueryBuilder.pivot_eval_results(
                 [(list(r.values())) for r in eval_result.data],
@@ -4096,7 +4249,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         LIMIT 1
         """
         current_result = analytics.execute_ch_query(
-            current_query, params, timeout_ms=5000
+            current_query, params, timeout_ms=30000
         )
         if not current_result.data:
             return self._gm.bad_request("Trace not found")
@@ -4119,7 +4272,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         LIMIT 1 BY trace_id
         LIMIT 1
         """
-        prev_result = analytics.execute_ch_query(prev_query, params, timeout_ms=5000)
+        prev_result = analytics.execute_ch_query(prev_query, params, timeout_ms=30000)
         previous_trace = prev_result.data[0]["trace_id"] if prev_result.data else None
 
         # Next trace (older by time)
@@ -4137,7 +4290,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         LIMIT 1 BY trace_id
         LIMIT 1
         """
-        next_result = analytics.execute_ch_query(next_query, params, timeout_ms=5000)
+        next_result = analytics.execute_ch_query(next_query, params, timeout_ms=30000)
         next_trace = next_result.data[0]["trace_id"] if next_result.data else None
 
         response = {
@@ -4650,7 +4803,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         sorted_eval_columns = sorted(eval_columns)
         for eval_name in sorted_eval_columns:
             fieldnames.append(eval_name)
-            fieldnames.append(f"{eval_name}_reason")
 
         response = HttpResponse(content_type="text/csv")
         filename = f"{project.name or 'project'}_voice_calls.csv"
@@ -4700,18 +4852,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # Initialize eval columns with empty values
             for eval_name in sorted_eval_columns:
                 row_data[eval_name] = ""
-                row_data[f"{eval_name}_reason"] = ""
 
             # Fill in eval outputs
             if result.get("eval_outputs"):
                 for config_id, eval_data in result["eval_outputs"].items():
                     eval_name = eval_data.get("name", f"Eval_{config_id}")
                     output = eval_data.get("output", "")
-                    reason = eval_data.get("reason", "")
                     row_data[eval_name] = str(output) if output is not None else ""
-                    row_data[f"{eval_name}_reason"] = (
-                        str(reason) if reason is not None else ""
-                    )
 
             writer.writerow(row_data)
 
@@ -4748,42 +4895,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # col_type that the CH filter builder handles specially.
         if org is None:
             org = getattr(request, "organization", None) or request.user.organization
-        _resolved: List[Dict] = []
-        for _f in filters:
-            _col = _f.get("column_id") or _f.get("columnId")
-            _cfg = _f.get("filter_config") or _f.get("filterConfig") or {}
-            _col_type = _cfg.get("col_type") or _cfg.get("colType") or "NORMAL"
-            if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value", _cfg.get("filterValue"))
-                _vals = _val if isinstance(_val, list) else [_val]
-                _vals = [v for v in _vals if v]
-                if not _vals:
-                    _resolved.append(_f)
-                    continue
-                _eu_qs = EndUser.objects.filter(
-                    user_id__in=_vals,
-                    organization=org,
-                    deleted=False,
-                )
-                if not org_scope and project_id:
-                    _eu_qs = _eu_qs.filter(project_id=project_id)
-                _ids = [str(u) for u in _eu_qs.values_list("id", flat=True)]
-                if not _ids:
-                    _ids = ["00000000-0000-0000-0000-000000000000"]
-                _resolved.append(
-                    {
-                        "column_id": "end_user_id",
-                        "filter_config": {
-                            "col_type": "TRACE_END_USER",
-                            "filter_type": "text",
-                            "filter_op": "in",
-                            "filter_value": _ids,
-                        },
-                    }
-                )
-                continue
-            _resolved.append(_f)
-        filters = _resolved
 
         # Get eval config IDs. Project mode uses a CH dict-lookup (fast);
         # org mode uses a PG scan because the CH dict-lookup takes a single
@@ -4791,9 +4902,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         eval_config_ids = []
         if org_scope:
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    trace__project_id__in=org_project_ids
-                )
+                id__in=EvalLogger.objects.filter(trace__project_id__in=org_project_ids)
                 .values("custom_eval_config_id")
                 .distinct(),
                 deleted=False,
@@ -4804,6 +4913,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
                 "FROM tracer_eval_logger FINAL "
                 "WHERE _peerdb_is_deleted = 0 "
+                "AND (deleted = 0 OR deleted IS NULL) "
                 "AND dictGet('trace_dict', 'project_id', "
                 "trace_id) = toUUID(%(pid)s)",
                 {"pid": str(project_id)},
@@ -4843,7 +4953,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
+            count_query, count_params, timeout_ms=30000
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
@@ -4870,13 +4980,15 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             row["metadata_map"] = content.get("metadata_map", {})
             row["trace_tags"] = content.get("trace_tags", [])
 
+        user_id_map = builder.resolve_user_ids(trace_ids, analytics)
+
         # Phase 2: Eval scores
         eval_map = {}
         if trace_ids and eval_config_ids:
             eval_query, eval_params = builder.build_eval_query(trace_ids)
             if eval_query:
                 eval_result = analytics.execute_ch_query(
-                    eval_query, eval_params, timeout_ms=5000
+                    eval_query, eval_params, timeout_ms=30000
                 )
                 eval_map = builder.pivot_eval_results(
                     [(list(row.values())) for row in eval_result.data],
@@ -4902,7 +5014,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 attr_query, attr_params = builder.build_span_attributes_query(trace_ids)
                 if attr_query:
                     attr_result = analytics.execute_ch_query(
-                        attr_query, attr_params, timeout_ms=5000
+                        attr_query, attr_params, timeout_ms=30000
                     )
                     for attr_row in attr_result.data:
                         tid = str(attr_row.get("trace_id", ""))
@@ -4992,6 +5104,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "model": row.get("model"),
                 "provider": row.get("provider"),
                 "tags": row.get("trace_tags") or [],
+                "user_id": user_id_map.get(trace_id),
             }
 
             # Add eval metrics
@@ -5016,9 +5129,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     entry[config_id] = (
                         avg_val if avg_val is not None else scores.get("pass_rate")
                     )
-                    reason = scores.get("reason")
-                    if reason:
-                        entry[f"{config_id}__reason"] = reason
                 else:
                     entry[config_id] = scores
 
@@ -5079,6 +5189,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
             "FROM tracer_eval_logger FINAL "
             "WHERE _peerdb_is_deleted = 0 "
+            "AND (deleted = 0 OR deleted IS NULL) "
             "AND dictGet('trace_dict', 'project_id', "
             "trace_id) = toUUID(%(pid)s)",
             {"pid": str(project_id)},
@@ -5148,7 +5259,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
+            count_query, count_params, timeout_ms=30000
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
@@ -5160,7 +5271,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_query, eval_params = builder.build_eval_query(trace_ids)
             if eval_query:
                 eval_result = analytics.execute_ch_query(
-                    eval_query, eval_params, timeout_ms=5000
+                    eval_query, eval_params, timeout_ms=30000
                 )
                 eval_map = TraceListQueryBuilder.pivot_eval_results(
                     [(list(row.values())) for row in eval_result.data],
@@ -5206,7 +5317,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             # Process raw_log through existing provider-specific logic
-            processed_log = ObservabilityService.process_raw_logs(raw_log, provider)
+            processed_log = ObservabilityService.process_raw_logs(
+                raw_log, provider, span_attributes=span_attrs
+            )
 
             entry = {
                 **processed_log,
@@ -5266,12 +5379,15 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         ) or {}
                         output_type = eval_template_config.get("output", "score")
                         metric_entry = {"name": metric_name, "output_type": output_type}
+                        # All eval rows errored — surface error to frontend
+                        if isinstance(scores, dict) and scores.get("error"):
+                            metric_entry["error"] = True
+                            metrics[config_id] = metric_entry
+                            continue
                         if isinstance(scores, dict):
                             if scores.get("per_choice"):
                                 metric_entry["output"] = [
-                                    k
-                                    for k, v in scores["per_choice"].items()
-                                    if v > 0
+                                    k for k, v in scores["per_choice"].items() if v > 0
                                 ]
                                 metric_entry["output_type"] = "str_list"
                             elif "str_list" in scores and scores["str_list"]:
@@ -5369,6 +5485,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
             "FROM tracer_eval_logger FINAL "
             "WHERE _peerdb_is_deleted = 0 "
+            "AND (deleted = 0 OR deleted IS NULL) "
             "AND dictGet('trace_dict', 'project_id', "
             "trace_id) = toUUID(%(pid)s)",
             {"pid": project_id},
@@ -5407,7 +5524,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Get count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
+            count_query, count_params, timeout_ms=30000
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
@@ -5418,7 +5535,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_query, eval_params = builder.build_eval_query(trace_ids)
             if eval_query:
                 eval_result = analytics.execute_ch_query(
-                    eval_query, eval_params, timeout_ms=5000
+                    eval_query, eval_params, timeout_ms=30000
                 )
                 eval_map = builder.pivot_eval_results(
                     [(list(row.values())) for row in eval_result.data],
@@ -5429,6 +5546,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         annotation_map = _build_annotation_map_from_scores(
             trace_ids, annotation_label_ids, label_types
         )
+
+        user_id_map = builder.resolve_user_ids(trace_ids, analytics)
 
         # Build column config
         column_config = get_default_trace_config()
@@ -5458,8 +5577,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "cost": row.get("cost"),
                 "model": row.get("model"),
                 "provider": row.get("provider"),
-                "session_id": row.get("trace_session_id"),
+                "session_id": (
+                    None
+                    if str(row.get("trace_session_id", "")) == NIL_UUID
+                    else row.get("trace_session_id")
+                ),
                 "tags": row.get("trace_tags") or [],
+                "user_id": user_id_map.get(trace_id),
             }
 
             # Add eval metrics matching PG format
@@ -5708,7 +5832,7 @@ class UsersView(APIView):
                       )
                     """
                     attr_result = analytics.execute_ch_query(
-                        attr_query, attr_params, timeout_ms=5000
+                        attr_query, attr_params, timeout_ms=30000
                     )
                     # Aggregate per user
                     user_attrs: dict = {}

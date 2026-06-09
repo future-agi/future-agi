@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -77,6 +78,26 @@ class TestFeatureUnavailable:
         assert response.status_code == 402
         assert response.data["upgrade_cta"] == cta
 
+    def test_custom_exception_handler_uses_instance_code_and_metadata(self):
+        from accounts.authentication import custom_exception_handler
+
+        exc = FeatureUnavailable(
+            EEResource.ANNOTATION_QUEUES,
+            detail="You've reached the 10 annotation queues limit (11 existing).",
+            code="ENTITLEMENT_LIMIT",
+            metadata={"current_usage": 11, "limit": 10, "resource": "queues"},
+        )
+        response = custom_exception_handler(exc, context={})
+
+        assert response.status_code == 402
+        assert response.data["error"]["code"] == "ENTITLEMENT_LIMIT"
+        assert response.data["error"]["detail"] == {
+            "feature": "queues",
+            "resource": "queues",
+            "current_usage": 11,
+            "limit": 10,
+        }
+
 
 # ── is_oss ────────────────────────────────────────────────────────────────
 
@@ -97,7 +118,7 @@ class TestIsOss:
         if not has_ee("ee.usage"):
             pytest.skip("ee/ not present — only meaningful with ee/ installed")
 
-        from ee.usage.deployment import DeploymentMode
+        DeploymentMode = pytest.importorskip("ee.usage.deployment").DeploymentMode
 
         # Force DeploymentMode.is_oss() to return True; is_oss() should too.
         with patch.object(DeploymentMode, "is_oss", return_value=True):
@@ -223,7 +244,7 @@ class TestEEFeatureMirror:
         if not has_ee("ee.usage"):
             pytest.skip("ee/ not present")
 
-        from ee.usage.deployment import EE_FEATURES as EE_FEATURES_SOURCE
+        EE_FEATURES_SOURCE = pytest.importorskip("ee.usage.deployment").EE_FEATURES
 
         assert EE_FEATURES_OSS == EE_FEATURES_SOURCE, (
             "tfc.ee_gating.EEFeature has drifted from ee.usage.deployment."
@@ -244,3 +265,35 @@ class TestCheckEECanCreate:
                 check_ee_can_create(
                     EEResource.GATEWAY_WEBHOOKS, org_id="org-1", current_count=0
                 )
+
+    def test_entitlement_limit_metadata_threads_to_exception(self):
+        result = SimpleNamespace(
+            allowed=False,
+            reason="You've reached the 10 annotation queues limit (11 existing).",
+            error_code="ENTITLEMENT_LIMIT",
+            current_usage=11,
+            limit=10,
+            upgrade_cta=None,
+        )
+
+        with (
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch(
+                "ee.usage.services.entitlements.Entitlements.can_create",
+                return_value=result,
+            ) as can_create,
+        ):
+            with pytest.raises(FeatureUnavailable) as exc_info:
+                check_ee_can_create(
+                    EEResource.ANNOTATION_QUEUES,
+                    org_id="org-1",
+                    current_count=11,
+                )
+
+        can_create.assert_called_once_with("org-1", "queues", 11)
+        assert exc_info.value.error_code == "ENTITLEMENT_LIMIT"
+        assert exc_info.value.metadata == {
+            "resource": "queues",
+            "current_usage": 11,
+            "limit": 10,
+        }

@@ -16,6 +16,7 @@ import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import Iconify from "src/components/iconify";
+import { canonicalEntries } from "src/utils/utils";
 
 const WrapperBox = styled(Box)(({ theme }) => ({
   display: "flex",
@@ -289,7 +290,10 @@ const EvalDrawerSection = () => {
               >
                 {errorAnalysis &&
                   (() => {
-                    const hasOrgSegment = Object.values(errorAnalysis)
+                    const errorAnalysisEntries =
+                      canonicalEntries(errorAnalysis);
+                    const hasOrgSegment = errorAnalysisEntries
+                      .map(([, value]) => value)
                       .flat()
                       .some((entry) => entry?.orgSegment);
 
@@ -302,7 +306,7 @@ const EvalDrawerSection = () => {
                       );
                     }
 
-                    return Object.entries(errorAnalysis)
+                    return errorAnalysisEntries
                       .filter(([_, value]) => value?.length)
                       .map(([key, value]) => (
                         <ErrorLocalizeCard

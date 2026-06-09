@@ -97,7 +97,7 @@ const TemplateCard = ({ name, description, createdBy, onClick }) => {
         <Typography
           typography={"s2"}
           fontWeight={"fontWeightRegular"}
-          color={"text.disabled"}
+          color={"text.secondary"}
           sx={{
             overflowWrap: "break-word",
             wordBreak: "break-word",
@@ -319,7 +319,7 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
           </Typography>
           <Typography
             typography="s2"
-            color="text.disabled"
+            color="text.secondary"
             fontWeight={"fontWeightRegular"}
           >
             Browse and discover curated prompt templates for writing,
@@ -534,9 +534,16 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
                       }}
                     >
                       <EmptyLayout
-                        title={"Create new template"}
-                        description="Craft a prompt, customize it to your needs, and save it as a 
-                      reusable template."
+                        title={
+                          importMode
+                            ? "No templates available"
+                            : "Create new template"
+                        }
+                        description={
+                          importMode
+                            ? "You don't have any templates yet. Create one from the prompts page to import it here."
+                            : "Craft a prompt, customize it to your needs, and save it as a reusable template."
+                        }
                         icon={"/assets/icons/ic_scratch.svg"}
                         linkText={"Check docs"}
                         link="https://docs.futureagi.com/docs/prompt"
@@ -544,13 +551,15 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
                           height: "80%",
                         }}
                         action={
-                          <Button
-                            onClick={() => setNewPromptModal(true)}
-                            variant="contained"
-                            color="primary"
-                          >
-                            Create prompt
-                          </Button>
+                          importMode ? null : (
+                            <Button
+                              onClick={() => setNewPromptModal(true)}
+                              variant="contained"
+                              color="primary"
+                            >
+                              Create prompt
+                            </Button>
+                          )
                         }
                       />
                     </Box>

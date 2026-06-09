@@ -438,10 +438,249 @@ class TestParityWithListEndpoint:
         expected = list_ids - {str(i) for i in excluded}
         assert {str(i) for i in resolver.ids} == expected
 
+    def test_parity_trace_name_system_metric_filter(
+        self, auth_client, observe_project, seeded_traces, organization
+    ):
+        from django.utils import timezone
+        from tracer.models.observation_span import ObservationSpan
 
-# NOTE: FilterEngine-branch parity tests (system metric, non-system metric,
-# span attribute, voice-call annotation, has_eval, has_annotation) are
-# deferred. Each requires a known-good filter payload captured from the
-# frontend — without that, any synthesized payload can drift from the
-# frontend's actual shape. Follow-up: capture real payloads from devtools
-# for each FilterEngine branch and add one parity test per branch.
+        match = seeded_traces[7]
+        skip = seeded_traces[8]
+        ObservationSpan.objects.create(
+            id=f"root-{match.id.hex}",
+            project=observe_project,
+            trace=match,
+            name="vip checkout trace",
+            observation_type="chain",
+            start_time=timezone.now(),
+            parent_span_id=None,
+        )
+        ObservationSpan.objects.create(
+            id=f"root-{skip.id.hex}",
+            project=observe_project,
+            trace=skip,
+            name="ordinary trace",
+            observation_type="chain",
+            start_time=timezone.now(),
+            parent_span_id=None,
+        )
+        filters = [
+            {
+                "column_id": "trace_name",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "contains",
+                    "filter_value": "vip checkout",
+                    "col_type": "SYSTEM_METRIC",
+                },
+            }
+        ]
+
+        resolver = resolve_filtered_trace_ids(
+            project_id=observe_project.id,
+            filters=filters,
+            organization=organization,
+        )
+        list_ids = _list_endpoint_ids(auth_client, observe_project.id, filters)
+
+        assert {str(i) for i in resolver.ids} == list_ids == {str(match.id)}
+
+    def test_parity_span_attribute_filter(
+        self, auth_client, observe_project, seeded_traces, organization
+    ):
+        from django.utils import timezone
+        from tracer.models.observation_span import ObservationSpan
+
+        match = seeded_traces[9]
+        skip = seeded_traces[10]
+        ObservationSpan.objects.create(
+            id=f"root-{match.id.hex}",
+            project=observe_project,
+            trace=match,
+            name="vip root",
+            observation_type="chain",
+            span_attributes={"customer_tier": "vip", "risk_score": 92},
+            start_time=timezone.now(),
+            parent_span_id=None,
+        )
+        ObservationSpan.objects.create(
+            id=f"root-{skip.id.hex}",
+            project=observe_project,
+            trace=skip,
+            name="free root",
+            observation_type="chain",
+            span_attributes={"customer_tier": "free", "risk_score": 42},
+            start_time=timezone.now(),
+            parent_span_id=None,
+        )
+        filters = [
+            {
+                "column_id": "customer_tier",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "vip",
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        ]
+
+        resolver = resolve_filtered_trace_ids(
+            project_id=observe_project.id,
+            filters=filters,
+            organization=organization,
+        )
+        list_ids = _list_endpoint_ids(auth_client, observe_project.id, filters)
+
+        assert {str(i) for i in resolver.ids} == list_ids == {str(match.id)}
+
+    def test_parity_eval_metric_filter(
+        self, auth_client, observe_project, seeded_traces, organization, workspace
+    ):
+        from django.utils import timezone
+        from model_hub.models.evals_metric import EvalTemplate
+        from tracer.models.custom_eval_config import CustomEvalConfig
+        from tracer.models.observation_span import EvalLogger, ObservationSpan
+
+        template = EvalTemplate.objects.create(
+            name="bulk_selection_quality",
+            organization=organization,
+            workspace=workspace,
+        )
+        config = CustomEvalConfig.objects.create(
+            name="Quality Eval",
+            eval_template=template,
+            project=observe_project,
+        )
+        match = seeded_traces[11]
+        skip = seeded_traces[12]
+        match_span = ObservationSpan.objects.create(
+            id=f"root-{match.id.hex}",
+            project=observe_project,
+            trace=match,
+            name="high quality",
+            observation_type="chain",
+            start_time=timezone.now(),
+            parent_span_id=None,
+        )
+        skip_span = ObservationSpan.objects.create(
+            id=f"root-{skip.id.hex}",
+            project=observe_project,
+            trace=skip,
+            name="low quality",
+            observation_type="chain",
+            start_time=timezone.now(),
+            parent_span_id=None,
+        )
+        EvalLogger.objects.create(
+            trace=match,
+            observation_span=match_span,
+            custom_eval_config=config,
+            output_float=0.91,
+        )
+        EvalLogger.objects.create(
+            trace=skip,
+            observation_span=skip_span,
+            custom_eval_config=config,
+            output_float=0.41,
+        )
+        filters = [
+            {
+                "column_id": str(config.id),
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "greater_than_or_equal",
+                    "filter_value": 80,
+                    "col_type": "EVAL_METRIC",
+                },
+            }
+        ]
+
+        resolver = resolve_filtered_trace_ids(
+            project_id=observe_project.id,
+            filters=filters,
+            organization=organization,
+        )
+        list_ids = _list_endpoint_ids(auth_client, observe_project.id, filters)
+
+        assert {str(i) for i in resolver.ids} == list_ids == {str(match.id)}
+
+    def test_parity_annotation_label_filter(
+        self, auth_client, observe_project, seeded_traces, organization, workspace, user
+    ):
+        from django.utils import timezone
+        from model_hub.models.develop_annotations import AnnotationsLabels
+        from model_hub.models.score import Score
+        from tracer.models.observation_span import ObservationSpan
+
+        label = AnnotationsLabels.objects.create(
+            name="bulk_quality",
+            type="numeric",
+            organization=organization,
+            workspace=workspace,
+            settings={
+                "min": 0,
+                "max": 100,
+                "step_size": 1,
+                "display_type": "slider",
+            },
+        )
+        match = seeded_traces[13]
+        skip = seeded_traces[14]
+        ObservationSpan.objects.create(
+            id=f"root-{match.id.hex}",
+            project=observe_project,
+            trace=match,
+            name="annotated high",
+            observation_type="chain",
+            start_time=timezone.now(),
+            parent_span_id=None,
+        )
+        ObservationSpan.objects.create(
+            id=f"root-{skip.id.hex}",
+            project=observe_project,
+            trace=skip,
+            name="annotated low",
+            observation_type="chain",
+            start_time=timezone.now(),
+            parent_span_id=None,
+        )
+        Score.objects.create(
+            source_type="trace",
+            trace=match,
+            label=label,
+            value={"value": 93},
+            annotator=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        Score.objects.create(
+            source_type="trace",
+            trace=skip,
+            label=label,
+            value={"value": 50},
+            annotator=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        filters = [
+            {
+                "column_id": str(label.id),
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "greater_than",
+                    "filter_value": 80,
+                    "col_type": "ANNOTATION",
+                },
+            }
+        ]
+
+        resolver = resolve_filtered_trace_ids(
+            project_id=observe_project.id,
+            filters=filters,
+            organization=organization,
+            user=user,
+        )
+        list_ids = _list_endpoint_ids(auth_client, observe_project.id, filters)
+
+        assert {str(i) for i in resolver.ids} == list_ids == {str(match.id)}

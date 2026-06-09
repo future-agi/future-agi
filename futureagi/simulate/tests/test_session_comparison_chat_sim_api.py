@@ -276,7 +276,7 @@ class TestSessionComparisonChatSimAPI:
             status.HTTP_403_FORBIDDEN,
         ]
 
-    def test_bad_request_when_call_execution_not_chat(
+    def test_bad_request_when_voice_execution_has_no_replay_baseline(
         self, auth_client, completed_text_call_execution
     ):
         completed_text_call_execution.simulation_call_type = (
@@ -291,7 +291,7 @@ class TestSessionComparisonChatSimAPI:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         data = response.json()
         assert data["status"] is False
-        assert data["result"] == "Call execution is not a chat execution"
+        assert data["result"] == "Comparison is only available for replay sessions"
 
     def test_bad_request_when_call_execution_not_completed(
         self, auth_client, completed_text_call_execution
@@ -421,8 +421,12 @@ class TestSessionComparisonChatSimViewUnit:
             patch(
                 "simulate.views.session_comparison_chat_sim.fetch_comparison_recordings"
             ) as mock_recordings,
+            patch(
+                "simulate.views.session_comparison_chat_sim.fetch_voice_conversation_span"
+            ) as mock_span,
         ):
             mock_get_obj.side_effect = [fake_call_exec, fake_row]
+            mock_span.return_value = object()
             mock_metrics.return_value = [{"metric": "duration", "value": 3}]
             mock_transcripts.return_value = {
                 "base_session_transcripts": [],
@@ -443,9 +447,13 @@ class TestSessionComparisonChatSimViewUnit:
         assert "comparison_metrics" in data["result"]
         assert "comparison_transcripts" in data["result"]
         assert "comparison_recordings" in data["result"]
-        mock_metrics.assert_called_once_with(fake_call_exec, "trace-456")
-        mock_transcripts.assert_called_once_with(fake_call_exec, "trace-456")
-        mock_recordings.assert_called_once_with(fake_call_exec, "trace-456")
+        mock_span.assert_called_once_with("trace-456")
+        span = mock_span.return_value
+        mock_metrics.assert_called_once_with(fake_call_exec, "trace-456", _span=span)
+        mock_transcripts.assert_called_once_with(
+            fake_call_exec, "trace-456", _span=span
+        )
+        mock_recordings.assert_called_once_with(fake_call_exec, "trace-456", _span=span)
 
     def test_get_rejects_not_completed_execution(self, user):
         factory = APIRequestFactory()

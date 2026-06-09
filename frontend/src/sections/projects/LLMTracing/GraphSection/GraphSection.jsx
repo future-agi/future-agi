@@ -14,7 +14,12 @@ import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 import EmptyGraph from "src/assets/illustrations/empty-graph";
 import _ from "lodash";
-import { getRandomId, getUniqueColorPalette } from "src/utils/utils";
+import {
+  getRandomId,
+  getUniqueColorPalette,
+  objectCamelToSnake,
+} from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { add, format, sub } from "date-fns";
 import {
   isDateRangeLessThan90Days,
@@ -174,7 +179,9 @@ const GraphSection = ({
     queryFn: () =>
       axios.post(endpoints.project.getTraceGraphData(), {
         interval: selectedInterval,
-        filters: combinedFilters,
+        filters: canonicalizeApiFilterColumnIds(
+          objectCamelToSnake(combinedFilters),
+        ),
         property: "average",
         req_data_config: selectedGraphConfig,
         project_id: observeId,
@@ -202,7 +209,9 @@ const GraphSection = ({
     queryFn: () =>
       axios.post(endpoints.project.getSpanGraphData(), {
         interval: selectedInterval,
-        filters: combinedFilters,
+        filters: canonicalizeApiFilterColumnIds(
+          objectCamelToSnake(combinedFilters),
+        ),
         property: "average",
         req_data_config: selectedGraphConfig,
         project_id: observeId,

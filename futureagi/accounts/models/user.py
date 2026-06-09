@@ -167,7 +167,18 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def has_global_workspace_access(self, organization=None):
         """Check if user's role in the given org grants global workspace access."""
-        role = self.get_organization_role(organization)
+        target_org = organization or self.organization
+        if not target_org:
+            return False
+
+        membership = self.get_membership(target_org)
+        if membership:
+            from tfc.constants.levels import Level
+
+            return membership.level_or_legacy >= Level.ADMIN
+
+        # Legacy fallback: no membership record exists for this org
+        role = self.get_organization_role(target_org)
         if not role:
             return False
 

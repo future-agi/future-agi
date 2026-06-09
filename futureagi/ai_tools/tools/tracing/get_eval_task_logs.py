@@ -49,11 +49,18 @@ class GetEvalTaskLogsTool(BaseTool):
             eval_task_id=str(params.eval_task_id), deleted=False
         ).aggregate(
             errors_count=Count("id", filter=Q(error=True)),
-            success_count=Count("id", filter=Q(error=False)),
+            success_count=Count(
+                "id", filter=Q(error=False, skipped_reason__isnull=True)
+            ),
+            skipped_count=Count("id", filter=Q(skipped_reason__isnull=False)),
             errors_message=ArrayAgg("eval_explanation", filter=Q(error=True)),
         )
 
-        total_count = log_stats["errors_count"] + log_stats["success_count"]
+        total_count = (
+            log_stats["errors_count"]
+            + log_stats["success_count"]
+            + log_stats["skipped_count"]
+        )
         errors = log_stats["errors_message"] or []
 
         info = key_value_block(

@@ -13,6 +13,10 @@ const API_HOST_MAP = {
 };
 
 function resolveApiHost() {
+  // Runtime > build-time > hostname map > dev default. See frontend/docker-entrypoint.sh.
+  const runtime =
+    (typeof window !== "undefined" && window.__FUTURE_AGI_CONFIG__) || {};
+  if (runtime.VITE_HOST_API) return runtime.VITE_HOST_API;
   if (import.meta.env.VITE_HOST_API) return import.meta.env.VITE_HOST_API;
   return API_HOST_MAP[window.location.hostname] || "http://localhost:8000";
 }
@@ -34,6 +38,16 @@ export const GA_ID = import.meta.env.VITE_GA_ID;
 
 export const REDDIT_PIXEL_ID = import.meta.env.VITE_REDDIT_PIXEL_ID;
 export const REDDIT_ADS_ENABLED = import.meta.env.VITE_REDDIT_ADS_ENABLED;
+
+export const TWITTER_PIXEL_ID = import.meta.env.VITE_TWITTER_PIXEL_ID;
+export const TWITTER_ADS_ENABLED = import.meta.env.VITE_TWITTER_ADS_ENABLED;
+
+
+export const AD_CONVERSION_VALUE = (() => {
+  const n = Number(import.meta.env.VITE_AD_CONVERSION_VALUE);
+  return Number.isFinite(n) ? n : undefined;
+})();
+export const AD_CONVERSION_CURRENCY = import.meta.env.VITE_AD_CONVERSION_CURRENCY;
 
 export const FIREBASE_API = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,

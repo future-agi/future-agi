@@ -78,7 +78,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
         result = response.json()["result"]
         if isinstance(result, dict) and "results" in result:
             result = result["results"]
-        names = {item["providerName"] for item in result}
+        names = {item["provider_name"] for item in result}
         assert names == {"anthropic"}
 
     def test_create_uses_active_request_organization(

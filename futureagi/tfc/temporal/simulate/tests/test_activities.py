@@ -201,3 +201,120 @@ class TestAsyncioRunBugRegression:
 
         result = asyncio.run(correct_async_function())
         assert result == "result"
+
+
+class TestResolveScenarioAgent:
+    """Tests for ``_resolve_scenario_agent`` (TH-4891).
+
+    Dataset-kind scenarios with ``source_type=prompt`` were silently
+    failing in the Temporal activity because the activity hard-required
+    ``scenario.agent_definition``. This helper centralises the prompt-
+    adapter resolution that the graph/script activities already use.
+    """
+
+    def _make_scenario(self, *, agent_definition=None, prompt_template=None,
+                       prompt_version=None):
+        from types import SimpleNamespace
+        org = SimpleNamespace(id="org-1")
+        ws = SimpleNamespace(id="ws-1")
+        return SimpleNamespace(
+            agent_definition=agent_definition,
+            prompt_template=prompt_template,
+            prompt_version=prompt_version,
+            organization=org,
+            workspace=ws,
+        )
+
+    def test_agent_definition_source_returns_real_object(self):
+        from types import SimpleNamespace
+        from tfc.temporal.simulate.activities import _resolve_scenario_agent
+
+        real_ad = SimpleNamespace(id="ad-1", agent_name="Real Agent")
+        scenario = self._make_scenario(agent_definition=real_ad)
+
+        result = _resolve_scenario_agent(scenario, "agent_definition")
+        assert result is real_ad
+
+    def test_prompt_source_returns_adapter_with_prompt_metadata(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from tfc.temporal.simulate.activities import _resolve_scenario_agent
+
+        prompt_version = SimpleNamespace(
+            prompt_config_snapshot={
+                "messages": [
+                    {"role": "system", "content": "You are a helpdesk bot."},
+                    {"role": "user", "content": "Greet the customer."},
+                ]
+            }
+        )
+        prompt_template = MagicMock()
+        prompt_template.id = "pt-42"
+        prompt_template.name = "Helpdesk Prompt"
+        prompt_template.description = "fallback desc"
+
+        scenario = self._make_scenario(
+            prompt_template=prompt_template, prompt_version=prompt_version
+        )
+
+        result = _resolve_scenario_agent(scenario, "prompt")
+        assert result.id == "pt-42"
+        assert result.agent_name == "Helpdesk Prompt"
+        assert "You are a helpdesk bot." in result.description
+        assert "Greet the customer." in result.description
+        assert result.agent_type == "text"
+        assert result.languages == ["en"]
+        assert result.inbound is True
+
+    def test_prompt_source_falls_back_to_default_version(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from tfc.temporal.simulate.activities import _resolve_scenario_agent
+
+        default_version = SimpleNamespace(
+            prompt_config_snapshot={
+                "messages": [{"role": "system", "content": "Default prompt."}]
+            }
+        )
+        prompt_template = MagicMock()
+        prompt_template.id = "pt-1"
+        prompt_template.name = "Default Lookup"
+        prompt_template.description = ""
+        prompt_template.all_executions.filter.return_value.first.return_value = (
+            default_version
+        )
+
+        scenario = self._make_scenario(
+            prompt_template=prompt_template, prompt_version=None
+        )
+
+        result = _resolve_scenario_agent(scenario, "prompt")
+        assert "Default prompt." in result.description
+
+    def test_prompt_source_without_template_falls_back_to_agent_definition(self):
+        from tfc.temporal.simulate.activities import _resolve_scenario_agent
+
+        scenario = self._make_scenario(
+            agent_definition=None, prompt_template=None
+        )
+        result = _resolve_scenario_agent(scenario, "prompt")
+        assert result is None
+
+    def test_empty_prompt_messages_uses_template_description(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from tfc.temporal.simulate.activities import _resolve_scenario_agent
+
+        prompt_version = SimpleNamespace(
+            prompt_config_snapshot={"messages": []}
+        )
+        prompt_template = MagicMock()
+        prompt_template.id = "pt-2"
+        prompt_template.name = "Empty"
+        prompt_template.description = "Template-level description"
+
+        scenario = self._make_scenario(
+            prompt_template=prompt_template, prompt_version=prompt_version
+        )
+        result = _resolve_scenario_agent(scenario, "prompt")
+        assert result.description == "Template-level description"

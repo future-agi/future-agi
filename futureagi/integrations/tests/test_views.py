@@ -679,3 +679,140 @@ class TestSyncLogListAPI:
         resp = auth_client.get(self.URL, {"connection_id": str(uuid.uuid4())})
         result = _result(resp)
         assert result["metadata"]["total_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Action-only platforms (Linear, etc.) — one live row per (org, workspace)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+@pytest.mark.api
+class TestActionOnlyConnectionCreate:
+    """`create` semantics for ACTION_ONLY_PLATFORMS.
+
+    Action-only platforms have org-wide credentials and no per-project
+    mapping, so they're capped at one live row per (organization,
+    workspace, platform) by the `uq_intconn_org_ws_action_only_active`
+    partial unique constraint. A re-add must return 400 with a message
+    that points the user at the edit flow, not silently update.
+    """
+
+    URL = "/integrations/connections/"
+
+    def _payload(self, **overrides):
+        data = {
+            "platform": "linear",
+            "host_url": "https://linear.app",
+            "credentials": {"api_key": "lin_api_test_abc123"},
+            "external_project_name": "Engineering",
+            "backfill_option": "new_only",
+        }
+        data.update(overrides)
+        return data
+
+    @staticmethod
+    def _mock_linear_service(mock_get_svc):
+        mock_svc = MagicMock()
+        mock_svc.validate_credentials.return_value = {
+            "valid": True,
+            "projects": [{"id": "team-1", "name": "Engineering"}],
+            "total_traces": 0,
+        }
+        mock_get_svc.return_value = mock_svc
+
+    @patch("integrations.views.integration_connection.get_integration_service")
+    def test_create_first_linear_succeeds(self, mock_get_svc, auth_client):
+        self._mock_linear_service(mock_get_svc)
+
+        resp = auth_client.post(
+            self.URL,
+            data=json.dumps(self._payload()),
+            content_type="application/json",
+        )
+
+        assert resp.status_code == http_status.HTTP_201_CREATED
+        result = _result(resp)
+        assert result["platform"] == "linear"
+        assert result["status"] == "active"
+
+    @patch("integrations.views.integration_connection.get_integration_service")
+    def test_second_linear_in_same_workspace_returns_400(
+        self, mock_get_svc, auth_client, organization, workspace
+    ):
+        self._mock_linear_service(mock_get_svc)
+        # Existing live Linear connection blocks a second create attempt.
+        IntegrationConnection.no_workspace_objects.create(
+            organization=organization,
+            workspace=workspace,
+            platform="linear",
+            display_name="Linear",
+            host_url="https://linear.app",
+            encrypted_credentials=b"existing",
+            external_project_name="Engineering",
+            status=ConnectionStatus.ACTIVE,
+        )
+
+        resp = auth_client.post(
+            self.URL,
+            data=json.dumps(self._payload()),
+            content_type="application/json",
+        )
+
+        assert resp.status_code == http_status.HTTP_400_BAD_REQUEST
+
+    @patch("integrations.views.integration_connection.get_integration_service")
+    def test_400_message_points_to_edit_flow(
+        self, mock_get_svc, auth_client, organization, workspace
+    ):
+        self._mock_linear_service(mock_get_svc)
+        IntegrationConnection.no_workspace_objects.create(
+            organization=organization,
+            workspace=workspace,
+            platform="linear",
+            display_name="Linear",
+            host_url="https://linear.app",
+            encrypted_credentials=b"existing",
+            external_project_name="Engineering",
+            status=ConnectionStatus.ACTIVE,
+        )
+
+        resp = auth_client.post(
+            self.URL,
+            data=json.dumps(self._payload()),
+            content_type="application/json",
+        )
+
+        body = resp.json()
+        message = (body.get("result") or body.get("detail") or "").lower()
+        # Don't pin the exact wording, but message must name the platform
+        # and tell the user where to rotate keys.
+        assert "linear" in message
+        assert "edit" in message
+
+    @patch("integrations.views.integration_connection.get_integration_service")
+    def test_soft_deleted_linear_does_not_block_create(
+        self, mock_get_svc, auth_client, organization, workspace
+    ):
+        """Partial constraint is scoped to `deleted=False`."""
+        self._mock_linear_service(mock_get_svc)
+        soft_deleted = IntegrationConnection.no_workspace_objects.create(
+            organization=organization,
+            workspace=workspace,
+            platform="linear",
+            display_name="Linear",
+            host_url="https://linear.app",
+            encrypted_credentials=b"old",
+            external_project_name="Engineering",
+            status=ConnectionStatus.ACTIVE,
+        )
+        soft_deleted.deleted = True
+        soft_deleted.save(update_fields=["deleted"])
+
+        resp = auth_client.post(
+            self.URL,
+            data=json.dumps(self._payload()),
+            content_type="application/json",
+        )
+
+        assert resp.status_code == http_status.HTTP_201_CREATED

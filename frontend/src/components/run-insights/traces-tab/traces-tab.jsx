@@ -33,6 +33,7 @@ const defaultFilter = {
   },
 };
 import { objectCamelToSnake } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { generateAnnotationColumnsForTracing } from "src/sections/projects/LLMTracing/common";
 import { useShallowToggleAnnotationsStore } from "src/sections/agents/store";
 
@@ -272,7 +273,9 @@ const TraceTab = React.forwardRef(
                 trace_ids: selectedTraceIds.join(","),
                 page_size: 10,
                 filters: JSON.stringify(
-                  objectCamelToSnake(debouncedValidatedFilters),
+                  canonicalizeApiFilterColumnIds(
+                    objectCamelToSnake(debouncedValidatedFilters),
+                  ),
                 ),
               },
             });

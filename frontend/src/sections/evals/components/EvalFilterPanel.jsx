@@ -538,7 +538,7 @@ QueryInput.propTypes = {
 // ---------------------------------------------------------------------------
 // Single filter row (Basic mode)
 // ---------------------------------------------------------------------------
-function FilterRow({ filter, index, onChange, onRemove }) {
+function FilterRow({ filter, index, onChange, onRemove, availableFields }) {
   const fieldDef = FIELD_MAP[filter.field] || FILTER_FIELDS[0];
   const operators = getOperators(fieldDef.type);
 
@@ -557,7 +557,7 @@ function FilterRow({ filter, index, onChange, onRemove }) {
         }}
         sx={{ minWidth: 100, fontSize: "13px", height: 30 }}
       >
-        {FILTER_FIELDS.map((f) => (
+        {availableFields.map((f) => (
           <MenuItem key={f.value} value={f.value} sx={{ fontSize: "13px" }}>
             {f.label}
           </MenuItem>
@@ -685,6 +685,7 @@ FilterRow.propTypes = {
   index: PropTypes.number.isRequired,
   onChange: PropTypes.func.isRequired,
   onRemove: PropTypes.func.isRequired,
+  availableFields: PropTypes.array.isRequired,
 };
 
 // ---------------------------------------------------------------------------
@@ -774,6 +775,7 @@ const EvalFilterPanel = ({
   onClose,
   onApply,
   currentFilters,
+  lockedFilters,
 }) => {
   const [activeTab, setActiveTab] = useState("basic");
   const [aiQuery, setAiQuery] = useState("");
@@ -782,6 +784,16 @@ const EvalFilterPanel = ({
     loading: aiLoading,
     error: aiError,
   } = useAIFilter(AI_FILTER_SCHEMA);
+
+  const lockedFields = useMemo(
+    () => Object.keys(lockedFilters || {}),
+    [lockedFilters],
+  );
+  const availableFields = useMemo(
+    () => FILTER_FIELDS.filter((f) => !lockedFields.includes(f.value)),
+    [lockedFields],
+  );
+
   // Build the UI rows from the API-shaped `currentFilters` object. Each
   // enum field collapses into a single row with an *array* value — the
   // enum FilterRow uses a multi-select Autocomplete and expects one row
@@ -796,6 +808,7 @@ const EvalFilterPanel = ({
         value: [...currentFilters.eval_type],
       });
     }
+
     if (currentFilters?.output_type?.length) {
       initial.push({
         field: "output_type",
@@ -831,10 +844,11 @@ const EvalFilterPanel = ({
         value: currentFilters.search,
       });
     }
-    return initial.length > 0
-      ? initial
+    const visible = initial.filter((r) => !lockedFields.includes(r.field));
+    return visible.length > 0
+      ? visible
       : [{ field: "name", operator: "contains", value: "" }];
-  }, [currentFilters]);
+  }, [currentFilters, lockedFields]);
 
   const [rows, setRows] = useState(buildInitialRows);
 
@@ -1055,6 +1069,7 @@ const EvalFilterPanel = ({
                   index={i}
                   onChange={handleUpdateRow}
                   onRemove={handleRemoveRow}
+                  availableFields={availableFields}
                 />
               ))}
             </Stack>
@@ -1125,6 +1140,7 @@ EvalFilterPanel.propTypes = {
   onClose: PropTypes.func.isRequired,
   onApply: PropTypes.func.isRequired,
   currentFilters: PropTypes.object,
+  lockedFilters: PropTypes.object,
 };
 
 export default EvalFilterPanel;

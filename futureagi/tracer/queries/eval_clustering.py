@@ -10,9 +10,11 @@ within the same eval, never across different evals.
 
 import hashlib
 import re
+from datetime import timedelta
 from typing import List, Optional, Tuple
 
 import structlog
+from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
@@ -25,12 +27,16 @@ from tracer.models.trace_error_analysis import (
     FeedIssueStatus,
     TraceErrorGroup,
 )
-from tracer.types.eval_cluster_types import ClusterableEvalResult
+from tracer.types.eval_cluster_types import ClusterableEvalResult, EvalClusterMeta
 
 logger = structlog.get_logger(__name__)
 
 CENTROIDS_TABLE = "cluster_centroids"  # shared with scanner — different family values
 COSINE_THRESHOLD = 0.45
+
+# Only cluster recent eval failures — old results aren't actionable and
+# bound the per-run work unit.
+_CLUSTER_WINDOW_DAYS = 60
 
 
 # ---------------------------------------------------------------------------
@@ -38,13 +44,20 @@ COSINE_THRESHOLD = 0.45
 # ---------------------------------------------------------------------------
 
 
-def get_unclustered_eval_results(project_id: str) -> List[ClusterableEvalResult]:
+def get_unclustered_eval_results(
+    project_id: str, limit: Optional[int] = None
+) -> List[ClusterableEvalResult]:
     """
     Fetch EvalLogger rows that failed, have an explanation, and haven't
     been assigned to a cluster yet.
 
     "Failed" = output_bool is False OR output_float < 1.0.
     Skips rows with null eval_explanation (deterministic evals without reasoning).
+    Only the last _CLUSTER_WINDOW_DAYS of results are considered.
+
+    ``limit`` bounds the returned batch (oldest-first). The caller drains a
+    large backlog over successive bounded runs so a single clustering
+    activity can never grow unbounded and time out.
     """
     # Already-clustered eval_logger IDs
     clustered_ids = set(
@@ -54,10 +67,17 @@ def get_unclustered_eval_results(project_id: str) -> List[ClusterableEvalResult]
         ).values_list("eval_logger_id", flat=True)
     )
 
+    # PR3: target_type='span' keeps span-level and trace-level results from
+    # being mixed in the same cluster. Trace evals are different semantic
+    # units (one per trace, not per span) and clustering them with span-level
+    # error themes would muddy the cluster centroids. Session evals have no
+    # trace FK and would 404 the trace__project_id filter anyway.
     evals = (
         EvalLogger.objects.filter(
             trace__project_id=project_id,
+            target_type="span",
             custom_eval_config__isnull=False,
+            created_at__gte=timezone.now() - timedelta(days=_CLUSTER_WINDOW_DAYS),
         )
         .filter(
             Q(output_bool=False) | Q(output_float__lt=1.0),
@@ -68,8 +88,10 @@ def get_unclustered_eval_results(project_id: str) -> List[ClusterableEvalResult]
         .order_by("created_at")
     )
 
-    results = []
-    for ev in evals:
+    results: List[ClusterableEvalResult] = []
+    # .iterator() so a huge backlog isn't all loaded into memory just to
+    # stop early once `limit` unclustered rows have been collected.
+    for ev in evals.iterator(chunk_size=2000):
         if ev.id in clustered_ids:
             continue
         results.append(
@@ -83,6 +105,8 @@ def get_unclustered_eval_results(project_id: str) -> List[ClusterableEvalResult]
                 score=ev.output_float,
             )
         )
+        if limit is not None and len(results) >= limit:
+            break
 
     return results
 
@@ -92,13 +116,48 @@ def get_unclustered_eval_results(project_id: str) -> List[ClusterableEvalResult]
 # ---------------------------------------------------------------------------
 
 
+_EMBED_BATCH_SIZE = 64
+
+
 def embed_texts(texts: List[str]) -> List[List[float]]:
-    """Embed a batch of texts using the model serving client."""
-    text_embed = model_manager.text_model
-    embeddings = []
-    for text in texts:
-        embedding = text_embed(text)
-        embeddings.append(embedding)
+    """Embed texts via the serving client in bounded batches.
+
+    Chunked rather than per-row or all-at-once: one request carries up to
+    _EMBED_BATCH_SIZE texts (the single-worker serving process does one
+    batched forward pass instead of N round-trips), and a failed chunk only
+    costs re-embedding that chunk on the next idempotent clustering sweep —
+    bounded blast radius, which is the fault-isolation the old per-row
+    enqueue was reaching for, without the fan-out that overran serving.
+    """
+    if not texts:
+        return []
+
+    try:
+        client = model_manager.serving_client
+    except Exception:
+        client = None
+
+    if client is None:
+        # Serving unavailable — preserve the previous per-item behaviour.
+        text_embed = model_manager.text_model
+        return [text_embed(t) for t in texts]
+
+    embeddings: List[List[float]] = []
+    for start in range(0, len(texts), _EMBED_BATCH_SIZE):
+        chunk = texts[start : start + _EMBED_BATCH_SIZE]
+        try:
+            embeddings.extend(client.embed_text_batch(chunk))
+        except Exception:
+            # One bad chunk must not fail the whole project sweep — fall
+            # back to per-item for this chunk only.
+            logger.warning(
+                "embed_batch_fallback_per_item",
+                chunk_start=start,
+                chunk_size=len(chunk),
+                exc_info=True,
+            )
+            text_embed = model_manager.text_model
+            embeddings.extend(text_embed(t) for t in chunk)
     return embeddings
 
 
@@ -225,6 +284,43 @@ def _extract_title(explanation: str) -> str:
     return first_line[:200] if first_line else text[:200]
 
 
+def _eval_cluster_meta(eval_name: str, reasoning: str) -> EvalClusterMeta:
+    """Title + fix_layer + severity for an eval cluster via the cheap-LLM
+    EE helper, with deterministic fallback.
+
+    EE absent (OSS) or any LLM failure → first-sentence title, null
+    fix_layer, null severity (caller defaults priority). Each field
+    degrades independently; metadata is best-effort and must never break
+    cluster creation.
+    """
+    fallback = EvalClusterMeta(title=_extract_title(reasoning))
+    try:
+        from ee.agenthub.trace_scanner.eval_cluster_title import (
+            generate_eval_cluster_meta,
+        )
+    except ImportError:
+        if settings.DEBUG:
+            logger.warning(
+                "Could not import ee.agenthub.trace_scanner.eval_cluster_title",
+                exc_info=True,
+            )
+        return fallback
+
+    try:
+        meta = generate_eval_cluster_meta(eval_name, reasoning)
+    except Exception:
+        logger.warning("eval_cluster_meta_llm_failed", exc_info=True)
+        meta = None
+
+    if not meta:
+        return fallback
+    return EvalClusterMeta(
+        title=meta.title or _extract_title(reasoning),
+        fix_layer=meta.fix_layer,
+        severity=meta.severity,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Cluster creation
 # ---------------------------------------------------------------------------
@@ -253,7 +349,10 @@ def create_cluster(
         ).hexdigest()[:8]
         cluster_id = f"E-{h2.upper()}"
 
-    title = _extract_title(result.explanation)
+    meta = _eval_cluster_meta(result.eval_name, result.explanation)
+    # Lazy import avoids a query-module import cycle; severity_to_priority
+    # returns "medium" when severity is None (the fallback default).
+    from tracer.queries.feed import severity_to_priority
 
     cluster = TraceErrorGroup.objects.create(
         project_id=project_id,
@@ -261,11 +360,12 @@ def create_cluster(
         source=ClusterSource.EVAL,
         issue_group=result.eval_name,
         issue_category=None,
-        fix_layer=None,
-        title=title,
+        fix_layer=meta.fix_layer,
+        title=meta.title,
         combined_description=result.explanation,
         combined_impact=_score_to_impact(result.score),
         status=FeedIssueStatus.ESCALATING,
+        priority=severity_to_priority(meta.severity),
         error_type=result.eval_name,
         eval_config_id=result.eval_config_id,
         total_events=1,
@@ -309,7 +409,9 @@ def create_cluster(
         "eval_cluster_created",
         cluster_id=cluster_id,
         eval_name=result.eval_name,
-        title=title[:80],
+        title=(meta.title or "")[:80],
+        fix_layer=meta.fix_layer,
+        severity=meta.severity,
     )
     return cluster_id
 

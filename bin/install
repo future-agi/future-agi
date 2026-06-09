@@ -1,0 +1,693 @@
+#!/usr/bin/env bash
+# ============================================================================
+# Future AGI — self-hosted installer
+#
+#   ./bin/install                      # light mode, interactive
+#   ./bin/install --full               # full mode (adds PeerDB CDC)
+#   ./bin/install --skip-user-creation # don't prompt for first user
+#   ./bin/install --no-up              # bootstrap .env only; don't start
+#   ./bin/install --wipe-volumes       # wipe stale project volumes and
+#                                      # re-init with fresh secrets
+#   ./bin/install --new-instance       # if existing volumes are detected,
+#                                      # spin up an isolated copy as
+#                                      # `futureagi-2`, `futureagi-3`, …
+#                                      # without touching the originals
+#   ./bin/install -y                   # non-interactive (CI / unattended).
+#                                      # Reads FAGI_ADMIN_EMAIL,
+#                                      # FAGI_ADMIN_NAME, FAGI_ADMIN_PASSWORD
+#                                      # from env if you want a user created.
+#
+# Idempotent: re-running preserves your existing secrets and merges any new
+# vars from .env.example. A timestamped log is written to install-*.log.
+# ============================================================================
+
+set -eEuo pipefail
+
+# ---------------- output helpers ----------------
+if [[ -t 1 ]]; then
+  BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'
+  YELLOW=$'\033[33m'; BLUE=$'\033[34m'; RESET=$'\033[0m'
+else
+  BOLD=""; DIM=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; RESET=""
+fi
+# Helpers write to terminal AND to fd 3 (install log, opened below). Avoids
+# globally tee'ing stdout — that breaks TTY detection for `docker compose`.
+say()   { printf "%s\n" "$*"; printf "%s\n" "$*" >&3; }
+step()  { printf "\n${BOLD}${BLUE}==>${RESET} ${BOLD}%s${RESET}\n" "$*"; printf "\n==> %s\n" "$*" >&3; }
+ok()    { printf "  ${GREEN}✓${RESET} %s\n" "$*"; printf "  [ok]   %s\n" "$*" >&3; }
+warn()  { printf "  ${YELLOW}!${RESET} %s\n" "$*" >&2; printf "  [warn] %s\n" "$*" >&3; }
+die()   { printf "\n${RED}✗ %s${RESET}\n" "$*" >&2; printf "\n[fail] %s\n" "$*" >&3; exit 1; }
+log_only() { printf "%s\n" "$*" >&3; }
+
+on_err() {
+  local code=$? line=${1:-?}
+  printf "\n${RED}✗ install failed (exit %d, line %s)${RESET}\n" "$code" "$line" >&2
+  printf "${DIM}  Re-run with: ./bin/install. Logs: docker compose logs${RESET}\n" >&2
+  exit "$code"
+}
+trap 'on_err $LINENO' ERR
+
+# ---------------- log file (gitignored as /install-*.log) ----------------
+# Opened before arg parsing so helpers (esp. die) can append from any point.
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+LOG_FILE="$ROOT/install-$(date +%Y%m%d-%H%M%S).log"
+exec 3>>"$LOG_FILE"
+printf "# Future AGI install log — %s\n# host: %s, uname: %s\n\n" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(hostname 2>/dev/null || echo ?)" "$(uname -a)" >&3
+
+# ---------------- args ----------------
+FULL=0
+SKIP_USER=${SKIP_USER_CREATION:-0}
+NO_UP=0
+NON_INTERACTIVE=0
+WIPE_VOLUMES_FLAG=0
+NEW_INSTANCE_FLAG=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --full) FULL=1 ;;
+    --skip-user-creation) SKIP_USER=1 ;;
+    --no-up) NO_UP=1 ;;
+    --wipe-volumes) WIPE_VOLUMES_FLAG=1 ;;
+    --new-instance) NEW_INSTANCE_FLAG=1 ;;
+    -y|--non-interactive) NON_INTERACTIVE=1 ;;
+    -h|--help)
+      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) die "unknown flag: $1 (try --help)" ;;
+  esac
+  shift
+done
+
+# CI / non-TTY runs always behave as non-interactive.
+[[ -n "${CI:-}" || ! -t 0 ]] && NON_INTERACTIVE=1
+
+cd "$ROOT"
+
+# ---------------- welcome banner ----------------
+if [[ -t 1 ]]; then
+  printf "\n"
+  printf "${BOLD}${BLUE}  ╭───────────────────────────────────────────╮${RESET}\n"
+  printf "${BOLD}${BLUE}  │${RESET}   ${BOLD}Future AGI${RESET} ${DIM}·${RESET} ${DIM}self-hosted installer${RESET}      ${BOLD}${BLUE}│${RESET}\n"
+  printf "${BOLD}${BLUE}  ╰───────────────────────────────────────────╯${RESET}\n"
+  if [[ "$FULL" -eq 1 ]]; then
+    printf "  ${DIM}mode: full · adds PeerDB CDC stack${RESET}\n"
+  else
+    printf "  ${DIM}mode: light · pass --full to add PeerDB CDC${RESET}\n"
+  fi
+  printf "\n"
+fi
+
+# ---------------- preflight ----------------
+step "Preflight"
+
+if command -v docker >/dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
+    die "Docker is installed but the daemon isn't running. Start Docker Desktop / dockerd and re-run."
+  fi
+  ok "Docker daemon reachable"
+else
+  die "docker not found in PATH. Install Docker first: https://docs.docker.com/get-docker/"
+fi
+
+# Pick docker compose flavor (plugin v2 preferred; fall back to standalone v1).
+if docker compose version >/dev/null 2>&1; then
+  DC="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  DC="docker-compose"
+  warn "Using legacy docker-compose v1. Consider upgrading to Compose v2 (built into Docker Desktop)."
+else
+  die "Neither 'docker compose' nor 'docker-compose' is available."
+fi
+ok "Compose: $($DC version --short 2>/dev/null || echo unknown)"
+
+# Soft RAM check. The full stack (~22 containers) is happiest with 8 GB free.
+ram_warn() {
+  local total_mb=""
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    total_mb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 ))
+  elif [[ -r /proc/meminfo ]]; then
+    total_mb=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1024 ))
+  fi
+  if [[ -n "$total_mb" && "$total_mb" -gt 0 && "$total_mb" -lt 8000 ]]; then
+    warn "Detected ${total_mb} MB RAM. The full stack likes ≥ 8 GB; light mode is fine on less."
+  fi
+}
+ram_warn
+
+# ---------------- .env ----------------
+step "Configuring .env"
+
+if [[ ! -f .env.example ]]; then
+  die ".env.example missing — are you running this from the repo root?"
+fi
+
+if [[ ! -f .env ]]; then
+  cp .env.example .env
+  ok "Created .env from .env.example"
+else
+  # Merge any new keys added to .env.example since the user's last install,
+  # without overwriting existing values. awk pattern from Coolify install.sh.
+  before=$(wc -l <.env | tr -d ' ')
+  awk -F= 'NR==FNR{seen[$1]=1; print; next} !($1 in seen) && /^[A-Z]/ {print}' \
+    .env .env.example > .env.tmp && mv .env.tmp .env
+  after=$(wc -l <.env | tr -d ' ')
+  if [[ "$after" -gt "$before" ]]; then
+    ok ".env exists — added $((after - before)) new key(s) from .env.example"
+  else
+    ok ".env already exists (existing values preserved)"
+  fi
+fi
+
+# Portable in-place sed (BSD on mac, GNU on linux).
+sed_inplace() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    sed -i '' "$@"
+  else
+    sed -i "$@"
+  fi
+}
+
+gen_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import secrets; print(secrets.token_hex(32))'
+  else
+    LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c 64
+    echo
+  fi
+}
+
+# Find the next free project name in the futureagi-N family by checking
+# for existing volumes. Used when --new-instance is requested.
+next_free_project_name() {
+  local base="futureagi" n=2
+  while docker volume ls --format '{{.Name}}' 2>/dev/null \
+         | grep -q "^${base}-${n}_"; do
+    n=$((n + 1))
+  done
+  echo "${base}-${n}"
+}
+
+# Set / replace COMPOSE_PROJECT_NAME in .env. Compose reads this and it
+# overrides the `name:` in docker-compose.yml, so volumes / containers /
+# networks become ${name}_*, ${name}-N, ${name}_default.
+set_project_name_in_env() {
+  local name="$1"
+  if grep -Eq '^COMPOSE_PROJECT_NAME=' .env; then
+    sed_inplace -E "s|^COMPOSE_PROJECT_NAME=.*|COMPOSE_PROJECT_NAME=${name}|" .env
+  else
+    printf "\nCOMPOSE_PROJECT_NAME=%s\n" "$name" >> .env
+  fi
+}
+
+# Stale-volume guard. If a previous stack-up (in this dir or another with
+# the same compose project name) created persistent volumes, those volumes
+# are already initialized with the OLD password. Rotating CHANGEME-* now
+# would generate a new secret that postgres / minio won't accept, and the
+# stack will fail to come up with cryptic auth errors. Detect and ask.
+project_name="futureagi"  # pinned in docker-compose.yml `name:`
+declare -a STALE_VOLS=()
+for vol in postgres-data clickhouse-data minio-data redis-data \
+           rabbitmq-data peerdb-catalog-data peerdb-minio-data; do
+  if docker volume inspect "${project_name}_${vol}" >/dev/null 2>&1; then
+    STALE_VOLS+=("${project_name}_${vol}")
+  fi
+done
+
+WIPE_VOLS=0
+ROTATE_OK=1
+if (( ${#STALE_VOLS[@]} > 0 )) && grep -Eq "^(PG_PASSWORD|MINIO_ROOT_PASSWORD)=CHANGEME-" .env; then
+  warn "Detected ${#STALE_VOLS[@]} existing project volume(s) — likely from a prior install:"
+  for v in "${STALE_VOLS[@]}"; do say "    • $v"; done
+  say ""
+  say "  These volumes have data initialized with the OLD passwords. If I"
+  say "  generate fresh secrets now, the stack will fail to authenticate."
+  say ""
+  if (( WIPE_VOLUMES_FLAG == 1 )); then
+    WIPE_VOLS=1
+  elif (( NEW_INSTANCE_FLAG == 1 )); then
+    project_name="$(next_free_project_name)"
+    set_project_name_in_env "$project_name"
+    STALE_VOLS=()
+    ok "Spinning up an isolated instance: ${BOLD}${project_name}${RESET}"
+    say "  ${DIM}volumes / containers / network will all be prefixed with ${project_name}.${RESET}"
+  elif [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+    warn "  Non-interactive mode: leaving CHANGEME-* placeholders in .env."
+    warn "  Re-run with --wipe-volumes (deletes data) or --new-instance"
+    warn "  (creates an isolated copy) — or set passwords in .env to match"
+    warn "  what the existing volumes were initialized with."
+    ROTATE_OK=0
+  else
+    say "  Choose:"
+    say "    [n] ${BOLD}new instance${RESET} — spin up an isolated copy alongside this one"
+    say "        ${DIM}(volumes will be ${project_name}-2_*, ${project_name}-3_*, …)${RESET}"
+    say "    [w] ${BOLD}wipe${RESET} the volumes and start fresh ${RED}(deletes all data)${RESET}"
+    say "    [k] ${BOLD}keep${RESET} the volumes — I'll leave .env passwords as CHANGEME-*"
+    say "        ${DIM}and you set them to match the existing data manually${RESET}"
+    say "    [a] ${BOLD}abort${RESET}"
+    while true; do
+      printf "  ${BOLD}> ${RESET}"
+      read -r choice || choice="a"
+      case "$choice" in
+        n|N)
+          project_name="$(next_free_project_name)"
+          set_project_name_in_env "$project_name"
+          STALE_VOLS=()
+          ok "Spinning up an isolated instance: ${BOLD}${project_name}${RESET}"
+          say "  ${DIM}volumes / containers / network will all be prefixed with ${project_name}.${RESET}"
+          break ;;
+        w|W) WIPE_VOLS=1; break ;;
+        k|K) ROTATE_OK=0; break ;;
+        a|A|"") die "Aborted by user." ;;
+        *) warn "Choose n / w / k / a" ;;
+      esac
+    done
+  fi
+fi
+
+if (( WIPE_VOLS == 1 )); then
+  step "Wiping existing volumes"
+  docker volume rm "${STALE_VOLS[@]}" 2>&1 | sed 's|^|  |'
+  ok "Volumes removed. Fresh secrets will work on first boot."
+fi
+
+# Replace CHANGEME-* placeholders idempotently. A var that has already been
+# rotated (no CHANGEME prefix) is left alone. Skipped entirely if the user
+# chose to keep stale volumes (ROTATE_OK=0) — they'll align passwords
+# manually.
+rotate_placeholder() {
+  local var="$1"
+  if (( ROTATE_OK == 0 )); then return 0; fi
+  if grep -Eq "^${var}=CHANGEME-" .env; then
+    local secret
+    secret=$(gen_secret)
+    sed_inplace -E "s|^${var}=CHANGEME-.*|${var}=${secret}|" .env
+    ok "Generated ${var}"
+  fi
+}
+rotate_placeholder SECRET_KEY
+rotate_placeholder PG_PASSWORD
+rotate_placeholder MINIO_ROOT_PASSWORD
+rotate_placeholder AGENTCC_INTERNAL_API_KEY
+rotate_placeholder AGENTCC_ADMIN_TOKEN
+
+# S3_SECRET_KEY must match MINIO_ROOT_PASSWORD (S3 client speaks to MinIO).
+if (( ROTATE_OK == 1 )) && grep -Eq "^S3_SECRET_KEY=CHANGEME-" .env; then
+  minio_pwd=$(grep -E '^MINIO_ROOT_PASSWORD=' .env | head -1 | cut -d= -f2-)
+  sed_inplace -E "s|^S3_SECRET_KEY=CHANGEME-.*|S3_SECRET_KEY=${minio_pwd}|" .env
+  ok "Aligned S3_SECRET_KEY with MINIO_ROOT_PASSWORD"
+fi
+
+# Mode: --full flips COMPOSE_PROFILES on disk so subsequent `docker compose
+# up` (without our wrapper) keeps the same mode.
+if [[ "$FULL" -eq 1 ]]; then
+  if grep -Eq '^# *COMPOSE_PROFILES=' .env; then
+    sed_inplace -E 's|^# *COMPOSE_PROFILES=.*|COMPOSE_PROFILES=full|' .env
+  elif grep -Eq '^COMPOSE_PROFILES=' .env; then
+    sed_inplace -E 's|^COMPOSE_PROFILES=.*|COMPOSE_PROFILES=full|' .env
+  else
+    printf "\nCOMPOSE_PROFILES=full\n" >> .env
+  fi
+  ok "Mode: full (adds PeerDB CDC stack)"
+else
+  ok "Mode: light (default — set --full to add the PeerDB stack)"
+fi
+
+# ---------------- port preflight ----------------
+# Catch host-port collisions BEFORE the slow docker compose up. Without
+# this, compose retries 3× on what's actually a structural conflict.
+# Runs before the --no-up exit so port overrides land in .env even when
+# you're only bootstrapping.
+step "Checking host ports"
+
+env_port() {
+  local var="$1" default="$2"
+  local v
+  v=$(grep -E "^${var}=" .env | tail -1 | cut -d= -f2- || true)
+  printf '%s' "${v:-$default}"
+}
+
+port_holder() {
+  # lsof / ss exit non-zero when nothing's bound. Disable both errexit and
+  # ERR-trap inheritance just for this function so a clean "nothing's
+  # listening" doesn't get reported as an install failure.
+  set +eE
+  local port="$1" out=""
+  if command -v lsof >/dev/null 2>&1; then
+    out=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null)
+    [[ -n "$out" ]] && awk 'NR>1 {printf "%s (pid %s)\n", $1, $2; exit}' <<<"$out"
+  elif command -v ss >/dev/null 2>&1; then
+    out=$(ss -ltn 2>/dev/null)
+    [[ -n "$out" ]] && awk -v p=":$port\$" '$4 ~ p {print $0; exit}' <<<"$out"
+  fi
+  set -eE
+  return 0
+}
+
+# Find the first free TCP port starting from $1, skipping any we've already
+# suggested in this same run (so two conflicting services can't both be
+# offered the same alternative). Result is written to FREE_PORT (a global
+# variable) so updates to SUGGESTED_PORTS persist — `$(find_free_port ...)`
+# would run in a subshell, hiding the array mutation from the next call.
+declare -a SUGGESTED_PORTS=()
+FREE_PORT=""
+find_free_port() {
+  local p="$1"
+  FREE_PORT=""
+  while (( p < 65535 )); do
+    if [[ -z "$(port_holder "$p" 2>/dev/null)" ]]; then
+      local seen=0 s
+      # ${arr[@]+"${arr[@]}"} survives `set -u` on an empty array.
+      for s in ${SUGGESTED_PORTS[@]+"${SUGGESTED_PORTS[@]}"}; do
+        [[ "$s" == "$p" ]] && seen=1 && break
+      done
+      if (( seen == 0 )); then
+        SUGGESTED_PORTS+=("$p")
+        FREE_PORT="$p"
+        return 0
+      fi
+    fi
+    p=$((p + 1))
+  done
+  return 1
+}
+
+# Set var=value in .env (replace if present, append otherwise).
+set_env_var() {
+  local var="$1" val="$2"
+  if grep -Eq "^${var}=" .env; then
+    sed_inplace -E "s|^${var}=.*|${var}=${val}|" .env
+  else
+    printf "%s=%s\n" "$var" "$val" >> .env
+  fi
+}
+
+# All host-bound ports. Data-store ports bind 127.0.0.1 in compose, but
+# they still collide with anything else on that interface (other docker
+# stacks, SSH tunnels, host services). PeerDB ports only matter in --full.
+declare -a PORTS_TO_CHECK=(
+  "FRONTEND_PORT:3000"
+  "BACKEND_PORT:8000"
+  "AGENTCC_GATEWAY_PORT:8090"
+  "SERVING_PORT:8080"
+  "CODE_EXECUTOR_PORT:8060"
+  "PG_PORT:5432"
+  "CH_HTTP_PORT:8123"
+  "CH_PORT:9000"
+  "REDIS_PORT:6379"
+  "MINIO_API_PORT:9005"
+  "MINIO_CONSOLE_PORT:9006"
+  "TEMPORAL_PORT:7233"
+)
+if [[ "$FULL" -eq 1 ]]; then
+  PORTS_TO_CHECK+=("PEERDB_UI_PORT:3001" "PEERDB_PORT:9900")
+fi
+
+declare -a UNRESOLVED=()
+for entry in "${PORTS_TO_CHECK[@]}"; do
+  var="${entry%%:*}"
+  default="${entry##*:}"
+  port=$(env_port "$var" "$default")
+  holder=$(port_holder "$port" 2>/dev/null) || holder=""
+
+  if [[ -z "$holder" ]]; then
+    ok "  $var=$port  free"
+    continue
+  fi
+
+  # Allow our own already-running container to "hold" the port — re-runs
+  # of bin/install on the same project are fine. Anything else collides.
+  if echo "$holder" | grep -qiE "com\.docker|docker-proxy"; then
+    project_name="futureagi"  # pinned in docker-compose.yml `name:`
+    if docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null \
+         | awk -v p=":$port->" -v proj="^${project_name}-" \
+              '$0 ~ p && $1 ~ proj' \
+         | grep -q .; then
+      ok "  $var=$port  (held by this project's container — fine)"
+      continue
+    fi
+  fi
+
+  # Find a suggested replacement.
+  suggestion=""
+  find_free_port $((port + 1)) && suggestion="$FREE_PORT" || true
+  if [[ -z "$suggestion" ]]; then
+    warn "  $var=$port  is taken by $holder  (no free port found above)"
+    UNRESOLVED+=("$var=$port  ←  $holder")
+    continue
+  fi
+
+  warn "  $var=$port  is taken by $holder"
+
+  # Offer to switch. Auto-accept in non-interactive mode (CI / -y) so the
+  # script can keep going unattended.
+  apply=0
+  if [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+    apply=1
+    say "      ${DIM}→ auto-switching to $var=$suggestion${RESET}"
+  else
+    printf "      ${DIM}→ use ${BOLD}$var=$suggestion${RESET}${DIM} instead? [Y/n] ${RESET}"
+    read -r answer || answer=""
+    case "$answer" in
+      ""|y|Y|yes|YES) apply=1 ;;
+      *) apply=0 ;;
+    esac
+  fi
+
+  if (( apply == 1 )); then
+    set_env_var "$var" "$suggestion"
+    ok "  $var=$suggestion  written to .env"
+    # Keep VITE_HOST_API in sync when BACKEND_PORT moves. The frontend
+    # bundle bakes the URL at build time; if .env still has the old
+    # localhost:8000 default after we switch BACKEND_PORT, the bundle
+    # would call a port that's no longer ours.
+    if [[ "$var" == "BACKEND_PORT" ]] && \
+       grep -Eq '^VITE_HOST_API=https?://localhost:[0-9]+/?$' .env; then
+      sed_inplace -E "s|^VITE_HOST_API=.*|VITE_HOST_API=http://localhost:${suggestion}|" .env
+      ok "  VITE_HOST_API=http://localhost:${suggestion}  (kept in sync)"
+    fi
+  else
+    UNRESOLVED+=("$var=$port  ←  $holder")
+  fi
+done
+
+if (( ${#UNRESOLVED[@]} > 0 )); then
+  say ""
+  say "  ${BOLD}${YELLOW}Unresolved port conflicts:${RESET}"
+  for c in "${UNRESOLVED[@]}"; do say "    • $c"; done
+  say ""
+  say "  Free the port (stop the process / container) or set the var in .env"
+  say "  to a free port, then re-run ${BOLD}./bin/install${RESET}."
+  exit 1
+fi
+
+if [[ "$NO_UP" -eq 1 ]]; then
+  step "Done (--no-up)"
+  say "  .env is ready. Bring up the stack with:"
+  say "    ${BOLD}$DC up -d${RESET}"
+  exit 0
+fi
+
+# ---------------- collect first-user creds ----------------
+# Done up-front so the rest of the install can run unattended. Captured
+# values are used after the backend reports healthy. Press Enter on the
+# email prompt to skip; --skip-user-creation / CI=1 skip without asking.
+USER_EMAIL=""
+USER_NAME=""
+USER_PASS=""
+
+prompt_user() {
+  step "Create your first account"
+  say "  ${DIM}You can press Enter on email to skip and create the user later via${RESET}"
+  say "  ${DIM}'$DC exec -it backend python manage.py create_user'.${RESET}"
+  say ""
+
+  while true; do
+    printf "  ${BOLD}Email${RESET}    : "; read -r USER_EMAIL || USER_EMAIL=""
+    if [[ -z "$USER_EMAIL" ]]; then
+      say "  ${DIM}skipped — no user will be created${RESET}"
+      return
+    fi
+    if [[ "$USER_EMAIL" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then
+      break
+    fi
+    warn "  '$USER_EMAIL' doesn't look like an email address — try again"
+  done
+
+  while [[ -z "$USER_NAME" ]]; do
+    printf "  ${BOLD}Name${RESET}     : "; read -r USER_NAME
+    [[ -z "$USER_NAME" ]] && warn "  name can't be empty"
+  done
+
+  while true; do
+    printf "  ${BOLD}Password${RESET} : "; read -rs USER_PASS; echo
+    if [[ ${#USER_PASS} -lt 8 ]]; then
+      warn "  password must be at least 8 characters"
+      USER_PASS=""
+      continue
+    fi
+    printf "  ${BOLD}Confirm${RESET}  : "; read -rs confirm; echo
+    if [[ "$USER_PASS" != "$confirm" ]]; then
+      warn "  passwords don't match — try again"
+      USER_PASS=""
+      continue
+    fi
+    break
+  done
+  ok "Captured. Account will be created once the backend is healthy."
+}
+
+if [[ "$SKIP_USER" -eq 1 ]]; then
+  : # no prompt
+elif [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+  # Use FAGI_ADMIN_* if all three are set; otherwise skip silently.
+  if [[ -n "${FAGI_ADMIN_EMAIL:-}" && -n "${FAGI_ADMIN_NAME:-}" && -n "${FAGI_ADMIN_PASSWORD:-}" ]]; then
+    USER_EMAIL="$FAGI_ADMIN_EMAIL"
+    USER_NAME="$FAGI_ADMIN_NAME"
+    USER_PASS="$FAGI_ADMIN_PASSWORD"
+    step "Using FAGI_ADMIN_* from environment for first-user creation"
+  else
+    step "Non-interactive: skipping first-user creation"
+    say "  ${DIM}Set FAGI_ADMIN_EMAIL, FAGI_ADMIN_NAME, FAGI_ADMIN_PASSWORD to auto-create.${RESET}"
+  fi
+else
+  prompt_user
+fi
+
+# ---------------- pull images ----------------
+step "Pulling images"
+log_only "running: $DC pull"
+if ! $DC pull; then
+  log_only "[fail] pull returned $?"
+  die "docker compose pull failed. Check disk space (docker system df) and try again."
+fi
+log_only "[ok]   pull complete"
+ok "Images pulled"
+
+# ---------------- bring up ----------------
+step "Starting the stack"
+
+attempt=0
+# --build forces a rebuild of any service with `build:` set, so a stale
+# image tag from a previous worktree (or an outdated layer) doesn't carry
+# old source into a new install. Docker's layer cache makes this fast
+# when nothing has actually changed.
+until $DC up -d --build --remove-orphans; do
+  attempt=$((attempt + 1))
+  if [[ "$attempt" -ge 3 ]]; then
+    die "docker compose up failed after $attempt attempts. Check 'docker compose logs'."
+  fi
+  warn "compose up failed (attempt $attempt) — retrying in 30s…"
+  sleep 30
+done
+ok "Containers started"
+
+# ---------------- health wait ----------------
+step "Waiting for backend to become healthy"
+
+# Source .env for BACKEND_PORT so we hit the right host port.
+backend_port=$(grep -E '^BACKEND_PORT=' .env | head -1 | cut -d= -f2- || true)
+backend_port="${backend_port:-8000}"
+deadline=$(( $(date +%s) + 600 ))
+while true; do
+  if curl -fsS "http://localhost:${backend_port}/health/" >/dev/null 2>&1; then
+    ok "Backend healthy at http://localhost:${backend_port}"
+    break
+  fi
+  if [[ "$(date +%s)" -ge "$deadline" ]]; then
+    warn "Backend did not pass /health/ within 10 minutes. The stack may still be migrating."
+    warn "Tail the logs: $DC logs -f backend"
+    break
+  fi
+  sleep 5
+done
+
+# ---------------- create captured user ----------------
+if [[ -n "$USER_EMAIL" ]]; then
+  step "Creating your account"
+  # Capture stderr to show the real error if the command fails. Disable
+  # errexit + errtrace inside the subshell so a non-zero exit doesn't
+  # fire the script-level ERR trap (which would print a misleading
+  # "install failed" line before our own error handling runs).
+  set +eE
+  trap - ERR
+  if cu_out=$($DC exec -T backend python manage.py create_user \
+                --email "$USER_EMAIL" --name "$USER_NAME" --password "$USER_PASS" 2>&1); then
+    cu_rc=0
+  else
+    cu_rc=$?
+  fi
+  trap 'on_err $LINENO' ERR
+  set -eE
+
+  if (( cu_rc == 0 )); then
+    ok "Account created for $USER_EMAIL"
+  elif printf '%s' "$cu_out" | grep -qiE "already exists|UNIQUE constraint"; then
+    ok "Account already exists for $USER_EMAIL — sign in normally"
+  else
+    warn "create_user failed (exit $cu_rc). Last 6 lines of output:"
+    printf '%s\n' "$cu_out" | tail -6 | sed 's|^|      |'
+    warn "Run it manually after the stack settles:"
+    warn "  $DC exec -it backend python manage.py create_user"
+  fi
+fi
+
+# ---------------- done ----------------
+frontend_port=$(grep -E '^FRONTEND_PORT=' .env | head -1 | cut -d= -f2- || true)
+frontend_port="${frontend_port:-3000}"
+
+# Detect alt URLs so VPS / WSL / Docker-in-VM users can pick what works for
+# their network. Each detection is best-effort with a hard timeout — never
+# blocks the success banner on a slow network.
+detect_lan_ip() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    # First non-loopback IPv4 from `ifconfig`. en0 is wifi, en1 is ethernet,
+    # but order varies — just pick the first non-127.x.
+    ifconfig 2>/dev/null | awk '/inet / && $2 != "127.0.0.1" {print $2; exit}'
+  elif command -v ip >/dev/null 2>&1; then
+    ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") {print $(i+1); exit}}'
+  else
+    hostname -I 2>/dev/null | awk '{print $1}'
+  fi
+}
+detect_public_ip() {
+  curl -fsS --max-time 3 https://ifconfig.io 2>/dev/null \
+    || curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null \
+    || true
+}
+LAN_IP=$(detect_lan_ip)
+PUB_IP=$(detect_public_ip)
+
+printf "\n"
+if [[ -t 1 ]]; then
+  printf "  ${BOLD}${GREEN}╭───────────────────────────────────────────╮${RESET}\n"
+  printf "  ${BOLD}${GREEN}│${RESET}   ${BOLD}🎉  Future AGI is up${RESET}                    ${BOLD}${GREEN}│${RESET}\n"
+  printf "  ${BOLD}${GREEN}╰───────────────────────────────────────────╯${RESET}\n"
+fi
+say ""
+say "  ${BOLD}Open in browser${RESET}"
+say "    Local       →  http://localhost:${frontend_port}"
+[[ -n "$LAN_IP" && "$LAN_IP" != "127.0.0.1" ]] && \
+  say "    LAN         →  http://${LAN_IP}:${frontend_port}"
+[[ -n "$PUB_IP" && "$PUB_IP" != "$LAN_IP" ]] && \
+  say "    Public      →  http://${PUB_IP}:${frontend_port}  ${DIM}(only if firewall allows)${RESET}"
+say ""
+say "  ${BOLD}APIs${RESET}"
+say "    Backend     →  http://localhost:${backend_port}"
+[[ "$FULL" -eq 1 ]] && \
+  say "    PeerDB UI   →  http://localhost:3001  ${DIM}(peerdb / peerdb)${RESET}"
+
+if [[ -n "$USER_EMAIL" ]]; then
+  say ""
+  say "  ${BOLD}Sign in as${RESET} ${USER_EMAIL}"
+  say "    →  http://localhost:${frontend_port}/auth/jwt/login"
+fi
+say ""
+say "  ${DIM}Stop:${RESET}        $DC down"
+say "  ${DIM}Wipe data:${RESET}   $DC down -v"
+say "  ${DIM}Tail logs:${RESET}   $DC logs -f"
+say "  ${DIM}Install log:${RESET} $LOG_FILE"
+say ""
+say "  ${DIM}★ Star us: https://github.com/future-agi/future-agi${RESET}"
+say ""

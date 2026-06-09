@@ -8,6 +8,7 @@ import { getUsersColumnConfig, userTraceRowHeightMapping } from "./common";
 import { mergeCellStyle } from "../LLMTracing/common";
 import axios, { endpoints } from "src/utils/axios";
 import { objectCamelToSnake } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { useNavigate, useParams } from "react-router";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useGetValidatedFilters } from "src/hooks/use-get-validated-filters";
@@ -16,17 +17,18 @@ import { getRandomId } from "src/utils/utils";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
 import { APP_CONSTANTS } from "src/utils/constants";
 
-const USERS_GRID_THEME_PARAMS = {
+const getUsersGridThemeParams = (theme) => ({
   columnBorder: false,
-  headerColumnBorder: { width: 0 },
+  headerColumnBorder: false,
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
   rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
   headerFontSize: "13px",
-  headerFontWeight: 500,
+  headerFontWeight: theme.typography.fontWeightMedium,
   headerBackgroundColor: "transparent",
+  headerTextColor: theme.palette.text.primary,
   rowHoverColor: "rgba(120,87,252,0.04)",
-};
+});
 
 const UsersGrid = React.memo(
   ({
@@ -37,7 +39,7 @@ const UsersGrid = React.memo(
     cellHeight,
   }) => {
     const theme = useTheme();
-    const agTheme = useAgThemeWith(USERS_GRID_THEME_PARAMS);
+    const agTheme = useAgThemeWith(getUsersGridThemeParams(theme));
     const gridApiRef = useRef(null);
     const {
       setGridApi,
@@ -224,7 +226,11 @@ const UsersGrid = React.memo(
                   : null,
                 page_size: pageSize,
                 current_page_index: pageNumber,
-                filters: JSON.stringify(objectCamelToSnake(validatedFilters)),
+                filters: JSON.stringify(
+                  canonicalizeApiFilterColumnIds(
+                    objectCamelToSnake(validatedFilters),
+                  ),
+                ),
               },
             });
 

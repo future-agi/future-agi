@@ -1698,6 +1698,7 @@ def custom_code_eval(code, language=None, **kwargs):
       - bool: True = pass (1.0), False = fail (0.0)
       - float/int: Score between 0 and 1
       - dict: {"result": bool|float, "reason": "explanation"}
+      - dict: {"score": bool|float, "reason": "explanation"}
 
     Args:
         code (str): The custom code to run. Must define `evaluate()` or `main()`.
@@ -1706,36 +1707,33 @@ def custom_code_eval(code, language=None, **kwargs):
     Returns:
         dict: {"result": float, "reason": str}
     """
-    code_execution = CodeExecution(code=code)
-
-    if language:
-        code_execution.language = language
-
+    code_execution = CodeExecution(code=code, language=language)
     result = code_execution.execute(kwargs)
 
     status = result.get("status")
     if status == "skip":
-        # The user's function returned None — treat as a failed/skipped eval
-        # with a clear message instead of the misleading "Code eval error: None".
-        return {"result": False, "reason": "Code eval: function returned None (no result produced)"}
+        raise ValueError("Code eval function returned None (no result produced)")
     if status != "success":
         error_msg = result.get("data", "Unknown error in code eval")
-        return {"result": False, "reason": f"Code eval error: {error_msg}"}
+        raise ValueError(f"Code eval input validation failed: {error_msg}")
 
     data = result.get("data")
 
-    # Handle dict return: {"result": ..., "reason": ...}
+    # Handle dict return: {"result": ..., "reason": ...} or {"score": ..., ...}
     if isinstance(data, dict):
-        if "result" not in data:
-            return {"result": False, "reason": "Dict return must include a 'result' key"}
-        result_val = data["result"]
+        if "result" in data:
+            result_val = data["result"]
+        elif "score" in data:
+            result_val = data["score"]
+        else:
+            raise ValueError("Code eval dict return must include a 'result' or 'score' key")
         reason = data.get("reason", "Custom code eval completed")
         if isinstance(result_val, bool):
             return {"result": float(result_val), "reason": reason}
         elif isinstance(result_val, (int, float)):
             return {"result": float(min(max(result_val, 0), 1)), "reason": reason}
         else:
-            return {"result": float(bool(result_val)), "reason": reason}
+            raise ValueError("Code eval result must be a boolean or number")
 
     # Handle float/int return (score 0-1)
     if isinstance(data, (int, float)) and not isinstance(data, bool):
@@ -1749,11 +1747,7 @@ def custom_code_eval(code, language=None, **kwargs):
             "reason": f"Custom code eval {'passed' if data else 'failed'}",
         }
 
-    # Fallback: truthy check
-    return {
-        "result": float(bool(data)),
-        "reason": f"Custom code eval {'passed' if data else 'failed'}",
-    }
+    raise ValueError("Code eval must return a boolean, number, or dict result")
 
 
 def _load_json(json_data: dict | str) -> dict:
@@ -3629,8 +3623,22 @@ def calculate_r2_score(output, expected, **kwargs):
     """Compute R-squared (coefficient of determination)."""
     y_pred = _parse_number_list(output)
     y_true = _parse_number_list(expected)
-    if len(y_pred) != len(y_true) or len(y_true) < 2:
-        return {"result": 0.0, "reason": "Invalid input"}
+    if len(y_pred) != len(y_true):
+        return {
+            "result": 0.0,
+            "reason": (
+                "R2 score requires the same number of predicted and actual values; "
+                f"received {len(y_pred)} predicted and {len(y_true)} actual values."
+            ),
+        }
+    if len(y_true) < 2:
+        return {
+            "result": 0.0,
+            "reason": (
+                "R2 score requires at least 2 predicted/actual value pairs; "
+                f"received {len(y_true)} pair."
+            ),
+        }
     mean_true = sum(y_true) / len(y_true)
     ss_res = sum((yt - yp) ** 2 for yt, yp in zip(y_true, y_pred))
     ss_tot = sum((yt - mean_true) ** 2 for yt in y_true)

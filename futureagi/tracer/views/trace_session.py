@@ -3,13 +3,20 @@ import json
 import traceback
 from collections import defaultdict
 from dataclasses import asdict
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
+
+try:
+    import orjson
+
+    _json_loads = orjson.loads
+except ImportError:
+    _json_loads = json.loads
 
 import pandas as pd
 import structlog
 
 logger = structlog.get_logger(__name__)
-from django.db import models
+from django.db import OperationalError, connection, models, transaction
 from django.db.models import (
     Avg,
     Case,
@@ -33,8 +40,10 @@ from django.db.models.functions import (
     Round,
 )
 from django.http import FileResponse
+from rest_framework import status as drf_status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.choices import AnnotationTypeChoices
@@ -43,12 +52,20 @@ from model_hub.models.score import Score
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EndUser, EvalLogger, ObservationSpan
+from tracer.models.observation_span import (
+    EndUser,
+    EvalLogger,
+    EvalTargetType,
+    ObservationSpan,
+)
 from tracer.models.project import Project
 from tracer.models.trace import Trace
+from tracer.services.clickhouse.query_builders.base import NIL_UUID
 
 session_logger = structlog.get_logger(__name__)
+from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.trace_session import TraceSession
+from tracer.serializers.eval_task import PaginationQuerySerializer
 from tracer.serializers.trace_session import (
     TraceSessionExportSerializer,
     TraceSessionSerializer,
@@ -100,14 +117,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
             analytics = AnalyticsQueryService()
             if analytics.should_use_clickhouse(QueryType.TRACE_DETAIL):
-                try:
-                    return self._retrieve_clickhouse(
-                        request, trace_session_id, trace_session, project_id, analytics
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "CH session retrieve failed, falling back to PG", error=str(e)
-                    )
+                return self._retrieve_clickhouse(
+                    request, trace_session_id, trace_session, project_id, analytics
+                )
 
             serializer = self.get_serializer(trace_session)
             trace_session = serializer.data
@@ -407,9 +419,29 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     "next": has_next,
                 }
             )
+        except OperationalError as e:
+            logger.exception(
+                "trace_session_retrieve_timeout",
+                session_id=str(self.kwargs.get("pk")),
+                error=str(e),
+            )
+            return Response(
+                {
+                    "status": False,
+                    "result": (
+                        "Session detail unavailable: query exceeded time "
+                        "budget. Retry shortly."
+                    ),
+                },
+                status=drf_status.HTTP_504_GATEWAY_TIMEOUT,
+            )
         except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(f"Error retrieving trace session: {str(e)}")
+            logger.exception(
+                "trace_session_retrieve_failed",
+                session_id=str(self.kwargs.get("pk")),
+                error=str(e),
+            )
+            return self._gm.bad_request("Error retrieving trace session.")
 
     def _retrieve_clickhouse(
         self, request, trace_session_id, trace_session_obj, project_id, analytics
@@ -469,7 +501,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 any(output) AS output,
                 min(CASE WHEN parent_span_id IS NULL OR parent_span_id = '' THEN latency_ms ELSE NULL END) AS root_latency_ms,
                 round(sum(cost), 6) AS total_cost,
-                min(start_time) AS start_time,
+                min(start_time) AS trace_min_start_time,
                 sum(total_tokens) AS total_tokens,
                 sum(prompt_tokens) AS input_tokens,
                 sum(completion_tokens) AS output_tokens
@@ -478,7 +510,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
               AND trace_session_id = %(session_id)s
               AND _peerdb_is_deleted = 0
             GROUP BY trace_id
-            ORDER BY min(start_time) ASC
+            ORDER BY trace_min_start_time ASC
             LIMIT %(limit)s
             OFFSET %(offset)s
         """
@@ -510,16 +542,44 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        # Get eval metrics from CH
+        # Resolve eval-config IDs in CH (avoids a tracer_eval_logger PG
+        # scan that grows linearly with eval traffic), then fetch the
+        # PG metadata by primary key.
         trace_ids = [r["trace_id"] for r in traces_data]
-        eval_configs = list(
-            CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(trace_id__in=trace_ids).values(
-                    "custom_eval_config_id"
-                ),
-                deleted=False,
-            ).select_related("eval_template")
-        )
+        eval_configs: list = []
+        if trace_ids:
+            try:
+                config_id_result = analytics.execute_ch_query(
+                    """
+                    SELECT DISTINCT toString(custom_eval_config_id) AS config_id
+                    FROM tracer_eval_logger FINAL
+                    WHERE trace_id IN %(trace_ids)s
+                      AND _peerdb_is_deleted = 0
+                      AND (deleted = 0 OR deleted IS NULL)
+                    """,
+                    {"trace_ids": trace_ids},
+                    timeout_ms=3000,
+                )
+                pre_config_ids = [
+                    row["config_id"]
+                    for row in config_id_result.data
+                    if row.get("config_id")
+                ]
+            except Exception as e:
+                logger.warning(
+                    "ch_eval_config_id_lookup_failed",
+                    session_id=str(trace_session_id),
+                    error=str(e),
+                )
+                pre_config_ids = []
+
+            if pre_config_ids:
+                eval_configs = list(
+                    CustomEvalConfig.objects.filter(
+                        id__in=pre_config_ids,
+                        deleted=False,
+                    ).select_related("eval_template")
+                )
 
         eval_map = {}
         if eval_configs and trace_ids:
@@ -538,6 +598,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 WHERE trace_id IN %(trace_ids)s
                   AND custom_eval_config_id IN %(config_ids)s
                   AND _peerdb_is_deleted = 0
+                  AND (deleted = 0 OR deleted IS NULL)
                   AND output_str != 'ERROR'
                   AND (error = 0 OR error IS NULL)
                 GROUP BY trace_id, custom_eval_config_id
@@ -564,7 +625,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 "system_metrics": {
                     "total_latency_ms": trace_row.get("root_latency_ms", 0),
                     "total_cost": trace_row.get("total_cost", 0),
-                    "start_time": format_datetime_to_iso(trace_row.get("start_time")),
+                    "start_time": format_datetime_to_iso(
+                        trace_row.get("trace_min_start_time")
+                    ),
                     "total_tokens": trace_row.get("total_tokens", 0),
                     "input_tokens": trace_row.get("input_tokens", 0),
                     "output_tokens": trace_row.get("output_tokens", 0),
@@ -665,6 +728,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     WHERE project_id = %(project_id)s
                       AND _peerdb_is_deleted = 0
                       AND trace_session_id IS NOT NULL
+                      AND trace_session_id != toUUID('{NIL_UUID}')
                       AND (parent_span_id IS NULL OR parent_span_id = '')
                     GROUP BY trace_session_id
                 )
@@ -680,12 +744,16 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 search_clause = (
                     f"AND toString({ch_column}) ILIKE %(search)s" if search else ""
                 )
+                nil_uuid_clause = (
+                    f"AND {ch_column} != toUUID('{NIL_UUID}')" if is_uuid else ""
+                )
                 query = f"""
                 SELECT DISTINCT {select_expr} AS val
                 FROM spans
                 WHERE project_id = %(project_id)s
                   AND _peerdb_is_deleted = 0
                   AND {ch_column} IS NOT NULL
+                  {nil_uuid_clause}
                   AND (parent_span_id IS NULL OR parent_span_id = '')
                   {search_clause}
                 ORDER BY val
@@ -989,6 +1057,33 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         end_user_filter["end_user"] = end_user
                     except EndUser.DoesNotExist:
                         raise Exception("User not found")  # noqa: B904
+
+            # In org-scoped mode with a user filter, narrow session_ids to
+            # only those linked to this user's spans BEFORE the heavy
+            # aggregation. Without this, the GROUP BY scans every session
+            # in every org project and exceeds PG's 30s statement_timeout.
+            # In single-project mode session_ids is already bounded by
+            # project_id, so the planner handles it without help.
+            if org_scope and end_user_filter:
+                user_session_ids = list(
+                    ObservationSpan.objects.filter(
+                        trace__session_id__in=session_ids,
+                        **end_user_filter,
+                    )
+                    .values_list("trace__session_id", flat=True)
+                    .distinct()
+                )
+                if not user_session_ids:
+                    return self._gm.success_response(
+                        {
+                            "metadata": {"total_rows": 0},
+                            "table": [],
+                            "config": get_default_project_session_config(),
+                        }
+                    )
+                session_ids = TraceSession.objects.filter(
+                    id__in=user_session_ids
+                ).values("id")
 
             fm_lm_columns = {"first_message", "last_message"}
             needs_first_last = any(
@@ -1362,6 +1457,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         """
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
 
+        # Resolve `org` once at the top — it's referenced both when injecting
+        # the synthetic end_user_id filter (below) and when decorating the
+        # formatted output with EndUser info (later). Previously only the
+        # later block defined it, so the earlier reference NameError'd as
+        # soon as ``user_id_raw`` was truthy and silently fell through to PG.
+        org = getattr(request, "organization", None) or request.user.organization
+
         org_scope = bool(org_project_ids)
         filters = list(validated_data.get("filters", []) or [])
         sort_params = validated_data.get("sort_params", [])
@@ -1380,11 +1482,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         user_id_raw: Optional[str] = user_id_qp or None
         _remaining: List[Dict] = []
         for _f in filters:
-            _col = _f.get("column_id") or _f.get("columnId")
-            _cfg = _f.get("filter_config") or _f.get("filterConfig") or {}
-            _col_type = _cfg.get("col_type") or _cfg.get("colType") or "NORMAL"
+            _col, _cfg = FilterEngine._normalize_filter_params(_f)
+            _col_type = _cfg.get("col_type", "NORMAL")
             if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value", _cfg.get("filterValue"))
+                _val = _cfg.get("filter_value")
                 if isinstance(_val, list):
                     _val = _val[0] if _val else None
                 if _val and not user_id_raw:
@@ -1393,9 +1494,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             _remaining.append(_f)
         filters = _remaining
 
-        # Resolve the raw user_id to a list of end_user UUIDs and inject as
-        # a synthetic end_user_id IN(...) filter. Scope by org (and project
-        # if we're in project mode).
+        # Resolve the raw user_id to end_user rows in one query. We need
+        # both the UUIDs (to inject as a synthetic end_user_id IN(...)
+        # filter) and the display fields (to stitch onto the formatted
+        # output later) — fetch them together to save a round-trip.
+        end_user_display: Optional[Dict[str, Any]] = None
         if user_id_raw:
             _eu_qs = EndUser.objects.filter(
                 user_id=user_id_raw,
@@ -1404,13 +1507,23 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             )
             if not org_scope and project_id:
                 _eu_qs = _eu_qs.filter(project_id=project_id)
-            _ids = [str(u) for u in _eu_qs.values_list("id", flat=True)]
+            _eu_rows = list(
+                _eu_qs.values("id", "user_id", "user_id_type", "user_id_hash")
+            )
+            _ids = [str(r["id"]) for r in _eu_rows]
             if not _ids:
-                _ids = ["00000000-0000-0000-0000-000000000000"]
+                _ids = [NIL_UUID]
+            else:
+                end_user_display = {
+                    "user_id": _eu_rows[0]["user_id"],
+                    "user_id_type": _eu_rows[0]["user_id_type"],
+                    "user_id_hash": _eu_rows[0]["user_id_hash"],
+                }
             filters.append(
                 {
                     "column_id": "end_user_id",
                     "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
                         "filter_type": "text",
                         "filter_op": "in",
                         "filter_value": _ids,
@@ -1432,30 +1545,42 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
 
+        # Trim the +1 sentinel row used for has_more detection
+        has_more = len(result.data) > page_size
+        actual_data = result.data[:page_size]
+
         # Phase 1b: Fetch first/last messages for the page
-        session_ids_page = [str(row.get("session_id", "")) for row in result.data]
+        session_ids_page = [str(row.get("session_id", "")) for row in actual_data]
         content_map = {}
         if session_ids_page:
             cq, cp = builder.build_content_query(session_ids_page)
             if cq:
                 cr = analytics.execute_ch_query(cq, cp, timeout_ms=10000)
                 content_map = {str(r.get("session_id", "")): r for r in cr.data}
-        for row in result.data:
+        for row in actual_data:
             sid = str(row.get("session_id", ""))
             c = content_map.get(sid, {})
             row["first_message"] = c.get("first_message", "")
             row["last_message"] = c.get("last_message", "")
 
-        # Get total count
-        count_query, count_params = builder.build_count_query()
-        count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
-        )
-        total_count = count_result.data[0].get("total", 0) if count_result.data else 0
+        # Get total count — skip the expensive count query when we can infer
+        # the total from the Phase 1 result size.
+        if not has_more and page_number == 0:
+            total_count = len(actual_data)
+        elif not has_more:
+            total_count = (page_number * page_size) + len(actual_data)
+        else:
+            count_query, count_params = builder.build_count_query()
+            count_result = analytics.execute_ch_query(
+                count_query, count_params, timeout_ms=5000
+            )
+            total_count = (
+                count_result.data[0].get("total", 0) if count_result.data else 0
+            )
 
         formatted = builder.format_sessions(
-            [(list(row.values())) for row in result.data],
-            list(result.data[0].keys()) if result.data else [],
+            [(list(row.values())) for row in actual_data],
+            list(actual_data[0].keys()) if actual_data else [],
         )
 
         # Inject user-defined session_name (from TraceSession.name) — spans'
@@ -1473,9 +1598,22 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 sid = entry.get("session_id", "")
                 try:
                     from uuid import UUID as _UUID
+
                     entry["session_name"] = _name_map.get(_UUID(sid))
                 except (ValueError, TypeError):
                     entry["session_name"] = None
+
+        # Inject user info when a user_id filter is active. The EndUser
+        # row was already resolved above when we built the synthetic
+        # filter, so no extra DB hit is needed here. In org-scoped mode
+        # multiple EndUser rows can match (one per project) — we pick
+        # the first; the display fields are typically identical across
+        # rows for the same logical user.
+        if end_user_display and formatted:
+            for entry in formatted:
+                entry["user_id"] = end_user_display["user_id"]
+                entry["user_id_type"] = end_user_display["user_id_type"]
+                entry["user_id_hash"] = end_user_display["user_id_hash"]
 
         # Phase 2: Aggregated span attributes for custom columns
         _SKIP_ATTR_PREFIXES = (
@@ -1485,6 +1623,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             "input.value",
             "output.value",
         )
+        _MAX_ATTR_KEYS_PER_SESSION = 50
         if session_ids_page:
             try:
                 attr_query, attr_params = builder.build_span_attributes_query(
@@ -1498,13 +1637,21 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     aggregated_attrs: Dict[str, Dict] = {}
                     for attr_row in attr_result.data:
                         sid = str(attr_row.get("session_id", ""))
-                        # Primary: parse raw JSON blob
+                        # Skip if this session already has max keys
+                        if (
+                            sid in aggregated_attrs
+                            and len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION
+                        ):
+                            continue
+                        # Primary: parse raw JSON blob (using orjson if available)
                         raw = attr_row.get("span_attributes_raw", "{}")
                         try:
                             attrs = (
-                                json.loads(raw) if isinstance(raw, str) else (raw or {})
+                                _json_loads(raw)
+                                if isinstance(raw, str) and raw
+                                else (raw or {})
                             )
-                        except (json.JSONDecodeError, TypeError):
+                        except (json.JSONDecodeError, ValueError, TypeError):
                             attrs = {}
                         # Fallback: merge from typed Map columns when raw is empty
                         if not attrs:
@@ -1519,6 +1666,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         if sid not in aggregated_attrs:
                             aggregated_attrs[sid] = {}
                         for key, value in attrs.items():
+                            if len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION:
+                                break
                             if key.startswith(_SKIP_ATTR_PREFIXES):
                                 continue
                             if isinstance(value, str) and len(value) > 500:
@@ -1752,3 +1901,123 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         except Exception as e:
             traceback.print_exc()
             return self._gm.bad_request(f"Error fetching the traces list: {str(e)}")
+
+    @action(detail=True, methods=["get"])
+    def eval_logs(self, request, *args, **kwargs):
+        """Session-scoped eval log feed for TracesDrawer's "Evals" tab.
+
+        Session-level eval results are walled off from span/trace surfaces
+        by ``target_type='session'`` — this endpoint is the only place
+        they appear.
+
+        Query params:
+            page (int, 1-indexed, default 1)
+            page_size (int, default 25, max 100)
+
+        Returns:
+            Paginated DRF response: {count, next, previous, results,
+            total_pages, current_page}. Each ``results`` item carries the
+            same fields ``EvalTaskView.get_usage`` exposes, minus
+            span/trace-only fields (NULL on session rows per the
+            ``eval_logger_target_type_fks`` check constraint).
+        """
+        try:
+            # get_object() applies the org-scoped queryset filter and
+            # raises 404 if the caller can't access the session.
+            session = self.get_object()
+
+            qp = PaginationQuerySerializer(data=request.query_params)
+            qp.is_valid(raise_exception=True)
+            page_size = qp.validated_data["page_size"]
+
+            logs_qs = (
+                EvalLogger.objects.filter(
+                    trace_session_id=session.id,
+                    target_type=EvalTargetType.SESSION,
+                )
+                .select_related(
+                    "custom_eval_config",
+                    "custom_eval_config__eval_template",
+                )
+                .order_by("-created_at")
+            )
+
+            paginator = ExtendedPageNumberPagination()
+            paginator.page_size = page_size
+            logs_page = paginator.paginate_queryset(logs_qs, request, view=self)
+
+            items = []
+            for log in logs_page:
+                # Same Pass/Fail derivation as EvalTaskView.get_usage so
+                # the two surfaces render identically.
+                if log.error:
+                    result_label = "Error"
+                    score = None
+                    status = "error"
+                elif log.output_bool is True:
+                    result_label = "Passed"
+                    score = 1.0
+                    status = "success"
+                elif log.output_bool is False:
+                    result_label = "Failed"
+                    score = 0.0
+                    status = "success"
+                elif log.output_float is not None:
+                    score = float(log.output_float)
+                    result_label = "Passed" if score >= 0.5 else "Failed"
+                    status = "success"
+                elif log.output_str:
+                    result_label = log.output_str[:50]
+                    score = None
+                    status = "success"
+                else:
+                    result_label = ""
+                    score = None
+                    status = "success"
+
+                config = log.custom_eval_config
+                reason = log.eval_explanation or log.error_message or ""
+
+                items.append(
+                    {
+                        "id": str(log.id),
+                        "input": (session.name or "")[:200],
+                        "result": result_label,
+                        "score": score,
+                        "reason": reason,
+                        "status": status,
+                        "source": "eval_task",
+                        "created_at": (
+                            log.created_at.isoformat() if log.created_at else ""
+                        ),
+                        "session_id": str(session.id),
+                        "eval_id": str(config.id) if config else None,
+                        "eval_name": config.name if config else None,
+                        "model": config.model if config else None,
+                        "detail": {
+                            "eval_name": config.name if config else None,
+                            "model": config.model if config else None,
+                            "output_type": (
+                                config.eval_template.output_type_normalized
+                                if config and config.eval_template
+                                else None
+                            ),
+                            "target_type": log.target_type,
+                            "session_id": str(session.id),
+                            "session_name": session.name,
+                            "output_bool": log.output_bool,
+                            "output_float": log.output_float,
+                            "output_str": log.output_str,
+                            "results_explanation": log.results_explanation,
+                            "error_message": log.error_message,
+                        },
+                    }
+                )
+
+            # ExtendedPageNumberPagination response shape:
+            # {count, next, previous, results, total_pages, current_page}
+            paginated = paginator.get_paginated_response(items)
+            return self._gm.success_response(paginated.data)
+        except Exception as e:
+            logger.exception(f"Error in fetching session eval logs: {str(e)}")
+            return self._gm.bad_request(f"Error fetching session eval logs: {str(e)}")

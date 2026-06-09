@@ -292,6 +292,7 @@ def _get_eval_metric_graph_data(
 
     base_queryset = EvalLogger.objects.filter(
         custom_eval_config=custom_eval_config,
+        target_type="span",
         observation_span__in=ObservationSpan.objects.filter(filters),
     )
 
@@ -448,6 +449,7 @@ def _get_eval_metric_buckets(
 
     base_queryset = EvalLogger.objects.filter(
         custom_eval_config=custom_eval_config,
+        target_type="span",
         observation_span__in=ObservationSpan.objects.filter(filters),
     )
     base_queryset = _apply_time_window_filter(

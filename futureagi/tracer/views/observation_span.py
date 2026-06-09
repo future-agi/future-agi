@@ -3,11 +3,11 @@ import io
 import json
 import traceback
 from collections import defaultdict
-from typing import Dict, List
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime
 from time import time
+from typing import Dict, List
 
 import pandas as pd
 import structlog
@@ -21,6 +21,7 @@ from django.db.models import (
     FloatField,
     IntegerField,
     JSONField,
+    Max,
     OuterRef,
     Q,
     Subquery,
@@ -68,6 +69,7 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.span_notes import SpanNotes
 from tracer.models.trace import Trace
+from tracer.models.trace_session import TraceSession
 from tracer.serializers.observation_span import (
     ObservationSpanSerializer,
     SpanExportSerializer,
@@ -75,6 +77,10 @@ from tracer.serializers.observation_span import (
     SubmitFeedbackSerializer,
 )
 from tracer.serializers.trace import TraceSerializer
+from tracer.services.clickhouse.query_service import (
+    AnalyticsQueryService,
+    QueryType,
+)
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.create_otel_span import create_single_otel_span
 from tracer.utils.eval import (
@@ -846,9 +852,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not trace_ids:
                 return self._gm.bad_request("trace_ids is required")
 
-            org = (
-                getattr(request, "organization", None) or request.user.organization
-            )
+            org = getattr(request, "organization", None) or request.user.organization
             spans = ObservationSpan.objects.filter(
                 trace_id__in=trace_ids,
                 parent_span_id__isnull=True,
@@ -1732,24 +1736,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                             default=None,
                             output_field=JSONField(),
                         ),
-                        # Per-span reason (latest EvalLogger for this config).
-                        # Feeds the "{eval} - Reason" column added in TH-4136.
-                        f"metric_reason_{config.id}": Subquery(
-                            EvalLogger.objects.filter(
-                                observation_span_id=OuterRef("id"),
-                                custom_eval_config_id=config.id,
-                            )
-                            .order_by("-created_at")
-                            .values("eval_explanation")[:1]
-                        ),
                     }
                 )
 
             # Add Span Annotations
-            annotation_labels = AnnotationsLabels.objects.filter(
-                project__id=project_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+            annotation_labels = get_annotation_labels_for_project(
+                project_id,
+                getattr(request, "organization", None) or request.user.organization,
             )
             base_query = build_annotation_subqueries(
                 base_query,
@@ -1935,9 +1928,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     elif data:
                         for key, value in data.items():
                             result[str(config.id) + "**" + key] = value["score"]
-                    reason = getattr(span, f"metric_reason_{config.id}", None)
-                    if reason:
-                        result[f"{config.id}__reason"] = reason
 
                 for label in annotation_labels:
                     ann_data = getattr(span, f"annotation_{label.id}", None)
@@ -2007,44 +1997,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             except EndUser.DoesNotExist:
                 raise Exception("User not found for the given user_id")
 
-        # Resolve in-filter user_id (string) → end_user_id UUIDs. Spans table
-        # keys end-users by UUID; a raw `user_id = 'customer_001'` clause
-        # references a non-existent CH column and crashes the query. Rewrite
-        # the filter to `end_user_id` scoped to this project + organization.
-        _resolved: List[Dict] = []
-        for _f in filters:
-            _col = _f.get("column_id") or _f.get("columnId")
-            _cfg = _f.get("filter_config") or _f.get("filterConfig") or {}
-            _col_type = _cfg.get("col_type") or _cfg.get("colType") or "NORMAL"
-            if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value", _cfg.get("filterValue"))
-                _vals = _val if isinstance(_val, list) else [_val]
-                _vals = [v for v in _vals if v]
-                if not _vals:
-                    _resolved.append(_f)
-                    continue
-                _ids = [
-                    str(u) for u in EndUser.objects.filter(
-                        user_id__in=_vals,
-                        organization=request.user.organization,
-                        project_id=project_id,
-                        deleted=False,
-                    ).values_list("id", flat=True)
-                ]
-                if not _ids:
-                    _ids = ["00000000-0000-0000-0000-000000000000"]
-                _resolved.append({
-                    "column_id": "end_user_id",
-                    "filter_config": {
-                        "col_type": "NORMAL",
-                        "filter_type": "text",
-                        "filter_op": "in",
-                        "filter_value": _ids,
-                    },
-                })
-                continue
-            _resolved.append(_f)
-        filters = _resolved
 
         # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
         eval_config_ids = []
@@ -2052,6 +2004,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
             "FROM tracer_eval_logger FINAL "
             "WHERE _peerdb_is_deleted = 0 "
+            "AND (deleted = 0 OR deleted IS NULL) "
             "AND dictGet('trace_dict', 'project_id', "
             "trace_id) = toUUID(%(pid)s)",
             {"pid": str(project_id)},
@@ -2110,7 +2063,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
+            count_query, count_params, timeout_ms=10000
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
@@ -2197,9 +2150,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # identifier. CH only stores the UUID; the display fields live on
         # the PG EndUser table.
         end_user_ids = {
-            str(r.get("end_user_id"))
-            for r in result.data
-            if r.get("end_user_id")
+            str(r.get("end_user_id")) for r in result.data if r.get("end_user_id")
         }
         end_user_map = {}
         if end_user_ids:
@@ -2215,9 +2166,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         for row in result.data:
             span_id = str(row.get("id", ""))
             cost = row.get("cost")
-            eu = end_user_map.get(str(row.get("end_user_id"))) if row.get(
-                "end_user_id"
-            ) else None
+            eu = (
+                end_user_map.get(str(row.get("end_user_id")))
+                if row.get("end_user_id")
+                else None
+            )
             entry = {
                 "span_id": span_id,
                 "input": row.get("input", ""),
@@ -2233,6 +2186,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "status": row.get("status"),
                 "latency_ms": row.get("latency_ms"),
                 "total_tokens": row.get("total_tokens"),
+                "prompt_tokens": row.get("prompt_tokens"),
+                "completion_tokens": row.get("completion_tokens"),
+                "model": row.get("model"),
+                "provider": row.get("provider"),
                 "cost": round(cost, 6) if cost else 0,
             }
 
@@ -2247,22 +2204,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 # columns keyed ``{config_id}**{choice}`` to match the
                 # column config produced by
                 # ``update_column_config_based_on_eval_config``.
-                if (
-                    isinstance(val, dict)
-                    and not val.get("error")
-                    and val
-                ):
+                if isinstance(val, dict) and not val.get("error") and val:
                     for choice, pct in val.items():
                         entry[f"{config_id}**{choice}"] = pct
                 else:
                     entry[config_id] = val
-                    if isinstance(value, dict):
-                        entry[config_id] = value.get("score")
-                        reason = value.get("reason")
-                        if reason:
-                            entry[f"{config_id}__reason"] = reason
+                    if isinstance(val, dict):
+                        entry[config_id] = val.get("score")
                     else:
-                        entry[config_id] = value
+                        entry[config_id] = val
 
             # Add annotations
             span_annotations = annotation_map.get(span_id, {})
@@ -2381,7 +2331,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
+            count_query, count_params, timeout_ms=10000
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
@@ -2448,9 +2398,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         entry[f"{config_id}**{choice}"] = pct
                 elif isinstance(val, dict):
                     entry[config_id] = val.get("score")
-                    reason = val.get("reason")
-                    if reason:
-                        entry[f"{config_id}__reason"] = reason
                 else:
                     entry[config_id] = val
 
@@ -2845,18 +2792,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def get_span_attributes_list(self, request, *args, **kwargs):
-        """
-        Get list of distinct span attribute keys for a project.
+        """Distinct span_attributes keys for a project (spans surface).
 
         Query params:
-            filters: JSON string with {"project_id": "<uuid>"}
+            filters: JSON {"project_id": "<uuid>"} (required)
 
         Returns:
-            List of distinct attribute keys found in span_attributes
+            List of attribute key strings.
         """
         try:
-            import time
-
             filters = self.request.query_params.get("filters", "{}")
             if filters:
                 filters = json.loads(filters)
@@ -2865,42 +2809,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not project_id:
                 return self._gm.bad_request("project_id is required")
 
-            start_time = time.time()
-            logger.info(
-                f"get_span_attributes_list Start time: {start_time} for project_id: {project_id}"
-            )
-
-            # ClickHouse dispatch
-            from tracer.services.clickhouse.query_service import (
-                AnalyticsQueryService,
-                QueryType,
-            )
-
-            analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
-                try:
-                    result = analytics.get_span_attribute_keys_ch(str(project_id))
-                    if result:
-                        end_time = time.time()
-                        logger.info(
-                            f"get_span_attributes_list (CH) Time taken: {end_time - start_time}s for project_id: {project_id}"
-                        )
-                        return self._gm.success_response(result)
-                    logger.info(
-                        "CH span attributes empty, falling back to PG for project_id: %s",
-                        project_id,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "CH span attributes failed, falling back to PG", error=str(e)
-                    )
-
-            result = SQL_query_handler.get_span_attributes_for_project(project_id)
-
-            end_time = time.time()
-            logger.info(
-                f"get_span_attributes_list Time taken: {end_time - start_time} seconds for project_id: {project_id}"
-            )
+            result = self._get_span_attribute_keys(project_id)
             return self._gm.success_response(result)
 
         except Exception as e:
@@ -2911,13 +2820,204 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def get_eval_attributes_list(self, request, *args, **kwargs):
-        """
-        DEPRECATED: Use get_span_attributes_list instead.
+        """Attribute paths the EvalPicker exposes per row_type.
 
-        This endpoint is maintained for backward compatibility and delegates
-        to get_span_attributes_list.
+        Query params:
+            filters: JSON {"project_id": "<uuid>"} (required)
+            row_type: spans | traces | sessions (default spans;
+                      voiceCalls aliases to spans)
+
+        Returns:
+            spans/voiceCalls: distinct span_attributes keys
+            traces:           trace fields + spans.<n>.<key>
+            sessions:         session fields + traces.<i>.<trace_field>
+                              + traces.<i>.spans.<j>.<key>
+
+        Indexed positions are sized to the project's observed maxes;
+        ordering of ``traces.<i>`` / ``spans.<n>`` slots is decided at
+        resolve time (see ``_resolve_session_path`` / ``_resolve_trace_path``).
         """
-        return self.get_span_attributes_list(request, *args, **kwargs)
+        try:
+            filters = self.request.query_params.get("filters", "{}")
+            if filters:
+                filters = json.loads(filters)
+
+            project_id = filters.get("project_id")
+            if not project_id:
+                return self._gm.bad_request("project_id is required")
+
+            row_type = self.request.query_params.get("row_type", "spans")
+
+            if row_type == "spans" or row_type == "voiceCalls":
+                # voiceCalls share the spans surface for the picker; they
+                # have their own evaluator pipeline upstream of EvalTask.
+                return self.get_span_attributes_list(request, *args, **kwargs)
+
+            span_attribute_keys = self._get_span_attribute_keys(project_id)
+
+            if row_type == "traces":
+                paths = self._build_trace_attribute_paths(
+                    project_id, span_attribute_keys
+                )
+                return self._gm.success_response(paths)
+
+            if row_type == "sessions":
+                paths = self._build_session_attribute_paths(
+                    project_id, span_attribute_keys
+                )
+                return self._gm.success_response(paths)
+
+            return self._gm.bad_request(
+                f"Unknown row_type {row_type!r}. Expected one of: "
+                "spans, traces, sessions, voiceCalls."
+            )
+
+        except Exception as e:
+            logger.exception(f"error fetching eval attributes list: {str(e)}")
+            return self._gm.bad_request(
+                f"error fetching the eval attributes list {str(e)}"
+            )
+
+    # Trace + session model fields the resolver allow-lists; mirrors the
+    # frozensets in tracer.utils.eval. Hand-synced so a model change shows
+    # up in both places at review time.
+    _TRACE_PUBLIC_FIELDS = (
+        "input",
+        "output",
+        "name",
+        "error",
+        "tags",
+        "metadata",
+        "external_id",
+    )
+    _SESSION_PUBLIC_FIELDS = ("name", "bookmarked")
+
+    # Cap on how many entities to scan when computing observed maxes.
+    # Most projects' traces have a few-to-dozens of spans; bounding the
+    # sample keeps the path enumeration query cheap.
+    _OBSERVED_MAX_SAMPLE_SIZE = 100
+
+    def _get_span_attribute_keys(self, project_id: str) -> list:
+        """Project's distinct span_attributes keys. CH-first, PG fallback.
+
+        Single source for both ``get_span_attributes_list`` (which wraps
+        it in a DRF response) and the trace + session path builders.
+
+        CH returns ``[{"key": ..., "type": ...}, ...]`` (spans picker
+        renders type chips); the trace + session path builders need
+        bare strings. The normalization loop below collapses both
+        shapes to ``list[str]`` so callers never see dicts f-stringed
+        into paths like ``traces.0.spans.0.{'key': '...', ...}``.
+        """
+        raw = None
+        analytics = AnalyticsQueryService()
+        if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
+            try:
+                ch_result = analytics.get_span_attribute_keys_ch(str(project_id))
+                if ch_result:
+                    raw = ch_result
+            except Exception as ch_err:
+                logger.warning(
+                    "CH span attribute keys failed in get_eval_attributes_list, "
+                    "falling back to PG",
+                    error=str(ch_err),
+                )
+
+        if raw is None:
+            raw = SQL_query_handler.get_span_attributes_for_project(project_id)
+
+        keys = []
+        for item in raw or []:
+            if isinstance(item, dict):
+                k = item.get("key")
+                if k:
+                    keys.append(k)
+            elif isinstance(item, str) and item:
+                keys.append(item)
+        return keys
+
+    def _max_spans_per_trace(self, project_id: str) -> int:
+        """Max span count observed across the project's most recent traces.
+
+        Bounds the indexed positions exposed under ``spans.<n>.<...>``.
+        Samples the most recent ``_OBSERVED_MAX_SAMPLE_SIZE`` traces to
+        keep the aggregate cheap on large projects.
+        """
+        sample_trace_ids = (
+            Trace.objects.filter(project_id=project_id)
+            .order_by("-created_at")
+            .values_list("id", flat=True)[: self._OBSERVED_MAX_SAMPLE_SIZE]
+        )
+        agg = (
+            ObservationSpan.objects.filter(trace_id__in=sample_trace_ids)
+            .values("trace_id")
+            .annotate(span_count=Count("id"))
+            .aggregate(max_count=Max("span_count"))
+        )
+        return agg["max_count"] or 0
+
+    def _max_traces_per_session(self, project_id: str) -> int:
+        """Max trace count observed across the project's most recent sessions."""
+        sample_session_ids = (
+            TraceSession.objects.filter(project_id=project_id)
+            .order_by("-created_at")
+            .values_list("id", flat=True)[: self._OBSERVED_MAX_SAMPLE_SIZE]
+        )
+        agg = (
+            Trace.objects.filter(session_id__in=sample_session_ids)
+            .values("session_id")
+            .annotate(trace_count=Count("id"))
+            .aggregate(max_count=Max("trace_count"))
+        )
+        return agg["max_count"] or 0
+
+    _SPAN_PUBLIC_FIELDS = (
+        "latency_ms",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "cost",
+        "response_time",
+        "model",
+        "name",
+        "observation_type",
+        "status",
+        "status_message",
+        "provider",
+    )
+
+    def _build_trace_attribute_paths(
+        self, project_id: str, span_attribute_keys: list
+    ) -> list:
+        """Trace-level paths: trace fields + ``spans.<n>.<key>`` for each
+        index up to the observed max spans-per-trace."""
+        paths = list(self._TRACE_PUBLIC_FIELDS)
+        max_spans = self._max_spans_per_trace(project_id)
+        for i in range(max_spans):
+            for field in self._SPAN_PUBLIC_FIELDS:
+                paths.append(f"spans.{i}.{field}")
+            for key in span_attribute_keys:
+                paths.append(f"spans.{i}.{key}")
+        return paths
+
+    def _build_session_attribute_paths(
+        self, project_id: str, span_attribute_keys: list
+    ) -> list:
+        """Session-level paths: session fields + ``traces.<i>.<trace_field>``
+        + ``traces.<i>.spans.<j>.<key>`` up to the observed max traces-per-
+        session and spans-per-trace."""
+        paths = list(self._SESSION_PUBLIC_FIELDS)
+        max_traces = self._max_traces_per_session(project_id)
+        max_spans = self._max_spans_per_trace(project_id)
+        for i in range(max_traces):
+            for trace_field in self._TRACE_PUBLIC_FIELDS:
+                paths.append(f"traces.{i}.{trace_field}")
+            for j in range(max_spans):
+                for field in self._SPAN_PUBLIC_FIELDS:
+                    paths.append(f"traces.{i}.spans.{j}.{field}")
+                for key in span_attribute_keys:
+                    paths.append(f"traces.{i}.spans.{j}.{key}")
+        return paths
 
     @action(detail=False, methods=["get"])
     def get_observation_span_fields(self, request, *args, **kwargs):
@@ -2962,6 +3062,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         self, observation_span_id, custom_eval_config_id, analytics
     ):
         """Get evaluation details from ClickHouse."""
+        # Span- and trace-target rows both anchor to observation_span_id;
+        # session rows don't and are served by /trace-session/:id/eval_logs/.
         query = """
             SELECT
                 output_float,
@@ -2975,6 +3077,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             FROM tracer_eval_logger FINAL
             WHERE observation_span_id = %(span_id)s
               AND custom_eval_config_id = %(config_id)s
+              AND target_type IN ('span', 'trace')
               AND _peerdb_is_deleted = 0
               AND (deleted = 0 OR deleted IS NULL)
             LIMIT 1
@@ -3071,9 +3174,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         "CH eval details failed, falling back to PG", error=str(e)
                     )
 
+            # Mirror the ClickHouse filter; excludes session-target rows.
             eval_logger = EvalLogger.objects.filter(
                 observation_span_id=observation_span_id,
                 custom_eval_config_id=custom_eval_config_id,
+                target_type__in=["span", "trace"],
             ).first()
 
             if not eval_logger:
@@ -3238,7 +3343,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     # LEFT JOIN on nullable workspace FK that triggers
                     # PostgreSQL's "FOR UPDATE cannot be applied to the
                     # nullable side of an outer join".
-                    Score.no_workspace_objects.update_or_create(
+                    score, _ = Score.no_workspace_objects.update_or_create(
                         observation_span_id=observation_span.pk,
                         label_id=annotation_label.pk,
                         annotator_id=request.user.pk,

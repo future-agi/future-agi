@@ -236,6 +236,7 @@ class EvalPlayGroundSerializer(serializers.Serializer):
     config = serializers.JSONField(allow_null=True, required=False, default={})
     params = serializers.JSONField(allow_null=True, required=False, default={})
     mapping = serializers.JSONField(allow_null=True, required=False)
+    mapping_paths = serializers.JSONField(allow_null=True, required=False)
     input_data_types = serializers.JSONField(allow_null=True, required=False)
     # Auto-context payloads — caller may send any combination. The evaluator
     # detects `{{row.X}}` / `{{span.X}}` / `{{trace.X}}` / `{{session.X}}`

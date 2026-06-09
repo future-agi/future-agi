@@ -20,8 +20,8 @@ config:
   eval_type_id: CustomCodeEval
   config: {}
   config_params_desc:
-    output: Output image (file path or base64 string)
-    expected: Reference image (file path or base64 string)
+    output: Output image (URL, file path, or base64 string)
+    expected: Reference image (URL, file path, or base64 string)
   code: |
     def evaluate(input, output, expected, context, **kwargs):
         import os, io, base64

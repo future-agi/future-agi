@@ -9,15 +9,18 @@ Covers:
 
 from __future__ import annotations
 
+import json
+from datetime import timedelta
+
 import pytest
 from django.utils import timezone
 
 from model_hub.models.ai_model import AIModel
-from model_hub.models.annotation_queues import AnnotationQueue
+from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
-
+from tracer.models.trace_session import TraceSession
 
 # --------------------------------------------------------------------------
 # Fixtures
@@ -51,6 +54,17 @@ def active_queue(db, auth_client):
 
 def _add_items_url(queue_id):
     return f"/model-hub/annotation-queues/{queue_id}/items/add-items/"
+
+
+def _api_filter(column_id, filter_type, filter_op, filter_value):
+    return {
+        "column_id": column_id,
+        "filter_config": {
+            "filter_type": filter_type,
+            "filter_op": filter_op,
+            "filter_value": filter_value,
+        },
+    }
 
 
 # --------------------------------------------------------------------------
@@ -454,8 +468,9 @@ class TestAddItemsFilterModeSpan:
     def test_filter_mode_span_truncation_returns_400(
         self, auth_client, active_queue, observe_project, span_parent_trace
     ):
-        import model_hub.views.annotation_queues as views_mod
         from datetime import timedelta
+
+        import model_hub.views.annotation_queues as views_mod
 
         original_cap = views_mod.MAX_SELECTION_CAP
         views_mod.MAX_SELECTION_CAP = 2
@@ -547,6 +562,79 @@ class TestAddItemsFilterModeSession:
         assert resp.status_code == 200, resp.data
         assert resp.data["result"]["added"] == 3
         assert resp.data["result"]["total_matching"] == 3
+
+    @pytest.mark.api
+    def test_filter_mode_session_date_filter_matches_list_endpoint(
+        self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch
+    ):
+        now = timezone.now()
+        recent_start = now - timedelta(days=7)
+        recent_end = now + timedelta(days=1)
+        recent_sessions = seeded_sessions_for_dispatch[:2]
+        old_session = seeded_sessions_for_dispatch[2]
+
+        TraceSession.objects.filter(id=recent_sessions[0].id).update(
+            created_at=now - timedelta(days=2)
+        )
+        TraceSession.objects.filter(id=recent_sessions[1].id).update(
+            created_at=now - timedelta(days=1)
+        )
+        TraceSession.objects.filter(id=old_session.id).update(
+            created_at=now - timedelta(days=90)
+        )
+
+        filters = [
+            _api_filter(
+                "created_at",
+                "datetime",
+                "between",
+                [recent_start.isoformat(), recent_end.isoformat()],
+            )
+        ]
+        expected_ids = {str(session.id) for session in recent_sessions}
+
+        list_resp = auth_client.get(
+            "/tracer/trace-session/list_sessions/",
+            {
+                "project_id": str(observe_project.id),
+                "filters": json.dumps(filters),
+                "sort_params": "[]",
+                "page_number": 0,
+                "page_size": 20,
+            },
+        )
+        assert list_resp.status_code == 200, list_resp.data
+        list_ids = {
+            row["session_id"]
+            for row in list_resp.data["result"]["table"]
+        }
+        assert list_ids == expected_ids
+
+        add_resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "trace_session",
+                    "project_id": str(observe_project.id),
+                    "filter": filters,
+                }
+            },
+            format="json",
+        )
+        assert add_resp.status_code == 200, add_resp.data
+        assert add_resp.data["result"]["added"] == 2
+        assert add_resp.data["result"]["total_matching"] == 2
+
+        queue_session_ids = {
+            str(item.trace_session_id)
+            for item in QueueItem.objects.filter(
+                queue=active_queue,
+                source_type="trace_session",
+                deleted=False,
+            )
+        }
+        assert queue_session_ids == expected_ids
 
     def test_filter_mode_session_respects_exclude_ids(
         self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch
@@ -699,3 +787,519 @@ class TestAddItemsFilterModeCallExecution:
         assert err.get("type") == "selection_too_large"
         assert err.get("total_matching") == 3
         assert err.get("cap") == 2
+
+
+# --------------------------------------------------------------------------
+# Manual add-items + filter-mode + non-created_at filters on call_execution.
+#
+# Before _apply_call_execution_filters existed, the resolver only honored
+# created_at filters and silently match-all'd everything else. The fixture
+# below seeds calls with mixed status/duration so we can prove status
+# and duration_seconds filters now actually narrow the result.
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def seeded_mixed_call_executions(db, organization, workspace):
+    from model_hub.models.choices import SourceChoices
+    from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+    from simulate.models.agent_definition import AgentDefinition
+    from simulate.models.run_test import RunTest
+    from simulate.models.scenarios import Scenarios
+    from simulate.models.test_execution import CallExecution, TestExecution
+
+    agent_def = AgentDefinition.objects.create(
+        agent_name="ce-mixed-agent",
+        inbound=True,
+        description="mixed-status fixture",
+        organization=organization,
+        workspace=workspace,
+    )
+    run = RunTest.objects.create(name="ce-mixed-run", organization=organization)
+    te = TestExecution.objects.create(run_test=run, agent_definition=agent_def)
+    dataset = Dataset.objects.create(
+        name="ce-mixed-scenario-dataset",
+        organization=organization,
+        workspace=workspace,
+    )
+    priority_column = Column.objects.create(
+        name="priority",
+        data_type="text",
+        dataset=dataset,
+        source=SourceChoices.OTHERS.value,
+    )
+    attempts_column = Column.objects.create(
+        name="attempts",
+        data_type="integer",
+        dataset=dataset,
+        source=SourceChoices.OTHERS.value,
+    )
+    dataset.column_order = [str(priority_column.id), str(attempts_column.id)]
+    dataset.save(update_fields=["column_order"])
+    high_priority_row = Row.objects.create(dataset=dataset, order=1)
+    low_priority_row = Row.objects.create(dataset=dataset, order=2)
+    failed_row = Row.objects.create(dataset=dataset, order=3)
+    Cell.objects.create(
+        dataset=dataset,
+        column=priority_column,
+        row=high_priority_row,
+        value="high",
+    )
+    Cell.objects.create(
+        dataset=dataset,
+        column=attempts_column,
+        row=high_priority_row,
+        value="2",
+    )
+    Cell.objects.create(
+        dataset=dataset,
+        column=priority_column,
+        row=low_priority_row,
+        value="low",
+    )
+    Cell.objects.create(
+        dataset=dataset,
+        column=attempts_column,
+        row=low_priority_row,
+        value="8",
+    )
+    Cell.objects.create(
+        dataset=dataset,
+        column=priority_column,
+        row=failed_row,
+        value="high",
+    )
+    Cell.objects.create(
+        dataset=dataset,
+        column=attempts_column,
+        row=failed_row,
+        value="4",
+    )
+    scen = Scenarios.objects.create(
+        name="ce-mixed-scenario",
+        source="mixed",
+        organization=organization,
+        workspace=workspace,
+        dataset=dataset,
+    )
+    te.scenario_ids = [str(scen.id)]
+    te.execution_metadata = {
+        "Provider": True,
+        "column_order": [
+            {
+                "id": str(priority_column.id),
+                "column_name": "priority",
+                "visible": True,
+                "data_type": "text",
+                "type": "scenario_dataset_column",
+                "scenario_id": str(scen.id),
+                "dataset_id": str(dataset.id),
+            },
+            {
+                "id": str(attempts_column.id),
+                "column_name": "attempts",
+                "visible": True,
+                "data_type": "integer",
+                "type": "scenario_dataset_column",
+                "scenario_id": str(scen.id),
+                "dataset_id": str(dataset.id),
+            },
+            {
+                "id": "tool_eval_accuracy",
+                "column_name": "Tool Accuracy",
+                "visible": True,
+                "type": "tool_evaluation",
+            },
+        ],
+    }
+    te.save(update_fields=["scenario_ids", "execution_metadata"])
+    completed_short = CallExecution.objects.create(
+        test_execution=te, scenario=scen,
+        status="completed", duration_seconds=10,
+        cost_cents=12,
+        row_id=high_priority_row.id,
+        call_metadata={
+            "row_data": {
+                "persona": {
+                    "name": "Casey",
+                    "language": "English",
+                    "languages": ["English"],
+                    "communication_style": ["Direct and concise"],
+                    "age_group": ["25-32"],
+                    "multilingual": False,
+                }
+            }
+        },
+        tool_outputs={"tool_eval_accuracy": {"output": "pass"}},
+    )
+    completed_long = CallExecution.objects.create(
+        test_execution=te, scenario=scen,
+        status="completed", duration_seconds=120,
+        customer_cost_cents=120,
+        row_id=low_priority_row.id,
+        call_metadata={
+            "row_data": {
+                "persona": {
+                    "name": "Riya",
+                    "language": "Hindi",
+                    "languages": ["Hindi", "English"],
+                    "communication_style": ["Casual and friendly"],
+                    "age_group": ["32-40"],
+                    "multilingual": True,
+                }
+            }
+        },
+        tool_outputs={"tool_eval_accuracy": {"output": "fail"}},
+    )
+    failed = CallExecution.objects.create(
+        test_execution=te, scenario=scen,
+        status="failed", duration_seconds=30,
+        cost_cents=56,
+        row_id=failed_row.id,
+        call_metadata={
+            "row_data": {
+                "persona": {
+                    "name": "Jordan",
+                    "language": "English",
+                    "languages": ["English"],
+                    "communication_style": ["Detailed and elaborate"],
+                    "age_group": ["40-50"],
+                    "multilingual": False,
+                }
+            }
+        },
+        tool_outputs={"tool_eval_accuracy": {"output": "pass"}},
+    )
+    return agent_def, te, completed_short, completed_long, failed, priority_column, attempts_column
+
+
+@pytest.mark.django_db
+class TestAddItemsFilterModeCallExecutionRichFilters:
+    def test_simulation_add_items_grid_endpoint_applies_rules_style_filters(
+        self, auth_client, seeded_mixed_call_executions
+    ):
+        _, test_execution, completed_short, *_ = seeded_mixed_call_executions
+
+        resp = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/",
+            {
+                "filters": json.dumps(
+                    [
+                        _api_filter(
+                            "status",
+                            "categorical",
+                            "equals",
+                            "completed",
+                        ),
+                        _api_filter(
+                            "duration_seconds",
+                            "number",
+                            "less_than",
+                            60,
+                        ),
+                    ]
+                ),
+                "page": 1,
+                "limit": 20,
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        assert resp.data["count"] == 1
+        assert [row["id"] for row in resp.data["results"]] == [
+            str(completed_short.id)
+        ]
+
+    def test_simulation_add_items_grid_endpoint_filters_scenario_attributes(
+        self, auth_client, seeded_mixed_call_executions
+    ):
+        (
+            _agent_def,
+            test_execution,
+            completed_short,
+            _completed_long,
+            failed,
+            priority_column,
+            attempts_column,
+        ) = seeded_mixed_call_executions
+
+        resp = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/",
+            {
+                "filters": json.dumps(
+                    [
+                        _api_filter(
+                            str(priority_column.id),
+                            "text",
+                            "equals",
+                            "high",
+                        ),
+                        _api_filter(
+                            str(attempts_column.id),
+                            "number",
+                            "less_than",
+                            5,
+                        ),
+                    ]
+                ),
+                "page": 1,
+                "limit": 20,
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        assert resp.data["count"] == 2
+        assert {row["id"] for row in resp.data["results"]} == {
+            str(completed_short.id),
+            str(failed.id),
+        }
+
+    def test_simulation_add_items_grid_endpoint_filters_tool_eval_columns(
+        self, auth_client, seeded_mixed_call_executions
+    ):
+        _, test_execution, completed_short, _completed_long, failed, *_ = (
+            seeded_mixed_call_executions
+        )
+
+        resp = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/",
+            {
+                "filters": json.dumps(
+                    [
+                        _api_filter(
+                            "tool_eval_accuracy",
+                            "text",
+                            "equals",
+                            "pass",
+                        )
+                    ]
+                ),
+                "page": 1,
+                "limit": 20,
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        assert resp.data["count"] == 2
+        assert {row["id"] for row in resp.data["results"]} == {
+            str(completed_short.id),
+            str(failed.id),
+        }
+
+    def test_simulation_add_items_grid_endpoint_filters_system_cost_metric(
+        self, auth_client, seeded_mixed_call_executions
+    ):
+        _, test_execution, completed_short, *_ = seeded_mixed_call_executions
+
+        resp = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/",
+            {
+                "filters": json.dumps(
+                    [_api_filter("cost_cents", "number", "less_than", 20)]
+                ),
+                "page": 1,
+                "limit": 20,
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        assert resp.data["count"] == 1
+        assert [row["id"] for row in resp.data["results"]] == [
+            str(completed_short.id)
+        ]
+
+    def test_simulation_add_items_grid_endpoint_filters_persona_fields(
+        self, auth_client, seeded_mixed_call_executions
+    ):
+        _, test_execution, _completed_short, completed_long, *_ = (
+            seeded_mixed_call_executions
+        )
+
+        resp = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/",
+            {
+                "filters": json.dumps(
+                    [
+                        _api_filter(
+                            "persona.language",
+                            "categorical",
+                            "equals",
+                            "Hindi",
+                        ),
+                        _api_filter(
+                            "persona.multilingual",
+                            "boolean",
+                            "equals",
+                            True,
+                        ),
+                    ]
+                ),
+                "page": 1,
+                "limit": 20,
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        assert resp.data["count"] == 1
+        assert [row["id"] for row in resp.data["results"]] == [
+            str(completed_long.id)
+        ]
+
+    def test_filter_mode_status_filter_narrows_result(
+        self, auth_client, active_queue, seeded_mixed_call_executions
+    ):
+        agent_def, *_ = seeded_mixed_call_executions
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "call_execution",
+                    "project_id": str(agent_def.id),
+                    "filter": [
+                        {
+                            "column_id": "status",
+                            "filter_config": {
+                                "filter_type": "categorical",
+                                "filter_op": "equals",
+                                "filter_value": "completed",
+                            },
+                        }
+                    ],
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        # Only the 2 completed calls — NOT the failed one. Pre-fix this
+        # would have added all 3 because the filter was silently dropped.
+        assert resp.data["result"]["added"] == 2
+        assert resp.data["result"]["total_matching"] == 2
+
+    def test_filter_mode_duration_range_narrows_result(
+        self, auth_client, active_queue, seeded_mixed_call_executions
+    ):
+        agent_def, *_ = seeded_mixed_call_executions
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "call_execution",
+                    "project_id": str(agent_def.id),
+                    "filter": [
+                        {
+                            "column_id": "duration_seconds",
+                            "filter_config": {
+                                "filter_type": "number",
+                                "filter_op": "less_than",
+                                "filter_value": 60,
+                            },
+                        }
+                    ],
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        # 10s + 30s match; 120s excluded.
+        assert resp.data["result"]["added"] == 2
+        assert resp.data["result"]["total_matching"] == 2
+
+    def test_filter_mode_persona_field_narrows_result(
+        self, auth_client, active_queue, seeded_mixed_call_executions
+    ):
+        agent_def, *_ = seeded_mixed_call_executions
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "call_execution",
+                    "project_id": str(agent_def.id),
+                    "filter": [
+                        {
+                            "column_id": "persona.communication_style",
+                            "filter_config": {
+                                "filter_type": "categorical",
+                                "filter_op": "equals",
+                                "filter_value": "Direct and concise",
+                            },
+                        }
+                    ],
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        assert resp.data["result"]["added"] == 1
+        assert resp.data["result"]["total_matching"] == 1
+
+    def test_filter_mode_unsupported_column_returns_400(
+        self, auth_client, active_queue, seeded_mixed_call_executions
+    ):
+        agent_def, *_ = seeded_mixed_call_executions
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "call_execution",
+                    "project_id": str(agent_def.id),
+                    "filter": [
+                        {
+                            "column_id": "totally_made_up_column",
+                            "filter_config": {
+                                "filter_type": "text",
+                                "filter_op": "equals",
+                                "filter_value": "x",
+                            },
+                        }
+                    ],
+                }
+            },
+            format="json",
+        )
+        # ValueError from resolver -> bad_request. Better than the old
+        # silent match-all behaviour.
+        assert resp.status_code == 400, resp.data
+        body = resp.data.get("result") or resp.data.get("message") or ""
+        assert "totally_made_up_column" in str(body) or "cannot apply" in str(body)
+
+    def test_filter_mode_combined_status_and_duration(
+        self, auth_client, active_queue, seeded_mixed_call_executions
+    ):
+        agent_def, *_ = seeded_mixed_call_executions
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "call_execution",
+                    "project_id": str(agent_def.id),
+                    "filter": [
+                        {
+                            "column_id": "status",
+                            "filter_config": {
+                                "filter_type": "categorical",
+                                "filter_op": "equals",
+                                "filter_value": "completed",
+                            },
+                        },
+                        {
+                            "column_id": "duration_seconds",
+                            "filter_config": {
+                                "filter_type": "number",
+                                "filter_op": "less_than",
+                                "filter_value": 60,
+                            },
+                        },
+                    ],
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        # Only completed_short (10s, completed) matches both filters.
+        assert resp.data["result"]["added"] == 1
+        assert resp.data["result"]["total_matching"] == 1

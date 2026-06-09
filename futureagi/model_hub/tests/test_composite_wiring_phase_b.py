@@ -7,7 +7,9 @@ Covers:
 - `process_eval_batch_async_task` branching on `template_type`
 """
 
-from unittest.mock import patch
+import json
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -234,6 +236,41 @@ class TestExecuteCompositeChildrenSync:
         # Inverted weights: (0.2, w=3), (0.8, w=1) = (0.6 + 0.8) / 4 = 0.35
         assert outcome.aggregate_score == pytest.approx(0.35, abs=1e-6)
 
+    def test_child_config_params_are_merged_per_child(
+        self, composite_parent, organization
+    ):
+        links = list(
+            CompositeEvalChild.objects.filter(parent=composite_parent)
+            .select_related("child")
+            .order_by("order")
+        )
+        links[0].config = {"params": {"min_words": 5}}
+        links[0].save(update_fields=["config"])
+
+        seen_configs = {}
+
+        def _capture_config(config, mapping, template, *args, **kwargs):
+            seen_configs[template.name] = config
+            return _fake_run_eval_func(config, mapping, template, *args, **kwargs)
+
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_capture_config,
+        ):
+            execute_composite_children_sync(
+                parent=composite_parent,
+                child_links=links,
+                mapping={"input": "hello"},
+                config={"params": {"max_words": 20}},
+                org=organization,
+            )
+
+        assert seen_configs["child-a"]["params"] == {
+            "max_words": 20,
+            "min_words": 5,
+        }
+        assert seen_configs["child-b"]["params"] == {"max_words": 20}
+
     def test_aggregation_disabled_returns_none(self, composite_parent, organization):
         composite_parent.aggregation_enabled = False
         composite_parent.save(update_fields=["aggregation_enabled"])
@@ -289,6 +326,98 @@ class TestExecuteCompositeChildrenSync:
         assert statuses == ["failed", "completed"]
         # Aggregate should still compute using the one completed child.
         assert outcome.aggregate_score == pytest.approx(0.8, abs=1e-6)
+
+    def test_composite_child_billing_uses_token_pricing_when_cost_is_zero(
+        self, composite_parent, organization, workspace, monkeypatch
+    ):
+        from ee.usage.services.config import BillingConfig
+        import model_hub.views.utils.evals as evals_module
+        from model_hub.views.utils.evals import run_eval_func
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        child = CompositeEvalChild.objects.filter(parent=composite_parent).first().child
+        child.model = "turing_large"
+        child.save(update_fields=["model"])
+        captured = []
+
+        class FakeEvalInstance:
+            cost = {"total_cost": 0}
+            token_usage = {
+                "prompt_tokens": 1341,
+                "completion_tokens": 150,
+                "total_tokens": 1491,
+            }
+
+            def run(self, **_kwargs):
+                return SimpleNamespace(
+                    eval_results=[
+                        {
+                            "data": {"input": "hello"},
+                            "failure": None,
+                            "reason": "ok",
+                            "runtime": 0.01,
+                            "model": "turing_large",
+                            "metrics": None,
+                            "metadata": {},
+                        }
+                    ]
+                )
+
+        log_row = SimpleNamespace(
+            log_id="log-1",
+            config=json.dumps({}),
+            status=APICallStatusChoices.PROCESSING.value,
+            input_token_count=0,
+            save=MagicMock(),
+        )
+
+        monkeypatch.setattr(
+            evals_module,
+            "log_and_deduct_cost_for_api_request",
+            lambda **_kwargs: log_row,
+        )
+        monkeypatch.setattr(
+            "ee.usage.services.metering.check_usage",
+            lambda *_args, **_kwargs: SimpleNamespace(allowed=True),
+        )
+        monkeypatch.setattr(
+            "ee.usage.services.emitter.emit",
+            lambda event: captured.append(event),
+        )
+        monkeypatch.setattr(
+            "model_hub.views.utils.evals.EvaluationRunner._create_eval_instance",
+            lambda *_args, **_kwargs: FakeEvalInstance(),
+        )
+        monkeypatch.setattr(
+            "model_hub.views.utils.evals.EvaluationRunner.map_fields",
+            lambda *_args, **_kwargs: {"input": "hello"},
+        )
+        monkeypatch.setattr(
+            "model_hub.views.utils.evals.EvaluationRunner.format_output",
+            lambda *_args, **_kwargs: 0.7,
+        )
+
+        output = run_eval_func(
+            {"config": {}, "params": {}},
+            {"input": "hello"},
+            child,
+            organization,
+            model=None,
+            workspace=workspace,
+            source="composite_eval",
+        )
+
+        assert output["output"] == 0.7
+        assert captured
+        event = captured[0]
+        assert event.properties["raw_cost_usd"] == "0.012001"
+        assert event.properties["llm_cost_usd"] == "0.011501"
+        assert event.properties["reported_llm_cost_usd"] == "0"
+        assert event.properties["llm_cost_source"] == "token_pricing"
+        assert event.properties["pricing_source"] == "available_models"
+        assert event.amount == pytest.approx(
+            BillingConfig.get().calculate_ai_credits(0.012001)
+        )
 
 
 # ---------------------------------------------------------------------------

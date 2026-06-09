@@ -178,10 +178,15 @@ def first_signup(data, mode=None):
         raise Exception("Email not provided")
 
     data["email"] = data["email"].lower()
-    old_email = data.pop("old_email", None).lower() if data.get("old_email") else None
-    update_true = data.pop("update_true", False)
-    generated_password = generate_password()
-    data["password"] = generated_password
+    # Defensive stripping of deprecated account-update parameters
+    data.pop("old_email", None)
+    data.pop("update_true", None)
+    user_provided_password = data.get("password") or ""
+    if user_provided_password:
+        generated_password = None
+    else:
+        generated_password = generate_password()
+        data["password"] = generated_password
     data.pop("allow_email", False)  # Remove but don't store
     # Extract domain from email
     email_parts = data["email"].split("@")
@@ -203,65 +208,43 @@ def first_signup(data, mode=None):
     if not allow_any_email and not is_work_email(data.get("email")):
         raise Exception("Provided Email is not work email")
 
-    if update_true and old_email:
+    serializer = UserSignupSerializer(data=data)
+    if serializer.is_valid():
+        user = serializer.save()
+        organization = Organization.objects.create(
+            name=data["company_name"], region=settings.REGION
+        )
+        user.organization = organization
+        user.organization_role = "Owner"
+        user.is_active = True
+        user.save()
+
+        # Create OrganizationMembership for RBAC (1-user-1-org invariant)
+        from accounts.models.organization_membership import OrganizationMembership
+        from tfc.constants.levels import Level
+
+        OrganizationMembership.objects.get_or_create(
+            user=user,
+            organization=organization,
+            defaults={
+                "role": "Owner",
+                "level": Level.OWNER,
+                "is_active": True,
+            },
+        )
+
+        # Create billing subscription (Free plan default).
+        # Skip when ee is absent — no subscription model.
         try:
-            user = User.objects.get(email=old_email)
-            # Check if new email is used by another user
-            new_email = data.get("email", "")
-            if User.objects.filter(email=new_email).exclude(id=user.id).exists():
-                raise Exception("A user with the new email already exists.")
+            from ee.usage.utils.usage_entries import (
+                create_organization_subscription_if_not_exists,
+            )
 
-            # Remove email from validation since we're updating
-            data_copy = data.copy()
-            data_copy.pop("email", None)
-            serializer = UserSignupSerializer(user, data=data_copy, partial=True)
-            if serializer.is_valid():
-                user = serializer.save()
-                # Update email separately after validation
-                user.email = data["email"]
-                user.save()
-            else:
-                raise Exception(f"Invalid data: {serializer.errors}")
-        except User.DoesNotExist as e:
-            raise Exception("User with old email not found") from e
+            create_organization_subscription_if_not_exists(organization)
+        except ImportError:
+            pass
     else:
-        serializer = UserSignupSerializer(data=data)
-        if serializer.is_valid():
-            user = serializer.save()
-            organization = Organization.objects.create(
-                name=data["company_name"], region=settings.REGION
-            )
-            user.organization = organization
-            user.organization_role = "Owner"
-            user.is_active = True
-            user.save()
-
-            # Create OrganizationMembership for RBAC (1-user-1-org invariant)
-            from accounts.models.organization_membership import OrganizationMembership
-            from tfc.constants.levels import Level
-
-            OrganizationMembership.objects.get_or_create(
-                user=user,
-                organization=organization,
-                defaults={
-                    "role": "Owner",
-                    "level": Level.OWNER,
-                    "is_active": True,
-                },
-            )
-
-            # Create billing subscription (Free plan default).
-            # Skip when ee is absent — no subscription model.
-            try:
-                from ee.usage.utils.usage_entries import (
-                    create_organization_subscription_if_not_exists,
-                )
-
-                create_organization_subscription_if_not_exists(organization)
-            except ImportError:
-                pass
-        else:
-            raise Exception(f"Invalid data: {serializer.errors}")
+        raise Exception(f"Invalid data: {serializer.errors}")
 
     email = data.get("email", None)
     organization = get_user_organization(user)
@@ -283,7 +266,8 @@ def first_signup(data, mode=None):
             OrgApiKey.no_workspace_objects.create(
                 organization=organization, type="system"
             )
-        process_post_registration(user.id, generated_password)
+        if generated_password:
+            process_post_registration(user.id, generated_password)
 
         return user
 
@@ -496,6 +480,39 @@ def _run_post_registration(user_id, generated_password):
             upload_demo_dataset(org.id, str(user.id))
             # create_demo_prompt_template(str(org.id), str(user.id))
             create_demo_traces_and_spans(str(org.id))
+
+
+def existing_member_access_will_change(existing_user, organization, org_level, workspace_access):
+    """Check if re-inviting an existing active member would actually grant new access."""
+    from accounts.models.workspace import WorkspaceMembership
+    from tfc.constants.levels import Level
+
+    existing_membership = OrganizationMembership.no_workspace_objects.filter(
+        user=existing_user,
+        organization=organization,
+        is_active=True,
+    ).first()
+    if not existing_membership:
+        return True
+
+    if org_level > existing_membership.level_or_legacy:
+        return True
+
+    for ws_entry in workspace_access:
+        ws_id = ws_entry.get("workspace_id")
+        ws_level = ws_entry.get("level", Level.WORKSPACE_VIEWER)
+        workspace_membership = WorkspaceMembership.no_workspace_objects.filter(
+            user=existing_user,
+            workspace_id=ws_id,
+            workspace__organization=organization,
+            is_active=True,
+        ).first()
+        if not workspace_membership:
+            return True
+        if workspace_membership.level_or_legacy < ws_level:
+            return True
+
+    return False
 
 
 # TODO: use async views to replace this code. its wrong

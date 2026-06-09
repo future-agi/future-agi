@@ -4,6 +4,7 @@ import {
   AccordionDetails,
   AccordionSummary,
   Box,
+  CircularProgress,
   Step,
   StepLabel,
   StepContent,
@@ -65,6 +66,7 @@ const CustomStepIcon = ({ step, isFailedStep }) => {
     status === "failed" || isFailedStep ? "failed" : status;
   const config =
     STEP_STATUS_CONFIG[effectiveStatus] || STEP_STATUS_CONFIG.pending;
+  const isRunning = effectiveStatus === AgentPromptOptimizerStatus.RUNNING;
 
   return (
     <Box
@@ -78,7 +80,14 @@ const CustomStepIcon = ({ step, isFailedStep }) => {
         backgroundColor: config.bgColor,
       }}
     >
-      {config.iconType === "svg" ? (
+      {isRunning ? (
+        <CircularProgress
+          size={14}
+          thickness={5}
+          sx={{ color: config.iconColor }}
+          aria-label="Step in progress"
+        />
+      ) : config.iconType === "svg" ? (
         <SvgColor
           sx={{ height: "14px", width: "14px", bgcolor: config.iconColor }}
           src={config.src}

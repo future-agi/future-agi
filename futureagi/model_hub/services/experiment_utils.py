@@ -68,21 +68,28 @@ def maybe_complete_experiment_after_eval_stop(experiment_id) -> bool:
 
 
 def is_user_eval_stopped(user_eval_metric_id) -> bool:
-    """Check if a UserEvalMetric has been stopped via StopUserEvalView.
+    """Check if a UserEvalMetric has been stopped or deleted.
 
-    StopUserEvalView sets status=CANCELLED and marks the current running
-    cells with a "User stopped evaluation" reason. This guard lets the
-    Temporal activities and sync runners skip cell writes that would
-    otherwise clobber the stop marker once the in-flight worker finishes.
+    StopUserEvalView sets status=ERROR and marks the current running
+    cells with a "User stopped evaluation" reason. DeleteEvalsView sets
+    deleted=True. This guard lets the Temporal activities and sync
+    runners skip cell writes that would otherwise clobber the stop/delete
+    marker once the in-flight worker finishes.
     """
     if not user_eval_metric_id:
         return False
     try:
-        status = (
-            UserEvalMetric.objects.filter(id=user_eval_metric_id, deleted=False)
-            .values_list("status", flat=True)
+        result = (
+            UserEvalMetric.all_objects.filter(id=user_eval_metric_id)
+            .values_list("status", "deleted")
             .first()
         )
-        return status == StatusType.CANCELLED.value
+        if result is None:
+            return False
+        status, deleted = result
+        return deleted or status in (
+            StatusType.CANCELLED.value,
+            StatusType.ERROR.value,
+        )
     except Exception:
         return False

@@ -32,6 +32,7 @@ import {
   getUniqueColorPalette,
   objectCamelToSnake,
 } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 
 /**
  * Converts graph selections to filter format compatible with the backend API.
@@ -162,6 +163,12 @@ import { buildAddEvalsDraft } from "./buildAddEvalsDraft";
 import SelectAllBanner from "./SelectAllBanner";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
 import FilterChips from "./FilterChips";
+import { useDashboardFilterValues } from "src/hooks/useDashboards";
+import {
+  getPickerOptionLabel,
+  getPickerOptionSecondaryLabel,
+  getPickerOptionValue,
+} from "./filterValuePickerUtils";
 import CustomColumnDialog from "./CustomColumnDialog";
 import SvgColor from "src/components/svg-color";
 import { ObserveIconButton } from "../SharedComponents";
@@ -314,6 +321,7 @@ const CompareGraphHeader = ({
   extraFilters,
   onRemoveFilter,
   onClearFilters,
+  fieldLabelMap,
 }) => {
   const [dateAnchor, setDateAnchor] = useState(null);
   const [customDateOpen, setCustomDateOpen] = useState(false);
@@ -473,6 +481,11 @@ const CompareGraphHeader = ({
             const field = f?.column_id;
             const op = f?.filter_config?.filter_op || "";
             const val = f?.filter_config?.filter_value;
+            const valueMap = fieldLabelMap?.[field];
+            const resolveValue = (v) => {
+              const key = String(v ?? "");
+              return valueMap?.[key] ?? key;
+            };
             const opLabel =
               {
                 equals: "is",
@@ -495,8 +508,8 @@ const CompareGraphHeader = ({
                 not_between: "not between",
               }[op] || op;
             const valueStr = Array.isArray(val)
-              ? val.join(", ")
-              : String(val ?? "");
+              ? val.map(resolveValue).join(", ")
+              : resolveValue(val);
             if (!field) return null;
             return (
               <Chip
@@ -575,6 +588,7 @@ CompareGraphHeader.propTypes = {
   extraFilters: PropTypes.array,
   onRemoveFilter: PropTypes.func,
   onClearFilters: PropTypes.func,
+  fieldLabelMap: PropTypes.object,
 };
 
 const DEFAULT_DISPLAY_CONFIG = {
@@ -626,7 +640,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // Simulator CallLogsGrid has its own client-side selection (paginated,
   // no ag-grid server-side inverted-select-all). Banner visibility keys
   // off `simCallMeta.isAllOnPageSelected && totalCount > pageLimit`.
-  const [simCallFilterSelectionMode, setSimCallFilterSelectionMode] = useState(false);
+  const [simCallFilterSelectionMode, setSimCallFilterSelectionMode] =
+    useState(false);
   const [simCallMeta, setSimCallMeta] = useState({
     isAllOnPageSelected: false,
     currentPageSize: 0,
@@ -920,9 +935,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const primaryCallLogsGridRef = useRef(null);
   const compareCallLogsGridRef = useRef(null);
   const columnConfigureRef = useRef();
-  // Saved-view columnState queued before the active sub-tab's primary grid
-  // mounted. Drained by onGridReady on the primary grid.
+  // Drained by onGridReady on the primary grid.
   const pendingColumnStateRef = useRef(null);
+  // applyColumnState alone can't persist hide across columnDefs rebuilds —
+  // getTraceListColumnDefs sets hide explicitly from col.isVisible, so we
+  // need to update col.isVisible in the columns state for hide to stick.
+  const pendingHideMapRef = useRef(null);
 
   const {
     setHeaderConfig,
@@ -933,13 +951,17 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   } = useObserveHeader();
 
   const { data: projectDetail } = useGetProjectDetails(observeId, !isUserMode);
-  // In user mode the grid should behave like an OBSERVE project (no project
-  // context, no simulator/prototype quirks). Defaulting to OBSERVE keeps the
-  // many `projectSource === OBSERVE` checks (grid enabled, display logic,
-  // etc.) on the happy path.
+  // User mode: behave like an OBSERVE project so the many projectSource
+  // checks stay on the happy path.
   const projectSource = isUserMode
     ? PROJECT_SOURCE.OBSERVE
     : projectDetail?.source;
+
+  const effectiveViewMode =
+    projectSource === PROJECT_SOURCE.SIMULATOR && viewMode !== "graph"
+      ? "graph"
+      : viewMode;
+
   const defaultDateFilter = useMemo(() => getDefaultDateRange(), []);
 
   const [isPrimaryFilterOpen, setIsPrimaryFilterOpen] = useUrlState(
@@ -975,14 +997,20 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   }, [observeId]);
 
   const handleAutoSize = () => {
+    const isSimulator = projectSource === PROJECT_SOURCE.SIMULATOR;
+
     const gridRef =
-      selectedGraph === "primary"
-        ? selectedTab === "trace"
-          ? primaryTraceGridRef
-          : primarySpanGridRef
-        : selectedTab === "trace"
-          ? compareTraceGridRef
-          : compareSpanGridRef;
+      isSimulator && selectedTab === "trace"
+        ? selectedGraph === "primary"
+          ? primaryCallLogsGridRef
+          : compareCallLogsGridRef
+        : selectedGraph === "primary"
+          ? selectedTab === "trace"
+            ? primaryTraceGridRef
+            : primarySpanGridRef
+          : selectedTab === "trace"
+            ? compareTraceGridRef
+            : compareSpanGridRef;
 
     if (!gridRef.current?.api) return;
 
@@ -1080,10 +1108,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     getFilterExtraProperties,
   );
 
-  // In user mode every grid is scoped by user_id. Inject a structural
-  // filter (similar to the implicit date filter) that prepends to every
-  // validated filter list. The filter lives in the primary `filters`
-  // array, NOT extraFilters, so it doesn't render as a removable chip.
+  // User mode injects a structural user_id filter into the primary filters
+  // (not extraFilters, so it doesn't render as a removable chip).
   const userScopeFilter = useMemo(
     () =>
       isUserMode && userIdForUserMode
@@ -1091,6 +1117,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             {
               columnId: "user_id",
               filterConfig: {
+                colType: "SYSTEM_METRIC",
                 filterType: "text",
                 filterOp: "equals",
                 filterValue: userIdForUserMode,
@@ -1109,11 +1136,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     [userScopeFilter, primarySpanValidatedFiltersRaw],
   );
 
-  // Drop out of filter-mode selection when the selection state becomes
-  // inconsistent (grid cleared, tab switched, project changed, or the
-  // filter itself changed so the opt-in no longer matches the current
-  // view). The user can always re-opt-in from the banner. Mirrored for
-  // the spans tab via `spanFilterSelectionMode`.
+  // Drop filter-mode opt-in when the selection becomes inconsistent (grid
+  // cleared, tab switched, project changed, filter changed). User can
+  // re-opt-in via the banner. Mirrored for spans below.
   useEffect(() => {
     if (!allTracesSelected) setFilterSelectionMode(false);
   }, [allTracesSelected]);
@@ -1127,9 +1152,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   useEffect(() => {
     setSpanFilterSelectionMode(false);
   }, [primarySpanValidatedFilters]);
-  // Simulator: reset filter-mode when the page-full-selection condition
-  // breaks (user unchecks a row, navigates pages, changes filters, or
-  // switches project).
+  // Simulator: reset filter-mode when page-full-selection breaks.
   useEffect(() => {
     if (!simCallMeta.isAllOnPageSelected) {
       setSimCallFilterSelectionMode(false);
@@ -1157,7 +1180,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       : primarySpanValidatedFilters,
     {
       enabled:
-        !isUserMode && (viewMode === "agentGraph" || viewMode === "agentPath"),
+        !isUserMode &&
+        (effectiveViewMode === "agentGraph" ||
+          effectiveViewMode === "agentPath"),
     },
   );
 
@@ -1175,7 +1200,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       enabled:
         !isUserMode &&
         showCompare &&
-        (viewMode === "agentGraph" || viewMode === "agentPath"),
+        (effectiveViewMode === "agentGraph" ||
+          effectiveViewMode === "agentPath"),
     },
   );
 
@@ -1218,23 +1244,38 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     [extraFilters, setExtraFilters],
   );
 
-  // Callback to receive column config from CallLogsGrid for simulator projects
   const handleSimulatorConfigLoaded = useCallback(
     (config) => {
       if (projectSource === PROJECT_SOURCE.SIMULATOR && config?.length > 0) {
         setColumns((prev) => {
-          // Preserve existing custom columns when grid reports its base columns
-          const preserveCustom = (key) => {
+          // Voice projects use CallLogsGrid (no per-fetch merge to drain
+          // pending custom cols), so this callback is the only path that
+          // drains them on backend column-count changes.
+          const drainPending = (key, ref) => {
             const existing = prev[key] || [];
             const customCols = existing.filter(
               (c) => c.groupBy === "Custom Columns",
             );
-            return [...config, ...customCols];
+            const pending = ref?.current || [];
+            const existingIds = new Set(customCols.map((c) => c.id));
+            const dedupedPending = pending.filter(
+              (c) => !existingIds.has(c.id),
+            );
+            if (pending.length > 0 && ref) {
+              ref.current = [];
+            }
+            return [...config, ...customCols, ...dedupedPending];
           };
           return {
             ...prev,
-            "primary-trace": preserveCustom("primary-trace"),
-            "compare-trace": preserveCustom("compare-trace"),
+            "primary-trace": drainPending(
+              "primary-trace",
+              primaryTracePendingRef,
+            ),
+            "compare-trace": drainPending(
+              "compare-trace",
+              compareTracePendingRef,
+            ),
           };
         });
       }
@@ -1301,10 +1342,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     columns,
   ]);
 
-  // Trace + simulator filter-mode reset on filter change. Watches
-  // primaryCombinedFilters (validated + graph filters) because both POSTs
-  // send that combined payload — watching only the validated subset would
-  // leave stale opt-in state when the user toggles a graph eval selection.
+  // Watch combined filters (validated + graph) — both POSTs send the
+  // combined payload, so the validated subset alone would miss graph toggles.
   useEffect(() => {
     setFilterSelectionMode(false);
   }, [primaryCombinedFilters]);
@@ -1365,23 +1404,53 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     setAttributes(evalAttributes || []);
   }, [evalAttributes]);
 
-  // In user mode surface a "Project" filter so the cross-project user-detail
-  // page can narrow to specific projects. Null in project mode (where the
-  // toolbar already scopes to one project).
+  // User mode only — project mode already scopes to a single project.
   const projectFilterField = useProjectFilterField({ enabled: isUserMode });
+  const hasAnnotatorFilter = useMemo(
+    () =>
+      [...(extraFilters || []), ...(compareExtraFilters || [])].some(
+        (filter) => filter?.column_id === "annotator",
+      ),
+    [extraFilters, compareExtraFilters],
+  );
+  const { data: annotatorFilterOptions = [] } = useDashboardFilterValues({
+    metricName: "annotator",
+    metricType: "annotation_metric",
+    projectIds: observeId ? [observeId] : [],
+    // Keep this in sync with the TraceFilterPanel ValuePicker source so
+    // applying a freshly-picked annotator can reuse the same cached options.
+    source: "traces",
+    enabled: hasAnnotatorFilter,
+  });
+  const annotatorFilterLabelMap = useMemo(() => {
+    const entries = annotatorFilterOptions
+      .map((option) => {
+        const value = String(getPickerOptionValue(option));
+        if (!value) return null;
+        const label = getPickerOptionLabel(option);
+        const email = getPickerOptionSecondaryLabel(option);
+        return [value, email ? `${label} (${email})` : label];
+      })
+      .filter(Boolean);
+    return entries.length > 0 ? Object.fromEntries(entries) : null;
+  }, [annotatorFilterOptions]);
   const toolbarFilterFields = useMemo(
     () => (projectFilterField ? [projectFilterField] : undefined),
     [projectFilterField],
   );
   // Map a filter's raw value back to the human label for chip display.
   const filterChipLabelMap = useMemo(() => {
-    if (!projectFilterField?.choices?.length) return undefined;
-    return {
-      project_id: Object.fromEntries(
+    const map = {};
+    if (projectFilterField?.choices?.length) {
+      map.project_id = Object.fromEntries(
         projectFilterField.choices.map((c) => [c.value, c.label]),
-      ),
-    };
-  }, [projectFilterField]);
+      );
+    }
+    if (annotatorFilterLabelMap) {
+      map.annotator = annotatorFilterLabelMap;
+    }
+    return Object.keys(map).length > 0 ? map : undefined;
+  }, [projectFilterField, annotatorFilterLabelMap]);
 
   const [primaryFilterDefinition, setPrimaryFilterDefinition] = useState(() => {
     if (selectedTab === "trace") {
@@ -1672,31 +1741,99 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     }
   }, [selectedTab, primaryTraceDateFilter, primarySpanDateFilter]);
 
-  // Load filters + display settings from saved view config when a custom view tab is selected
-  // Tracked separately so the null-branch reset only fires on a genuine
-  // saved-view → default transition, not on initial mount where
-  // activeViewConfig is null only because hydration hasn't landed yet.
-  // Without this guard, the destructive resets below clobber state that
-  // the localStorage rehydrate (line 1816) and the apply branch are
-  // about to set from the saved view itself.
+  // wasOnSavedViewRef gates the null-branch reset to genuine saved-view →
+  // default transitions so it doesn't clobber state that the mount hydrate
+  // or apply branch is about to set.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const wasOnSavedViewRef = useRef(false);
   useEffect(() => {
     if (!activeViewConfig) {
       const wasOnSavedView = wasOnSavedViewRef.current;
       wasOnSavedViewRef.current = false;
-      if (!wasOnSavedView) return; // initial mount / already on default — nothing to clean up
-      // Back to a default tab — clear local extraFilters so chips from a
-      // prior custom view don't linger. URL-synced display state
-      // (cellHeight / showErrors / showNonAnnotated / hasEvalFilter /
-      // showCompare) is wiped via the parent's URL navigation; viewMode
-      // lives in the Zustand store (no URL key) so we reset it explicitly,
-      // and the active grid's columnState (widths/order/sort) is internal
-      // to AG Grid and likewise needs an imperative reset.
+      if (!wasOnSavedView) return;
+      // Back to default tab — viewMode lives in Zustand (no URL key) so
+      // reset explicitly; AG Grid columnState also needs an imperative reset.
       setExtraFilters((prev) => (prev.length === 0 ? prev : []));
       setViewMode(DEFAULT_DISPLAY_CONFIG.viewMode);
       pendingColumnStateRef.current = null;
-      pendingCustomColumnsRef.current = [];
+      pendingHideMapRef.current = null;
+      primaryTracePendingRef.current = [];
+      compareTracePendingRef.current = [];
+      primarySpansPendingRef.current = [];
+      compareSpansPendingRef.current = [];
+      // Strip saved-view customs and reset isVisible on the remaining cols —
+      // TraceGrid's merge preserves isVisible across fetches, so leaving a
+      // view that hid columns would otherwise persist the hide state.
+      setColumns((prev) => {
+        const next = {};
+        Object.keys(prev).forEach((ck) => {
+          next[ck] = (prev[ck] || [])
+            .filter((c) => c.groupBy !== "Custom Columns")
+            .map((c) => (c.isVisible ? c : { ...c, isVisible: true }));
+        });
+        return next;
+      });
+      // Re-hydrate from localStorage — the mount hydrate is keyed on
+      // displayStorageKey and won't re-fire on a same-project tab toggle.
+      try {
+        const raw = localStorage.getItem(displayStorageKey);
+        const saved = raw ? JSON.parse(raw) : null;
+        if (saved?.customColumns) {
+          // customColumns may be a legacy array or new {trace, spans}
+          // object. Hydrate both primary and compare refs for the tab
+          // type so a later compare-mode toggle works without another
+          // localStorage read.
+          const cloneEach = (arr) => arr.map((c) => ({ ...c }));
+          if (Array.isArray(saved.customColumns)) {
+            if (saved.customColumns.length > 0) {
+              if (selectedTab === "trace") {
+                primaryTracePendingRef.current = cloneEach(saved.customColumns);
+                compareTracePendingRef.current = cloneEach(saved.customColumns);
+              } else {
+                primarySpansPendingRef.current = cloneEach(saved.customColumns);
+                compareSpansPendingRef.current = cloneEach(saved.customColumns);
+              }
+            }
+          } else {
+            const traceCols = saved.customColumns.trace || [];
+            const spansCols = saved.customColumns.spans || [];
+            if (traceCols.length > 0) {
+              primaryTracePendingRef.current = cloneEach(traceCols);
+              compareTracePendingRef.current = cloneEach(traceCols);
+            }
+            if (spansCols.length > 0) {
+              primarySpansPendingRef.current = cloneEach(spansCols);
+              compareSpansPendingRef.current = cloneEach(spansCols);
+            }
+          }
+        }
+      } catch {
+        /* ignore corrupted localStorage */
+      }
+      // Voice/simulator: handleSimulatorConfigLoaded only fires on column-
+      // count changes, so saved-view → default transitions need an explicit
+      // drain here.
+      if (projectSource === PROJECT_SOURCE.SIMULATOR) {
+        const draining = primaryTracePendingRef.current || [];
+        if (draining.length > 0) {
+          setColumns((prev) => {
+            const merge = (key) => {
+              const existing = prev[key] || [];
+              const stripped = existing.filter(
+                (c) => c.groupBy !== "Custom Columns",
+              );
+              return [...stripped, ...draining];
+            };
+            return {
+              ...prev,
+              "primary-trace": merge("primary-trace"),
+              "compare-trace": merge("compare-trace"),
+            };
+          });
+          primaryTracePendingRef.current = [];
+          compareTracePendingRef.current = [];
+        }
+      }
       const activeApi =
         selectedTab === "trace"
           ? primaryTraceGridRef.current?.api
@@ -1717,14 +1854,100 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     if (display.hasEvalFilter !== undefined)
       setHasEvalFilter(display.hasEvalFilter);
 
-    // Defer custom columns — merged when backend columns arrive
+    // Strip existing customs so view → view doesn't show the union of both
+    // sets (which would also dirty-flag the Save view button).
+    setColumns((prev) => {
+      const next = {};
+      Object.keys(prev).forEach((ck) => {
+        next[ck] = (prev[ck] || []).filter(
+          (c) => c.groupBy !== "Custom Columns",
+        );
+      });
+      return next;
+    });
+
+    // Populate both primary and compare refs for the active tab type so a
+    // compare-mode toggle later hydrates correctly. Shallow-clone per slot
+    // so mutations don't write through into the saved-views query cache.
     if (display.customColumns?.length > 0) {
-      pendingCustomColumnsRef.current = display.customColumns;
+      if (selectedTab === "trace") {
+        primaryTracePendingRef.current = display.customColumns.map((c) => ({
+          ...c,
+        }));
+        compareTracePendingRef.current = display.customColumns.map((c) => ({
+          ...c,
+        }));
+      } else {
+        primarySpansPendingRef.current = display.customColumns.map((c) => ({
+          ...c,
+        }));
+        compareSpansPendingRef.current = display.customColumns.map((c) => ({
+          ...c,
+        }));
+      }
     }
 
-    // Apply column state (widths/order/sort) to the active sub-tab's primary
-    // grid. If the grid isn't mounted yet, queue for the onGridReady callback.
+    // Voice/simulator: same-tab-type saved-view switch doesn't trigger
+    // handleSimulatorConfigLoaded, so drain into columns directly.
+    if (
+      projectSource === PROJECT_SOURCE.SIMULATOR &&
+      display.customColumns?.length > 0
+    ) {
+      setColumns((prev) => {
+        const merge = (key) => {
+          const existing = prev[key] || [];
+          const stripped = existing.filter(
+            (c) => c.groupBy !== "Custom Columns",
+          );
+          const fresh = display.customColumns.map((c) => ({ ...c }));
+          return [...stripped, ...fresh];
+        };
+        return {
+          ...prev,
+          "primary-trace": merge("primary-trace"),
+          "compare-trace": merge("compare-trace"),
+        };
+      });
+      // Clear pending refs so handleSimulatorConfigLoaded doesn't drain
+      // them again on a later config callback.
+      primaryTracePendingRef.current = [];
+      compareTracePendingRef.current = [];
+    }
+
+    // Hide needs a parallel path: applyColumnState's hide doesn't survive
+    // the next columnDefs rebuild (getTraceListColumnDefs sets hide from
+    // col.isVisible, which wins over applied state). The [columns] drain
+    // effect below updates col.isVisible from this map.
     if (Array.isArray(display.columnState) && display.columnState.length > 0) {
+      const hideMap = {};
+      display.columnState.forEach((entry) => {
+        if (entry && entry.colId) hideMap[entry.colId] = !!entry.hide;
+      });
+      // Apply hideMap immediately so view→view switches with identical
+      // backend cols (no merge → no drain) still pick up the hide intent.
+      setColumns((prev) => {
+        let anyChanged = false;
+        const next = {};
+        Object.keys(prev).forEach((ck) => {
+          let slotChanged = false;
+          const updated = (prev[ck] || []).map((col) => {
+            if (col && col.id in hideMap) {
+              const desiredVisible = !hideMap[col.id];
+              if (col.isVisible !== desiredVisible) {
+                slotChanged = true;
+                return { ...col, isVisible: desiredVisible };
+              }
+            }
+            return col;
+          });
+          next[ck] = slotChanged ? updated : prev[ck];
+          if (slotChanged) anyChanged = true;
+        });
+        return anyChanged ? next : prev;
+      });
+      // Queue for cols that arrive later via TraceGrid's merge.
+      pendingHideMapRef.current = hideMap;
+
       const activeApi =
         selectedTab === "trace"
           ? primaryTraceGridRef.current?.api
@@ -1739,8 +1962,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       }
     }
 
-    // Primary date filter — stored inside display for backend-whitelist compatibility.
-    // Only apply if the saved view has one; old views without it keep the current date.
+    // dateFilter lives inside display because the backend serializer only
+    // whitelists `display` for arbitrary sub-keys.
     if (display.dateFilter) {
       if (selectedTab === "trace") {
         setPrimaryTraceDateFilter(display.dateFilter);
@@ -1749,11 +1972,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       }
     }
 
-    // Apply filters — replace unconditionally so switching views clears stale filters.
-    // Guard with Array.isArray: UsersView writes `filters` as an object
-    // ({extraFilters, dateFilter}), and that config can briefly leak into this
-    // view's apply effect during cross-tab transitions (the route change is
-    // queued in startTransition while activeViewConfig updates synchronously).
+    // Array.isArray guard: UsersView writes `filters` as an object, which
+    // can briefly leak during cross-tab transitions (route change is queued
+    // in startTransition while activeViewConfig updates synchronously).
     const rawFilters = activeViewConfig.filters;
     const nextFilters = (Array.isArray(rawFilters) ? rawFilters : []).map(
       (f) => ({
@@ -1798,9 +2019,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViewConfig]);
 
-  // Drain the queued saved-view columnState once the active sub-tab's primary
-  // grid mounts. TraceGrid is lazy-loaded so the AG Grid api may not exist
-  // when applyConfig runs — retry a handful of times to catch it.
+  // Drains pendingColumnStateRef once the lazy-loaded grid mounts.
   useEffect(() => {
     if (!pendingColumnStateRef.current) return;
     let attempts = 0;
@@ -1831,6 +2050,57 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     };
   }, [activeViewConfig, selectedTab]);
 
+  // Re-apply queued columnState + hideMap once `columns` updates. The
+  // retry effect above only fires on activeViewConfig/selectedTab change;
+  // if it ran before custom cols landed, AG Grid dropped their entries.
+  // The hideMap path is necessary because the next columnDefs rebuild
+  // overrides applyColumnState's hide flag from col.isVisible.
+  useEffect(() => {
+    if (pendingHideMapRef.current) {
+      const hideMap = pendingHideMapRef.current;
+      // Only clear pendingHideMapRef if at least one col matched —
+      // otherwise a cold-load drain on empty slots would wipe the queue
+      // before TraceGrid/SpanGrid's first setColumns lands the cols.
+      let sawMatch = false;
+      setColumns((prev) => {
+        let anyChanged = false;
+        const next = {};
+        Object.keys(prev).forEach((ck) => {
+          let slotChanged = false;
+          const updated = (prev[ck] || []).map((col) => {
+            if (col && col.id in hideMap) {
+              sawMatch = true;
+              const desiredVisible = !hideMap[col.id];
+              if (col.isVisible !== desiredVisible) {
+                slotChanged = true;
+                return { ...col, isVisible: desiredVisible };
+              }
+            }
+            return col;
+          });
+          next[ck] = slotChanged ? updated : prev[ck];
+          if (slotChanged) anyChanged = true;
+        });
+        return anyChanged ? next : prev;
+      });
+      if (sawMatch) {
+        pendingHideMapRef.current = null;
+      }
+    }
+    if (!pendingColumnStateRef.current) return;
+    const api =
+      selectedTab === "trace"
+        ? primaryTraceGridRef.current?.api
+        : primarySpanGridRef.current?.api;
+    if (!api?.applyColumnState) return;
+    api.applyColumnState({
+      state: pendingColumnStateRef.current,
+      applyOrder: true,
+    });
+    pendingColumnStateRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columns]);
+
   // ---------------------------------------------------------------------------
   // View persistence — auto-save display + reset/default
   // ---------------------------------------------------------------------------
@@ -1841,13 +2111,32 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     ? `user-filters-${userIdForUserMode}`
     : `observe-filters-${observeId}`;
 
-  // Pending custom columns — loaded from localStorage/view config but not
-  // merged into columns state until the backend returns real columns.
-  // This prevents the loading skeleton from showing only custom columns.
-  const pendingCustomColumnsRef = useRef([]);
+  // User-initiated clears (popover "Clear all" / chip-strip "Clear all").
+  // Wipes the localStorage entry too — without this the saved filter
+  // resurrects on the next project mount because the load effect for
+  // `filtersStorageKey` restores any non-empty extraFilters it finds.
+  const clearPrimaryExtraFilters = useCallback(() => {
+    setExtraFilters([]);
+    localStorage.removeItem(filtersStorageKey);
+  }, [setExtraFilters, filtersStorageKey]);
+  const clearCompareExtraFilters = useCallback(() => {
+    setCompareExtraFilters([]);
+    localStorage.removeItem(filtersStorageKey);
+  }, [setCompareExtraFilters, filtersStorageKey]);
 
-  // Load display settings from localStorage on mount (for default tab)
+  // Pending custom cols, queued until the backend returns real columns so
+  // the grid doesn't render with only-custom-col headers mid-load. One ref
+  // per grid instance — a shared ref would race across the 4 mounted grids.
+  const primaryTracePendingRef = useRef([]);
+  const compareTracePendingRef = useRef([]);
+  const primarySpansPendingRef = useRef([]);
+  const compareSpansPendingRef = useRef([]);
+
+  // Mount hydrate for the default tab. Saved-view tabs hydrate via the
+  // apply effect above; seeding here on a saved-view URL would drain the
+  // wrong customs before the view config arrives.
   useEffect(() => {
+    if (activeViewTabId) return;
     try {
       const raw = localStorage.getItem(displayStorageKey);
       if (!raw) return;
@@ -1858,9 +2147,32 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       if (saved.showNonAnnotated) setShowNonAnnotated(saved.showNonAnnotated);
       if (saved.showCompare) setShowCompare(saved.showCompare);
       if (saved.hasEvalFilter) setHasEvalFilter(saved.hasEvalFilter);
-      // Defer custom columns — they'll be merged when backend columns arrive
-      if (saved.customColumns?.length > 0) {
-        pendingCustomColumnsRef.current = saved.customColumns;
+      // Accept both new {trace, spans} object shape and legacy flat array
+      // (treated as customs for the current tab only).
+      if (saved.customColumns) {
+        const cloneEach = (arr) => arr.map((c) => ({ ...c }));
+        if (Array.isArray(saved.customColumns)) {
+          if (saved.customColumns.length > 0) {
+            if (selectedTab === "trace") {
+              primaryTracePendingRef.current = cloneEach(saved.customColumns);
+              compareTracePendingRef.current = cloneEach(saved.customColumns);
+            } else {
+              primarySpansPendingRef.current = cloneEach(saved.customColumns);
+              compareSpansPendingRef.current = cloneEach(saved.customColumns);
+            }
+          }
+        } else {
+          const traceCols = saved.customColumns.trace || [];
+          const spansCols = saved.customColumns.spans || [];
+          if (traceCols.length > 0) {
+            primaryTracePendingRef.current = cloneEach(traceCols);
+            compareTracePendingRef.current = cloneEach(traceCols);
+          }
+          if (spansCols.length > 0) {
+            primarySpansPendingRef.current = cloneEach(spansCols);
+            compareSpansPendingRef.current = cloneEach(spansCols);
+          }
+        }
       }
     } catch {
       /* ignore corrupted localStorage */
@@ -1925,26 +2237,35 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     return (columns[ck] || []).filter((c) => c.groupBy === "Custom Columns");
   }, [columns, selectedGraph, selectedTab]);
 
+  // Used by the localStorage save so adding customs on one tab doesn't
+  // wipe the other's customs (storage key is project-scoped, not tab-scoped).
+  const getCustomColumnsByTab = useCallback(() => {
+    const traceKey = `${selectedGraph}-trace`;
+    const spansKey = `${selectedGraph}-spans`;
+    return {
+      trace: (columns[traceKey] || []).filter(
+        (c) => c.groupBy === "Custom Columns",
+      ),
+      spans: (columns[spansKey] || []).filter(
+        (c) => c.groupBy === "Custom Columns",
+      ),
+    };
+  }, [columns, selectedGraph]);
+
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: createSavedView } = useCreateSavedView(observeId);
-  // Workspace-scoped update for user_detail mode (CrossProjectUserDetailPage).
-  // Always declared (hooks can't be conditional); only invoked when isUserMode.
+  // Workspace-scoped update for user_detail mode — only invoked when isUserMode.
   const { mutate: updateWorkspaceSavedView } =
     useUpdateWorkspaceSavedView(USER_DETAIL_TAB_TYPE);
 
-  // Get active view tab ID from URL. The tab-key URL param differs per
-  // surface: "tab" on ObservePage, "userTab" on CrossProjectUserDetailPage.
   const activeViewTabId = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = isUserMode ? params.get("userTab") : params.get("tab");
     return tab?.startsWith("view-") ? tab.replace("view-", "") : null;
-  }, [activeViewConfig, isUserMode]); // re-derive when view config changes
+  }, [activeViewConfig, isUserMode]);
 
-  // Build the full saved view config payload
   const buildViewConfig = useCallback(() => {
-    // Capture current grid column state (widths/order/sort/visibility) of the
-    // active sub-tab's primary grid, so saved views restore the user's exact
-    // column layout. Stashed inside `display` because the backend serializer
+    // columnState lives inside `display` because the backend serializer
     // whitelists `display` for arbitrary subkeys.
     const activeGridApi =
       selectedTab === "trace"
@@ -1959,7 +2280,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       showCompare,
       hasEvalFilter,
       customColumns: getCustomColumns(),
-      // Stash primary date filter inside display for backend-whitelist compatibility
+      // dateFilter lives inside display for backend-whitelist compatibility.
       dateFilter:
         selectedTab === "trace"
           ? primaryTraceDateFilter
@@ -1976,10 +2297,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       filters: mapFilters(
         selectedTab === "trace" ? primaryTraceFilters : primarySpanFilters,
       ),
-      // extraFilters is independent of compare mode — always persist
       extraFilters: extraFilters || [],
     };
-    // Include compare state when compare mode is on
     if (showCompare) {
       config.compareFilters = mapFilters(
         selectedTab === "trace" ? compareTraceFilters : compareSpansFilters,
@@ -2023,8 +2342,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     return () => registerGetTabType(null);
   }, [registerGetTabType, selectedTab]);
 
-  // Explicit "Save view" — overwrite the active saved view's config with the
-  // current live state. Bound to ObserveToolbar's Save view button.
+  // Bound to ObserveToolbar's Save view button.
   const handleSaveView = useCallback(() => {
     if (!activeViewTabId) return;
     const config = buildViewConfig();
@@ -2033,7 +2351,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       { id: activeViewTabId, config },
       {
         onSuccess: (response) => {
-          // Refresh the baseline so canSaveView's diff resets to false.
           setActiveViewConfig(response?.data?.result?.config ?? config);
           enqueueSnackbar("View updated", { variant: "success" });
         },
@@ -2050,16 +2367,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     setActiveViewConfig,
   ]);
 
-  // Persist display settings to localStorage on the default tab so personal
-  // preferences (cellHeight, viewMode, …) survive across navigation. The
-  // backend-update branch that used to live here was removed: filter/date
-  // state was never in the dep array, so it silently missed those changes.
-  // Updates to a saved view are now triggered explicitly by handleSaveView
-  // (the Save view button in the toolbar).
+  // Default tab only — saved views go through handleSaveView instead.
   useEffect(() => {
-    // Default tab only — persist personal display preferences to localStorage
-    // so cellHeight / viewMode / etc. survive across navigation. Saved-view
-    // tabs go through the explicit Save view button (handleSaveView) instead.
     if (activeViewTabId) return;
     const currentDisplay = {
       viewMode,
@@ -2068,7 +2377,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       showNonAnnotated,
       showCompare,
       hasEvalFilter,
-      customColumns: getCustomColumns(),
+      // Keyed by tab type so adding a custom on spans doesn't overwrite
+      // traces' customs (storage key is project-scoped, not tab-scoped).
+      customColumns: getCustomColumnsByTab(),
     };
     try {
       localStorage.setItem(displayStorageKey, JSON.stringify(currentDisplay));
@@ -2084,7 +2395,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     showCompare,
     hasEvalFilter,
     displayStorageKey,
-    getCustomColumns,
+    getCustomColumnsByTab,
   ]);
 
   const handleAddEvals = useCallback(() => {
@@ -2842,7 +3153,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         >
           {/* Primary Graph — dual-axis bars + line. Hidden in user mode
               (PrimaryGraph requires observeId for its query). */}
-          {viewMode === "graph" && !isUserMode && (
+          {effectiveViewMode === "graph" && !isUserMode && (
             <>
               <PrimaryGraph
                 filters={
@@ -2915,7 +3226,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           )}
 
           {/* Agent Graph — DAG visualization */}
-          {viewMode === "agentGraph" && (
+          {effectiveViewMode === "agentGraph" && (
             <>
               <Box sx={{ mx: 2, my: 1 }}>
                 {showCompare && (
@@ -2936,6 +3247,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     }
                     hasActiveFilter={extraFilters?.length > 0}
                     extraFilters={extraFilters}
+                    fieldLabelMap={filterChipLabelMap}
                     onRemoveFilter={(idx) =>
                       setExtraFilters((prev) =>
                         prev.filter((_, i) => i !== idx),
@@ -2972,6 +3284,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     }
                     hasActiveFilter={compareExtraFilters?.length > 0}
                     extraFilters={compareExtraFilters}
+                    fieldLabelMap={filterChipLabelMap}
                     onRemoveFilter={(idx) =>
                       setCompareExtraFilters((prev) =>
                         prev.filter((_, i) => i !== idx),
@@ -2993,7 +3306,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           )}
 
           {/* Agent Path — sequential flow */}
-          {viewMode === "agentPath" && (
+          {effectiveViewMode === "agentPath" && (
             <>
               <Box>
                 {showCompare && (
@@ -3015,6 +3328,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       }
                       hasActiveFilter={extraFilters?.length > 0}
                       extraFilters={extraFilters}
+                      fieldLabelMap={filterChipLabelMap}
                       onRemoveFilter={(idx) =>
                         setExtraFilters((prev) =>
                           prev.filter((_, i) => i !== idx),
@@ -3051,6 +3365,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       }
                       hasActiveFilter={compareExtraFilters?.length > 0}
                       extraFilters={compareExtraFilters}
+                      fieldLabelMap={filterChipLabelMap}
                       onRemoveFilter={(idx) =>
                         setCompareExtraFilters((prev) =>
                           prev.filter((_, i) => i !== idx),
@@ -3153,11 +3468,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 setIsPrimaryFilterOpen(!isPrimaryFilterOpen);
               }}
               onApplyExtraFilters={setExtraFilters}
+              onClearExtraFilters={clearPrimaryExtraFilters}
               graphFilters={extraFilters}
               isFilterOpen={isPrimaryFilterOpen}
               externalFilterAnchor={externalFilterAnchor}
               filterTarget={filterTarget}
               onApplyCompareExtraFilters={setCompareExtraFilters}
+              onClearCompareExtraFilters={clearCompareExtraFilters}
               filters={
                 selectedTab === "trace"
                   ? primaryTraceFilters
@@ -3188,7 +3505,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               onAddCustomColumn={() => setOpenCustomColumn(true)}
               cellHeight={cellHeight}
               setCellHeight={setCellHeight}
-              viewMode={viewMode}
+              viewMode={effectiveViewMode}
               onViewModeChange={setViewMode}
               hasEvalFilter={hasEvalFilter}
               onToggleEvalFilter={() => setHasEvalFilter(!hasEvalFilter)}
@@ -3399,10 +3716,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 // opted into filter-mode selection via the banner
                 // (`filterSelectionMode`). The popover's submit then
                 // dispatches a filter-mode payload to the backend.
-                if (
-                  isSelectAll &&
-                  ["tags", "annotate"].includes(actionId)
-                ) {
+                if (isSelectAll && ["tags", "annotate"].includes(actionId)) {
                   enqueueSnackbar(
                     "Deselect 'all' and pick specific items for this action",
                     { variant: "info" },
@@ -3839,7 +4153,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   // Simulator projects surface voice calls whose selected IDs
                   // come from CallLogsGrid as `row.trace_id` — send them as
                   // traces, not call_executions.
-                  if (projectSource === PROJECT_SOURCE.SIMULATOR) return "trace";
+                  if (projectSource === PROJECT_SOURCE.SIMULATOR)
+                    return "trace";
                   return selectedTab === "trace" ? "trace" : "observation_span";
                 })()}
                 sourceIds={(() => {
@@ -3872,8 +4187,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   return selectedTab === "trace" ? "Trace" : "Span";
                 })()}
                 selectionMode={(() => {
-                  if (filterSelectionMode && selectedTab === "trace") return "filter";
-                  if (spanFilterSelectionMode && selectedTab === "spans") return "filter";
+                  if (filterSelectionMode && selectedTab === "trace")
+                    return "filter";
+                  if (spanFilterSelectionMode && selectedTab === "spans")
+                    return "filter";
                   if (
                     simCallFilterSelectionMode &&
                     projectSource === PROJECT_SOURCE.SIMULATOR
@@ -3889,37 +4206,37 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   // set than the grid, leading to the bug where "N selected"
                   // under a chip/metric filter adds MORE than N to the queue.
                   if (filterSelectionMode && selectedTab === "trace") {
-                    return [
+                    return canonicalizeApiFilterColumnIds([
                       ...objectCamelToSnake([
                         ...primaryCombinedFilters,
                         ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                       ]),
                       ...(extraFilters || []),
                       ...(metricFilters || []),
-                    ];
+                    ]);
                   }
                   if (spanFilterSelectionMode && selectedTab === "spans") {
-                    return [
+                    return canonicalizeApiFilterColumnIds([
                       ...objectCamelToSnake([
                         ...primarySpanValidatedFilters,
                         ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                       ]),
                       ...(extraFilters || []),
                       ...(metricFilters || []),
-                    ];
+                    ]);
                   }
                   if (
                     simCallFilterSelectionMode &&
                     projectSource === PROJECT_SOURCE.SIMULATOR
                   ) {
-                    return [
+                    return canonicalizeApiFilterColumnIds([
                       ...objectCamelToSnake([
                         ...primaryCombinedFilters,
                         ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                       ]),
                       ...(extraFilters || []),
                       ...(metricFilters || []),
-                    ];
+                    ]);
                   }
                   return null;
                 })()}
@@ -4076,7 +4393,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
-                    pendingCustomColumnsRef={pendingCustomColumnsRef}
+                    pendingCustomColumnsRef={primaryTracePendingRef}
                     showErrors={showErrors}
                     enabled={
                       [
@@ -4114,7 +4431,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
-                    pendingCustomColumnsRef={pendingCustomColumnsRef}
+                    pendingCustomColumnsRef={compareTracePendingRef}
                     projectId={observeId}
                     showErrors={showErrors}
                     enabled={
@@ -4173,7 +4490,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
-                    pendingCustomColumnsRef={pendingCustomColumnsRef}
+                    pendingCustomColumnsRef={primarySpansPendingRef}
                     setFilters={setPrimarySpanFilters}
                     setExtraFilters={setExtraFilters}
                     setFilterOpen={setIsPrimaryFilterOpen}
@@ -4207,7 +4524,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
-                    pendingCustomColumnsRef={pendingCustomColumnsRef}
+                    pendingCustomColumnsRef={compareSpansPendingRef}
                     filters={compareSpansValidatedFilters}
                     extraFilters={extraFilters}
                     ref={compareSpanGridRef}
@@ -4262,18 +4579,23 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 enabled={projectSource === PROJECT_SOURCE.SIMULATOR}
                 cellHeight={cellHeight}
                 columnVisibility={columns["primary-trace"]}
+                onColumnsChange={(next) =>
+                  setColumns((prev) => ({ ...prev, "primary-trace": next }))
+                }
                 showErrors={showErrors}
                 params={{
                   project_id: observeId,
                   remove_simulation_calls: excludeSimulationCalls,
-                  filters: JSON.stringify([
-                    ...objectCamelToSnake([
-                      ...primaryCombinedFilters,
-                      ...(extraFilters || []),
-                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                  filters: JSON.stringify(
+                    canonicalizeApiFilterColumnIds([
+                      ...objectCamelToSnake([
+                        ...primaryCombinedFilters,
+                        ...(extraFilters || []),
+                        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                      ]),
+                      ...(metricFilters || []),
                     ]),
-                    ...(metricFilters || []),
-                  ]),
+                  ),
                 }}
                 onRowClicked={handleRowClicked}
                 onConfigLoaded={handleSimulatorConfigLoaded}
@@ -4299,19 +4621,24 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 enabled={projectSource === PROJECT_SOURCE.SIMULATOR}
                 cellHeight={cellHeight}
                 columnVisibility={columns["compare-trace"]}
+                onColumnsChange={(next) =>
+                  setColumns((prev) => ({ ...prev, "compare-trace": next }))
+                }
                 showErrors={showErrors}
                 hideDrawer
                 params={{
                   project_id: observeId,
                   remove_simulation_calls: excludeSimulationCalls,
-                  filters: JSON.stringify([
-                    ...objectCamelToSnake([
-                      ...compareCombinedFilters,
-                      ...(compareExtraFilters || []),
-                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                  filters: JSON.stringify(
+                    canonicalizeApiFilterColumnIds([
+                      ...objectCamelToSnake([
+                        ...compareCombinedFilters,
+                        ...(compareExtraFilters || []),
+                        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                      ]),
+                      ...(metricFilters || []),
                     ]),
-                    ...(metricFilters || []),
-                  ]),
+                  ),
                 }}
                 onRowClicked={handleRowClicked}
                 onConfigLoaded={handleSimulatorConfigLoaded}

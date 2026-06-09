@@ -136,7 +136,7 @@ class UpdateEvalTemplateInput(PydanticBaseModel):
         description=(
             "Explanation style for agent evals: "
             "{'type': 'concise'} (default), 'short', 'long', or "
-            "{'type': 'custom', 'custom_instructions': '...'}."
+            "{'type': 'custom', 'custom': '...'}."
         ),
     )
 

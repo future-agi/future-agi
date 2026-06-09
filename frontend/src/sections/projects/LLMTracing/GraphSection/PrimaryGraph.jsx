@@ -41,6 +41,8 @@ import GraphSkeleton from "./GraphSkeleton";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
 import { FILTER_FOR_HAS_EVAL } from "../common";
+import { objectCamelToSnake } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 
 // ---------------------------------------------------------------------------
 // Map dashboard category → graph API type
@@ -348,7 +350,9 @@ const PrimaryGraph = ({
     queryFn: () =>
       axios.post(apiEndpoint, {
         interval: selectedInterval,
-        filters: combinedFilters,
+        filters: canonicalizeApiFilterColumnIds(
+          objectCamelToSnake(combinedFilters),
+        ),
         property: "average",
         req_data_config: {
           id: metricDef.id,

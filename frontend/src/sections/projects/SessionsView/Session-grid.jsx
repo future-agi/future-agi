@@ -8,7 +8,6 @@ import React, {
   useEffect,
   useCallback,
 } from "react";
-import _ from "lodash";
 import PropTypes from "prop-types";
 import { getRandomId } from "src/utils/utils";
 import TotalRowsStatusBar from "src/sections/develop-detail/Common/TotalRowsStatusBar";
@@ -21,16 +20,23 @@ import { Events, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
 import { objectCamelToSnake } from "src/utils/utils";
+import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { useSessionsGridStoreShallow } from "./ReplaySessions/store";
 import { APP_CONSTANTS } from "src/utils/constants";
 
-const SESSION_GRID_THEME_PARAMS = {
+const getSessionGridThemeParams = (theme) => ({
   columnBorder: false,
   rowVerticalPaddingScale: 2.6,
-  headerColumnBorder: { width: 0 },
+  headerColumnBorder: false,
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
-};
+  rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+  headerFontSize: "13px",
+  headerFontWeight: theme.typography.fontWeightMedium,
+  headerBackgroundColor: "transparent",
+  headerTextColor: theme.palette.text.primary,
+  rowHoverColor: "rgba(120,87,252,0.04)",
+});
 
 const DATASET_ROWS_LIMIT = 30;
 
@@ -68,7 +74,7 @@ const SessionGrid = React.forwardRef(
     const [open, setOpen] = useState(false);
     const [currentRowData, setCurrentRowData] = useState(null);
     const theme = useTheme();
-    const agTheme = useAgThemeWith(SESSION_GRID_THEME_PARAMS);
+    const agTheme = useAgThemeWith(getSessionGridThemeParams(theme));
     const handleDrawerClose = () => {
       setOpen(false);
     };
@@ -219,7 +225,9 @@ const SessionGrid = React.forwardRef(
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(objectCamelToSnake(filters)),
+                filters: JSON.stringify(
+                  canonicalizeApiFilterColumnIds(objectCamelToSnake(filters)),
+                ),
                 ...(dateInterval && { interval: dateInterval }),
               });
 
@@ -239,21 +247,46 @@ const SessionGrid = React.forwardRef(
                 const currentNonCustom = (columnsRef.current || []).filter(
                   (c) => c.groupBy !== "Custom Columns",
                 );
-                if (!_.isEqual(newCols, currentNonCustom)) {
-                  const existingCustom = (columnsRef.current || []).filter(
-                    (c) => c.groupBy === "Custom Columns",
-                  );
-                  const pending = pendingCustomColumnsRef?.current || [];
-                  const existingIds = new Set(existingCustom.map((c) => c.id));
-                  const dedupedPending = pending.filter(
-                    (c) => !existingIds.has(c.id),
-                  );
+                const existingCustom = (columnsRef.current || []).filter(
+                  (c) => c.groupBy === "Custom Columns",
+                );
+                const pending = pendingCustomColumnsRef?.current || [];
+                const existingIds = new Set(existingCustom.map((c) => c.id));
+                const dedupedPending = pending.filter(
+                  (c) => !existingIds.has(c.id),
+                );
+                const newIds = new Set(newCols.map((c) => c.id));
+                const currentIdSet = new Set(currentNonCustom.map((c) => c.id));
+                const idSetChanged =
+                  newIds.size !== currentIdSet.size ||
+                  [...newIds].some((id) => !currentIdSet.has(id));
+                // hasPending ensures same-tab saved-view clicks still drain
+                // queued customs even when backend cols match.
+                const hasPending = dedupedPending.length > 0;
+                if (idSetChanged || hasPending) {
                   const allCustom = [...existingCustom, ...dedupedPending];
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
+                  let finalNonCustom;
+                  if (idSetChanged) {
+                    const newById = new Map(newCols.map((nc) => [nc.id, nc]));
+                    const seen = new Set();
+                    const kept = currentNonCustom
+                      .filter((cc) => newById.has(cc.id))
+                      .map((cc) => {
+                        seen.add(cc.id);
+                        return newById.get(cc.id);
+                      });
+                    const added = newCols.filter((nc) => !seen.has(nc.id));
+                    finalNonCustom = [...kept, ...added];
+                  } else {
+                    finalNonCustom = currentNonCustom;
+                  }
                   setColumns(
-                    allCustom.length > 0 ? [...newCols, ...allCustom] : newCols,
+                    allCustom.length > 0
+                      ? [...finalNonCustom, ...allCustom]
+                      : finalNonCustom,
                   );
                 }
               }

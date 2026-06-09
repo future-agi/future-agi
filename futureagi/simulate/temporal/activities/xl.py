@@ -38,6 +38,7 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationInput,
     RunToolCallEvaluationOutput,
 )
+from simulate.utils.eval_summary import derive_kpi_output_type
 
 logger = structlog.get_logger(__name__)
 
@@ -199,7 +200,6 @@ def _build_transcript_data(call_execution):
     records, and reads recording URLs from call_execution fields.
     """
     from simulate.models import CallTranscript, ChatMessageModel
-    from ee.voice.utils.transcript_roles import SpeakerRoleResolver
 
     transcript_data = {
         "transcript": "",
@@ -271,21 +271,33 @@ def _build_transcript_data(call_execution):
                             elif chat_message.role == "assistant":
                                 assistant_chat_transcript_text.append(message)
             else:
-                provider = SpeakerRoleResolver.detect_provider(
-                    call_execution.provider_call_data
-                )
-                call_dir = (call_execution.call_metadata or {}).get(
-                    "call_direction", ""
-                )
-                is_outbound = str(call_dir).strip().lower() == "outbound"
+                try:
+                    from ee.voice.utils.transcript_roles import SpeakerRoleResolver
+                except ImportError:
+                    SpeakerRoleResolver = None
+                    logger.warning(
+                        "speaker_role_resolver_unavailable_for_xl_transcript",
+                        call_execution_id=str(call_execution.id),
+                    )
+                else:
+                    provider = SpeakerRoleResolver.detect_provider(
+                        call_execution.provider_call_data
+                    )
+                    call_dir = (call_execution.call_metadata or {}).get(
+                        "call_direction", ""
+                    )
+                    is_outbound = str(call_dir).strip().lower() == "outbound"
 
                 for transcript in transcripts:
                     if transcript.content.strip():
-                        eval_role = SpeakerRoleResolver.get_eval_role_label(
-                            transcript.speaker_role,
-                            provider=provider,
-                            is_outbound=is_outbound,
-                        )
+                        if SpeakerRoleResolver is None:
+                            eval_role = transcript.speaker_role
+                        else:
+                            eval_role = SpeakerRoleResolver.get_eval_role_label(
+                                transcript.speaker_role,
+                                provider=provider,
+                                is_outbound=is_outbound,
+                            )
                         transcript_text.append(f"{eval_role}: {transcript.content}")
 
             transcript_data["transcript"] = "\n".join(transcript_text)
@@ -706,6 +718,8 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                     "error": "error",
                     "name": eval_config.name,
                     "timestamp": timezone.now().isoformat(),
+                    "output": None,
+                    "output_type": derive_kpi_output_type(eval_template),
                 }
                 call_execution.eval_outputs[str(eval_config.id)] = error_result
                 call_execution.save(update_fields=["eval_outputs"])
@@ -718,6 +732,37 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         config = eval_config.config.copy() if eval_config.config else {}
         organization = call_execution.test_execution.run_test.organization
 
+        # Build call_context for data_injection support — gives the eval
+        # agent access to the full call data via explore_trace tool.
+        # Only built when the eval's data_injection.call_context flag is on,
+        # because the payload contains PII (phone_number, recording_url) and
+        # we shouldn't ship it into the LLM prompt unless explicitly enabled.
+        from common.utils.data_injection import is_enabled as _di_enabled
+
+        _di_cfg = (
+            (config or {}).get("run_config", {}).get("data_injection")
+            or (config or {}).get("data_injection")
+            or {}
+        )
+        _call_context = None
+        if _di_enabled(_di_cfg, "call_context"):
+            _call_context = {
+                "id": str(call_execution.id),
+                "status": call_execution.status,
+                "call_type": call_execution.call_type,
+                "simulation_call_type": call_execution.simulation_call_type,
+                "phone_number": call_execution.phone_number,
+                "started_at": str(call_execution.started_at) if call_execution.started_at else None,
+                "ended_at": str(call_execution.ended_at) if call_execution.ended_at else None,
+                "duration_seconds": call_execution.duration_seconds,
+                "recording_url": call_execution.recording_url,
+                "call_summary": call_execution.call_summary,
+                "ended_reason": call_execution.ended_reason,
+                "error_message": call_execution.error_message,
+                "message_count": call_execution.message_count,
+                "overall_score": float(call_execution.overall_score) if call_execution.overall_score is not None else None,
+            }
+
         eval_result = run_eval_func(
             config=config,
             mappings=updated_mapping,
@@ -728,6 +773,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             error_localizer=eval_config.error_localizer,
             workspace=call_execution.test_execution.run_test.workspace,
             source="simulate",
+            call_context=_call_context,
         )
 
         if isinstance(eval_result, str):
@@ -794,6 +840,8 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             "error": "error",
             "name": eval_config.name,
             "timestamp": timezone.now().isoformat(),
+            "output": None,
+            "output_type": derive_kpi_output_type(eval_config.eval_template),
         }
         call_execution.eval_outputs[str(eval_config.id)] = error_result
         call_execution.save(update_fields=["eval_outputs"])
@@ -934,11 +982,11 @@ def _run_evaluations_standalone(
         if eval_config_ids:
             eval_configs = SimulateEvalConfig.objects.filter(
                 id__in=eval_config_ids, deleted=False
-            )
+            ).select_related("eval_template")
         else:
             eval_configs = SimulateEvalConfig.objects.filter(
                 run_test=run_test, deleted=False
-            )
+            ).select_related("eval_template")
 
         if not eval_configs.exists():
             logger.info(f"No evaluation configs found for run test {run_test.id}")
@@ -962,7 +1010,7 @@ def _run_evaluations_standalone(
                 call_execution.eval_outputs[str(eval_config.id)] = {
                     "output": None,
                     "reason": "No transcript data available",
-                    "output_type": None,
+                    "output_type": derive_kpi_output_type(eval_config.eval_template),
                     "name": eval_config.name,
                 }
             if not call_execution.call_metadata:
@@ -1209,10 +1257,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from simulate.models import AgentDefinition
     from tfc.utils.error_codes import get_specific_error_message
     from tracer.models.observability_provider import ProviderChoices
-    try:
-        from ee.usage.models.usage import APICallStatusChoices
-    except ImportError:
-        APICallStatusChoices = None
+    from tfc.constants.api_calls import APICallStatusChoices
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
     except ImportError:
@@ -1525,6 +1570,10 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                         from ee.usage.services.emitter import emit
                     except ImportError:
                         emit = None
+                    try:
+                        from ee.usage.utils.event_properties import llm_usage_properties
+                    except ImportError:
+                        llm_usage_properties = lambda obj: {}
 
                     actual_cost = 0
                     if hasattr(agent, "llm") and agent.llm:
@@ -1542,6 +1591,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                                 "source": "simulate_tool_evaluation",
                                 "source_id": str(test_execution.id),
                                 "raw_cost_usd": str(actual_cost),
+                                **llm_usage_properties(agent),
                             },
                         )
                     )

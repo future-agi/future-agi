@@ -57,6 +57,7 @@ const NewTaskDrawerChild = ({
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(
         sub(new Date(), {
           months: 6,
@@ -76,6 +77,7 @@ const NewTaskDrawerChild = ({
   };
   const navigate = useNavigate();
   const project = useWatch({ control, name: "project" });
+  const rowType = useWatch({ control, name: "rowType" }) || "spans";
   const isProjectSelected = !!project;
 
   const {
@@ -120,6 +122,7 @@ const NewTaskDrawerChild = ({
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(
         sub(new Date(), {
           months: 6,
@@ -151,6 +154,7 @@ const NewTaskDrawerChild = ({
   const onSubmit = (data) => {
     const {
       runType,
+      rowType,
       spansLimit,
       samplingRate,
       evalsDetails,
@@ -161,6 +165,7 @@ const NewTaskDrawerChild = ({
     const payload = {
       ...restData,
       run_type: runType,
+      row_type: rowType,
       ...(runType !== "continuous" && spansLimit
         ? { spans_limit: spansLimit }
         : {}),
@@ -173,11 +178,12 @@ const NewTaskDrawerChild = ({
   };
 
   const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, filtersWithoutDate],
+    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
     queryFn: () =>
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
           project_id: project,
+          row_type: rowType,
           filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
         },
       }),

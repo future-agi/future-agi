@@ -1,0 +1,78 @@
+# Manual trigger only. Run from the Actions tab when ready to cut an agentcc-gateway release.
+# Publishes futureagi/agentcc-gateway:<version>, :<minor>, :latest.
+# Required secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN.
+
+name: Release agentcc-gateway
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to publish (e.g. v1.0.0)'
+        required: true
+        type: string
+      branch:
+        description: 'Branch to build from'
+        required: true
+        default: 'main'
+        type: choice
+        options:
+          - main
+          - dev
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build & push agentcc-gateway
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: false
+
+      - name: Resolve version & minor
+        id: version
+        run: |
+          set -eu
+          v="${{ inputs.version }}"
+          if ! printf '%s' "$v" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
+            echo "::error::Version '$v' does not match expected vX.Y.Z[-suffix] form"
+            exit 1
+          fi
+          base="${v%%-*}"
+          minor="${base%.*}"
+          { echo "version=$v"; echo "minor=$minor"; } >> "$GITHUB_OUTPUT"
+          echo "Resolved: version=$v, minor=$minor"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./agentcc-gateway
+          file: ./agentcc-gateway/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            futureagi/agentcc-gateway:${{ steps.version.outputs.version }}
+            futureagi/agentcc-gateway:${{ steps.version.outputs.minor }}
+            futureagi/agentcc-gateway:latest
+          cache-from: type=registry,ref=futureagi/agentcc-gateway:buildcache
+          cache-to: type=registry,ref=futureagi/agentcc-gateway:buildcache,mode=max

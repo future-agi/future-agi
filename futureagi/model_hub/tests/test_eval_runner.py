@@ -962,19 +962,6 @@ class TestTestEvaluationTemplateAPIView(EvalRunnerBaseTestCase):
         """Set up test data for the entire test class."""
         super().setUpTestData()
 
-        # Create deterministic_evals template (required by the view)
-        cls.deterministic_eval_template = EvalTemplate.objects.create(
-            name="deterministic_evals",
-            description="Deterministic evaluations template",
-            owner=OwnerChoices.SYSTEM.value,
-            config={
-                "required_keys": ["text"],
-                "eval_type_id": "DeterministicEvaluator",
-                "output": "Pass/Fail",
-            },
-            eval_tags=["FUNCTION"],
-        )
-
     def test_function_eval_missing_eval_type_id(self):
         """Function eval without eval_type_id returns error."""
         data = {

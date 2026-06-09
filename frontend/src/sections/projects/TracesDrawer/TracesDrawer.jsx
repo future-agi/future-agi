@@ -5,9 +5,8 @@ import {
   Typography,
   Chip,
   useTheme,
-  // Tabs and Tab hidden for now - only one tab exists currently
-  // Tabs,
-  // Tab,
+  Tabs,
+  Tab,
   Skeleton,
 } from "@mui/material";
 import PropTypes from "prop-types";
@@ -17,10 +16,10 @@ import axios, { endpoints } from "src/utils/axios";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
 
 import SessionHistory from "./SessionHistory";
+import SessionEvalsList from "./SessionEvalsList";
 import logger from "src/utils/logger";
 import { format, parseISO } from "date-fns";
-// SvgColor used by Tabs - hidden for now
-// import SvgColor from "src/components/svg-color";
+import SvgColor from "src/components/svg-color";
 import Header from "./Header";
 import Filters from "./Filters";
 import { useParams } from "react-router";
@@ -28,41 +27,12 @@ import { useTraceDrawerStore } from "./useTraceDrawerStore";
 import { formatMs } from "src/utils/utils";
 import InlineAnnotator from "src/components/InlineAnnotator";
 
-/* CustomTabPanel and a11yProps hidden - only one tab exists currently.
-   Uncomment when more tabs are added.
-
-const CustomTabPanel = React.forwardRef((props, ref) => {
-  const { children, value, index, ...other } = props;
-
-  return (
-    <Box
-      ref={ref}
-      role="tabpanel"
-      hidden={value !== index}
-      id={`simple-tabpanel-${index}`}
-      aria-labelledby={`simple-tab-${index}`}
-      {...other}
-    >
-      {value === index && <Box sx={{ p: 2 }}>{children}</Box>}
-    </Box>
-  );
-});
-
-CustomTabPanel.displayName = "CustomTabPanel";
-
-CustomTabPanel.propTypes = {
-  children: PropTypes.node,
-  index: PropTypes.number.isRequired,
-  value: PropTypes.number.isRequired,
-};
-
 function a11yProps(index) {
   return {
     id: `simple-tab-${index}`,
     "aria-controls": `simple-tabpanel-${index}`,
   };
 }
-*/
 
 const TracesDrawer = ({ open, onClose, rowData }) => {
   const theme = useTheme();
@@ -71,6 +41,7 @@ const TracesDrawer = ({ open, onClose, rowData }) => {
   const sessionId = rowData?.session_id;
   const [currentSessionId, setCurrentSessionId] = React.useState(null);
   const [navigationDirection, setNavigationDirection] = React.useState(null);
+  const [activeTab, setActiveTab] = React.useState(0);
   const { viewType, setViewType } = useTraceDrawerStore();
 
   const activeSessionId = currentSessionId || sessionId;
@@ -128,6 +99,7 @@ const TracesDrawer = ({ open, onClose, rowData }) => {
     onClose();
     setCurrentSessionId(null);
     setNavigationDirection(null);
+    setActiveTab(0);
   };
 
   // Separate loading states
@@ -356,13 +328,11 @@ const TracesDrawer = ({ open, onClose, rowData }) => {
               </>
             )}
           </Box>
-          {/* Tabs hidden - only one tab (Session History) exists currently.
-              Uncomment when more tabs are added. */}
-          {/* <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
+          <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
             <Tabs
-              value={value}
-              onChange={handleChange}
-              aria-label="basic tabs example"
+              value={activeTab}
+              onChange={(_, v) => setActiveTab(v)}
+              aria-label="session drawer tabs"
               textColor="primary"
               indicatorColor="primary"
               sx={{
@@ -390,20 +360,37 @@ const TracesDrawer = ({ open, onClose, rowData }) => {
                     src={"/assets/icons/ic_message.svg"}
                   />
                 }
+                iconPosition="start"
                 label="Session History"
                 {...a11yProps(0)}
               />
+              <Tab
+                icon={
+                  <Iconify
+                    icon="solar:chart-square-bold"
+                    width={16}
+                    sx={{ color: "primary.main" }}
+                  />
+                }
+                iconPosition="start"
+                label="Evals"
+                {...a11yProps(1)}
+              />
             </Tabs>
-          </Box> */}
-          <Box sx={{ px: 1, maxHeight: "50vh", overflowY: "auto" }}>
-            <InlineAnnotator
-              sourceType="trace_session"
-              sourceId={activeSessionId}
-              projectId={projectIdToUse}
-              compact
-            />
           </Box>
-          <Filters viewType={viewType} setViewType={setViewType} />
+          {activeTab === 0 && (
+            <Box sx={{ px: 1, maxHeight: "50vh", overflowY: "auto" }}>
+              <InlineAnnotator
+                sourceType="trace_session"
+                sourceId={activeSessionId}
+                projectId={projectIdToUse}
+                compact
+              />
+            </Box>
+          )}
+          {activeTab === 0 && (
+            <Filters viewType={viewType} setViewType={setViewType} />
+          )}
         </Box>
         <Box
           sx={{
@@ -412,12 +399,16 @@ const TracesDrawer = ({ open, onClose, rowData }) => {
           }}
           ref={scrollRef}
         >
-          <SessionHistory
-            traceDetail={traceDetail}
-            loading={isInitialLoading}
-            isFetchingNextPage={isFetchingNextPage}
-            activeSessionId={activeSessionId}
-          />
+          {activeTab === 0 ? (
+            <SessionHistory
+              traceDetail={traceDetail}
+              loading={isInitialLoading}
+              isFetchingNextPage={isFetchingNextPage}
+              activeSessionId={activeSessionId}
+            />
+          ) : (
+            <SessionEvalsList sessionId={activeSessionId} />
+          )}
         </Box>
       </Box>
     </Drawer>

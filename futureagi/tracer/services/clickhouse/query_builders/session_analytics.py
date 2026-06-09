@@ -9,7 +9,7 @@ tables with efficient ClickHouse GROUP BY queries on the denormalized
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
 
 
 class SessionAnalyticsQueryBuilder(BaseQueryBuilder):
@@ -82,6 +82,9 @@ class SessionAnalyticsQueryBuilder(BaseQueryBuilder):
         """
         params = dict(self.params)
 
+        # trace_session_id is UUID; comparing to '' makes CH coerce '' -> UUID
+        # and raise Code 376. Use IS NOT NULL; the NIL-UUID line still
+        # excludes the "no session" sentinel.
         query = f"""
         SELECT
             trace_session_id,
@@ -92,7 +95,8 @@ class SessionAnalyticsQueryBuilder(BaseQueryBuilder):
             sum(cost) AS total_cost
         FROM {self.TABLE}
         {self.project_where()}
-          AND trace_session_id != ''
+          AND trace_session_id IS NOT NULL
+          AND trace_session_id != toUUID('{NIL_UUID}')
         GROUP BY trace_session_id
         ORDER BY started_at DESC
         """

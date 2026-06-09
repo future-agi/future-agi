@@ -82,11 +82,7 @@ from tfc.utils.storage import (
     convert_image_from_url_to_base64,
     detect_audio_format,
 )
-try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -1117,56 +1113,56 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
-                try:
-                    api_call_config = {"reference_id": str(self.run_prompt_id)}
-                    api_call_log_row = log_and_deduct_cost_for_api_request(
-                        self.run_prompt_model.organization,
-                        APICallTypeChoices.DATASET_RUN_PROMPT.value,
-                        config=api_call_config,
-                        workspace=row.dataset.workspace,
-                    )
-                    logger.info(
-                        "RunPrompts_process_row_api_call_logged",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                        api_call_log_row_id=(
-                            str(api_call_log_row.id) if api_call_log_row else None
-                        ),
-                    )
-                except Exception as api_err:
-                    logger.error(
-                        "RunPrompts_process_row_api_call_validation_error",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                        error=str(api_err),
-                    )
-                    raise ValueError("Error in API call validation")  # noqa: B904
-                if not api_call_log_row:
-                    logger.error(
-                        "RunPrompts_process_row_api_call_log_row_none",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                    )
-                    raise ValueError("Error in API call validation")
-                elif api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                    error_message = get_error_for_api_status(api_call_log_row.status)
-                    logger.error(
-                        "RunPrompts_process_row_api_call_status_invalid",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                        status=api_call_log_row.status,
-                        error_message=error_message,
-                    )
-                    raise ValueError(error_message)
-                elif api_call_log_row.status == APICallStatusChoices.PROCESSING.value:
-                    # by default set the status to success since we are not deducting cost
-                    api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-                    api_call_log_row.save()
-                    logger.info(
-                        "RunPrompts_process_row_api_call_status_set_success",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                    )
+                if log_and_deduct_cost_for_api_request is not None:
+                    try:
+                        api_call_config = {"reference_id": str(self.run_prompt_id)}
+                        api_call_log_row = log_and_deduct_cost_for_api_request(
+                            self.run_prompt_model.organization,
+                            APICallTypeChoices.DATASET_RUN_PROMPT.value,
+                            config=api_call_config,
+                            workspace=row.dataset.workspace,
+                        )
+                        logger.info(
+                            "RunPrompts_process_row_api_call_logged",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                            api_call_log_row_id=(
+                                str(api_call_log_row.id) if api_call_log_row else None
+                            ),
+                        )
+                    except Exception as api_err:
+                        logger.error(
+                            "RunPrompts_process_row_api_call_validation_error",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                            error=str(api_err),
+                        )
+                        raise ValueError("Error in API call validation")  # noqa: B904
+                    if not api_call_log_row:
+                        logger.error(
+                            "RunPrompts_process_row_api_call_log_row_none",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                        )
+                        raise ValueError("Error in API call validation")
+                    elif api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+                        error_message = get_error_for_api_status(api_call_log_row.status)
+                        logger.error(
+                            "RunPrompts_process_row_api_call_status_invalid",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                            status=api_call_log_row.status,
+                            error_message=error_message,
+                        )
+                        raise ValueError(error_message)
+                    elif api_call_log_row.status == APICallStatusChoices.PROCESSING.value:
+                        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+                        api_call_log_row.save()
+                        logger.info(
+                            "RunPrompts_process_row_api_call_status_set_success",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                        )
 
                 # Dual-write: emit usage event for new billing system
                 try:
@@ -1179,7 +1175,10 @@ class RunPrompts:
                     except ImportError:
                         emit = None
 
-                    emit(
+                    if emit is not None and UsageEvent is not None:
+
+
+                        emit(
                         UsageEvent(
                             org_id=str(self.run_prompt_model.organization.id),
                             event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,

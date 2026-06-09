@@ -159,14 +159,11 @@ def _safe_background_task(func, *args, **kwargs):
     return wrapped
 
 
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
-    from ee.usage.models.usage import APICallStatusChoices
+    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
-    APICallStatusChoices = None
-try:
-    from ee.usage.utils.usage_entries import APICallTypeChoices, count_text_tokens, log_and_deduct_cost_for_api_request
-except ImportError:
-    APICallTypeChoices = None
     count_text_tokens = None
     log_and_deduct_cost_for_api_request = None
 
@@ -1912,7 +1909,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         }
                         # print("token config is here:",token_config)
                         if organization:
-                            log_and_deduct_cost_for_api_request(
+                            if log_and_deduct_cost_for_api_request is not None:
+                                log_and_deduct_cost_for_api_request(
                                 organization,
                                 APICallTypeChoices.PROMPT_BENCH.value,
                                 config=token_config,
@@ -1933,7 +1931,10 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                                 except ImportError:
                                     emit = None
 
-                                emit(
+                                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+
+
+                                    emit(
                                     UsageEvent(
                                         org_id=str(organization.id),
                                         event_type=APICallTypeChoices.PROMPT_BENCH.value,
@@ -2564,28 +2565,41 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 }
             )
             org = Organization.objects.get(id=organization_id)
-            api_call_log_row = log_and_deduct_cost_for_api_request(
-                organization=org,
-                api_call_type=APICallTypeChoices.DATASET_EVALUATION.value,
-                source="prompt_template",
-                source_id=eval_template.id,
-                config=source_config,
-                workspace=evaluation.prompt_template.workspace,
-            )
-
-            if not api_call_log_row:
-                raise ValueError(
-                    "API call not allowed : Error validating the api call."
+            api_call_log_row = None
+            if log_and_deduct_cost_for_api_request is not None:
+                api_call_log_row = log_and_deduct_cost_for_api_request(
+                    organization=org,
+                    api_call_type=APICallTypeChoices.DATASET_EVALUATION.value,
+                    source="prompt_template",
+                    source_id=eval_template.id,
+                    config=source_config,
+                    workspace=evaluation.prompt_template.workspace,
                 )
 
-            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                raise ValueError("API call not allowed : ", api_call_log_row.status)
+                if not api_call_log_row:
+                    raise ValueError(
+                        "API call not allowed : Error validating the api call."
+                    )
+
+                if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+                    raise ValueError("API call not allowed : ", api_call_log_row.status)
+            # Apply the shared empty-input rules so prompt-template evals
+            # behave the same as dataset/playground/tracing/SDK paths.
+            from model_hub.utils.eval_input_validation import (
+                validate_eval_inputs,
+            )
+
+            _mapped_kwargs = evaluation_runner.map_fields(
+                list(run_params.keys()), list(run_params.values())
+            )
+            partial_input_warning, _mapped_kwargs = validate_eval_inputs(
+                eval_template,
+                _mapped_kwargs,
+                mapped_keys=_mapped_kwargs.keys(),
+            )
+
             # Run evaluation
-            eval_result = eval_instance.run(
-                **evaluation_runner.map_fields(
-                    list(run_params.keys()), list(run_params.values())
-                )
-            )
+            eval_result = eval_instance.run(**_mapped_kwargs)
 
             # Format response
             response = {
@@ -2599,6 +2613,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 "metadata": eval_result.eval_results[0].get("metadata", {}),
                 "output": eval_template.config.get("output"),
             }
+            if partial_input_warning:
+                response["warnings"] = [partial_input_warning]
             metadata = response.get("metadata") or {}
             if isinstance(metadata, str):
                 try:
@@ -2636,14 +2652,22 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
-                emit(
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+
+
+                    emit(
                     UsageEvent(
                         org_id=str(org.id),
                         event_type=BillingEventType.EVAL_EXPLANATION,
                         properties={
                             "source": "prompt_template",
                             "source_id": str(eval_template.id),
+                            **token_usage_properties(metadata.get("usage", {})),
                         },
                     )
                 )
@@ -3190,19 +3214,21 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             if not statement:
                 return self._gm.bad_request(get_error_message("MISSING_STATEMENT"))
 
-            config = {"input_tokens": count_text_tokens(statement)}
-            call_log_row = log_and_deduct_cost_for_api_request(
-                getattr(request, "organization", None) or request.user.organization,
-                APICallTypeChoices.PROMPT_BENCH.value,
-                config=config,
-                source="run_prompt_gen",
-                workspace=request.workspace,
-            )
-            if (
-                call_log_row is None
-                or call_log_row.status != APICallStatusChoices.PROCESSING.value
-            ):
-                return self._gm.bad_request(get_error_message("INSUFFICIENT_CREDITS"))
+            config = {"input_tokens": (count_text_tokens(statement) if count_text_tokens else 0)}
+            call_log_row = None
+            if log_and_deduct_cost_for_api_request is not None:
+                call_log_row = log_and_deduct_cost_for_api_request(
+                    getattr(request, "organization", None) or request.user.organization,
+                    APICallTypeChoices.PROMPT_BENCH.value,
+                    config=config,
+                    source="run_prompt_gen",
+                    workspace=request.workspace,
+                )
+                if (
+                    call_log_row is None
+                    or call_log_row.status != APICallStatusChoices.PROCESSING.value
+                ):
+                    return self._gm.bad_request(get_error_message("INSUFFICIENT_CREDITS"))
 
             # Dual-write: emit usage event for new billing system
             try:
@@ -3218,17 +3244,24 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
                 )
-                emit(
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+
+                    emit(
                     UsageEvent(
                         org_id=str(_org.id),
                         event_type=BillingEventType.AI_PROMPT_CREATION,
                         properties={
                             "source": "run_prompt_gen",
                             "source_id": str(call_log_row.log_id),
+                            **token_usage_properties(config),
                         },
                     )
                 )
@@ -3309,22 +3342,24 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 )
 
             config = {
-                "input_tokens": count_text_tokens(
+                "input_tokens": (count_text_tokens(
                     existing_prompt + improvement_requirements
-                )
+                ) if count_text_tokens else 0)
             }
-            call_log_row = log_and_deduct_cost_for_api_request(
-                getattr(request, "organization", None) or request.user.organization,
-                APICallTypeChoices.PROMPT_BENCH.value,
-                config=config,
-                source="run_prompt_improve",
-                workspace=request.workspace,
-            )
-            if (
-                call_log_row is None
-                or call_log_row.status != APICallStatusChoices.PROCESSING.value
-            ):
-                return self._gm.bad_request(get_error_message("INSUFFICIENT_CREDITS"))
+            call_log_row = None
+            if log_and_deduct_cost_for_api_request is not None:
+                call_log_row = log_and_deduct_cost_for_api_request(
+                    getattr(request, "organization", None) or request.user.organization,
+                    APICallTypeChoices.PROMPT_BENCH.value,
+                    config=config,
+                    source="run_prompt_improve",
+                    workspace=request.workspace,
+                )
+                if (
+                    call_log_row is None
+                    or call_log_row.status != APICallStatusChoices.PROCESSING.value
+                ):
+                    return self._gm.bad_request(get_error_message("INSUFFICIENT_CREDITS"))
 
             # Dual-write: emit usage event for new billing system
             try:
@@ -3340,17 +3375,24 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
                 )
-                emit(
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+
+                    emit(
                     UsageEvent(
                         org_id=str(_org.id),
                         event_type=BillingEventType.AI_PROMPT_IMPROVEMENT,
                         properties={
                             "source": "run_prompt_improve",
                             "source_id": str(call_log_row.log_id),
+                            **token_usage_properties(config),
                         },
                     )
                 )

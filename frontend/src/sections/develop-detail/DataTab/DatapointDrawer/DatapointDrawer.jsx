@@ -24,12 +24,13 @@ import { enqueueSnackbar } from "notistack";
 
 import AudioDatapointCard from "src/components/custom-audio/AudioDatapointCard";
 import { getStatusColor } from "../common";
-import { getLabel } from "../common";
+import { getLabel, normalizeEvalCellValue } from "../common";
 import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import { ShowComponent } from "src/components/show";
 import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import { canonicalEntries } from "src/utils/utils";
 
 const SkeletonLoader = () => (
   <Box
@@ -43,6 +44,10 @@ const SkeletonLoader = () => (
     <Skeleton sx={{ width: "100%", height: "10px" }} variant="rounded" />
   </Box>
 );
+
+const hasRenderableCellValue = (value) =>
+  value !== undefined && value !== null && value !== "";
+
 const StatusCellRenderer = (data) => {
   const theme = useTheme();
 
@@ -65,10 +70,8 @@ const StatusCellRenderer = (data) => {
     );
   }
 
-  if (cellValue?.startsWith("[") && cellValue?.endsWith("]")) {
-    cellValue = JSON.parse(cellValue.replace(/'/g, '"'));
-  }
-  if (!cellValue || cellValue === undefined || cellValue === "") return;
+  cellValue = normalizeEvalCellValue(cellValue);
+  if (!hasRenderableCellValue(cellValue)) return;
 
   return (
     <>
@@ -481,13 +484,8 @@ const DatapointDrawerChild = ({
   const isNextDisabled = rowIndex >= totalCount - 1;
 
   const finalArray = useMemo(() => {
-    if (
-      runEval?.cellValue &&
-      runEval?.cellValue.startsWith("[") &&
-      runEval?.cellValue.endsWith("]")
-    ) {
-      return JSON.parse(runEval?.cellValue.replace(/'/g, '"'));
-    }
+    const v = normalizeEvalCellValue(runEval?.cellValue);
+    return Array.isArray(v) ? v : undefined;
   }, [runEval?.cellValue]);
 
   return (
@@ -571,8 +569,7 @@ const DatapointDrawerChild = ({
                     Error
                   </Box>
                 ) : (
-                  runEval?.cellValue &&
-                  runEval?.cellValue !== "" && (
+                  hasRenderableCellValue(runEval?.cellValue) && (
                     <>
                       <ShowComponent condition={!Array.isArray(finalArray)}>
                         <Chip
@@ -704,9 +701,11 @@ const DatapointDrawerChild = ({
                     typeof runEval?.valueInfos === "object" &&
                     runEval?.valueInfos?.errorAnalysis &&
                     (() => {
-                      const hasOrgSegment = Object.values(
+                      const errorAnalysisEntries = canonicalEntries(
                         runEval?.valueInfos?.errorAnalysis,
-                      )
+                      );
+                      const hasOrgSegment = errorAnalysisEntries
+                        .map(([, value]) => value)
                         .flat()
                         .some((entry) => entry?.orgSegment);
 
@@ -719,7 +718,7 @@ const DatapointDrawerChild = ({
                         );
                       }
 
-                      return Object.entries(runEval?.valueInfos?.errorAnalysis)
+                      return errorAnalysisEntries
                         .filter(([_, value]) => value?.length)
                         .map(([key, value]) => (
                           <ErrorLocalizeCard

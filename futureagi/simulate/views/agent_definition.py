@@ -37,10 +37,13 @@ from simulate.serializers.response.agent_definition import (
 from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
+from tfc.ee_stub import _ee_stub
+
 try:
     from ee.voice.services.vapi_service import VapiService
 except ImportError:
-    VapiService = None
+    VapiService = _ee_stub("VapiService")
+from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -278,7 +281,7 @@ class CreateAgentDefinitionView(APIView):
                 assistant_id=assistant_id,
                 authentication_method=validated.get("authentication_method") or "",
                 language=validated.get("language"),
-                languages=validated.get("languages"),
+                languages=validated.get("languages") or ["en"],
                 contact_number=validated.get("contact_number"),
                 inbound=validated.get("inbound", True),
                 knowledge_base_id=validated.get("knowledge_base"),
@@ -482,8 +485,10 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
                 FetchAssistantResponseSerializer(response_data).data
             )
 
-        except Exception as e:
-            logger.warning(e)
+        except FeatureUnavailable:
+            raise
+        except Exception:
+            logger.exception("fetch_assistant_from_provider failed")
             return self._gm.bad_request("Please recheck your API key and assistant ID")
 
 

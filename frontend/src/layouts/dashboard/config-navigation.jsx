@@ -60,6 +60,7 @@ const ICONS = {
 export function useNavData() {
   const { user } = useAuthContext();
   const { currentWorkspaceRole } = useWorkspace();
+  const { isOSS } = useDeploymentMode();
   const userOrgRole = user?.organization_role ?? user?.organizationRole;
   const userDefaultWsRole =
     user?.default_workspace_role ?? user?.defaultWorkspaceRole;
@@ -137,16 +138,7 @@ export function useNavData() {
         icon: ICONS.keys,
       });
     }
-    return [
-      {
-        items: [
-          {
-            title: "Falcon AI",
-            path: paths.dashboard.falconAI,
-            icon: ICONS.falconAI,
-          },
-        ],
-      },
+    const sections = [
       {
         subheader: "BUILD",
         items: buildItems,
@@ -272,7 +264,21 @@ export function useNavData() {
       //   items: [],
       // },
     ];
-  }, [isOwner, isAdmin]);
+
+    sections.unshift({
+      items: [
+        {
+          title: "Falcon AI",
+          path: paths.dashboard.falconAI,
+          icon: ICONS.falconAI,
+          disabled: isOSS,
+          disabledTooltip: "Not available on self-hosted",
+        },
+      ],
+    });
+
+    return sections;
+  }, [isOwner, isAdmin, isOSS]);
   return data;
 }
 
@@ -412,7 +418,7 @@ export function useNavSettingsData() {
       });
     }
     // Falcon AI Connectors — same access as integrations
-    if (canAccess(RoutesName.integrations)) {
+    if (!isOSS && canAccess(RoutesName.integrations)) {
       wsSettingsItems.push({
         title: "Falcon AI Connectors",
         path: "/dashboard/settings/falcon-ai-connectors",

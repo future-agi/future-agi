@@ -221,6 +221,36 @@ describe("CreateLabelDrawer", () => {
     });
   });
 
+  it("passes the created label back to the caller", async () => {
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    mockCreate.mockImplementationOnce((_payload, options) => {
+      options.onSuccess({
+        data: { id: "created-label", name: "Created Label" },
+      });
+    });
+
+    render(
+      <CreateLabelDrawer
+        open={true}
+        onClose={onClose}
+        editLabel={null}
+        onCreated={onCreated}
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/name/i), "Created Label");
+    await user.click(screen.getByRole("button", { name: /create$/i }));
+
+    await waitFor(() => {
+      expect(onCreated).toHaveBeenCalledWith({
+        id: "created-label",
+        name: "Created Label",
+      });
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+  });
+
   it("calls updateLabel on submit in edit mode", async () => {
     const user = userEvent.setup();
     const editLabel = {

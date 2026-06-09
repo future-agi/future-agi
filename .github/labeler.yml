@@ -15,7 +15,7 @@ frontend:
 gateway:
   - changed-files:
       - any-glob-to-any-file:
-          - 'futureagi/agentcc-gateway/**'
+          - 'agentcc-gateway/**'
           - 'futureagi/agentcc/**'
 
 # ── Evaluations ──

@@ -22,11 +22,17 @@ import { useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries, stripAttributePathPrefix } from "src/utils/utils";
+import { ROW_TYPE_LABELS } from "src/utils/constants";
+import {
+  buildFlatValueMap,
+  executeEvalForRow,
+} from "src/sections/evals/utils/evalExecution";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { JsonValueTree } from "src/sections/evals/components/DatasetTestMode";
 import EvalResultDisplay from "src/sections/evals/components/EvalResultDisplay";
+import SpanRowList from "src/sections/evals/components/SpanRowList";
 import {
   InlineAudio,
   RecordingGroup,
@@ -37,6 +43,8 @@ import {
   isAudioUrlString,
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
+import { ID_ONLY_FIELDS } from "src/sections/projects/LLMTracing/idFields";
+import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
 
 // ───────────────────────────────────────────────────────────────
 // Helpers (ported from TracingTestMode)
@@ -48,25 +56,90 @@ const COL_TYPE_MAP = {
   annotation: "ANNOTATION",
 };
 
-function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
-  const userFilters = (oldFormatFilters || [])
-    .filter((f) => f?.propertyId || f?.property)
-    .map((f) => {
-      const isAttribute = f.property === "attributes";
-      const columnId = isAttribute ? f.propertyId : f.property;
+const RANGE_OPS = new Set(["between", "not_between"]);
+const LIST_OPS = new Set(["in", "not_in"]);
+const NO_VALUE_OPS = new Set(NULL_OPERATORS);
+
+// Form rows from `TaskFilterBar.convertNewToOld` carry scalar `filterValue`
+// for single-value ops and arrays for `in`/`not_in`/`between`/`not_between`.
+// Multiple scalar rows for the same (field, op) need to be merged into one
+// wire entry so the BE `in` validator gets a single array clause instead of
+// N independently-evaluated scalar clauses.
+function mergeRowsByFieldAndOp(rows) {
+  const merged = new Map();
+  rows.forEach((f) => {
+    const isAttribute = f.property === "attributes";
+    const columnId = isAttribute ? f.propertyId : f.property;
+    if (!columnId) return;
+    const op = f?.filterConfig?.filterOp || "equals";
+    const filterType = f?.filterConfig?.filterType || "text";
+    const key = `${columnId}|${op}|${f.fieldCategory || "system"}|${filterType}`;
+    if (!merged.has(key)) {
+      merged.set(key, {
+        columnId,
+        fieldCategory: f.fieldCategory,
+        op,
+        filterType,
+        isAttribute,
+        value: undefined,
+        values: [],
+      });
+    }
+    const entry = merged.get(key);
+    const v = f?.filterConfig?.filterValue;
+    if (RANGE_OPS.has(op)) {
+      // Range rows already carry the [low, high] array.
+      entry.value = Array.isArray(v) ? v : entry.value;
+    } else if (LIST_OPS.has(op)) {
+      const arr = Array.isArray(v) ? v : v != null && v !== "" ? [v] : [];
+      entry.values.push(...arr);
+    } else if (v !== undefined && v !== null && v !== "") {
+      entry.values.push(v);
+    }
+  });
+  return Array.from(merged.values());
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
+  const userFilters = mergeRowsByFieldAndOp(oldFormatFilters || []).map(
+    (entry) => {
+      const isIdColumn = ID_ONLY_FIELDS.has(entry.columnId);
       const colType =
-        COL_TYPE_MAP[f.fieldCategory] ||
-        (isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
+        COL_TYPE_MAP[entry.fieldCategory] ||
+        (entry.isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
+      let filterValue;
+      if (NO_VALUE_OPS.has(entry.op)) {
+        filterValue = "";
+      } else if (RANGE_OPS.has(entry.op)) {
+        filterValue = entry.value;
+      } else if (LIST_OPS.has(entry.op)) {
+        filterValue = entry.values;
+      } else if (entry.values.length > 1) {
+        // Multiple scalar rows under a single-value op — collapse to `in`.
+        filterValue = entry.values;
+      } else if (entry.values.length === 1) {
+        filterValue = entry.values[0];
+      } else {
+        filterValue = undefined;
+      }
+      const filterOp =
+        !RANGE_OPS.has(entry.op) &&
+        !LIST_OPS.has(entry.op) &&
+        Array.isArray(filterValue)
+          ? "in"
+          : entry.op;
       return {
-        column_id: columnId,
+        column_id: entry.columnId,
         filter_config: {
-          filter_type: f?.filterConfig?.filterType || "text",
-          filter_op: f?.filterConfig?.filterOp || "equals",
-          filter_value: f?.filterConfig?.filterValue,
-          col_type: colType,
+          filter_type: entry.filterType,
+          filter_op: filterOp,
+          ...(filterValue !== undefined && { filter_value: filterValue }),
+          ...(!isIdColumn && { col_type: colType }),
         },
       };
-    });
+    },
+  );
 
   if (startDate && endDate) {
     userFilters.push({
@@ -173,13 +246,6 @@ function flattenSpanTree(
   return result;
 }
 
-const ROW_TYPE_LABEL = {
-  spans: "Spans",
-  traces: "Traces",
-  sessions: "Sessions",
-  voiceCalls: "Voice Calls",
-};
-
 // ───────────────────────────────────────────────────────────────
 // Main
 // ───────────────────────────────────────────────────────────────
@@ -222,14 +288,13 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     queryFn: async () => {
       if (!projectId) return { rows: [], total: 0, columns: [] };
 
-      // Voice calls use a dedicated list_voice_calls endpoint with a
-      // different request/response shape (no filter array).
       if (rowType === "voiceCalls") {
         const resp = await axios.get(endpoints.project.getCallLogs, {
           params: {
             project_id: projectId,
             page: 1,
             page_size: 50,
+            filters: JSON.stringify(apiFilters),
           },
         });
         const result = resp.data?.result || resp.data || {};
@@ -329,6 +394,61 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           const allSpans = flattenSpanTree(spans);
           detailData = { ...traceInfo, spans: allSpans };
         }
+      } else if (rowType === "sessions" && currentRow?.session_id) {
+        // Sessions need a layered fetch: list_sessions returns flat
+        // session-summary rows (id, total_cost, traces_count, etc.) but
+        // no nested traces/spans. The walker that powers fieldNames /
+        // the "(not in row)" check needs the actual session shape so
+        // mapping paths like `traces.<i>.input` and
+        // `traces.0.spans.<j>.<key>` resolve. Two-step fetch:
+        //   1) GET /tracer/trace-session/<id>/ → paginated trace list
+        //      (no spans nested per the BE contract)
+        //   2) GET /tracer/trace/<first_trace_id>/ → spans tree for the
+        //      first trace. Span-level mapping paths only resolve for
+        //      the first trace in the preview; deeper drill-in would
+        //      need a click-to-fetch UI that we don't have here yet.
+        const sid = currentRow.session_id;
+        let sessionMeta = {};
+        let traces = [];
+        try {
+          const sResp = await axios.get(
+            `${endpoints.project.traceSession}${sid}/`,
+            { params: { page_number: 0, page_size: 30 } },
+          );
+          const sResult = sResp.data?.result || {};
+          sessionMeta = sResult.session_metadata || {};
+          traces = sResult.response || [];
+        } catch {
+          // Session fetch failed — fall back to the flat row so the
+          // user at least sees session-summary fields.
+          detailData = { ...currentRow };
+        }
+
+        if (!detailData) {
+          let firstTraceSpans = [];
+          const firstTraceId = traces[0]?.trace_id;
+          if (firstTraceId) {
+            try {
+              const tResp = await axios.get(
+                endpoints.project.getTrace(firstTraceId),
+              );
+              const tResult = tResp.data?.result || {};
+              firstTraceSpans = flattenSpanTree(
+                tResult.observation_spans || [],
+              );
+            } catch {
+              // Trace fetch failed — leave empty; the rest of the
+              // preview still works with trace-level fields.
+            }
+          }
+          detailData = {
+            ...sessionMeta,
+            traces: traces.map((t, i) => ({
+              ...t,
+              spans: i === 0 ? firstTraceSpans : [],
+            })),
+          };
+        }
       } else {
         detailData = { ...currentRow };
       }
@@ -400,80 +520,13 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   const handleRunTest = useCallback(async () => {
     if (!currentRow || !evalsDetails?.length || !spanDetail) return;
 
-    const _spanId = currentRow?.span_id;
-    const _traceId = currentRow?.trace_id;
-    const _sessionId = currentRow?.session_id;
-
-    const autoCtx = {};
-    if (rowType === "spans" && _spanId) autoCtx.span_id = _spanId;
-    if ((rowType === "spans" || rowType === "traces") && _traceId)
-      autoCtx.trace_id = _traceId;
-    if (rowType === "sessions" && _sessionId) autoCtx.session_id = _sessionId;
-    if (rowType === "voiceCalls" && _traceId) autoCtx.trace_id = _traceId;
-
-    // Build a flat fieldName→value lookup by walking spanDetail,
-    // soft-flattening span_attributes keys (same logic as the
-    // fieldNames dropdown in TracingTestMode). This ensures mapped
-    // fields like "input.value" (stripped from "span_attributes.input.value")
-    // resolve correctly even when a top-level "input" shadows the path.
-    // Limits match the dropdown walker in TracingTestMode so every path
-    // offered to the user during mapping also resolves at test time.
-    const ARRAY_PEEK = 500;
-    const DICT_LIMIT = 5000;
-    const valueMap = {};
-    const walkValues = (node, prefix) => {
-      if (Array.isArray(node)) {
-        node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
-          const path = prefix ? `${prefix}.${idx}` : String(idx);
-          valueMap[path] = item;
-          if (item && typeof item === "object") {
-            walkValues(item, path);
-          }
-        });
-        return;
-      }
-      // canonicalEntries drops the camelCase aliases the axios interceptor
-      // layers on — otherwise `span_attributes.*` and `spanAttributes.*`
-      // both end up in valueMap and only the snake side gets stripped.
-      for (const [k, v] of canonicalEntries(node)) {
-        if (k.startsWith("_")) continue;
-        const path = prefix ? `${prefix}.${k}` : k;
-        valueMap[path] = v;
-        if (v && typeof v === "object") {
-          if (Array.isArray(v) || Object.keys(v).length < DICT_LIMIT) {
-            walkValues(v, path);
-          }
-        }
-      }
-    };
-    walkValues(spanDetail, "");
-
-    // Soft-flatten: strip `span_attributes.` prefix, top-level wins.
-    const flatValueMap = {};
-    for (const [path, val] of Object.entries(valueMap)) {
-      const short = path.startsWith("span_attributes.")
-        ? path.slice("span_attributes.".length)
-        : path;
-      if (!(short in flatValueMap) || !path.startsWith("span_attributes.")) {
-        flatValueMap[short] = val;
-      }
-    }
-
-    const resolveMapping = (mapping) => {
-      const resolved = {};
-      for (const [variable, field] of Object.entries(mapping || {})) {
-        if (!field) continue;
-        const val = flatValueMap[field];
-        if (val !== undefined && val !== null) {
-          resolved[variable] =
-            typeof val === "object" ? JSON.stringify(val) : String(val);
-        }
-      }
-      return resolved;
-    };
+    // Sessions delegate mapping resolution to the BE via `mapping_paths`,
+    // so the local walk is skipped. Other row types walk once and reuse
+    // the same lookup across every eval on this row.
+    const isSession = rowType === "sessions";
+    const flatValueMap = isSession ? {} : buildFlatValueMap(spanDetail);
 
     setIsTesting(true);
-    // Initialize all to running
     setTestResults(
       evalsDetails.reduce((acc, _ev, idx) => {
         acc[idx] = { status: "running" };
@@ -481,53 +534,62 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
       }, {}),
     );
 
-    // Run evals in parallel — each one independently
     await Promise.all(
       evalsDetails.map(async (evalItem, idx) => {
-        try {
-          const templateId = evalItem?.template_id;
-          if (!templateId) {
-            setTestResults((prev) => ({
-              ...prev,
-              [idx]: {
-                status: "error",
-                error: "Missing template id — re-add this eval",
-              },
-            }));
-            return;
-          }
-          const { data } = await axios.post(
-            endpoints.develop.eval.evalPlayground,
-            {
-              template_id: templateId,
-              model: evalItem?.model || "turing_large",
-              config: { mapping: resolveMapping(evalItem?.mapping) },
-              ...autoCtx,
-            },
-          );
-          if (data?.status) {
-            setTestResults((prev) => ({
-              ...prev,
-              [idx]: { status: "success", result: data.result },
-            }));
-          } else {
-            setTestResults((prev) => ({
-              ...prev,
-              [idx]: {
-                status: "error",
-                error: data?.result || "Evaluation failed",
-              },
-            }));
-          }
-        } catch (err) {
+        const templateId = evalItem?.template_id;
+        if (!templateId) {
           setTestResults((prev) => ({
             ...prev,
             [idx]: {
               status: "error",
-              error:
-                err?.response?.data?.result ||
-                err?.message ||
-                "Failed to run eval",
+              error: "Missing template id — re-add this eval",
+            },
+          }));
+          return;
+        }
+        // Forward the saved data_injection flags so the BE enables the
+        // matching auto-context (matches EvalPickerConfigFull's tracing tab).
+        const diFlags =
+          evalItem?.data_injection ||
+          evalItem?.config?.run_config?.data_injection ||
+          evalItem?.config?.data_injection ||
+          {};
+        const configExtras =
+          Object.keys(diFlags).length > 0
+            ? { run_config: { data_injection: diFlags } }
+            : {};
+        const result = await executeEvalForRow({
+          evalItem,
+          rowType,
+          currentRow,
+          spanDetail,
+          mapping: evalItem?.mapping || {},
+          flatValueMap,
+          singleEvalConfigExtras: configExtras,
+          compositeConfigExtras: configExtras,
+        });
+        if (result.ok) {
+          setTestResults((prev) => ({
+            ...prev,
+            [idx]: {
+              status: "success",
+              // EvalResultDisplay reads `compositeResult` for composite or
+              // the legacy `output`/`reason`/`score` keys for single.
+              result: result.isComposite
+                ? {
+                    output: result.output,
+                    reason: result.reason,
+                    compositeResult: result.compositeResult,
+                  }
+                : result.raw,
+            },
+          }));
+        } else {
+          setTestResults((prev) => ({
+            ...prev,
+            [idx]: {
+              status: "error",
+              error: result.errorMessage || "Failed to run eval",
             },
           }));
         }
@@ -592,7 +654,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             </Typography>
             {projectId && (
               <Chip
-                label={ROW_TYPE_LABEL[rowType] || rowType}
+                label={ROW_TYPE_LABELS[rowType] || rowType}
                 size="small"
                 sx={{
                   height: 18,
@@ -600,6 +662,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                   bgcolor: "background.neutral",
                   color: "text.secondary",
                   "& .MuiChip-label": { px: 0.75 },
+                    "&:hover": { bgcolor: "background.neutral" },
                 }}
               />
             )}
@@ -722,6 +785,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
               <VariableMappingView
                 evalsDetails={evalsDetails || []}
                 fieldNames={fieldNames}
+                rowType={rowType}
                 testResults={testResults}
               />
             )}
@@ -752,8 +816,17 @@ const RowDetailTable = ({
   // Flatten span_attributes children into the top-level entries so users
   // see e.g. "llm.system" as its own row instead of a collapsed object.
   // Top-level keys win deduplication (same logic as the fieldNames flatten).
+  // The `spans` key is filtered out here because it gets a dedicated
+  // collapsible-row renderer below — same pattern as TracingTestMode so
+  // the two preview surfaces look identical for trace + session row types.
+  // canonicalEntries (not Object.entries) drops the camelCase aliases the
+  // axios interceptor adds for any snake_case key — without it, every
+  // `gen_ai.span.kind` row would also have a duplicate `genAi.span.kind`
+  // sibling rendered next to it.
   const entries = useMemo(() => {
-    const raw = Object.entries(spanDetail).filter(([key]) => key !== "spans");
+    const raw = canonicalEntries(spanDetail).filter(
+      ([key]) => key !== "spans",
+    );
     const spanAttrs = spanDetail?.span_attributes;
     if (
       !spanAttrs ||
@@ -764,7 +837,7 @@ const RowDetailTable = ({
     }
     const topKeys = new Set(raw.map(([k]) => k));
     const flattened = raw.filter(([k]) => k !== "span_attributes");
-    for (const [k, v] of Object.entries(spanAttrs)) {
+    for (const [k, v] of canonicalEntries(spanAttrs)) {
       if (!topKeys.has(k)) {
         flattened.push([k, v]);
       }
@@ -882,14 +955,22 @@ const RowDetailTable = ({
                   "&:hover": { backgroundColor: "action.hover" },
                 }}
               >
-                <Typography
-                  variant="caption"
-                  fontWeight={500}
-                  noWrap
-                  sx={{ width: 130, flexShrink: 0, pt: 0.25 }}
+                <CustomTooltip
+                  title={key}
+                  show
+                  placement="top-start"
+                  arrow
+                  size="small"
                 >
-                  {key}
-                </Typography>
+                  <Typography
+                    variant="caption"
+                    fontWeight={500}
+                    noWrap
+                    sx={{ width: 130, flexShrink: 0, pt: 0.25 }}
+                  >
+                    {key}
+                  </Typography>
+                </CustomTooltip>
                 <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
                   {isEmpty ? (
                     <Typography variant="caption" color="text.disabled">
@@ -950,6 +1031,16 @@ const RowDetailTable = ({
               </Box>
             );
           })}
+
+        {/* Spans section — each span as a collapsible row. Shared
+            renderer with TracingTestMode so the picker drawer and the
+            preview pane look identical for trace + session row types. */}
+        <SpanRowList
+          spans={spanDetail.spans}
+          expandedCols={expandedCols}
+          setExpandedCols={setExpandedCols}
+          tableSearch={tableSearch}
+        />
       </Box>
     </Box>
   );
@@ -970,10 +1061,17 @@ RowDetailTable.propTypes = {
 const VariableMappingView = ({
   evalsDetails,
   fieldNames,
+  rowType,
   testResults = {},
 }) => {
   const fieldSet = useMemo(() => new Set(fieldNames), [fieldNames]);
   const hasEvals = evalsDetails.length > 0;
+  // For sessions the lazy fetch only covers `traces[0].spans`, so the
+  // walker over the preview detail can't witness paths into other traces
+  // or beyond the first trace's loaded spans. The `(not in row)` chip
+  // becomes misinformation in that regime — the BE is the authoritative
+  // resolver at test time. Suppress the check entirely for sessions.
+  const skipRowCheck = rowType === "sessions";
 
   if (!hasEvals) return null;
 
@@ -989,7 +1087,7 @@ const VariableMappingView = ({
         </Typography>
         <Typography
           variant="caption"
-          color="text.disabled"
+          color="text.secondary"
           sx={{ display: "block", fontSize: "10px" }}
         >
           Configured mapping for each eval against the current row&apos;s fields
@@ -1061,6 +1159,7 @@ const VariableMappingView = ({
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.5 },
+                      "&:hover": { bgcolor: "background.neutral" },
                     }}
                   />
                 )}
@@ -1074,6 +1173,7 @@ const VariableMappingView = ({
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.5 },
+                      "&:hover": { bgcolor: "background.neutral" },
                     }}
                   />
                 )}
@@ -1100,6 +1200,7 @@ const VariableMappingView = ({
                         ? field.slice("span_attributes.".length)
                         : field;
                     const resolved =
+                      skipRowCheck ||
                       fieldSet.has(field) ||
                       (strippedField && fieldSet.has(strippedField));
                     return (
@@ -1242,6 +1343,7 @@ const VariableMappingView = ({
 VariableMappingView.propTypes = {
   evalsDetails: PropTypes.array.isRequired,
   fieldNames: PropTypes.array.isRequired,
+  rowType: PropTypes.string,
   testResults: PropTypes.object,
 };
 

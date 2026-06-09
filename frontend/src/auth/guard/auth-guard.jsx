@@ -1,6 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 import { paths } from "src/routes/paths";
 import { useRouter } from "src/routes/hooks";
@@ -11,7 +11,9 @@ import { useAuthContext } from "../hooks";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { trackSignupConversion } from "src/utils/googleAds";
 import { trackRedditSignup } from "src/utils/redditAds";
+import { trackTwitterSignup } from "src/utils/twitterAds";
 import { ROLES } from "src/utils/rolePermissionMapping";
+import { usePostLoginPath } from "src/hooks/useDeploymentMode";
 
 // ----------------------------------------------------------------------
 
@@ -36,9 +38,11 @@ AuthGuard.propTypes = {
 function Container({ children }) {
   const router = useRouter();
 
-  const { authenticated, method, user } = useAuthContext();
+  const { authenticated, method, user, initialize } = useAuthContext();
+  const postLoginPath = usePostLoginPath();
 
   const [checked, setChecked] = useState(false);
+  const hydrateAttempted = useRef(false);
 
   const {
     currentOrganizationName,
@@ -51,7 +55,9 @@ function Container({ children }) {
     const sso_token =
       queryParams.get("sso_token") || queryParams.get("access_token");
     const refreshToken = queryParams.get("refresh_token");
+    const isNewOAuthUser = queryParams.get("is_new_user") === "true";
     const returnTo = localStorage.getItem("redirectUrl");
+    
 
     if (!authenticated) {
       if (sso_token) {
@@ -59,6 +65,11 @@ function Container({ children }) {
           localStorage.setItem("refreshToken", refreshToken);
         }
         localStorage.setItem("accessToken", sso_token);
+    
+        if (isNewOAuthUser) {
+          localStorage.setItem("isNewOAuthSignup", "1");
+          localStorage.setItem("isNewOAuthSignupAt", String(Date.now()));
+        }
         // if (newOrg) {
         //   // redirect to onboarding page
         //   window.location.href = "/auth/jwt/setup-org";
@@ -75,6 +86,15 @@ function Container({ children }) {
         // }
         return;
       }
+
+
+      const existingToken = localStorage.getItem("accessToken");
+      if (existingToken && !hydrateAttempted.current) {
+        hydrateAttempted.current = true;
+        initialize();
+        return;
+      }
+
       const parameters = window.location.search;
       const searchParams = new URLSearchParams({
         returnTo: window.location.pathname + parameters,
@@ -88,7 +108,7 @@ function Container({ children }) {
     } else {
       setChecked(true);
     }
-  }, [authenticated, method, router]);
+  }, [authenticated, method, router, initialize]);
 
   useEffect(() => {
     check();
@@ -102,6 +122,37 @@ function Container({ children }) {
     // Skip redirect logic for standalone pages (e.g. MCP OAuth consent)
     if (window.location.pathname.startsWith("/mcp/")) return;
     if (!user) return;
+    const isNewOAuthSignup =
+      localStorage.getItem("isNewOAuthSignup") === "1";
+    if (isNewOAuthSignup) {
+      const stampedAt = Number(
+        localStorage.getItem("isNewOAuthSignupAt") || 0,
+      );
+      const fresh = Date.now() - stampedAt < 10 * 60 * 1000;
+      const provider = localStorage.getItem("signupProvider") || "oauth";
+      if (fresh && user?.email && user?.id && provider !== "email") {
+        if (typeof window.gtag === "function") {
+          trackSignupConversion({
+            email: user.email,
+            method: provider,
+            userId: String(user.id),
+          });
+        }
+        if (typeof window.rdt === "function") {
+          trackRedditSignup({
+            email: user.email,
+            userId: String(user.id),
+          });
+        }
+        trackTwitterSignup({
+          email: user.email,
+          method: provider,
+          userId: String(user.id),
+        });
+      }
+      localStorage.removeItem("isNewOAuthSignup");
+      localStorage.removeItem("isNewOAuthSignupAt");
+    }
 
     // New user to platform (requires_org_setup) — redirect to org-setup
     // flow and, for OAuth/SSO paths, fire ad-platform signup conversions.
@@ -124,6 +175,11 @@ function Container({ children }) {
             userId: String(user.id),
           });
         }
+        trackTwitterSignup({
+          email: user.email,
+          method: provider,
+          userId: String(user.id),
+        });
       }
 
       if (window.location.pathname !== paths.auth.jwt.org_removed) {
@@ -141,13 +197,14 @@ function Container({ children }) {
       // If user has an organization_role, they're already part of an org (invited or owner)
       // Skip onboarding and go straight to dashboard
       if (user?.organization_role) {
-        router.replace("/dashboard/falcon-ai");
+        router.replace(postLoginPath);
       } else {
         router.replace("/dashboard/get-started");
       }
       localStorage.setItem("initial-render", "done");
+      localStorage.removeItem("redirectUrl");
     }
-  }, [user, router]);
+  }, [postLoginPath, user, router]);
 
   // Gate "no org → setup-org" redirect on isOrgReady to avoid false
   // redirects while org context is still hydrating.
