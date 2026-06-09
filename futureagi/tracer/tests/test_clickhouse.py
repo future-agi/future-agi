@@ -350,9 +350,9 @@ class TestClickHouseSchema:
         assert names.index("span_metrics_hourly_mv") < names.index(
             "span_metrics_hourly"
         ), "MV must drop before its source table"
-        assert names.index("spans_mv") < names.index("tracer_observation_span"), (
-            "spans_mv must drop before tracer_observation_span"
-        )
+        assert names.index("spans_mv") < names.index(
+            "tracer_observation_span"
+        ), "spans_mv must drop before tracer_observation_span"
         # Idempotency: every drop wraps IF EXISTS so reruns are no-ops.
         for _, sql in drops:
             assert "IF EXISTS" in sql, f"drop must be idempotent: {sql}"
@@ -6197,9 +6197,9 @@ class TestVoiceCallListPhase1bMigration:
         src = self._voice_list_source()
         # `FROM spans FINAL` collapses ReplacingMergeTree duplicates — the
         # v2 dedup contract. FINAL alone (without `spans`) is too permissive.
-        assert re.search(r"FROM\s+spans\s+FINAL", src), (
-            "_list_voice_calls_clickhouse must hydrate from v2 `spans FINAL`."
-        )
+        assert re.search(
+            r"FROM\s+spans\s+FINAL", src
+        ), "_list_voice_calls_clickhouse must hydrate from v2 `spans FINAL`."
         assert "is_deleted = 0" in src
 
     def test_phase_1b_selects_typed_map_columns_for_reconstruction(self):
@@ -6611,9 +6611,9 @@ class TestVoiceCallListQueryBuilderComprehensive:
         # Each phone number is still recognised as a simulator call in Python.
         for phone in VAPI_PHONE_NUMBERS:
             span_attrs = {"raw_log": {"customer": {"number": phone}}}
-            assert VoiceCallListQueryBuilder.is_simulator_call(span_attrs, "vapi"), (
-                f"Missing phone number: {phone}"
-            )
+            assert VoiceCallListQueryBuilder.is_simulator_call(
+                span_attrs, "vapi"
+            ), f"Missing phone number: {phone}"
 
     def test_simulation_filter_uses_json_extract(self):
         """Simulation filtering is now Python-side against parsed raw_log.
@@ -7819,6 +7819,8 @@ class TestSessionAnalyticsQueryBuilder:
         assert "trace_session_id" in query
         assert "GROUP BY trace_session_id" in query
         assert "ORDER BY started_at DESC" in query
+        # UUID-vs-empty-string makes CH raise Code 376 (Cannot parse uuid).
+        assert "trace_session_id != ''" not in query
         assert "trace_session_id IS NOT NULL" in query
 
     def test_session_navigation_has_aggregate_columns(self):

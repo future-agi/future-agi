@@ -3,6 +3,7 @@ import json
 import traceback
 from collections import defaultdict
 from dataclasses import asdict
+from typing import Any, Dict, List, Optional
 
 try:
     import orjson
@@ -13,7 +14,9 @@ except ImportError:
 
 import pandas as pd
 import structlog
-from django.db import models, transaction
+
+logger = structlog.get_logger(__name__)
+from django.db import OperationalError, connection, models, transaction
 from django.db.models import (
     Avg,
     Case,
@@ -38,8 +41,10 @@ from django.db.models.functions import (
 )
 from django.http import FileResponse
 from django.utils import timezone
+from rest_framework import status as drf_status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.choices import AnnotationTypeChoices
@@ -628,9 +633,29 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     "next": has_next,
                 }
             )
+        except OperationalError as e:
+            logger.exception(
+                "trace_session_retrieve_timeout",
+                session_id=str(self.kwargs.get("pk")),
+                error=str(e),
+            )
+            return Response(
+                {
+                    "status": False,
+                    "result": (
+                        "Session detail unavailable: query exceeded time "
+                        "budget. Retry shortly."
+                    ),
+                },
+                status=drf_status.HTTP_504_GATEWAY_TIMEOUT,
+            )
         except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(f"Error retrieving trace session: {str(e)}")
+            logger.exception(
+                "trace_session_retrieve_failed",
+                session_id=str(self.kwargs.get("pk")),
+                error=str(e),
+            )
+            return self._gm.bad_request("Error retrieving trace session.")
 
     def _retrieve_clickhouse(
         self,
@@ -763,16 +788,44 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        # Get eval metrics from CH
+        # Resolve eval-config IDs in CH (avoids a tracer_eval_logger PG
+        # scan that grows linearly with eval traffic), then fetch the
+        # PG metadata by primary key.
         trace_ids = [r["trace_id"] for r in traces_data]
-        eval_configs = list(
-            CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(trace_id__in=trace_ids).values(
-                    "custom_eval_config_id"
-                ),
-                deleted=False,
-            ).select_related("eval_template")
-        )
+        eval_configs: list = []
+        if trace_ids:
+            try:
+                config_id_result = analytics.execute_ch_query(
+                    """
+                    SELECT DISTINCT toString(custom_eval_config_id) AS config_id
+                    FROM tracer_eval_logger FINAL
+                    WHERE trace_id IN %(trace_ids)s
+                      AND _peerdb_is_deleted = 0
+                      AND (deleted = 0 OR deleted IS NULL)
+                    """,
+                    {"trace_ids": trace_ids},
+                    timeout_ms=3000,
+                )
+                pre_config_ids = [
+                    row["config_id"]
+                    for row in config_id_result.data
+                    if row.get("config_id")
+                ]
+            except Exception as e:
+                logger.warning(
+                    "ch_eval_config_id_lookup_failed",
+                    session_id=str(trace_session_id),
+                    error=str(e),
+                )
+                pre_config_ids = []
+
+            if pre_config_ids:
+                eval_configs = list(
+                    CustomEvalConfig.objects.filter(
+                        id__in=pre_config_ids,
+                        deleted=False,
+                    ).select_related("eval_template")
+                )
 
         eval_map = {}
         if eval_configs and trace_ids:
@@ -1319,6 +1372,33 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         end_user_filter["end_user"] = end_user
                     except EndUser.DoesNotExist:
                         raise Exception("User not found")  # noqa: B904
+
+            # In org-scoped mode with a user filter, narrow session_ids to
+            # only those linked to this user's spans BEFORE the heavy
+            # aggregation. Without this, the GROUP BY scans every session
+            # in every org project and exceeds PG's 30s statement_timeout.
+            # In single-project mode session_ids is already bounded by
+            # project_id, so the planner handles it without help.
+            if org_scope and end_user_filter:
+                user_session_ids = list(
+                    ObservationSpan.objects.filter(
+                        trace__session_id__in=session_ids,
+                        **end_user_filter,
+                    )
+                    .values_list("trace__session_id", flat=True)
+                    .distinct()
+                )
+                if not user_session_ids:
+                    return self._gm.success_response(
+                        {
+                            "metadata": {"total_rows": 0},
+                            "table": [],
+                            "config": get_default_project_session_config(),
+                        }
+                    )
+                session_ids = TraceSession.objects.filter(
+                    id__in=user_session_ids
+                ).values("id")
 
             fm_lm_columns = {"first_message", "last_message"}
             needs_first_last = any(
@@ -1982,6 +2062,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         BuilderCls = get_query_builder_class("SESSION_LIST")  # noqa: N806
 
+        # Resolve `org` once at the top — it's referenced both when injecting
+        # the synthetic end_user_id filter (below) and when decorating the
+        # formatted output with EndUser info (later). Previously only the
+        # later block defined it, so the earlier reference NameError'd as
+        # soon as ``user_id_raw`` was truthy and silently fell through to PG.
+        org = getattr(request, "organization", None) or request.user.organization
+
         org_scope = bool(org_project_ids)
         # Organization in scope — the canonical resolver used across this view
         # (request is a param here; the helper is pure getattr, no query). Needed
@@ -2149,6 +2236,18 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 entry["user_id_type"] = eu.get("user_id_type")
                 entry["user_id_hash"] = eu.get("user_id_hash")
 
+        # Inject user info when a user_id filter is active. The EndUser
+        # row was already resolved above when we built the synthetic
+        # filter, so no extra DB hit is needed here. In org-scoped mode
+        # multiple EndUser rows can match (one per project) — we pick
+        # the first; the display fields are typically identical across
+        # rows for the same logical user.
+        if end_user_display and formatted:
+            for entry in formatted:
+                entry["user_id"] = end_user_display["user_id"]
+                entry["user_id_type"] = end_user_display["user_id_type"]
+                entry["user_id_hash"] = end_user_display["user_id_hash"]
+
         # Phase 2: Aggregated span attributes for custom columns
         _SKIP_ATTR_PREFIXES = (
             "raw.",
@@ -2189,8 +2288,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                             attrs = {}
                         # Fallback: merge from typed Map columns when raw is empty
                         if not attrs:
-                            str_map = attr_row.get("span_attr_str") or {}
-                            num_map = attr_row.get("span_attr_num") or {}
+                            str_map = attr_row.get("attrs_string") or {}
+                            num_map = attr_row.get("attrs_number") or {}
                             if isinstance(str_map, dict):
                                 attrs.update(str_map)
                             if isinstance(num_map, dict):

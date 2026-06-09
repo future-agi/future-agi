@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 import structlog
-from django.db import connection, models, transaction
+from django.db import IntegrityError, connection, models, transaction
 from django.utils import timezone
 
 from model_hub.models.prompt_label import PromptLabel
@@ -187,6 +187,25 @@ def _serialize_json_field_value(val: Any) -> str | None:
     if "\\u0000" not in dumped:
         return dumped
     return json.dumps(_strip_null_chars(val), allow_nan=False)
+
+
+def _is_pk_unique_violation(exc: BaseException, table_name: str) -> bool:
+    """True iff exc represents a unique violation on ``{table_name}_pkey``.
+
+    Handles both Django-wrapped IntegrityError (psycopg cause on __cause__)
+    and the raw psycopg UniqueViolation that escapes from ``cursor.copy()``
+    contexts (which bypass Django's exception translation).
+    """
+    from psycopg.errors import UniqueViolation as PgUniqueViolation
+
+    pg_exc: Any = (
+        exc if isinstance(exc, PgUniqueViolation) else getattr(exc, "__cause__", None)
+    )
+    if not isinstance(pg_exc, PgUniqueViolation):
+        return False
+    diag = getattr(pg_exc, "diag", None)
+    constraint = getattr(diag, "constraint_name", None) if diag else None
+    return constraint == f"{table_name}_pkey"
 
 
 def _bulk_create_with_copy(model: models.Model, objects: list[models.Model]):
@@ -643,7 +662,13 @@ def _prepare_observation_spans_and_trace_updates(
 
 
 def _bulk_insert_observation_spans(spans_to_create: list[ObservationSpan]):
-    """Sets timestamps and bulk inserts observation spans using the COPY command."""
+    """Sets timestamps and bulk inserts observation spans.
+
+    Fast path: PostgreSQL COPY (all-or-nothing). On unique-key collision (e.g.
+    a client double-submitting an OTLP batch), the savepoint rolls back and we
+    re-insert via bulk_create(ignore_conflicts=True), which emits
+    INSERT ... ON CONFLICT DO NOTHING and skips only the duplicate rows.
+    """
     if not spans_to_create:
         return
 
@@ -655,27 +680,23 @@ def _bulk_insert_observation_spans(spans_to_create: list[ObservationSpan]):
         if not span.updated_at:
             span.updated_at = now
 
-    # Idempotent on Temporal retry: COPY FROM STDIN has no ON CONFLICT support,
-    # so a re-ingest of the same span IDs would violate tracer_observation_span_pkey.
-    # Use a savepoint (we run inside an outer transaction.atomic) so a conflict does
-    # not poison the outer transaction, then fall back to an ON CONFLICT DO NOTHING
-    # insert. NOTE: _bulk_create_with_copy uses psycopg3's COPY API, which bypasses
-    # Django's error wrapping — the duplicate-key error surfaces as a raw psycopg
-    # UniqueViolation (often chained via __cause__), NOT django.db.IntegrityError.
-    # Mirror the sibling Trace handler above and match on that.
+    from psycopg.errors import UniqueViolation as PgUniqueViolation
+
     try:
         with transaction.atomic():
             _bulk_create_with_copy(ObservationSpan, spans_to_create)
-    except Exception as e:
-        from django.db import DatabaseError
-        from psycopg.errors import UniqueViolation
-
-        if isinstance(getattr(e, "__cause__", None), UniqueViolation) or isinstance(
-            e, DatabaseError
-        ):
-            ObservationSpan.objects.bulk_create(spans_to_create, ignore_conflicts=True)
-        else:
+    except (IntegrityError, PgUniqueViolation) as e:
+        if not _is_pk_unique_violation(e, "tracer_observation_span"):
             raise
+        logger.warning(
+            "observation_span_copy_pk_violation_falling_back",
+            batch_size=len(spans_to_create),
+        )
+        ObservationSpan.objects.bulk_create(
+            spans_to_create,
+            ignore_conflicts=True,
+            batch_size=500,
+        )
 
 
 def _bulk_update_traces(

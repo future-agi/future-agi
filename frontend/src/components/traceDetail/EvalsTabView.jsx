@@ -80,7 +80,10 @@ export function collectAllEvalsFromEntry(entry) {
 // score, arbitrary label) is treated as not-passed and keeps the button.
 const isPassedEval = (ev) => {
   if (ev?.score != null) return ev.score >= 50;
-  const label = (ev?.score_label || "").trim().toLowerCase();
+  const rawLabel = (ev?.score_label || "").trim();
+  const numericLabel = parseFloat(rawLabel.replace(/%$/, ""));
+  if (Number.isFinite(numericLabel)) return numericLabel >= 50;
+  const label = rawLabel.toLowerCase();
   return label === "pass" || label === "passed" || label === "true";
 };
 

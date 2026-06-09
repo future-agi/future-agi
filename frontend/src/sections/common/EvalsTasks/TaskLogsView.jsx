@@ -98,6 +98,8 @@ function formatDuration(startTime, endTime) {
 
 const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const [showFullError, setShowFullError] = useState(false);
+  const hasMoreError = group.raw && group.raw !== group.normalized;
   // Every entry in this log is a real failure — there's no soft tier.
   // Kept as a const so the styling chain below can still parameterize
   // off it if we ever bring back severity tiers.
@@ -176,10 +178,30 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
               fontSize: "12px",
               fontFamily: "monospace",
               wordBreak: "break-word",
+              whiteSpace: "pre-wrap",
               lineHeight: 1.5,
             }}
           >
-            {group.normalized}
+            {showFullError && hasMoreError ? group.raw : group.normalized}
+            {hasMoreError && (
+              <Typography
+                component="span"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowFullError((prev) => !prev);
+                }}
+                sx={{
+                  ml: 0.5,
+                  fontSize: "11px",
+                  color: "primary.main",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  "&:hover": { textDecoration: "underline" },
+                }}
+              >
+                {showFullError ? "Show less" : "Show more"}
+              </Typography>
+            )}
           </Typography>
         </Box>
 
@@ -317,6 +339,7 @@ ErrorGroupCard.propTypes = {
     severity: PropTypes.oneOf(["error"]).isRequired,
     hints: PropTypes.arrayOf(PropTypes.string),
     normalized: PropTypes.string.isRequired,
+    raw: PropTypes.string,
     count: PropTypes.number.isRequired,
     examples: PropTypes.arrayOf(PropTypes.string),
   }).isRequired,

@@ -2751,6 +2751,10 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
                 if (
                     emit is not None
@@ -2764,6 +2768,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                             properties={
                                 "source": "prompt_template",
                                 "source_id": str(eval_template.id),
+                                **token_usage_properties(metadata.get("usage", {})),
                             },
                         )
                     )
@@ -3395,6 +3400,10 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
@@ -3411,6 +3420,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                             properties={
                                 "source": "run_prompt_gen",
                                 "source_id": str(call_log_row.log_id),
+                                **token_usage_properties(config),
                             },
                         )
                     )
@@ -3528,6 +3538,10 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
@@ -3544,6 +3558,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                             properties={
                                 "source": "run_prompt_improve",
                                 "source_id": str(call_log_row.log_id),
+                                **token_usage_properties(config),
                             },
                         )
                     )

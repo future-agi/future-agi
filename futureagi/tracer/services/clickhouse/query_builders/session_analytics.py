@@ -131,6 +131,9 @@ class SessionAnalyticsQueryBuilder(BaseQueryBuilder):
         """
         params = dict(self.params)
 
+        # trace_session_id is UUID; comparing to '' makes CH coerce '' -> UUID
+        # and raise Code 376. Use IS NOT NULL; the NIL-UUID line still
+        # excludes the "no session" sentinel.
         query = f"""
         SELECT
             trace_session_id,

@@ -245,7 +245,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             attrs_string,
             attrs_number,
             toJSONString(metadata) AS metadata,
-            trace_tags
+            dictGetOrDefault('trace_dict', 'tags', toUUID(trace_id), '[]') AS trace_tags
         FROM {self.TABLE}
         PREWHERE trace_id IN %(content_trace_ids)s
         WHERE {self.project_filter_sql()}

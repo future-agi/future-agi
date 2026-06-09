@@ -163,8 +163,13 @@ class TestTraceSessionRetrieveAPI:
         assert metadata["previous_session_id"] is None
         assert metadata["next_session_id"] is None
 
+    # The test env routes CH_ROUTE_SESSION_ANALYTICS to postgres and does
+    # not seed ClickHouse, so the navigation tests below monkeypatch
+    # _try_session_navigation_ch to simulate CH returning known
+    # neighbours.
+
     def test_retrieve_session_navigation_middle_session(
-        self, auth_client, observe_project
+        self, auth_client, observe_project, monkeypatch
     ):
         """Middle session should have both prev and next."""
         base = timezone.now()
@@ -176,6 +181,14 @@ class TestTraceSessionRetrieveAPI:
         )
         s3 = _create_session_with_span(observe_project, "Last", base)
 
+        from tracer.utils import session as session_utils
+
+        monkeypatch.setattr(
+            session_utils,
+            "_try_session_navigation_ch",
+            lambda req, pid, sid: (str(s1.id), str(s3.id)),
+        )
+
         response = auth_client.get(f"/tracer/trace-session/{s2.id}/")
         assert response.status_code == status.HTTP_200_OK
         metadata = get_result(response)["session_metadata"]
@@ -183,7 +196,7 @@ class TestTraceSessionRetrieveAPI:
         assert metadata["next_session_id"] == str(s1.id)
 
     def test_retrieve_session_navigation_first_session(
-        self, auth_client, observe_project
+        self, auth_client, observe_project, monkeypatch
     ):
         """First session (newest) should have next but no previous."""
         base = timezone.now()
@@ -192,6 +205,14 @@ class TestTraceSessionRetrieveAPI:
         )
         s2 = _create_session_with_span(observe_project, "Newest", base)
 
+        from tracer.utils import session as session_utils
+
+        monkeypatch.setattr(
+            session_utils,
+            "_try_session_navigation_ch",
+            lambda req, pid, sid: (str(s1.id), None),
+        )
+
         response = auth_client.get(f"/tracer/trace-session/{s2.id}/")
         assert response.status_code == status.HTTP_200_OK
         metadata = get_result(response)["session_metadata"]
@@ -199,7 +220,7 @@ class TestTraceSessionRetrieveAPI:
         assert metadata["next_session_id"] == str(s1.id)
 
     def test_retrieve_session_navigation_last_session(
-        self, auth_client, observe_project
+        self, auth_client, observe_project, monkeypatch
     ):
         """Last session (oldest) should have previous but no next."""
         base = timezone.now()
@@ -207,6 +228,14 @@ class TestTraceSessionRetrieveAPI:
             observe_project, "Oldest", base - timedelta(minutes=1)
         )
         s2 = _create_session_with_span(observe_project, "Newer", base)
+
+        from tracer.utils import session as session_utils
+
+        monkeypatch.setattr(
+            session_utils,
+            "_try_session_navigation_ch",
+            lambda req, pid, sid: (None, str(s2.id)),
+        )
 
         response = auth_client.get(f"/tracer/trace-session/{s1.id}/")
         assert response.status_code == status.HTTP_200_OK
