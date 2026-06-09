@@ -10605,80 +10605,79 @@ export const IntegrationsConnectionsUpdateParams = zod.object({
 
 export const integrationsConnectionsUpdateBodyDisplayNameMax = 255;
 
+export const integrationsConnectionsUpdateBodyPublicKeyMax = 500;
+
+export const integrationsConnectionsUpdateBodySecretKeyMax = 500;
+
 export const integrationsConnectionsUpdateBodyHostUrlMax = 500;
 
-export const integrationsConnectionsUpdateBodyExternalProjectNameMax = 255;
-
-export const integrationsConnectionsUpdateBodyTotalTracesSyncedMin = 0;
-export const integrationsConnectionsUpdateBodyTotalTracesSyncedMax = 2147483647;
-
-export const integrationsConnectionsUpdateBodyTotalSpansSyncedMin = 0;
-export const integrationsConnectionsUpdateBodyTotalSpansSyncedMax = 2147483647;
-
-export const integrationsConnectionsUpdateBodyTotalScoresSyncedMin = 0;
-export const integrationsConnectionsUpdateBodyTotalScoresSyncedMax = 2147483647;
-
 export const integrationsConnectionsUpdateBodySyncIntervalSecondsMin = 60;
-export const integrationsConnectionsUpdateBodySyncIntervalSecondsMax = 1800;
+export const integrationsConnectionsUpdateBodySyncIntervalSecondsMax = 3600;
 
 
 
 export const IntegrationsConnectionsUpdateBody = zod.object({
-  "platform": zod.enum(['langfuse', 'datadog', 'posthog', 'pagerduty', 'mixpanel', 'cloud_storage', 'message_queue', 'linear']),
-  "display_name": zod.string().min(1).max(integrationsConnectionsUpdateBodyDisplayNameMax),
-  "host_url": zod.string().url().min(1).max(integrationsConnectionsUpdateBodyHostUrlMax),
-  "status": zod.enum(['active', 'paused', 'error', 'syncing', 'backfilling']).optional(),
-  "status_message": zod.string().optional(),
-  "external_project_name": zod.string().min(1).max(integrationsConnectionsUpdateBodyExternalProjectNameMax),
-  "last_synced_at": zod.string().datetime({"offset":true}).optional(),
-  "total_traces_synced": zod.number().min(integrationsConnectionsUpdateBodyTotalTracesSyncedMin).max(integrationsConnectionsUpdateBodyTotalTracesSyncedMax).optional(),
-  "total_spans_synced": zod.number().min(integrationsConnectionsUpdateBodyTotalSpansSyncedMin).max(integrationsConnectionsUpdateBodyTotalSpansSyncedMax).optional(),
-  "total_scores_synced": zod.number().min(integrationsConnectionsUpdateBodyTotalScoresSyncedMin).max(integrationsConnectionsUpdateBodyTotalScoresSyncedMax).optional(),
-  "backfill_completed": zod.boolean().optional(),
-  "backfill_progress": zod.object({
-
-}).passthrough().optional(),
+  "display_name": zod.string().min(1).max(integrationsConnectionsUpdateBodyDisplayNameMax).optional(),
+  "public_key": zod.string().min(1).max(integrationsConnectionsUpdateBodyPublicKeyMax).optional(),
+  "secret_key": zod.string().min(1).max(integrationsConnectionsUpdateBodySecretKeyMax).optional(),
+  "host_url": zod.string().url().min(1).max(integrationsConnectionsUpdateBodyHostUrlMax).optional(),
+  "ca_certificate": zod.string().optional(),
   "sync_interval_seconds": zod.number().min(integrationsConnectionsUpdateBodySyncIntervalSecondsMin).max(integrationsConnectionsUpdateBodySyncIntervalSecondsMax).optional()
 })
 
-export const integrationsConnectionsUpdateResponseDisplayNameMax = 255;
+export const integrationsConnectionsUpdateResponseStatusDefault = true;
+export const integrationsConnectionsUpdateResponseResultDisplayNameMax = 255;
 
-export const integrationsConnectionsUpdateResponseHostUrlMax = 500;
+export const integrationsConnectionsUpdateResponseResultHostUrlMax = 500;
 
-export const integrationsConnectionsUpdateResponseExternalProjectNameMax = 255;
+export const integrationsConnectionsUpdateResponseResultExternalProjectNameMax = 255;
 
-export const integrationsConnectionsUpdateResponseTotalTracesSyncedMin = 0;
-export const integrationsConnectionsUpdateResponseTotalTracesSyncedMax = 2147483647;
+export const integrationsConnectionsUpdateResponseResultSyncIntervalSecondsMin = 60;
+export const integrationsConnectionsUpdateResponseResultSyncIntervalSecondsMax = 1800;
 
-export const integrationsConnectionsUpdateResponseTotalSpansSyncedMin = 0;
-export const integrationsConnectionsUpdateResponseTotalSpansSyncedMax = 2147483647;
+export const integrationsConnectionsUpdateResponseResultTotalTracesSyncedMin = 0;
+export const integrationsConnectionsUpdateResponseResultTotalTracesSyncedMax = 2147483647;
 
-export const integrationsConnectionsUpdateResponseTotalScoresSyncedMin = 0;
-export const integrationsConnectionsUpdateResponseTotalScoresSyncedMax = 2147483647;
+export const integrationsConnectionsUpdateResponseResultTotalSpansSyncedMin = 0;
+export const integrationsConnectionsUpdateResponseResultTotalSpansSyncedMax = 2147483647;
 
-export const integrationsConnectionsUpdateResponseSyncIntervalSecondsMin = 60;
-export const integrationsConnectionsUpdateResponseSyncIntervalSecondsMax = 1800;
+export const integrationsConnectionsUpdateResponseResultTotalScoresSyncedMin = 0;
+export const integrationsConnectionsUpdateResponseResultTotalScoresSyncedMax = 2147483647;
 
 
 
 export const IntegrationsConnectionsUpdateResponse = zod.object({
+  "status": zod.boolean().default(integrationsConnectionsUpdateResponseStatusDefault),
+  "result": zod.object({
   "id": zod.string().uuid().optional(),
   "platform": zod.enum(['langfuse', 'datadog', 'posthog', 'pagerduty', 'mixpanel', 'cloud_storage', 'message_queue', 'linear']),
-  "display_name": zod.string().min(1).max(integrationsConnectionsUpdateResponseDisplayNameMax),
-  "host_url": zod.string().url().min(1).max(integrationsConnectionsUpdateResponseHostUrlMax),
+  "display_name": zod.string().min(1).max(integrationsConnectionsUpdateResponseResultDisplayNameMax),
+  "host_url": zod.string().url().min(1).max(integrationsConnectionsUpdateResponseResultHostUrlMax),
   "status": zod.enum(['active', 'paused', 'error', 'syncing', 'backfilling']).optional(),
   "status_message": zod.string().optional(),
-  "external_project_name": zod.string().min(1).max(integrationsConnectionsUpdateResponseExternalProjectNameMax),
+  "external_project_name": zod.string().min(1).max(integrationsConnectionsUpdateResponseResultExternalProjectNameMax),
+  "project": zod.string().uuid().optional(),
+  "project_name": zod.string().optional(),
+  "public_key_display": zod.string().optional(),
+  "secret_key_display": zod.string().optional(),
   "last_synced_at": zod.string().datetime({"offset":true}).optional(),
-  "total_traces_synced": zod.number().min(integrationsConnectionsUpdateResponseTotalTracesSyncedMin).max(integrationsConnectionsUpdateResponseTotalTracesSyncedMax).optional(),
-  "total_spans_synced": zod.number().min(integrationsConnectionsUpdateResponseTotalSpansSyncedMin).max(integrationsConnectionsUpdateResponseTotalSpansSyncedMax).optional(),
-  "total_scores_synced": zod.number().min(integrationsConnectionsUpdateResponseTotalScoresSyncedMin).max(integrationsConnectionsUpdateResponseTotalScoresSyncedMax).optional(),
+  "sync_cursor": zod.object({
+
+}).passthrough().optional(),
+  "sync_interval_seconds": zod.number().min(integrationsConnectionsUpdateResponseResultSyncIntervalSecondsMin).max(integrationsConnectionsUpdateResponseResultSyncIntervalSecondsMax).optional(),
+  "last_error_notified_at": zod.string().datetime({"offset":true}).optional(),
+  "backfill_from": zod.string().datetime({"offset":true}).optional(),
   "backfill_completed": zod.boolean().optional(),
   "backfill_progress": zod.object({
 
 }).passthrough().optional(),
-  "sync_interval_seconds": zod.number().min(integrationsConnectionsUpdateResponseSyncIntervalSecondsMin).max(integrationsConnectionsUpdateResponseSyncIntervalSecondsMax).optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional()
+  "total_traces_synced": zod.number().min(integrationsConnectionsUpdateResponseResultTotalTracesSyncedMin).max(integrationsConnectionsUpdateResponseResultTotalTracesSyncedMax).optional(),
+  "total_spans_synced": zod.number().min(integrationsConnectionsUpdateResponseResultTotalSpansSyncedMin).max(integrationsConnectionsUpdateResponseResultTotalSpansSyncedMax).optional(),
+  "total_scores_synced": zod.number().min(integrationsConnectionsUpdateResponseResultTotalScoresSyncedMin).max(integrationsConnectionsUpdateResponseResultTotalScoresSyncedMax).optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "updated_at": zod.string().datetime({"offset":true}).optional(),
+  "created_by": zod.string().uuid().optional()
+})
 })
 
 
@@ -14183,7 +14182,8 @@ export const ModelHubAnnotationsLabelsListQueryParams = zod.object({
   "type": zod.enum(['text', 'numeric', 'categorical', 'star', 'thumbs_up_down']).optional(),
   "search": zod.string().optional(),
   "include_usage_count": zod.boolean().optional(),
-  "include_archived": zod.boolean().optional()
+  "include_archived": zod.boolean().optional(),
+  "archived": zod.boolean().optional()
 })
 
 export const modelHubAnnotationsLabelsListResponseNameMax = 255;
@@ -14203,7 +14203,8 @@ export const ModelHubAnnotationsLabelsListResponseItem = zod.object({
   "allow_notes": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "trace_annotations_count": zod.number().optional(),
-  "annotation_count": zod.number().optional()
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
 })
 export const ModelHubAnnotationsLabelsListResponse = zod.array(ModelHubAnnotationsLabelsListResponseItem)
 
@@ -14248,7 +14249,8 @@ export const ModelHubAnnotationsLabelsReadResponse = zod.object({
   "allow_notes": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "trace_annotations_count": zod.number().optional(),
-  "annotation_count": zod.number().optional()
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
 })
 
 
@@ -14288,7 +14290,8 @@ export const ModelHubAnnotationsLabelsUpdateResponse = zod.object({
   "allow_notes": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "trace_annotations_count": zod.number().optional(),
-  "annotation_count": zod.number().optional()
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
 })
 
 
@@ -14328,7 +14331,8 @@ export const ModelHubAnnotationsLabelsPartialUpdateResponse = zod.object({
   "allow_notes": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "trace_annotations_count": zod.number().optional(),
-  "annotation_count": zod.number().optional()
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
 })
 
 
@@ -14368,7 +14372,8 @@ export const ModelHubAnnotationsLabelsRestoreResponse = zod.object({
   "allow_notes": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "trace_annotations_count": zod.number().optional(),
-  "annotation_count": zod.number().optional()
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
 })
 })
 
@@ -17961,11 +17966,14 @@ export const ModelHubDevelopsGetDatasetTableListQueryParams = zod.object({
 
 
 
+
 export const ModelHubDevelopsGetDatasetTableListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "metadata": zod.object({
   "dataset_name": zod.string().min(1),
+  "experiment_id": zod.string().uuid().optional(),
+  "experiment_name": zod.string().min(1).optional(),
   "total_rows": zod.number().optional(),
   "total_pages": zod.number().optional(),
   "error_messages": zod.array(zod.string().min(1)).optional(),
@@ -18358,11 +18366,14 @@ export const ModelHubDevelopsGetExperimentDatasetTableListParams = zod.object({
 
 
 
+
 export const ModelHubDevelopsGetExperimentDatasetTableListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "metadata": zod.object({
   "dataset_name": zod.string().min(1),
+  "experiment_id": zod.string().uuid().optional(),
+  "experiment_name": zod.string().min(1).optional(),
   "total_rows": zod.number().optional(),
   "total_pages": zod.number().optional(),
   "error_messages": zod.array(zod.string().min(1)).optional(),
@@ -18491,7 +18502,11 @@ export const ModelHubEmbeddingsReadResponse = zod.object({
 
 
 /**
- * List all eval groups for the user's organization
+ * Pure routing: three independent bulk reads in this method (main
+EvalGroup queryset, EvalGroup.eval_templates through-table, and
+EvalTemplate) all route to DATABASE_FOR_EVAL_GROUP_LIST when
+"feature:eval_group_list" is opted in. No query semantics change.
+ * @summary List all eval groups for the user's organization.
  */
 export const ModelHubEvalGroupsListQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -18856,16 +18871,14 @@ export const ModelHubEvalSummaryTemplatesDeleteResponse = zod.object({
 
 export const modelHubEvalTemplateCreateCreateBodyNameMax = 50;
 
-export const modelHubEvalTemplateCreateCreateBodyOwnerDefault = `system`;
-export const modelHubEvalTemplateCreateCreateBodyOwnerMax = 50;
-
+export const modelHubEvalTemplateCreateCreateBodyOwnerDefault = `user`;
 export const modelHubEvalTemplateCreateCreateBodyEvalTagsItemMax = 100;
 
 
 
 export const ModelHubEvalTemplateCreateCreateBody = zod.object({
   "name": zod.string().min(1).max(modelHubEvalTemplateCreateCreateBodyNameMax),
-  "owner": zod.string().min(1).max(modelHubEvalTemplateCreateCreateBodyOwnerMax).default(modelHubEvalTemplateCreateCreateBodyOwnerDefault),
+  "owner": zod.enum(['system', 'user']).default(modelHubEvalTemplateCreateCreateBodyOwnerDefault),
   "config": zod.object({
 
 }).passthrough(),
@@ -19014,6 +19027,9 @@ export const ModelHubEvalTemplatesCreateCompositeCreateBody = zod.object({
   "aggregation_enabled": zod.boolean().default(modelHubEvalTemplatesCreateCompositeCreateBodyAggregationEnabledDefault),
   "aggregation_function": zod.enum(['weighted_avg', 'avg', 'min', 'max', 'pass_rate']).default(modelHubEvalTemplatesCreateCompositeCreateBodyAggregationFunctionDefault),
   "child_weights": zod.object({
+
+}).passthrough().optional(),
+  "child_pinned_versions": zod.object({
 
 }).passthrough().optional(),
   "composite_child_axis": zod.enum(['', 'pass_fail', 'percentage', 'choices', 'code']).default(modelHubEvalTemplatesCreateCompositeCreateBodyCompositeChildAxisDefault)
@@ -19173,6 +19189,9 @@ export const modelHubEvalTemplatesListCreateBodyPageSizeMax = 100;
 export const modelHubEvalTemplatesListCreateBodyOwnerFilterDefault = `all`;
 
 
+
+
+
 export const modelHubEvalTemplatesListCreateBodySortByDefault = `updated_at`;
 export const modelHubEvalTemplatesListCreateBodySortOrderDefault = `desc`;
 
@@ -19183,11 +19202,17 @@ export const ModelHubEvalTemplatesListCreateBody = zod.object({
   "owner_filter": zod.enum(['all', 'user', 'system']).default(modelHubEvalTemplatesListCreateBodyOwnerFilterDefault),
   "filters": zod.object({
   "eval_type": zod.array(zod.enum(['llm', 'code', 'agent'])).optional(),
+  "eval_type_not": zod.array(zod.enum(['llm', 'code', 'agent'])).optional(),
   "output_type": zod.array(zod.enum(['pass_fail', 'percentage', 'deterministic'])).optional(),
+  "output_type_not": zod.array(zod.enum(['pass_fail', 'percentage', 'deterministic'])).optional(),
   "template_type": zod.array(zod.enum(['single', 'composite'])).optional(),
+  "template_type_not": zod.array(zod.enum(['single', 'composite'])).optional(),
   "tags": zod.array(zod.string().min(1)).optional(),
+  "tags_not": zod.array(zod.string().min(1)).optional(),
   "created_by": zod.array(zod.string().min(1)).optional(),
-  "names": zod.array(zod.string().min(1)).optional()
+  "created_by_not": zod.array(zod.string().min(1)).optional(),
+  "names": zod.array(zod.string().min(1)).optional(),
+  "names_not": zod.array(zod.string().min(1)).optional()
 }).optional(),
   "sort_by": zod.enum(['name', 'updated_at', 'created_at']).default(modelHubEvalTemplatesListCreateBodySortByDefault),
   "sort_order": zod.enum(['asc', 'desc']).default(modelHubEvalTemplatesListCreateBodySortOrderDefault)
@@ -19308,6 +19333,9 @@ export const ModelHubEvalTemplatesCompositePartialUpdateBody = zod.object({
   "aggregation_function": zod.enum(['weighted_avg', 'avg', 'min', 'max', 'pass_rate']).optional(),
   "child_template_ids": zod.array(zod.string().uuid()).optional(),
   "child_weights": zod.object({
+
+}).passthrough().optional(),
+  "child_pinned_versions": zod.object({
 
 }).passthrough().optional(),
   "composite_child_axis": zod.enum(['', 'pass_fail', 'percentage', 'choices', 'code']).optional()
@@ -21702,7 +21730,7 @@ export const modelHubGetEvalLogsDetailsListQueryCurrentPageIndexDefault = 0;
 export const modelHubGetEvalLogsDetailsListQueryCurrentPageIndexMin = 0;
 
 export const modelHubGetEvalLogsDetailsListQuerySourceDefault = `logs`;
-export const modelHubGetEvalLogsDetailsListQuerySearchDefault = ``;
+export const modelHubGetEvalLogsDetailsListQuerySearchDefault = {  };
 export const modelHubGetEvalLogsDetailsListQueryFiltersDefault = `[]`;
 
 export const modelHubGetEvalLogsDetailsListQuerySortDefault = `[]`;
@@ -22194,7 +22222,8 @@ export const ModelHubKbUpdateResponse = zod.object({
 
 
 /**
- * ViewSet for handling KnowledgeBase operations.
+ * Partially update a knowledge base.
+ * @summary Partially update a knowledge base.
  */
 export const ModelHubKbPartialUpdateParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this knowledge base.')
@@ -22213,21 +22242,21 @@ export const ModelHubKbPartialUpdateBody = zod.object({
   "chunk_size": zod.number().min(modelHubKbPartialUpdateBodyChunkSizeMin).max(modelHubKbPartialUpdateBodyChunkSizeMax)
 })
 
-export const modelHubKbPartialUpdateResponseNameMax = 2000;
 
-export const modelHubKbPartialUpdateResponseChunkSizeMin = 0;
-export const modelHubKbPartialUpdateResponseChunkSizeMax = 2147483647;
 
 
 
 export const ModelHubKbPartialUpdateResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "name": zod.string().min(1).max(modelHubKbPartialUpdateResponseNameMax),
-  "embedding_model": zod.enum(['BAAI/bge-small-en-v1.5']).optional(),
-  "chunk_size": zod.number().min(modelHubKbPartialUpdateResponseChunkSizeMin).max(modelHubKbPartialUpdateResponseChunkSizeMax),
-  "organization": zod.string().uuid().optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional()
+  "status": zod.boolean(),
+  "result": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "embedding_model": zod.string().min(1),
+  "chunk_size": zod.number(),
+  "organization": zod.string().uuid(),
+  "created_at": zod.string().datetime({"offset":true}),
+  "updated_at": zod.string().datetime({"offset":true})
+})
 })
 
 
@@ -27405,7 +27434,6 @@ export const SimulateAgentDefinitionsReadParams = zod.object({
 
 
 
-
 export const SimulateAgentDefinitionsReadResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "agent_name": zod.string().min(1).optional().describe('Name of the AI agent'),
@@ -27425,7 +27453,7 @@ export const SimulateAgentDefinitionsReadResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "knowledge_base": zod.string().uuid().optional(),
   "organization": zod.string().uuid().optional().describe('Organization this agent definition belongs to'),
-  "api_key": zod.string().min(1).optional().describe('API key for the agent'),
+  "api_key": zod.string().optional(),
   "observability_provider": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
@@ -27512,7 +27540,6 @@ export const SimulateAgentDefinitionsEditUpdateBody = zod.object({
 
 
 
-
 export const SimulateAgentDefinitionsEditUpdateResponse = zod.object({
   "message": zod.string().min(1).optional(),
   "agent": zod.object({
@@ -27534,7 +27561,7 @@ export const SimulateAgentDefinitionsEditUpdateResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "knowledge_base": zod.string().uuid().optional(),
   "organization": zod.string().uuid().optional().describe('Organization this agent definition belongs to'),
-  "api_key": zod.string().min(1).optional().describe('API key for the agent'),
+  "api_key": zod.string().optional(),
   "observability_provider": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
@@ -27938,7 +27965,6 @@ export const SimulateApiAgentDefinitionOperationsListQueryParams = zod.object({
 
 
 
-
 export const SimulateApiAgentDefinitionOperationsListResponse = zod.object({
   "count": zod.number(),
   "next": zod.string().url().optional(),
@@ -27962,7 +27988,7 @@ export const SimulateApiAgentDefinitionOperationsListResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "knowledge_base": zod.string().uuid().optional(),
   "organization": zod.string().uuid().optional().describe('Organization this agent definition belongs to'),
-  "api_key": zod.string().min(1).optional().describe('API key for the agent'),
+  "api_key": zod.string().optional(),
   "observability_provider": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
@@ -28072,7 +28098,6 @@ export const SimulateApiAgentDefinitionOperationsReadParams = zod.object({
 
 
 
-
 export const SimulateApiAgentDefinitionOperationsReadResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "agent_name": zod.string().min(1).optional().describe('Name of the AI agent'),
@@ -28092,7 +28117,7 @@ export const SimulateApiAgentDefinitionOperationsReadResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "knowledge_base": zod.string().uuid().optional(),
   "organization": zod.string().uuid().optional().describe('Organization this agent definition belongs to'),
-  "api_key": zod.string().min(1).optional().describe('API key for the agent'),
+  "api_key": zod.string().optional(),
   "observability_provider": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
@@ -30205,7 +30230,10 @@ export const SimulateCallExecutionsReadResponse = zod.object({
   "agent_definition_used_id": zod.string().uuid().optional(),
   "call_summary": zod.string().optional().describe('Call summary from the service'),
   "recordings": zod.string().optional(),
+  "test_execution_id": zod.string().uuid().optional(),
   "scenario_id": zod.string().optional(),
+  "scenario_graph": zod.string().optional(),
+  "scenario_graph_id": zod.string().optional(),
   "avg_agent_latency": zod.number().optional(),
   "avg_agent_latency_ms": zod.number().min(simulateCallExecutionsReadResponseAvgAgentLatencyMsMin).max(simulateCallExecutionsReadResponseAvgAgentLatencyMsMax).optional().describe('Average agent latency in milliseconds (time taken by agent to respond after user\'s pause)'),
   "user_interruption_count": zod.number().min(simulateCallExecutionsReadResponseUserInterruptionCountMin).max(simulateCallExecutionsReadResponseUserInterruptionCountMax).optional().describe('Number of times user interrupted the AI'),
@@ -35158,7 +35186,9 @@ export const TracerEvalTaskListResponse = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskListResponseResultsItemFiltersDateRangeMin).max(tracerEvalTaskListResponseResultsItemFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35214,7 +35244,9 @@ export const TracerEvalTaskCreateBody = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskCreateBodyFiltersDateRangeMin).max(tracerEvalTaskCreateBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35276,7 +35308,9 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDateRangeMin).max(tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35342,7 +35376,9 @@ export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersDateRangeMin).max(tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35408,7 +35444,9 @@ export const TracerEvalTaskGetUsageResponse = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskGetUsageResponseResultsItemFiltersDateRangeMin).max(tracerEvalTaskGetUsageResponseResultsItemFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35489,7 +35527,9 @@ export const TracerEvalTaskListEvalTasksResponseItem = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskListEvalTasksResponseFiltersDateRangeMin).max(tracerEvalTaskListEvalTasksResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35570,7 +35610,9 @@ export const TracerEvalTaskListEvalTasksWithProjectNameResponseItem = zod.object
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskListEvalTasksWithProjectNameResponseFiltersDateRangeMin).max(tracerEvalTaskListEvalTasksWithProjectNameResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35626,7 +35668,9 @@ export const TracerEvalTaskMarkEvalTasksDeletedBody = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskMarkEvalTasksDeletedBodyFiltersDateRangeMin).max(tracerEvalTaskMarkEvalTasksDeletedBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35678,7 +35722,9 @@ export const TracerEvalTaskPauseEvalTaskBody = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskPauseEvalTaskBodyFiltersDateRangeMin).max(tracerEvalTaskPauseEvalTaskBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35730,7 +35776,9 @@ export const TracerEvalTaskUnpauseEvalTaskBody = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskUnpauseEvalTaskBodyFiltersDateRangeMin).max(tracerEvalTaskUnpauseEvalTaskBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35787,7 +35835,9 @@ export const TracerEvalTaskUpdateEvalTaskBody = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskUpdateEvalTaskBodyFiltersDateRangeMin).max(tracerEvalTaskUpdateEvalTaskBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35839,7 +35889,9 @@ export const TracerEvalTaskUpdateEvalTaskResponse = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskUpdateEvalTaskResponseFiltersDateRangeMin).max(tracerEvalTaskUpdateEvalTaskResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35899,7 +35951,9 @@ export const TracerEvalTaskReadResponse = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskReadResponseFiltersDateRangeMin).max(tracerEvalTaskReadResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35958,7 +36012,9 @@ export const TracerEvalTaskUpdateBody = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskUpdateBodyFiltersDateRangeMin).max(tracerEvalTaskUpdateBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -36010,7 +36066,9 @@ export const TracerEvalTaskUpdateResponse = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskUpdateResponseFiltersDateRangeMin).max(tracerEvalTaskUpdateResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -36069,7 +36127,9 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskPartialUpdateBodyFiltersDateRangeMin).max(tracerEvalTaskPartialUpdateBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -36121,7 +36181,9 @@ export const TracerEvalTaskPartialUpdateResponse = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskPartialUpdateResponseFiltersDateRangeMin).max(tracerEvalTaskPartialUpdateResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -36486,6 +36548,7 @@ export const tracerFeedIssuesCreateLinearIssueCreateBodyPriorityDefault = 0;
 
 export const TracerFeedIssuesCreateLinearIssueCreateBody = zod.object({
   "team_id": zod.string().min(1),
+  "trace_id": zod.string().uuid().optional(),
   "title": zod.string().optional(),
   "description": zod.string().optional(),
   "priority": zod.number().default(tracerFeedIssuesCreateLinearIssueCreateBodyPriorityDefault)

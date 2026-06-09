@@ -9665,15 +9665,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "put": {
         "operationId": "integrations_connections_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/IntegrationConnectionList"
+          "$ref": "#/definitions/IntegrationConnectionUpdate"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/IntegrationConnectionList"
+            "$ref": "#/definitions/IntegrationConnectionDetailResponse"
           },
           "400": {
             "$ref": "#/definitions/IntegrationErrorResponse"
@@ -12266,6 +12266,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             }
           },
           "include_archived": {
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          "archived": {
             "required": false,
             "schema": {
               "type": "boolean"
@@ -20023,7 +20029,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "required": false,
             "schema": {
               "type": "string",
-              "default": ""
+              "default": {}
             }
           },
           "filters": {
@@ -20698,15 +20704,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "patch": {
         "operationId": "model-hub_kb_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/KnowledgeBase"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/KnowledgeBase"
+            "$ref": "#/definitions/KnowledgeBaseResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -43668,11 +43689,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "api_key": {
           "title": "Api key",
-          "description": "API key for the agent",
           "type": "string",
-          "readOnly": true,
-          "minLength": 1,
-          "x-nullable": true
+          "readOnly": true
         },
         "observability_provider": {
           "title": "Observability provider",
@@ -46583,6 +46601,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Annotation count",
           "type": "integer",
           "readOnly": true
+        },
+        "archived": {
+          "title": "Archived",
+          "type": "boolean",
+          "readOnly": true
         }
       }
     },
@@ -48019,8 +48042,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "readOnly": true
         },
+        "test_execution_id": {
+          "title": "Test execution id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
         "scenario_id": {
           "title": "Scenario id",
+          "type": "string",
+          "readOnly": true
+        },
+        "scenario_graph": {
+          "title": "Scenario graph",
+          "type": "string",
+          "readOnly": true
+        },
+        "scenario_graph_id": {
+          "title": "Scenario graph id",
           "type": "string",
           "readOnly": true
         },
@@ -49413,6 +49452,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "object",
           "x-nullable": true
         },
+        "child_pinned_versions": {
+          "title": "Child pinned versions",
+          "type": "object",
+          "x-nullable": true
+        },
         "composite_child_axis": {
           "title": "Composite child axis",
           "type": "string",
@@ -49582,6 +49626,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "child_weights": {
           "title": "Child weights",
+          "type": "object",
+          "x-nullable": true
+        },
+        "child_pinned_versions": {
+          "title": "Child pinned versions",
           "type": "object",
           "x-nullable": true
         },
@@ -49778,6 +49827,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Team id",
           "type": "string",
           "minLength": 1
+        },
+        "trace_id": {
+          "title": "Trace id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
         },
         "title": {
           "title": "Title",
@@ -53723,8 +53778,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "description": "Lower-bound ISO timestamp for legacy task filters."
             },
             "session_id": {
-              "type": "string",
-              "description": "Trace session id to constrain the task."
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Trace session id(s) to constrain the task."
+            },
+            "trace_id": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Trace id(s) to constrain linked-source tasks."
+            },
+            "span_id": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Observation span id(s) to constrain linked-source tasks."
             },
             "observation_type": {
               "type": "array",
@@ -53906,9 +53978,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "owner": {
           "title": "Owner",
           "type": "string",
-          "default": "system",
-          "maxLength": 50,
-          "minLength": 1
+          "enum": [
+            "system",
+            "user"
+          ],
+          "default": "user"
         },
         "config": {
           "title": "Config",
@@ -57622,116 +57696,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/IntegrationConnectionDetail"
-        }
-      }
-    },
-    "IntegrationConnectionList": {
-      "required": [
-        "platform",
-        "display_name",
-        "host_url",
-        "external_project_name"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid",
-          "readOnly": true
-        },
-        "platform": {
-          "title": "Platform",
-          "type": "string",
-          "enum": [
-            "langfuse",
-            "datadog",
-            "posthog",
-            "pagerduty",
-            "mixpanel",
-            "cloud_storage",
-            "message_queue",
-            "linear"
-          ]
-        },
-        "display_name": {
-          "title": "Display name",
-          "type": "string",
-          "maxLength": 255,
-          "minLength": 1
-        },
-        "host_url": {
-          "title": "Host url",
-          "type": "string",
-          "format": "uri",
-          "maxLength": 500,
-          "minLength": 1
-        },
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "enum": [
-            "active",
-            "paused",
-            "error",
-            "syncing",
-            "backfilling"
-          ]
-        },
-        "status_message": {
-          "title": "Status message",
-          "type": "string",
-          "x-nullable": true
-        },
-        "external_project_name": {
-          "title": "External project name",
-          "type": "string",
-          "maxLength": 255,
-          "minLength": 1
-        },
-        "last_synced_at": {
-          "title": "Last synced at",
-          "type": "string",
-          "format": "date-time",
-          "x-nullable": true
-        },
-        "total_traces_synced": {
-          "title": "Total traces synced",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0
-        },
-        "total_spans_synced": {
-          "title": "Total spans synced",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0
-        },
-        "total_scores_synced": {
-          "title": "Total scores synced",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0
-        },
-        "backfill_completed": {
-          "title": "Backfill completed",
-          "type": "boolean"
-        },
-        "backfill_progress": {
-          "title": "Backfill progress",
-          "type": "object"
-        },
-        "sync_interval_seconds": {
-          "title": "Sync interval seconds",
-          "type": "integer",
-          "maximum": 1800,
-          "minimum": 60
-        },
-        "created_at": {
-          "title": "Created at",
-          "type": "string",
-          "format": "date-time",
-          "readOnly": true
         }
       }
     },
@@ -70887,7 +70851,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "project_version": {
           "title": "Project version",
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "x-nullable": true
         },
         "name": {
           "title": "Name",
@@ -70918,7 +70883,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "session": {
           "title": "Session",
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "x-nullable": true
         },
         "external_id": {
           "title": "External id",
@@ -79028,7 +78994,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "metadata": {
           "title": "Metadata",
-          "type": "object"
+          "type": "object",
+          "x-nullable": true
         },
         "log_id": {
           "title": "Log id",
@@ -79153,7 +79120,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
             ]
           }
         },
+        "eval_type_not": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "llm",
+              "code",
+              "agent"
+            ]
+          }
+        },
         "output_type": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "pass_fail",
+              "percentage",
+              "deterministic"
+            ]
+          }
+        },
+        "output_type_not": {
           "type": "array",
           "items": {
             "type": "string",
@@ -79174,7 +79163,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
             ]
           }
         },
+        "template_type_not": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "single",
+              "composite"
+            ]
+          }
+        },
         "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tags_not": {
           "type": "array",
           "items": {
             "type": "string",
@@ -79188,7 +79194,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "minLength": 1
           }
         },
+        "created_by_not": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "names": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "names_not": {
           "type": "array",
           "items": {
             "type": "string",
@@ -91292,6 +91312,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "minLength": 1
         },
+        "experiment_id": {
+          "title": "Experiment id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "experiment_name": {
+          "title": "Experiment name",
+          "type": "string",
+          "minLength": 1
+        },
         "total_rows": {
           "title": "Total rows",
           "type": "integer"
@@ -93514,6 +93544,116 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Error",
           "type": "string",
           "x-nullable": true
+        }
+      }
+    },
+    "IntegrationConnectionList": {
+      "required": [
+        "platform",
+        "display_name",
+        "host_url",
+        "external_project_name"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "platform": {
+          "title": "Platform",
+          "type": "string",
+          "enum": [
+            "langfuse",
+            "datadog",
+            "posthog",
+            "pagerduty",
+            "mixpanel",
+            "cloud_storage",
+            "message_queue",
+            "linear"
+          ]
+        },
+        "display_name": {
+          "title": "Display name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "host_url": {
+          "title": "Host url",
+          "type": "string",
+          "format": "uri",
+          "maxLength": 500,
+          "minLength": 1
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "active",
+            "paused",
+            "error",
+            "syncing",
+            "backfilling"
+          ]
+        },
+        "status_message": {
+          "title": "Status message",
+          "type": "string",
+          "x-nullable": true
+        },
+        "external_project_name": {
+          "title": "External project name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "last_synced_at": {
+          "title": "Last synced at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "total_traces_synced": {
+          "title": "Total traces synced",
+          "type": "integer",
+          "maximum": 2147483647,
+          "minimum": 0
+        },
+        "total_spans_synced": {
+          "title": "Total spans synced",
+          "type": "integer",
+          "maximum": 2147483647,
+          "minimum": 0
+        },
+        "total_scores_synced": {
+          "title": "Total scores synced",
+          "type": "integer",
+          "maximum": 2147483647,
+          "minimum": 0
+        },
+        "backfill_completed": {
+          "title": "Backfill completed",
+          "type": "boolean"
+        },
+        "backfill_progress": {
+          "title": "Backfill progress",
+          "type": "object"
+        },
+        "sync_interval_seconds": {
+          "title": "Sync interval seconds",
+          "type": "integer",
+          "maximum": 1800,
+          "minimum": 60
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true
         }
       }
     },

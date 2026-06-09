@@ -5,6 +5,9 @@
   "description": "Vite Starter & JavaScript",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "scripts": {
     "dev": "vite",
     "start": "vite preview",

@@ -266,10 +266,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     serializer_class = EvalTaskSerializer
 
     def _get_request_organization(self):
-        return (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        # Returns None for unauthenticated requests (e.g. drf-yasg's fake view
+        # during OpenAPI generation) instead of raising on AnonymousUser, which
+        # would otherwise silently drop request bodies from the generated schema.
+        org = getattr(self.request, "organization", None)
+        if org is not None:
+            return org
+        user = getattr(self.request, "user", None)
+        if user is None or not user.is_authenticated:
+            return None
+        return getattr(user, "organization", None)
 
     def _project_workspace_scope_q(self, organization_id):
         workspace = getattr(self.request, "workspace", None)
@@ -290,14 +296,20 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         return Q(project__workspace=workspace)
 
     def _scope_eval_task_queryset(self, queryset):
-        organization_id = self._get_request_organization().id
+        organization = self._get_request_organization()
+        if organization is None:
+            return queryset.none()
+        organization_id = organization.id
         return queryset.filter(
             project__organization_id=organization_id,
             project__deleted=False,
         ).filter(self._project_workspace_scope_q(organization_id))
 
     def _scope_project_queryset(self, queryset):
-        organization_id = self._get_request_organization().id
+        organization = self._get_request_organization()
+        if organization is None:
+            return queryset.none()
+        organization_id = organization.id
         workspace = getattr(self.request, "workspace", None)
         queryset = queryset.filter(organization_id=organization_id, deleted=False)
         if not workspace:
@@ -314,7 +326,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         return queryset.filter(workspace=workspace)
 
     def _scope_custom_eval_config_queryset(self, queryset, project_id=None):
-        organization_id = self._get_request_organization().id
+        organization = self._get_request_organization()
+        if organization is None:
+            return queryset.none()
+        organization_id = organization.id
         queryset = queryset.filter(
             deleted=False,
             project__organization_id=organization_id,

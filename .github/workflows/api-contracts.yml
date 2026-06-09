@@ -77,17 +77,53 @@ on:
 
 jobs:
   frontend-contracts:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
+    env:
+      EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
+      EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Require private EE checkout token
+        working-directory: .
+        run: |
+          if [ -z "${EE_REPO_READ_TOKEN}" ]; then
+            echo "::error::EE_REPO_READ_TOKEN is required for frontend contract CI because the runtime Management API contract debt report includes Enterprise routes."
+            exit 1
+          fi
+
+      - name: Checkout EE package
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/ee
+          path: futureagi/ee
+          token: ${{ env.EE_REPO_READ_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Use matching EE branch when available
+        working-directory: futureagi/ee
+        run: |
+          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
+            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
+            git checkout --detach FETCH_HEAD
+            echo "Using EE branch ${EE_REPO_BRANCH}"
+          else
+            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
+          fi
+
+      - name: Drop EE checkout credentials
+        working-directory: futureagi/ee
+        run: git config --unset-all http.https://github.com/.extraheader || true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20.17"
+          node-version: "22.18"
           cache: "yarn"
           cache-dependency-path: frontend/yarn.lock
 
@@ -128,7 +164,7 @@ jobs:
       redis:
         image: redis:7
         ports:
-          - 6379:6379
+          - 16379:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -144,6 +180,8 @@ jobs:
       PG_TEST_DB: test_tfc_test
       PG_USER: postgres
       PG_PASSWORD: postgres
+      CH_USE_REPLICATED_ENGINES: "false"
+      CH25_DROP_LEGACY_CDC_CHAIN: "true"
       TESTING: "false"
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
@@ -182,6 +220,24 @@ jobs:
         working-directory: futureagi/ee
         run: git config --unset-all http.https://github.com/.extraheader || true
 
+      - name: Start ClickHouse 25.3
+        run: |
+          docker run -d --name ch-test \
+            -p 18123:8123 -p 19000:9000 \
+            -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+            -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+            -e CLICKHOUSE_DB=test_tfc \
+            -v "$PWD/.ci/clickhouse-test-config.xml:/etc/clickhouse-server/config.d/test-overrides.xml:ro" \
+            -v "$PWD/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/001_storage_policy.xml:ro" \
+            clickhouse/clickhouse-server:25.3-alpine
+          for i in $(seq 1 30); do
+            if docker exec ch-test clickhouse-client --query 'SELECT 1' >/dev/null 2>&1; then
+              echo "ClickHouse ready"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::ClickHouse did not become ready"; docker logs ch-test | tail -50; exit 1
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -203,6 +259,8 @@ jobs:
           git diff --exit-code api_contracts/openapi/swagger.json
 
       - name: Run annotation/filter contract tests
+        env:
+          TESTING: "true"
         run: >
           uv run pytest -q --tb=line
           tracer/tests/test_filter_contract.py
