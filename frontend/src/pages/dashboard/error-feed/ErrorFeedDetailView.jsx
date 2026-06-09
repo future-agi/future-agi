@@ -29,7 +29,6 @@ import ClusterHeadlineCard from "./components/ClusterHeadlineCard";
 import AnalyzeTab from "./components/AnalyzeTab";
 import { useErrorFeedStore } from "./store";
 import { useAnalyzeRunner } from "./useAnalyzeRunner";
-import { isVoiceDemoCluster, voiceDemoDetail } from "./voiceDemoCluster";
 
 // ── Detail page skeleton ─────────────────────────────────────────────────────
 function DetailSkeleton() {
@@ -102,15 +101,7 @@ export default function ErrorFeedDetailView() {
   const setAnalyzePendingStart = useErrorFeedStore(
     (s) => s.setAnalyzePendingStart,
   );
-  // The synthetic voice demo cluster isn't on the backend — short-circuit
-  // the fetch and use the local mock instead.
-  const isVoiceDemo = isVoiceDemoCluster(id);
-  const { data: fetchedDetail, isLoading: isFetchLoading } = useErrorFeedDetail(
-    id,
-    { enabled: !isVoiceDemo },
-  );
-  const detail = isVoiceDemo ? voiceDemoDetail : fetchedDetail;
-  const isLoading = isVoiceDemo ? false : isFetchLoading;
+  const { data: detail, isLoading } = useErrorFeedDetail(id);
   const updateIssue = useUpdateErrorFeedIssue();
 
   const currentError = useMemo(() => {

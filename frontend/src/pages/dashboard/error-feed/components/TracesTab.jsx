@@ -4,7 +4,6 @@ import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import { useErrorFeedTraces } from "src/api/errorFeed/error-feed";
-import { isVoiceDemoCluster } from "../voiceDemoCluster";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
 import { PROJECT_SOURCE } from "src/utils/constants";
@@ -237,12 +236,7 @@ TracesGrid.propTypes = {
 export default function TracesTab({ error }) {
   const clusterId = error?.clusterId;
   const projectId = error?.projectId;
-  // Synthetic voice demo cluster isn't on the backend — skip the fetch.
-  const { data, isLoading } = useErrorFeedTraces(
-    clusterId,
-    { limit: 200 },
-    { enabled: !isVoiceDemoCluster(clusterId) },
-  );
+  const { data, isLoading } = useErrorFeedTraces(clusterId, { limit: 200 });
   const [drawerTraceId, setDrawerTraceId] = useState(null);
 
   // Sim/voice projects need the VAPI call drawer, not the generic trace drawer.

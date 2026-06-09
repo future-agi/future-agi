@@ -13,7 +13,6 @@ import {
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useErrorFeedTrends } from "src/api/errorFeed/error-feed";
-import { isVoiceDemoCluster } from "../voiceDemoCluster";
 
 // ── Events over time — dual-axis area + bars ────────────────────────────────
 function EventsLineChart({ eventsData }) {
@@ -564,10 +563,7 @@ MetricCards.propTypes = { metrics: PropTypes.array.isRequired };
 // ── Main TrendsTab ──────────────────────────────────────────────────────────
 export default function TrendsTab({ error }) {
   const clusterId = error?.clusterId;
-  // Synthetic voice demo cluster isn't on the backend — skip the fetch.
-  const { data, isLoading } = useErrorFeedTrends(clusterId, undefined, {
-    enabled: !isVoiceDemoCluster(clusterId),
-  });
+  const { data, isLoading } = useErrorFeedTrends(clusterId);
 
   if (isLoading || !data) {
     return (

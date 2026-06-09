@@ -24,7 +24,6 @@ import EvalIOPanel from "./EvalIOPanel";
 import VoiceEvalPanel from "./VoiceEvalPanel";
 import { buildGraphDiff } from "./buildGraphDiff";
 import { useErrorFeedStore } from "../store";
-import { isVoiceDemoCluster, voiceDemoOverview } from "../voiceDemoCluster";
 
 // ── Shared section card (collapsible) ────────────────────────────────────────
 function SectionCard({
@@ -720,7 +719,7 @@ function renderRichCaption(text) {
   });
 }
 
-function PatternSummary({ summary, clusterId }) {
+function PatternSummary({ summary }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   // Real BE-computed insights only (PRD §6.2). No stub fallback — an
@@ -728,22 +727,9 @@ function PatternSummary({ summary, clusterId }) {
   // fabricated demo cards.
   const insights = (summary?.insights ?? []).filter((i) => i && i.title);
 
-  if (!insights.length) {
-    const isEvalCluster =
-      typeof clusterId === "string" && clusterId.startsWith("E-");
-    const message = isEvalCluster
-      ? "No eval scores aggregated yet — this cluster's evaluations are still landing."
-      : "Not enough data yet — waiting for more scanner results.";
-    return (
-      <Typography
-        fontSize="11px"
-        color="text.disabled"
-        sx={{ py: 2, textAlign: "center" }}
-      >
-        {message}
-      </Typography>
-    );
-  }
+  // Parent hides the whole section when nothing fired; this is just a
+  // belt-and-braces guard for direct renders.
+  if (!insights.length) return null;
 
   // Render only the cards that fired — PRD §6.2: "Better to show 2 strong
   // than 4 with 2 weak." No greyed-out placeholders.
@@ -820,7 +806,6 @@ PatternSummary.propTypes = {
       }),
     ),
   }),
-  clusterId: PropTypes.string,
 };
 
 // ── Agent flow from real span tree ────────────────────────────────────────────
@@ -1074,15 +1059,13 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
   const passQ = useGetTraceDetail(workingTraceId);
 
   const failGraph = useMemo(() => {
-    const tree =
-      failQ.data?.observation_spans || failQ.data?.observationSpans;
+    const tree = failQ.data?.observation_spans || failQ.data?.observationSpans;
     if (!tree?.length) return null;
     return buildTraceGraph(tree);
   }, [failQ.data]);
 
   const passGraph = useMemo(() => {
-    const tree =
-      passQ.data?.observation_spans || passQ.data?.observationSpans;
+    const tree = passQ.data?.observation_spans || passQ.data?.observationSpans;
     if (!tree?.length) return null;
     return buildTraceGraph(tree);
   }, [passQ.data]);
@@ -1581,7 +1564,14 @@ BreadcrumbList.propTypes = {
 };
 
 // One side of the side-by-side comparison: a labeled column with steps inside.
-function ReelColumn({ title, headerMeta, accentColor, steps, isFailReel, emptyMessage }) {
+function ReelColumn({
+  title,
+  headerMeta,
+  accentColor,
+  steps,
+  isFailReel,
+  emptyMessage,
+}) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   return (
@@ -1645,15 +1635,27 @@ function ReelColumn({ title, headerMeta, accentColor, steps, isFailReel, emptyMe
       </Stack>
       <Box sx={{ flex: 1, px: 1.25, py: 1 }}>
         {steps.length > 0 ? (
-          <BreadcrumbList steps={steps} isFailReel={isFailReel} showFooter={false} />
+          <BreadcrumbList
+            steps={steps}
+            isFailReel={isFailReel}
+            showFooter={false}
+          />
         ) : (
-          <Stack alignItems="center" justifyContent="center" sx={{ p: 2.5, gap: 0.5 }}>
+          <Stack
+            alignItems="center"
+            justifyContent="center"
+            sx={{ p: 2.5, gap: 0.5 }}
+          >
             <Iconify
               icon="mdi:file-search-outline"
               width={20}
               sx={{ color: "text.disabled" }}
             />
-            <Typography fontSize="11.5px" color="text.disabled" sx={{ textAlign: "center" }}>
+            <Typography
+              fontSize="11.5px"
+              color="text.disabled"
+              sx={{ textAlign: "center" }}
+            >
               {emptyMessage}
             </Typography>
           </Stack>
@@ -1778,7 +1780,8 @@ function ReelTabs({ value, onChange }) {
                   ? alpha("#fff", 0.1)
                   : "#fff"
                 : "transparent",
-              boxShadow: isActive && !isDark ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
+              boxShadow:
+                isActive && !isDark ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
               transition: "all 0.15s",
             }}
           >
@@ -1846,7 +1849,8 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
   const cost =
     summary.cost ??
     ((summary.inputTokens ?? 0) * 0.000003 +
-      (summary.outputTokens ?? 0) * 0.000015 || null);
+      (summary.outputTokens ?? 0) * 0.000015 ||
+      null);
   const shortId = traceId ? traceId.slice(0, 8) : null;
   const isTraceFail = trace?.status !== "pass";
 
@@ -1918,7 +1922,11 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
             variant="outlined"
             startIcon={
               <Iconify
-                icon={splitView ? "mdi:view-sequential-outline" : "mdi:compare-horizontal"}
+                icon={
+                  splitView
+                    ? "mdi:view-sequential-outline"
+                    : "mdi:compare-horizontal"
+                }
                 width={13}
               />
             }
@@ -1961,7 +1969,12 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
             bgcolor: isDark ? alpha("#fff", 0.015) : alpha("#000", 0.012),
           }}
         >
-          <Stack direction="row" alignItems="center" gap={0.4} sx={{ flexShrink: 0 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            gap={0.4}
+            sx={{ flexShrink: 0 }}
+          >
             <Box
               sx={{
                 width: 6,
@@ -1990,7 +2003,11 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
               gap={0.4}
               sx={{ flexShrink: 0 }}
             >
-              <Iconify icon={m.icon} width={11} sx={{ color: "text.disabled" }} />
+              <Iconify
+                icon={m.icon}
+                width={11}
+                sx={{ color: "text.disabled" }}
+              />
               <Typography
                 fontSize="10.5px"
                 sx={{
@@ -2558,15 +2575,11 @@ export default function OverviewTab({ _error: currentError }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const clusterId = currentError?.clusterId;
-  // A cluster's modality (text vs voice) decides the per-trace surface.
-  // Voice comes from the synthetic demo cluster today; real voice clusters
-  // will carry `modality: "voice"` from BE once the voice pipeline lands.
+  // A cluster's modality (text vs voice) decides the per-trace surface —
+  // the BE derives it from the project's voice agent definition.
   const isVoice = currentError?.modality === "voice";
-  const isVoiceDemo = isVoiceDemoCluster(clusterId);
-  const { data: fetchedOverview, isLoading: isFetchOverviewLoading } =
-    useErrorFeedOverview(clusterId, { enabled: !isVoiceDemo });
-  const overview = isVoiceDemo ? voiceDemoOverview : fetchedOverview;
-  const isOverviewLoading = isVoiceDemo ? false : isFetchOverviewLoading;
+  const { data: overview, isLoading: isOverviewLoading } =
+    useErrorFeedOverview(clusterId);
   const traces = useMemo(
     () => overview?.representativeTraces ?? [],
     [overview],
@@ -2630,229 +2643,239 @@ export default function OverviewTab({ _error: currentError }) {
 
   return (
     <Stack gap={1.5} sx={{ minHeight: 0 }}>
-      {/* ── Patterns across the cluster (full-width, PRD §5.1) ── */}
-      <SectionCard
-        title="Patterns across the cluster"
-        icon="mdi:clipboard-text-outline"
-      >
-        <PatternSummary summary={patternSummary} clusterId={clusterId} />
-      </SectionCard>
-
-    <Box
-      ref={containerRef}
-      sx={{
-        display: "flex",
-        gap: 0,
-        height: "calc(100vh - 360px)",
-        minHeight: 420,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "8px",
-        overflow: "hidden",
-        bgcolor: isDark ? alpha("#fff", 0.015) : "background.paper",
-      }}
-    >
-      {/* ── LEFT PANEL: chart + trace list ── */}
-      <Stack
-        sx={{
-          width: leftWidth,
-          flexShrink: 0,
-          overflow: "hidden",
-        }}
-      >
-        {/* Events/Users chart — flat (no own border) */}
-        <Box
-          sx={{
-            flexShrink: 0,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
+      {/* ── Patterns across the cluster (full-width, PRD §5.1) ──
+          No insights cleared their statistical floor → no section at all,
+          not an empty shell. */}
+      {(patternSummary?.insights ?? []).some((i) => i && i.title) && (
+        <SectionCard
+          title="Patterns across the cluster"
+          icon="mdi:clipboard-text-outline"
         >
-          <EventsUsersChart
-            flat
-            data={eventsOverTime}
-            deployMarkers={[]}
-            loading={isOverviewLoading && !overview}
-          />
-        </Box>
+          <PatternSummary summary={patternSummary} />
+        </SectionCard>
+      )}
 
-        {/* Traces heading */}
-        <Stack
-          direction="row"
-          alignItems="center"
-          gap={0.75}
-          sx={{
-            px: 1.5,
-            py: 0.75,
-            flexShrink: 0,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Typography fontSize="11px" fontWeight={600} color="text.secondary">
-            Traces affected
-          </Typography>
-          {isOverviewLoading && !overview ? (
-            <Skeleton
-              width={28}
-              height={14}
-              sx={{
-                borderRadius: "4px",
-                bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.05),
-              }}
-            />
-          ) : (
-            <Typography
-              fontSize="11px"
-              fontWeight={600}
-              sx={{
-                color: "text.disabled",
-                bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.05),
-                px: 0.75,
-                py: 0.1,
-                borderRadius: "4px",
-              }}
-            >
-              {traces.length.toLocaleString()}
-            </Typography>
-          )}
-        </Stack>
-
-        {/* Scrollable trace list */}
-        <Box sx={{ flex: 1, overflow: "auto" }}>
-          <TraceList
-            traces={traces}
-            selectedIndex={traceIndex}
-            onSelect={selectTrace}
-            loading={isOverviewLoading && !overview}
-          />
-        </Box>
-      </Stack>
-
-      {/* ── DRAG HANDLE ── */}
       <Box
-        onMouseDown={(e) => {
-          e.preventDefault();
-          isDraggingRef.current = true;
-          document.body.style.cursor = "col-resize";
-          document.body.style.userSelect = "none";
-        }}
+        ref={containerRef}
         sx={{
-          width: 5,
-          flexShrink: 0,
-          cursor: "col-resize",
-          bgcolor: "transparent",
-          borderLeft: "1px solid",
+          display: "flex",
+          gap: 0,
+          height: "calc(100vh - 360px)",
+          minHeight: 420,
+          border: "1px solid",
           borderColor: "divider",
-          position: "relative",
-          transition: "background 0.15s",
-          "&:hover": {
-            bgcolor: isDark ? alpha("#7857FC", 0.18) : alpha("#7857FC", 0.1),
-          },
-          "&:hover .drag-dots": { opacity: 1 },
+          borderRadius: "8px",
+          overflow: "hidden",
+          bgcolor: isDark ? alpha("#fff", 0.015) : "background.paper",
         }}
       >
-        {/* Grip dots */}
+        {/* ── LEFT PANEL: chart + trace list ── */}
         <Stack
-          className="drag-dots"
-          alignItems="center"
-          justifyContent="center"
-          gap={0.4}
           sx={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            transform: "translate(-50%, -50%)",
-            opacity: 0,
-            transition: "opacity 0.15s",
+            width: leftWidth,
+            flexShrink: 0,
+            overflow: "hidden",
           }}
         >
-          {[0, 1, 2, 3, 4].map((i) => (
-            <Box
-              key={i}
-              sx={{
-                width: 3,
-                height: 3,
-                borderRadius: "50%",
-                bgcolor: isDark ? alpha("#fff", 0.35) : alpha("#000", 0.25),
-              }}
+          {/* Events/Users chart — flat (no own border) */}
+          <Box
+            sx={{
+              flexShrink: 0,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <EventsUsersChart
+              flat
+              data={eventsOverTime}
+              deployMarkers={[]}
+              loading={isOverviewLoading && !overview}
             />
-          ))}
-        </Stack>
-      </Box>
+          </Box>
 
-      {/* ── RIGHT PANEL: trace detail ── */}
-      <Box sx={{ flex: 1, minWidth: 0, overflow: "auto" }}>
-        {isOverviewLoading && !trace ? (
-          <Stack gap={1.5} sx={{ p: 1.75 }}>
-            <Skeleton
-              variant="rectangular"
-              height={56}
-              sx={{ borderRadius: "6px" }}
-            />
-            <Skeleton
-              variant="rectangular"
-              height={140}
-              sx={{ borderRadius: "8px" }}
-            />
-            <Skeleton
-              variant="rectangular"
-              height={260}
-              sx={{ borderRadius: "8px" }}
-            />
-            <Skeleton
-              variant="rectangular"
-              height={200}
-              sx={{ borderRadius: "8px" }}
-            />
-          </Stack>
-        ) : !trace ? (
+          {/* Traces heading */}
           <Stack
+            direction="row"
+            alignItems="center"
+            gap={0.75}
+            sx={{
+              px: 1.5,
+              py: 0.75,
+              flexShrink: 0,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography fontSize="11px" fontWeight={600} color="text.secondary">
+              Traces affected
+            </Typography>
+            {isOverviewLoading && !overview ? (
+              <Skeleton
+                width={28}
+                height={14}
+                sx={{
+                  borderRadius: "4px",
+                  bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.05),
+                }}
+              />
+            ) : (
+              <Typography
+                fontSize="11px"
+                fontWeight={600}
+                sx={{
+                  color: "text.disabled",
+                  bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.05),
+                  px: 0.75,
+                  py: 0.1,
+                  borderRadius: "4px",
+                }}
+              >
+                {traces.length.toLocaleString()}
+              </Typography>
+            )}
+          </Stack>
+
+          {/* Scrollable trace list */}
+          <Box sx={{ flex: 1, overflow: "auto" }}>
+            <TraceList
+              traces={traces}
+              selectedIndex={traceIndex}
+              onSelect={selectTrace}
+              loading={isOverviewLoading && !overview}
+            />
+          </Box>
+        </Stack>
+
+        {/* ── DRAG HANDLE ── */}
+        <Box
+          onMouseDown={(e) => {
+            e.preventDefault();
+            isDraggingRef.current = true;
+            document.body.style.cursor = "col-resize";
+            document.body.style.userSelect = "none";
+          }}
+          sx={{
+            width: 5,
+            flexShrink: 0,
+            cursor: "col-resize",
+            bgcolor: "transparent",
+            borderLeft: "1px solid",
+            borderColor: "divider",
+            position: "relative",
+            transition: "background 0.15s",
+            "&:hover": {
+              bgcolor: isDark ? alpha("#7857FC", 0.18) : alpha("#7857FC", 0.1),
+            },
+            "&:hover .drag-dots": { opacity: 1 },
+          }}
+        >
+          {/* Grip dots */}
+          <Stack
+            className="drag-dots"
             alignItems="center"
             justifyContent="center"
-            sx={{ height: "100%", p: 4 }}
+            gap={0.4}
+            sx={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              opacity: 0,
+              transition: "opacity 0.15s",
+            }}
           >
-            <Iconify
-              icon="mdi:file-search-outline"
-              width={40}
-              sx={{ color: "text.disabled", mb: 1.5 }}
-            />
-            <Typography fontSize="13px" color="text.disabled">
-              No trace evidence available for this cluster yet.
-            </Typography>
+            {[0, 1, 2, 3, 4].map((i) => (
+              <Box
+                key={i}
+                sx={{
+                  width: 3,
+                  height: 3,
+                  borderRadius: "50%",
+                  bgcolor: isDark ? alpha("#fff", 0.35) : alpha("#000", 0.25),
+                }}
+              />
+            ))}
           </Stack>
-        ) : (
-          <Stack gap={1.5} sx={{ p: 1.75 }}>
-            {/* Per-trace surface — scanner clusters get breadcrumb-style
+        </Box>
+
+        {/* ── RIGHT PANEL: trace detail ── */}
+        <Box sx={{ flex: 1, minWidth: 0, overflow: "auto" }}>
+          {isOverviewLoading && !trace ? (
+            <Stack gap={1.5} sx={{ p: 1.75 }}>
+              <Skeleton
+                variant="rectangular"
+                height={56}
+                sx={{ borderRadius: "6px" }}
+              />
+              <Skeleton
+                variant="rectangular"
+                height={140}
+                sx={{ borderRadius: "8px" }}
+              />
+              <Skeleton
+                variant="rectangular"
+                height={260}
+                sx={{ borderRadius: "8px" }}
+              />
+              <Skeleton
+                variant="rectangular"
+                height={200}
+                sx={{ borderRadius: "8px" }}
+              />
+            </Stack>
+          ) : !trace ? (
+            <Stack
+              alignItems="center"
+              justifyContent="center"
+              sx={{ height: "100%", p: 4 }}
+            >
+              <Iconify
+                icon="mdi:file-search-outline"
+                width={40}
+                sx={{ color: "text.disabled", mb: 1.5 }}
+              />
+              <Typography fontSize="13px" color="text.disabled">
+                No trace evidence available for this cluster yet.
+              </Typography>
+            </Stack>
+          ) : (
+            <Stack gap={1.5} sx={{ p: 1.75 }}>
+              {/* Per-trace surface — scanner clusters get breadcrumb-style
                 Trace Evidence (Breadcrumb / Agent Graph / Agent Path toggle,
                 PRD §6.3 Variant A; the graph modes reuse the real Observe
                 trace-graph components); eval clusters get the I/O panel. */}
-            {currentError?.source === "eval" ? (
-              <SectionCard
-                title={isVoice ? "Voice call" : "Input / Output"}
-                icon={isVoice ? "mdi:phone-outline" : "mdi:code-tags"}
-                collapsible
-              >
-                {isVoice ? (
-                  <VoiceEvalPanel trace={trace} evalScore={trace?.evalScore} />
-                ) : (
-                  <EvalIOPanel trace={trace} evalScore={trace?.evalScore} />
-                )}
-              </SectionCard>
-            ) : (
-              // Trace Evidence — dense, observability-style standout card.
-              <TraceEvidence
-                evidence={trace.evidence ?? {}}
-                trace={trace}
-                traceId={trace.id}
-                workingTraceId={currentError?.successTrace?.traceId}
-              />
-            )}
-
-          </Stack>
-        )}
+              {currentError?.source === "eval" ? (
+                <SectionCard
+                  title={isVoice ? "Voice call" : "Input / Output"}
+                  icon={isVoice ? "mdi:phone-outline" : "mdi:code-tags"}
+                  collapsible
+                >
+                  {isVoice ? (
+                    <VoiceEvalPanel
+                      trace={trace}
+                      evalScore={trace?.evalScore}
+                      successTraceId={
+                        currentError?.successTrace?.traceId ??
+                        currentError?.successTrace?.trace_id
+                      }
+                    />
+                  ) : (
+                    <EvalIOPanel trace={trace} evalScore={trace?.evalScore} />
+                  )}
+                </SectionCard>
+              ) : (
+                // Trace Evidence — dense, observability-style standout card.
+                <TraceEvidence
+                  evidence={trace.evidence ?? {}}
+                  trace={trace}
+                  traceId={trace.id}
+                  workingTraceId={currentError?.successTrace?.traceId}
+                />
+              )}
+            </Stack>
+          )}
+        </Box>
       </Box>
-    </Box>
     </Stack>
   );
 }
@@ -2861,6 +2884,10 @@ OverviewTab.propTypes = {
   _error: PropTypes.shape({
     clusterId: PropTypes.string,
     source: PropTypes.string,
-    projectId: PropTypes.string,
+    modality: PropTypes.string,
+    successTrace: PropTypes.shape({
+      traceId: PropTypes.string,
+      trace_id: PropTypes.string,
+    }),
   }),
 };

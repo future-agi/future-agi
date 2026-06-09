@@ -30,7 +30,6 @@ import {
 import { useOrgMembers } from "src/api/annotation-queues/annotation-queues";
 import { useAuthContext } from "src/auth/hooks";
 import { useErrorFeedStore } from "../store";
-import { isVoiceDemoCluster } from "../voiceDemoCluster";
 import PropTypes from "prop-types";
 
 const humanizeTime = (iso) => {
@@ -1180,12 +1179,9 @@ export default function ErrorMetadataPanel({ error }) {
   const selectedTraceId = useErrorFeedStore(
     (s) => s.selectedTraceIdByCluster[error?.clusterId] ?? null,
   );
-  // The synthetic voice demo cluster isn't on the backend — skip the
-  // sidebar fetch so it doesn't 404 with a "cluster not found" toast.
   const { data: sidebar, isLoading: isSidebarLoading } = useErrorFeedSidebar(
     error?.clusterId,
     selectedTraceId,
-    { enabled: !isVoiceDemoCluster(error?.clusterId) },
   );
   const sidebarPending = isSidebarLoading && !sidebar;
   // OverviewTab keys its deep-analysis query off `selectedTraceId` (with a

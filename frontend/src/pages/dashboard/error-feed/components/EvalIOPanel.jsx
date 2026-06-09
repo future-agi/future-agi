@@ -80,7 +80,11 @@ function IOBlock({ label, icon, value }) {
             {text}
           </Typography>
         ) : (
-          <Typography fontSize="12px" color="text.disabled" sx={{ fontStyle: "italic" }}>
+          <Typography
+            fontSize="12px"
+            color="text.disabled"
+            sx={{ fontStyle: "italic" }}
+          >
             No {label.toLowerCase()} captured.
           </Typography>
         )}
@@ -111,14 +115,18 @@ function JudgeReasonCard({ reason, score }) {
       }}
     >
       <Stack direction="row" alignItems="center" gap={0.75} sx={{ mb: 0.75 }}>
-        <Iconify icon="mdi:scale-balance" width={13} sx={{ color: "text.secondary" }} />
+        <Iconify
+          icon="mdi:scale-balance"
+          width={13}
+          sx={{ color: "text.secondary" }}
+        />
         <Typography
           fontSize="10.5px"
           fontWeight={700}
           color="text.secondary"
           sx={{ textTransform: "uppercase", letterSpacing: "0.06em" }}
         >
-          Judge reason
+          Evaluator reasoning
         </Typography>
         <Box sx={{ flex: 1 }} />
         {score != null && (
@@ -146,8 +154,11 @@ function JudgeReasonCard({ reason, score }) {
         sx={{ lineHeight: 1.6, whiteSpace: "pre-wrap" }}
       >
         {reason || (
-          <Box component="span" sx={{ color: "text.disabled", fontStyle: "italic" }}>
-            No judge reasoning recorded.
+          <Box
+            component="span"
+            sx={{ color: "text.disabled", fontStyle: "italic" }}
+          >
+            No evaluator reasoning recorded.
           </Box>
         )}
       </Typography>
@@ -170,7 +181,12 @@ export default function EvalIOPanel({ trace, evalScore }) {
     const ev = t.evidence ?? {};
     return {
       input:
-        ev.input ?? ev.input_text ?? t.input ?? t.input_text ?? t.inputs ?? null,
+        ev.input ??
+        ev.input_text ??
+        t.input ??
+        t.input_text ??
+        t.inputs ??
+        null,
       output:
         ev.output ??
         ev.output_text ??

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
+  CircularProgress,
   IconButton,
   Stack,
   Tooltip,
@@ -11,40 +12,19 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
-
-// Inline stub data — replace once BE exposes voice-call evidence on the trace.
-const STUB_DURATION_S = 184;
-const STUB_TRANSCRIPT = [
-  { t: 3, speaker: "agent", text: "Hi, thanks for calling. How can I help today?" },
-  { t: 9, speaker: "caller", text: "I want to confirm my card ending 4242 was charged." },
-  { t: 16, speaker: "agent", text: "Sure. Can you confirm your full card number?" },
-  { t: 24, speaker: "caller", text: "Uh — it's 4242 4242 4242 4242." },
-  { t: 32, speaker: "agent", text: "Got it, 4242-4242-4242-4242. One moment." },
-  { t: 47, speaker: "agent", text: "I see two charges — one for $32 and another for $14.99." },
-  { t: 58, speaker: "caller", text: "The $14.99 wasn't me." },
-  { t: 64, speaker: "agent", text: "Understood. I'll dispute that and send a confirmation to eve@example.com." },
-  { t: 78, speaker: "caller", text: "Thanks." },
-  { t: 84, speaker: "agent", text: "Anything else I can help with?" },
-  { t: 90, speaker: "caller", text: "No, that's all." },
-  { t: 94, speaker: "agent", text: "Have a great day." },
-];
-const STUB_MARKERS = [
-  { t: 32, kind: "this", label: "Agent repeats full card number" },
-  { t: 64, kind: "this", label: "Agent reads back email in clear" },
-  { t: 24, kind: "prior", label: "Caller volunteers PCI data" },
-];
-const STUB_JUDGE_REASON =
-  "Agent repeated the caller's full PAN and read the email address in clear at 1:04. Both should have been masked or paraphrased.";
+import { useVoiceCallDetail } from "src/sections/agents/helper";
 
 const FAIL_COLOR = "#DB2F2D";
 const PASS_COLOR = "#5ACE6D";
 const AMBER_COLOR = "#F5A623";
 
 // Cheap deterministic waveform — a series of bar heights derived from a hash
-// of the trace id, so each trace shows a stable but distinct shape.
+// of the trace id, so each trace shows a stable but distinct scrub track.
+// Purely decorative: progress/seek map to the real audio element.
 function waveformBars(seed = "default", count = 80) {
   let h = 0;
-  for (let i = 0; i < seed.length; i += 1) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  for (let i = 0; i < seed.length; i += 1)
+    h = (h * 31 + seed.charCodeAt(i)) | 0;
   const out = [];
   for (let i = 0; i < count; i += 1) {
     h = (h * 1103515245 + 12345) & 0x7fffffff;
@@ -55,6 +35,7 @@ function waveformBars(seed = "default", count = 80) {
 }
 
 const fmtTime = (s) => {
+  if (s == null || Number.isNaN(s)) return "–:––";
   const total = Math.max(0, Math.floor(s));
   const m = Math.floor(total / 60);
   const ss = total % 60;
@@ -65,7 +46,10 @@ const fmtTime = (s) => {
 function Scrubber({ duration, currentTime, markers, onSeek, seed, dense }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const bars = useMemo(() => waveformBars(seed, dense ? 60 : 80), [seed, dense]);
+  const bars = useMemo(
+    () => waveformBars(seed, dense ? 60 : 80),
+    [seed, dense],
+  );
   const trackRef = useRef(null);
   const progress = duration > 0 ? Math.min(1, currentTime / duration) : 0;
 
@@ -118,14 +102,13 @@ function Scrubber({ duration, currentTime, markers, onSeek, seed, dense }) {
                   : isDark
                     ? alpha("#fff", 0.22)
                     : alpha("#000", 0.22),
-                transition: "background 0.1s",
               }}
             />
           );
         })}
       </Box>
 
-      {/* Playhead line */}
+      {/* Playhead */}
       <Box
         sx={{
           position: "absolute",
@@ -188,59 +171,71 @@ Scrubber.propTypes = {
   dense: PropTypes.bool,
 };
 
-// ── Player (scrubber + play/pause + marker legend) ──────────────────────────
+// ── Player (real <audio> + scrubber + play/pause) ───────────────────────────
 function useAudioPlayer({
-  duration,
+  src,
+  duration: durationProp,
   markers,
   seed,
-  active,
-  onActiveChange,
   dense,
+  active = true,
+  onActiveChange,
 }) {
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const rafRef = useRef(null);
-  const lastTickRef = useRef(0);
+  const [mediaDuration, setMediaDuration] = useState(null);
+  const audioRef = useRef(null);
 
-  // Pause when another player becomes active.
+  // The audio element's own duration wins once metadata loads (the span
+  // attribute can lag the actual file by a second or two).
+  const duration = mediaDuration ?? durationProp ?? 0;
+
   useEffect(() => {
-    if (!active && playing) setPlaying(false);
+    if (!src) return undefined;
+    const audio = new Audio(src);
+    audioRef.current = audio;
+    const onTime = () => setCurrentTime(audio.currentTime);
+    const onMeta = () => {
+      if (Number.isFinite(audio.duration)) setMediaDuration(audio.duration);
+    };
+    const onEnded = () => setPlaying(false);
+    audio.addEventListener("timeupdate", onTime);
+    audio.addEventListener("loadedmetadata", onMeta);
+    audio.addEventListener("ended", onEnded);
+    return () => {
+      audio.pause();
+      audio.removeEventListener("timeupdate", onTime);
+      audio.removeEventListener("loadedmetadata", onMeta);
+      audio.removeEventListener("ended", onEnded);
+      audioRef.current = null;
+    };
+  }, [src]);
+
+  // Pause when the other side of a split view takes over playback.
+  useEffect(() => {
+    if (!active && playing) {
+      audioRef.current?.pause();
+      setPlaying(false);
+    }
   }, [active, playing]);
 
-  // Animation loop — increments currentTime while playing.
-  useEffect(() => {
-    if (!playing) {
-      cancelAnimationFrame(rafRef.current);
-      return undefined;
-    }
-    lastTickRef.current = performance.now();
-    const tick = (now) => {
-      const dt = (now - lastTickRef.current) / 1000;
-      lastTickRef.current = now;
-      setCurrentTime((t) => {
-        const next = t + dt;
-        if (next >= duration) {
-          setPlaying(false);
-          return duration;
-        }
-        return next;
-      });
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    rafRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [playing, duration]);
-
   const togglePlay = () => {
-    if (!playing) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (playing) {
+      audio.pause();
+      setPlaying(false);
+    } else {
       onActiveChange?.();
-      if (currentTime >= duration) setCurrentTime(0);
+      audio.play();
+      setPlaying(true);
     }
-    setPlaying((p) => !p);
   };
 
   const onSeek = (t) => {
+    if (t == null) return;
     setCurrentTime(t);
+    if (audioRef.current) audioRef.current.currentTime = t;
   };
 
   return {
@@ -252,6 +247,7 @@ function useAudioPlayer({
         <Stack direction="row" alignItems="center" gap={1}>
           <IconButton
             onClick={togglePlay}
+            disabled={!src}
             sx={{
               width: 32,
               height: 32,
@@ -259,6 +255,7 @@ function useAudioPlayer({
               bgcolor: "#7857FC",
               color: "#fff",
               "&:hover": { bgcolor: "#6845E8" },
+              "&.Mui-disabled": { bgcolor: "action.disabledBackground" },
               flexShrink: 0,
             }}
           >
@@ -288,25 +285,6 @@ function useAudioPlayer({
             {fmtTime(currentTime)} / {fmtTime(duration)}
           </Typography>
         </Stack>
-
-        {/* Marker legend */}
-        <Stack direction="row" gap={1.25} flexWrap="wrap" sx={{ pl: 5 }}>
-          {markers.map((m, i) => (
-            <Stack key={i} direction="row" alignItems="center" gap={0.4}>
-              <Box
-                sx={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: "50%",
-                  bgcolor: m.kind === "this" ? FAIL_COLOR : AMBER_COLOR,
-                }}
-              />
-              <Typography fontSize="10.5px" color="text.secondary">
-                {fmtTime(m.t)} · {m.label}
-              </Typography>
-            </Stack>
-          ))}
-        </Stack>
       </Stack>
     ),
   };
@@ -322,8 +300,8 @@ function Transcript({ lines, currentTime, onSeek, dense }) {
   const activeIdx = useMemo(() => {
     let idx = -1;
     for (let i = 0; i < lines.length; i += 1) {
-      if (lines[i].t <= currentTime) idx = i;
-      else break;
+      if (lines[i].t != null && lines[i].t <= currentTime) idx = i;
+      else if (lines[i].t != null) break;
     }
     return idx;
   }, [lines, currentTime]);
@@ -365,7 +343,7 @@ function Transcript({ lines, currentTime, onSeek, dense }) {
                 py: 0.85,
                 borderBottom: "1px solid",
                 borderColor: "divider",
-                cursor: "pointer",
+                cursor: line.t != null ? "pointer" : "default",
                 bgcolor: isActive
                   ? alpha("#7857FC", isDark ? 0.14 : 0.07)
                   : "transparent",
@@ -443,14 +421,18 @@ function JudgeReasonCard({ reason, score }) {
       }}
     >
       <Stack direction="row" alignItems="center" gap={0.75} sx={{ mb: 0.75 }}>
-        <Iconify icon="mdi:scale-balance" width={13} sx={{ color: "text.secondary" }} />
+        <Iconify
+          icon="mdi:scale-balance"
+          width={13}
+          sx={{ color: "text.secondary" }}
+        />
         <Typography
           fontSize="10.5px"
           fontWeight={700}
           color="text.secondary"
           sx={{ textTransform: "uppercase", letterSpacing: "0.06em" }}
         >
-          Judge reason
+          Evaluator reasoning
         </Typography>
         <Box sx={{ flex: 1 }} />
         {score != null && (
@@ -472,7 +454,11 @@ function JudgeReasonCard({ reason, score }) {
           </Box>
         )}
       </Stack>
-      <Typography fontSize="12.5px" color="text.primary" sx={{ lineHeight: 1.6 }}>
+      <Typography
+        fontSize="12.5px"
+        color="text.primary"
+        sx={{ lineHeight: 1.6 }}
+      >
         {reason}
       </Typography>
     </Box>
@@ -483,177 +469,272 @@ JudgeReasonCard.propTypes = {
   score: PropTypes.number,
 };
 
-// One side of the side-by-side comparison.
-function CallColumn({ title, accentColor, headerMeta, traceSeed, duration, markers, transcript, activeSide, side, onActivate }) {
+// Map the voice_call_detail payload to transcript lines {t, speaker, text}.
+// Prefer `messages` (they carry seconds_from_start for seek-sync); fall back
+// to `transcript` rows (role/content, no offsets → t null disables seek).
+function toTranscriptLines(detail) {
+  const messages = detail?.messages ?? [];
+  const fromMessages = messages
+    .filter(
+      (m) =>
+        ["user", "bot", "assistant"].includes(m?.role) &&
+        (m?.message ?? m?.content),
+    )
+    .map((m) => ({
+      t: m.seconds_from_start ?? m.secondsFromStart ?? null,
+      speaker: m.role === "user" ? "caller" : "agent",
+      text: m.message ?? m.content,
+    }));
+  if (fromMessages.length) return fromMessages;
+
+  const transcript = detail?.transcript ?? [];
+  return transcript
+    .filter((l) => l?.content)
+    .map((l) => ({
+      t: l.seconds_from_start ?? null,
+      speaker: l.role === "user" ? "caller" : "agent",
+      text: l.content,
+    }));
+}
+
+// Fetch + map one call's voice evidence. Shared by the single view and each
+// side of the failing-vs-working comparison.
+function useVoiceCallData(traceId) {
+  const { data: detail, isLoading } = useVoiceCallDetail(traceId, !!traceId);
+  const lines = useMemo(() => toTranscriptLines(detail), [detail]);
+  const recordingUrl =
+    detail?.recording_url ||
+    detail?.recording?.mono?.combined_url ||
+    detail?.stereo_recording_url ||
+    null;
+  return {
+    isLoading,
+    lines,
+    recordingUrl,
+    duration: detail?.duration_seconds ?? null,
+  };
+}
+
+// One side of the failing-vs-working comparison.
+function CallColumn({
+  title,
+  accentColor,
+  call,
+  seed,
+  activeSide,
+  side,
+  onActivate,
+}) {
   const player = useAudioPlayer({
-    duration,
-    markers,
-    seed: traceSeed,
+    src: call.recordingUrl,
+    duration: call.duration,
+    markers: [],
+    seed,
+    dense: true,
     active: activeSide === side,
     onActiveChange: () => onActivate(side),
-    dense: true,
   });
   return (
     <Stack gap={0.75}>
       <Stack direction="row" alignItems="center" gap={0.5}>
-        <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: accentColor }} />
+        <Box
+          sx={{
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            bgcolor: accentColor,
+          }}
+        />
         <Typography
           fontSize="11px"
           fontWeight={700}
-          sx={{ color: accentColor, textTransform: "uppercase", letterSpacing: "0.06em" }}
+          sx={{
+            color: accentColor,
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+          }}
         >
           {title}
         </Typography>
-        <Box sx={{ flex: 1 }} />
-        {headerMeta && (
-          <Typography
-            fontSize="10.5px"
-            color="text.disabled"
-            sx={{ fontFamily: "ui-monospace, SFMono-Regular, monospace" }}
-          >
-            {headerMeta}
-          </Typography>
-        )}
       </Stack>
-      {player.render}
-      <Transcript
-        lines={transcript}
-        currentTime={player.currentTime}
-        onSeek={(t) => {
-          onActivate(side);
-          player.seekTo(t);
-        }}
-        dense
-      />
+      {call.isLoading ? (
+        <Stack alignItems="center" sx={{ py: 3 }}>
+          <CircularProgress size={18} />
+        </Stack>
+      ) : (
+        <>
+          {call.recordingUrl ? (
+            player.render
+          ) : (
+            <Typography fontSize="11px" color="text.disabled">
+              No recording available — transcript only.
+            </Typography>
+          )}
+          {call.lines.length > 0 && (
+            <Transcript
+              lines={call.lines}
+              currentTime={player.currentTime}
+              onSeek={
+                call.recordingUrl
+                  ? (t) => {
+                      onActivate(side);
+                      player.seekTo(t);
+                    }
+                  : undefined
+              }
+              dense
+            />
+          )}
+        </>
+      )}
     </Stack>
   );
 }
 CallColumn.propTypes = {
   title: PropTypes.string.isRequired,
   accentColor: PropTypes.string.isRequired,
-  headerMeta: PropTypes.string,
-  traceSeed: PropTypes.string,
-  duration: PropTypes.number.isRequired,
-  markers: PropTypes.array.isRequired,
-  transcript: PropTypes.array.isRequired,
+  call: PropTypes.object.isRequired,
+  seed: PropTypes.string,
   activeSide: PropTypes.string,
   side: PropTypes.string,
   onActivate: PropTypes.func,
 };
 
 // ── Main VoiceEvalPanel ──────────────────────────────────────────────────────
-export default function VoiceEvalPanel({ trace, evalScore }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const [splitView, setSplitView] = useState(false);
-  const [activeSide, setActiveSide] = useState("fail"); // which side owns audio playback
-
+export default function VoiceEvalPanel({ trace, evalScore, successTraceId }) {
   const traceSeed = trace?.id ?? "default";
+  const [splitView, setSplitView] = useState(false);
+  const [activeSide, setActiveSide] = useState("fail");
 
-  // Single-view player — only used when not in split mode.
+  const failCall = useVoiceCallData(trace?.id);
+  // Only fetched once the user opens the comparison.
+  const passCall = useVoiceCallData(splitView ? successTraceId : null);
+
+  // Judge reason rides on the overview's trace evidence, same as EvalIOPanel.
+  const evidence = trace?.evidence ?? {};
+  const judgeReason = evidence.judgeReason ?? evidence.judge_reason ?? null;
+  const judgeScore =
+    evidence.score ?? (typeof evalScore === "number" ? evalScore : null);
+
   const singlePlayer = useAudioPlayer({
-    duration: STUB_DURATION_S,
-    markers: STUB_MARKERS,
+    src: failCall.recordingUrl,
+    duration: failCall.duration,
+    markers: [],
     seed: traceSeed,
-    active: true,
     dense: false,
   });
 
+  if (failCall.isLoading) {
+    return (
+      <Stack alignItems="center" justifyContent="center" sx={{ py: 6 }}>
+        <CircularProgress size={22} />
+      </Stack>
+    );
+  }
+
+  if (!failCall.lines.length && !failCall.recordingUrl) {
+    return (
+      <Stack
+        alignItems="center"
+        justifyContent="center"
+        gap={0.5}
+        sx={{ py: 5 }}
+      >
+        <Iconify
+          icon="mdi:phone-off-outline"
+          width={20}
+          sx={{ color: "text.disabled" }}
+        />
+        <Typography fontSize="12px" color="text.secondary">
+          No voice evidence found for this call.
+        </Typography>
+      </Stack>
+    );
+  }
+
   return (
     <Stack gap={1.25}>
-      {/* Top control row */}
-      <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
-        <Box sx={{ flex: 1 }} />
-        <Button
-          size="small"
-          variant={splitView ? "text" : "outlined"}
-          startIcon={
-            <Iconify
-              icon={splitView ? "mdi:view-sequential-outline" : "mdi:compare-horizontal"}
-              width={13}
-            />
-          }
-          onClick={() => setSplitView((v) => !v)}
-          sx={{
-            height: 28,
-            fontSize: "11.5px",
-            fontWeight: 600,
-            borderRadius: "6px",
-            textTransform: "none",
-            ...(splitView
-              ? {
-                  // Tertiary — subtle text button to step back to single view.
-                  color: "text.secondary",
-                  "&:hover": {
-                    color: "text.primary",
-                    bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
-                  },
+      {/* Compare toggle — only when the cluster has a real working call. */}
+      {successTraceId && (
+        <Stack direction="row" alignItems="center" gap={1}>
+          <Box sx={{ flex: 1 }} />
+          <Button
+            size="small"
+            variant={splitView ? "text" : "outlined"}
+            startIcon={
+              <Iconify
+                icon={
+                  splitView
+                    ? "mdi:view-sequential-outline"
+                    : "mdi:compare-horizontal"
                 }
-              : {
-                  borderColor: "divider",
-                  color: "text.primary",
-                  "&:hover": {
-                    borderColor: "text.secondary",
-                    bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
-                  },
-                }),
-          }}
-        >
-          {splitView ? "Single view" : "Compare with passing"}
-        </Button>
-      </Stack>
+                width={13}
+              />
+            }
+            onClick={() => setSplitView((v) => !v)}
+            sx={{
+              height: 28,
+              fontSize: "11.5px",
+              fontWeight: 600,
+              borderRadius: "6px",
+              textTransform: "none",
+              borderColor: "divider",
+              color: splitView ? "text.secondary" : "text.primary",
+            }}
+          >
+            {splitView ? "Single view" : "Compare with passing"}
+          </Button>
+        </Stack>
+      )}
 
       {!splitView ? (
         <Stack gap={1.25}>
-          {singlePlayer.render}
-          <Transcript
-            lines={STUB_TRANSCRIPT}
-            currentTime={singlePlayer.currentTime}
-            onSeek={singlePlayer.seekTo}
-          />
-          <JudgeReasonCard reason={STUB_JUDGE_REASON} score={evalScore} />
+          {failCall.recordingUrl ? (
+            singlePlayer.render
+          ) : (
+            <Typography fontSize="11px" color="text.disabled">
+              No recording available — transcript only.
+            </Typography>
+          )}
+          {failCall.lines.length > 0 && (
+            <Transcript
+              lines={failCall.lines}
+              currentTime={singlePlayer.currentTime}
+              onSeek={failCall.recordingUrl ? singlePlayer.seekTo : undefined}
+            />
+          )}
         </Stack>
       ) : (
-        <Stack gap={1.25}>
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
-              gap: 1.5,
-            }}
-          >
-            <CallColumn
-              title="Failing call"
-              accentColor={FAIL_COLOR}
-              traceSeed={`${traceSeed}-fail`}
-              duration={STUB_DURATION_S}
-              markers={STUB_MARKERS}
-              transcript={STUB_TRANSCRIPT}
-              activeSide={activeSide}
-              side="fail"
-              onActivate={setActiveSide}
-            />
-            <CallColumn
-              title="Working call"
-              accentColor={PASS_COLOR}
-              headerMeta="KNN match · cos 0.12"
-              traceSeed={`${traceSeed}-pass`}
-              duration={STUB_DURATION_S - 18}
-              markers={[]}
-              transcript={STUB_TRANSCRIPT.slice(0, 8).map((l) => ({
-                ...l,
-                text: l.text
-                  .replace(/4242 4242 4242 4242/g, "card ending 4242")
-                  .replace(/4242-4242-4242-4242/g, "card ending 4242")
-                  .replace(/eve@example\.com/g, "the email on file"),
-              }))}
-              activeSide={activeSide}
-              side="pass"
-              onActivate={setActiveSide}
-            />
-          </Box>
-          <JudgeReasonCard reason={STUB_JUDGE_REASON} score={evalScore} />
-        </Stack>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+            gap: 1.5,
+          }}
+        >
+          <CallColumn
+            title="Failing call"
+            accentColor={FAIL_COLOR}
+            call={failCall}
+            seed={`${traceSeed}-fail`}
+            activeSide={activeSide}
+            side="fail"
+            onActivate={setActiveSide}
+          />
+          <CallColumn
+            title="Working call"
+            accentColor={PASS_COLOR}
+            call={passCall}
+            seed={`${traceSeed}-pass`}
+            activeSide={activeSide}
+            side="pass"
+            onActivate={setActiveSide}
+          />
+        </Box>
+      )}
+
+      {judgeReason && (
+        <JudgeReasonCard reason={judgeReason} score={judgeScore} />
       )}
     </Stack>
   );
@@ -661,4 +742,5 @@ export default function VoiceEvalPanel({ trace, evalScore }) {
 VoiceEvalPanel.propTypes = {
   trace: PropTypes.object,
   evalScore: PropTypes.number,
+  successTraceId: PropTypes.string,
 };
