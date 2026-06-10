@@ -72,7 +72,7 @@ x-backend-env: &backend-env
   # LLM gateway + code sandbox + embedding service
   AGENTCC_INTERNAL_URL: http://agentcc-gateway:8090
   AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8090
-  AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
+  AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?AGENTCC_INTERNAL_API_KEY must be set}
   AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
   RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
@@ -224,7 +224,7 @@ services:
       - path: .env
         required: false
     environment:
-      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?AGENTCC_INTERNAL_API_KEY must be set}
       AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -253,7 +253,9 @@ services:
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
     ports:
-      - "${CODE_EXECUTOR_PORT:-8060}:8060"
+      - "127.0.0.1:${CODE_EXECUTOR_PORT:-8060}:8060"
+    environment:
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?AGENTCC_INTERNAL_API_KEY must be set}
     privileged: true
     deploy:
       resources:
