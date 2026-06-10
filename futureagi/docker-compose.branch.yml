@@ -1,0 +1,42 @@
+# TH-5642 local branch run: use the baked :dev image (deps) + mount THIS working
+# tree as source, so the running backend/worker execute the feat/multi-provider-registry
+# code WITHOUT a rebuild (base image v1.8.19_base isn't local). Compose `up` (no --build)
+# uses the existing :dev image because it's set here.
+# Voice E2E: point the voice stack at the LOCAL LiveKit+SIP containers (lksip-*,
+# host network → reachable from compose containers via host.docker.internal).
+x-livekit-env: &livekit-env
+  LIVEKIT_URL: ws://host.docker.internal:7880
+  LIVEKIT_API_KEY: APIe0919c953e2fa7b0
+  LIVEKIT_API_SECRET: qjPNcqBF+c4C7/mQUbiySYGCkH4ijiVlWI2mIjsCUTU=
+  # Voice executions are orchestrated by TestExecutionWorkflow (creates
+  # CallExecutions + launches ee CallExecutionWorkflow children). The legacy
+  # monitor-based pickup is commented out in tfc/temporal/schedules/simulate.py,
+  # so without this flag voice runs are created PENDING and never picked up.
+  TEMPORAL_TEST_EXECUTION_ENABLED: "true"
+  # The lksip agent worker pushes transcripts/metrics/call-end to the backend's
+  # internal livekit API (Authorization: Bearer <INTERNAL_API_SECRET>); must match
+  # the worker's INTERNAL_API_SECRET.
+  INTERNAL_API_SECRET: devsecret
+  # Callback URL the backend embeds in LiveKit agent-dispatch metadata; the
+  # lksip job process pushes transcripts/lifecycle THERE (it overrides the
+  # worker's own BACKEND_URL env). Default is :8000 → pushes vanish; the lksip
+  # containers run host-network, so the branch backend is host :8003.
+  LIVEKIT_BACKEND_CALLBACK_URL: http://localhost:8003
+
+services:
+  backend:
+    image: futureagi/future-agi:dev
+    pull_policy: never
+    platform: linux/arm64
+    volumes:
+      - ".:/app/backend"
+    environment:
+      <<: *livekit-env
+  temporal-worker-dev:
+    image: futureagi/future-agi:dev
+    pull_policy: never
+    platform: linux/arm64
+    volumes:
+      - ".:/app/backend"
+    environment:
+      <<: *livekit-env
