@@ -697,11 +697,11 @@ def _extract_eval_value(value: Any) -> Any:
 
 def should_run_error_localizer(value: Any, eval_template: EvalTemplate | None) -> tuple[bool, str]:
     if eval_template is None:
-        return False, "No eval template is attached to this evaluation."
+        return False, "Error localization skipped — no eval template is attached to this evaluation."
     if getattr(eval_template, "eval_type", "") == "code":
-        return False, "Error localization is not applicable to code-type evals."
+        return False, "Error localization skipped — not applicable to code-type evals."
     if getattr(eval_template, "template_type", "single") == "composite":
-        return False, "Error localization for composite evals is not yet supported."
+        return False, "Error localization skipped — composite evals are not yet supported."
 
     from model_hub.utils.scoring import determine_pass_fail, normalize_score
 
@@ -715,11 +715,12 @@ def should_run_error_localizer(value: Any, eval_template: EvalTemplate | None) -
     decision = determine_pass_fail(score, threshold)
     if output_type == "pass_fail":
         if decision:
-            return False, "The evaluation passed."
+            return False, "Error localization skipped — the evaluation passed."
         return True, "The evaluation failed."
     if decision:
         return False, (
-            f"The evaluation passed (score {score:.2f}, threshold {threshold:.2f})."
+            f"Error localization skipped — the evaluation passed "
+            f"(score {score:.2f}, threshold {threshold:.2f})."
         )
     return True, (
         f"The evaluation failed (score {score:.2f}, threshold {threshold:.2f})."
