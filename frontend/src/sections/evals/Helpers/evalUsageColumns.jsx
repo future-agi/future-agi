@@ -83,7 +83,17 @@ export const decodeColumnConfig = (str, base) => {
       const hidden = token.startsWith("~");
       const value = hidden ? token.slice(1) : token;
       const orig = byValue.get(value);
-      if (!orig) return;
+      if (!orig) {
+        // Preserve unknown tokens (e.g. input_var_* discovered on other pages)
+        result.push({
+          value,
+          label: value.replace(/^input_var_/, "").replaceAll("_", " "),
+          enabled: !hidden,
+          is_visible: !hidden,
+          order_index: result.length,
+        });
+        return;
+      }
       byValue.delete(value);
       result.push({
         ...orig,

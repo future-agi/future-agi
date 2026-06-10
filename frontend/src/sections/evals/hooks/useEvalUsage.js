@@ -37,7 +37,6 @@ export function useEvalUsageLogs(
       const result = data?.result || {};
       return {
         table: result.table || result.logs?.items || [],
-        columnConfig: result.column_config || [],
         pagination: result.logs || {},
       };
     },

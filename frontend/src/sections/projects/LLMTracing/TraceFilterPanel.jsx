@@ -42,8 +42,7 @@ import {
   getPickerOptionSecondaryLabel,
   getPickerOptionValue,
 } from "./filterValuePickerUtils";
-// ID_ONLY_FIELDS is defined locally below (line ~191) with an expanded
-// set that includes "session". Do not re-import from ./idFields here.
+import { ID_ONLY_FIELDS } from "./idFields";
 
 // ---------------------------------------------------------------------------
 // Trace filter fields (for Query tab via shared FilterPanel)

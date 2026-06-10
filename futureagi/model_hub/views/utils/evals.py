@@ -224,7 +224,7 @@ def run_eval_func(
             try:
                 _tracked_version = EvalTemplateVersion.objects.get_default(template)
             except Exception:
-                pass
+                logger.warning("version_tracking_failed", template_id=str(template.id), exc_info=True)
         if _tracked_version:
             source_config["version_id"] = str(_tracked_version.id)
             source_config["version_number"] = _tracked_version.version_number

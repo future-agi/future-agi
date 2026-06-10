@@ -1237,7 +1237,7 @@ def process_single_error_localization(task_id):
                 )
             )
         except Exception:
-            pass  # Metering failure must not break the action
+            logger.warning("error_localizer_billing_emit_failed", eval_id=str(task.id), exc_info=True)
 
         logger.info(f"Error Localization task {task.id} completed")
 

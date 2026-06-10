@@ -4970,20 +4970,6 @@ class GroundTruthTriggerEmbeddingView(APIView):
 
 
 
-def _get_all_eval_required_keys(template):
-    """Union of required_keys across all versions + current template config."""
-    from model_hub.models.evals_metric import EvalTemplateVersion
-
-    all_keys = set()
-    for v in EvalTemplateVersion.objects.filter(
-        eval_template=template, deleted=False
-    ):
-        cs = v.config_snapshot or {}
-        all_keys.update(cs.get("required_keys", []))
-    all_keys.update((template.config or {}).get("required_keys", []))
-    return sorted(all_keys)
-
-
 class EvalUsageStatsView(APIView):
     """
     GET /model-hub/eval-templates/<id>/usage/
@@ -5026,8 +5012,14 @@ class EvalUsageStatsView(APIView):
             )
 
             # Parse query params
-            page = int(request.GET.get("page", 0))
-            page_size = min(int(request.GET.get("page_size", 25)), 100)
+            try:
+                page = max(int(request.GET.get("page", 0)), 0)
+            except (ValueError, TypeError):
+                page = 0
+            try:
+                page_size = min(max(int(request.GET.get("page_size", 25)), 1), 100)
+            except (ValueError, TypeError):
+                page_size = 25
             period = request.GET.get("period", "30d")
 
             period_delta = self.PERIOD_MAP.get(period, timedelta(days=30))
@@ -5317,6 +5309,14 @@ class EvalUsageStatsView(APIView):
                     else None
                 )
 
+                # Truncate long text fields to keep list payload sane;
+                # full content is available in the detail panel.
+                _MAX = 500
+                if isinstance(input_str, str) and len(input_str) > _MAX:
+                    input_str = input_str[:_MAX] + "…"
+                if isinstance(reason, str) and len(reason) > _MAX:
+                    reason = reason[:_MAX] + "…"
+
                 # Build row: static fields + flattened input variables
                 row_data = {
                     "row_id": str(log.log_id),
@@ -5459,8 +5459,14 @@ class EvalFeedbackListView(APIView):
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Eval template not found.")
 
-            page = int(request.GET.get("page", 0))
-            page_size = min(int(request.GET.get("page_size", 25)), 100)
+            try:
+                page = max(int(request.GET.get("page", 0)), 0)
+            except (ValueError, TypeError):
+                page = 0
+            try:
+                page_size = min(max(int(request.GET.get("page_size", 25)), 1), 100)
+            except (ValueError, TypeError):
+                page_size = 25
 
             # Get log IDs for this template as strings (Feedback.source_id is CharField)
             log_ids = list(
