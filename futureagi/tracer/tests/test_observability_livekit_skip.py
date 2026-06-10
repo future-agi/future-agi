@@ -21,8 +21,10 @@ def test_get_call_logs_skips_livekit_push_based():
 
 @pytest.mark.unit
 def test_get_call_logs_still_raises_for_unimplemented_provider():
-    # A provider with no fetch path and not marked push-based still raises, so we
-    # notice genuinely-unwired providers.
-    provider = SimpleNamespace(provider="agora")
+    # A provider with no fetch path and not in the deliberate no-pull set still
+    # raises, so we notice genuinely-unwired providers. (agora/deepgram/pipecat
+    # moved to the graceful no-pull set — pull is impossible or gated TH-5682 —
+    # covered in test_pull_observability_bland_twilio.py.)
+    provider = SimpleNamespace(provider="not-a-real-provider")
     with pytest.raises(NotImplementedError):
         ObservabilityService.get_call_logs(provider)

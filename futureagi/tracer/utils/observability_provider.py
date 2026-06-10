@@ -24,9 +24,11 @@ from tracer.tasks.recordings_rehost import (
     RECORDING_KEYS_BY_PROVIDER,
     rehost_external_recordings,
 )
+from tracer.utils.bland import normalize_bland_data
 from tracer.utils.eleven_labs import normalize_eleven_labs_data
 from tracer.utils.otel import ResourceLimitError, get_or_create_project
 from tracer.utils.retell import normalize_retell_data
+from tracer.utils.twilio_calls import normalize_twilio_data
 from tracer.utils.usage_emit import emit_span_ingestion_usage
 from tracer.utils.vapi import normalize_vapi_data
 
@@ -295,6 +297,8 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
         "vapi": normalize_vapi_data,
         "retell": normalize_retell_data,
         "eleven_labs": normalize_eleven_labs_data,
+        "bland": normalize_bland_data,
+        "twilio": normalize_twilio_data,
     }
 
     if provider.provider not in normalization_functions:

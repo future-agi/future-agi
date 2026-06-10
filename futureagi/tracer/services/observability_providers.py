@@ -82,12 +82,31 @@ class ObservabilityService:
             return ObservabilityService._fetch_eleven_labs_logs(
                 provider, start_time, end_time
             )
-        elif provider.provider == ProviderChoices.LIVEKIT:
-            # LiveKit observability is PUSH-based: the customer's agent is
-            # instrumented with the traceai-livekit SDK and pushes spans
-            # directly to the project, so there is nothing to PULL here. Skip
-            # gracefully instead of raising (which would log a fetch failure
-            # every poll cycle for a LiveKit agent definition). (TH-5642)
+        elif provider.provider == ProviderChoices.BLAND:
+            return ObservabilityService._fetch_bland_logs(
+                provider, start_time, end_time
+            )
+        elif provider.provider == ProviderChoices.TWILIO:
+            return ObservabilityService._fetch_twilio_logs(
+                provider, start_time, end_time
+            )
+        elif provider.provider in (
+            ProviderChoices.LIVEKIT,
+            ProviderChoices.DEEPGRAM,
+            ProviderChoices.PIPECAT,
+            ProviderChoices.AGORA,
+        ):
+            # Nothing hosted to PULL for these providers (TH-5642):
+            # - LiveKit / Pipecat: the tested agent is the customer's own
+            #   deployment; neither provider cloud stores conversation history.
+            # - Deepgram: the Voice Agent API is a live WebSocket; Deepgram
+            #   retains no conversations to list.
+            # - Agora: the ConvAI history API needs a project we don't have
+            #   access to yet (TH-5682) — skip gracefully until it lands.
+            # Conversation-level observability for these comes from the
+            # simulation side (CallTranscript → sim trace emission). Returning
+            # [] avoids a NotImplementedError crash-loop in the scheduled
+            # fetch for every enabled agent definition on these providers.
             return []
         else:
             raise NotImplementedError(f"Provider {provider.provider} not implemented.")
@@ -269,6 +288,107 @@ class ObservabilityService:
         response = requests.get(detail_url, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()
+
+    @staticmethod
+    def _fetch_bland_logs(
+        provider: ObservabilityProvider,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ):
+        """Pulls Bland.ai calls: list ``GET /v1/calls`` then per-call details
+        (``GET /v1/calls/{id}``) which carry the ``transcripts`` rows (TH-5642).
+
+        Auth header is ``authorization: <api_key>`` (no Bearer prefix).
+        """
+        agent = ObservabilityService._get_agent_definition(provider)
+        api_key = ObservabilityService._validate_agent_api_key(agent, provider, "Bland")
+        if not api_key:
+            return []
+
+        headers = {"authorization": api_key}
+        params: dict = {"limit": 100, "ascending": False}
+        if start_time:
+            params["start_date"] = start_time.strftime("%Y-%m-%d")
+        if end_time:
+            params["end_date"] = end_time.strftime("%Y-%m-%d")
+
+        response = requests.get(
+            ObservabilityRoutes.BLAND_CALLS_URL.value,
+            headers=headers,
+            params=params,
+            timeout=30,
+        )
+        response.raise_for_status()
+        calls = response.json().get("calls", []) or []
+
+        detailed_logs = []
+        for call in calls:
+            call_id = call.get("call_id") or call.get("c_id")
+            if not call_id:
+                continue
+            detail_resp = requests.get(
+                f"{ObservabilityRoutes.BLAND_CALLS_URL.value}/{call_id}",
+                headers=headers,
+                timeout=30,
+            )
+            if detail_resp.status_code != 200:
+                logger.warning(
+                    "bland_call_detail_fetch_failed",
+                    provider_id=str(provider.id),
+                    call_id=call_id,
+                    status_code=detail_resp.status_code,
+                )
+                # Fall back to the listing row (metadata-only, no transcripts).
+                detailed_logs.append(call)
+                continue
+            detailed_logs.append(detail_resp.json())
+
+        return detailed_logs
+
+    @staticmethod
+    def _fetch_twilio_logs(
+        provider: ObservabilityProvider,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ):
+        """Pulls Twilio Call resources (telephony metadata; Twilio stores no
+        transcripts on the Call resource) — TH-5642.
+
+        Credentials: ``AgentDefinition.api_key`` holds ``"<AccountSid>:<AuthToken>"``
+        (Twilio's two-part credential in the single key field; basic auth).
+        """
+        agent = ObservabilityService._get_agent_definition(provider)
+        api_key = ObservabilityService._validate_agent_api_key(
+            agent, provider, "Twilio"
+        )
+        if not api_key:
+            return []
+        if ":" not in api_key:
+            logger.warning(
+                "twilio_api_key_format_invalid",
+                provider_id=str(provider.id),
+                message=(
+                    "Twilio observability needs api_key formatted as "
+                    "'<AccountSid>:<AuthToken>'. Skipping log fetch."
+                ),
+            )
+            return []
+
+        account_sid, auth_token = api_key.split(":", 1)
+        params: dict = {"PageSize": 100}
+        if start_time:
+            params["StartTime>"] = start_time.strftime("%Y-%m-%d")
+        if end_time:
+            params["StartTime<"] = end_time.strftime("%Y-%m-%d")
+
+        response = requests.get(
+            ObservabilityRoutes.TWILIO_CALLS_URL.value.format(account_sid=account_sid),
+            auth=(account_sid, auth_token),
+            params=params,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json().get("calls", []) or []
 
     @staticmethod
     def _fetch_eleven_labs_logs(
