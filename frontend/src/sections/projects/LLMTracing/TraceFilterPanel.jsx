@@ -42,7 +42,6 @@ import {
   getPickerOptionSecondaryLabel,
   getPickerOptionValue,
 } from "./filterValuePickerUtils";
-import { ID_ONLY_FIELDS } from "./idFields";
 
 // ---------------------------------------------------------------------------
 // Trace filter fields (for Query tab via shared FilterPanel)
