@@ -6,8 +6,6 @@ import requests
 import structlog
 
 from tracer.constants.external_endpoints import ObservabilityRoutes
-
-logger = structlog.get_logger(__name__)
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
 from tracer.models.project import VoiceCallLogs
 
@@ -310,7 +308,11 @@ class ObservabilityService:
         if start_time:
             params["start_date"] = start_time.strftime("%Y-%m-%d")
         if end_time:
-            params["end_date"] = end_time.strftime("%Y-%m-%d")
+            # Bland's end_date is EXCLUSIVE at date granularity: end_date=today
+            # silently drops all of today's calls (live-confirmed), so every
+            # scheduled pull (end=now) would never fetch same-day calls. Send
+            # the day after.
+            params["end_date"] = (end_time + timedelta(days=1)).strftime("%Y-%m-%d")
 
         response = requests.get(
             ObservabilityRoutes.BLAND_CALLS_URL.value,
@@ -895,7 +897,9 @@ class ObservabilityService:
         """
         call_length = raw_log.get("call_length")
         duration_seconds = (
-            int(round(float(call_length) * 60)) if call_length not in (None, "") else None
+            int(round(float(call_length) * 60))
+            if call_length not in (None, "")
+            else None
         )
         transcripts = [
             {
@@ -920,7 +924,10 @@ class ObservabilityService:
             "cost_cents": float(price) * 100 if price not in (None, "") else None,
             "transcript": transcripts,
             "error_message": raw_log.get("error_message"),
-            "call_metadata": {"from": raw_log.get("from"), "summary": raw_log.get("summary")},
+            "call_metadata": {
+                "from": raw_log.get("from"),
+                "summary": raw_log.get("summary"),
+            },
         }
         return VoiceCallLogs(**processed_log).model_dump()
 
