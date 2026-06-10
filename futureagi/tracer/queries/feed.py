@@ -259,29 +259,18 @@ def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
     if not trace_to_clusters:
         return {}
 
-    # CH25-TODO (codex consolidated review P2 2026-05-26): this materializes
-    # every span for every trace in the cluster list. Bounded by clustering
-    # page-size today but unsafe under "all-clusters" sweeps. Pending reader
-    # extension:
-    #   CHSpanReader.distinct_end_users_by_trace_ids(trace_ids) ->
-    #       dict[trace_id, set[end_user_id]]
-    # which would push the DISTINCT into CH and return only the user-ids,
-    # not the full span payload.
+    # DISTINCT pushed into CH — only user-ids come back, never span payloads.
     with get_reader() as reader:
-        spans = reader.list_by_trace_ids(list(trace_to_clusters.keys()))
+        users_by_trace = reader.distinct_end_users_by_trace_ids(
+            list(trace_to_clusters.keys())
+        )
 
-    # Distinct end_user_id per cluster_id — a span contributes its
-    # end_user to every cluster the trace is in (fan-out matches the
-    # legacy SQL join).
+    # Distinct end_user_id per cluster_id — a trace contributes its users to
+    # every cluster it is in (fan-out matches the legacy SQL join).
     users_by_cluster: dict[str, set] = {}
-    for s in spans:
-        if not s.end_user_id:
-            continue
-        clusters_for_trace = trace_to_clusters.get(str(s.trace_id))
-        if not clusters_for_trace:
-            continue
-        for cid in clusters_for_trace:
-            users_by_cluster.setdefault(cid, set()).add(s.end_user_id)
+    for tid, users in users_by_trace.items():
+        for cid in trace_to_clusters.get(tid, ()):
+            users_by_cluster.setdefault(cid, set()).update(users)
 
     return {cid: len(users) for cid, users in users_by_cluster.items() if users}
 
@@ -1380,14 +1369,11 @@ def _get_root_spans_batch(trace_ids: list[str]) -> dict:
     if not trace_ids:
         return {}
     with get_reader() as reader:
-        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+        spans = reader.roots_by_trace_ids([str(t) for t in trace_ids])
     out: dict = {}
-    # CH orders by (trace_id, start_time, id) ASC; we want the latest
-    # parentless row per trace_id. A single pass that always overwrites
-    # gives us the last (= newest) parentless span for each trace.
+    # CH orders by (trace_id, start_time, id) ASC; we want the latest root
+    # per trace_id, so a pass that always overwrites keeps the newest.
     for span in spans:
-        if span.parent_span_id:
-            continue
         out[str(span.trace_id)] = span
     return out
 
@@ -1405,20 +1391,14 @@ def _get_trace_totals(
 
 
 def _get_trace_totals_batch(trace_ids: list[str]) -> dict:
-    """Return {trace_id_str: (latency, prompt, completion)} aggregated from spans."""
+    """Return {trace_id_str: (latency, prompt, completion)} aggregated from spans.
+
+    Summed CH-side — three ints per trace come back, not the span payloads.
+    """
     if not trace_ids:
         return {}
     with get_reader() as reader:
-        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
-    rollup: dict[str, list[int | None]] = {}
-    for s in spans:
-        tid = str(s.trace_id)
-        row = rollup.setdefault(tid, [None, None, None])
-        for idx, val in enumerate((s.latency_ms, s.prompt_tokens, s.completion_tokens)):
-            if val is None:
-                continue
-            row[idx] = (row[idx] or 0) + val
-    return {tid: tuple(values) for tid, values in rollup.items()}
+        return reader.totals_by_trace_ids([str(t) for t in trace_ids])
 
 
 def _get_trace_score(trace_id: str) -> float | None:
@@ -1592,6 +1572,28 @@ def _trace_judge(trace_id: str) -> tuple[str | None, float | None]:
     return row["eval_explanation"], row["_score"]
 
 
+def _trace_judges_batch(
+    trace_ids: list[str],
+) -> dict[str, tuple[str | None, float | None]]:
+    """Batch form of _trace_judge — one query for the whole rep-trace page
+    instead of one per trace. Lowest-scoring eval wins per trace (ordering
+    guarantees the first row seen per trace_id is the explainer)."""
+    if not trace_ids:
+        return {}
+    rows = (
+        EvalLogger.objects.filter(trace_id__in=trace_ids, deleted=False)
+        .exclude(eval_explanation__isnull=True)
+        .exclude(eval_explanation="")
+        .annotate(_score=EVAL_SCORE_EXPR)
+        .order_by("trace_id", "_score")
+        .values_list("trace_id", "eval_explanation", "_score")
+    )
+    out: dict[str, tuple[str | None, float | None]] = {}
+    for tid, explanation, score in rows:
+        out.setdefault(str(tid), (explanation, score))
+    return out
+
+
 def _build_representative_trace(
     trace: Trace,
     has_issues: bool,
@@ -1602,6 +1604,7 @@ def _build_representative_trace(
     totals: tuple[int | None, int | None, int | None] | None = None,
     score: float | None = None,
     scan_result: TraceScanResult | None = None,
+    judge: tuple[str | None, float | None] | None = None,
     _prefetched: bool = False,
 ) -> RepresentativeTrace:
     """Turn a Trace into a RepresentativeTrace dataclass.
@@ -1657,7 +1660,9 @@ def _build_representative_trace(
             trace_id=str(trace.id),
         )
 
-    judge_reason, judge_score = _trace_judge(str(trace.id))
+    if judge is None and not _prefetched:
+        judge = _trace_judge(str(trace.id))
+    judge_reason, judge_score = judge or (None, None)
 
     return RepresentativeTrace(
         id=str(trace.id),
@@ -1791,6 +1796,7 @@ def _fetch_representative_traces(
     totals = _get_trace_totals_batch(trace_ids)
     scores = _get_trace_scores_batch(trace_ids)
     scans = _get_scan_results_batch(trace_ids)
+    judges = _trace_judges_batch(trace_ids)
 
     return [
         _build_representative_trace(
@@ -1802,6 +1808,7 @@ def _fetch_representative_traces(
             totals=totals.get(str(trace.id)),
             score=scores.get(str(trace.id)),
             scan_result=scans.get(str(trace.id)),
+            judge=judges.get(str(trace.id)),
             _prefetched=True,
         )
         for trace in deduped

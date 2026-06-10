@@ -164,6 +164,19 @@ _READ_COLUMNS: tuple[str, ...] = (
 
 _SELECT_SQL = ", ".join(_READ_COLUMNS)
 
+# Same positional shape with the heavy JSON columns stubbed to '' — decoding
+# attributes_extra/span_events/resource_attrs dominates wide reads (a voice
+# conversation root carries its whole raw_log there). _row_to_chspan works
+# unchanged; the stubbed fields just come back empty.
+_HEAVY_COLUMNS = {
+    "span_events",
+    "toJSONString(resource_attrs) AS resource_attrs",
+    "toJSONString(attributes_extra) AS attributes_extra",
+}
+_LEAN_SELECT_SQL = ", ".join(
+    "''" if col in _HEAVY_COLUMNS else col for col in _READ_COLUMNS
+)
+
 # Order in which result_rows columns arrive — bare names (no `AS` aliases) for the
 # row→dataclass mapping below.
 _DATA_KEYS: tuple[str, ...] = (
@@ -389,6 +402,59 @@ class CHSpanReader:
             parameters={"trace_ids": tuple(trace_ids)},
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
+
+    # ─── Root spans only (parentless) across many traces ─────────────────────
+    def roots_by_trace_ids(
+        self, trace_ids: list[str], *, include_heavy: bool = False
+    ) -> list[CHSpan]:
+        """Parentless spans for the given traces, same shape/order as
+        list_by_trace_ids. Fetches one row per root instead of every span.
+
+        Unless ``include_heavy``, attributes_extra / span_events /
+        resource_attrs come back as '' — decoding them dominates the read
+        (a voice conversation root carries its whole raw_log in
+        attributes_extra). input/output/attrs_string stay real.
+        """
+        if not trace_ids:
+            return []
+        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
+        rows = self._client.query(
+            f"SELECT {select} FROM spans FINAL "
+            "WHERE trace_id IN %(trace_ids)s AND is_deleted = 0 "
+            "AND (parent_span_id IS NULL OR parent_span_id = '') "
+            "ORDER BY trace_id, start_time, id",
+            parameters={"trace_ids": tuple(trace_ids)},
+        ).result_rows
+        return [_row_to_chspan(r) for r in rows]
+
+    # ─── Per-trace rollups (latency / tokens) ─────────────────────────────────
+    def totals_by_trace_ids(
+        self, trace_ids: list[str]
+    ) -> dict[str, tuple[int | None, int | None, int | None]]:
+        """{trace_id: (latency_ms, prompt_tokens, completion_tokens)} summed
+        in CH — replaces materializing every span just to add three ints.
+
+        No FINAL: analytics-aggregate convention (matches the dashboard query
+        builders) — an unmerged duplicate inflates a sum until the merge runs,
+        acceptable for summary stats and far cheaper on fat-row tables."""
+        if not trace_ids:
+            return {}
+        rows = self._client.query(
+            "SELECT trace_id, sum(latency_ms) AS lat, "
+            "sum(prompt_tokens) AS pt, sum(completion_tokens) AS ct "
+            "FROM spans "
+            "WHERE trace_id IN %(trace_ids)s AND is_deleted = 0 "
+            "GROUP BY trace_id",
+            parameters={"trace_ids": tuple(trace_ids)},
+        ).result_rows
+        return {
+            str(tid): (
+                int(lat) if lat else None,
+                int(pt) if pt else None,
+                int(ct) if ct else None,
+            )
+            for tid, lat, pt, ct in rows
+        }
 
     # ─── Children of a parent span ────────────────────────────────────────────
     def list_by_parent(
