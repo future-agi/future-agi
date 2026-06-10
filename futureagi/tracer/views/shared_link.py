@@ -32,7 +32,6 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        # Filter by resource if query params provided
         resource_type = self.request.query_params.get("resource_type")
         resource_id = self.request.query_params.get("resource_id")
         if resource_type:
@@ -71,7 +70,6 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
             workspace=getattr(request, "workspace", None),
         )
 
-        # Add ACL entries if provided
         emails = data.get("emails", [])
         for email in emails:
             user = User.objects.filter(email=email).first()
@@ -172,7 +170,6 @@ def resolve_shared_link(request, token):
             status=status.HTTP_410_GONE,
         )
 
-    # Check access for restricted links
     if link.access_type == AccessType.RESTRICTED:
         if not request.user or not request.user.is_authenticated:
             return Response(
@@ -182,14 +179,12 @@ def resolve_shared_link(request, token):
         has_access = link.access_list.filter(
             email=request.user.email, deleted=False
         ).exists()
-        # Also allow the creator
         if not has_access and request.user != link.created_by:
             return Response(
                 {"error": "You don't have access to this shared resource"},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-    # Resolve the resource
     resource_data = _resolve_resource(link)
     if resource_data is None:
         return Response(
@@ -229,14 +224,12 @@ def _resolve_resource(link):
             if not trace:
                 return None
 
-            # Get spans for this trace and build a flat list
             spans_qs = ObservationSpan.objects.filter(
                 trace_id=str(trace.id),
                 project=trace.project,
             ).order_by("start_time")
             spans_data = ObservationSpanSerializer(spans_qs, many=True).data
 
-            # Build tree structure (parent→children)
             span_map = {}
             roots = []
             for s in spans_data:
@@ -269,21 +262,42 @@ def _resolve_resource(link):
             }
 
         elif link.resource_type == "dashboard":
-            from tracer.models.dashboard import Dashboard
+            from tracer.models.dashboard import Dashboard, DashboardWidget
 
-            dashboard = Dashboard.objects.filter(
-                id=link.resource_id,
-                workspace__organization=link.organization,
-            ).first()
+            dashboard = (
+                Dashboard.objects.filter(
+                    id=link.resource_id,
+                    workspace__organization=link.organization,
+                )
+                .prefetch_related("widgets")
+                .first()
+            )
             if not dashboard:
                 return None
+
+            # FIX: include full widget data so DashboardReadOnlyView can render charts
+            widgets = [
+                {
+                    "id": str(w.id),
+                    "name": w.name,
+                    "description": w.description,
+                    "position": w.position,
+                    "width": w.width,
+                    "height": w.height,
+                    "query_config": w.query_config,
+                    "chart_config": w.chart_config,
+                }
+                for w in dashboard.widgets.filter(deleted=False).order_by("position")
+            ]
+
             return {
                 "id": str(dashboard.id),
                 "name": dashboard.name,
-                "config": dashboard.config,
+                "description": dashboard.description,
+                "config": getattr(dashboard, "config", {}),
+                "widgets": widgets,
             }
 
-        # Extend for other resource types as needed
         return None
 
     except Exception:

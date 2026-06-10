@@ -43,6 +43,7 @@ import {
 } from "src/hooks/useDashboards";
 import Iconify from "src/components/iconify";
 import WidgetChart from "./WidgetChart";
+import ShareDialog from "src/components/share-dialog/ShareDialog";
 import {
   DndContext,
   DragOverlay,
@@ -115,8 +116,6 @@ function getDateRange(preset) {
   return { start: start.toISOString(), end: now.toISOString() };
 }
 
-/** Group a flat sorted widget list into rows based on cumulative widths.
- *  Widgets in each row are normalized so their widths sum to exactly 12. */
 function computeRows(widgets) {
   const sorted = [...widgets].sort((a, b) => a.position - b.position);
   const rows = [];
@@ -139,7 +138,7 @@ function computeRows(widgets) {
 }
 
 // ---------------------------------------------------------------------------
-// InlineEdit — click-to-edit text field
+// InlineEdit
 // ---------------------------------------------------------------------------
 const InlineEdit = forwardRef(function InlineEdit(
   { value, onSave, placeholder, typographyProps, multiline },
@@ -228,7 +227,7 @@ const InlineEdit = forwardRef(function InlineEdit(
 });
 
 // ---------------------------------------------------------------------------
-// DropZone — droppable area that shows a blue indicator line when hovered
+// DropZone
 // ---------------------------------------------------------------------------
 function DropZone({ id, direction = "vertical", isDragging }) {
   const { setNodeRef, isOver } = useDroppable({ id });
@@ -260,7 +259,6 @@ function DropZone({ id, direction = "vertical", isDragging }) {
     );
   }
 
-  // Vertical — invisible when not dragging, expands during drag
   return (
     <Box
       ref={setNodeRef}
@@ -290,8 +288,7 @@ function DropZone({ id, direction = "vertical", isDragging }) {
 }
 
 // ---------------------------------------------------------------------------
-// ResizeHandle — draggable divider between adjacent widgets in a row
-// Resizes live as you drag, snapping to grid columns.
+// ResizeHandle
 // ---------------------------------------------------------------------------
 function ResizeHandle({
   leftWidget,
@@ -310,11 +307,9 @@ function ResizeHandle({
     const rightStart = rightWidget.width || 6;
     const totalWidth = leftStart + rightStart;
 
-    // Find the sibling DOM elements for live resizing
     const handleEl = handleRef.current;
     const leftEl = handleEl?.previousElementSibling;
     const rightEl = handleEl?.nextElementSibling;
-    // Skip past the DropZone that sits between handle and next widget
     const actualRightEl = rightEl?.getAttribute?.("data-widget-id")
       ? rightEl
       : rightEl?.nextElementSibling;
@@ -333,7 +328,6 @@ function ResizeHandle({
 
       if (newLeft !== lastCols) {
         lastCols = newLeft;
-        // Live update the flex of both widgets
         const leftPct = (newLeft / 12) * 100;
         const rightPct = (newRight / 12) * 100;
         if (leftEl) {
@@ -351,7 +345,6 @@ function ResizeHandle({
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
       document.body.style.cursor = "";
-      // Clear inline styles so React takes back control
       if (leftEl) {
         leftEl.style.flex = "";
         leftEl.style.maxWidth = "";
@@ -411,13 +404,12 @@ function ResizeHandle({
 }
 
 // ---------------------------------------------------------------------------
-// RowResizeHandle — a single horizontal bar below the entire row
+// RowResizeHandle
 // ---------------------------------------------------------------------------
 function RowResizeHandle({ row, onRowResize }) {
   const handleMouseDown = (e) => {
     e.preventDefault();
     const startY = e.clientY;
-    // Find the row container (parent of this handle)
     const rowEl = e.currentTarget.previousElementSibling;
     const cards = rowEl ? rowEl.querySelectorAll(".MuiCard-root") : [];
     const startHeight = cards.length > 0 ? cards[0].offsetHeight : 320;
@@ -475,7 +467,7 @@ function RowResizeHandle({ row, onRowResize }) {
 }
 
 // ---------------------------------------------------------------------------
-// DraggableWidgetCard — individual widget card with drag handle
+// DraggableWidgetCard
 // ---------------------------------------------------------------------------
 function DraggableWidgetCard({
   widget,
@@ -539,7 +531,6 @@ function DraggableWidgetCard({
             overflow: "hidden",
           }}
         >
-          {/* Header row — entire bar is the drag activator */}
           <div
             {...attributes}
             {...listeners}
@@ -577,7 +568,6 @@ function DraggableWidgetCard({
               {widget.name}
             </Typography>
 
-            {/* Actions */}
             <Stack
               className="widget-actions"
               direction="row"
@@ -605,7 +595,6 @@ function DraggableWidgetCard({
             </Stack>
           </div>
 
-          {/* Chart */}
           <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <WidgetChart widget={widget} globalDateRange={globalDateRange} />
           </Box>
@@ -616,7 +605,7 @@ function DraggableWidgetCard({
 }
 
 // ---------------------------------------------------------------------------
-// DragOverlayCard — compact preview shown while dragging
+// DragOverlayCard
 // ---------------------------------------------------------------------------
 function DragOverlayCard({ widget }) {
   const theme = useTheme();
@@ -687,7 +676,9 @@ export default function DashboardDetailView() {
   // Widget context menu
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [menuWidget, setMenuWidget] = useState(null);
-  const [linkCopied, setLinkCopied] = useState(false);
+
+  // Share dialog state  ← FIXED (was using clipboard directly before)
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
 
   // Width submenu
   const [widthMenuAnchor, setWidthMenuAnchor] = useState(null);
@@ -695,7 +686,7 @@ export default function DashboardDetailView() {
   // Dashboard more menu
   const [dashMenuAnchor, setDashMenuAnchor] = useState(null);
 
-  // Grid container ref (for measuring column widths during resize)
+  // Grid container ref
   const gridContainerRef = useRef(null);
 
   // Drag state
@@ -715,8 +706,6 @@ export default function DashboardDetailView() {
   );
 
   const rows = useMemo(() => computeRows(widgets), [widgets]);
-
-  // --- Handlers ---
 
   const titleEditRef = useRef(null);
 
@@ -751,14 +740,6 @@ export default function DashboardDetailView() {
       const draggedId = active.id;
       const dropId = String(over.id);
 
-      // Parse drop zone ID
-      // Formats:
-      //   "gap-r{rowIdx}-{insertIdx}"  → insert before widget at insertIdx in row
-      //   "gap-r{rowIdx}-end"          → insert after last widget in row
-      //   "gap-row-{rowIdx}"           → new row before row rowIdx
-      //   "gap-row-end"                → new row at the end
-
-      // Build a mutable copy of rows (excluding the dragged widget)
       const draggedWidget = widgets.find((w) => w.id === draggedId);
       if (!draggedWidget) return;
 
@@ -771,21 +752,17 @@ export default function DashboardDetailView() {
       let isNewRow = false;
 
       if (dropId.startsWith("gap-row-end")) {
-        // New row at the bottom
         isNewRow = true;
         targetRowIdx = rowsCopy.length;
       } else if (dropId.startsWith("gap-row-")) {
-        // New row before rowIdx
         isNewRow = true;
         targetRowIdx = parseInt(dropId.replace("gap-row-", ""), 10);
-        // Adjust targetRowIdx if the dragged widget was in an earlier row that collapsed
         const origRowIdx = rows.findIndex((r) =>
           r.some((w) => w.id === draggedId),
         );
         if (origRowIdx >= 0 && origRowIdx < targetRowIdx) {
           const origRow = rows[origRowIdx];
           if (origRow.length === 1) {
-            // That row will collapse, shift target down
             targetRowIdx = Math.max(0, targetRowIdx - 1);
           }
         }
@@ -795,8 +772,6 @@ export default function DashboardDetailView() {
         const rawRowIdx = parseInt(match[1], 10);
         const posStr = match[2];
 
-        // Adjust rowIdx for collapsed rows
-        // Map from original row index to rowsCopy index
         let adjustedRowIdx = rawRowIdx;
         const origRowIdx = rows.findIndex((r) =>
           r.some((w) => w.id === draggedId),
@@ -817,21 +792,17 @@ export default function DashboardDetailView() {
             posStr === "end"
               ? rowsCopy[targetRowIdx].length
               : parseInt(posStr, 10);
-          // Check if row can accept another widget (max 4 per row)
           if (rowsCopy[targetRowIdx].length >= 4) {
-            // Can't fit, create new row instead
             isNewRow = true;
           }
         }
       } else {
-        return; // Unknown drop zone
+        return;
       }
 
       if (isNewRow) {
-        // Insert a new row with just the dragged widget at full width
         rowsCopy.splice(targetRowIdx, 0, [{ ...draggedWidget, width: 12 }]);
       } else {
-        // Insert into existing row and redistribute widths
         const row = rowsCopy[targetRowIdx];
         row.splice(insertIdx, 0, draggedWidget);
         const n = row.length;
@@ -845,7 +816,6 @@ export default function DashboardDetailView() {
         }
       }
 
-      // Also redistribute the source row if it lost a widget
       for (const row of rowsCopy) {
         const totalW = row.reduce((s, w) => s + (w.width || 12), 0);
         if (totalW < 12 && row.length > 0 && row.length <= 4) {
@@ -861,7 +831,6 @@ export default function DashboardDetailView() {
         }
       }
 
-      // Flatten rows into a new ordered list with positions
       const newOrder = rowsCopy.flat().map((w) => ({
         id: w.id,
         width: w.width || 12,
@@ -918,7 +887,6 @@ export default function DashboardDetailView() {
 
   const handleRowResize = useCallback(
     (rowWidgets, newHeight) => {
-      // Update height for all widgets in the row
       rowWidgets.forEach((w) => {
         updateWidget.mutate({
           dashboardId,
@@ -932,7 +900,6 @@ export default function DashboardDetailView() {
 
   const handleWidthResize = useCallback(
     (leftId, leftWidth, rightId, rightWidth) => {
-      // Update both widgets' widths via reorder (preserves positions)
       const newOrder = widgets.map((w) => {
         if (w.id === leftId) return { id: w.id, width: leftWidth };
         if (w.id === rightId) return { id: w.id, width: rightWidth };
@@ -948,17 +915,14 @@ export default function DashboardDetailView() {
       const row = rows[rowIdx];
       if (!row || row.length >= 4) return;
 
-      // Compute new widget width — redistribute evenly
       const newCount = row.length + 1;
       const perWidget = Math.floor(12 / newCount);
       const remainder = 12 - perWidget * newCount;
 
-      // Compute position: just after the last widget in this row
       const lastInRow = row[row.length - 1];
       const lastPos = lastInRow?.position ?? 0;
 
       try {
-        // Create a blank widget placed into this row
         const res = await createWidget.mutateAsync({
           dashboardId,
           data: {
@@ -974,7 +938,6 @@ export default function DashboardDetailView() {
         const newWidgetId = res.data?.result?.id;
         if (!newWidgetId) return;
 
-        // Build updated order: redistribute widths for this row
         const newOrder = [];
         for (let ri = 0; ri < rows.length; ri++) {
           for (let wi = 0; wi < rows[ri].length; wi++) {
@@ -989,7 +952,6 @@ export default function DashboardDetailView() {
               newOrder.push({ id: w.id, width: w.width || 12 });
             }
           }
-          // Insert new widget at end of target row
           if (ri === rowIdx) {
             newOrder.push({
               id: newWidgetId,
@@ -999,8 +961,6 @@ export default function DashboardDetailView() {
         }
 
         await reorderWidgets.mutateAsync({ dashboardId, order: newOrder });
-
-        // Navigate to edit the new widget
         navigate(`/dashboard/dashboards/${dashboardId}/widget/${newWidgetId}`);
       } catch (err) {
         // error handled silently
@@ -1077,22 +1037,14 @@ export default function DashboardDetailView() {
         </Breadcrumbs>
 
         <Stack direction="row" spacing={0.5} alignItems="center">
-          <Tooltip title={linkCopied ? "Copied!" : "Copy link to share"}>
+          {/* FIXED: was navigator.clipboard.writeText(window.location.href) */}
+          <Tooltip title="Share dashboard">
             <IconButton
               size="small"
-              onClick={() => {
-                navigator.clipboard.writeText(window.location.href);
-                setLinkCopied(true);
-                setTimeout(() => setLinkCopied(false), 2000);
-              }}
-              sx={{
-                color: linkCopied ? "primary.main" : "text.secondary",
-              }}
+              onClick={() => setShareDialogOpen(true)}
+              sx={{ color: "text.secondary" }}
             >
-              <Iconify
-                icon={linkCopied ? "mdi:check" : "mdi:share-variant-outline"}
-                width={18}
-              />
+              <Iconify icon="mdi:share-variant-outline" width={18} />
             </IconButton>
           </Tooltip>
           <Tooltip title="More options">
@@ -1158,7 +1110,7 @@ export default function DashboardDetailView() {
         />
       </Stack>
 
-      {/* ---- Dashboard title & description (inline editable) ---- */}
+      {/* ---- Dashboard title & description ---- */}
       <Box sx={{ px: 3, pt: 2 }}>
         <InlineEdit
           ref={titleEditRef}
@@ -1191,7 +1143,7 @@ export default function DashboardDetailView() {
         />
       </Box>
 
-      {/* ---- Widgets grid with drag-and-drop ---- */}
+      {/* ---- Widgets grid ---- */}
       <Box
         ref={gridContainerRef}
         sx={{ px: 3, pt: 2, pb: 4, flex: 1, overflow: "visible" }}
@@ -1239,7 +1191,6 @@ export default function DashboardDetailView() {
               onDragEnd={handleDragEnd}
             >
               {rows.map((row, rowIdx) => {
-                // Compute uniform row height (max of all widgets in this row)
                 const rowHeight =
                   row.length > 1
                     ? Math.max(
@@ -1253,14 +1204,12 @@ export default function DashboardDetailView() {
 
                 return (
                   <React.Fragment key={rowIdx}>
-                    {/* Horizontal drop zone between rows */}
                     <DropZone
                       id={`gap-row-${rowIdx}`}
                       direction="horizontal"
                       isDragging={!!activeWidget}
                     />
 
-                    {/* Row wrapper with "+" button on left */}
                     <Box
                       sx={{
                         display: "flex",
@@ -1271,7 +1220,6 @@ export default function DashboardDetailView() {
                         "&:hover .row-add-btn": { opacity: 1 },
                       }}
                     >
-                      {/* Add-to-row button */}
                       {!activeWidget && row.length < 4 && (
                         <Tooltip title="Add widget to row" placement="left">
                           <IconButton
@@ -1303,7 +1251,6 @@ export default function DashboardDetailView() {
                         </Tooltip>
                       )}
 
-                      {/* Row of widgets with vertical drop zones */}
                       <Box
                         sx={{
                           display: "flex",
@@ -1313,7 +1260,6 @@ export default function DashboardDetailView() {
                       >
                         {row.map((widget, widgetIdx) => (
                           <React.Fragment key={widget.id}>
-                            {/* Vertical drop zone before this widget */}
                             <DropZone
                               id={`gap-r${rowIdx}-${widgetIdx}`}
                               isDragging={!!activeWidget}
@@ -1330,7 +1276,6 @@ export default function DashboardDetailView() {
                               datePreset={datePreset}
                             />
 
-                            {/* Resize handle between adjacent widgets */}
                             {!activeWidget && widgetIdx < row.length - 1 && (
                               <ResizeHandle
                                 leftWidget={widget}
@@ -1342,7 +1287,6 @@ export default function DashboardDetailView() {
                           </React.Fragment>
                         ))}
 
-                        {/* Vertical drop zone after last widget in row */}
                         <DropZone
                           id={`gap-r${rowIdx}-end`}
                           isDragging={!!activeWidget}
@@ -1350,7 +1294,6 @@ export default function DashboardDetailView() {
                       </Box>
                     </Box>
 
-                    {/* Row-level height resize handle */}
                     {!activeWidget && (
                       <RowResizeHandle
                         row={row}
@@ -1361,14 +1304,12 @@ export default function DashboardDetailView() {
                 );
               })}
 
-              {/* Horizontal drop zone at the very end */}
               <DropZone
                 id="gap-row-end"
                 direction="horizontal"
                 isDragging={!!activeWidget}
               />
 
-              {/* Drag overlay — follows cursor */}
               <DragOverlay dropAnimation={null}>
                 {activeWidget ? (
                   <DragOverlayCard widget={activeWidget} />
@@ -1376,7 +1317,6 @@ export default function DashboardDetailView() {
               </DragOverlay>
             </DndContext>
 
-            {/* Add widget button below grid */}
             <Box sx={{ display: "flex", justifyContent: "center", mt: 3 }}>
               <Button
                 variant="outlined"
@@ -1509,6 +1449,14 @@ export default function DashboardDetailView() {
           <ListItemText>Delete Dashboard</ListItemText>
         </MenuItem>
       </Menu>
+
+      {/* ---- Share Dialog ---- */}
+      <ShareDialog
+        open={shareDialogOpen}
+        onClose={() => setShareDialogOpen(false)}
+        resourceType="dashboard"
+        resourceId={dashboardId}
+      />
     </Box>
   );
 }
