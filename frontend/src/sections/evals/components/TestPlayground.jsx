@@ -660,7 +660,7 @@ const TestPlayground = React.forwardRef(
     const simulationTestRef = useRef(null);
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
       useErrorLocalizerPoll();
-
+ 
     // Version hover menu state
     const [versionMenuAnchor, setVersionMenuAnchor] = useState(null);
     const [hoveredVersionId, setHoveredVersionId] = useState(null);
@@ -1242,6 +1242,12 @@ const TestPlayground = React.forwardRef(
                             ? {
                                 error_localizer_status:
                                   errorLocalizerState.status,
+                              }
+                            : {}),
+                          ...(errorLocalizerState.message
+                            ? {
+                                error_localizer_message:
+                                  errorLocalizerState.message,
                               }
                             : {}),
                           ...(errorLocalizerState.details

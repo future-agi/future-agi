@@ -1812,6 +1812,9 @@ const SimulationTestMode = React.forwardRef(
               ...(errorLocalizerState.status
                 ? { error_localizer_status: errorLocalizerState.status }
                 : {}),
+              ...(errorLocalizerState.message
+                ? { error_localizer_message: errorLocalizerState.message }
+                : {}),
               ...(errorLocalizerState.details
                 ? {
                     error_details:

@@ -330,14 +330,36 @@ const EvalErrorLocalization = ({
   // ── State 4: skipped ─────────────────────────────────────────────────────
   if (effectiveStatus === "skipped") {
     return (
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ fontSize: 10, fontStyle: "italic" }}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1.25,
+          px: 1.25,
+          py: 1,
+          borderRadius: "6px",
+          border: "1px solid",
+          borderColor: "warning.light",
+          backgroundColor: (theme) =>
+            theme.palette.mode === "dark"
+              ? "rgba(255, 171, 0, 0.08)"
+              : "rgba(255, 171, 0, 0.06)",
+        }}
       >
-        Error localization was skipped — input data isn&apos;t available to
-        localize on.
-      </Typography>
+        <Iconify
+          icon="solar:forbidden-circle-bold"
+          width={16}
+          sx={{ color: "warning.main", flexShrink: 0 }}
+        />
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ fontSize: 10 }}
+        >
+          {cellPollData?.error_message ||
+            "Error localization was skipped — input data isn't available to localize on."}
+        </Typography>
+      </Box>
     );
   }
 
