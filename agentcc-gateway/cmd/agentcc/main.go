@@ -24,6 +24,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/external"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/futureagi"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/hallucination"
+	"github.com/futureagi/agentcc-gateway/internal/guardrails/indirect"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/injection"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/language"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/leakage"
@@ -316,6 +317,7 @@ func main() {
 		guardrailRegistry["system-prompt-protection"] = sysprompt.New(findRuleConfig(cfg.Guardrails.Rules, "system-prompt-protection"))
 		guardrailRegistry["hallucination-detection"] = hallucination.New(findRuleConfig(cfg.Guardrails.Rules, "hallucination-detection"))
 		guardrailRegistry["data-leakage-prevention"] = leakage.New(findRuleConfig(cfg.Guardrails.Rules, "data-leakage-prevention"))
+		guardrailRegistry["indirect-prompt-injection"] = indirect.New(findRuleConfig(cfg.Guardrails.Rules, "indirect-prompt-injection"))
 
 		// Register dynamic guardrails: webhooks and expressions.
 		for _, rule := range cfg.Guardrails.Rules {
@@ -383,6 +385,8 @@ func main() {
 				return hallucination.New(cfg)
 			case "data-leakage-prevention":
 				return leakage.New(cfg)
+			case "indirect-prompt-injection":
+				return indirect.New(cfg)
 			}
 			if futureagi.IsFutureAGIConfig(cfg) {
 				return futureagi.New(name, cfg)
