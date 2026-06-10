@@ -183,6 +183,26 @@ describe("useWorkflowExecution", () => {
       expect(runState.executionId).toBe("exec-1");
     });
 
+    it("starts polling with backend snake_case execution_ids", async () => {
+      const nodes = [createPromptNode("n1")];
+      setupNodes(nodes);
+      mockFetchGraphDataset.mockResolvedValue({
+        rows: [{ cells: [{ value: "ok" }] }],
+      });
+      mockExecuteDataset.mockResolvedValue({
+        data: { result: { execution_ids: ["exec-snake"] } },
+      });
+
+      const { result } = renderHook(() => useWorkflowExecution());
+      await act(async () => {
+        await result.current.runWorkflow();
+      });
+
+      const runState = useWorkflowRunStore.getState();
+      expect(runState.workflowState).toBe(WORKFLOW_STATE.RUNNING);
+      expect(runState.executionId).toBe("exec-snake");
+    });
+
     it("sets ERROR state and calls failRun on execution failure", async () => {
       const nodes = [createPromptNode("n1")];
       setupNodes(nodes);
@@ -203,6 +223,31 @@ describe("useWorkflowExecution", () => {
       expect(runState.runError).toBe("Custom API error");
       expect(mockEnqueueSnackbar).toHaveBeenCalledWith(
         "Custom API error",
+        expect.objectContaining({ variant: "error" }),
+      );
+    });
+
+    it("uses flattened API result as execution failure message", async () => {
+      const nodes = [createPromptNode("n1")];
+      setupNodes(nodes);
+      mockFetchGraphDataset.mockResolvedValue({
+        rows: [{ cells: [{ value: "ok" }] }],
+      });
+      mockExecuteDataset.mockRejectedValue({
+        result: { message: "Temporal dispatch unavailable" },
+        statusCode: 500,
+      });
+
+      const { result } = renderHook(() => useWorkflowExecution());
+      await act(async () => {
+        await result.current.runWorkflow();
+      });
+
+      const runState = useWorkflowRunStore.getState();
+      expect(runState.workflowState).toBe(WORKFLOW_STATE.ERROR);
+      expect(runState.runError).toBe("Temporal dispatch unavailable");
+      expect(mockEnqueueSnackbar).toHaveBeenCalledWith(
+        "Temporal dispatch unavailable",
         expect.objectContaining({ variant: "error" }),
       );
     });

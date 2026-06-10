@@ -18,6 +18,19 @@ import {
 } from "../../../api/agent-playground/agent-playground";
 import { useActivateVersion } from "../../../api/agent-playground/versions";
 
+const getExecutionIdsFromResponse = (res) => {
+  const result = res?.data?.result ?? res?.result ?? res;
+  return result?.executionIds || result?.execution_ids || [];
+};
+
+const getExecutionErrorMessage = (error) =>
+  error?.response?.data?.result?.message ||
+  error?.response?.data?.result ||
+  error?.result?.message ||
+  error?.result ||
+  error?.message ||
+  "Workflow execution failed";
+
 export default function useWorkflowExecution() {
   const { agentId } = useParams();
   const [searchParams] = useSearchParams();
@@ -124,17 +137,14 @@ export default function useWorkflowExecution() {
     setIsInitiating(false);
     try {
       const res = await executeDataset({ graphId });
-      const executionIds = res.data?.result?.executionIds;
+      const executionIds = getExecutionIdsFromResponse(res);
       if (executionIds?.[0]) {
         startPolling(executionIds[0]);
       } else {
         throw new Error("No execution IDs returned");
       }
     } catch (error) {
-      const errorMessage =
-        error?.response?.data?.result ||
-        error?.message ||
-        "Workflow execution failed";
+      const errorMessage = getExecutionErrorMessage(error);
       failRun(errorMessage);
       enqueueSnackbar(errorMessage, { variant: "error" });
     }
