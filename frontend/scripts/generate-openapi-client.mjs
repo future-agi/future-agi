@@ -106,6 +106,24 @@ function buildManagementApiSwagger(swagger) {
   };
 }
 
+function normalizeJsonValueSchemas(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(normalizeJsonValueSchemas);
+
+  if (schema["x-json-value"]) {
+    return {
+      ...(schema.description ? { description: schema.description } : {}),
+    };
+  }
+
+  return Object.fromEntries(
+    Object.entries(schema).map(([key, value]) => [
+      key,
+      normalizeJsonValueSchemas(value),
+    ]),
+  );
+}
+
 function snapshotGeneratedFiles() {
   if (!fs.existsSync(outputDir)) return new Map();
   return new Map(
@@ -219,7 +237,9 @@ async function runGeneration(schemaPath) {
 }
 
 const swagger = JSON.parse(fs.readFileSync(swaggerPath, "utf8"));
-const managementApiSwagger = buildManagementApiSwagger(swagger);
+const managementApiSwagger = normalizeJsonValueSchemas(
+  buildManagementApiSwagger(swagger),
+);
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "futureagi-openapi-"));
 const tempSchemaPath = path.join(tempDir, "management-openapi.json");
 fs.writeFileSync(tempSchemaPath, JSON.stringify(managementApiSwagger, null, 2));

@@ -1,6 +1,8 @@
 /* eslint-disable no-console */
+import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import process from "node:process";
+import { promisify } from "node:util";
 import {
   apiPath,
   asArray,
@@ -12,6 +14,7 @@ import {
 
 const require = createRequire(import.meta.url);
 const puppeteer = require("puppeteer-core");
+const execFileAsync = promisify(execFile);
 
 const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
 const PROJECT_PREFIX = "ui_prototype_run_browser_";
@@ -39,11 +42,13 @@ async function main() {
   let page = null;
   let projectId = null;
 
+  await cleanupClickHouseByPrefix(PROJECT_PREFIX, cleanupEvidence);
   await cleanupProjectsByPrefix(auth.client, PROJECT_PREFIX, cleanupEvidence);
 
   try {
     const seeded = await seedPrototypeRuns({
       client: auth.client,
+      organizationId: auth.organizationId,
       projectName,
       alphaName,
       betaName,
@@ -258,6 +263,7 @@ async function main() {
     await page.screenshot({ path: RUN_SCREENSHOT_PATH, fullPage: true });
 
     await deleteProjects(auth.client, [projectId], cleanupEvidence);
+    await cleanupClickHouseByPrefix(PROJECT_PREFIX, cleanupEvidence);
     projectId = null;
 
     assert(
@@ -326,12 +332,14 @@ async function main() {
       );
     }
     await cleanupProjectsByPrefix(auth.client, PROJECT_PREFIX, cleanupEvidence);
+    await cleanupClickHouseByPrefix(PROJECT_PREFIX, cleanupEvidence);
     if (browser) await browser.close();
   }
 }
 
 async function seedPrototypeRuns({
   client,
+  organizationId,
   projectName,
   alphaName,
   betaName,
@@ -402,6 +410,34 @@ async function seedPrototypeRuns({
     ),
     "Seeded beta run was missing from list_runs.",
   );
+
+  await mirrorPrototypeRunsToClickHouse({
+    projectId,
+    organizationId,
+    traces: [
+      {
+        id: alphaSeed.traceId,
+        projectVersionId: alphaVersion.id,
+        name: alphaSeed.traceName,
+        lane: "alpha",
+        input: { prompt: `shared prototype input ${marker}` },
+        output: { response: `prototype alpha output ${marker}` },
+        metadata: { source: "api-journey", marker, lane: "alpha" },
+        tags: ["api-journey", "alpha"],
+      },
+      {
+        id: betaSeed.traceId,
+        projectVersionId: betaVersion.id,
+        name: betaSeed.traceName,
+        lane: "beta",
+        input: { prompt: `shared prototype input ${marker}` },
+        output: { response: `prototype beta output ${marker}` },
+        metadata: { source: "api-journey", marker, lane: "beta" },
+        tags: ["api-journey", "beta"],
+      },
+    ],
+    spans: [alphaSeed, betaSeed],
+  });
 
   return {
     projectId,
@@ -481,7 +517,178 @@ async function seedTraceAndSpan(
     metadata: { source: "api-journey", marker, lane },
   });
   assert((span.id || spanId) === spanId, "Span seed returned the wrong id.");
-  return { traceId, spanId, traceName, spanName };
+  return {
+    traceId,
+    spanId,
+    traceName,
+    spanName,
+    projectVersionId,
+    lane,
+    latencyMs,
+    cost,
+    startTime,
+    endTime,
+    input: { messages: [{ role: "user", content: `hello ${marker}` }] },
+    output: { choices: [{ message: { content: `hi from ${lane}` } }] },
+    tags: ["api-journey", lane],
+    metadata: { source: "api-journey", marker, lane },
+  };
+}
+
+async function mirrorPrototypeRunsToClickHouse({
+  projectId,
+  organizationId,
+  traces,
+  spans,
+}) {
+  assert(isUuid(projectId), "ClickHouse mirror projectId must be a UUID.");
+  assert(
+    isUuid(organizationId),
+    "ClickHouse mirror organizationId must be a UUID.",
+  );
+  const traceValues = traces
+    .map(
+      (trace) => `(
+        ${chUuid(trace.id)},
+        ${chUuid(projectId)},
+        ${chUuid(trace.projectVersionId)},
+        ${chString(trace.name)},
+        ${chJson(trace.tags)},
+        ${chJson(trace.metadata)},
+        ${chJson(trace.input)},
+        ${chJson(trace.output)},
+        '{}',
+        now64(6, 'UTC'),
+        now64(6, 'UTC'),
+        0,
+        toUInt64(toUnixTimestamp64Nano(now64(9, 'UTC')))
+      )`,
+    )
+    .join(",\n");
+  const spanValues = spans
+    .map(
+      (span) => `(
+        ${chUuid(projectId)},
+        'llm',
+        'api-journey',
+        ${chDateTime(span.startTime)},
+        ${chString(span.traceId)},
+        ${chString(span.spanId)},
+        ${chString(span.spanName)},
+        ${chDateTime(span.endTime)},
+        ${Number(span.latencyMs)},
+        ${chUuid(organizationId)},
+        ${chUuid(span.projectVersionId)},
+        'OK',
+        'api-journey-model',
+        'api-journey',
+        2,
+        3,
+        5,
+        ${Number(span.cost)},
+        ${chJson(span.input)},
+        ${chJson(span.output)},
+        ${chJson(span.tags)},
+        now64(6, 'UTC'),
+        now64(6, 'UTC'),
+        0,
+        toUInt64(toUnixTimestamp64Nano(now64(9, 'UTC')))
+      )`,
+    )
+    .join(",\n");
+
+  await runClickHouseSql(`
+    INSERT INTO traces (
+      id, project_id, project_version_id, name, tags, metadata, input, output,
+      error, created_at, updated_at, is_deleted, _version
+    ) VALUES ${traceValues};
+
+    INSERT INTO spans (
+      project_id, observation_type, service_name, start_time, trace_id, id,
+      name, end_time, latency_ms, org_id, project_version_id, status, model,
+      provider, prompt_tokens, completion_tokens, total_tokens, cost, input,
+      output, tags, created_at, updated_at, is_deleted, _version
+    ) VALUES ${spanValues};
+  `);
+}
+
+async function cleanupClickHouseByPrefix(prefix, evidence) {
+  await runClickHouseSql(`
+    ALTER TABLE traces DELETE WHERE startsWith(ifNull(name, ''), ${chString(
+      prefix,
+    )});
+    ALTER TABLE spans DELETE WHERE startsWith(name, ${chString(prefix)});
+  `);
+  evidence.push({
+    cleanup: "delete prototype ClickHouse mirror rows",
+    status: "passed",
+    prefix,
+  });
+}
+
+async function runClickHouseSql(sql) {
+  const container = await resolveClickHouseContainer();
+  const database = process.env.API_JOURNEY_CLICKHOUSE_DB || "default";
+  const guardedSql = `SET ignore_materialized_views_with_dropped_target_table = 1;
+SET mutations_sync = 1;
+${sql}`;
+  await execFileAsync(
+    "docker",
+    [
+      "exec",
+      container,
+      "clickhouse-client",
+      "--database",
+      database,
+      "--multiquery",
+      "--query",
+      guardedSql,
+    ],
+    { maxBuffer: 10 * 1024 * 1024 },
+  );
+}
+
+async function resolveClickHouseContainer() {
+  if (process.env.API_JOURNEY_CLICKHOUSE_CONTAINER) {
+    return process.env.API_JOURNEY_CLICKHOUSE_CONTAINER;
+  }
+  const candidates = [
+    "ws2-clickhouse",
+    "futureagi-ws2-clickhouse-1",
+    "clickhouse",
+    "futureagi-clickhouse-1",
+  ];
+  for (const candidate of candidates) {
+    try {
+      await execFileAsync("docker", [
+        "inspect",
+        "--type",
+        "container",
+        candidate,
+      ]);
+      return candidate;
+    } catch {
+      // Try the next local compose naming convention.
+    }
+  }
+  return "ws2-clickhouse";
+}
+
+function chUuid(value) {
+  assert(isUuid(value), `ClickHouse UUID value must be a UUID: ${value}`);
+  return chString(value);
+}
+
+function chString(value) {
+  return `'${String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+
+function chJson(value) {
+  return chString(JSON.stringify(value ?? {}));
+}
+
+function chDateTime(value) {
+  return `parseDateTime64BestEffort(${chString(value)}, 6, 'UTC')`;
 }
 
 async function cleanupProjectsByPrefix(client, prefix, evidence) {

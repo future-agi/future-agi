@@ -241,8 +241,17 @@ def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
     #       dict[trace_id, set[end_user_id]]
     # which would push the DISTINCT into CH and return only the user-ids,
     # not the full span payload.
-    with get_reader() as reader:
-        spans = reader.list_by_trace_ids(list(trace_to_clusters.keys()))
+    try:
+        with get_reader() as reader:
+            spans = reader.list_by_trace_ids(list(trace_to_clusters.keys()))
+    except Exception as exc:
+        logger.warning(
+            "feed_users_affected_clickhouse_failed",
+            error=str(exc),
+            cluster_count=len(cluster_ids),
+            trace_count=len(trace_to_clusters),
+        )
+        return {}
 
     # Distinct end_user_id per cluster_id — a span contributes its
     # end_user to every cluster the trace is in (fan-out matches the
@@ -1636,11 +1645,12 @@ def _fetch_trace_rows(
     roots_by_trace = _get_root_spans_batch(page_trace_ids)
     scans_by_trace = {
         str(sr.trace_id): sr
-        for sr in TraceScanResult.objects.filter(trace_id__in=page_trace_ids)
-        .only("trace_id", "meta")
+        for sr in TraceScanResult.objects.filter(trace_id__in=page_trace_ids).only(
+            "trace_id", "meta"
+        )
     }
 
-    rows: List[TracesListRow] = []
+    rows: list[TracesListRow] = []
     for trace in page_traces:
         tid = str(trace.id)
 
@@ -2058,7 +2068,7 @@ def _fetch_sidebar_ai_metadata(
         # are case-sensitive, so the iexact="llm" is reproduced with a
         # Python lower() comparison (the same idiom analyze_errors uses
         # for status).
-        llm_span: Optional[CHSpan] = None
+        llm_span: CHSpan | None = None
         with get_reader() as reader:
             for s in reader.list_by_trace(focus_trace_id):
                 if (s.observation_type or "").lower() == "llm":

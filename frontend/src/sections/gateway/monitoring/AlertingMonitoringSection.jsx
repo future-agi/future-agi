@@ -18,6 +18,13 @@ import {
   TableRow,
   Chip,
   Skeleton,
+  IconButton,
+  Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
@@ -26,9 +33,11 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   useGatewayConfig,
   useProviderHealth,
+  useUpdateConfig,
 } from "../providers/hooks/useGatewayConfig";
 import { useAnalyticsOverview } from "../analytics/hooks/useAnalyticsOverview";
 import { useGatewayContext } from "../context/useGatewayContext";
+import { enqueueSnackbar } from "notistack";
 
 import CreateAlertRuleDialog from "./CreateAlertRuleDialog";
 import CreateChannelDialog from "./CreateChannelDialog";
@@ -43,10 +52,10 @@ function extractAlertRules(config) {
   const alerting = config?.alerting || config?.alerts || {};
   const rules = alerting.rules || alerting.alert_rules || [];
   if (Array.isArray(rules)) return rules;
-  if (typeof rules === "object") {
+  if (rules && typeof rules === "object") {
     return Object.entries(rules).map(([name, cfg]) => ({
       name,
-      ...(typeof cfg === "object" ? cfg : {}),
+      ...(cfg && typeof cfg === "object" ? cfg : {}),
     }));
   }
   return [];
@@ -56,13 +65,49 @@ function extractChannels(config) {
   const alerting = config?.alerting || config?.alerts || {};
   const channels = alerting.channels || alerting.notification_channels || [];
   if (Array.isArray(channels)) return channels;
-  if (typeof channels === "object") {
+  if (channels && typeof channels === "object") {
     return Object.entries(channels).map(([name, cfg]) => ({
       name,
-      ...(typeof cfg === "object" ? cfg : {}),
+      ...(cfg && typeof cfg === "object" ? cfg : {}),
     }));
   }
   return [];
+}
+
+function rawAlertRules(config) {
+  const alerting = config?.alerting || config?.alerts || {};
+  return alerting.rules ?? alerting.alert_rules ?? [];
+}
+
+function rawChannels(config) {
+  const alerting = config?.alerting || config?.alerts || {};
+  return alerting.channels ?? alerting.notification_channels ?? [];
+}
+
+function ruleName(rule, index) {
+  return rule?.name || `Rule ${index + 1}`;
+}
+
+function channelName(channel, index) {
+  return channel?.name || `Channel ${index + 1}`;
+}
+
+function rulesToMap(rules) {
+  return Object.fromEntries(
+    rules.map((rule, index) => {
+      const name = ruleName(rule, index);
+      return [name, { ...rule, name }];
+    }),
+  );
+}
+
+function channelsToMap(channels) {
+  return Object.fromEntries(
+    channels.map((channel, index) => {
+      const name = channelName(channel, index);
+      return [name, { ...channel, name }];
+    }),
+  );
 }
 
 const TAB_SLUGS = ["metrics", "rules", "channels"];
@@ -82,7 +127,7 @@ function getSeverityColor(severity) {
 // Alert Rules Tab
 // ---------------------------------------------------------------------------
 
-const AlertRulesTab = ({ rules }) => (
+const AlertRulesTab = ({ rules, onEdit, onDelete }) => (
   <Card>
     <TableContainer>
       <Table size="small">
@@ -95,6 +140,7 @@ const AlertRulesTab = ({ rules }) => (
             <TableCell>Window</TableCell>
             <TableCell>Severity</TableCell>
             <TableCell>Status</TableCell>
+            <TableCell align="right">Actions</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -140,11 +186,32 @@ const AlertRulesTab = ({ rules }) => (
                   variant="outlined"
                 />
               </TableCell>
+              <TableCell align="right">
+                <Tooltip title="Edit">
+                  <IconButton
+                    size="small"
+                    aria-label={`Edit alert rule ${ruleName(rule, idx)}`}
+                    onClick={() => onEdit(rule)}
+                  >
+                    <Iconify icon="mdi:pencil" width={18} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Delete">
+                  <IconButton
+                    size="small"
+                    color="error"
+                    aria-label={`Delete alert rule ${ruleName(rule, idx)}`}
+                    onClick={() => onDelete(rule)}
+                  >
+                    <Iconify icon="mdi:trash-can-outline" width={18} />
+                  </IconButton>
+                </Tooltip>
+              </TableCell>
             </TableRow>
           ))}
           {rules.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} align="center">
+              <TableCell colSpan={8} align="center">
                 <Typography variant="body2" color="text.secondary" py={4}>
                   No alert rules configured. Click &quot;Create Rule&quot; to
                   add your first alert rule.
@@ -179,7 +246,7 @@ function maskUrl(url) {
   }
 }
 
-const ChannelsTab = ({ channels }) => (
+const ChannelsTab = ({ channels, onEdit, onDelete }) => (
   <Stack spacing={2}>
     {channels.length === 0 ? (
       <Card sx={{ p: 4 }}>
@@ -207,18 +274,45 @@ const ChannelsTab = ({ channels }) => (
                   {ch.name || `Channel ${idx + 1}`}
                 </Typography>
               </Stack>
-              <Stack direction="row" spacing={0.5}>
-                <Chip
-                  label={ch.type || "webhook"}
-                  color="primary"
-                  size="small"
-                  variant="outlined"
-                />
-                <Chip
-                  label={ch.enabled !== false ? "Enabled" : "Disabled"}
-                  color={ch.enabled !== false ? "success" : "default"}
-                  size="small"
-                />
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Stack direction="row" spacing={0.5}>
+                  <Chip
+                    label={ch.type || "webhook"}
+                    color="primary"
+                    size="small"
+                    variant="outlined"
+                  />
+                  <Chip
+                    label={ch.enabled !== false ? "Enabled" : "Disabled"}
+                    color={ch.enabled !== false ? "success" : "default"}
+                    size="small"
+                  />
+                </Stack>
+                <Tooltip title="Edit">
+                  <IconButton
+                    size="small"
+                    aria-label={`Edit notification channel ${channelName(
+                      ch,
+                      idx,
+                    )}`}
+                    onClick={() => onEdit(ch)}
+                  >
+                    <Iconify icon="mdi:pencil" width={18} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Delete">
+                  <IconButton
+                    size="small"
+                    color="error"
+                    aria-label={`Delete notification channel ${channelName(
+                      ch,
+                      idx,
+                    )}`}
+                    onClick={() => onDelete(ch)}
+                  >
+                    <Iconify icon="mdi:trash-can-outline" width={18} />
+                  </IconButton>
+                </Tooltip>
               </Stack>
             </Stack>
             <Stack spacing={0.75}>
@@ -460,6 +554,9 @@ const AlertingMonitoringSection = () => {
 
   const [createRuleOpen, setCreateRuleOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  const [editRule, setEditRule] = useState(null);
+  const [editChannel, setEditChannel] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const { gatewayId, isLoading: gwLoading } = useGatewayContext();
 
   const { data: config, isLoading: configLoading } =
@@ -481,6 +578,60 @@ const AlertingMonitoringSection = () => {
 
   const rules = useMemo(() => extractAlertRules(config), [config]);
   const channels = useMemo(() => extractChannels(config), [config]);
+  const replaceRules = Array.isArray(rawAlertRules(config));
+  const replaceChannels = Array.isArray(rawChannels(config));
+  const updateConfig = useUpdateConfig();
+
+  const handleDelete = () => {
+    if (!deleteTarget) return;
+    const isRule = deleteTarget.type === "rule";
+    const item = deleteTarget.item;
+    const name = item?.name;
+    if (!name) return;
+    const alertingPatch = isRule
+      ? {
+          rules: replaceRules
+            ? Object.fromEntries(
+                Object.entries(rulesToMap(rules)).filter(
+                  ([ruleKey]) => ruleKey !== name,
+                ),
+              )
+            : { [name]: null },
+        }
+      : {
+          channels: replaceChannels
+            ? Object.fromEntries(
+                Object.entries(channelsToMap(channels)).filter(
+                  ([channelKey]) => channelKey !== name,
+                ),
+              )
+            : { [name]: null },
+        };
+
+    updateConfig.mutate(
+      {
+        gatewayId,
+        config: { alerting: alertingPatch },
+      },
+      {
+        onSuccess: () => {
+          enqueueSnackbar(
+            `${isRule ? "Alert rule" : "Channel"} "${name}" deleted`,
+            {
+              variant: "success",
+            },
+          );
+          setDeleteTarget(null);
+        },
+        onError: () => {
+          enqueueSnackbar(
+            `Failed to delete ${isRule ? "alert rule" : "channel"}`,
+            { variant: "error" },
+          );
+        },
+      },
+    );
+  };
 
   if (gwLoading || configLoading) {
     return (
@@ -545,19 +696,78 @@ const AlertingMonitoringSection = () => {
           gatewayId={gatewayId}
         />
       )}
-      {tab === 1 && <AlertRulesTab rules={rules} />}
-      {tab === 2 && <ChannelsTab channels={channels} />}
+      {tab === 1 && (
+        <AlertRulesTab
+          rules={rules}
+          onEdit={setEditRule}
+          onDelete={(item) => setDeleteTarget({ type: "rule", item })}
+        />
+      )}
+      {tab === 2 && (
+        <ChannelsTab
+          channels={channels}
+          onEdit={setEditChannel}
+          onDelete={(item) => setDeleteTarget({ type: "channel", item })}
+        />
+      )}
 
       <CreateAlertRuleDialog
         open={createRuleOpen}
         onClose={() => setCreateRuleOpen(false)}
         gatewayId={gatewayId}
+        existingRules={rules}
+        replaceRules={replaceRules}
       />
       <CreateChannelDialog
         open={createChannelOpen}
         onClose={() => setCreateChannelOpen(false)}
         gatewayId={gatewayId}
+        existingChannels={channels}
+        replaceChannels={replaceChannels}
       />
+      <CreateAlertRuleDialog
+        open={Boolean(editRule)}
+        onClose={() => setEditRule(null)}
+        gatewayId={gatewayId}
+        initialRule={editRule}
+        existingRules={rules}
+        replaceRules={replaceRules}
+      />
+      <CreateChannelDialog
+        open={Boolean(editChannel)}
+        onClose={() => setEditChannel(null)}
+        gatewayId={gatewayId}
+        initialChannel={editChannel}
+        existingChannels={channels}
+        replaceChannels={replaceChannels}
+      />
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>
+          Delete {deleteTarget?.type === "rule" ? "Alert Rule" : "Channel"}
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            This removes &quot;{deleteTarget?.item?.name}&quot; from the active
+            Gateway alerting config.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteTarget(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={handleDelete}
+            disabled={updateConfig.isPending}
+          >
+            {updateConfig.isPending ? "Deleting..." : "Delete"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

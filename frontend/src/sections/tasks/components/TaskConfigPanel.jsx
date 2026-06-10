@@ -95,15 +95,21 @@ const EVAL_TYPE_META = {
   code: { icon: "solar:code-square-linear", label: "Code" },
 };
 
+const resolveEvalTemplateId = (evalItem) =>
+  evalItem?.templateId ||
+  evalItem?.template_id ||
+  evalItem?.eval_template ||
+  evalItem?.evalTemplate?.id;
+
 // ── Configured Eval Card ──
-const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
+const ConfiguredEvalCard = ({ evalItem, onEdit, onOpenEval, onRemove }) => {
   const theme = useTheme();
-  const invalid = !evalItem?.id;
   const name =
     evalItem?.name ||
     evalItem?.evalTemplate?.name ||
     evalItem?.evalTemplateName ||
     "Evaluation";
+  const templateId = resolveEvalTemplateId(evalItem);
   const mappedKeys = evalItem?.mapping ? Object.keys(evalItem.mapping) : [];
 
   const evalType = (
@@ -257,6 +263,18 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
         )}
       </Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.25 }}>
+        {onOpenEval && templateId && (
+          <Tooltip title="Open evaluation">
+            <IconButton
+              size="small"
+              aria-label={`Open evaluation ${name}`}
+              onClick={() => onOpenEval(templateId)}
+              sx={{ p: 0.25, color: "text.secondary" }}
+            >
+              <Iconify icon="mingcute:external-link-line" width={15} />
+            </IconButton>
+          </Tooltip>
+        )}
         {onEdit && (
           <Tooltip title="Edit evaluation">
             <IconButton
@@ -285,6 +303,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
 ConfiguredEvalCard.propTypes = {
   evalItem: PropTypes.object.isRequired,
   onEdit: PropTypes.func,
+  onOpenEval: PropTypes.func,
   onRemove: PropTypes.func.isRequired,
 };
 
@@ -296,6 +315,7 @@ const TaskConfigPanel = ({
   getValues: _getValues,
   projectLocked = false,
   initialProjectName = null,
+  onOpenEval,
 }) => {
   const [evalPickerOpen, setEvalPickerOpen] = useState(false);
   // Index of the eval currently being edited. null means "add mode".
@@ -758,6 +778,7 @@ const TaskConfigPanel = ({
                     key={evalItem.id || index}
                     evalItem={evalItem}
                     onEdit={() => handleEditEval(index)}
+                    onOpenEval={onOpenEval}
                     onRemove={() => removeEval(index)}
                   />
                 ))}
@@ -859,6 +880,7 @@ TaskConfigPanel.propTypes = {
   getValues: PropTypes.func.isRequired,
   projectLocked: PropTypes.bool,
   initialProjectName: PropTypes.string,
+  onOpenEval: PropTypes.func,
 };
 
 export default TaskConfigPanel;

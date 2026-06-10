@@ -27,6 +27,7 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { getUploadedDatasetId } from "./uploadFileDatasetResponse";
 
 const defaultValues = {
   name: "",
@@ -57,6 +58,7 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
         headers: { "Content-Type": "multipart/form-data" },
       }),
     onSuccess: (data) => {
+      const datasetId = getUploadedDatasetId(data);
       enqueueSnackbar("Dataset uploaded successfully", {
         variant: "success",
       });
@@ -66,12 +68,14 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
       });
       queryClient.invalidateQueries({ queryKey: ["dataset-detail"] });
       trackEvent(Events.datasetFromJSONCSVSuccessful, {
-        [PropertyName.datasetId]: data?.data?.result?.datasetId,
+        [PropertyName.datasetId]: datasetId,
       });
       onCloseClick(null, true);
       reset();
       refreshGrid();
-      navigate(`/dashboard/develop/${data?.data?.result?.datasetId}?tab=data`);
+      if (datasetId) {
+        navigate(`/dashboard/develop/${datasetId}?tab=data`);
+      }
     },
     onError: (error) => {
       enqueueSnackbar(

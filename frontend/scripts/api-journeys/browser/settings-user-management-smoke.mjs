@@ -481,6 +481,9 @@ async function main() {
     if (shouldMutate && !inviteCancelled) {
       await cancelInvitesByEmail(auth, inviteEmail);
     }
+    if (shouldMutate) {
+      await deleteDisposableRbacUserArtifacts(inviteEmail);
+    }
     if (shouldMutate && !activeMemberCleaned) {
       await cleanupAcceptedMember(auth, {
         email: activeMemberEmail,

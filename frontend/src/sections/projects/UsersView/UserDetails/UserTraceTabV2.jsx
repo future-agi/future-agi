@@ -184,11 +184,12 @@ const UserTraceTabV2 = ({ dateFilter }) => {
       />
 
       <FilterChips
-        extraFilters={/** @type {any[]} */ (extraFilters).map((f) => ({
-          ...f,
-          display_name:
-            columnLabelLookup[f?.column_id] ?? f?.display_name,
-        }))}
+        extraFilters={
+          /** @type {any[]} */ (extraFilters).map((f) => ({
+            ...f,
+            display_name: columnLabelLookup[f?.column_id] ?? f?.display_name,
+          }))
+        }
         onRemoveFilter={(idx) => {
           // Chips are keyed by array index, so any removal re-mounts the
           // later chips and invalidates a chip-anchored popover ref.

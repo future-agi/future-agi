@@ -407,10 +407,7 @@ function waitForLicenseListResponse(page) {
 async function waitForLicenseMutationResponse(page, method, { grantId } = {}) {
   const response = await page.waitForResponse(
     (candidate) => {
-      if (
-        candidate.request().method() !== method ||
-        candidate.status() >= 400
-      ) {
+      if (candidate.request().method() !== method) {
         return false;
       }
       const pathname = new URL(candidate.url()).pathname;
@@ -419,7 +416,21 @@ async function waitForLicenseMutationResponse(page, method, { grantId } = {}) {
     },
     { timeout: 60000 },
   );
+  await assertResponseOk(response, `${method} EE license mutation`);
   return response.json();
+}
+
+async function assertResponseOk(response, label) {
+  if (response.status() < 400) return;
+  let body = "";
+  try {
+    body = await response.text();
+  } catch {
+    body = "<unreadable response body>";
+  }
+  throw new Error(
+    `${label} returned HTTP ${response.status()}: ${body.slice(0, 500)}`,
+  );
 }
 
 function responseResult(payload) {

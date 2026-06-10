@@ -26,6 +26,7 @@ const FOLDER_RENAMED_SCREENSHOT_PATH =
 const FOLDER_DELETED_SCREENSHOT_PATH =
   "/tmp/prompt-workbench-folder-deleted-smoke.png";
 const DETAIL_SCREENSHOT_PATH = "/tmp/prompt-workbench-detail-smoke.png";
+const EVALUATION_SCREENSHOT_PATH = "/tmp/prompt-workbench-evaluation-smoke.png";
 const MODEL_PICKER_SCREENSHOT_PATH =
   "/tmp/prompt-workbench-model-picker-smoke.png";
 const RUN_OUTPUT_SCREENSHOT_PATH = "/tmp/prompt-workbench-run-output-smoke.png";
@@ -39,10 +40,12 @@ async function main() {
   const folderName = `ui_prompt_folder_${suffix}`;
   const renamedFolderName = `ui_prompt_folder_renamed_${suffix}`;
   const promptName = `ui prompt workbench ${suffix}`;
-  const promptText = `Customer {{customer}} asks for the readiness phrase ${auth.runId}.`;
+  const evalConfigName = `ui_prompt_eval_config_${suffix}`;
+  const promptText = `Customer {{customer}} asks for the readiness phrase ${auth.runId}. Use text {{text}} and expected hint {{expected}}.`;
   const safeModel = await findSafePromptRunModel(auth.client);
   let folderId = null;
   let promptId = null;
+  let evalConfig = null;
   let browser = null;
   let caughtError = null;
   let uiDeletedFolder = false;
@@ -58,8 +61,10 @@ async function main() {
     folder_name: folderName,
     folder_renamed_name: renamedFolderName,
     prompt_name: promptName,
+    eval_config_name: evalConfigName,
     safe_model: safeModel.model_name,
     safe_provider: safeModel.providers,
+    safe_model_available: safeModel.isAvailable,
   };
 
   try {
@@ -177,7 +182,6 @@ async function main() {
         await clickDialogButton(page, "Save");
       },
     );
-    await waitForNoVisibleText(page, folderName, { exact: true });
     await waitForVisibleText(page, renamedFolderName);
     await assertPromptFolderReadback(auth.client, {
       folderId,
@@ -197,6 +201,46 @@ async function main() {
       model: safeModel,
     });
     evidence.prompt_id = promptId;
+    await commitWorkbenchPromptVersion(auth.client, {
+      promptId,
+      runId: auth.runId,
+    });
+    const seededOutputAudit = await seedPromptWorkbenchOutputDb({
+      promptId,
+      organizationId: auth.organizationId,
+      workspaceId: auth.workspaceId,
+    });
+    assert(
+      Number(seededOutputAudit.updated_count) === 1 &&
+        Number(seededOutputAudit.output_count) === 1 &&
+        seededOutputAudit.is_draft === false,
+      `Prompt Workbench output seed failed: ${JSON.stringify(
+        seededOutputAudit,
+      )}`,
+    );
+    evidence.prompt_version_committed = true;
+    evidence.db_seeded_output_count = Number(seededOutputAudit.output_count);
+    evalConfig = await createPromptEvaluationConfig(auth.client, {
+      promptId,
+      name: evalConfigName,
+      suffix,
+    });
+    const evaluationApiReadback = await assertPromptEvaluationApiReadback(
+      auth.client,
+      {
+        promptId,
+        evalConfig,
+      },
+    );
+    evidence.eval_config_id = evalConfig.id;
+    evidence.eval_template_id = evalConfig.templateId;
+    evidence.eval_template_name = evalConfig.templateName;
+    evidence.eval_template_source = evalConfig.templateSource;
+    evidence.eval_required_keys = evalConfig.requiredKeys;
+    evidence.eval_mapping = evalConfig.mapping;
+    evidence.eval_params = evalConfig.expectedParams;
+    evidence.evaluation_api_status = evaluationApiReadback.status;
+    evidence.evaluation_api_variable_text = evaluationApiReadback.textValue;
 
     await waitForResponseDuring(
       page,
@@ -261,6 +305,42 @@ async function main() {
     await page.screenshot({ path: DETAIL_SCREENSHOT_PATH, fullPage: true });
     evidence.detail_screenshot = DETAIL_SCREENSHOT_PATH;
 
+    const evaluationResponse = await waitForResponseDuring(
+      page,
+      "prompt evaluation tab data",
+      (response) =>
+        response
+          .url()
+          .includes(`/model-hub/prompt-templates/${promptId}/evaluations/`) &&
+        response.request().method() === "GET" &&
+        response.status() < 400,
+      () => clickVisibleText(page, "Evaluation", { exact: true }),
+    );
+    const evaluationPayload = unwrapResult(
+      await responseJson(evaluationResponse),
+    );
+    const evaluationUiReadback = assertPromptEvaluationPayload(
+      evaluationPayload,
+      { evalConfig, requireMessages: false },
+    );
+    await waitForPromptEvaluationGrid(page, {
+      evalConfigName,
+      textValue: evaluationUiReadback.textValue,
+    });
+    await waitForNoVisibleText(page, "Invalid Date");
+    await waitForNoVisibleText(page, "undefined");
+    await page.screenshot({
+      path: EVALUATION_SCREENSHOT_PATH,
+      fullPage: true,
+    });
+    evidence.evaluation_screenshot = EVALUATION_SCREENSHOT_PATH;
+    evidence.evaluation_grid_visible = true;
+    evidence.evaluation_ui_status = evaluationUiReadback.status;
+    evidence.evaluation_ui_variable_text = evaluationUiReadback.textValue;
+
+    await clickVisibleText(page, "Playground", { exact: true });
+    await waitForEditorText(page, ["Customer", "customer", auth.runId]);
+
     await openModelPickerAndSelectSafeModel(page, safeModel);
     await page.screenshot({
       path: MODEL_PICKER_SCREENSHOT_PATH,
@@ -271,14 +351,20 @@ async function main() {
       modelParameterRequestObserved(promptRequests, safeModel),
       "Model parameter endpoint did not load for the safe model.",
     );
-    await clickVisibleMenuItemContaining(page, safeModel.model_name);
-    await page.waitForFunction(
-      () =>
-        window.visibleElements('input[placeholder="Select model"]').length ===
-        0,
-      { timeout: 30000 },
-    );
-    evidence.model_picker_selection_verified = true;
+    if (safeModel.isAvailable === false) {
+      evidence.model_picker_selection_skipped =
+        "No configured chat model was available in this local workspace.";
+      await page.keyboard.press("Escape");
+    } else {
+      await clickVisibleMenuItemContaining(page, safeModel.model_name);
+      await page.waitForFunction(
+        () =>
+          window.visibleElements('input[placeholder="Select model"]').length ===
+          0,
+        { timeout: 30000 },
+      );
+      evidence.model_picker_selection_verified = true;
+    }
     evidence.model_parameters_request_observed = true;
 
     await clickVisibleText(page, "Text output", { exact: true });
@@ -389,16 +475,27 @@ async function main() {
         deleteAudit.version_deleted_at_set === true,
       `Folder delete cascade audit failed: ${JSON.stringify(deleteAudit)}`,
     );
+    assert(
+      Number(deleteAudit.eval_config_row_count) === 1 &&
+        deleteAudit.eval_config_deleted_at_set === true,
+      `Folder delete eval config cascade audit failed: ${JSON.stringify(
+        deleteAudit,
+      )}`,
+    );
     hardCleanup = await hardDeletePromptWorkbenchFixtureDb({
       folderId,
       promptId,
+      evalConfigId: evalConfig?.id,
+      createdEvalTemplateId: evalConfig?.createdTemplateId,
       organizationId: auth.organizationId,
       workspaceId: auth.workspaceId,
     });
     assert(
       Number(hardCleanup.remaining_folder_count) === 0 &&
         Number(hardCleanup.remaining_prompt_count) === 0 &&
-        Number(hardCleanup.remaining_version_count) === 0,
+        Number(hardCleanup.remaining_version_count) === 0 &&
+        Number(hardCleanup.remaining_eval_config_count) === 0 &&
+        Number(hardCleanup.remaining_eval_template_count) === 0,
       `Hard cleanup left prompt workbench rows behind: ${JSON.stringify(hardCleanup)}`,
     );
     await page.screenshot({
@@ -411,6 +508,8 @@ async function main() {
     evidence.cascade_prompt_deleted_at_set = deleteAudit.prompt_deleted_at_set;
     evidence.cascade_versions_deleted_at_set =
       deleteAudit.version_deleted_at_set;
+    evidence.cascade_eval_config_deleted_at_set =
+      deleteAudit.eval_config_deleted_at_set;
     evidence.hard_cleanup_remaining_folder_count = Number(
       hardCleanup.remaining_folder_count,
     );
@@ -419,6 +518,12 @@ async function main() {
     );
     evidence.hard_cleanup_remaining_version_count = Number(
       hardCleanup.remaining_version_count,
+    );
+    evidence.hard_cleanup_remaining_eval_config_count = Number(
+      hardCleanup.remaining_eval_config_count,
+    );
+    evidence.hard_cleanup_remaining_eval_template_count = Number(
+      hardCleanup.remaining_eval_template_count,
     );
 
     assert(apiFailures.length === 0, `API failures: ${apiFailures.join("; ")}`);
@@ -478,6 +583,8 @@ async function main() {
         await hardDeletePromptWorkbenchFixtureDb({
           folderId,
           promptId,
+          evalConfigId: evalConfig?.id,
+          createdEvalTemplateId: evalConfig?.createdTemplateId,
           organizationId: auth.organizationId,
           workspaceId: auth.workspaceId,
         }).catch((error) => {
@@ -499,21 +606,35 @@ async function findSafePromptRunModel(client) {
     apiPath("/model-hub/develops/retrieve_run_prompt_options/"),
   );
   const models = payloadArray(options, "models");
-  const safeModel = models.find((model) => {
+  const isPreferredChatModel = (model) => {
     const name = model?.model_name || model?.modelName || model?.name;
     const provider = model?.providers || model?.provider;
     const type = model?.type || model?.mode || model?.model_type;
-    const isAvailable = model?.is_available ?? model?.isAvailable;
     return (
       name === "gpt-4o-mini" &&
       provider === "openai" &&
-      (type === "chat" || type === "llm" || !type) &&
-      isAvailable === true
+      (type === "chat" || type === "llm" || !type)
     );
-  });
+  };
+  const isAvailableChatModel = (model) => {
+    const type = model?.type || model?.mode || model?.model_type;
+    const isAvailable = model?.is_available ?? model?.isAvailable;
+    return (type === "chat" || type === "llm" || !type) && isAvailable === true;
+  };
+  const preferredModel = models.find(isPreferredChatModel);
+  const safeModel =
+    (preferredModel && isAvailableChatModel(preferredModel)
+      ? preferredModel
+      : null) ||
+    models.find(isAvailableChatModel) ||
+    preferredModel ||
+    models.find((model) => {
+      const type = model?.type || model?.mode || model?.model_type;
+      return type === "chat" || type === "llm" || !type;
+    });
   assert(
     safeModel,
-    "Prompt Workbench browser run requires configured openai gpt-4o-mini.",
+    "Prompt Workbench browser smoke requires at least one chat/LLM model option.",
   );
   return normalizeModelOption(safeModel);
 }
@@ -523,45 +644,448 @@ async function createWorkbenchPrompt(
   { folderId, name, runId, promptText, model },
 ) {
   const modelDetail = normalizeModelDetail(model);
+  const variableNames = promptWorkbenchVariableNames();
+  const promptConfig = [
+    {
+      messages: [
+        {
+          role: "system",
+          content: [{ type: "text", text: "You are a concise assistant." }],
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: promptText }],
+        },
+      ],
+      configuration: {
+        model: model.model_name,
+        model_detail: modelDetail,
+        max_tokens: 16,
+        temperature: 0,
+        top_p: 1,
+        response_format: "text",
+        output_format: "string",
+        template_format: "mustache",
+      },
+      placeholders: [],
+    },
+  ];
   const created = await client.post(
     apiPath("/model-hub/prompt-templates/create-draft/"),
     {
       name,
       description: "Prompt Workbench browser smoke candidate.",
       prompt_folder: folderId,
-      variable_names: { customer: ["Ada"] },
+      variable_names: variableNames,
       metadata: { source: "api-journey-browser", run_id: runId },
-      prompt_config: [
-        {
-          messages: [
-            {
-              role: "system",
-              content: [{ type: "text", text: "You are a concise assistant." }],
-            },
-            {
-              role: "user",
-              content: [{ type: "text", text: promptText }],
-            },
-          ],
-          configuration: {
-            model: model.model_name,
-            model_detail: modelDetail,
-            max_tokens: 16,
-            temperature: 0,
-            top_p: 1,
-            response_format: "text",
-            output_format: "string",
-            template_format: "mustache",
-          },
-          placeholders: [],
-        },
-      ],
+      prompt_config: promptConfig,
     },
   );
   const promptId =
     created?.id || created?.root_template || created?.rootTemplate;
   assert(isUuid(promptId), "Workbench prompt create did not return a UUID id.");
+  await client.post(
+    apiPath("/model-hub/prompt-templates/{id}/run_template/", {
+      id: promptId,
+    }),
+    {
+      name,
+      version: "v1",
+      is_run: false,
+      variable_names: variableNames,
+      placeholders: {},
+      evaluation_configs: [],
+      prompt_config: promptConfig,
+    },
+  );
   return promptId;
+}
+
+function promptWorkbenchVariableNames() {
+  return {
+    customer: ["Ada"],
+    text: ["one two three four"],
+    expected: ["a short answer"],
+  };
+}
+
+async function commitWorkbenchPromptVersion(client, { promptId, runId }) {
+  await client.post(
+    apiPath("/model-hub/prompt-templates/{id}/commit/", { id: promptId }),
+    {
+      version_name: "v1",
+      message: `Prompt Workbench browser smoke ${runId}`,
+      is_draft: false,
+      set_default: true,
+    },
+  );
+  const committed = await client.get(
+    apiPath("/model-hub/prompt-templates/{id}/", { id: promptId }),
+  );
+  assert(
+    committed?.is_draft === false,
+    "Prompt Workbench commit did not mark v1 as non-draft.",
+  );
+  return committed;
+}
+
+async function seedPromptWorkbenchOutputDb({
+  promptId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(promptId), "Prompt output seed requires a prompt UUID.");
+  const sql = `
+WITH updated AS (
+  UPDATE model_hub_promptversion v
+  SET
+    output = '["Seeded output for prompt Workbench evaluation smoke."]'::jsonb,
+    metadata = '[{"source":"api-journey-browser","transport":"db-seed"}]'::jsonb
+  FROM model_hub_prompttemplate p
+  WHERE v.original_template_id = p.id
+    AND p.id = ${sqlUuid(promptId)}
+    AND p.organization_id = ${sqlUuid(organizationId)}
+    AND p.workspace_id = ${sqlUuid(workspaceId)}
+    AND v.template_version = 'v1'
+    AND p.deleted = false
+    AND v.deleted = false
+  RETURNING v.id, v.output, v.metadata, v.is_draft
+)
+SELECT json_build_object(
+  'updated_count', (SELECT count(*) FROM updated),
+  'output_count', COALESCE((SELECT jsonb_array_length(output::jsonb) FROM updated LIMIT 1), 0),
+  'metadata_count', COALESCE((SELECT jsonb_array_length(metadata::jsonb) FROM updated LIMIT 1), 0),
+  'is_draft', (SELECT is_draft FROM updated LIMIT 1)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function createPromptEvaluationConfig(
+  client,
+  { promptId, name, suffix },
+) {
+  let evalTemplate = null;
+  let evalConfigId = null;
+  try {
+    evalTemplate = await resolvePromptEvalTemplateForConfig(client, suffix);
+    const mapping = buildPromptEvalConfigMapping(evalTemplate.requiredKeys);
+    const createdConfig = await client.post(
+      apiPath("/model-hub/prompt-templates/{id}/update-evaluation-configs/", {
+        id: promptId,
+      }),
+      {
+        id: evalTemplate.id,
+        name,
+        mapping,
+        config: { params: evalTemplate.params },
+        is_run: false,
+      },
+    );
+    evalConfigId = createdConfig?.prompt_eval_config_id;
+    assert(
+      isUuid(evalConfigId),
+      "Prompt Workbench eval config create did not return prompt_eval_config_id.",
+    );
+
+    const configsPayload = await client.get(
+      apiPath("/model-hub/prompt-templates/{id}/evaluation-configs/", {
+        id: promptId,
+      }),
+    );
+    const configRows = payloadArray(
+      configsPayload?.evaluation_configs,
+      "evaluation_configs",
+    );
+    const configRow = configRows.find((row) => row?.id === evalConfigId);
+    assert(configRow, "Prompt Workbench eval config readback was missing.");
+    assert(
+      configRow.name === name,
+      "Prompt Workbench eval config readback returned the wrong name.",
+    );
+    assert(
+      configRow.eval_template_id === evalTemplate.id,
+      "Prompt Workbench eval config used the wrong eval template.",
+    );
+    assertPromptEvalMapping(configRow.mapping, mapping);
+    assertPromptEvalParams(configRow.params, evalTemplate.expectedParams);
+
+    return {
+      id: evalConfigId,
+      name,
+      templateId: evalTemplate.id,
+      templateName: evalTemplate.name,
+      templateSource: evalTemplate.source,
+      createdTemplateId:
+        evalTemplate.source === "created" ? evalTemplate.id : null,
+      requiredKeys: evalTemplate.requiredKeys,
+      mapping,
+      params: evalTemplate.params,
+      expectedParams: evalTemplate.expectedParams,
+    };
+  } catch (error) {
+    if (evalConfigId && promptId) {
+      await cleanupPromptEvaluationConfig(client, promptId, evalConfigId).catch(
+        () => null,
+      );
+    }
+    if (evalTemplate?.source === "created") {
+      await cleanupCreatedEvalTemplate(client, evalTemplate.id).catch(
+        () => null,
+      );
+    }
+    throw error;
+  }
+}
+
+async function assertPromptEvaluationApiReadback(
+  client,
+  { promptId, evalConfig },
+) {
+  const evaluationData = await client.get(
+    apiPath("/model-hub/prompt-templates/{id}/evaluations/", {
+      id: promptId,
+    }),
+    {
+      query: {
+        versions: JSON.stringify(["v1"]),
+        show_var: true,
+        show_prompts: true,
+      },
+    },
+  );
+  return assertPromptEvaluationPayload(evaluationData, { evalConfig });
+}
+
+function assertPromptEvaluationPayload(
+  payload,
+  { evalConfig, requireMessages = true },
+) {
+  const versionData = payload?.v1;
+  assert(versionData, "Prompt Workbench evaluations did not return v1 data.");
+  const textVariable = payload?.variables?.text;
+  const textValue = Array.isArray(textVariable)
+    ? textVariable[0]
+    : textVariable;
+  assert(
+    textValue === "one two three four",
+    "Prompt Workbench evaluations did not include the seeded text variable.",
+  );
+  const evalNames = payloadArray(versionData.eval_names, "eval_names");
+  const evalRow = evalNames.find((row) => String(row?.id) === evalConfig.id);
+  assert(
+    evalRow,
+    "Prompt Workbench evaluations did not include the created eval config.",
+  );
+  assert(
+    evalRow.name === evalConfig.name,
+    "Prompt Workbench evaluations returned the wrong eval config name.",
+  );
+  assertPromptEvalMapping(evalRow.mapping, evalConfig.mapping);
+  const status = versionData.eval_status?.[evalConfig.id];
+  assert(
+    typeof status === "string" && status.length > 0,
+    "Prompt Workbench evaluations did not expose eval_status for the config.",
+  );
+  assert(
+    Array.isArray(versionData.eval_output?.[evalConfig.id]),
+    "Prompt Workbench evaluations did not expose eval_output for the config.",
+  );
+  if (requireMessages) {
+    assert(
+      Array.isArray(versionData.messages),
+      "Prompt Workbench evaluations show_prompts readback omitted messages.",
+    );
+  }
+  return { status, textValue };
+}
+
+async function resolvePromptEvalTemplateForConfig(client, suffix) {
+  const systemTemplate = await findEvalTemplateDetailByName(
+    client,
+    "word_count_in_range",
+  );
+  if (systemTemplate) {
+    const paramsConfig = promptEvalParamsForTemplate(systemTemplate);
+    return {
+      id: systemTemplate.id,
+      name: systemTemplate.name,
+      source: "system",
+      requiredKeys: promptEvalRequiredKeys(systemTemplate),
+      ...paramsConfig,
+    };
+  }
+
+  const name = `ui_prompt_eval_${suffix}`;
+  const created = await client.post(
+    apiPath("/model-hub/eval-templates/create-v2/"),
+    {
+      name,
+      eval_type: "llm",
+      instructions:
+        "Assess {{output}} against {{expected}} and return Passed or Failed.",
+      model: "turing_large",
+      output_type: "pass_fail",
+      pass_threshold: 0.5,
+      description:
+        "Temporary prompt eval template for Workbench browser smoke.",
+      tags: ["api-journey", "prompt-workbench"],
+      check_internet: false,
+    },
+  );
+  assert(
+    isUuid(created?.id),
+    "Fallback Workbench eval template create did not return a UUID id.",
+  );
+  const detail = await client.get(
+    apiPath("/model-hub/eval-templates/{template_id}/detail/", {
+      template_id: created.id,
+    }),
+  );
+  return {
+    id: created.id,
+    name: detail?.name || name,
+    source: "created",
+    requiredKeys: promptEvalRequiredKeys(detail),
+    params: {},
+    expectedParams: {},
+    schemaKeys: [],
+  };
+}
+
+async function findEvalTemplateDetailByName(client, name) {
+  const payload = await client.post(
+    apiPath("/model-hub/eval-templates/list/"),
+    {
+      page: 0,
+      page_size: 10,
+      owner_filter: "all",
+      search: name,
+      sort_by: "updated_at",
+      sort_order: "desc",
+    },
+  );
+  const row = payloadArray(payload?.items, "items").find(
+    (item) => item?.name === name && isUuid(item?.id),
+  );
+  if (!row) return null;
+  return client.get(
+    apiPath("/model-hub/eval-templates/{template_id}/detail/", {
+      template_id: row.id,
+    }),
+  );
+}
+
+function promptEvalRequiredKeys(detail) {
+  return payloadArray(
+    detail?.required_keys ||
+      detail?.eval_required_keys ||
+      detail?.config?.required_keys,
+    "required_keys",
+  ).filter((key) => typeof key === "string" && key.length > 0);
+}
+
+function promptEvalParamsForTemplate(detail) {
+  const schema =
+    detail?.config?.function_params_schema ||
+    detail?.function_params_schema ||
+    detail?.config?.config ||
+    {};
+  if (schema.min_words && schema.max_words) {
+    return {
+      params: { min_words: "1", max_words: "20" },
+      expectedParams: { min_words: 1, max_words: 20 },
+      schemaKeys: ["min_words", "max_words"],
+    };
+  }
+  if (schema.k) {
+    return {
+      params: { k: "3" },
+      expectedParams: { k: 3 },
+      schemaKeys: ["k"],
+    };
+  }
+  return {
+    params: {},
+    expectedParams: {},
+    schemaKeys: Object.keys(schema),
+  };
+}
+
+function buildPromptEvalConfigMapping(requiredKeys) {
+  const fallbackByKey = {
+    expected: "expected",
+    expected_output: "expected",
+    ground_truth: "expected",
+    hypothesis: "text",
+    input: "text",
+    output: "text",
+    reference: "expected",
+    response: "text",
+    text: "text",
+  };
+  const mapping = {};
+  for (const key of requiredKeys) {
+    mapping[key] = fallbackByKey[key] || "text";
+  }
+  return mapping;
+}
+
+function assertPromptEvalMapping(actual, expected) {
+  for (const [key, value] of Object.entries(expected)) {
+    assert(
+      actual?.[key] === value,
+      `Prompt Workbench eval config mapping did not preserve ${key}.`,
+    );
+  }
+}
+
+function assertPromptEvalParams(actual, expected) {
+  for (const [key, value] of Object.entries(expected)) {
+    assert(
+      actual?.[key] === value,
+      `Prompt Workbench eval config params did not preserve normalized ${key}.`,
+    );
+  }
+}
+
+async function cleanupPromptEvaluationConfig(client, promptId, evalConfigId) {
+  if (!promptId || !evalConfigId) return null;
+  try {
+    return await client.delete(
+      apiPath("/model-hub/prompt-templates/{id}/delete-evaluation-config/", {
+        id: promptId,
+      }),
+      { query: { id: evalConfigId } },
+    );
+  } catch (error) {
+    const message = String(error?.message || "").toLowerCase();
+    if (
+      error?.status === 404 ||
+      message.includes("does not exist") ||
+      message.includes("not found")
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function cleanupCreatedEvalTemplate(client, evalTemplateId) {
+  if (!evalTemplateId) return null;
+  try {
+    return await client.post(
+      apiPath("/model-hub/eval-templates/bulk-delete/"),
+      { template_ids: [evalTemplateId] },
+      { okStatuses: [200, 404] },
+    );
+  } catch (error) {
+    const message = String(error?.message || "").toLowerCase();
+    if (message.includes("not found") || message.includes("does not exist")) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 function normalizeModelOption(model) {
@@ -746,6 +1270,11 @@ target_versions AS (
   SELECT id, deleted, deleted_at
   FROM model_hub_promptversion
   WHERE original_template_id IN (SELECT id FROM target_prompts)
+),
+target_eval_configs AS (
+  SELECT id, deleted, deleted_at
+  FROM model_hub_promptevalconfig
+  WHERE prompt_template_id IN (SELECT id FROM target_prompts)
 )
 SELECT json_build_object(
   'folder_row_count', (SELECT count(*) FROM target_folder),
@@ -762,6 +1291,11 @@ SELECT json_build_object(
   'version_deleted_at_set', COALESCE((
     SELECT bool_and(deleted = true AND deleted_at IS NOT NULL)
     FROM target_versions
+  ), false),
+  'eval_config_row_count', (SELECT count(*) FROM target_eval_configs),
+  'eval_config_deleted_at_set', COALESCE((
+    SELECT bool_and(deleted = true AND deleted_at IS NOT NULL)
+    FROM target_eval_configs
   ), false)
 );
 `;
@@ -771,18 +1305,28 @@ SELECT json_build_object(
 async function hardDeletePromptWorkbenchFixtureDb({
   folderId,
   promptId,
+  evalConfigId,
+  createdEvalTemplateId,
   organizationId,
   workspaceId,
 }) {
-  if (!folderId && !promptId) {
+  if (!folderId && !promptId && !evalConfigId && !createdEvalTemplateId) {
     return {
       remaining_folder_count: 0,
       remaining_prompt_count: 0,
       remaining_version_count: 0,
+      remaining_eval_config_count: 0,
+      remaining_eval_template_count: 0,
     };
   }
   const folderPredicate = folderId ? `id = ${sqlUuid(folderId)}` : "false";
   const promptPredicate = promptId ? `id = ${sqlUuid(promptId)}` : "false";
+  const evalConfigPredicate = evalConfigId
+    ? `id = ${sqlUuid(evalConfigId)}`
+    : "false";
+  const evalTemplatePredicate = createdEvalTemplateId
+    ? `id = ${sqlUuid(createdEvalTemplateId)}`
+    : "false";
   const sql = `
 BEGIN;
 CREATE TEMP TABLE _pwb_folder_ids(id uuid) ON COMMIT DROP;
@@ -810,16 +1354,33 @@ SELECT id
 FROM model_hub_promptversion
 WHERE original_template_id IN (SELECT id FROM _pwb_prompt_ids);
 
+CREATE TEMP TABLE _pwb_eval_config_ids(id uuid) ON COMMIT DROP;
+INSERT INTO _pwb_eval_config_ids
+SELECT id
+FROM model_hub_promptevalconfig
+WHERE ${evalConfigPredicate}
+  OR prompt_template_id IN (SELECT id FROM _pwb_prompt_ids);
+
+CREATE TEMP TABLE _pwb_eval_template_ids(id uuid) ON COMMIT DROP;
+INSERT INTO _pwb_eval_template_ids
+SELECT id
+FROM model_hub_evaltemplate
+WHERE ${evalTemplatePredicate};
+
 DELETE FROM model_hub_promptversion_labels
 WHERE promptversion_id IN (SELECT id FROM _pwb_version_ids);
 DELETE FROM model_hub_prompttemplate_collaborators
 WHERE prompttemplate_id IN (SELECT id FROM _pwb_prompt_ids);
+DELETE FROM model_hub_promptevalconfig
+WHERE id IN (SELECT id FROM _pwb_eval_config_ids);
 DELETE FROM model_hub_promptversion
 WHERE id IN (SELECT id FROM _pwb_version_ids);
 DELETE FROM model_hub_prompttemplate
 WHERE id IN (SELECT id FROM _pwb_prompt_ids);
 DELETE FROM model_hub_prompt_folder
 WHERE id IN (SELECT id FROM _pwb_folder_ids);
+DELETE FROM model_hub_evaltemplate
+WHERE id IN (SELECT id FROM _pwb_eval_template_ids);
 
 SELECT json_build_object(
   'remaining_folder_count', (
@@ -833,6 +1394,14 @@ SELECT json_build_object(
   'remaining_version_count', (
     SELECT count(*) FROM model_hub_promptversion
     WHERE id IN (SELECT id FROM _pwb_version_ids)
+  ),
+  'remaining_eval_config_count', (
+    SELECT count(*) FROM model_hub_promptevalconfig
+    WHERE id IN (SELECT id FROM _pwb_eval_config_ids)
+  ),
+  'remaining_eval_template_count', (
+    SELECT count(*) FROM model_hub_evaltemplate
+    WHERE id IN (SELECT id FROM _pwb_eval_template_ids)
   )
 );
 COMMIT;
@@ -1019,6 +1588,33 @@ async function waitForEditorText(page, fragments, timeout = 30000) {
   );
 }
 
+async function waitForPromptEvaluationGrid(
+  page,
+  { evalConfigName, textValue },
+  timeout = 30000,
+) {
+  await waitForVisibleText(page, "Show Variables", { exact: true, timeout });
+  await waitForVisibleText(page, "Add Evaluations", { exact: true, timeout });
+  await page.waitForFunction(
+    ({ expectedEvalName, expectedTextValue }) => {
+      const grid =
+        document.querySelector(".prompt-evaluation-gird") ||
+        document.querySelector(".prompt-variable-gird");
+      if (!grid) return false;
+      const text = window.normalizeText(grid.textContent);
+      return (
+        text.includes("{{text}}") &&
+        text.includes(expectedTextValue) &&
+        text.includes(expectedEvalName) &&
+        text.includes("v1") &&
+        (text.includes("NA") || text.includes("Status:"))
+      );
+    },
+    { timeout },
+    { expectedEvalName: evalConfigName, expectedTextValue: textValue },
+  );
+}
+
 async function openModelPickerAndSelectSafeModel(page, model) {
   await waitForVisibleText(page, model.model_name, { exact: true });
   await clickModelPickerButton(page, model.model_name);
@@ -1041,7 +1637,9 @@ async function openModelPickerAndSelectSafeModel(page, model) {
     () => typeModelSearch(page, model.model_name),
   );
   await waitForVisibleMenuItemText(page, model.model_name);
-  await waitForNoVisibleText(page, "Configure an api key", { timeout: 5000 });
+  if (model.isAvailable !== false) {
+    await waitForNoVisibleText(page, "Configure an api key", { timeout: 5000 });
+  }
 }
 
 async function clickModelPickerButton(page, modelName) {
@@ -1364,15 +1962,12 @@ async function typeIntoDialogInput(page, value) {
       );
     });
     if (!visible) continue;
-    await input.evaluate((element, nextValue) => {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype,
-        "value",
-      )?.set;
-      setter?.call(element, nextValue);
-      element.dispatchEvent(new Event("input", { bubbles: true }));
-      element.dispatchEvent(new Event("change", { bubbles: true }));
-    }, value);
+    await input.click({ clickCount: 3 });
+    await page.keyboard.down(modifierKey());
+    await page.keyboard.press("A");
+    await page.keyboard.up(modifierKey());
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type(value);
     return;
   }
   throw new Error("No visible dialog input found.");

@@ -4,6 +4,7 @@ from agentcc.serializers.contracts import (
     APIKeyBulkResponseSerializer,
     GatewayConfigProviderSerializer,
     GatewayMCPStatusResponseSerializer,
+    GatewayMCPToolTestRequestSerializer,
     GatewayProviderStatusSerializer,
     OrgConfigBulkResponseSerializer,
 )
@@ -69,6 +70,25 @@ def test_gateway_mcp_status_accepts_empty_server_list():
     )
 
     assert serializer.is_valid(), serializer.errors
+
+
+def test_gateway_mcp_tool_request_accepts_json_primitive_arguments():
+    serializer = GatewayMCPToolTestRequestSerializer(
+        data={
+            "name": "echo",
+            "arguments": {
+                "input": "hello",
+                "count": 3,
+                "flag": True,
+                "empty": None,
+                "metadata": {"source": "browser"},
+                "items": ["a", "b"],
+            },
+        }
+    )
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["arguments"]["count"] == 3
 
 
 def test_gateway_config_provider_uses_uuid_database_id():

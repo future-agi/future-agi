@@ -208,6 +208,7 @@ function StatusDropdown({ clusterId, current }) {
   return (
     <>
       <Box
+        data-testid="error-feed-status-dropdown"
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
@@ -269,6 +270,7 @@ function StatusDropdown({ clusterId, current }) {
         {STATUS_OPTIONS.filter((s) => s.value !== current).map((s) => (
           <MenuItem
             key={s.value}
+            data-testid={`error-feed-status-option-${s.value}`}
             onClick={() => {
               updateIssue.mutate({ clusterId, status: s.value });
               setAnchorEl(null);
@@ -333,6 +335,7 @@ function SeverityDropdown({ current, onChange }) {
   return (
     <>
       <Box
+        data-testid="error-feed-severity-dropdown"
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
@@ -404,6 +407,7 @@ function SeverityDropdown({ current, onChange }) {
           return (
             <MenuItem
               key={s.value}
+              data-testid={`error-feed-severity-option-${s.value}`}
               onClick={() => {
                 onChange?.(s.value);
                 setAnchorEl(null);
@@ -454,6 +458,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
   return (
     <>
       <Box
+        data-testid="error-feed-assignee-dropdown"
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
@@ -556,6 +561,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
         <Divider sx={{ borderColor: "divider" }} />
         {current && (
           <MenuItem
+            data-testid="error-feed-assignee-unassign-option"
             onClick={() => {
               onChange?.(null);
               setAnchorEl(null);
@@ -577,6 +583,8 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
           .map((m) => (
             <MenuItem
               key={m.email}
+              data-testid="error-feed-assignee-option"
+              data-email={m.email}
               onClick={() => {
                 onChange?.(m.email);
                 setAnchorEl(null);
@@ -1280,6 +1288,7 @@ function DeepAnalysisButton({ clusterId, traceId }) {
           </Typography>
         </Stack>
         <Button
+          data-testid="error-feed-deep-analysis-rerun-button"
           size="small"
           variant="contained"
           startIcon={<Iconify icon="mdi:refresh" width={10} />}

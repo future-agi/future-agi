@@ -5,6 +5,7 @@ Tests for trace error analysis endpoints.
 """
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from django.utils import timezone
@@ -28,6 +29,7 @@ from tracer.models.trace_error_analysis_task import (
     TraceErrorAnalysisTask,
     TraceErrorTaskStatus,
 )
+from tracer.views.feed._permissions import resolve_requested_project_ids
 
 AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
@@ -173,6 +175,37 @@ class TestErrorClusterFeedAPI:
             "TEST-HIGH",
             "TEST-LOW",
         ]
+
+    def test_get_cluster_feed_degrades_when_clickhouse_user_counts_fail(
+        self, auth_client, project, monkeypatch
+    ):
+        """CH user-count failures should not make the feed list fail."""
+        cluster = make_feed_group(project, "TEST-CH-FALLBACK")
+        trace = Trace.objects.create(project=project, name="CH fallback trace")
+        ErrorClusterTraces.objects.create(cluster=cluster, trace=trace)
+
+        def fail_get_reader():
+            raise RuntimeError("clickhouse unavailable")
+
+        monkeypatch.setattr("tracer.queries.feed.get_reader", fail_get_reader)
+
+        response = auth_client.get(self.url, {"project_id": str(project.id)})
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = get_result(response)["data"]
+        row = next(item for item in rows if item["cluster_id"] == "TEST-CH-FALLBACK")
+        assert row["users_affected"] == 0
+
+    def test_feed_project_scope_uses_workspace_org_when_user_org_missing(
+        self, user, workspace, project
+    ):
+        """Workspace-authenticated requests should not require user.organization."""
+        user.organization = None
+        request = SimpleNamespace(user=user, workspace=workspace)
+
+        project_ids = resolve_requested_project_ids(request, None)
+
+        assert project_ids == [str(project.id)]
 
 
 @pytest.mark.integration

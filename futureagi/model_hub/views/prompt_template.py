@@ -1,4 +1,6 @@
+import atexit
 import base64
+import concurrent.futures
 import json  # Add this import at the top of the file
 import re
 import time
@@ -26,7 +28,7 @@ except ImportError:
     PromptSuggestionGenerator = _ee_stub("PromptSuggestionGenerator")
     SyntheticDataAgent = _ee_stub("SyntheticDataAgent")
 from django.core.cache import cache
-from django.db import close_old_connections, models, transaction
+from django.db import close_old_connections, connection, models, transaction
 from django.db.models import Case, IntegerField, Prefetch, Q, Value, When
 from django.db.models.functions import Cast, Substr
 from django.forms.models import model_to_dict
@@ -43,13 +45,6 @@ from rest_framework.views import APIView
 
 from accounts.models import User
 from accounts.models.organization import Organization
-
-logger = structlog.get_logger(__name__)
-import atexit
-import concurrent.futures
-
-from django.db import connection
-
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from analytics.utils import (
@@ -74,7 +69,6 @@ from model_hub.models.choices import ModalityType, OwnerChoices, StatusType
 from model_hub.models.develop_dataset import (
     Cell,
     Column,
-    Dataset,
     KnowledgeBaseFile,
     Row,
 )
@@ -119,15 +113,16 @@ from model_hub.utils.utils import (
     submit_with_retry,
     track_running_eval_count,
 )
+from model_hub.utils.websocket_manager import (
+    get_websocket_manager,
+)
 from model_hub.utils.workspace_scope import (
     request_workspace_filter,
     scoped_column_queryset,
     scoped_dataset_queryset,
 )
-from model_hub.utils.websocket_manager import (
-    get_websocket_manager,
-)
 from model_hub.views.eval_runner import EvaluationRunner
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.settings.settings import BASE_URL
 from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
@@ -147,6 +142,22 @@ from tfc.utils.storage import (
     upload_document_to_s3,
     upload_image_to_s3,
 )
+
+try:
+    from ee.usage.schemas.event_types import BillingEventType
+except ImportError:
+    BillingEventType = None
+
+try:
+    from ee.usage.utils.usage_entries import (
+        count_text_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
+except ImportError:
+    count_text_tokens = None
+    log_and_deduct_cost_for_api_request = None
+
+logger = structlog.get_logger(__name__)
 
 # Module-level ThreadPoolExecutor for background tasks that use instance methods
 # These can't be migrated to Temporal as they require 'self' context
@@ -173,16 +184,9 @@ def _safe_background_task(func, *args, **kwargs):
     return wrapped
 
 
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+def _empty_token_usage_properties(token_usage):
+    return {}
 
-try:
-    from ee.usage.utils.usage_entries import (
-        count_text_tokens,
-        log_and_deduct_cost_for_api_request,
-    )
-except ImportError:
-    count_text_tokens = None
-    log_and_deduct_cost_for_api_request = None
 
 MIME_TO_EXT = {
     # Documents
@@ -2420,14 +2424,14 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             except (TypeError, ValueError):
                 return self._gm.bad_request("Invalid evaluation configuration id.")
 
-            existing_eval_configs = set(
+            existing_eval_configs = {
                 str(config_id)
                 for config_id in PromptEvalConfig.objects.filter(
                     id__in=prompt_eval_config_ids,
                     prompt_template=template,
                     deleted=False,
                 ).values_list("id", flat=True)
-            )
+            }
             missing_eval_configs = [
                 config_id
                 for config_id in prompt_eval_config_ids
@@ -2754,7 +2758,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 try:
                     from ee.usage.utils.event_properties import token_usage_properties
                 except ImportError:
-                    token_usage_properties = lambda token_usage: {}
+                    token_usage_properties = _empty_token_usage_properties
 
                 if (
                     emit is not None
@@ -3346,6 +3350,10 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             deleted=True,
             deleted_at=now,
         )
+        PromptEvalConfig.objects.filter(prompt_template=instance).update(
+            deleted=True,
+            deleted_at=now,
+        )
 
     @action(detail=False, methods=["post"], url_path="generate-prompt")
     def generate_prompt(self, request):
@@ -3403,7 +3411,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 try:
                     from ee.usage.utils.event_properties import token_usage_properties
                 except ImportError:
-                    token_usage_properties = lambda token_usage: {}
+                    token_usage_properties = _empty_token_usage_properties
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
@@ -3541,7 +3549,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 try:
                     from ee.usage.utils.event_properties import token_usage_properties
                 except ImportError:
-                    token_usage_properties = lambda token_usage: {}
+                    token_usage_properties = _empty_token_usage_properties
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization

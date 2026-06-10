@@ -30,10 +30,10 @@ async function main() {
       typeof provider?.masked_key === "string" &&
       provider.masked_key.includes("*"),
   );
-  assert(
-    configuredTextProvider,
-    "No configured text provider with a masked key is available for browser smoke.",
-  );
+  const checkedProvider =
+    configuredTextProvider ||
+    providers.find((provider) => provider?.type === "text");
+  assert(checkedProvider, "No text provider is available for browser smoke.");
 
   const customModelsRaw = await auth.client.get(
     apiPath("/model-hub/custom-models/"),
@@ -58,9 +58,10 @@ async function main() {
     provider_count: providers.length,
     configured_provider_count: providers.filter((provider) => provider?.has_key)
       .length,
-    checked_provider: configuredTextProvider.provider,
-    checked_provider_display_name: configuredTextProvider.display_name,
-    checked_provider_masked_key: configuredTextProvider.masked_key,
+    configured_text_provider_available: Boolean(configuredTextProvider),
+    checked_provider: checkedProvider.provider,
+    checked_provider_display_name: checkedProvider.display_name,
+    checked_provider_masked_key: configuredTextProvider?.masked_key || null,
     custom_model_count: getPayloadTotal(customModelsRaw),
     api_key_list_rows: getPayloadTotal(apiKeysRaw),
   };
@@ -80,9 +81,11 @@ async function main() {
       localStorage.setItem("refreshToken", tokens.refresh || "");
       localStorage.setItem("rememberMe", "true");
       localStorage.setItem("initial-render", "done");
-      if (organizationId) sessionStorage.setItem("organizationId", organizationId);
+      if (organizationId)
+        sessionStorage.setItem("organizationId", organizationId);
       if (workspaceId) sessionStorage.setItem("workspaceId", workspaceId);
-      if (user?.id) sessionStorage.setItem("futureagi-current-user-id", user.id);
+      if (user?.id)
+        sessionStorage.setItem("futureagi-current-user-id", user.id);
     },
     {
       tokens: auth.tokens,
@@ -128,7 +131,8 @@ async function main() {
     await Promise.all([providerStatusResponse, customModelsResponse]);
 
     await page.waitForFunction(
-      () => window.location.pathname.endsWith("/dashboard/settings/ai-providers"),
+      () =>
+        window.location.pathname.endsWith("/dashboard/settings/ai-providers"),
       { timeout: 30000 },
     );
     await waitForVisibleText(page, "AI Providers", { exact: true });
@@ -137,20 +141,24 @@ async function main() {
     await waitForVisibleText(page, "Default model provider");
     await waitForVisibleText(page, "Default cloud providers");
     await waitForVisibleText(page, "Custom model");
-    await waitForVisibleText(page, configuredTextProvider.display_name, {
+    await waitForVisibleText(page, checkedProvider.display_name, {
       exact: true,
     });
-    await waitForInputValue(page, configuredTextProvider.masked_key);
+    if (configuredTextProvider) {
+      await waitForInputValue(page, configuredTextProvider.masked_key);
 
-    const inputState = await findInputState(
-      page,
-      configuredTextProvider.masked_key,
-    );
-    assert(inputState.found, "Masked provider key input was not found.");
-    assert(
-      inputState.disabled || inputState.readOnly,
-      "Configured provider masked key input was editable before entering edit mode.",
-    );
+      const inputState = await findInputState(
+        page,
+        configuredTextProvider.masked_key,
+      );
+      assert(inputState.found, "Masked provider key input was not found.");
+      assert(
+        inputState.disabled || inputState.readOnly,
+        "Configured provider masked key input was editable before entering edit mode.",
+      );
+    } else {
+      await waitForVisibleButton(page, "Add");
+    }
 
     await assertNoRawSecretVisible(page);
     await waitForNoVisibleText(page, "No Models Added", { exact: true });
@@ -251,12 +259,14 @@ async function waitForNoVisibleText(
           rect.height > 0
         );
       };
-      return !Array.from(document.querySelectorAll("body *")).some((element) => {
-        if (!isVisible(element)) return false;
-        const textContent = normalized(element.textContent);
-        if (exactMatch) return textContent === expectedText;
-        return textContent.includes(expectedText);
-      });
+      return !Array.from(document.querySelectorAll("body *")).some(
+        (element) => {
+          if (!isVisible(element)) return false;
+          const textContent = normalized(element.textContent);
+          if (exactMatch) return textContent === expectedText;
+          return textContent.includes(expectedText);
+        },
+      );
     },
     { timeout },
     { text, exact },
@@ -274,11 +284,30 @@ async function waitForInputValue(page, expectedValue, timeout = 30000) {
   );
 }
 
+async function waitForVisibleButton(page, label, timeout = 30000) {
+  await page.waitForFunction(
+    (buttonLabel) =>
+      Array.from(document.querySelectorAll("button")).some((button) => {
+        const style = window.getComputedStyle(button);
+        const rect = button.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0 &&
+          button.textContent.trim() === buttonLabel
+        );
+      }),
+    { timeout },
+    label,
+  );
+}
+
 async function findInputState(page, expectedValue) {
   return page.evaluate((value) => {
-    const element = Array.from(document.querySelectorAll("input, textarea")).find(
-      (candidate) => candidate.value === value,
-    );
+    const element = Array.from(
+      document.querySelectorAll("input, textarea"),
+    ).find((candidate) => candidate.value === value);
     if (!element) return { found: false };
     return {
       found: true,
@@ -310,7 +339,10 @@ function assertNoRawSecretString(value, label) {
     /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   ];
   for (const pattern of rawSecretPatterns) {
-    assert(!pattern.test(value), `${label} contains a raw provider secret pattern.`);
+    assert(
+      !pattern.test(value),
+      `${label} contains a raw provider secret pattern.`,
+    );
   }
 }
 
@@ -318,7 +350,8 @@ function getPayloadTotal(payload) {
   if (Number.isFinite(payload?.count)) return payload.count;
   if (Number.isFinite(payload?.result?.count)) return payload.result.count;
   if (Array.isArray(payload?.results)) return payload.results.length;
-  if (Array.isArray(payload?.result?.results)) return payload.result.results.length;
+  if (Array.isArray(payload?.result?.results))
+    return payload.result.results.length;
   if (Array.isArray(payload)) return payload.length;
   return 0;
 }

@@ -285,7 +285,9 @@ class TestAnnotationsLabelsViewSet:
             "/model-hub/annotations-labels/", payload, format="json"
         )
         assert response.status_code == status.HTTP_200_OK
-        assert AnnotationsLabels.objects.filter(name="Text Label").exists()
+        label = AnnotationsLabels.objects.get(name="Text Label")
+        assert response.data["result"]["id"] == str(label.id)
+        assert response.data["result"]["name"] == "Text Label"
 
     def test_create_categorical_label(self, auth_client, categorical_label_settings):
         """Test creating a categorical annotation label."""
@@ -800,7 +802,10 @@ class TestAnnotationsViewSetActions:
             payload,
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_update_cells_rejects_legacy_label_values_alias(
         self, auth_client, annotation, row
@@ -1183,9 +1188,7 @@ class TestAnnotationSummaryView:
 
         # Mock the summary service response
         mock_summary_service.return_value = {
-            "header_data": pd.DataFrame(
-                {"label_id": [], "type": [], "name": []}
-            ),
+            "header_data": pd.DataFrame({"label_id": [], "type": [], "name": []}),
             "metric_calc": pd.DataFrame(
                 {"label_id": [], "row_id": [], "user_id": [], "value": []}
             ),

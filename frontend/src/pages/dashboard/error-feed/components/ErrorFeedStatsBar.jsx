@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
   Box,
   Divider,
@@ -67,6 +67,7 @@ function StatCard({ stat, isDark, value, isLoading }) {
       direction="row"
       alignItems="center"
       gap={1.25}
+      data-testid={`error-feed-stat-${stat.key}`}
       sx={{ minWidth: 120 }}
     >
       <Box
@@ -125,7 +126,15 @@ export default function ErrorFeedStatsBar() {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const apiParams = useErrorFeedApiParams();
-  const { data: stats, isLoading } = useErrorFeedStats(apiParams);
+  const statsParams = useMemo(() => {
+    const nextParams = {};
+    if (apiParams.project_id) nextParams.project_id = apiParams.project_id;
+    if (apiParams.time_range_days) {
+      nextParams.time_range_days = apiParams.time_range_days;
+    }
+    return nextParams;
+  }, [apiParams.project_id, apiParams.time_range_days]);
+  const { data: stats, isLoading } = useErrorFeedStats(statsParams);
 
   return (
     <Box

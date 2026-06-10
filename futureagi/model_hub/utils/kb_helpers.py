@@ -5,7 +5,6 @@ This module contains shared utility functions for KB operations,
 used by both views and tasks.
 """
 
-import os
 import time
 
 import structlog
@@ -157,12 +156,33 @@ def schedule_kb_ingestion_on_commit(file_metadata, kb_id, org_id):
         import tfc.temporal.background_tasks.activities  # noqa: F401
         from tfc.temporal.drop_in import start_activity
 
-        start_activity(
-            "ingest_kb_files_activity",
-            args=(metadata, kb_id_str, org_id_str),
-            queue="default",
-            task_id=workflow_id,
-        )
+        try:
+            start_activity(
+                "ingest_kb_files_activity",
+                args=(metadata, kb_id_str, org_id_str),
+                queue="default",
+                task_id=workflow_id,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to schedule KB ingestion activity",
+                kb_id=kb_id_str,
+                org_id=org_id_str,
+                workflow_id=workflow_id,
+            )
+            try:
+                KnowledgeBaseFile.objects.filter(
+                    id=kb_id_str,
+                    deleted=False,
+                ).update(
+                    status=StatusType.FAILED.value,
+                    last_error=f"Failed to schedule ingestion: {exc}"[:10000],
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to mark KB as failed after ingestion scheduling error",
+                    kb_id=kb_id_str,
+                )
 
     transaction.on_commit(_start_ingestion)
 

@@ -264,6 +264,12 @@ const EditTaskDrawerV2Content = ({
   const onUpdateSubmit = useCallback(
     (editType) => {
       const data = formValues;
+      const spansLimit =
+        data.spansLimit === undefined ||
+        data.spansLimit === null ||
+        data.spansLimit === ""
+          ? undefined
+          : Number(data.spansLimit);
       const attributeFilters = extractAttributeFilters(data?.filters);
 
       // Task system filter aggregation. Keep the update payload aligned with
@@ -308,7 +314,7 @@ const EditTaskDrawerV2Content = ({
         // The BE serializer rejects it on PATCH; the picker is also
         // locked on edit (see TaskConfigPanel rowTypeLocked).
         sampling_rate: data.samplingRate,
-        spans_limit: String(data.spansLimit),
+        spans_limit: spansLimit,
         edit_type: editType,
       };
       updateEvalTask(transformedData);

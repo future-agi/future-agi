@@ -2,34 +2,35 @@
 Shared helper for resolving the set of project IDs a request is allowed to see.
 """
 
-from typing import List, Optional
-
 from tracer.models.project import Project
 
 
-def get_accessible_project_ids(request) -> List[str]:
+def get_accessible_project_ids(request) -> list[str]:
     """
     Return list of project IDs the request's user has access to.
 
-    Scoped by organization (+ workspace if present on the request).
-    Returns empty list if the user has no organization.
+    Scoped by organization (+ workspace if present on the request). Some auth
+    paths attach only request.workspace, so derive organization from the
+    workspace before falling back to the legacy user.organization field.
     """
-    org = getattr(request, "organization", None) or getattr(
-        request.user, "organization", None
+    workspace = getattr(request, "workspace", None)
+    org = (
+        getattr(request, "organization", None)
+        or (getattr(workspace, "organization", None) if workspace is not None else None)
+        or getattr(request.user, "organization", None)
     )
     if not org:
         return []
 
     qs = Project.objects.filter(organization_id=org.id)
-    workspace = getattr(request, "workspace", None)
     if workspace is not None:
         qs = qs.filter(workspace_id=workspace.id)
     return [str(pid) for pid in qs.values_list("id", flat=True)]
 
 
 def resolve_requested_project_ids(
-    request, requested_project_id: Optional[str]
-) -> Optional[List[str]]:
+    request, requested_project_id: str | None
+) -> list[str] | None:
     """
     Given an optional `project_id` filter, return the effective list of project
     IDs to query, or None if the user is forbidden from the requested project.

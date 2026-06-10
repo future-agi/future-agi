@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Dialog,
@@ -24,22 +24,57 @@ const METRICS = [
 const CONDITIONS = [">", ">=", "<", "<=", "=="];
 const SEVERITIES = ["critical", "warning", "info"];
 
-const CreateAlertRuleDialog = ({ open, onClose, gatewayId }) => {
+function ruleName(rule, index) {
+  return rule?.name || `Rule ${index + 1}`;
+}
+
+function rulesToMap(rules) {
+  return Object.fromEntries(
+    rules.map((rule, index) => {
+      const name = ruleName(rule, index);
+      return [name, { ...rule, name }];
+    }),
+  );
+}
+
+const CreateAlertRuleDialog = ({
+  open,
+  onClose,
+  gatewayId,
+  initialRule = null,
+  existingRules = [],
+  replaceRules = false,
+}) => {
+  const isEdit = Boolean(initialRule);
   const [name, setName] = useState("");
   const [metric, setMetric] = useState("error_rate");
   const [condition, setCondition] = useState(">");
   const [threshold, setThreshold] = useState("");
-  const [window, setWindow] = useState("5m");
+  const [windowValue, setWindowValue] = useState("5m");
   const [severity, setSeverity] = useState("warning");
 
   const updateConfig = useUpdateConfig();
+
+  useEffect(() => {
+    if (!open) return;
+    setName(initialRule?.name || "");
+    setMetric(initialRule?.metric || "error_rate");
+    setCondition(initialRule?.condition || initialRule?.operator || ">");
+    setThreshold(
+      initialRule?.threshold === undefined || initialRule?.threshold === null
+        ? ""
+        : String(initialRule.threshold),
+    );
+    setWindowValue(initialRule?.window || initialRule?.duration || "5m");
+    setSeverity(initialRule?.severity || "warning");
+  }, [initialRule, open]);
 
   const resetForm = () => {
     setName("");
     setMetric("error_rate");
     setCondition(">");
     setThreshold("");
-    setWindow("5m");
+    setWindowValue("5m");
     setSeverity("warning");
   };
 
@@ -54,30 +89,47 @@ const CreateAlertRuleDialog = ({ open, onClose, gatewayId }) => {
       metric,
       condition,
       threshold: Number(threshold),
-      window,
+      window: windowValue,
       severity,
       enabled: true,
     };
+    const originalName = initialRule?.name;
+    const rulesPatch = replaceRules ? rulesToMap(existingRules) : {};
+    if (originalName && originalName !== name) {
+      if (replaceRules) {
+        delete rulesPatch[originalName];
+      } else {
+        rulesPatch[originalName] = null;
+      }
+    }
+    rulesPatch[name] = rule;
 
-    // We'll send this as a config patch that adds the rule
     updateConfig.mutate(
       {
         gatewayId,
         config: {
           alerting: {
-            rules: { [name]: rule },
+            rules: rulesPatch,
           },
         },
       },
       {
         onSuccess: () => {
-          enqueueSnackbar(`Alert rule "${name}" created`, {
-            variant: "success",
-          });
+          enqueueSnackbar(
+            `Alert rule "${name}" ${isEdit ? "updated" : "created"}`,
+            {
+              variant: "success",
+            },
+          );
           handleClose();
         },
         onError: () => {
-          enqueueSnackbar("Failed to create alert rule", { variant: "error" });
+          enqueueSnackbar(
+            `Failed to ${isEdit ? "update" : "create"} alert rule`,
+            {
+              variant: "error",
+            },
+          );
         },
       },
     );
@@ -85,7 +137,9 @@ const CreateAlertRuleDialog = ({ open, onClose, gatewayId }) => {
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Create Alert Rule</DialogTitle>
+      <DialogTitle>
+        {isEdit ? "Edit Alert Rule" : "Create Alert Rule"}
+      </DialogTitle>
       <DialogContent>
         <Stack spacing={2} mt={1}>
           <TextField
@@ -136,8 +190,8 @@ const CreateAlertRuleDialog = ({ open, onClose, gatewayId }) => {
           <TextField
             label="Window"
             fullWidth
-            value={window}
-            onChange={(e) => setWindow(e.target.value)}
+            value={windowValue}
+            onChange={(e) => setWindowValue(e.target.value)}
             placeholder="e.g., 5m, 1h"
           />
           <TextField
@@ -167,7 +221,13 @@ const CreateAlertRuleDialog = ({ open, onClose, gatewayId }) => {
           onClick={handleCreate}
           disabled={!name.trim() || !threshold || updateConfig.isPending}
         >
-          {updateConfig.isPending ? "Creating..." : "Create Rule"}
+          {updateConfig.isPending
+            ? isEdit
+              ? "Saving..."
+              : "Creating..."
+            : isEdit
+              ? "Save Rule"
+              : "Create Rule"}
         </Button>
       </DialogActions>
     </Dialog>
@@ -178,6 +238,9 @@ CreateAlertRuleDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   gatewayId: PropTypes.string,
+  initialRule: PropTypes.object,
+  existingRules: PropTypes.arrayOf(PropTypes.object),
+  replaceRules: PropTypes.bool,
 };
 
 export default CreateAlertRuleDialog;

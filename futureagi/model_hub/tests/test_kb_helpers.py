@@ -156,6 +156,35 @@ class TestScheduleKbIngestionOnCommit:
             task_id="kb-ingest-kb-123",
         )
 
+    @patch("model_hub.utils.kb_helpers.KnowledgeBaseFile.objects.filter")
+    @patch("tfc.temporal.drop_in.start_activity")
+    @patch("model_hub.utils.kb_helpers.transaction.on_commit")
+    def test_callback_marks_kb_failed_when_temporal_scheduling_fails(
+        self, mock_on_commit, mock_start, mock_filter
+    ):
+        """A post-commit Temporal outage must not make the HTTP create fail."""
+        from model_hub.models.choices import StatusType
+        from model_hub.utils.kb_helpers import schedule_kb_ingestion_on_commit
+
+        mock_start.side_effect = RuntimeError("temporal unavailable")
+        mock_queryset = mock_filter.return_value
+
+        schedule_kb_ingestion_on_commit(
+            file_metadata={"file-1": {"name": "test.pdf", "extension": "pdf"}},
+            kb_id="kb-123",
+            org_id="org-456",
+        )
+
+        callback = mock_on_commit.call_args[0][0]
+        callback()
+
+        mock_start.assert_called_once()
+        mock_filter.assert_called_once_with(id="kb-123", deleted=False)
+        mock_queryset.update.assert_called_once()
+        update_kwargs = mock_queryset.update.call_args.kwargs
+        assert update_kwargs["status"] == StatusType.FAILED.value
+        assert "temporal unavailable" in update_kwargs["last_error"]
+
 
 class TestIngestKbFilesImpl:
     """Tests for ingest_kb_files_impl function."""

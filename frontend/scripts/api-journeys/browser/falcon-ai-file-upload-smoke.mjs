@@ -445,8 +445,7 @@ async function removeFalconMinioObjects(storageKeys) {
 }
 
 async function runFalconMinioCommand(args) {
-  const container =
-    process.env.API_JOURNEY_MINIO_CONTAINER || "futureagi-ws2-minio-1";
+  const container = await resolveFalconMinioContainer();
   const command = [
     'mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null',
     `mc ${args.map((arg) => shellQuote(arg)).join(" ")}`,
@@ -456,8 +455,34 @@ async function runFalconMinioCommand(args) {
   });
 }
 
+async function resolveFalconMinioContainer() {
+  if (process.env.API_JOURNEY_MINIO_CONTAINER) {
+    return process.env.API_JOURNEY_MINIO_CONTAINER;
+  }
+  const candidates = [
+    "ws2-minio",
+    "futureagi-ws2-minio-1",
+    "minio",
+    "futureagi-minio-1",
+  ];
+  for (const candidate of candidates) {
+    try {
+      await execFileAsync("docker", [
+        "inspect",
+        "--type",
+        "container",
+        candidate,
+      ]);
+      return candidate;
+    } catch {
+      // Try the next local compose naming convention.
+    }
+  }
+  return "futureagi-ws2-minio-1";
+}
+
 function falconMinioTarget(storageKey) {
-  const bucket = process.env.API_JOURNEY_MINIO_BUCKET || "fi-content";
+  const bucket = process.env.API_JOURNEY_MINIO_BUCKET || "fi-content-dev";
   return `local/${bucket}/${storageKey}`;
 }
 

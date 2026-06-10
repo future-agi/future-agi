@@ -22,10 +22,9 @@ import json
 import time
 import uuid
 
+import clickhouse_connect
 import pytest
 import requests
-
-import clickhouse_connect
 
 from tracer.services.clickhouse.v2 import get_v2_config
 from tracer.tests._ch_seed import truncate_ch_spans
@@ -51,14 +50,22 @@ TEST_ORG_ID = "e2e00000-e2e0-4e2e-8e2e-e2e000000002"
 
 @pytest.fixture(scope="session", autouse=True)
 def _require_collector():
-    """Skip entire module if fi-collector is not reachable."""
+    """Skip entire module if fi-collector is not reachable or not test-wired."""
     try:
         # Try HTTP endpoint health (simpler than gRPC probe)
-        resp = requests.get("http://localhost:4318/", timeout=2)
+        requests.get("http://localhost:4318/", timeout=2)
         # Collector typically returns 404 or 405 on root but the socket is open
     except requests.ConnectionError:
+        pytest.skip("fi-collector not running at localhost:4318 — skipping E2E tests")
+    try:
+        if not _collector_writes_to_test_clickhouse():
+            pytest.skip(
+                "fi-collector at localhost:4318 is not wired to the test "
+                "ClickHouse sidecar — skipping collector E2E tests"
+            )
+    except Exception as exc:
         pytest.skip(
-            "fi-collector not running at localhost:4318 — skipping E2E tests"
+            f"fi-collector wiring probe failed; skipping collector E2E tests: {exc}"
         )
 
 
@@ -209,9 +216,30 @@ def wait_for_ch_row(
         if result.row_count > 0:
             columns = result.column_names
             row = result.first_row
-            return dict(zip(columns, row))
+            return dict(zip(columns, row, strict=False))
         time.sleep(0.5)
     return None
+
+
+def _collector_writes_to_test_clickhouse() -> bool:
+    """Confirm the reachable collector writes to the same CH client used here."""
+    cfg = get_v2_config()
+    client = clickhouse_connect.get_client(
+        host=cfg["host"],
+        port=cfg["http_port"],
+        username=cfg["user"],
+        password=cfg["password"],
+        database=cfg["database"],
+    )
+    try:
+        _, span_id = send_otlp_span(
+            span_name="e2e-collector-wiring-probe",
+            attributes={"openinference.span.kind": "CHAIN"},
+        )
+        return wait_for_ch_row(client, span_id, timeout=5) is not None
+    finally:
+        client.close()
+        truncate_ch_spans()
 
 
 # ---------------------------------------------------------------------------
@@ -278,9 +306,7 @@ class TestE2ESpanVisibleViaDjangoListSpans:
         assert response.status_code == 200
         data = response.json()
         span_ids = [s.get("id") for s in data.get("result", {}).get("data", [])]
-        assert span_id in span_ids, (
-            f"Span {span_id} not visible via list_spans_observe"
-        )
+        assert span_id in span_ids, f"Span {span_id} not visible via list_spans_observe"
 
 
 class TestE2ETraceAggregateConsistent:

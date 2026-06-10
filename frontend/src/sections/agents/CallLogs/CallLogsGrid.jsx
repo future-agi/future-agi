@@ -307,8 +307,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     const updated = callLogsColumnDefs
       .map((col) => ({
         ...col,
-        ...(col.field &&
-          col.field in visMap && { hide: !visMap[col.field] }),
+        ...(col.field && col.field in visMap && { hide: !visMap[col.field] }),
       }))
       .sort((a, b) => {
         const ai = orderIndex.get(a?.field) ?? Infinity;
@@ -379,7 +378,12 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   // Propagate reorder to parent so the View columns dropdown stays in sync.
   const onColumnMoved = useCallback(
     (params) => {
-      if (!params?.finished || !params?.api || typeof onColumnsChange !== "function") return;
+      if (
+        !params?.finished ||
+        !params?.api ||
+        typeof onColumnsChange !== "function"
+      )
+        return;
       const newOrder = (params?.api?.getColumnState() ?? [])
         .map((s) => s.colId)
         .filter((id) => id !== APP_CONSTANTS.AG_GRID_SELECTION_COLUMN);
@@ -394,8 +398,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       const sameOrder =
         next.length === cols.length &&
         next.every(
-          (c, i) =>
-            (c?.field || c?.id) === (cols[i]?.field || cols[i]?.id),
+          (c, i) => (c?.field || c?.id) === (cols[i]?.field || cols[i]?.id),
         );
       if (!sameOrder) onColumnsChange(next);
     },

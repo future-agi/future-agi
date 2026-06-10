@@ -384,9 +384,7 @@ const EvalDetailPage = () => {
           const next = new URLSearchParams(prev);
           next.set(
             "v",
-            String(
-              versionToLoad.version_number ?? versionToLoad.versionNumber,
-            ),
+            String(versionToLoad.version_number ?? versionToLoad.versionNumber),
           );
           return next;
         },
@@ -515,7 +513,6 @@ const EvalDetailPage = () => {
   const initialLoadDone = useRef(false);
   useEffect(() => {
     if (evalData && !viewingVersion) {
-
       const isCustom = evalData.owner !== "system";
       const urlVersion = searchParams.get("v");
       if (urlVersion && !initialLoadDone.current) {

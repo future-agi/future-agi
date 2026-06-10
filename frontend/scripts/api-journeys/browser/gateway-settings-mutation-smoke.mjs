@@ -1,6 +1,8 @@
 /* eslint-disable no-console */
+import { execFile as execFileCallback } from "node:child_process";
 import { createRequire } from "node:module";
 import process from "node:process";
+import { promisify } from "node:util";
 import {
   apiPath,
   asArray,
@@ -11,8 +13,15 @@ import {
 
 const require = createRequire(import.meta.url);
 const puppeteer = require("puppeteer-core");
+const execFile = promisify(execFileCallback);
 
 const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
+const EMAIL_ALERT_CREATE_SCREENSHOT_PATH =
+  "/tmp/gateway-settings-email-alert-create-smoke.png";
+const EMAIL_ALERT_EDIT_SCREENSHOT_PATH =
+  "/tmp/gateway-settings-email-alert-edit-smoke.png";
+const EMAIL_ALERT_DELETE_SCREENSHOT_PATH =
+  "/tmp/gateway-settings-email-alert-delete-smoke.png";
 const HEALTH_RELOAD_SCREENSHOT_PATH =
   "/tmp/gateway-settings-health-reload-smoke.png";
 const ORG_CONFIG_SCREENSHOT_PATH =
@@ -20,6 +29,7 @@ const ORG_CONFIG_SCREENSHOT_PATH =
 const BATCH_SCREENSHOT_PATH = "/tmp/gateway-settings-batch-submit-smoke.png";
 const FAILURE_SCREENSHOT_PATH =
   "/tmp/gateway-settings-mutation-smoke-failure.png";
+const EMAIL_ALERT_PREFIX = "ui_settings_email_alert_";
 const MUTATION_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 
 async function main() {
@@ -31,6 +41,7 @@ async function main() {
   const gatewayRequests = [];
   const browserMutations = [];
   const unexpectedMutations = [];
+  const expectedApiFailures = [];
   let browser = null;
   let page = null;
   let caughtError = null;
@@ -42,6 +53,10 @@ async function main() {
     const baseline = await prepareOrgConfigRestorer(auth.client);
     cleanup = baseline.cleanup;
     evidence = await preflightSettings(auth.client, baseline, auth.runId);
+    evidence.email_alert_initial_cleanup =
+      await hardDeleteEmailAlertFixturesByPrefix({
+        organizationId: auth.organizationId,
+      });
 
     browser = await puppeteer.launch({
       executablePath: browserExecutablePath(),
@@ -68,6 +83,12 @@ async function main() {
     });
     page.on("response", (response) => {
       const url = response.url();
+      if (isExpectedSettingsFailure(response)) {
+        expectedApiFailures.push(
+          `${response.status()} ${response.request().method()} ${url}`,
+        );
+        return;
+      }
       if (isGatewayApiUrl(url) && response.status() >= 400) {
         apiFailures.push(`${response.status()} ${url}`);
       }
@@ -100,6 +121,11 @@ async function main() {
     ]) {
       await waitForVisibleText(page, label, { exact: true });
     }
+
+    evidence.email_alert_lifecycle = await exerciseEmailAlertMutationFlow({
+      page,
+      auth,
+    });
 
     const [healthResponse] = await waitForResponsesDuring(
       page,
@@ -277,8 +303,8 @@ async function main() {
       )}`,
     );
     assert(
-      browserMutations.length === 4,
-      `Expected four Gateway Settings browser mutations, saw ${browserMutations.length}: ${browserMutations.join(
+      browserMutations.length === 8,
+      `Expected eight Gateway Settings browser mutations, saw ${browserMutations.length}: ${browserMutations.join(
         "; ",
       )}`,
     );
@@ -290,6 +316,16 @@ async function main() {
       .catch(() => null);
   } finally {
     if (browser) await browser.close();
+    try {
+      evidence.email_alert_cleanup = await hardDeleteEmailAlertFixturesByPrefix(
+        {
+          organizationId: auth.organizationId,
+        },
+      );
+    } catch (error) {
+      cleanupError ||= error;
+      evidence.email_alert_cleanup = { status: "failed", error: error.message };
+    }
     if (cleanup) {
       try {
         evidence.cleanup = await cleanup();
@@ -315,6 +351,7 @@ async function main() {
           gateway_requests: gatewayRequests,
           browser_mutations: browserMutations,
           unexpected_mutations: unexpectedMutations,
+          expected_api_failures: expectedApiFailures,
           failure_screenshot: FAILURE_SCREENSHOT_PATH,
         },
         null,
@@ -335,6 +372,7 @@ async function main() {
         evidence,
         gateway_request_count: gatewayRequests.length,
         browser_mutations: browserMutations,
+        expected_api_failures: expectedApiFailures,
       },
       null,
       2,
@@ -358,6 +396,196 @@ async function preflightSettings(client, baseline, runId) {
     original_org_config_id: baseline.originalActiveConfig.id,
     original_org_config_version: baseline.originalActiveConfig.version,
     change_description: `Browser Settings mutation ${suffix}`,
+  };
+}
+
+async function exerciseEmailAlertMutationFlow({ page, auth }) {
+  const suffix = String(auth.runId || Date.now())
+    .replace(/[^a-z0-9]/gi, "_")
+    .toLowerCase();
+  const alertName = `${EMAIL_ALERT_PREFIX}${suffix}`;
+  const editedAlertName = `${alertName}_edited`;
+  const recipient = `ui-email-alert-${suffix}@example.com`;
+  const fromEmail = `ui-email-alert-from-${suffix}@example.com`;
+  const editedFromEmail = `ui-email-alert-edited-${suffix}@example.com`;
+
+  await clickVisibleText(page, "Add Alert", { exact: true });
+  await waitForVisibleText(page, "New Email Alert", { exact: true });
+  await typeIntoPlaceholder(page, "e.g. Production Error Alerts", alertName);
+  await typeAutocompleteValue(page, "Type email and press Enter", recipient);
+  await clickVisibleText(page, "Budget Exceeded", { exact: true });
+  await clickVisibleText(page, "Error Occurred", { exact: true });
+  await typeIntoPlaceholder(page, "alerts@yourdomain.com", fromEmail);
+  await setInputByLabel(page, "Cooldown (minutes)", "7");
+
+  const [createResponse] = await waitForResponsesDuring(
+    page,
+    "create Gateway Settings email alert",
+    [emailAlertCreateResponse(), emailAlertsResponse()],
+    () => clickDialogButton(page, "Create"),
+  );
+  const created = await responseResult(createResponse);
+  assert(
+    created?.id,
+    `Email alert browser create did not return an id: ${JSON.stringify(
+      created,
+    )}`,
+  );
+  await waitForTextGone(page, "New Email Alert");
+  await waitForVisibleText(page, alertName, { exact: true });
+  await waitForVisibleText(page, recipient, { exact: true });
+  await waitForVisibleText(page, "2 events", { exact: true });
+  await waitForVisibleText(page, "sendgrid", { exact: true });
+
+  const createdReadback = await auth.client.get(
+    apiPath("/agentcc/email-alerts/{id}/", { id: created.id }),
+  );
+  assert(
+    createdReadback?.name === alertName &&
+      createdReadback?.provider === "sendgrid" &&
+      createdReadback?.cooldown_minutes === 7 &&
+      createdReadback?.provider_config?.from_email === fromEmail &&
+      !createdReadback?.provider_config?.api_key,
+    `Email alert API readback after browser create was unexpected: ${JSON.stringify(
+      createdReadback,
+    )}`,
+  );
+  const createdDbAudit = await loadAgentccEmailAlertDbAudit({
+    alertId: created.id,
+    organizationId: auth.organizationId,
+    rawSecrets: [fromEmail],
+  });
+  assert(
+    createdDbAudit?.id === created.id &&
+      createdDbAudit?.organization_id === auth.organizationId &&
+      createdDbAudit?.deleted === false &&
+      createdDbAudit?.provider === "sendgrid" &&
+      createdDbAudit?.is_active === true &&
+      createdDbAudit?.cooldown_minutes === 7 &&
+      Number(createdDbAudit?.encrypted_config_bytes) > 0 &&
+      createdDbAudit?.raw_secret_present_in_ciphertext === false,
+    `Email alert DB audit after create was unexpected: ${JSON.stringify(
+      createdDbAudit,
+    )}`,
+  );
+  await page.screenshot({
+    path: EMAIL_ALERT_CREATE_SCREENSHOT_PATH,
+    fullPage: true,
+  });
+
+  await clickRowAction(page, alertName, 0);
+  await waitForVisibleText(page, "Edit Email Alert", { exact: true });
+  await waitForVisibleValue(page, alertName);
+  await waitForVisibleValue(page, fromEmail);
+
+  const [testResponse] = await waitForResponsesDuring(
+    page,
+    "validation-only Gateway Settings email alert test",
+    [emailAlertTestFailureResponse(created.id)],
+    () => clickDialogButton(page, "Send Test"),
+  );
+  const testResult = await responseResult(testResponse);
+  await waitForVisibleText(page, "SendGrid API key not configured");
+
+  await setInputValueByCurrentValue(page, alertName, editedAlertName);
+  await setInputValueByCurrentValue(page, fromEmail, editedFromEmail);
+  await setInputByLabel(page, "Cooldown (minutes)", "11");
+  await setCheckboxByLabel(page, "Alert is active", false);
+
+  const [updateResponse] = await waitForResponsesDuring(
+    page,
+    "update Gateway Settings email alert",
+    [emailAlertUpdateResponse(created.id), emailAlertsResponse()],
+    () => clickDialogButton(page, "Update"),
+  );
+  const updated = await responseResult(updateResponse);
+  assert(
+    updated?.id === created.id &&
+      updated?.name === editedAlertName &&
+      updated?.cooldown_minutes === 11 &&
+      updated?.is_active === false &&
+      updated?.provider_config?.from_email === editedFromEmail,
+    `Email alert browser update response was unexpected: ${JSON.stringify(
+      updated,
+    )}`,
+  );
+  await waitForTextGone(page, "Edit Email Alert");
+  await waitForVisibleText(page, editedAlertName, { exact: true });
+  await waitForVisibleText(page, recipient, { exact: true });
+
+  const updatedDbAudit = await loadAgentccEmailAlertDbAudit({
+    alertId: created.id,
+    organizationId: auth.organizationId,
+    rawSecrets: [editedFromEmail],
+  });
+  assert(
+    updatedDbAudit?.deleted === false &&
+      updatedDbAudit?.name === editedAlertName &&
+      updatedDbAudit?.is_active === false &&
+      updatedDbAudit?.cooldown_minutes === 11 &&
+      updatedDbAudit?.raw_secret_present_in_ciphertext === false,
+    `Email alert DB audit after update was unexpected: ${JSON.stringify(
+      updatedDbAudit,
+    )}`,
+  );
+  await page.screenshot({
+    path: EMAIL_ALERT_EDIT_SCREENSHOT_PATH,
+    fullPage: true,
+  });
+
+  const [deleteResponse] = await waitForResponsesDuring(
+    page,
+    "delete Gateway Settings email alert",
+    [emailAlertDeleteResponse(created.id), emailAlertsResponse()],
+    () => dispatchLastRowAction(page, editedAlertName),
+  );
+  const deleted = await responseResult(deleteResponse);
+  assert(
+    deleted?.deleted === true,
+    `Email alert browser delete response was unexpected: ${JSON.stringify(
+      deleted,
+    )}`,
+  );
+  await waitForTextGone(page, editedAlertName);
+  const afterDelete = asArray(
+    await auth.client.get(apiPath("/agentcc/email-alerts/")),
+  );
+  assert(
+    !afterDelete.some((alert) => alert.id === created.id),
+    "Deleted email alert is still visible in API list.",
+  );
+  const deletedDbAudit = await loadAgentccEmailAlertDbAudit({
+    alertId: created.id,
+    organizationId: auth.organizationId,
+    rawSecrets: [editedFromEmail],
+  });
+  assert(
+    deletedDbAudit?.deleted === true && deletedDbAudit?.deleted_at_set === true,
+    `Email alert DB audit after delete was unexpected: ${JSON.stringify(
+      deletedDbAudit,
+    )}`,
+  );
+  await page.screenshot({
+    path: EMAIL_ALERT_DELETE_SCREENSHOT_PATH,
+    fullPage: true,
+  });
+
+  return {
+    alert_id: created.id,
+    alert_name: alertName,
+    edited_alert_name: editedAlertName,
+    recipient,
+    provider: "sendgrid",
+    test_status: testResponse.status(),
+    test_result: testResult,
+    created_db_audit: createdDbAudit,
+    updated_db_audit: updatedDbAudit,
+    deleted_db_audit: deletedDbAudit,
+    screenshots: [
+      EMAIL_ALERT_CREATE_SCREENSHOT_PATH,
+      EMAIL_ALERT_EDIT_SCREENSHOT_PATH,
+      EMAIL_ALERT_DELETE_SCREENSHOT_PATH,
+    ],
   };
 }
 
@@ -490,6 +718,69 @@ async function pollBatchTerminal(client, gatewayId, batchId) {
   );
 }
 
+async function loadAgentccEmailAlertDbAudit({
+  alertId,
+  organizationId,
+  rawSecrets,
+}) {
+  const rawSecretChecks = asArray(rawSecrets)
+    .map(
+      (secret) =>
+        `COALESCE(position(${sqlString(secret)} in encode(encrypted_config, 'escape')) > 0, false)`,
+    )
+    .join(" OR ");
+  const sql = `
+SELECT COALESCE((
+  SELECT json_build_object(
+    'id', id::text,
+    'organization_id', organization_id::text,
+    'name', name,
+    'provider', provider,
+    'recipients', recipients,
+    'events', events,
+    'thresholds', thresholds,
+    'is_active', is_active,
+    'cooldown_minutes', cooldown_minutes,
+    'encrypted_config_bytes', octet_length(encrypted_config),
+    'raw_secret_present_in_ciphertext', ${rawSecretChecks || "false"},
+    'deleted', deleted,
+    'deleted_at_set', deleted_at IS NOT NULL
+  )
+  FROM agentcc_email_alert
+  WHERE id = ${sqlUuid(alertId)}
+    AND organization_id = ${sqlUuid(organizationId)}
+), '{}'::json);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteEmailAlertFixturesByPrefix({ organizationId }) {
+  const deleteAudit = await runPostgresJson(`
+WITH deleted_alerts AS (
+  DELETE FROM agentcc_email_alert
+  WHERE organization_id = ${sqlUuid(organizationId)}
+    AND name LIKE ${sqlString(`${EMAIL_ALERT_PREFIX}%`)}
+  RETURNING id
+)
+SELECT json_build_object(
+  'deleted_alert_count', (SELECT count(*) FROM deleted_alerts)
+);
+`);
+  const remainingAudit = await runPostgresJson(`
+SELECT json_build_object(
+  'remaining_alert_count', count(*)
+)
+FROM agentcc_email_alert
+WHERE organization_id = ${sqlUuid(organizationId)}
+  AND name LIKE ${sqlString(`${EMAIL_ALERT_PREFIX}%`)};
+`);
+  return {
+    status: "passed",
+    deleted_alert_count: Number(deleteAudit.deleted_alert_count || 0),
+    remaining_alert_count: Number(remainingAudit.remaining_alert_count || 0),
+  };
+}
+
 function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -619,6 +910,25 @@ async function waitForTextGone(page, text, { timeout = 30000 } = {}) {
   );
 }
 
+async function waitForVisibleValue(page, value, { timeout = 30000 } = {}) {
+  await page.waitForFunction(
+    (expectedValue) =>
+      window.visibleElements().some((element) => {
+        if (
+          element instanceof HTMLInputElement &&
+          element.value === expectedValue
+        ) {
+          return true;
+        }
+
+        const input = element.querySelector?.("input");
+        return input?.value === expectedValue;
+      }),
+    { timeout },
+    value,
+  );
+}
+
 async function typeIntoPlaceholder(page, placeholder, value) {
   await page.waitForFunction(
     (expectedPlaceholder) =>
@@ -668,6 +978,7 @@ async function clickVisibleText(
         element?.closest("button,a,[role='button'],[role='menuitem'],tr") ||
         element;
       if (!clickable || clickable.disabled) return false;
+      clickable.scrollIntoView({ block: "center", inline: "center" });
       const rect = clickable.getBoundingClientRect();
       return {
         x: rect.left + rect.width / 2,
@@ -716,6 +1027,7 @@ async function clickRowAction(page, rowText, actionIndex) {
       );
       const button = buttons[index];
       if (!button) return false;
+      button.scrollIntoView({ block: "center", inline: "center" });
       const rect = button.getBoundingClientRect();
       return {
         x: rect.left + rect.width / 2,
@@ -726,6 +1038,108 @@ async function clickRowAction(page, rowText, actionIndex) {
   );
   assert(point, `Could not click row action ${actionIndex} for ${rowText}`);
   await page.mouse.click(point.x, point.y);
+}
+
+async function dispatchLastRowAction(page, rowText) {
+  await waitForVisibleText(page, rowText);
+  const clicked = await page.evaluate((expectedText) => {
+    const row = window
+      .visibleElements("tr")
+      .find((candidate) =>
+        window.normalizeText(candidate.textContent).includes(expectedText),
+      );
+    if (!row) return false;
+    const buttons = Array.from(row.querySelectorAll("button")).filter(
+      (button) => !button.disabled,
+    );
+    const button = buttons.at(-1);
+    if (!button) return false;
+    button.scrollIntoView({ block: "center", inline: "center" });
+    window.dispatchClick(button);
+    return true;
+  }, rowText);
+  assert(clicked, `Could not dispatch last row action for ${rowText}`);
+}
+
+async function typeAutocompleteValue(page, placeholder, value) {
+  const point = await page.evaluate((expectedPlaceholder) => {
+    const input = window
+      .visibleElements("input")
+      .find((element) => element.placeholder === expectedPlaceholder);
+    if (!input || input.disabled) return false;
+    const rect = input.getBoundingClientRect();
+    return {
+      x: rect.left + Math.min(rect.width / 2, 80),
+      y: rect.top + rect.height / 2,
+    };
+  }, placeholder);
+  assert(point, `Could not focus autocomplete placeholder: ${placeholder}`);
+  await page.mouse.click(point.x, point.y);
+  await page.keyboard.type(value);
+  await page.keyboard.press("Enter");
+  await waitForVisibleText(page, value, { exact: true });
+}
+
+async function setInputByLabel(page, label, value) {
+  const updated = await page.evaluate(
+    ({ expectedLabel, text }) => {
+      const labels = window.visibleElements("label").filter((element) => {
+        const textContent = window.normalizeText(element.textContent);
+        return textContent === expectedLabel;
+      });
+      for (const labelElement of labels) {
+        const input = labelElement.htmlFor
+          ? document.getElementById(labelElement.htmlFor)
+          : labelElement
+              .closest(".MuiFormControl-root")
+              ?.querySelector("input,textarea");
+        if (!input || input.disabled) continue;
+        input.focus();
+        window.setNativeValue(input, text);
+        return true;
+      }
+      return false;
+    },
+    { expectedLabel: label, text: value },
+  );
+  assert(updated, `Could not set input by label: ${label}`);
+}
+
+async function setInputValueByCurrentValue(page, currentValue, nextValue) {
+  const updated = await page.evaluate(
+    ({ expectedValue, text }) => {
+      const input = window
+        .visibleElements("input,textarea")
+        .find((element) => element.value === expectedValue);
+      if (!input || input.disabled) return false;
+      input.focus();
+      window.setNativeValue(input, text);
+      return true;
+    },
+    { expectedValue: currentValue, text: nextValue },
+  );
+  assert(updated, `Could not update input with value: ${currentValue}`);
+}
+
+async function setCheckboxByLabel(page, label, checked) {
+  const updated = await page.evaluate(
+    ({ expectedLabel, expectedChecked }) => {
+      const labelElement = window
+        .visibleElements("label")
+        .find(
+          (element) =>
+            window.normalizeText(element.textContent) === expectedLabel,
+        );
+      const checkbox = labelElement?.querySelector("input[type='checkbox']");
+      if (!checkbox || checkbox.disabled) return false;
+      if (checkbox.checked !== expectedChecked) {
+        checkbox.click();
+      }
+      return true;
+    },
+    { expectedLabel: label, expectedChecked: checked },
+  );
+  assert(updated, `Could not set checkbox by label: ${label}`);
 }
 
 async function responseResult(response) {
@@ -794,18 +1208,79 @@ function submitBatchResponseFor(gatewayId) {
     response.status() < 400;
 }
 
+function emailAlertCreateResponse() {
+  return (response) =>
+    response.url().endsWith("/agentcc/email-alerts/") &&
+    response.request().method() === "POST" &&
+    response.status() < 400;
+}
+
+function emailAlertUpdateResponse(alertId) {
+  return (response) =>
+    response.url().includes(`/agentcc/email-alerts/${alertId}/`) &&
+    response.request().method() === "PATCH" &&
+    response.status() < 400;
+}
+
+function emailAlertDeleteResponse(alertId) {
+  return (response) =>
+    response.url().includes(`/agentcc/email-alerts/${alertId}/`) &&
+    response.request().method() === "DELETE" &&
+    response.status() < 400;
+}
+
+function emailAlertTestFailureResponse(alertId) {
+  return (response) =>
+    response.url().includes(`/agentcc/email-alerts/${alertId}/test/`) &&
+    response.request().method() === "POST" &&
+    response.status() === 400;
+}
+
 function isGatewayApiUrl(url) {
   return url.includes("/agentcc/");
 }
 
+function isExpectedSettingsFailure(response) {
+  return (
+    response.url().includes("/agentcc/email-alerts/") &&
+    response.url().includes("/test/") &&
+    response.request().method() === "POST" &&
+    response.status() === 400
+  );
+}
+
 function isAllowedSettingsMutation(method, url) {
   return (
-    method === "POST" &&
-    (url.includes("/health_check/") ||
-      url.includes("/reload/") ||
-      (url.includes("/agentcc/org-configs/") && !url.includes("/activate/")) ||
-      url.includes("/submit-batch/"))
+    (method === "POST" &&
+      (url.includes("/health_check/") ||
+        url.includes("/reload/") ||
+        (url.includes("/agentcc/org-configs/") &&
+          !url.includes("/activate/")) ||
+        url.includes("/submit-batch/") ||
+        url.includes("/agentcc/email-alerts/"))) ||
+    (url.includes("/agentcc/email-alerts/") &&
+      (method === "PATCH" || method === "DELETE"))
   );
+}
+
+async function runPostgresJson(sql) {
+  const container = process.env.API_JOURNEY_DB_CONTAINER || "ws2-postgres";
+  const { stdout } = await execFile(
+    "docker",
+    ["exec", container, "psql", "-qAt", "-U", "user", "-d", "tfc", "-c", sql],
+    { maxBuffer: 10 * 1024 * 1024 },
+  );
+  const output = stdout.trim();
+  return output ? JSON.parse(output) : {};
+}
+
+function sqlUuid(value) {
+  assert(value && /^[0-9a-f-]{36}$/i.test(value), `Invalid UUID: ${value}`);
+  return `'${value}'::uuid`;
+}
+
+function sqlString(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
 }
 
 function browserExecutablePath() {

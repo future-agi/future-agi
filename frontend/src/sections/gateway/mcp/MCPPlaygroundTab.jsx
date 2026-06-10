@@ -121,6 +121,10 @@ const MCPPlaygroundTab = ({ mcpTools, gatewayId }) => {
                   {...params}
                   size="small"
                   placeholder="Select a tool to test..."
+                  inputProps={{
+                    ...params.inputProps,
+                    "data-testid": "mcp-playground-tool-input",
+                  }}
                 />
               )}
             />
@@ -196,6 +200,9 @@ const MCPPlaygroundTab = ({ mcpTools, gatewayId }) => {
                   }}
                   error={Boolean(jsonError)}
                   helperText={jsonError}
+                  inputProps={{
+                    "data-testid": "mcp-playground-arguments-input",
+                  }}
                   InputProps={{
                     sx: { fontFamily: "monospace", fontSize: 13 },
                   }}
@@ -214,6 +221,7 @@ const MCPPlaygroundTab = ({ mcpTools, gatewayId }) => {
                     }
                     onClick={handleExecute}
                     disabled={testMutation.isPending}
+                    data-testid="mcp-playground-execute-button"
                   >
                     {testMutation.isPending ? "Executing..." : "Execute"}
                   </Button>
@@ -222,7 +230,7 @@ const MCPPlaygroundTab = ({ mcpTools, gatewayId }) => {
             </Card>
 
             {result && (
-              <Card>
+              <Card data-testid="mcp-playground-result">
                 <CardContent>
                   <Typography variant="subtitle1" fontWeight={700} gutterBottom>
                     Result

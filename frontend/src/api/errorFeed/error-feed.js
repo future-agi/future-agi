@@ -77,7 +77,7 @@ export const useErrorFeedStats = (params, options = {}) => {
     ...options,
     queryKey: KEYS.stats(params),
     queryFn: () => axios.get(endpoints.errorFeed.stats, { params }),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     staleTime: 30 * 1000,
   });
 };

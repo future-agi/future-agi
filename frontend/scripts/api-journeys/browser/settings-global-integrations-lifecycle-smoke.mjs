@@ -199,6 +199,13 @@ async function main() {
     await waitForVisibleText(page, expectedSecretKeyDisplay, {
       exact: true,
     });
+    await waitForVisibleText(page, "Sync Status", { exact: true });
+    await waitForVisibleText(page, "Sync History", { exact: true });
+    await waitForVisibleText(page, "Time", { exact: true });
+    await waitForVisibleText(page, "Traces", { exact: true });
+    await waitForVisibleText(page, "Spans", { exact: true });
+    await waitForVisibleText(page, "Scores", { exact: true });
+    await waitForVisibleText(page, "Status", { exact: true });
     await assertPageDoesNotContain(page, [
       seeded.plain_public_key,
       seeded.plain_secret_key,

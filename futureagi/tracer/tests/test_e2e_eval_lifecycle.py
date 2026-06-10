@@ -25,9 +25,8 @@ import json
 import time
 import uuid
 
-import pytest
-
 import clickhouse_connect
+import pytest
 
 from tracer.services.clickhouse.v2 import get_v2_config
 from tracer.tests._ch_seed import seed_ch_span, truncate_ch_spans
@@ -39,6 +38,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.e2e, pytest.mark.slow]
 # ---------------------------------------------------------------------------
 
 COLLECTOR_HTTP_URL = "http://localhost:4318/v1/traces"
+_COLLECTOR_COMPATIBLE_WITH_TEST_CH: bool | None = None
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -68,14 +68,48 @@ def _truncate_between_tests():
 
 
 def _collector_available() -> bool:
-    """Check if fi-collector is reachable."""
+    """Check if fi-collector is reachable and writes to the test ClickHouse."""
+    global _COLLECTOR_COMPATIBLE_WITH_TEST_CH
+    if _COLLECTOR_COMPATIBLE_WITH_TEST_CH is not None:
+        return _COLLECTOR_COMPATIBLE_WITH_TEST_CH
+
     try:
         import requests
 
         requests.get("http://localhost:4318/", timeout=1)
-        return True
     except Exception:
+        _COLLECTOR_COMPATIBLE_WITH_TEST_CH = False
         return False
+
+    trace_id = uuid.uuid4().hex[:32]
+    span_id = uuid.uuid4().hex[:16]
+    cfg = get_v2_config()
+    client = None
+    try:
+        client = clickhouse_connect.get_client(
+            host=cfg["host"],
+            port=cfg["http_port"],
+            username=cfg["user"],
+            password=cfg["password"],
+            database=cfg["database"],
+        )
+        _send_otlp_span_http(
+            trace_id=trace_id,
+            span_id=span_id,
+            project_id="e2e00000-e2e0-4e2e-8e2e-e2e000000001",
+            span_name="eval-collector-wiring-probe",
+            attributes={"openinference.span.kind": "CHAIN"},
+        )
+        _COLLECTOR_COMPATIBLE_WITH_TEST_CH = (
+            _wait_for_ch_row(client, span_id, timeout=5) is not None
+        )
+    except Exception:
+        _COLLECTOR_COMPATIBLE_WITH_TEST_CH = False
+    finally:
+        if client is not None:
+            client.close()
+        truncate_ch_spans()
+    return _COLLECTOR_COMPATIBLE_WITH_TEST_CH
 
 
 def _send_otlp_span_http(
@@ -108,8 +142,16 @@ def _send_otlp_span_http(
                     "attributes": [
                         {"key": "service.name", "value": {"stringValue": "eval-e2e"}},
                         {"key": "fi.project_id", "value": {"stringValue": project_id}},
-                        {"key": "fi.org_id", "value": {"stringValue": "e2e00000-e2e0-4e2e-8e2e-e2e000000002"}},
-                        {"key": "fi.semconv", "value": {"stringValue": "openinference"}},
+                        {
+                            "key": "fi.org_id",
+                            "value": {
+                                "stringValue": "e2e00000-e2e0-4e2e-8e2e-e2e000000002"
+                            },
+                        },
+                        {
+                            "key": "fi.semconv",
+                            "value": {"stringValue": "openinference"},
+                        },
                     ]
                 },
                 "scopeSpans": [
@@ -188,7 +230,8 @@ def _seed_span_directly(
         cost=0.001,
         latency_ms=500,
         status="OK",
-        span_attributes=attributes or {
+        span_attributes=attributes
+        or {
             "input": "eval test",
             "output": "eval response",
             "model_name": "gpt-4o",
@@ -211,7 +254,7 @@ def _ingest_span(
     """
     trace_id = uuid.uuid4().hex + uuid.uuid4().hex[:16]
     trace_id = trace_id[:32]
-    span_id = f"eval_{uuid.uuid4().hex[:12]}"
+    span_id = uuid.uuid4().hex[:16]
 
     if _collector_available():
         _send_otlp_span_http(
@@ -249,7 +292,7 @@ def _wait_for_ch_row(ch_client, span_id: str, timeout: float = 10) -> dict | Non
             parameters={"sid": span_id},
         )
         if result.row_count > 0:
-            return dict(zip(result.column_names, result.first_row))
+            return dict(zip(result.column_names, result.first_row, strict=False))
         time.sleep(0.5)
     return None
 
@@ -264,12 +307,11 @@ def _wait_for_eval_logger_row(
     while time.monotonic() < deadline:
         try:
             result = ch_client.query(
-                "SELECT * FROM eval_logger FINAL "
-                "WHERE span_id = {sid:String} LIMIT 1",
+                "SELECT * FROM eval_logger FINAL WHERE span_id = {sid:String} LIMIT 1",
                 parameters={"sid": span_id},
             )
             if result.row_count > 0:
-                return dict(zip(result.column_names, result.first_row))
+                return dict(zip(result.column_names, result.first_row, strict=False))
         except Exception:
             # eval_logger table may not exist yet in all environments
             pass

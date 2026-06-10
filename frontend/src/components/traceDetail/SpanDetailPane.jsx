@@ -2524,219 +2524,223 @@ const AttributesCard = ({
   return (
     <SingleImageViewerProvider>
       <AudioPlaybackProvider>
-    <Box
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "4px",
-        bgcolor: "background.paper",
-        overflow: "hidden",
-      }}
-    >
-      {/* Header — excluded from find-in-page */}
-      <Stack
-        data-search-skip="true"
-        direction="row"
-        alignItems="center"
-        sx={{ px: 1.5, py: 0.75, cursor: "pointer" }}
-        onClick={() => setExpanded((p) => !p)}
-      >
-        <Typography
-          variant="body2"
-          sx={{
-            fontSize: 13,
-            fontWeight: 500,
-            fontFamily: "'IBM Plex Sans', sans-serif",
-            flex: 1,
-          }}
-        >
-          Attributes
-        </Typography>
-        <IconButton
-          size="small"
-          sx={{ p: 0.25 }}
-          onClick={(e) => {
-            e.stopPropagation();
-            copyText(JSON.stringify(parsed, null, 2));
-          }}
-        >
-          <Iconify icon="tabler:copy" width={14} color="text.disabled" />
-        </IconButton>
-        <Iconify
-          icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
-          width={16}
-          sx={{ color: "text.disabled", ml: 0.25 }}
-        />
-      </Stack>
-
-      <Collapse in={expanded}>
-        {/* Search within attributes — hidden when parent owns the query */}
-        {!hideInlineSearch && (
-          <Box sx={{ px: 1.5, pb: 0.75 }}>
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 0.5,
-                px: 1,
-                py: 0.25,
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: "2px",
-                bgcolor: "background.default",
-              }}
-            >
-              <Iconify icon="mdi:magnify" width={12} color="text.disabled" />
-              <Box
-                component="input"
-                placeholder="Search attributes..."
-                value={attrSearch}
-                onChange={(e) => setAttrSearch(e.target.value)}
-                sx={{
-                  border: "none",
-                  outline: "none",
-                  flex: 1,
-                  fontSize: 11,
-                  color: "text.primary",
-                  bgcolor: "transparent",
-                  py: 0.15,
-                  "&::placeholder": { color: "text.disabled" },
-                }}
-              />
-            </Box>
-          </Box>
-        )}
-
         <Box
           sx={{
-            mx: 1.5,
-            mb: 1.5,
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "4px",
+            bgcolor: "background.paper",
             overflow: "hidden",
           }}
         >
-          {/* Table header — excluded from find-in-page */}
-          <Box
+          {/* Header — excluded from find-in-page */}
+          <Stack
             data-search-skip="true"
-            sx={{
-              display: "flex",
-              px: 1.5,
-              py: 0.5,
-              bgcolor: "background.default",
-              borderBottom: "1px solid",
-              borderColor: "divider",
-            }}
+            direction="row"
+            alignItems="center"
+            sx={{ px: 1.5, py: 0.75, cursor: "pointer" }}
+            onClick={() => setExpanded((p) => !p)}
           >
             <Typography
-              variant="caption"
+              variant="body2"
               sx={{
-                fontWeight: 600,
-                fontSize: 11,
-                width: "40%",
-                flexShrink: 0,
+                fontSize: 13,
+                fontWeight: 500,
+                fontFamily: "'IBM Plex Sans', sans-serif",
+                flex: 1,
               }}
             >
-              Path
+              Attributes
             </Typography>
-            <Typography
-              variant="caption"
-              sx={{ fontWeight: 600, fontSize: 11, flex: 1 }}
+            <IconButton
+              size="small"
+              sx={{ p: 0.25 }}
+              onClick={(e) => {
+                e.stopPropagation();
+                copyText(JSON.stringify(parsed, null, 2));
+              }}
             >
-              Value
-            </Typography>
-          </Box>
+              <Iconify icon="tabler:copy" width={14} color="text.disabled" />
+            </IconButton>
+            <Iconify
+              icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
+              width={16}
+              sx={{ color: "text.disabled", ml: 0.25 }}
+            />
+          </Stack>
 
-          {/* Rows */}
-          <Box sx={{ maxHeight: 350, overflowY: "auto" }}>
-            {filteredEntries.length === 0 ? (
-              <Typography
-                variant="caption"
-                color="text.disabled"
-                sx={{ p: 1.5, display: "block", textAlign: "center" }}
-              >
-                {query ? "No matching attributes" : "No attributes"}
-              </Typography>
-            ) : (
-              filteredEntries.map(([key, val]) => {
-                const isObj =
-                  val !== null &&
-                  val !== undefined &&
-                  typeof val === "object" &&
-                  !Array.isArray(val);
-                const isArr = Array.isArray(val);
-                const isEmpty =
-                  val === null ||
-                  val === undefined ||
-                  val === "" ||
-                  (isObj && Object.keys(val).length === 0) ||
-                  (isArr && val.length === 0);
-
-                return (
+          <Collapse in={expanded}>
+            {/* Search within attributes — hidden when parent owns the query */}
+            {!hideInlineSearch && (
+              <Box sx={{ px: 1.5, pb: 0.75 }}>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 0.5,
+                    px: 1,
+                    py: 0.25,
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: "2px",
+                    bgcolor: "background.default",
+                  }}
+                >
+                  <Iconify
+                    icon="mdi:magnify"
+                    width={12}
+                    color="text.disabled"
+                  />
                   <Box
-                    key={key}
+                    component="input"
+                    placeholder="Search attributes..."
+                    value={attrSearch}
+                    onChange={(e) => setAttrSearch(e.target.value)}
                     sx={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      px: 1.5,
-                      py: 0.5,
-                      borderBottom: "1px solid",
-                      borderColor: "divider",
-                      "&:last-child": { borderBottom: "none" },
-                      "&:hover": { bgcolor: "action.hover" },
+                      border: "none",
+                      outline: "none",
+                      flex: 1,
+                      fontSize: 11,
+                      color: "text.primary",
+                      bgcolor: "transparent",
+                      py: 0.15,
+                      "&::placeholder": { color: "text.disabled" },
                     }}
+                  />
+                </Box>
+              </Box>
+            )}
+
+            <Box
+              sx={{
+                mx: 1.5,
+                mb: 1.5,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "4px",
+                overflow: "hidden",
+              }}
+            >
+              {/* Table header — excluded from find-in-page */}
+              <Box
+                data-search-skip="true"
+                sx={{
+                  display: "flex",
+                  px: 1.5,
+                  py: 0.5,
+                  bgcolor: "background.default",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontWeight: 600,
+                    fontSize: 11,
+                    width: "40%",
+                    flexShrink: 0,
+                  }}
+                >
+                  Path
+                </Typography>
+                <Typography
+                  variant="caption"
+                  sx={{ fontWeight: 600, fontSize: 11, flex: 1 }}
+                >
+                  Value
+                </Typography>
+              </Box>
+
+              {/* Rows */}
+              <Box sx={{ maxHeight: 350, overflowY: "auto" }}>
+                {filteredEntries.length === 0 ? (
+                  <Typography
+                    variant="caption"
+                    color="text.disabled"
+                    sx={{ p: 1.5, display: "block", textAlign: "center" }}
                   >
-                    <Typography
-                      variant="caption"
-                      fontWeight={500}
-                      noWrap
-                      sx={{
-                        width: "40%",
-                        flexShrink: 0,
-                        pt: 0.15,
-                        fontSize: 11,
-                        color: "text.secondary",
-                      }}
-                    >
-                      {query && key.toLowerCase().includes(query) ? (
-                        <Highlight text={key} query={query} />
-                      ) : (
-                        key
-                      )}
-                    </Typography>
-                    <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-                      {isEmpty ? (
+                    {query ? "No matching attributes" : "No attributes"}
+                  </Typography>
+                ) : (
+                  filteredEntries.map(([key, val]) => {
+                    const isObj =
+                      val !== null &&
+                      val !== undefined &&
+                      typeof val === "object" &&
+                      !Array.isArray(val);
+                    const isArr = Array.isArray(val);
+                    const isEmpty =
+                      val === null ||
+                      val === undefined ||
+                      val === "" ||
+                      (isObj && Object.keys(val).length === 0) ||
+                      (isArr && val.length === 0);
+
+                    return (
+                      <Box
+                        key={key}
+                        sx={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          px: 1.5,
+                          py: 0.5,
+                          borderBottom: "1px solid",
+                          borderColor: "divider",
+                          "&:last-child": { borderBottom: "none" },
+                          "&:hover": { bgcolor: "action.hover" },
+                        }}
+                      >
                         <Typography
                           variant="caption"
-                          color="text.disabled"
-                          sx={{ fontSize: 11 }}
+                          fontWeight={500}
+                          noWrap
+                          sx={{
+                            width: "40%",
+                            flexShrink: 0,
+                            pt: 0.15,
+                            fontSize: 11,
+                            color: "text.secondary",
+                          }}
                         >
-                          {isObj || isArr
-                            ? `empty ${isArr ? "array" : "object"}`
-                            : "—"}
+                          {query && key.toLowerCase().includes(query) ? (
+                            <Highlight text={key} query={query} />
+                          ) : (
+                            key
+                          )}
                         </Typography>
-                      ) : (
-                        <AttrValueCell
-                          value={val}
-                          expanded={expandedKeys[key]}
-                          onToggle={() => toggleKey(key)}
-                          searchQuery={query}
-                          path={key}
-                          spanId={spanId}
-                          traceId={traceId}
-                          audioCache={audioCache}
-                        />
-                      )}
-                    </Box>
-                  </Box>
-                );
-              })
-            )}
-          </Box>
+                        <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+                          {isEmpty ? (
+                            <Typography
+                              variant="caption"
+                              color="text.disabled"
+                              sx={{ fontSize: 11 }}
+                            >
+                              {isObj || isArr
+                                ? `empty ${isArr ? "array" : "object"}`
+                                : "—"}
+                            </Typography>
+                          ) : (
+                            <AttrValueCell
+                              value={val}
+                              expanded={expandedKeys[key]}
+                              onToggle={() => toggleKey(key)}
+                              searchQuery={query}
+                              path={key}
+                              spanId={spanId}
+                              traceId={traceId}
+                              audioCache={audioCache}
+                            />
+                          )}
+                        </Box>
+                      </Box>
+                    );
+                  })
+                )}
+              </Box>
+            </Box>
+          </Collapse>
         </Box>
-      </Collapse>
-    </Box>
       </AudioPlaybackProvider>
     </SingleImageViewerProvider>
   );

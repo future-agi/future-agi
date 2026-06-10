@@ -1161,7 +1161,7 @@ const ConfigPanel = ({ templateId, gtId }) => {
   const [maxExamples, setMaxExamples] = useState(
     config?.maxExamples ?? config?.max_examples ?? 3,
   );
-  const theme = useTheme()
+  const theme = useTheme();
   const [threshold, setThreshold] = useState(
     config?.similarityThreshold ?? config?.similarity_threshold ?? 0.7,
   );
@@ -1224,7 +1224,6 @@ const ConfigPanel = ({ templateId, gtId }) => {
           disableRipple
           onChange={handleToggle}
         />
-
       </Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
         <Typography

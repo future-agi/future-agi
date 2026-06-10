@@ -20,7 +20,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /app/backend
     volumes:
-      - '.:/app/backend'
+      - ".:/app/backend"
     env_file:
       - .env
     environment:
@@ -29,6 +29,8 @@ services:
       - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
       - TEMPORAL_ALL_QUEUES=true
       - FAST_STARTUP=${FAST_STARTUP:-true}
+      - CH25_DROP_LEGACY_CDC_CHAIN=${CH25_DROP_LEGACY_CDC_CHAIN:-true}
+      - CH_USE_REPLICATED_ENGINES=${CH_USE_REPLICATED_ENGINES:-false}
       # Lower concurrency for dev (saves memory)
       - TEMPORAL_MAX_CONCURRENT_ACTIVITIES=${TEMPORAL_DEV_MAX_ACTIVITIES:-20}
       - TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS=${TEMPORAL_DEV_MAX_WORKFLOWS:-20}

@@ -76,6 +76,7 @@ const TaskDetailPage = () => {
     canTest: false,
     isTesting: false,
   });
+  const [pendingUpdateData, setPendingUpdateData] = useState(null);
   const handleTestStateChange = useCallback((next) => {
     setTestState(next);
   }, []);
@@ -105,7 +106,7 @@ const TaskDetailPage = () => {
   }, [taskDetails, reset]);
 
   // ── Mutations ──
-  const { mutate: updateTask, isPending: isUpdating } = useMutation({
+  const { mutateAsync: updateTask, isPending: isUpdating } = useMutation({
     mutationFn: (data) =>
       axios.patch(endpoints.project.patchEvalTask(), {
         ...data,
@@ -163,21 +164,32 @@ const TaskDetailPage = () => {
 
   // Transform form → update payload (same logic as EditTaskDrawerV2)
   const handleSave = useCallback(() => {
-    handleSubmit(() => {
+    handleSubmit((data) => {
+      setPendingUpdateData(data);
       setConfirmOpen(true);
     })();
   }, [handleSubmit]);
 
   const handleConfirm = useCallback(
-    (editType) => {
-      const data = formValues;
-      const { filters, attributeFilters } = getNewTaskFilters(
-        data,
-        data.project,
-      );
+    async (editType) => {
+      const data = pendingUpdateData || formValues;
+      const spansLimit =
+        data.spansLimit === undefined ||
+        data.spansLimit === null ||
+        data.spansLimit === ""
+          ? undefined
+          : Number(data.spansLimit);
+      const normalizedFilters = Array.isArray(data.filters)
+        ? getNewTaskFilters(data, data.project)
+        : { filters: data.filters || {}, attributeFilters: [] };
+      const { filters, attributeFilters } = normalizedFilters;
+      const evalIds =
+        data.evals ||
+        data.evalsDetails?.map((item) => item.id || item).filter(Boolean) ||
+        [];
 
       const transformedData = {
-        evals: data.evalsDetails?.map((item) => item.id || item) || [],
+        evals: evalIds,
         filters: {
           ...filters,
           ...(attributeFilters?.length > 0
@@ -189,13 +201,25 @@ const TaskDetailPage = () => {
         project: data.project,
         run_type: data.runType,
         sampling_rate: data.samplingRate,
-        spans_limit: data.spansLimit ? String(data.spansLimit) : undefined,
+        spans_limit: spansLimit,
         edit_type: editType,
       };
-      updateTask(transformedData);
-      setConfirmOpen(false);
+      try {
+        await updateTask(transformedData);
+        setPendingUpdateData(null);
+        setConfirmOpen(false);
+      } catch {
+        // React Query handles the user-facing error snackbar in onError.
+      }
     },
-    [formValues, updateTask],
+    [formValues, pendingUpdateData, updateTask],
+  );
+
+  const handleOpenEval = useCallback(
+    (evalTemplateId) => {
+      navigate(`/dashboard/evaluations/${evalTemplateId}`);
+    },
+    [navigate],
   );
 
   if (isLoading) {
@@ -416,6 +440,7 @@ const TaskDetailPage = () => {
                 initialProjectName={
                   taskDetails.project_name ?? taskDetails.projectName
                 }
+                onOpenEval={handleOpenEval}
               />
             }
             rightPanel={
@@ -485,7 +510,10 @@ const TaskDetailPage = () => {
         title="Update Task"
         content="Select one of the options"
         open={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
+        onClose={() => {
+          setPendingUpdateData(null);
+          setConfirmOpen(false);
+        }}
         onConfirm={handleConfirm}
         isLoading={isUpdating}
       />

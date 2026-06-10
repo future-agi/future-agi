@@ -107,9 +107,10 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
       }),
     onSuccess: (data) => {
       onCloseClick();
+      const result = data?.data?.result || {};
       //@ts-ignore
       addRowSDK({
-        dataset_name: data?.data?.result?.datasetName,
+        dataset_name: result?.dataset_name || result?.datasetName,
       });
       setIsNext(true);
     },
@@ -139,6 +140,10 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
     reset();
     refreshGrid();
   };
+  const sdkResult = data?.data?.result || {};
+  const sdkApiKeys = sdkResult?.api_keys || sdkResult?.apiKeys || {};
+  const sdkApiKey = sdkApiKeys?.api_key || sdkApiKeys?.apiKey || "N/A";
+  const sdkSecretKey = sdkApiKeys?.secret_key || sdkApiKeys?.secretKey || "N/A";
 
   return (
     <>
@@ -304,6 +309,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     {data?.data?.result?.dataset?.name}
                   </Typography>
                   <IconButton
+                    aria-label="Copy Dataset Name"
                     size="small"
                     onClick={() =>
                       copyToClipboard(
@@ -343,6 +349,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     {data?.data?.result?.dataset?.id}
                   </Typography>
                   <IconButton
+                    aria-label="Copy Dataset ID"
                     size="small"
                     onClick={() =>
                       copyToClipboard(
@@ -375,16 +382,12 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     p="5px 12px"
                     color="black"
                   >
-                    {data?.data?.result?.apiKeys?.apiKey}
+                    {sdkApiKey}
                   </Typography>
                   <IconButton
+                    aria-label="Copy API Key"
                     size="small"
-                    onClick={() =>
-                      copyToClipboard(
-                        data?.data?.result?.apiKeys?.apiKey,
-                        "API Key",
-                      )
-                    }
+                    onClick={() => copyToClipboard(sdkApiKey, "API Key")}
                     sx={{ color: "text.secondary" }}
                   >
                     <Iconify icon="eva:copy-outline" width={16} height={16} />
@@ -410,16 +413,12 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     p="5px 12px"
                     color="black"
                   >
-                    {data?.data?.result?.apiKeys?.secretKey}
+                    {sdkSecretKey}
                   </Typography>
                   <IconButton
+                    aria-label="Copy Secret Key"
                     size="small"
-                    onClick={() =>
-                      copyToClipboard(
-                        data?.data?.result?.apiKeys?.secretKey,
-                        "Secret Key",
-                      )
-                    }
+                    onClick={() => copyToClipboard(sdkSecretKey, "Secret Key")}
                     sx={{ color: "text.secondary" }}
                   >
                     <Iconify icon="eva:copy-outline" width={16} height={16} />

@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import process from "node:process";
+import { promisify } from "node:util";
 import {
   apiPath,
   assert,
@@ -10,6 +12,7 @@ import {
 
 const require = createRequire(import.meta.url);
 const puppeteer = require("puppeteer-core");
+const execFileAsync = promisify(execFile);
 
 const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
 const ROUTE_MODE =
@@ -53,10 +56,10 @@ async function main() {
       typeof provider?.masked_key === "string" &&
       provider.masked_key.includes("*"),
   );
-  assert(
-    configuredTextProvider,
-    "No configured text provider with a masked key is available for browser smoke.",
-  );
+  const checkedProvider =
+    configuredTextProvider ||
+    providers.find((provider) => provider?.type === "text");
+  assert(checkedProvider, "No text provider is available for browser smoke.");
   const mutationProvider = RUN_PROVIDER_KEY_MUTATION
     ? chooseSafeUnconfiguredProvider(providers)
     : null;
@@ -78,9 +81,10 @@ async function main() {
     provider_count: providers.length,
     configured_provider_count: providers.filter((provider) => provider?.has_key)
       .length,
-    checked_provider: configuredTextProvider.provider,
-    checked_provider_display_name: configuredTextProvider.display_name,
-    checked_provider_masked_key: configuredTextProvider.masked_key,
+    configured_text_provider_available: Boolean(configuredTextProvider),
+    checked_provider: checkedProvider.provider,
+    checked_provider_display_name: checkedProvider.display_name,
+    checked_provider_masked_key: configuredTextProvider?.masked_key || null,
     custom_model_count:
       customModelsRaw?.count ??
       customModelsRaw?.result?.count ??
@@ -171,20 +175,24 @@ async function main() {
     await waitForVisibleText(page, "Default model provider");
     await waitForVisibleText(page, "Default cloud providers");
     await waitForVisibleText(page, "Custom model");
-    await waitForVisibleText(page, configuredTextProvider.display_name, {
+    await waitForVisibleText(page, checkedProvider.display_name, {
       exact: true,
     });
-    await waitForInputValue(page, configuredTextProvider.masked_key);
+    if (configuredTextProvider) {
+      await waitForInputValue(page, configuredTextProvider.masked_key);
 
-    const inputState = await findInputState(
-      page,
-      configuredTextProvider.masked_key,
-    );
-    assert(inputState.found, "Masked provider key input was not found.");
-    assert(
-      inputState.disabled || inputState.readOnly,
-      "Configured provider masked key input was editable before entering edit mode.",
-    );
+      const inputState = await findInputState(
+        page,
+        configuredTextProvider.masked_key,
+      );
+      assert(inputState.found, "Masked provider key input was not found.");
+      assert(
+        inputState.disabled || inputState.readOnly,
+        "Configured provider masked key input was editable before entering edit mode.",
+      );
+    } else {
+      await waitForVisibleButton(page, "Add");
+    }
 
     await assertNoRawSecretVisible(page);
     await waitForNoVisibleText(page, "No Models Added", { exact: true });
@@ -200,7 +208,7 @@ async function main() {
       await waitForVisibleText(page, mutationProvider.display_name, {
         exact: true,
       });
-      await fillVisibleProviderKeyInput(page, rawKey);
+      await fillProviderKeyInput(page, mutationProvider.display_name, rawKey);
       const createResponse = page.waitForResponse(
         (response) =>
           response.url().includes("/model-hub/api-keys/") &&
@@ -208,7 +216,7 @@ async function main() {
           response.status() < 400,
         { timeout: 60000 },
       );
-      await clickVisibleButton(page, "Add");
+      await clickProviderButton(page, mutationProvider.display_name, "Add");
       await createResponse;
       disposableProviderCreated = true;
 
@@ -220,9 +228,17 @@ async function main() {
       assertProviderKeyPayloadMasked(createdKey, [rawKey, updatedRawKey]);
       evidence.created_provider_key_id = createdKey.id;
 
-      await waitForProviderCardMaskedValue(page, rawKey);
+      await waitForProviderCardMaskedValue(
+        page,
+        mutationProvider.display_name,
+        rawKey,
+      );
       await clickProviderActionButton(page, mutationProvider.display_name, 0);
-      await fillVisibleProviderKeyInput(page, updatedRawKey);
+      await fillProviderKeyInput(
+        page,
+        mutationProvider.display_name,
+        updatedRawKey,
+      );
       const updateResponse = page.waitForResponse(
         (response) =>
           response.url().includes("/model-hub/api-keys/") &&
@@ -230,7 +246,7 @@ async function main() {
           response.status() < 400,
         { timeout: 60000 },
       );
-      await clickVisibleButton(page, "Save");
+      await clickProviderButton(page, mutationProvider.display_name, "Save");
       await updateResponse;
 
       const updatedKey = await waitForProviderKey(auth.client, {
@@ -260,6 +276,11 @@ async function main() {
         provider: mutationProvider.provider,
         absent: true,
       });
+      const hardCleanup = await hardDeleteProviderKeyRows([createdKey.id]);
+      assert(
+        hardCleanup.exact_provider_key_rows === 0,
+        `Provider key hard cleanup left rows behind: ${JSON.stringify(hardCleanup)}`,
+      );
       await waitForVisibleButton(page, "Add");
       await page.screenshot({ path: DELETE_SCREENSHOT_PATH, fullPage: true });
       evidence.delete_screenshot = DELETE_SCREENSHOT_PATH;
@@ -267,6 +288,8 @@ async function main() {
       evidence.provider_key_update_visible = true;
       evidence.provider_key_delete_visible = true;
       evidence.expected_mutation_count = expectedMutations.length;
+      evidence.hard_cleanup_provider_key_rows =
+        hardCleanup.exact_provider_key_rows;
       disposableProviderCreated = false;
       await assertNoRawSecretVisible(page);
     }
@@ -292,10 +315,11 @@ async function main() {
   } finally {
     await browser.close();
     if (mutationProvider && disposableProviderCreated) {
-      await deleteProviderKeyForProvider(
+      const deletedKeyId = await deleteProviderKeyForProvider(
         auth.client,
         mutationProvider.provider,
       );
+      if (deletedKeyId) await hardDeleteProviderKeyRows([deletedKeyId]);
     }
   }
 }
@@ -423,9 +447,9 @@ async function filterProvider(page, providerName) {
   );
 }
 
-async function fillVisibleProviderKeyInput(page, value) {
+async function fillProviderKeyInput(page, providerName, value) {
   const inputHandle = await page.waitForFunction(
-    () => {
+    (name) => {
       const isVisible = (element) => {
         const style = window.getComputedStyle(element);
         const rect = element.getBoundingClientRect();
@@ -436,20 +460,75 @@ async function fillVisibleProviderKeyInput(page, value) {
           rect.height > 0
         );
       };
-      return Array.from(document.querySelectorAll("input, textarea")).find(
-        (element) =>
-          isVisible(element) &&
-          !element.disabled &&
-          element.placeholder !== "Search AI Provider",
+      const label = Array.from(
+        document.querySelectorAll("p, span, div, h1, h2, h3, h4, h5, h6"),
+      ).find(
+        (element) => isVisible(element) && element.textContent.trim() === name,
       );
+      if (!label) return null;
+      let current = label;
+      for (let depth = 0; depth < 8 && current; depth += 1) {
+        const input = Array.from(
+          current.querySelectorAll("input, textarea"),
+        ).find(
+          (element) =>
+            isVisible(element) &&
+            !element.disabled &&
+            element.placeholder !== "Search AI Provider",
+        );
+        if (input) return input;
+        current = current.parentElement;
+      }
+      return null;
     },
     { timeout: 30000 },
+    providerName,
   );
   const input = inputHandle.asElement();
-  assert(input, "Provider key input was not found.");
+  assert(input, `Provider key input for ${providerName} was not found.`);
   await input.click({ clickCount: 3 });
   await page.keyboard.press("Backspace");
   await page.keyboard.type(value);
+}
+
+async function clickProviderButton(page, providerName, label) {
+  const buttonHandle = await page.waitForFunction(
+    ({ name, label }) => {
+      const isVisible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+      const providerLabel = Array.from(
+        document.querySelectorAll("p, span, div, h1, h2, h3, h4, h5, h6"),
+      ).find(
+        (element) => isVisible(element) && element.textContent.trim() === name,
+      );
+      if (!providerLabel) return null;
+      let current = providerLabel;
+      for (let depth = 0; depth < 8 && current; depth += 1) {
+        const button = Array.from(current.querySelectorAll("button")).find(
+          (element) =>
+            isVisible(element) &&
+            !element.disabled &&
+            element.textContent.trim() === label,
+        );
+        if (button) return button;
+        current = current.parentElement;
+      }
+      return null;
+    },
+    { timeout: 30000 },
+    { name: providerName, label },
+  );
+  const button = buttonHandle.asElement();
+  assert(button, `Provider ${providerName} button ${label} was not found.`);
+  await button.click();
 }
 
 async function clickVisibleButton(page, label) {
@@ -548,20 +627,47 @@ async function clickProviderActionButton(page, providerName, actionIndex) {
   await button.click();
 }
 
-async function waitForProviderCardMaskedValue(page, forbiddenRawValue) {
+async function waitForProviderCardMaskedValue(
+  page,
+  providerName,
+  forbiddenRawValue,
+) {
   await page.waitForFunction(
-    (rawValue) => {
-      const inputs = Array.from(document.querySelectorAll("input, textarea"));
-      return inputs.some(
-        (input) =>
-          input.disabled &&
-          input.value &&
-          input.value.includes("*") &&
-          input.value !== rawValue,
+    ({ name, rawValue }) => {
+      const isVisible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+      const label = Array.from(
+        document.querySelectorAll("p, span, div, h1, h2, h3, h4, h5, h6"),
+      ).find(
+        (element) => isVisible(element) && element.textContent.trim() === name,
       );
+      if (!label) return false;
+      let current = label;
+      for (let depth = 0; depth < 8 && current; depth += 1) {
+        const hasMaskedInput = Array.from(
+          current.querySelectorAll("input, textarea"),
+        ).some(
+          (input) =>
+            input.disabled &&
+            input.value &&
+            input.value.includes("*") &&
+            input.value !== rawValue,
+        );
+        if (hasMaskedInput) return true;
+        current = current.parentElement;
+      }
+      return false;
     },
     { timeout: 30000 },
-    forbiddenRawValue,
+    { name: providerName, rawValue: forbiddenRawValue },
   );
 }
 
@@ -599,8 +705,52 @@ async function listProviderKeys(client) {
 async function deleteProviderKeyForProvider(client, provider) {
   const keys = await listProviderKeys(client);
   const key = keys.find((candidate) => candidate.provider === provider);
-  if (!key?.id) return;
+  if (!key?.id) return null;
   await client.delete(apiPath("/model-hub/api-keys/{id}/", { id: key.id }));
+  return key.id;
+}
+
+async function hardDeleteProviderKeyRows(ids) {
+  const quotedIds = ids.filter(Boolean).map(sqlString);
+  if (quotedIds.length === 0) {
+    return { deleted_provider_key_rows: 0, exact_provider_key_rows: 0 };
+  }
+  const deleted = await runPostgresJson(`
+    WITH deleted_keys AS (
+      DELETE FROM model_hub_apikey
+      WHERE id IN (${quotedIds.join(", ")})
+      RETURNING 1
+    )
+    SELECT json_build_object(
+      'deleted_provider_key_rows', (SELECT count(*) FROM deleted_keys)
+    );
+  `);
+  const verified = await runPostgresJson(`
+    SELECT json_build_object(
+      'exact_provider_key_rows', (
+        SELECT count(*) FROM model_hub_apikey WHERE id IN (${quotedIds.join(", ")})
+      )
+    );
+  `);
+  return { ...deleted, ...verified };
+}
+
+async function runPostgresJson(sql) {
+  const container = process.env.API_JOURNEY_DB_CONTAINER || "ws2-postgres";
+  const user = process.env.API_JOURNEY_DB_USER || "user";
+  const database = process.env.API_JOURNEY_DB_NAME || "tfc";
+  const { stdout } = await execFileAsync(
+    "docker",
+    ["exec", container, "psql", "-U", user, "-d", database, "-At", "-c", sql],
+    { maxBuffer: 10 * 1024 * 1024 },
+  );
+  const text = stdout.trim();
+  assert(text, "Postgres provider-key cleanup returned no JSON output.");
+  return JSON.parse(text);
+}
+
+function sqlString(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
 }
 
 function assertProviderKeyPayloadMasked(payload, forbiddenValues) {

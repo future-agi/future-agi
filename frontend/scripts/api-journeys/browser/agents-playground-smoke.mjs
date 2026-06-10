@@ -26,6 +26,7 @@ async function main() {
   const editedSourceNodeName = `${sourceNodeName}_edited`.slice(0, 80);
   const targetNodeName = `browser_target_${marker}`.slice(0, 80);
   const connectedNodeName = "llm_prompt_node_1";
+  const draggedNodeName = "llm_prompt_node_2";
   const sourcePromptText = "Write one test fact about {{topic}}.";
   const variableInitialValue = `browser variable initial ${auth.runId}`;
   const variableUpdatedValue = `browser variable updated ${auth.runId}`;
@@ -41,6 +42,7 @@ async function main() {
     editedSourceNodeName,
     targetNodeName,
     connectedNodeName,
+    draggedNodeName,
   ];
   let graphId = null;
   let publicDeleteStatus = null;
@@ -150,6 +152,15 @@ async function main() {
           request.method() === "POST" &&
           url.includes(
             `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/nodes/`,
+          )
+        ) {
+          expectedMutations.push(`${request.method()} ${url}`);
+          return;
+        }
+        if (
+          request.method() === "POST" &&
+          url.includes(
+            `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/node-connections/`,
           )
         ) {
           expectedMutations.push(`${request.method()} ${url}`);
@@ -412,6 +423,81 @@ async function main() {
         post_mutation_audit: postBuilderMutationAudit,
       };
 
+      logStep("manual drag/drop node and handle connect");
+      const draggedNodeCreateResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response
+            .url()
+            .includes(
+              `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/nodes/`,
+            ) &&
+          response.status() < 400,
+        { timeout: 60000 },
+      );
+      await dragTemplateToCanvas(page, "LLM Prompt", {
+        xRatio: 0.72,
+        yRatio: 0.28,
+      });
+      const draggedNodePayload = await draggedNodeCreateResponse.then(
+        (response) => response.json(),
+      );
+      const draggedNode = draggedNodePayload?.result;
+      assert(
+        draggedNode?.name === draggedNodeName,
+        "Manual palette drag/drop did not create the expected prompt node.",
+      );
+      await waitForVisibleText(page, draggedNodeName, { exact: true });
+
+      const manualConnectionResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response
+            .url()
+            .includes(
+              `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/node-connections/`,
+            ) &&
+          response.status() < 400,
+        { timeout: 60000 },
+      );
+      await connectNodesByHandle(page, connectedNodeName, draggedNodeName);
+      const manualConnectionPayload = await manualConnectionResponse.then(
+        (response) => response.json(),
+      );
+      const manualConnection =
+        manualConnectionPayload?.result || manualConnectionPayload;
+      assert(
+        manualConnection?.source_node_id === connectedNode.id,
+        "Manual handle connect did not persist the expected source node.",
+      );
+      assert(
+        manualConnection?.target_node_id === draggedNode.id,
+        "Manual handle connect did not persist the expected target node.",
+      );
+      evidence.rendered_edge_count_after_manual_connect =
+        await waitForRenderedEdgeCount(page, 3);
+      const postManualConnectAudit = await loadAgentGraphDbAudit({ graphId });
+      assert(
+        postManualConnectAudit.node_visible === 4,
+        "Manual drag/connect did not leave four visible nodes.",
+      );
+      assert(
+        postManualConnectAudit.node_connection_visible === 3,
+        "Manual handle connect did not leave three visible node connections.",
+      );
+      assert(
+        postManualConnectAudit.prompt_template_node_visible === 4,
+        "Manual drag/drop did not create a visible prompt-template node link.",
+      );
+      evidence.browser_manual_drag_connect = {
+        dragged_node_id: draggedNode.id,
+        dragged_node_name: draggedNode.name,
+        node_connection_id: manualConnection.id,
+        source_node_id: manualConnection.source_node_id,
+        target_node_id: manualConnection.target_node_id,
+        post_mutation_audit: postManualConnectAudit,
+      };
+
       logStep("edit global variable drawer");
       const graphDatasetResponse = page.waitForResponse(
         (response) =>
@@ -606,8 +692,8 @@ async function main() {
         `Agent playground smoke fired unexpected mutations: ${unexpectedMutations.join("; ")}`,
       );
       assert(
-        expectedMutations.length === 3,
-        `Expected one prompt save, one browser node add mutation, and one variable update mutation, saw ${expectedMutations.length}.`,
+        expectedMutations.length === 5,
+        `Expected one prompt save, two browser node add mutations, one manual connection mutation, and one variable update mutation, saw ${expectedMutations.length}.`,
       );
       evidence.expected_mutation_count = expectedMutations.length;
     } finally {
@@ -1137,6 +1223,133 @@ async function addConnectedBlankPromptFromNode(page, sourceNodeLabel) {
   await clickNodeTemplateFromOpenPopper(page, "LLM Prompt");
   await waitForVisibleText(page, "Add Blank Prompt", { exact: true });
   await clickVisibleText(page, "Add Blank Prompt", { exact: true });
+}
+
+async function dragTemplateToCanvas(
+  page,
+  templateTitle,
+  { xRatio = 0.65, yRatio = 0.35 } = {},
+) {
+  const dropped = await page.evaluate(
+    ({ templateTitle: title, xRatio: targetXRatio, yRatio: targetYRatio }) => {
+      const isVisible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+      const normalized = (value) => String(value || "").trim();
+      const label = Array.from(document.querySelectorAll("body *")).find(
+        (candidate) =>
+          isVisible(candidate) && normalized(candidate.textContent) === title,
+      );
+      const source = label?.closest("[draggable='true']");
+      const pane =
+        document.querySelector(".react-flow__pane") ||
+        document.querySelector(".react-flow");
+      if (!source || !pane) return false;
+
+      const paneRect = pane.getBoundingClientRect();
+      const clientX = paneRect.left + paneRect.width * targetXRatio;
+      const clientY = paneRect.top + paneRect.height * targetYRatio;
+      const dataTransfer = new DataTransfer();
+      source.dispatchEvent(
+        new DragEvent("dragstart", {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer,
+        }),
+      );
+      pane.dispatchEvent(
+        new DragEvent("dragover", {
+          bubbles: true,
+          cancelable: true,
+          clientX,
+          clientY,
+          dataTransfer,
+        }),
+      );
+      pane.dispatchEvent(
+        new DragEvent("drop", {
+          bubbles: true,
+          cancelable: true,
+          clientX,
+          clientY,
+          dataTransfer,
+        }),
+      );
+      source.dispatchEvent(
+        new DragEvent("dragend", {
+          bubbles: true,
+          cancelable: true,
+          clientX,
+          clientY,
+          dataTransfer,
+        }),
+      );
+      return true;
+    },
+    { templateTitle, xRatio, yRatio },
+  );
+  assert(dropped, `Could not drag ${templateTitle} template to canvas.`);
+}
+
+async function connectNodesByHandle(page, sourceNodeLabel, targetNodeLabel) {
+  const points = await page.evaluate(
+    ({ sourceLabel, targetLabel }) => {
+      const isVisible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+      const findNode = (label) =>
+        Array.from(document.querySelectorAll(".react-flow__node")).find(
+          (candidate) =>
+            isVisible(candidate) &&
+            String(candidate.textContent || "").includes(label),
+        );
+      const sourceNode = findNode(sourceLabel);
+      const targetNode = findNode(targetLabel);
+      if (!sourceNode || !targetNode) return null;
+      const sourceHandle =
+        sourceNode.querySelector(".react-flow__handle-right") ||
+        sourceNode.querySelector(".react-flow__handle-source");
+      const targetHandle =
+        targetNode.querySelector(".react-flow__handle-left") ||
+        targetNode.querySelector(".react-flow__handle-target");
+      if (!sourceHandle || !targetHandle) return null;
+      const sourceRect = sourceHandle.getBoundingClientRect();
+      const targetRect = targetHandle.getBoundingClientRect();
+      return {
+        source: {
+          x: sourceRect.left + sourceRect.width / 2,
+          y: sourceRect.top + sourceRect.height / 2,
+        },
+        target: {
+          x: targetRect.left + targetRect.width / 2,
+          y: targetRect.top + targetRect.height / 2,
+        },
+      };
+    },
+    { sourceLabel: sourceNodeLabel, targetLabel: targetNodeLabel },
+  );
+  assert(
+    points,
+    `Could not find connect handles for ${sourceNodeLabel} -> ${targetNodeLabel}.`,
+  );
+  await page.mouse.move(points.source.x, points.source.y);
+  await page.mouse.down();
+  await page.mouse.move(points.target.x, points.target.y, { steps: 24 });
+  await page.mouse.up();
 }
 
 async function clickCanvasNodeAddButton(page, nodeLabel) {

@@ -37,20 +37,20 @@ from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.annotation import AnnotationTaskSerializer
 from model_hub.serializers.develop_annotations import (
+    AnnotateRowQuerySerializer,
+    AnnotationActionMessageResponseSerializer,
     AnnotationLabelRestoreResponseSerializer,
     AnnotationLabelsListQuerySerializer,
-    AnnotationActionMessageResponseSerializer,
+    AnnotationsLabelsSerializer,
+    AnnotationsSerializer,
+    AnnotationSummaryResponseSerializer,
     AnnotationTaskListQuerySerializer,
-    AnnotateRowQuerySerializer,
     BulkDestroyAnnotationsRequestSerializer,
     BulkDestroyAnnotationsResponseSerializer,
     PreviewAnnotationsRequestSerializer,
     PreviewAnnotationsResponseSerializer,
     ResetAnnotationsRequestSerializer,
     UpdateAnnotationCellsRequestSerializer,
-    AnnotationsLabelsSerializer,
-    AnnotationsSerializer,
-    AnnotationSummaryResponseSerializer,
     UserSerializer,
 )
 from model_hub.utils.auto_annotate import generate_annotations_task
@@ -413,7 +413,7 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
             )
 
         try:
-            serializer.save(
+            label = serializer.save(
                 organization=getattr(request, "organization", None)
                 or request.user.organization
             )
@@ -430,7 +430,7 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
             logger.warning(f"Annotation label save failed (model validation): {detail}")
             return self._gm.bad_request(f"Annotation label creation failed: {detail}")
 
-        return self._gm.success_response("Annotation label created successfully")
+        return self._gm.success_response(self.get_serializer(label).data)
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,

@@ -1,4 +1,5 @@
 /* eslint-disable no-console */
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import process from "node:process";
 import {
@@ -15,6 +16,11 @@ const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
 const SCREENSHOT_PATH = "/tmp/gateway-fallbacks-smoke.png";
 const FAILURE_SCREENSHOT_PATH = "/tmp/gateway-fallbacks-smoke-failure.png";
 const MUTATION_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+const FALLBACK_PROVIDER_MODELS = [
+  "fallback-smoke-primary-model",
+  "fallback-smoke-backup-model",
+];
+let dbConnection = null;
 
 async function main() {
   const auth = await createAuthenticatedContext();
@@ -171,6 +177,17 @@ async function main() {
       .catch(() => null);
   } finally {
     if (browser) await browser.close();
+    if (evidence.disposable_provider) {
+      try {
+        evidence.provider_cleanup = await cleanupDisposableFallbackProvider(
+          auth.client,
+          evidence,
+        );
+      } catch (error) {
+        cleanupError = error;
+        evidence.provider_cleanup = { status: "failed", error: error.message };
+      }
+    }
     if (cleanup) {
       try {
         evidence.cleanup = await cleanup();
@@ -230,10 +247,21 @@ async function preflightFallbacks(client, baseline) {
     gateways[0].id ||
     "default";
 
-  const providerHealth = await client.get(
+  let providerHealth = await client.get(
     apiPath("/agentcc/gateways/{id}/providers/", { id: gatewayId }),
   );
-  const models = providerModels(providerHealth?.providers);
+  let models = providerModels(providerHealth?.providers);
+  let disposableProvider = null;
+  if (models.length < 2) {
+    disposableProvider = await createDisposableFallbackProvider(
+      client,
+      gatewayId,
+    );
+    providerHealth = await client.get(
+      apiPath("/agentcc/gateways/{id}/providers/", { id: gatewayId }),
+    );
+    models = providerModels(providerHealth?.providers);
+  }
   assert(
     models.length >= 2,
     "Gateway fallbacks smoke requires at least two configured provider models.",
@@ -308,7 +336,77 @@ async function preflightFallbacks(client, baseline) {
     model_count: models.length,
     primary_model: primaryModel,
     fallback_model: fallbackModel,
+    disposable_provider: disposableProvider,
   };
+}
+
+async function createDisposableFallbackProvider(client, gatewayId) {
+  const providerName = `fallback_smoke_${Date.now().toString(36)}`;
+  const updateResult = await client.post(
+    apiPath("/agentcc/gateways/{id}/update-provider/", { id: gatewayId }),
+    {
+      name: providerName,
+      config: {
+        api_key: "fallback-smoke-fake-key",
+        display_name: "Fallback smoke provider",
+        api_format: "openai",
+        models: FALLBACK_PROVIDER_MODELS,
+        base_url: "https://api.example.com/v1",
+        default_timeout: 30,
+        max_concurrent: 2,
+        conn_pool_size: 5,
+      },
+    },
+  );
+  const gatewayConfig = await client.get(
+    apiPath("/agentcc/gateways/{id}/config/", { id: gatewayId }),
+  );
+  const providerConfig = gatewayConfig?.providers?.[providerName];
+  assert(
+    providerConfig?.id &&
+      FALLBACK_PROVIDER_MODELS.every((model) =>
+        asArray(providerConfig.models).includes(model),
+      ),
+    `Disposable fallback provider was not visible in config: ${JSON.stringify(
+      providerConfig,
+    )}`,
+  );
+  return {
+    id: providerConfig.id,
+    name: providerName,
+    models: FALLBACK_PROVIDER_MODELS,
+    update_response: updateResult,
+  };
+}
+
+async function cleanupDisposableFallbackProvider(client, evidence) {
+  const provider = evidence.disposable_provider;
+  const cleanup = {
+    status: "passed",
+    api_removed: false,
+    hard_deleted_provider_id: null,
+  };
+  if (!provider?.name) return cleanup;
+
+  const config = await client.get(
+    apiPath("/agentcc/gateways/{id}/config/", { id: evidence.gateway_id }),
+  );
+  if (config?.providers?.[provider.name]) {
+    await client.post(
+      apiPath("/agentcc/gateways/{id}/remove-provider/", {
+        id: evidence.gateway_id,
+      }),
+      { name: provider.name },
+    );
+    cleanup.api_removed = true;
+  }
+
+  if (provider.id) {
+    cleanup.hard_deleted_provider_id = await hardDeleteProviderCredential(
+      provider.id,
+    );
+  }
+  return cleanup;
 }
 
 async function prepareOrgConfigRestorer(client) {
@@ -632,6 +730,84 @@ function browserExecutablePath() {
     return "/usr/bin/google-chrome";
   }
   return undefined;
+}
+
+async function hardDeleteProviderCredential(providerId) {
+  const rows = await runDb(`
+    DELETE FROM agentcc_provider_credential
+    WHERE id = ${sqlString(providerId)}
+    RETURNING id::text
+  `);
+  return rows[0] || null;
+}
+
+async function runDb(sql) {
+  const container = process.env.API_JOURNEY_DB_CONTAINER || "ws2-postgres";
+  const candidates = dbConnection ? [dbConnection] : databaseCandidates();
+  const failures = [];
+
+  for (const candidate of candidates) {
+    const result = spawnSync(
+      "docker",
+      [
+        "exec",
+        container,
+        "psql",
+        "-U",
+        candidate.user,
+        "-d",
+        candidate.database,
+        "-At",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        sql,
+      ],
+      { encoding: "utf8" },
+    );
+    if (result.status === 0) {
+      dbConnection = candidate;
+      return result.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+    }
+    failures.push(
+      `${candidate.user}/${candidate.database}: ${result.stderr || result.stdout}`,
+    );
+  }
+
+  throw new Error(`Database command failed: ${failures.join(" | ")}`);
+}
+
+function databaseCandidates() {
+  if (process.env.API_JOURNEY_DB_USER || process.env.API_JOURNEY_DB_NAME) {
+    return [
+      {
+        user: process.env.API_JOURNEY_DB_USER || "postgres",
+        database: process.env.API_JOURNEY_DB_NAME || "postgres",
+      },
+    ];
+  }
+
+  const candidates = [
+    { user: process.env.PG_USER, database: process.env.PG_DB },
+    { user: "user", database: "tfc" },
+    { user: "futureagi", database: "futureagi" },
+    { user: "postgres", database: "postgres" },
+  ];
+  const seen = new Set();
+  return candidates.filter((candidate) => {
+    if (!candidate.user || !candidate.database) return false;
+    const key = `${candidate.user}/${candidate.database}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function sqlString(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
 }
 
 main().catch((error) => {

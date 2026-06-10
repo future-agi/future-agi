@@ -11506,9 +11506,8 @@ class FeedbackViewSet(viewsets.ModelViewSet):
             )[:5]
             for feedback in recent_feedback:
                 feedback_user = feedback.user
-                user_name = (
-                    getattr(feedback_user, "name", "")
-                    or getattr(feedback_user, "email", "")
+                user_name = getattr(feedback_user, "name", "") or getattr(
+                    feedback_user, "email", ""
                 )
                 summary["recent_feedback"].append(
                     {
@@ -15333,13 +15332,20 @@ class CreateKnowledgeBaseView(APIView):
                 for kb_id in processing_kbs:
                     cancel_kb_ingestion_workflow(kb_id)
 
-                remove_kb_files.delay(
-                    None, str(org.id), [str(kb_id) for kb_id in target_kb_ids]
-                )
                 KnowledgeBaseFile.objects.filter(id__in=target_kb_ids).update(
                     deleted=True,
                     deleted_at=timezone.now(),
                 )
+                try:
+                    remove_kb_files.delay(
+                        None, str(org.id), [str(kb_id) for kb_id in target_kb_ids]
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to schedule KB file removal after soft delete",
+                        organization_id=str(org.id),
+                        kb_ids=[str(kb_id) for kb_id in target_kb_ids],
+                    )
             return self._gm.success_response("Successfully deleted the Knowledge Base")
 
         except Exception as e:
