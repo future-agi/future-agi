@@ -135,9 +135,7 @@ export default function WorkspaceBreakdown({
                 </Typography>
               </TableCell>
               <TableCell align="right">
-                <Typography variant="body2">
-                  {fUsage(w.usage)}
-                </Typography>
+                <Typography variant="body2">{fUsage(w.usage)}</Typography>
               </TableCell>
               <TableCell align="right">
                 <Typography variant="body2" color="text.secondary">
@@ -155,9 +153,7 @@ export default function WorkspaceBreakdown({
               <Typography variant="subtitle2">Total</Typography>
             </TableCell>
             <TableCell align="right">
-              <Typography variant="subtitle2">
-                {fUsage(totalUsage)}
-              </Typography>
+              <Typography variant="subtitle2">{fUsage(totalUsage)}</Typography>
             </TableCell>
             <TableCell align="right">
               <Typography variant="subtitle2">100%</Typography>

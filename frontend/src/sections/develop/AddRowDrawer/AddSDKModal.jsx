@@ -109,9 +109,14 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
     enabled: open, // Trigger query only when modal is open
   });
 
+  const sdkResult = data?.result || {};
+  const sdkApiKeys = sdkResult?.api_keys || sdkResult?.apiKeys || {};
+  const sdkApiKey = sdkApiKeys?.api_key || sdkApiKeys?.apiKey || "N/A";
+  const sdkSecretKey = sdkApiKeys?.secret_key || sdkApiKeys?.secretKey || "N/A";
+
   const handleSubmit = () => {
     trackEvent(Events.rowFromSDKCreated, {
-      [PropertyName.name]: data?.result?.dataset?.name,
+      [PropertyName.name]: sdkResult?.dataset?.name,
       [PropertyName.languageUsed]: currentTab,
     });
     trackEvent(Events.addRowsSuccess, {
@@ -217,6 +222,7 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                   {data?.result?.dataset?.name || "N/A"}
                 </Typography>
                 <IconButton
+                  aria-label="Copy Dataset Name"
                   size="small"
                   onClick={() =>
                     copyToClipboard(data?.result?.dataset?.name, "Dataset Name")
@@ -253,6 +259,7 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                   {data?.result?.dataset?.id || "N/A"}
                 </Typography>
                 <IconButton
+                  aria-label="Copy Dataset ID"
                   size="small"
                   onClick={() =>
                     copyToClipboard(data?.result?.dataset?.id, "Dataset ID")
@@ -282,13 +289,12 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                   p="5px 12px"
                   color="text.primary"
                 >
-                  {data?.result?.apiKeys?.apiKey || "N/A"}
+                  {sdkApiKey}
                 </Typography>
                 <IconButton
+                  aria-label="Copy API Key"
                   size="small"
-                  onClick={() =>
-                    copyToClipboard(data?.result?.apiKeys?.apiKey, "API Key")
-                  }
+                  onClick={() => copyToClipboard(sdkApiKey, "API Key")}
                   sx={{ color: "text.secondary" }}
                 >
                   <Iconify icon="eva:copy-outline" width={16} height={16} />
@@ -314,16 +320,12 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                   p="5px 12px"
                   color="text.primary"
                 >
-                  {data?.result?.apiKeys?.secretKey || "N/A"}
+                  {sdkSecretKey}
                 </Typography>
                 <IconButton
+                  aria-label="Copy Secret Key"
                   size="small"
-                  onClick={() =>
-                    copyToClipboard(
-                      data?.result?.apiKeys?.secretKey,
-                      "Secret Key",
-                    )
-                  }
+                  onClick={() => copyToClipboard(sdkSecretKey, "Secret Key")}
                   sx={{ color: "text.secondary" }}
                 >
                   <Iconify icon="eva:copy-outline" width={16} height={16} />

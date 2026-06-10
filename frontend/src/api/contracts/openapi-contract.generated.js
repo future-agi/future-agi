@@ -56204,7 +56204,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "type": "object",
             "additionalProperties": {
-              "type": "object"
+              "type": "object",
+              "x-json-value": true,
+              "description": "Any valid JSON value."
             }
           }
         },
@@ -56261,7 +56263,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config",
           "type": "object",
           "additionalProperties": {
-            "type": "object"
+            "type": "object",
+            "x-json-value": true,
+            "description": "Any valid JSON value."
           }
         }
       }
@@ -56453,7 +56457,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config",
           "type": "object",
           "additionalProperties": {
-            "type": "object"
+            "type": "object",
+            "x-json-value": true,
+            "description": "Any valid JSON value."
           }
         }
       }
@@ -56487,7 +56493,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config",
           "type": "object",
           "additionalProperties": {
-            "type": "object"
+            "type": "object",
+            "x-json-value": true,
+            "description": "Any valid JSON value."
           }
         }
       }
@@ -56523,7 +56531,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Arguments",
           "type": "object",
           "additionalProperties": {
-            "type": "object"
+            "type": "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            "description": "Any valid JSON value."
           },
           "default": {}
         }

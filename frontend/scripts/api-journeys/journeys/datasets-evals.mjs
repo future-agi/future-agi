@@ -5433,6 +5433,119 @@ export const datasetEvalJourneys = [
     },
   },
   {
+    id: "DPE-API-039",
+    title:
+      "Real multipart local-file dataset create, queued progress, and cleanup",
+    tags: ["dataset", "file-import", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      apiBase,
+      client,
+      cleanup,
+      evidence,
+      organizationId,
+      runId,
+      tokens,
+      workspaceId,
+    }) {
+      requireMutations();
+      const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      const datasetName = `api journey local file create ${runId}`;
+      const fileName = `dpe-api-039-${suffix}.csv`;
+      const inputOne = `real multipart input one ${suffix}`;
+      const inputTwo = `real multipart input two ${suffix}`;
+
+      const created = await multipartApiRequest({
+        apiBase,
+        accessToken: tokens.access,
+        organizationId,
+        workspaceId,
+        method: "POST",
+        pathName: apiPath(
+          "/model-hub/develops/create-dataset-from-local-file/",
+        ),
+        fields: {
+          new_dataset_name: datasetName,
+          model_type: "GenerativeLLM",
+        },
+        files: [
+          {
+            fieldName: "file",
+            fileName,
+            content: `input,expected\n${inputOne},expected one\n${inputTwo},expected two\n`,
+            contentType: "text/csv",
+          },
+        ],
+      });
+      assert(
+        isUuid(created?.dataset_id),
+        "Local-file multipart create did not return a dataset id.",
+      );
+      cleanup.defer("hard delete API journey local-file create fixture", () =>
+        hardDeleteDatasetCopyFixture([created.dataset_id]),
+      );
+      assert(
+        created.dataset_name === datasetName,
+        "Local-file multipart create returned a different dataset name.",
+      );
+      assert(
+        created.processing_status === "queued",
+        "Local-file multipart create did not return queued status.",
+      );
+      assert(
+        Number(created.estimated_rows) === 2 &&
+          Number(created.estimated_columns) === 2,
+        "Local-file multipart create returned unexpected row/column estimates.",
+      );
+
+      const progress = await client.get(
+        apiPath("/model-hub/develops/dataset-creation-progress/{dataset_id}/", {
+          dataset_id: created.dataset_id,
+        }),
+      );
+      assert(
+        progress?.processing_status === "queued" ||
+          progress?.processing_status === "completed",
+        "Local-file multipart progress returned an unexpected processing status.",
+      );
+      assert(
+        progress?.original_filename === fileName,
+        "Local-file multipart progress did not expose the original filename.",
+      );
+      assert(
+        Number(progress?.estimated_rows) === 2 &&
+          Number(progress?.estimated_columns) === 2,
+        "Local-file multipart progress returned unexpected row/column estimates.",
+      );
+
+      const audit = await loadLocalFileCreateAudit({
+        datasetId: created.dataset_id,
+        datasetName,
+        fileName,
+        organizationId,
+        workspaceId,
+      });
+      assertLocalFileCreateAudit(audit, {
+        datasetId: created.dataset_id,
+        datasetName,
+        fileName,
+        organizationId,
+        workspaceId,
+        expectedProcessingStatus: progress.processing_status,
+      });
+
+      evidence.push({
+        dataset_id: created.dataset_id,
+        dataset_name: created.dataset_name,
+        processing_status: progress.processing_status,
+        estimated_rows: Number(progress.estimated_rows),
+        estimated_columns: Number(progress.estimated_columns),
+        row_count_before_worker: Number(audit.row_count),
+        column_count_before_worker: Number(audit.column_count),
+        cell_count_before_worker: Number(audit.cell_count),
+      });
+    },
+  },
+  {
     id: "DPE-API-036",
     title: "Generated dataset helper routes keep active workspace scope",
     tags: ["dataset", "generated-client", "mutating", "db-audit"],
@@ -7600,6 +7713,25 @@ export const datasetEvalJourneys = [
       runId,
     }) {
       requireMutations();
+      const cleanupPrefix = "api_journey_kb_patch";
+      const preCleanup =
+        await hardDeleteKnowledgeBasePatchFixturesByPrefix(cleanupPrefix);
+      if (
+        Number(preCleanup.deleted_kb_count) > 0 ||
+        Number(preCleanup.deleted_file_count) > 0 ||
+        Number(preCleanup.remaining_kb_count) > 0 ||
+        Number(preCleanup.remaining_file_count) > 0
+      ) {
+        evidence.push({
+          cleanup: "pre-clean stale KB PATCH fixtures",
+          status:
+            Number(preCleanup.remaining_kb_count) === 0 &&
+            Number(preCleanup.remaining_file_count) === 0
+              ? "passed"
+              : "failed",
+          audit: preCleanup,
+        });
+      }
       await skipIfLegacyKnowledgeBaseEntitlementDenied(client, evidence);
       const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
       const kbName = `api_journey_kb_patch_${suffix}`;
@@ -7760,6 +7892,16 @@ export const datasetEvalJourneys = [
         expectedFileIds: patchedFileIds,
       });
 
+      const hardCleanup =
+        await hardDeleteKnowledgeBasePatchFixturesByPrefix(cleanupPrefix);
+      assert(
+        Number(hardCleanup.remaining_kb_count) === 0 &&
+          Number(hardCleanup.remaining_file_count) === 0,
+        `KB PATCH hard cleanup left fixture rows: ${JSON.stringify(
+          hardCleanup,
+        )}`,
+      );
+
       evidence.push({
         kb_id: kbId,
         renamed_kb_name: renamedKbName,
@@ -7768,6 +7910,7 @@ export const datasetEvalJourneys = [
         file_only_patch_preserved_name: fileAddedAudit.name === renamedKbName,
         other_workspace_guard: otherWorkspaceGuard,
         deleted_at_set: deletedAudit.deleted_at_set === true,
+        hard_cleanup: hardCleanup,
       });
     },
   },
@@ -7946,15 +8089,15 @@ export const datasetEvalJourneys = [
     title:
       "Legacy knowledge base entitlement gate and structured KB read availability",
     tags: ["knowledge-base", "safe", "entitlement", "smoke"],
-    async run({ client, evidence }) {
-      const tableError = await expectLegacyKnowledgeBaseEntitlementDenied(
+    async run({ client, cleanup, evidence }) {
+      const tableResult = await captureKnowledgeBaseEntitlementOrPayload(
         () =>
           client.get(apiPath("/model-hub/knowledge-base/get/"), {
             query: { page_number: 0, page_size: 1 },
           }),
         "Legacy Knowledge Base table endpoint did not return the expected entitlement gate.",
       );
-      const optionError = await expectLegacyKnowledgeBaseEntitlementDenied(
+      const optionResult = await captureKnowledgeBaseEntitlementOrPayload(
         () => client.get(apiPath("/model-hub/knowledge-base/list/")),
         "Legacy Knowledge Base option endpoint did not return the expected entitlement gate.",
       );
@@ -7967,8 +8110,8 @@ export const datasetEvalJourneys = [
         await client.get(apiPath("/model-hub/kb/supported-embedding-models")),
       );
       assertStructuredEmbeddingModels(embeddingModels);
-      const structuredCreateError =
-        await expectLegacyKnowledgeBaseEntitlementDenied(
+      const structuredCreateResult =
+        await captureKnowledgeBaseEntitlementOrPayload(
           () =>
             client.post(apiPath("/model-hub/kb/"), {
               name: `api_journey_structured_gate_${Date.now().toString(36)}`,
@@ -7977,17 +8120,50 @@ export const datasetEvalJourneys = [
             }),
           "Structured Knowledge Base create did not return the expected entitlement gate.",
         );
+      const structuredCreateId = structuredCreateResult.payload?.id;
+      if (!structuredCreateResult.entitlementDenied) {
+        assert(
+          isUuid(structuredCreateId),
+          "Structured KB create probe did not return a UUID id.",
+        );
+        cleanup.defer("delete KB-API-004 structured create probe", () =>
+          ignoreNotFound(() =>
+            client.delete(
+              apiPath("/model-hub/kb/{id}/", { id: structuredCreateId }),
+            ),
+          ),
+        );
+        await client.delete(
+          apiPath("/model-hub/kb/{id}/", { id: structuredCreateId }),
+        );
+      }
 
       evidence.push({
-        legacy_table_status: tableError.status,
-        legacy_table_code: tableError.body?.code,
-        legacy_option_status: optionError.status,
-        legacy_option_code: optionError.body?.code,
-        structured_create_status: structuredCreateError.status,
-        structured_create_code: structuredCreateError.body?.code,
+        legacy_table_status: tableResult.status,
+        legacy_table_code: tableResult.body?.code || null,
+        legacy_table_mode: tableResult.entitlementDenied
+          ? "entitlement_denied"
+          : "available",
+        legacy_option_status: optionResult.status,
+        legacy_option_code: optionResult.body?.code || null,
+        legacy_option_mode: optionResult.entitlementDenied
+          ? "entitlement_denied"
+          : "available",
+        structured_create_status: structuredCreateResult.status,
+        structured_create_code: structuredCreateResult.body?.code || null,
+        structured_create_mode: structuredCreateResult.entitlementDenied
+          ? "entitlement_denied"
+          : "available",
+        structured_create_deleted:
+          structuredCreateResult.entitlementDenied === false,
         structured_kb_count: structuredList?.count ?? structuredRows.length,
         structured_embedding_model_count: embeddingModels.length,
-        mode: "legacy_and_structured_create_entitlement_denied_structured_read_available",
+        mode:
+          tableResult.entitlementDenied ||
+          optionResult.entitlementDenied ||
+          structuredCreateResult.entitlementDenied
+            ? "knowledge_base_partially_entitlement_denied"
+            : "knowledge_base_available",
       });
     },
   },
@@ -12838,10 +13014,21 @@ export const datasetEvalJourneys = [
       const putDescription = `api journey workbench prompt replaced ${suffix}`;
       const helperPromptName = `api journey workbench prompt helper ${suffix}`;
       const cascadePromptName = `api journey workbench cascade ${suffix}`;
+      let folderId = null;
+      let moveFolderId = null;
+      let promptId = null;
+      let cascadePromptId = null;
       let folderDeleted = false;
       let moveFolderDeleted = false;
       let promptDeleted = false;
       let cascadePromptDeleted = false;
+
+      cleanup.defer("hard delete API journey prompt workbench fixture", () =>
+        hardDeletePromptWorkbenchFixture({
+          folder_ids: [folderId, moveFolderId],
+          template_ids: [promptId, cascadePromptId],
+        }),
+      );
 
       const foldersBefore = asArray(
         await client.get(apiPath("/model-hub/prompt-folders/")),
@@ -12851,7 +13038,7 @@ export const datasetEvalJourneys = [
         apiPath("/model-hub/prompt-folders/"),
         { name: folderName },
       );
-      const folderId = createdFolder?.id;
+      folderId = createdFolder?.id;
       assert(
         isUuid(folderId),
         "Prompt folder create did not return a UUID id.",
@@ -12915,7 +13102,7 @@ export const datasetEvalJourneys = [
         apiPath("/model-hub/prompt-folders/"),
         { name: moveFolderName },
       );
-      const moveFolderId = moveFolder?.id;
+      moveFolderId = moveFolder?.id;
       assert(
         isUuid(moveFolderId),
         "Prompt move-folder create did not return a UUID id.",
@@ -12932,7 +13119,7 @@ export const datasetEvalJourneys = [
         }
       });
 
-      const promptId = await createWorkbenchPrompt(client, {
+      promptId = await createWorkbenchPrompt(client, {
         folderId,
         name: promptName,
         runId,
@@ -13161,7 +13348,7 @@ export const datasetEvalJourneys = [
         expectedVersionsDeleted: true,
       });
 
-      const cascadePromptId = await createWorkbenchPrompt(client, {
+      cascadePromptId = await createWorkbenchPrompt(client, {
         folderId,
         name: cascadePromptName,
         runId,
@@ -14896,8 +15083,19 @@ export const datasetEvalJourneys = [
           "Use this text: {{text}}. Expected hint: {{expected}}",
         ),
       ];
+      let promptId = null;
+      let evalConfigId = null;
+      let createdEvalTemplateId = null;
       let evalConfigDeleted = false;
       let promptDeleted = false;
+
+      cleanup.defer("hard delete API journey prompt eval fixture", () =>
+        hardDeletePromptEvalConfigFixture({
+          prompt_id: promptId,
+          eval_config_id: evalConfigId,
+          created_eval_template_id: createdEvalTemplateId,
+        }),
+      );
 
       const createdPrompt = await client.post(
         apiPath("/model-hub/prompt-templates/create-draft/"),
@@ -14908,7 +15106,7 @@ export const datasetEvalJourneys = [
           prompt_config: promptMessages,
         },
       );
-      const promptId =
+      promptId =
         createdPrompt?.id ||
         createdPrompt?.root_template ||
         createdPrompt?.rootTemplate;
@@ -14953,6 +15151,8 @@ export const datasetEvalJourneys = [
         cleanup,
         suffix,
       );
+      createdEvalTemplateId =
+        evalTemplate.source === "created" ? evalTemplate.id : null;
       const mapping = buildPromptEvalConfigMapping(evalTemplate.requiredKeys);
       const createdConfig = await client.post(
         apiPath("/model-hub/prompt-templates/{id}/update-evaluation-configs/", {
@@ -14966,7 +15166,7 @@ export const datasetEvalJourneys = [
           is_run: false,
         },
       );
-      const evalConfigId = createdConfig?.prompt_eval_config_id;
+      evalConfigId = createdConfig?.prompt_eval_config_id;
       assert(
         isUuid(evalConfigId),
         "Prompt eval config create did not return prompt_eval_config_id.",
@@ -14977,7 +15177,7 @@ export const datasetEvalJourneys = [
         }
       });
 
-      await expectApiErrorStatus(
+      const duplicateConfigError = await expectApiErrorStatus(
         () =>
           client.post(
             apiPath(
@@ -15054,7 +15254,7 @@ export const datasetEvalJourneys = [
         expectedDeleted: false,
       });
 
-      await expectApiErrorStatus(
+      const missingVersionsError = await expectApiErrorStatus(
         () =>
           client.get(
             apiPath("/model-hub/prompt-templates/{id}/evaluations/", {
@@ -15065,7 +15265,7 @@ export const datasetEvalJourneys = [
         400,
         "Prompt evaluations without versions unexpectedly succeeded.",
       );
-      await expectApiErrorStatus(
+      const multiVersionGuardError = await expectApiErrorStatus(
         () =>
           client.get(
             apiPath("/model-hub/prompt-templates/{id}/evaluations/", {
@@ -15122,7 +15322,7 @@ export const datasetEvalJourneys = [
         "Prompt evaluations show_prompts did not return prompt messages.",
       );
 
-      await expectApiErrorStatus(
+      const emptyConfigError = await expectApiErrorStatus(
         () =>
           client.post(
             apiPath(
@@ -15134,7 +15334,7 @@ export const datasetEvalJourneys = [
         400,
         "Prompt run-evals accepted an empty eval config id list.",
       );
-      await expectApiErrorStatus(
+      const malformedConfigError = await expectApiErrorStatus(
         () =>
           client.post(
             apiPath(
@@ -15149,7 +15349,7 @@ export const datasetEvalJourneys = [
         400,
         "Prompt run-evals accepted a malformed eval config id.",
       );
-      await expectApiErrorStatus(
+      const outsideConfigError = await expectApiErrorStatus(
         () =>
           client.post(
             apiPath(
@@ -15169,7 +15369,7 @@ export const datasetEvalJourneys = [
         { query: { id: evalConfigId } },
       );
       evalConfigDeleted = true;
-      await expectApiErrorStatus(
+      const deletedConfigError = await expectApiErrorStatus(
         () =>
           client.post(
             apiPath(
@@ -15227,6 +15427,15 @@ export const datasetEvalJourneys = [
         eval_params: configRow.params,
         eval_status: versionData.eval_status?.[evalConfigId],
         eval_config_deleted_at_set: deletedAudit.deleted_at_set,
+        guard_statuses: {
+          duplicate_config: duplicateConfigError.status,
+          missing_versions: missingVersionsError.status,
+          multi_version_without_compare: multiVersionGuardError.status,
+          empty_config_ids: emptyConfigError.status,
+          malformed_config_id: malformedConfigError.status,
+          outside_config_id: outsideConfigError.status,
+          deleted_config_id: deletedConfigError.status,
+        },
       });
     },
   },
@@ -19223,6 +19432,25 @@ async function expectLegacyKnowledgeBaseEntitlementDenied(fn, message) {
     return error;
   }
   throw new Error(message);
+}
+
+async function captureKnowledgeBaseEntitlementOrPayload(fn, message) {
+  try {
+    const payload = await fn();
+    return { entitlementDenied: false, status: 200, payload };
+  } catch (error) {
+    assert(
+      isLegacyKnowledgeBaseEntitlementDeniedError(error),
+      `${message} Expected success or HTTP 402 knowledge_base entitlement metadata, got ${
+        error?.status || error.message
+      }: ${JSON.stringify(error?.body || {})}`,
+    );
+    return {
+      entitlementDenied: true,
+      status: error.status,
+      body: error.body,
+    };
+  }
 }
 
 async function skipIfLegacyKnowledgeBaseEntitlementDenied(client, evidence) {
@@ -23775,6 +24003,134 @@ print(json.dumps({
 }))
 `;
   return runBackendShellJson(script);
+}
+
+async function loadLocalFileCreateAudit({
+  datasetId,
+  datasetName,
+  fileName,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(datasetId), "datasetId must be a UUID for DB audit.");
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  if (workspaceId)
+    assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const sql = `
+WITH dataset_row AS (
+  SELECT id, name, organization_id, workspace_id, dataset_config
+  FROM model_hub_dataset
+  WHERE id = ${sqlUuid(datasetId)}
+    AND name = ${sqlTextLiteral(datasetName)}
+    AND deleted = false
+),
+rows AS (
+  SELECT id
+  FROM model_hub_row
+  WHERE dataset_id = ${sqlUuid(datasetId)}
+    AND deleted = false
+),
+columns AS (
+  SELECT id
+  FROM model_hub_column
+  WHERE dataset_id = ${sqlUuid(datasetId)}
+    AND deleted = false
+)
+SELECT COALESCE((
+  SELECT json_build_object(
+    'dataset_id', d.id::text,
+    'dataset_name', d.name,
+    'organization_id', d.organization_id::text,
+    'workspace_id', d.workspace_id::text,
+    'dataset_source_local', COALESCE((d.dataset_config->>'dataset_source_local')::boolean, false),
+    'processing_status', d.dataset_config->>'file_processing_status',
+    'original_filename', d.dataset_config->>'original_filename',
+    'file_url_set', COALESCE(d.dataset_config->>'file_url', '') <> '',
+    'estimated_rows', d.dataset_config->>'estimated_rows',
+    'estimated_columns', d.dataset_config->>'estimated_columns',
+    'row_count', (SELECT count(*) FROM rows),
+    'column_count', (SELECT count(*) FROM columns),
+    'cell_count', (
+      SELECT count(*)
+      FROM model_hub_cell c
+      WHERE c.dataset_id = d.id
+        AND c.deleted = false
+    )
+  )
+  FROM dataset_row d
+), '{}'::json);
+`;
+  return runPostgresJson(sql);
+}
+
+function assertLocalFileCreateAudit(
+  audit,
+  {
+    datasetId,
+    datasetName,
+    expectedProcessingStatus,
+    fileName,
+    organizationId,
+    workspaceId,
+  },
+) {
+  assert(
+    audit?.dataset_id === datasetId,
+    "Local-file create DB audit dataset id mismatch.",
+  );
+  assert(
+    audit.dataset_name === datasetName,
+    "Local-file create DB audit dataset name mismatch.",
+  );
+  assert(
+    audit.organization_id === organizationId,
+    "Local-file create DB audit organization mismatch.",
+  );
+  if (workspaceId) {
+    assert(
+      audit.workspace_id === workspaceId,
+      "Local-file create DB audit workspace mismatch.",
+    );
+  }
+  assert(
+    audit.dataset_source_local === true,
+    "Local-file create DB audit did not preserve dataset_source_local.",
+  );
+  assert(
+    audit.processing_status === expectedProcessingStatus,
+    "Local-file create DB audit processing status mismatch.",
+  );
+  assert(
+    audit.original_filename === fileName,
+    "Local-file create DB audit original filename mismatch.",
+  );
+  assert(
+    audit.file_url_set === true,
+    "Local-file create DB audit did not persist the uploaded file URL.",
+  );
+  assert(
+    Number(audit.estimated_rows) === 2,
+    "Local-file create DB audit estimated rows mismatch.",
+  );
+  assert(
+    Number(audit.estimated_columns) === 2,
+    "Local-file create DB audit estimated columns mismatch.",
+  );
+  if (expectedProcessingStatus === "queued") {
+    assert(
+      Number(audit.row_count) === 0 &&
+        Number(audit.column_count) === 0 &&
+        Number(audit.cell_count) === 0,
+      "Queued local-file create materialized rows before the worker completed.",
+    );
+  } else if (expectedProcessingStatus === "completed") {
+    assert(
+      Number(audit.row_count) === 2 &&
+        Number(audit.column_count) === 2 &&
+        Number(audit.cell_count) === 4,
+      "Completed local-file create did not materialize the expected rows.",
+    );
+  }
 }
 
 async function loadLocalFileWorkerFixtureAudit({
@@ -29573,6 +29929,64 @@ SELECT json_build_object(
   return runPostgresJson(sql);
 }
 
+async function hardDeleteKnowledgeBasePatchFixturesByPrefix(prefix) {
+  assert(typeof prefix === "string" && prefix.length > 0, "prefix required.");
+  const deleteSql = `
+WITH fixture_kbs AS (
+  SELECT id
+  FROM model_hub_knowledgebasefile
+  WHERE name LIKE ${sqlText(`${prefix}%`)}
+),
+fixture_files AS (
+  SELECT kbf.files_id AS id
+  FROM model_hub_knowledgebasefile_files kbf
+  WHERE kbf.knowledgebasefile_id IN (SELECT id FROM fixture_kbs)
+  UNION
+  SELECT id
+  FROM model_hub_files
+  WHERE name LIKE ${sqlText(`${prefix}%`)}
+),
+deleted_links AS (
+  DELETE FROM model_hub_knowledgebasefile_files
+  WHERE knowledgebasefile_id IN (SELECT id FROM fixture_kbs)
+     OR files_id IN (SELECT id FROM fixture_files)
+  RETURNING 1
+),
+deleted_kbs AS (
+  DELETE FROM model_hub_knowledgebasefile
+  WHERE id IN (SELECT id FROM fixture_kbs)
+  RETURNING 1
+),
+deleted_files AS (
+  DELETE FROM model_hub_files
+  WHERE id IN (SELECT id FROM fixture_files)
+  RETURNING 1
+)
+SELECT json_build_object(
+  'deleted_link_count', (SELECT count(*) FROM deleted_links),
+  'deleted_kb_count', (SELECT count(*) FROM deleted_kbs),
+  'deleted_file_count', (SELECT count(*) FROM deleted_files)
+);
+`;
+  const deleteResult = await runPostgresJson(deleteSql);
+  const remainingSql = `
+SELECT json_build_object(
+  'remaining_kb_count', (
+    SELECT count(*)
+    FROM model_hub_knowledgebasefile
+    WHERE name LIKE ${sqlText(`${prefix}%`)}
+  ),
+  'remaining_file_count', (
+    SELECT count(*)
+    FROM model_hub_files
+    WHERE name LIKE ${sqlText(`${prefix}%`)}
+  )
+);
+`;
+  const remainingResult = await runPostgresJson(remainingSql);
+  return { ...deleteResult, ...remainingResult };
+}
+
 async function loadStructuredKnowledgeBaseDbAudit({
   kbId,
   organizationId,
@@ -33976,6 +34390,39 @@ function assertPromptWorkbenchDbAudit(
   }
 }
 
+async function hardDeletePromptWorkbenchFixture(fixture) {
+  const folderIds = (fixture.folder_ids || []).filter(Boolean);
+  const templateIds = (fixture.template_ids || []).filter(Boolean);
+  for (const id of [...folderIds, ...templateIds]) {
+    assert(
+      isUuid(id),
+      "Prompt Workbench cleanup received a non-UUID fixture id.",
+    );
+  }
+  const script = `
+import json
+from model_hub.models.prompt_folders import PromptFolder
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+folder_ids = ${JSON.stringify(folderIds)}
+template_ids = ${JSON.stringify(templateIds)}
+
+version_ids = list(
+    PromptVersion.all_objects.filter(original_template_id__in=template_ids)
+    .values_list("id", flat=True)
+)
+versions_deleted, _ = PromptVersion.all_objects.filter(id__in=version_ids).delete()
+templates_deleted, _ = PromptTemplate.all_objects.filter(id__in=template_ids).delete()
+folders_deleted, _ = PromptFolder.all_objects.filter(id__in=folder_ids).delete()
+print(json.dumps({
+    "deleted_versions": versions_deleted,
+    "deleted_templates": templates_deleted,
+    "deleted_folders": folders_deleted,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
 async function seedPromptLabelFixture({
   runId,
   userId,
@@ -36709,6 +37156,44 @@ function assertPromptEvalConfigDbAudit(
     );
   }
   assertPromptEvalMapping(audit.mapping, mapping);
+}
+
+async function hardDeletePromptEvalConfigFixture(fixture) {
+  const promptIds = [fixture.prompt_id].filter(Boolean);
+  const evalConfigIds = [fixture.eval_config_id].filter(Boolean);
+  const evalTemplateIds = [fixture.created_eval_template_id].filter(Boolean);
+  for (const id of [...promptIds, ...evalConfigIds, ...evalTemplateIds]) {
+    assert(isUuid(id), "Prompt eval cleanup received a non-UUID fixture id.");
+  }
+  const script = `
+import json
+from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.run_prompt import PromptEvalConfig, PromptTemplate, PromptVersion
+
+prompt_ids = ${JSON.stringify(promptIds)}
+eval_config_ids = ${JSON.stringify(evalConfigIds)}
+eval_template_ids = ${JSON.stringify(evalTemplateIds)}
+
+version_ids = list(
+    PromptVersion.all_objects.filter(original_template_id__in=prompt_ids)
+    .values_list("id", flat=True)
+)
+eval_configs_deleted, _ = PromptEvalConfig.all_objects.filter(
+    id__in=eval_config_ids,
+).delete()
+versions_deleted, _ = PromptVersion.all_objects.filter(id__in=version_ids).delete()
+prompts_deleted, _ = PromptTemplate.all_objects.filter(id__in=prompt_ids).delete()
+eval_templates_deleted, _ = EvalTemplate.all_objects.filter(
+    id__in=eval_template_ids,
+).delete()
+print(json.dumps({
+    "deleted_eval_configs": eval_configs_deleted,
+    "deleted_versions": versions_deleted,
+    "deleted_prompts": prompts_deleted,
+    "deleted_eval_templates": eval_templates_deleted,
+}))
+`;
+  return runBackendShellJson(script);
 }
 
 async function runPostgresJson(sql) {

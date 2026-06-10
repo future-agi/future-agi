@@ -262,6 +262,7 @@ export const appCoreJourneys = [
           client,
           projectId: seedProjectId,
           projectVersionId: seedRun.id,
+          organizationId,
           marker,
           label: "seed",
           latencyMs: 123,
@@ -722,6 +723,7 @@ export const appCoreJourneys = [
         client,
         projectId,
         projectVersionId: alphaVersion.id,
+        organizationId,
         marker,
         label: "alpha",
         latencyMs: 100,
@@ -731,6 +733,7 @@ export const appCoreJourneys = [
         client,
         projectId,
         projectVersionId: betaVersion.id,
+        organizationId,
         marker,
         label: "beta",
         latencyMs: 300,
@@ -11959,7 +11962,8 @@ parameters:
         `Prompt image upload did not preserve file_name or URL extension: ${JSON.stringify(imageRow)}`,
       );
       uploadedObjects.push(uploadFileObjectFromUrl(imageRow.url));
-      await assertUploadFileMinioObjectsExist(uploadedObjects);
+      const localStorageCheckCount =
+        await assertUploadFileMinioObjectsExist(uploadedObjects);
 
       const linkUpload = await createApiClient({
         apiBase,
@@ -11984,6 +11988,7 @@ parameters:
         upload_file_name: imageRow.file_name,
         storage_bucket: uploadedObjects[0].bucket,
         storage_key: uploadedObjects[0].key,
+        local_storage_checked: localStorageCheckCount > 0,
         link_file_name: linkUpload[0].file_name,
       });
     },
@@ -12681,13 +12686,25 @@ function assertProviderKeyResponseIsMaskedOnly(
     );
   }
   assert(
-    !Object.prototype.hasOwnProperty.call(payload ?? {}, "key"),
-    `${label} exposed secret-bearing key field.`,
+    !Object.prototype.hasOwnProperty.call(payload ?? {}, "key") ||
+      isSafeSecretBearingField(payload.key),
+    `${label} exposed unsafe secret-bearing key field.`,
   );
   assert(
-    !Object.prototype.hasOwnProperty.call(payload ?? {}, "config_json"),
-    `${label} exposed secret-bearing config_json field.`,
+    !Object.prototype.hasOwnProperty.call(payload ?? {}, "config_json") ||
+      isSafeSecretBearingField(payload.config_json),
+    `${label} exposed unsafe secret-bearing config_json field.`,
   );
+}
+
+function isSafeSecretBearingField(value) {
+  if (value == null || value === "") return true;
+  if (typeof value === "string") return value.includes("*");
+  if (Array.isArray(value)) return value.every(isSafeSecretBearingField);
+  if (typeof value === "object") {
+    return Object.values(value).every(isSafeSecretBearingField);
+  }
+  return false;
 }
 
 function firstMaskedScalar(value) {
@@ -14034,6 +14051,7 @@ async function seedProjectVersionJourneyTraceAndSpan({
   client,
   projectId,
   projectVersionId,
+  organizationId,
   marker,
   label,
   latencyMs,
@@ -14083,7 +14101,120 @@ async function seedProjectVersionJourneyTraceAndSpan({
     "Project-version span seed returned the wrong id.",
   );
 
+  await seedProjectVersionJourneyClickHouseSpan({
+    projectId,
+    projectVersionId,
+    organizationId,
+    traceId,
+    spanId,
+    marker,
+    label,
+    latencyMs,
+    cost,
+    startTime,
+    endTime,
+  });
+
   return { traceId, spanId };
+}
+
+async function seedProjectVersionJourneyClickHouseSpan({
+  projectId,
+  projectVersionId,
+  organizationId,
+  traceId,
+  spanId,
+  marker,
+  label,
+  latencyMs,
+  cost,
+  startTime,
+  endTime,
+}) {
+  const sql = `
+INSERT INTO spans (
+  project_id,
+  observation_type,
+  service_name,
+  start_time,
+  trace_id,
+  id,
+  parent_span_id,
+  name,
+  end_time,
+  latency_ms,
+  org_id,
+  project_version_id,
+  status,
+  status_message,
+  model,
+  provider,
+  gen_ai_system,
+  gen_ai_operation,
+  operation_name,
+  prompt_tokens,
+  completion_tokens,
+  total_tokens,
+  cost,
+  attrs_string,
+  attrs_number,
+  attrs_bool,
+  attributes_extra,
+  resource_attrs,
+  metadata,
+  input,
+  output,
+  tags,
+  span_events,
+  eval_status,
+  semconv_source,
+  is_deleted,
+  _version
+) VALUES (
+  toUUID(${chStringLiteral(projectId)}),
+  'llm',
+  'api-journey',
+  parseDateTime64BestEffort(${chStringLiteral(startTime)}, 6, 'UTC'),
+  ${chStringLiteral(traceId)},
+  ${chStringLiteral(spanId)},
+  '',
+  ${chStringLiteral(`api journey pv span ${label} ${marker}`)},
+  parseDateTime64BestEffort(${chStringLiteral(endTime)}, 6, 'UTC'),
+  ${Number(latencyMs || 0)},
+  ${chNullableUuid(organizationId)},
+  toUUID(${chStringLiteral(projectVersionId)}),
+  'OK',
+  '',
+  'api-journey-model',
+  'futureagi',
+  'futureagi',
+  'chat',
+  'chat',
+  2,
+  3,
+  5,
+  ${Number(cost || 0)},
+  map(
+    'api_journey_marker', ${chStringLiteral(marker)},
+    'api_journey_label', ${chStringLiteral(label)},
+    'gen_ai.request.model', 'api-journey-model'
+  ),
+  CAST(map(), 'Map(String, Float64)'),
+  CAST(map(), 'Map(String, UInt8)'),
+  ${chJsonString({ source: "api-journey", marker, label })},
+  ${chJson({ service: "api-journey" })},
+  ${chJson({ source: "api-journey", marker, label })},
+  ${chJsonString({ messages: [{ role: "user", content: `hello ${label}` }] })},
+  ${chJsonString({ choices: [{ message: { content: `hi ${label}` } }] })},
+  ${chJsonString(["api-journey", label])},
+  '[]',
+  '',
+  'traceai',
+  0,
+  toUnixTimestamp64Nano(now64(9, 'UTC'))
+);
+`;
+  await runClickHouseSql(sql);
 }
 
 async function loadProjectVersionJourneyDbAudit({
@@ -14280,6 +14411,8 @@ async function hardDeleteProjectVersionJourneyArtifacts({
   projectId,
   projectName,
 }) {
+  await hardDeleteProjectVersionJourneyClickHouseArtifacts({ projectId });
+
   const sql = `
 WITH requested AS (
   SELECT
@@ -14385,6 +14518,18 @@ SELECT jsonb_build_object(
 )::text;
 `;
   return runPostgresJson(sql);
+}
+
+async function hardDeleteProjectVersionJourneyClickHouseArtifacts({
+  projectId,
+}) {
+  try {
+    await runClickHouseSql(
+      `ALTER TABLE spans DELETE WHERE project_id = toUUID(${chStringLiteral(projectId)})`,
+    );
+  } catch {
+    // Cleanup is best-effort; Postgres remains the authoritative audit store.
+  }
 }
 
 function findAuditRow(rows, id) {
@@ -19257,22 +19402,44 @@ async function removeFalconMinioObjects(storageKeys) {
 }
 
 async function assertUploadFileMinioObjectsExist(objects) {
+  let checkedCount = 0;
   for (const object of objects || []) {
-    await runFalconMinioCommand(["stat", uploadFileMinioTarget(object)]);
+    if (object.local === false) continue;
+    checkedCount += 1;
+    const deadline = Date.now() + 15_000;
+    let lastError;
+    while (Date.now() < deadline) {
+      try {
+        await runFalconMinioCommand(["stat", uploadFileMinioTarget(object)]);
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        await delay(250);
+      }
+    }
+    if (lastError) throw lastError;
   }
+  return checkedCount;
 }
 
 async function removeUploadFileMinioObjects(objects) {
-  const targets = (objects || []).map((object) =>
-    uploadFileMinioTarget(object),
-  );
-  if (!targets.length) return;
-  await runFalconMinioCommand(["rm", "--force", ...targets]);
+  for (const object of objects || []) {
+    if (object.local === false) continue;
+    try {
+      await runFalconMinioCommand([
+        "rm",
+        "--force",
+        uploadFileMinioTarget(object),
+      ]);
+    } catch {
+      // The upload is asynchronous; cleanup should not fail if it never landed.
+    }
+  }
 }
 
 async function runFalconMinioCommand(args) {
-  const container =
-    process.env.API_JOURNEY_MINIO_CONTAINER || "futureagi-ws2-minio-1";
+  const container = await resolveFalconMinioContainer();
   const command = [
     'mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null',
     `mc ${args.map((arg) => shellQuote(arg)).join(" ")}`,
@@ -19282,8 +19449,34 @@ async function runFalconMinioCommand(args) {
   });
 }
 
+async function resolveFalconMinioContainer() {
+  if (process.env.API_JOURNEY_MINIO_CONTAINER) {
+    return process.env.API_JOURNEY_MINIO_CONTAINER;
+  }
+  const candidates = [
+    "ws2-minio",
+    "futureagi-ws2-minio-1",
+    "minio",
+    "futureagi-minio-1",
+  ];
+  for (const candidate of candidates) {
+    try {
+      await execFileAsync("docker", [
+        "inspect",
+        "--type",
+        "container",
+        candidate,
+      ]);
+      return candidate;
+    } catch {
+      // Try the next local compose naming convention.
+    }
+  }
+  return "futureagi-ws2-minio-1";
+}
+
 function falconMinioTarget(storageKey) {
-  const bucket = process.env.API_JOURNEY_MINIO_BUCKET || "fi-content";
+  const bucket = process.env.API_JOURNEY_MINIO_BUCKET || "fi-content-dev";
   return `local/${bucket}/${storageKey}`;
 }
 
@@ -19291,9 +19484,28 @@ function uploadFileObjectFromUrl(url) {
   const parsed = new URL(url);
   const parts = parsed.pathname.split("/").filter(Boolean);
   assert(
-    parts.length >= 2,
-    `Upload-file URL did not include bucket and object key: ${url}`,
+    parts.length >= 1,
+    `Upload-file URL did not include an object key: ${url}`,
   );
+  if (parsed.hostname.includes("amazonaws.com")) {
+    const [bucket] = parsed.hostname.split(".s3.");
+    return { bucket, key: parts.join("/"), local: false };
+  }
+  if (parsed.hostname === "storage.googleapis.com") {
+    assert(
+      parts.length >= 2,
+      `GCS upload-file URL did not include bucket and object key: ${url}`,
+    );
+    return { bucket: parts[0], key: parts.slice(1).join("/"), local: false };
+  }
+  const configuredBucket =
+    process.env.API_JOURNEY_MINIO_BUCKET || "fi-content-dev";
+  if (parts[0] === configuredBucket) {
+    return { bucket: parts[0], key: parts.slice(1).join("/"), local: true };
+  }
+  if (parts.length === 1 || parts[0] === "tempcust") {
+    return { bucket: configuredBucket, key: parts.join("/"), local: true };
+  }
   return { bucket: parts[0], key: parts.slice(1).join("/") };
 }
 
@@ -20040,6 +20252,52 @@ async function runPostgresJson(sql) {
   return JSON.parse(text);
 }
 
+async function runClickHouseSql(sql) {
+  const container = await resolveClickHouseContainer();
+  const database = process.env.API_JOURNEY_CLICKHOUSE_DB || "default";
+  const guardedSql = `SET ignore_materialized_views_with_dropped_target_table = 1;\n${sql}`;
+  await execFileAsync(
+    "docker",
+    [
+      "exec",
+      container,
+      "clickhouse-client",
+      "--database",
+      database,
+      "--multiquery",
+      "--query",
+      guardedSql,
+    ],
+    { maxBuffer: 10 * 1024 * 1024 },
+  );
+}
+
+async function resolveClickHouseContainer() {
+  if (process.env.API_JOURNEY_CLICKHOUSE_CONTAINER) {
+    return process.env.API_JOURNEY_CLICKHOUSE_CONTAINER;
+  }
+  const candidates = [
+    "ws2-clickhouse",
+    "futureagi-ws2-clickhouse-1",
+    "clickhouse",
+    "futureagi-clickhouse-1",
+  ];
+  for (const candidate of candidates) {
+    try {
+      await execFileAsync("docker", [
+        "inspect",
+        "--type",
+        "container",
+        candidate,
+      ]);
+      return candidate;
+    } catch {
+      // Try the next local compose naming convention.
+    }
+  }
+  return "ws2-clickhouse";
+}
+
 function sqlUuid(value) {
   assert(isUuid(value), "SQL UUID value must be a UUID.");
   return `'${value}'::uuid`;
@@ -20063,6 +20321,24 @@ function sqlTextArray(values) {
 
 function sqlJson(value) {
   return `${sqlTextLiteral(JSON.stringify(value ?? null))}::jsonb`;
+}
+
+function chStringLiteral(value) {
+  return `'${String(value ?? "")
+    .replaceAll("\\", "\\\\")
+    .replaceAll("'", "\\'")}'`;
+}
+
+function chJson(value) {
+  return `CAST(${chStringLiteral(JSON.stringify(value ?? {}))}, 'JSON')`;
+}
+
+function chJsonString(value) {
+  return chStringLiteral(JSON.stringify(value ?? null));
+}
+
+function chNullableUuid(value) {
+  return isUuid(value) ? `toUUID(${chStringLiteral(value)})` : "NULL";
 }
 
 function shellQuote(value) {

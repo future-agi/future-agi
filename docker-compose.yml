@@ -323,6 +323,7 @@ services:
       # from the docker bridge network and gets AUTHENTICATION_FAILED.
       # SKIP_USER_SETUP keeps the upstream default-user config (no IP
       # allowlist) — what every other service expects from local-dev CH.
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
       CLICKHOUSE_SKIP_USER_SETUP: "1"
       CLICKHOUSE_DB: ${CH_DATABASE:-default}
     ports:

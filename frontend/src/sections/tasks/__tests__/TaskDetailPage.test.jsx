@@ -80,7 +80,15 @@ vi.mock("../components/TaskUsageTab", () => ({
 }));
 
 vi.mock("src/sections/common/EvalsTasks/EditTaskDrawer/TaskConfirmBox", () => ({
-  default: () => null,
+  default: ({ open, title, onConfirm }) =>
+    open ? (
+      <div role="dialog" aria-label={title}>
+        <h2>{title}</h2>
+        <button type="button" onClick={() => onConfirm("fresh_run")}>
+          Run task
+        </button>
+      </div>
+    ) : null,
 }));
 
 const renderTaskDetail = (taskId = "missing-task") => {
@@ -157,6 +165,39 @@ describe("TaskDetailPage", () => {
       expect(axiosPatchMock).toHaveBeenCalledWith("/tracer/eval-task/task-1/", {
         name: "Renamed Inline Task",
       });
+    });
+  });
+
+  it("uses the update PATCH route after save confirmation", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({
+        evals_applied: [{ id: "eval-1", name: "Eval One" }],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Update Task");
+    fireEvent.click(screen.getByRole("button", { name: /run task/i }));
+
+    await waitFor(() => {
+      expect(axiosPatchMock).toHaveBeenCalledWith(
+        "/tracer/eval-task/update_eval_task/",
+        expect.objectContaining({
+          edit_type: "fresh_run",
+          eval_task_id: "task-1",
+          evals: ["eval-1"],
+          name: "Original Task",
+          project: "project-1",
+          project_id: "project-1",
+          run_type: "continuous",
+          sampling_rate: 100,
+          spans_limit: 100,
+        }),
+      );
     });
   });
 

@@ -14,13 +14,19 @@ const SCREENSHOT_PATH = "/tmp/settings-global-integrations-smoke.png";
 
 async function main() {
   const auth = await createAuthenticatedContext();
-  const listPayload = await auth.client.get(apiPath("/integrations/connections/"), {
-    query: { page_number: 0, page_size: 20 },
-  });
+  const listPayload = await auth.client.get(
+    apiPath("/integrations/connections/"),
+    {
+      query: { page_number: 0, page_size: 20 },
+    },
+  );
   const connections = Array.isArray(listPayload?.connections)
     ? listPayload.connections
     : [];
-  assert(connections.length > 0, "No integration connection is available for global settings smoke.");
+  assert(
+    connections.length > 0,
+    "No integration connection is available for global settings smoke.",
+  );
   const connection = connections[0];
   const displayName =
     connection.display_name || connection.external_project_name || "Unnamed";
@@ -30,9 +36,12 @@ async function main() {
   const detail = await auth.client.get(
     apiPath("/integrations/connections/{id}/", { id: connection.id }),
   );
-  const logsPayload = await auth.client.get(apiPath("/integrations/sync-logs/"), {
-    query: { connection_id: connection.id, page_number: 0, page_size: 10 },
-  });
+  const logsPayload = await auth.client.get(
+    apiPath("/integrations/sync-logs/"),
+    {
+      query: { connection_id: connection.id, page_number: 0, page_size: 10 },
+    },
+  );
 
   const apiFailures = [];
   const pageErrors = [];
@@ -60,9 +69,11 @@ async function main() {
       localStorage.setItem("refreshToken", tokens.refresh || "");
       localStorage.setItem("rememberMe", "true");
       localStorage.setItem("initial-render", "done");
-      if (organizationId) sessionStorage.setItem("organizationId", organizationId);
+      if (organizationId)
+        sessionStorage.setItem("organizationId", organizationId);
       if (workspaceId) sessionStorage.setItem("workspaceId", workspaceId);
-      if (user?.id) sessionStorage.setItem("futureagi-current-user-id", user.id);
+      if (user?.id)
+        sessionStorage.setItem("futureagi-current-user-id", user.id);
     },
     {
       tokens: auth.tokens,
@@ -106,18 +117,25 @@ async function main() {
     await listResponse;
 
     await waitForVisibleText(page, "Integrations", { exact: true });
-    await waitForVisibleText(page, "Connect external observability platforms to import traces");
+    await waitForVisibleText(
+      page,
+      "Connect external observability platforms to import traces",
+    );
     await waitForVisibleText(page, "Available Platforms", { exact: true });
     await waitForVisibleText(page, displayName);
     await waitForVisibleText(page, hostUrl);
     await waitForVisibleText(page, traceLabel);
     if (connection.status) {
-      await waitForVisibleText(page, startCase(connection.status), { exact: true });
+      await waitForVisibleText(page, startCase(connection.status), {
+        exact: true,
+      });
     }
 
     const detailResponse = page.waitForResponse(
       (response) =>
-        response.url().includes(`/integrations/connections/${connection.id}/`) &&
+        response
+          .url()
+          .includes(`/integrations/connections/${connection.id}/`) &&
         response.status() < 400,
       { timeout: 60000 },
     );
@@ -135,7 +153,10 @@ async function main() {
     ]);
 
     await page.waitForFunction(
-      (expectedId) => window.location.pathname.endsWith(`/settings/integrations/${expectedId}`),
+      (expectedId) =>
+        window.location.pathname.endsWith(
+          `/settings/integrations/${expectedId}`,
+        ),
       { timeout: 30000 },
       connection.id,
     );
@@ -221,7 +242,11 @@ async function clickVisibleText(page, text) {
         (candidate) =>
           isVisible(candidate) &&
           String(candidate.textContent || "").includes(expectedText) &&
-          Boolean(candidate.closest(".MuiCardActionArea-root,button,a,[role='button']")),
+          Boolean(
+            candidate.closest(
+              ".MuiCardActionArea-root,button,a,[role='button']",
+            ),
+          ),
       );
     },
     { timeout: 30000 },
@@ -242,7 +267,9 @@ async function clickVisibleText(page, text) {
       (candidate) =>
         isVisible(candidate) &&
         String(candidate.textContent || "").includes(expectedText) &&
-        Boolean(candidate.closest(".MuiCardActionArea-root,button,a,[role='button']")),
+        Boolean(
+          candidate.closest(".MuiCardActionArea-root,button,a,[role='button']"),
+        ),
     );
     element.closest(".MuiCardActionArea-root,button,a,[role='button']").click();
   }, text);
@@ -296,12 +323,14 @@ async function waitForNoVisibleText(
           rect.height > 0
         );
       };
-      return !Array.from(document.querySelectorAll("body *")).some((element) => {
-        if (!isVisible(element)) return false;
-        const textContent = normalized(element.textContent);
-        if (exactMatch) return textContent === expectedText;
-        return textContent.includes(expectedText);
-      });
+      return !Array.from(document.querySelectorAll("body *")).some(
+        (element) => {
+          if (!isVisible(element)) return false;
+          const textContent = normalized(element.textContent);
+          if (exactMatch) return textContent === expectedText;
+          return textContent.includes(expectedText);
+        },
+      );
     },
     { timeout },
     { text, exact },
@@ -317,7 +346,8 @@ function startCase(value) {
 }
 
 function browserExecutablePath() {
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
+  if (process.env.PUPPETEER_EXECUTABLE_PATH)
+    return process.env.PUPPETEER_EXECUTABLE_PATH;
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
   if (process.platform === "darwin") {
     return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";

@@ -119,7 +119,10 @@ export const FormCodeEditor = ({
                 title="Copy"
                 arrow
               >
-                <IconButton onClick={() => handleCopyClick(restField.value)}>
+                <IconButton
+                  aria-label={label ? `Copy ${label}` : "Copy code"}
+                  onClick={() => handleCopyClick(restField.value)}
+                >
                   {rest?.copyIcon ? (
                     rest?.copyIcon
                   ) : (

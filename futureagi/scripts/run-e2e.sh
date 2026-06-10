@@ -63,7 +63,7 @@ if [ "$SKIP_INFRA" = false ]; then
     RETRIES=0
     MAX_RETRIES=30
     until docker compose -f docker-compose.test.yml -p futureagi-test \
-          exec -T test-clickhouse wget --quiet --tries=1 --spider http://localhost:8123/ping 2>/dev/null; do
+          exec -T test-clickhouse wget --quiet --tries=1 --spider http://127.0.0.1:8123/ping 2>/dev/null; do
         RETRIES=$((RETRIES + 1))
         if [ "$RETRIES" -ge "$MAX_RETRIES" ]; then
             error "ClickHouse did not become healthy after ${MAX_RETRIES} attempts"

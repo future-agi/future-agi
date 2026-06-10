@@ -8787,7 +8787,7 @@ SELECT json_build_object(
 }
 
 async function deleteAgentccApiKeyBulkFixtureDb({ marker, organizationId }) {
-  const sql = `
+  const deleted = await runPostgresJson(`
 WITH target AS (
   SELECT id
   FROM agentcc_api_key
@@ -8800,8 +8800,11 @@ deleted_rows AS (
   WHERE k.id = target.id
   RETURNING k.id
 )
+SELECT json_build_object('deleted_count', count(*)) FROM deleted_rows;
+`);
+  const remaining = await runPostgresJson(`
 SELECT json_build_object(
-  'deleted_count', (SELECT count(*) FROM deleted_rows),
+  'deleted_count', ${Number(deleted?.deleted_count ?? 0)},
   'remaining_count', (
     SELECT count(*)
     FROM agentcc_api_key
@@ -8809,8 +8812,8 @@ SELECT json_build_object(
       AND gateway_key_id LIKE ${sqlString(`${marker}%`)}
   )
 );
-`;
-  return runPostgresJson(sql);
+`);
+  return remaining;
 }
 
 async function expectApiError(fn, expectedStatuses, successMessage) {

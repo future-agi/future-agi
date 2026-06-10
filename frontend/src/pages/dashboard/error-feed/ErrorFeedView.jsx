@@ -1,14 +1,13 @@
 import React, { useState } from "react";
-import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import SvgColor from "src/components/svg-color";
-import Iconify from "src/components/iconify";
 import { useErrorFeedList } from "src/api/errorFeed/error-feed";
 import ErrorFeedFilters from "./components/ErrorFeedFilters";
+import ErrorFeedStatsBar from "./components/ErrorFeedStatsBar";
 import ErrorFeedTable from "./components/ErrorFeedTable";
 import { useErrorFeedApiParams } from "./store";
 
 export default function ErrorFeedView() {
-  const theme = useTheme();
   const [selected, setSelected] = useState([]);
 
   const apiParams = useErrorFeedApiParams();
@@ -136,6 +135,8 @@ export default function ErrorFeedView() {
           selected={selected}
           onClearSelection={handleClearSelection}
         />
+
+        <ErrorFeedStatsBar />
 
         {/* Table */}
         <ErrorFeedTable

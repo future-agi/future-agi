@@ -7,7 +7,7 @@ from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 
 from model_hub.models.prompt_folders import PromptFolder
-from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+from model_hub.models.run_prompt import PromptEvalConfig, PromptTemplate, PromptVersion
 from model_hub.serializers.prompt_folder import PromptFolderSerializer
 from model_hub.utils.workspace_scope import (
     request_organization,
@@ -56,8 +56,9 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     self.perform_create(serializer)
             except IntegrityError as e:
-                if "unique_prompt_folder_name_organization_workspace_not_deleted" in str(
-                    e
+                if (
+                    "unique_prompt_folder_name_organization_workspace_not_deleted"
+                    in str(e)
                 ):
                     return self._duplicate_name_response()
                 raise
@@ -115,8 +116,9 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     self.perform_update(serializer)
             except IntegrityError as e:
-                if "unique_prompt_folder_name_organization_workspace_not_deleted" in str(
-                    e
+                if (
+                    "unique_prompt_folder_name_organization_workspace_not_deleted"
+                    in str(e)
                 ):
                     return self._duplicate_name_response()
                 raise
@@ -163,6 +165,12 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         prompt_template_ids = list(prompt_templates.values_list("id", flat=True))
 
         if prompt_template_ids:
+            PromptEvalConfig.objects.filter(
+                prompt_template_id__in=prompt_template_ids
+            ).update(
+                deleted=True,
+                deleted_at=now,
+            )
             PromptVersion.objects.filter(
                 original_template_id__in=prompt_template_ids
             ).update(

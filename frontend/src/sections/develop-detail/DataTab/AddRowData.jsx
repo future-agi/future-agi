@@ -80,6 +80,11 @@ const AddRowData = ({ dataset }) => {
     setValue("CUcode", data?.result?.code?.curl_add_col || "");
   }, [data, setValue]);
 
+  const sdkResult = data?.result || {};
+  const sdkApiKeys = sdkResult?.api_keys || sdkResult?.apiKeys || {};
+  const sdkApiKey = sdkApiKeys?.api_key || sdkApiKeys?.apiKey || "N/A";
+  const sdkSecretKey = sdkApiKeys?.secret_key || sdkApiKeys?.secretKey || "N/A";
+
   if (isLoading) {
     return (
       <Box height="100vh" overflow="auto" py="50px" px="15px">
@@ -177,6 +182,7 @@ const AddRowData = ({ dataset }) => {
                 {data?.result?.dataset?.name}
               </Typography>
               <IconButton
+                aria-label="Copy Dataset Name"
                 size="small"
                 onClick={() =>
                   copyToClipboard(data?.result?.dataset?.name, "Dataset Name")
@@ -213,6 +219,7 @@ const AddRowData = ({ dataset }) => {
                 {data?.result?.dataset?.id}
               </Typography>
               <IconButton
+                aria-label="Copy Dataset ID"
                 size="small"
                 onClick={() =>
                   copyToClipboard(data?.result?.dataset?.id, "Dataset ID")
@@ -242,13 +249,12 @@ const AddRowData = ({ dataset }) => {
                 p="5px 12px"
                 color="black"
               >
-                {data?.result?.apiKeys?.apiKey}
+                {sdkApiKey}
               </Typography>
               <IconButton
+                aria-label="Copy API Key"
                 size="small"
-                onClick={() =>
-                  copyToClipboard(data?.result?.apiKeys?.apiKey, "API Key")
-                }
+                onClick={() => copyToClipboard(sdkApiKey, "API Key")}
                 sx={{ color: "text.secondary" }}
               >
                 <Iconify icon="eva:copy-outline" width={16} height={16} />
@@ -274,16 +280,12 @@ const AddRowData = ({ dataset }) => {
                 p="5px 12px"
                 color="black"
               >
-                {data?.result?.apiKeys?.secretKey}
+                {sdkSecretKey}
               </Typography>
               <IconButton
+                aria-label="Copy Secret Key"
                 size="small"
-                onClick={() =>
-                  copyToClipboard(
-                    data?.result?.apiKeys?.secretKey,
-                    "Secret Key",
-                  )
-                }
+                onClick={() => copyToClipboard(sdkSecretKey, "Secret Key")}
                 sx={{ color: "text.secondary" }}
               >
                 <Iconify icon="eva:copy-outline" width={16} height={16} />

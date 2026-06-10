@@ -13,9 +13,17 @@ const require = createRequire(import.meta.url);
 const puppeteer = require("puppeteer-core");
 
 const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
-const RULE_SCREENSHOT_PATH = "/tmp/gateway-monitoring-rule-create-smoke.png";
-const CHANNEL_SCREENSHOT_PATH =
+const RULE_CREATE_SCREENSHOT_PATH =
+  "/tmp/gateway-monitoring-rule-create-smoke.png";
+const RULE_EDIT_SCREENSHOT_PATH = "/tmp/gateway-monitoring-rule-edit-smoke.png";
+const RULE_DELETE_SCREENSHOT_PATH =
+  "/tmp/gateway-monitoring-rule-delete-smoke.png";
+const CHANNEL_CREATE_SCREENSHOT_PATH =
   "/tmp/gateway-monitoring-channel-create-smoke.png";
+const CHANNEL_EDIT_SCREENSHOT_PATH =
+  "/tmp/gateway-monitoring-channel-edit-smoke.png";
+const CHANNEL_DELETE_SCREENSHOT_PATH =
+  "/tmp/gateway-monitoring-channel-delete-smoke.png";
 const FAILURE_SCREENSHOT_PATH =
   "/tmp/gateway-monitoring-mutation-smoke-failure.png";
 const MUTATION_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
@@ -132,8 +140,11 @@ async function main() {
     ]) {
       await waitForVisibleText(page, label, { exact: true });
     }
-    await page.screenshot({ path: RULE_SCREENSHOT_PATH, fullPage: true });
-    evidence.rule_screenshot = RULE_SCREENSHOT_PATH;
+    await page.screenshot({
+      path: RULE_CREATE_SCREENSHOT_PATH,
+      fullPage: true,
+    });
+    evidence.rule_create_screenshot = RULE_CREATE_SCREENSHOT_PATH;
 
     const configWithRule = await auth.client.get(
       apiPath("/agentcc/gateways/{id}/config/", { id: evidence.gateway_id }),
@@ -154,6 +165,103 @@ async function main() {
       threshold: savedRule.threshold,
       enabled: savedRule.enabled,
     };
+
+    await clickByAriaLabel(page, `Edit alert rule ${evidence.rule_name}`);
+    await waitForVisibleText(page, "Edit Alert Rule", { exact: true });
+    await setDialogInputByLabel(page, "Rule Name", evidence.edited_rule_name);
+    await setDialogInputByLabel(
+      page,
+      "Threshold",
+      String(evidence.edited_threshold),
+    );
+    await setDialogInputByLabel(page, "Window", evidence.edited_window);
+
+    const [editRuleResponse] = await waitForResponsesDuring(
+      page,
+      "edit monitoring alert rule through browser",
+      [
+        updateConfigMutationResponse(evidence.gateway_id),
+        gatewayConfigResponse(),
+      ],
+      () => clickDialogButton(page, "Save Rule"),
+    );
+    evidence.edit_rule_response = await responseResult(editRuleResponse);
+    await waitForNoVisibleText(page, "Edit Alert Rule", { exact: true });
+
+    for (const label of [
+      evidence.edited_rule_name,
+      String(evidence.edited_threshold),
+      evidence.edited_window,
+    ]) {
+      await waitForVisibleText(page, label, { exact: true });
+    }
+    await waitForNoVisibleText(page, evidence.rule_name, { exact: true });
+    await page.screenshot({ path: RULE_EDIT_SCREENSHOT_PATH, fullPage: true });
+    evidence.rule_edit_screenshot = RULE_EDIT_SCREENSHOT_PATH;
+
+    const configWithEditedRule = await auth.client.get(
+      apiPath("/agentcc/gateways/{id}/config/", { id: evidence.gateway_id }),
+    );
+    const oldRuleAfterEdit = extractAlertRules(configWithEditedRule).find(
+      (rule) => rule.name === evidence.rule_name,
+    );
+    const editedRule = extractAlertRules(configWithEditedRule).find(
+      (rule) => rule.name === evidence.edited_rule_name,
+    );
+    assert(
+      !oldRuleAfterEdit &&
+        editedRule?.enabled === true &&
+        editedRule?.metric === "error_rate" &&
+        editedRule?.threshold === evidence.edited_threshold &&
+        editedRule?.window === evidence.edited_window,
+      `Edited alert rule did not match browser form: ${JSON.stringify({
+        oldRuleAfterEdit,
+        editedRule,
+      })}`,
+    );
+    evidence.edited_rule = {
+      name: editedRule.name,
+      threshold: editedRule.threshold,
+      window: editedRule.window,
+      enabled: editedRule.enabled,
+    };
+
+    await clickByAriaLabel(
+      page,
+      `Delete alert rule ${evidence.edited_rule_name}`,
+    );
+    await waitForVisibleText(page, "Delete Alert Rule", { exact: true });
+    const [deleteRuleResponse] = await waitForResponsesDuring(
+      page,
+      "delete monitoring alert rule through browser",
+      [
+        updateConfigMutationResponse(evidence.gateway_id),
+        gatewayConfigResponse(),
+      ],
+      () => clickDialogButton(page, "Delete"),
+    );
+    evidence.delete_rule_response = await responseResult(deleteRuleResponse);
+    await waitForNoVisibleText(page, "Delete Alert Rule", { exact: true });
+    await waitForNoVisibleText(page, evidence.edited_rule_name, {
+      exact: true,
+    });
+    await page.screenshot({
+      path: RULE_DELETE_SCREENSHOT_PATH,
+      fullPage: true,
+    });
+    evidence.rule_delete_screenshot = RULE_DELETE_SCREENSHOT_PATH;
+
+    const configAfterRuleDelete = await auth.client.get(
+      apiPath("/agentcc/gateways/{id}/config/", { id: evidence.gateway_id }),
+    );
+    const deletedRule = extractAlertRules(configAfterRuleDelete).find(
+      (rule) => rule.name === evidence.edited_rule_name,
+    );
+    assert(
+      !deletedRule,
+      `Deleted alert rule remained in /config/: ${JSON.stringify(deletedRule)}`,
+    );
+    evidence.deleted_rule_absent = true;
 
     await clickVisibleText(page, "Add Channel", { exact: true });
     await waitForVisibleText(page, "Add Notification Channel", {
@@ -189,8 +297,11 @@ async function main() {
       await waitForVisibleText(page, label, { exact: true });
     }
     await waitForVisibleText(page, "https://example.com/");
-    await page.screenshot({ path: CHANNEL_SCREENSHOT_PATH, fullPage: true });
-    evidence.channel_screenshot = CHANNEL_SCREENSHOT_PATH;
+    await page.screenshot({
+      path: CHANNEL_CREATE_SCREENSHOT_PATH,
+      fullPage: true,
+    });
+    evidence.channel_create_screenshot = CHANNEL_CREATE_SCREENSHOT_PATH;
 
     const configWithChannel = await auth.client.get(
       apiPath("/agentcc/gateways/{id}/config/", { id: evidence.gateway_id }),
@@ -210,6 +321,115 @@ async function main() {
       type: savedChannel.type,
       url: savedChannel.url,
     };
+    evidence.channel_row_action_controls_after_create =
+      await countMonitoringRowActions(page);
+
+    await clickByAriaLabel(
+      page,
+      `Edit notification channel ${evidence.channel_name}`,
+    );
+    await waitForVisibleText(page, "Edit Notification Channel", {
+      exact: true,
+    });
+    await setDialogInputByLabel(
+      page,
+      "Channel Name",
+      evidence.edited_channel_name,
+    );
+    await setDialogInputByLabel(
+      page,
+      "URL / Endpoint",
+      evidence.edited_channel_url,
+    );
+
+    const [editChannelResponse] = await waitForResponsesDuring(
+      page,
+      "edit monitoring notification channel through browser",
+      [
+        updateConfigMutationResponse(evidence.gateway_id),
+        gatewayConfigResponse(),
+      ],
+      () => clickDialogButton(page, "Save Channel"),
+    );
+    evidence.edit_channel_response = await responseResult(editChannelResponse);
+    await waitForNoVisibleText(page, "Edit Notification Channel", {
+      exact: true,
+    });
+
+    await waitForVisibleText(page, evidence.edited_channel_name, {
+      exact: true,
+    });
+    await waitForNoVisibleText(page, evidence.channel_name, { exact: true });
+    await page.screenshot({
+      path: CHANNEL_EDIT_SCREENSHOT_PATH,
+      fullPage: true,
+    });
+    evidence.channel_edit_screenshot = CHANNEL_EDIT_SCREENSHOT_PATH;
+
+    const configWithEditedChannel = await auth.client.get(
+      apiPath("/agentcc/gateways/{id}/config/", { id: evidence.gateway_id }),
+    );
+    const oldChannelAfterEdit = extractChannels(configWithEditedChannel).find(
+      (channel) => channel.name === evidence.channel_name,
+    );
+    const editedChannel = extractChannels(configWithEditedChannel).find(
+      (channel) => channel.name === evidence.edited_channel_name,
+    );
+    assert(
+      !oldChannelAfterEdit &&
+        editedChannel?.type === "webhook" &&
+        editedChannel?.url === evidence.edited_channel_url,
+      `Edited alert channel did not match browser form: ${JSON.stringify({
+        oldChannelAfterEdit,
+        editedChannel,
+      })}`,
+    );
+    evidence.edited_channel = {
+      name: editedChannel.name,
+      type: editedChannel.type,
+      url: editedChannel.url,
+    };
+
+    await clickByAriaLabel(
+      page,
+      `Delete notification channel ${evidence.edited_channel_name}`,
+    );
+    await waitForVisibleText(page, "Delete Channel", { exact: true });
+    const [deleteChannelResponse] = await waitForResponsesDuring(
+      page,
+      "delete monitoring notification channel through browser",
+      [
+        updateConfigMutationResponse(evidence.gateway_id),
+        gatewayConfigResponse(),
+      ],
+      () => clickDialogButton(page, "Delete"),
+    );
+    evidence.delete_channel_response = await responseResult(
+      deleteChannelResponse,
+    );
+    await waitForNoVisibleText(page, "Delete Channel", { exact: true });
+    await waitForNoVisibleText(page, evidence.edited_channel_name, {
+      exact: true,
+    });
+    await page.screenshot({
+      path: CHANNEL_DELETE_SCREENSHOT_PATH,
+      fullPage: true,
+    });
+    evidence.channel_delete_screenshot = CHANNEL_DELETE_SCREENSHOT_PATH;
+
+    const configAfterChannelDelete = await auth.client.get(
+      apiPath("/agentcc/gateways/{id}/config/", { id: evidence.gateway_id }),
+    );
+    const deletedChannel = extractChannels(configAfterChannelDelete).find(
+      (channel) => channel.name === evidence.edited_channel_name,
+    );
+    assert(
+      !deletedChannel,
+      `Deleted alert channel remained in /config/: ${JSON.stringify(
+        deletedChannel,
+      )}`,
+    );
+    evidence.deleted_channel_absent = true;
     evidence.browser_row_action_controls =
       await countMonitoringRowActions(page);
 
@@ -222,8 +442,8 @@ async function main() {
       )}`,
     );
     assert(
-      browserMutations.length === 2,
-      `Expected two monitoring browser mutations, saw ${browserMutations.length}: ${browserMutations.join(
+      browserMutations.length === 6,
+      `Expected six monitoring browser mutations, saw ${browserMutations.length}: ${browserMutations.join(
         "; ",
       )}`,
     );
@@ -318,10 +538,15 @@ async function preflightMonitoring(client, runId) {
       original_org_config_id: originalActiveConfig.id,
       original_org_config_version: originalActiveConfig.version,
       rule_name: `ui_monitoring_rule_${suffix}`,
+      edited_rule_name: `ui_monitoring_rule_${suffix}_edited`,
       channel_name: `ui_monitoring_channel_${suffix}`,
+      edited_channel_name: `ui_monitoring_channel_${suffix}_edited`,
       channel_url: `https://example.com/futureagi-monitoring-${shortSuffix}`,
+      edited_channel_url: `https://example.com/futureagi-monitoring-${shortSuffix}-edited`,
       threshold: 73,
+      edited_threshold: 41,
       window: "7m",
+      edited_window: "13m",
     },
     cleanup: createOrgConfigRestorer({
       client,
@@ -607,6 +832,35 @@ async function clickVisibleText(
     { text, exact },
   );
   assert(clicked, `Could not click visible text: ${text}`);
+}
+
+async function clickByAriaLabel(page, label, timeout = 30000) {
+  await page.waitForFunction(
+    (expectedLabel) =>
+      window
+        .visibleElements("button")
+        .some(
+          (button) =>
+            button.getAttribute("aria-label") === expectedLabel &&
+            !button.disabled,
+        ),
+    { timeout },
+    label,
+  );
+  const clicked = await page.evaluate((expectedLabel) => {
+    const button = window
+      .visibleElements("button")
+      .find(
+        (candidate) =>
+          candidate.getAttribute("aria-label") === expectedLabel &&
+          !candidate.disabled,
+      );
+    if (!button) return false;
+    button.scrollIntoView({ block: "center", inline: "center" });
+    window.dispatchClick(button);
+    return true;
+  }, label);
+  assert(clicked, `Could not click aria-label: ${label}`);
 }
 
 async function setDialogInputByLabel(page, label, value, timeout = 30000) {

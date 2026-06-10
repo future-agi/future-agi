@@ -100,15 +100,24 @@ async function main() {
       "Active",
       "Revoked",
       "Expired",
-      "Name",
-      "Key",
-      "Status",
-      "Owner",
-      "Models",
-      "Created",
-      "Last Used",
     ]) {
       await waitForVisibleText(page, label, { exact: true });
+    }
+    if (Number(evidence.starting_api_key_count) === 0) {
+      await waitForVisibleText(page, "No API keys yet", { exact: true });
+      await waitForVisibleText(page, "Create Your First Key", { exact: true });
+    } else {
+      for (const label of [
+        "Name",
+        "Key",
+        "Status",
+        "Owner",
+        "Models",
+        "Created",
+        "Last Used",
+      ]) {
+        await waitForVisibleText(page, label, { exact: true });
+      }
     }
 
     await clickVisibleText(page, "Create Key", { exact: true });
@@ -192,7 +201,7 @@ async function main() {
     await waitForVisibleText(page, "View Logs", { exact: true });
     await waitForVisibleText(page, "Revoke Key", { exact: true });
 
-    await page.click('button[title="Edit"]');
+    await clickVisibleButtonByTitle(page, "Edit");
     await waitForVisibleText(page, "Edit API Key", { exact: true });
     await setDialogInputByLabel(page, "Name", updatedKeyName);
     await setDialogInputByLabel(page, "Owner", updatedOwner);
@@ -616,6 +625,41 @@ async function clickDialogButton(page, label, timeout = 30000) {
     return true;
   }, label);
   assert(clicked, `Could not click dialog button: ${label}`);
+}
+
+async function clickVisibleButtonByTitle(page, title, timeout = 30000) {
+  await page.waitForFunction(
+    (expectedTitle) =>
+      window
+        .visibleElements("button")
+        .some(
+          (button) =>
+            button.getAttribute("title") === expectedTitle && !button.disabled,
+        ),
+    { timeout },
+    title,
+  );
+  const clicked = await page.evaluate((expectedTitle) => {
+    const button = window
+      .visibleElements("button")
+      .find(
+        (candidate) =>
+          candidate.getAttribute("title") === expectedTitle &&
+          !candidate.disabled,
+      );
+    if (!button) return false;
+    button.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+    );
+    button.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, cancelable: true }),
+    );
+    button.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+    return true;
+  }, title);
+  assert(clicked, `Could not click visible button titled: ${title}`);
 }
 
 async function setDialogInputByLabel(page, label, value, timeout = 30000) {

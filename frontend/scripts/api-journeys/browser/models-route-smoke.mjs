@@ -97,7 +97,10 @@ async function main() {
       () => window.location.pathname === "/dashboard/models",
       { timeout: 30000 },
     );
-    await waitForVisibleText(page, "Models", { exact: true });
+    evidence.route_heading = await waitForAnyVisibleText(page, [
+      "Models",
+      "Model",
+    ]);
     await waitForVisibleText(page, "Add Model", { exact: true });
 
     if (firstModel) {
@@ -230,6 +233,42 @@ async function waitForVisibleText(
     { timeout },
     { text, exact },
   );
+}
+
+async function waitForAnyVisibleText(
+  page,
+  texts,
+  { exact = true, timeout = 30000 } = {},
+) {
+  const handle = await page.waitForFunction(
+    ({ candidates, exact: exactMatch }) => {
+      const normalized = (value) => String(value || "").trim();
+      const isElementVisible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+      return (
+        candidates.find((candidate) =>
+          Array.from(document.querySelectorAll("body *")).some((element) => {
+            if (!isElementVisible(element)) return false;
+            const textContent = normalized(element.textContent);
+            return exactMatch
+              ? textContent === candidate
+              : textContent.includes(candidate);
+          }),
+        ) || null
+      );
+    },
+    { timeout },
+    { candidates: texts, exact },
+  );
+  return handle.jsonValue();
 }
 
 async function clickVisibleText(page, text) {

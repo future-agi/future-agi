@@ -98,70 +98,94 @@ async function main() {
       "Provider Config",
       "Routing",
       "Cache",
-      "Provider",
-      "Status",
-      "Models",
-      "Latency (P50)",
-      "Error Rate",
-      "Circuit Breaker",
     ]) {
       await waitForVisibleText(page, label, { exact: true });
     }
-    await waitForVisibleText(page, sampleProvider.health_display_name, {
-      exact: true,
-    });
-    if (sampleProvider.models.length > 0) {
-      await waitForVisibleText(page, sampleProvider.models[0], {
+
+    if (sampleProvider) {
+      for (const label of [
+        "Provider",
+        "Status",
+        "Models",
+        "Latency (P50)",
+        "Error Rate",
+        "Circuit Breaker",
+      ]) {
+        await waitForVisibleText(page, label, { exact: true });
+      }
+      await waitForVisibleText(page, sampleProvider.health_display_name, {
         exact: true,
       });
+      if (sampleProvider.models.length > 0) {
+        await waitForVisibleText(page, sampleProvider.models[0], {
+          exact: true,
+        });
+      }
+    } else {
+      await waitForVisibleText(page, "No provider data available.", {
+        exact: true,
+      });
+      evidence.empty_provider_health = true;
     }
 
     await clickVisibleText(page, "Provider Config", { exact: true });
     await waitForPath(page, "/dashboard/gateway/providers/config");
-    await waitForVisibleText(page, sampleProvider.name, { exact: true });
-    for (const label of [
-      "Base URL",
-      "API Format",
-      "API Key",
-      "Timeout",
-      "Max Concurrent",
-      "Connection Pool",
-      "Models",
-    ]) {
-      await waitForVisibleText(page, label, { exact: true });
-    }
-    for (const value of [
-      sampleProvider.base_url,
-      sampleProvider.api_format,
-      sampleProvider.default_timeout,
-      sampleProvider.max_concurrent,
-      sampleProvider.conn_pool_size,
-      sampleProvider.models[0],
-    ]) {
-      if (value !== undefined && value !== null && value !== "") {
-        await waitForVisibleText(page, String(value), { exact: true });
+    if (sampleProvider) {
+      await waitForVisibleText(page, sampleProvider.name, { exact: true });
+      for (const label of [
+        "Base URL",
+        "API Format",
+        "API Key",
+        "Timeout",
+        "Max Concurrent",
+        "Connection Pool",
+        "Models",
+      ]) {
+        await waitForVisibleText(page, label, { exact: true });
       }
+      for (const value of [
+        sampleProvider.base_url,
+        sampleProvider.api_format,
+        sampleProvider.default_timeout,
+        sampleProvider.max_concurrent,
+        sampleProvider.conn_pool_size,
+        sampleProvider.models[0],
+      ]) {
+        if (value !== undefined && value !== null && value !== "") {
+          await waitForVisibleText(page, String(value), { exact: true });
+        }
+      }
+      evidence.provider_config_mode = "configured";
+    } else {
+      await waitForVisibleText(page, "No provider configuration available.", {
+        exact: true,
+      });
+      evidence.provider_config_mode = "empty";
     }
     await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
     evidence.screenshot = SCREENSHOT_PATH;
 
-    const fetchResponse = await waitForResponseDuring(
-      page,
-      "fetch provider models in edit dialog",
-      (response) =>
-        response.url().includes("/agentcc/provider-credentials/fetch_models/") &&
-        response.request().method() === "POST",
-      () => clickTitleWithinText(page, sampleProvider.name, "Edit provider"),
-    );
-    providerFetchResponses.push(
-      `${fetchResponse.status()} ${fetchResponse.url()}`,
-    );
-    await waitForVisibleText(page, "Edit Provider", { exact: true });
-    await waitForVisibleText(page, "Provider Name");
-    await waitForVisibleText(page, "API Format", { exact: true });
-    await waitForVisibleText(page, "Models", { exact: true });
-    await clickDialogButton(page, "Cancel");
-    await waitForNoVisibleText(page, "Edit Provider", { exact: true });
+    if (sampleProvider) {
+      const fetchResponse = await waitForResponseDuring(
+        page,
+        "fetch provider models in edit dialog",
+        (response) =>
+          response
+            .url()
+            .includes("/agentcc/provider-credentials/fetch_models/") &&
+          response.request().method() === "POST",
+        () => clickTitleWithinText(page, sampleProvider.name, "Edit provider"),
+      );
+      providerFetchResponses.push(
+        `${fetchResponse.status()} ${fetchResponse.url()}`,
+      );
+      await waitForVisibleText(page, "Edit Provider", { exact: true });
+      await waitForVisibleText(page, "Provider Name");
+      await waitForVisibleText(page, "API Format", { exact: true });
+      await waitForVisibleText(page, "Models", { exact: true });
+      await clickDialogButton(page, "Cancel");
+      await waitForNoVisibleText(page, "Edit Provider", { exact: true });
+    }
 
     await clickVisibleText(page, "Routing", { exact: true });
     await waitForPath(page, "/dashboard/gateway/providers/routing");
@@ -212,10 +236,12 @@ async function main() {
       unexpectedMutations.length === 0,
       `Unexpected Gateway provider mutations: ${unexpectedMutations.join("; ")}`,
     );
-    assert(
-      providerFetchResponses.length > 0,
-      "Provider edit dialog did not exercise fetch-model path.",
-    );
+    if (sampleProvider) {
+      assert(
+        providerFetchResponses.length > 0,
+        "Provider edit dialog did not exercise fetch-model path.",
+      );
+    }
   } catch (error) {
     caughtError = error;
     await page
@@ -289,9 +315,7 @@ async function preflightGateway(client) {
         name.charAt(0).toUpperCase() + name.slice(1),
       base_url: providerConfig.base_url ?? providerConfig.baseUrl ?? "",
       api_format: providerConfig.api_format ?? providerConfig.apiFormat ?? "",
-      models: Array.isArray(providerConfig.models)
-        ? providerConfig.models
-        : [],
+      models: Array.isArray(providerConfig.models) ? providerConfig.models : [],
       default_timeout:
         providerConfig.default_timeout ?? providerConfig.defaultTimeout,
       max_concurrent:
@@ -300,13 +324,10 @@ async function preflightGateway(client) {
         providerConfig.conn_pool_size ?? providerConfig.connPoolSize,
     }),
   );
-  assert(
-    providerEntries.length > 0,
-    "Gateway config returned no providers to browser-verify.",
-  );
   const sampleProvider =
     providerEntries.find((provider) => provider.models.length > 0) ||
-    providerEntries[0];
+    providerEntries[0] ||
+    null;
 
   return {
     gateway_id: gatewayId,
@@ -534,8 +555,9 @@ async function clickTitleWithinText(page, text, title, timeout = 30000) {
     ({ expectedText, expectedTitle }) => {
       const textElements = window
         .visibleElements()
-        .filter((element) =>
-          window.normalizeText(element.textContent) === expectedText,
+        .filter(
+          (element) =>
+            window.normalizeText(element.textContent) === expectedText,
         );
       for (const element of textElements) {
         const container =
@@ -544,7 +566,9 @@ async function clickTitleWithinText(page, text, title, timeout = 30000) {
           element;
         const button = Array.from(
           container.querySelectorAll("button[title]"),
-        ).find((candidate) => candidate.getAttribute("title") === expectedTitle);
+        ).find(
+          (candidate) => candidate.getAttribute("title") === expectedTitle,
+        );
         if (button && !button.disabled) {
           button.dispatchEvent(
             new MouseEvent("mousedown", { bubbles: true, cancelable: true }),

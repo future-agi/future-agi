@@ -478,7 +478,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 toJSONString(metadata) AS metadata_json,
                 custom_eval_config_id,
                 attrs_string, attrs_number, attrs_bool
-            FROM spans
+            FROM spans FINAL
             WHERE id = %(span_id)s
               AND is_deleted = 0
             LIMIT 1

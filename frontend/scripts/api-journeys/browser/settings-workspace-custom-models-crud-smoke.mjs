@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import http from "node:http";
 import { createRequire } from "node:module";
 import process from "node:process";
+import { promisify } from "node:util";
 import {
   apiPath,
   assert,
@@ -10,6 +12,7 @@ import {
 
 const require = createRequire(import.meta.url);
 const puppeteer = require("puppeteer-core");
+const execFileAsync = promisify(execFile);
 
 const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
 const ROUTE_MODE =
@@ -206,6 +209,11 @@ async function main() {
     await clickVisibleButton(page, "Delete");
     await assertHttpResponseOk(await deleteResponse, "custom model delete");
     await waitForCustomModel(auth.client, { modelName, absent: true });
+    const hardCleanup = await hardDeleteCustomModelRows([createdModelId]);
+    assert(
+      hardCleanup.exact_custom_model_rows === 0,
+      `Custom model hard cleanup left rows behind: ${JSON.stringify(hardCleanup)}`,
+    );
     deletedViaUi = true;
     await waitForNoVisibleText(page, modelName, { exact: true });
     await page.screenshot({ path: DELETE_SCREENSHOT_PATH, fullPage: true });
@@ -235,6 +243,7 @@ async function main() {
             update_screenshot: UPDATE_SCREENSHOT_PATH,
             delete_screenshot: DELETE_SCREENSHOT_PATH,
             expected_mutation_count: expectedMutations.length,
+            hard_cleanup_custom_model_rows: hardCleanup.exact_custom_model_rows,
           },
         },
         null,
@@ -262,6 +271,7 @@ async function main() {
     await fakeServer.close();
     if (createdModelId && !deletedViaUi) {
       await deleteCustomModelIds(auth.client, [createdModelId]);
+      await hardDeleteCustomModelRows([createdModelId]);
     }
     await cleanupModelsByName(auth.client, modelName);
   }
@@ -673,13 +683,59 @@ async function cleanupModelsByName(client, modelName) {
     .filter((model) => model.user_model_id === modelName)
     .map((model) => model.id)
     .filter(Boolean);
-  if (ids.length > 0) await deleteCustomModelIds(client, ids);
+  if (ids.length > 0) {
+    await deleteCustomModelIds(client, ids);
+    await hardDeleteCustomModelRows(ids);
+  }
 }
 
 async function deleteCustomModelIds(client, ids) {
   await client.delete(apiPath("/model-hub/custom_models/delete/"), {
     body: { ids },
   });
+}
+
+async function hardDeleteCustomModelRows(ids) {
+  const quotedIds = ids.filter(Boolean).map(sqlString);
+  if (quotedIds.length === 0) {
+    return { deleted_custom_model_rows: 0, exact_custom_model_rows: 0 };
+  }
+  const deleted = await runPostgresJson(`
+    WITH deleted_models AS (
+      DELETE FROM model_hub_customaimodel
+      WHERE id IN (${quotedIds.join(", ")})
+      RETURNING 1
+    )
+    SELECT json_build_object(
+      'deleted_custom_model_rows', (SELECT count(*) FROM deleted_models)
+    );
+  `);
+  const verified = await runPostgresJson(`
+    SELECT json_build_object(
+      'exact_custom_model_rows', (
+        SELECT count(*) FROM model_hub_customaimodel WHERE id IN (${quotedIds.join(", ")})
+      )
+    );
+  `);
+  return { ...deleted, ...verified };
+}
+
+async function runPostgresJson(sql) {
+  const container = process.env.API_JOURNEY_DB_CONTAINER || "ws2-postgres";
+  const user = process.env.API_JOURNEY_DB_USER || "user";
+  const database = process.env.API_JOURNEY_DB_NAME || "tfc";
+  const { stdout } = await execFileAsync(
+    "docker",
+    ["exec", container, "psql", "-U", user, "-d", database, "-At", "-c", sql],
+    { maxBuffer: 10 * 1024 * 1024 },
+  );
+  const text = stdout.trim();
+  assert(text, "Postgres custom-model cleanup returned no JSON output.");
+  return JSON.parse(text);
+}
+
+function sqlString(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
 }
 
 function assertPayloadDoesNotContain(payload, forbiddenValues) {

@@ -23,7 +23,10 @@ async function main() {
     ? toolConfig.enabled_groups
     : [];
   assert(config?.mcp_url, "MCP config omitted mcp_url.");
-  assert(availableGroups.length > 0, "MCP config returned no available groups.");
+  assert(
+    availableGroups.length > 0,
+    "MCP config returned no available groups.",
+  );
 
   const groupBadge =
     enabledGroups.length === availableGroups.length
@@ -56,9 +59,11 @@ async function main() {
       localStorage.setItem("refreshToken", tokens.refresh || "");
       localStorage.setItem("rememberMe", "true");
       localStorage.setItem("initial-render", "done");
-      if (organizationId) sessionStorage.setItem("organizationId", organizationId);
+      if (organizationId)
+        sessionStorage.setItem("organizationId", organizationId);
       if (workspaceId) sessionStorage.setItem("workspaceId", workspaceId);
-      if (user?.id) sessionStorage.setItem("futureagi-current-user-id", user.id);
+      if (user?.id)
+        sessionStorage.setItem("futureagi-current-user-id", user.id);
     },
     {
       tokens: auth.tokens,
@@ -97,7 +102,10 @@ async function main() {
 
     await waitForVisibleText(page, "MCP Server", { exact: true });
     await waitForVisibleText(page, "Connect Your IDE", { exact: true });
-    await waitForVisibleText(page, "Authentication happens automatically via OAuth");
+    await waitForVisibleText(
+      page,
+      "Authentication happens automatically via OAuth",
+    );
     await waitForInputValue(page, config.mcp_url);
     await waitForVisibleText(page, "Cursor", { exact: true });
     await waitForVisibleText(page, "Claude Code", { exact: true });
@@ -254,12 +262,14 @@ async function waitForNoVisibleText(
           rect.height > 0
         );
       };
-      return !Array.from(document.querySelectorAll("body *")).some((element) => {
-        if (!isVisible(element)) return false;
-        const textContent = normalized(element.textContent);
-        if (exactMatch) return textContent === expectedText;
-        return textContent.includes(expectedText);
-      });
+      return !Array.from(document.querySelectorAll("body *")).some(
+        (element) => {
+          if (!isVisible(element)) return false;
+          const textContent = normalized(element.textContent);
+          if (exactMatch) return textContent === expectedText;
+          return textContent.includes(expectedText);
+        },
+      );
     },
     { timeout },
     { text, exact },

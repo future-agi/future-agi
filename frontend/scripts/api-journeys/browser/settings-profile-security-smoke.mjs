@@ -16,6 +16,8 @@ const UPDATE_SCREENSHOT_PATH =
   "/tmp/settings-profile-security-name-update-smoke.png";
 const REVERT_SCREENSHOT_PATH =
   "/tmp/settings-profile-security-name-revert-smoke.png";
+const ORG_SECURITY_SCREENSHOT_PATH =
+  "/tmp/settings-org-security-policy-smoke.png";
 const ERROR_SCREENSHOT_PATH = "/tmp/settings-profile-security-error-smoke.png";
 
 async function main() {
@@ -25,6 +27,12 @@ async function main() {
   );
   const twoFactorStatus = await auth.client.get(
     apiPath("/accounts/2fa/status/"),
+    {
+      unwrap: false,
+    },
+  );
+  const orgPolicy = await auth.client.get(
+    apiPath("/accounts/organization/2fa-policy/"),
     {
       unwrap: false,
     },
@@ -42,6 +50,7 @@ async function main() {
 
   const apiFailures = [];
   const pageErrors = [];
+  const orgPolicyMutations = [];
   const evidence = {
     email,
     original_name: originalName,
@@ -49,6 +58,8 @@ async function main() {
     two_factor_enabled: twoFactorStatus.two_factor_enabled,
     totp_enabled: twoFactorStatus.methods?.totp?.enabled,
     passkey_enabled: twoFactorStatus.methods?.passkey?.enabled,
+    org_require_2fa: orgPolicy.require_2fa,
+    org_2fa_grace_days: orgPolicy.require_2fa_grace_period_days,
   };
 
   const browser = await puppeteer.launch({
@@ -85,10 +96,20 @@ async function main() {
     if (
       (url.includes("/accounts/get-user-profile-details/") ||
         url.includes("/accounts/2fa/status/") ||
-        url.includes("/accounts/passkeys/")) &&
+        url.includes("/accounts/passkeys/") ||
+        url.includes("/accounts/organization/2fa-policy/")) &&
       response.status() >= 400
     ) {
       apiFailures.push(`${response.status()} ${url}`);
+    }
+  });
+  page.on("request", (request) => {
+    const writeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+    if (
+      request.url().includes("/accounts/organization/2fa-policy/") &&
+      writeMethods.has(request.method())
+    ) {
+      orgPolicyMutations.push(`${request.method()} ${request.url()}`);
     }
   });
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -170,7 +191,15 @@ async function main() {
     await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
     evidence.screenshot = SCREENSHOT_PATH;
 
+    await verifyOrganizationSecurityPolicy(page, orgPolicy, twoFactorStatus);
+    evidence.org_policy_screenshot = ORG_SECURITY_SCREENSHOT_PATH;
+    evidence.org_policy_mutation_count = orgPolicyMutations.length;
+
     assert(apiFailures.length === 0, `API failures: ${apiFailures.join("; ")}`);
+    assert(
+      orgPolicyMutations.length === 0,
+      `Unexpected organization policy mutations: ${orgPolicyMutations.join("; ")}`,
+    );
     assert(pageErrors.length === 0, `Page errors: ${pageErrors.join("; ")}`);
 
     console.log(
@@ -229,6 +258,125 @@ async function installRuntimeConfig(page, auth) {
     }
     request.continue();
   });
+}
+
+async function verifyOrganizationSecurityPolicy(
+  page,
+  orgPolicy,
+  twoFactorStatus,
+) {
+  const orgPolicyResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/accounts/organization/2fa-policy/") &&
+      response.request().method() === "GET" &&
+      response.status() < 400,
+    { timeout: 60000 },
+  );
+  const twoFactorResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/accounts/2fa/status/") &&
+      response.request().method() === "GET" &&
+      response.status() < 400,
+    { timeout: 60000 },
+  );
+
+  await page.goto(`${APP_BASE}/dashboard/settings/org-settings`, {
+    waitUntil: "domcontentloaded",
+  });
+  await orgPolicyResponse;
+  await twoFactorResponse.catch(() => null);
+
+  await waitForVisibleText(page, "Organization Settings", { exact: true });
+  await waitForVisibleText(page, "Organization Name", { exact: true });
+  await waitForVisibleText(page, "Organization Security", { exact: true });
+  await waitForVisibleText(page, "Require 2FA for all members", {
+    exact: true,
+  });
+
+  const require2faChecked = await visibleSwitchCheckedNearText(
+    page,
+    "Require 2FA for all members",
+  );
+  assert(
+    require2faChecked === Boolean(orgPolicy.require_2fa),
+    "Organization 2FA toggle did not reflect the API policy state.",
+  );
+
+  if (!twoFactorStatus.two_factor_enabled && !orgPolicy.require_2fa) {
+    await waitForVisibleText(
+      page,
+      "You must enable two-factor authentication on your own account before requiring it for the organization.",
+    );
+    await waitForVisibleText(page, "Go to Profile Settings", { exact: true });
+    const require2faDisabled = await visibleSwitchDisabledNearText(
+      page,
+      "Require 2FA for all members",
+    );
+    assert(
+      require2faDisabled,
+      "Organization 2FA toggle should be disabled until the actor has 2FA.",
+    );
+  }
+
+  await waitForNoVisibleText(page, "Invalid Date");
+  await page.screenshot({
+    path: ORG_SECURITY_SCREENSHOT_PATH,
+    fullPage: true,
+  });
+}
+
+async function visibleSwitchCheckedNearText(page, text) {
+  return page.evaluate((expectedText) => {
+    const isVisible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    };
+    const label = Array.from(document.querySelectorAll("body *")).find(
+      (element) =>
+        isVisible(element) &&
+        String(element.textContent || "").trim() === expectedText,
+    );
+    let section = label;
+    for (let index = 0; section && index < 8; index += 1) {
+      if (section.querySelector('input[type="checkbox"]')) break;
+      section = section.parentElement;
+    }
+    const input = section?.querySelector('input[type="checkbox"]');
+    return Boolean(input?.checked);
+  }, text);
+}
+
+async function visibleSwitchDisabledNearText(page, text) {
+  return page.evaluate((expectedText) => {
+    const isVisible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    };
+    const label = Array.from(document.querySelectorAll("body *")).find(
+      (element) =>
+        isVisible(element) &&
+        String(element.textContent || "").trim() === expectedText,
+    );
+    let section = label;
+    for (let index = 0; section && index < 8; index += 1) {
+      if (section.querySelector('input[type="checkbox"]')) break;
+      section = section.parentElement;
+    }
+    const input = section?.querySelector('input[type="checkbox"]');
+    return Boolean(input?.disabled);
+  }, text);
 }
 
 async function clickVisibleIconByTitle(page, title) {

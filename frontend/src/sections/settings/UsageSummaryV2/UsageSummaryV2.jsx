@@ -478,7 +478,8 @@ function DimensionCard({ dim, periodCaption }) {
                       color="text.secondary"
                       sx={{ textAlign: "right" }}
                     >
-                      {formatTierRate(tier.rate)}/{getSingularUnit(dim.display_unit)}
+                      {formatTierRate(tier.rate)}/
+                      {getSingularUnit(dim.display_unit)}
                     </Typography>
                     <Typography
                       variant="caption"

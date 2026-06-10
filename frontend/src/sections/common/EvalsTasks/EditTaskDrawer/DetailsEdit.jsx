@@ -249,6 +249,12 @@ const DetailsEdit = ({
   });
 
   const onUpdateSubmit = (data, editType) => {
+    const spansLimit =
+      data.spansLimit === undefined ||
+      data.spansLimit === null ||
+      data.spansLimit === ""
+        ? undefined
+        : Number(data.spansLimit);
     const attributeFilters = extractAttributeFilters(data?.filters);
 
     // Task system filter aggregation. The task filter UI only exposes
@@ -292,7 +298,7 @@ const DetailsEdit = ({
       // row_type intentionally omitted from update payload — immutable
       // after task creation; the BE serializer rejects it on PATCH.
       sampling_rate: data.samplingRate,
-      spans_limit: String(data.spansLimit),
+      spans_limit: spansLimit,
       edit_type: editType,
     };
     updateEvalTask(transformedData);

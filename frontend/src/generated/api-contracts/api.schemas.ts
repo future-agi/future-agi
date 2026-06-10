@@ -2715,7 +2715,7 @@ export interface GatewayNameRequestApi {
   name: string;
 }
 
-export type GatewayBudgetSetRequestApiConfig = {[key: string]: { [key: string]: unknown }};
+export type GatewayBudgetSetRequestApiConfig = {[key: string]: unknown};
 
 export interface GatewayBudgetSetRequestApi {
   /** @minLength 1 */
@@ -2723,7 +2723,7 @@ export interface GatewayBudgetSetRequestApi {
   config: GatewayBudgetSetRequestApiConfig;
 }
 
-export type GatewayBatchSubmitRequestApiRequestsItem = {[key: string]: { [key: string]: unknown }};
+export type GatewayBatchSubmitRequestApiRequestsItem = {[key: string]: unknown};
 
 export interface GatewayBatchSubmitRequestApi {
   requests: GatewayBatchSubmitRequestApiRequestsItem[];
@@ -2746,7 +2746,7 @@ export interface GatewayBatchSubmitResponseApi {
   result: GatewayBatchSubmitResultApi;
 }
 
-export type GatewayMCPToolTestRequestApiArguments = {[key: string]: { [key: string]: unknown }};
+export type GatewayMCPToolTestRequestApiArguments = {[key: string]: unknown};
 
 export interface GatewayMCPToolTestRequestApi {
   /** @minLength 1 */
@@ -2875,7 +2875,7 @@ export interface GatewayConfigPatchRequestApi {
   model_map?: GatewayConfigPatchRequestApiModelMap;
 }
 
-export type GatewayNamedConfigRequestApiConfig = {[key: string]: { [key: string]: unknown }};
+export type GatewayNamedConfigRequestApiConfig = {[key: string]: unknown};
 
 export interface GatewayNamedConfigRequestApi {
   /** @minLength 1 */
@@ -2883,13 +2883,13 @@ export interface GatewayNamedConfigRequestApi {
   config: GatewayNamedConfigRequestApiConfig;
 }
 
-export type GatewayMCPGuardrailsUpdateRequestApiConfig = {[key: string]: { [key: string]: unknown }};
+export type GatewayMCPGuardrailsUpdateRequestApiConfig = {[key: string]: unknown};
 
 export interface GatewayMCPGuardrailsUpdateRequestApi {
   config: GatewayMCPGuardrailsUpdateRequestApiConfig;
 }
 
-export type GatewayMCPServerUpdateRequestApiConfig = {[key: string]: { [key: string]: unknown }};
+export type GatewayMCPServerUpdateRequestApiConfig = {[key: string]: unknown};
 
 export interface GatewayMCPServerUpdateRequestApi {
   /** @minLength 1 */
@@ -2897,7 +2897,7 @@ export interface GatewayMCPServerUpdateRequestApi {
   config: GatewayMCPServerUpdateRequestApiConfig;
 }
 
-export type GatewayProviderUpdateRequestApiConfig = {[key: string]: { [key: string]: unknown }};
+export type GatewayProviderUpdateRequestApiConfig = {[key: string]: unknown};
 
 export interface GatewayProviderUpdateRequestApi {
   /** @minLength 1 */
@@ -18057,11 +18057,6 @@ export interface DashboardCreateUpdateApi {
   description?: string;
 }
 
-/**
- * Any valid JSON value.
- */
-export type DashboardMetricCatalogItemApiChoicesItem = { [key: string]: unknown };
-
 export interface DashboardMetricCatalogItemApi {
   /** @minLength 1 */
   name: string;
@@ -18072,7 +18067,7 @@ export interface DashboardMetricCatalogItemApi {
   type?: string;
   unit?: string;
   output_type?: string;
-  choices?: DashboardMetricCatalogItemApiChoicesItem[];
+  choices?: unknown[];
   allowed_aggregations?: string[];
   data_type?: string;
 }
@@ -19588,11 +19583,6 @@ export const ProjectApiTraceType = {
 
 export type ProjectApiMetadata = { [key: string]: unknown };
 
-/**
- * Any valid JSON value.
- */
-export type ProjectApiConfig = { [key: string]: unknown };
-
 export type ProjectApiSource = typeof ProjectApiSource[keyof typeof ProjectApiSource];
 
 
@@ -19601,16 +19591,6 @@ export const ProjectApiSource = {
   prototype: 'prototype',
   simulator: 'simulator',
 } as const;
-
-/**
- * Any valid JSON value.
- */
-export type ProjectApiSessionConfig = { [key: string]: unknown };
-
-/**
- * Any valid JSON value.
- */
-export type ProjectApiTags = { [key: string]: unknown };
 
 export interface ProjectApi {
   readonly id?: string;
@@ -19627,12 +19607,12 @@ export interface ProjectApi {
   readonly created_at?: string;
   readonly updated_at?: string;
   /** Any valid JSON value. */
-  config?: ProjectApiConfig;
+  config?: unknown;
   source?: ProjectApiSource;
   /** Any valid JSON value. */
-  session_config?: ProjectApiSessionConfig;
+  session_config?: unknown;
   /** Any valid JSON value. */
-  tags?: ProjectApiTags;
+  tags?: unknown;
 }
 
 export type ProjectUserGraphDataRequestApiFiltersItemFilterConfig = {
@@ -19803,21 +19783,6 @@ export const ProjectDetailResultApiSource = {
 
 export type ProjectDetailResultApiMetadata = { [key: string]: unknown };
 
-/**
- * Any valid JSON value.
- */
-export type ProjectDetailResultApiConfig = { [key: string]: unknown };
-
-/**
- * Any valid JSON value.
- */
-export type ProjectDetailResultApiSessionConfig = { [key: string]: unknown };
-
-/**
- * Any valid JSON value.
- */
-export type ProjectDetailResultApiTags = { [key: string]: unknown };
-
 export interface ProjectDetailResultApi {
   readonly id?: string;
   model_type: ProjectDetailResultApiModelType;
@@ -19833,12 +19798,12 @@ export interface ProjectDetailResultApi {
   readonly created_at?: string;
   readonly updated_at?: string;
   /** Any valid JSON value. */
-  config?: ProjectDetailResultApiConfig;
+  config?: unknown;
   source?: ProjectDetailResultApiSource;
   /** Any valid JSON value. */
-  session_config?: ProjectDetailResultApiSessionConfig;
+  session_config?: unknown;
   /** Any valid JSON value. */
-  tags?: ProjectDetailResultApiTags;
+  tags?: unknown;
   sampling_rate: number;
 }
 

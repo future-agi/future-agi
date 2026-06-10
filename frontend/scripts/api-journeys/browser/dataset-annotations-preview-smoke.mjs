@@ -1,6 +1,8 @@
 /* eslint-disable no-console */
+import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import process from "node:process";
+import { promisify } from "node:util";
 import {
   apiPath,
   asArray,
@@ -12,6 +14,7 @@ import {
 
 const require = createRequire(import.meta.url);
 const puppeteer = require("puppeteer-core");
+const execFileAsync = promisify(execFile);
 
 const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
 const DATASET_PREFIX = "ui_annotation_preview_";
@@ -46,6 +49,7 @@ async function main() {
 
   await cleanupDatasetsByPrefix(auth.client, DATASET_PREFIX, cleanupEvidence);
   await cleanupLabelsByPrefix(auth.client, LABEL_PREFIX, cleanupEvidence);
+  await hardDeleteAnnotationPreviewFixtures(cleanupEvidence);
 
   try {
     const source = await createSourceDataset(auth.client, {
@@ -198,6 +202,16 @@ async function main() {
     labelId = null;
     await deleteDatasets(auth.client, [datasetId], cleanupEvidence);
     datasetId = null;
+    const hardCleanup =
+      await hardDeleteAnnotationPreviewFixtures(cleanupEvidence);
+    assert(
+      Number(hardCleanup.remaining_dataset_count) === 0 &&
+        Number(hardCleanup.remaining_annotation_count) === 0 &&
+        Number(hardCleanup.remaining_label_count) === 0,
+      `Annotation preview hard cleanup left fixture rows: ${JSON.stringify(
+        hardCleanup,
+      )}`,
+    );
 
     console.log(
       JSON.stringify(
@@ -260,6 +274,15 @@ async function main() {
     }
     await cleanupDatasetsByPrefix(auth.client, DATASET_PREFIX, cleanupEvidence);
     await cleanupLabelsByPrefix(auth.client, LABEL_PREFIX, cleanupEvidence);
+    await hardDeleteAnnotationPreviewFixtures(cleanupEvidence).catch(
+      (error) => {
+        cleanupEvidence.push({
+          cleanup: "hard delete annotation preview fixtures after failure",
+          status: "failed",
+          error: error.message,
+        });
+      },
+    );
     if (browser) await browser.close();
   }
 }
@@ -506,6 +529,147 @@ async function deleteDatasets(client, datasetIds, evidence) {
     status: "passed",
     dataset_ids: datasetIds,
   });
+}
+
+async function hardDeleteAnnotationPreviewFixtures(evidence) {
+  const deleteSql = `
+WITH fixture_datasets AS (
+  SELECT id
+  FROM model_hub_dataset
+  WHERE name LIKE ${sqlTextLiteral(`${DATASET_PREFIX}%`)}
+),
+fixture_annotations AS (
+  SELECT id
+  FROM model_hub_annotations
+  WHERE name LIKE ${sqlTextLiteral(`${ANNOTATION_PREFIX}%`)}
+     OR dataset_id IN (SELECT id FROM fixture_datasets)
+),
+fixture_labels AS (
+  SELECT id
+  FROM model_hub_annotationslabels
+  WHERE name LIKE ${sqlTextLiteral(`${LABEL_PREFIX}%`)}
+),
+deleted_annotation_labels AS (
+  DELETE FROM model_hub_annotations_labels
+  WHERE annotations_id IN (SELECT id FROM fixture_annotations)
+     OR annotationslabels_id IN (SELECT id FROM fixture_labels)
+  RETURNING id
+),
+deleted_annotation_users AS (
+  DELETE FROM model_hub_annotations_assigned_users
+  WHERE annotations_id IN (SELECT id FROM fixture_annotations)
+  RETURNING id
+),
+deleted_annotation_columns AS (
+  DELETE FROM model_hub_annotations_columns
+  WHERE annotations_id IN (SELECT id FROM fixture_annotations)
+  RETURNING id
+),
+deleted_annotations AS (
+  DELETE FROM model_hub_annotations
+  WHERE id IN (SELECT id FROM fixture_annotations)
+  RETURNING id
+),
+deleted_cells AS (
+  DELETE FROM model_hub_cell
+  WHERE dataset_id IN (SELECT id FROM fixture_datasets)
+  RETURNING id
+),
+deleted_rows AS (
+  DELETE FROM model_hub_row
+  WHERE dataset_id IN (SELECT id FROM fixture_datasets)
+  RETURNING id
+),
+deleted_columns AS (
+  DELETE FROM model_hub_column
+  WHERE dataset_id IN (SELECT id FROM fixture_datasets)
+  RETURNING id
+),
+deleted_datasets AS (
+  DELETE FROM model_hub_dataset
+  WHERE id IN (SELECT id FROM fixture_datasets)
+  RETURNING id
+),
+deleted_labels AS (
+  DELETE FROM model_hub_annotationslabels
+  WHERE id IN (SELECT id FROM fixture_labels)
+  RETURNING id
+)
+SELECT json_build_object(
+  'deleted_annotation_label_link_count', (SELECT count(*) FROM deleted_annotation_labels),
+  'deleted_annotation_user_link_count', (SELECT count(*) FROM deleted_annotation_users),
+  'deleted_annotation_column_link_count', (SELECT count(*) FROM deleted_annotation_columns),
+  'deleted_annotation_count', (SELECT count(*) FROM deleted_annotations),
+  'deleted_cell_count', (SELECT count(*) FROM deleted_cells),
+  'deleted_row_count', (SELECT count(*) FROM deleted_rows),
+  'deleted_column_count', (SELECT count(*) FROM deleted_columns),
+  'deleted_dataset_count', (SELECT count(*) FROM deleted_datasets),
+  'deleted_label_count', (SELECT count(*) FROM deleted_labels)
+);
+`;
+  const remainingSql = `
+SELECT json_build_object(
+  'remaining_dataset_count', (
+    SELECT count(*)
+    FROM model_hub_dataset
+    WHERE name LIKE ${sqlTextLiteral(`${DATASET_PREFIX}%`)}
+  ),
+  'remaining_annotation_count', (
+    SELECT count(*)
+    FROM model_hub_annotations
+    WHERE name LIKE ${sqlTextLiteral(`${ANNOTATION_PREFIX}%`)}
+  ),
+  'remaining_label_count', (
+    SELECT count(*)
+    FROM model_hub_annotationslabels
+    WHERE name LIKE ${sqlTextLiteral(`${LABEL_PREFIX}%`)}
+  )
+);
+`;
+  const deleteAudit = await runPostgresJson(deleteSql);
+  const remainingAudit = await runPostgresJson(remainingSql);
+  const audit = {
+    ...deleteAudit,
+    ...remainingAudit,
+  };
+  if (
+    Number(audit.deleted_dataset_count) > 0 ||
+    Number(audit.deleted_annotation_count) > 0 ||
+    Number(audit.deleted_label_count) > 0 ||
+    Number(audit.remaining_dataset_count) > 0 ||
+    Number(audit.remaining_annotation_count) > 0 ||
+    Number(audit.remaining_label_count) > 0
+  ) {
+    evidence.push({
+      cleanup: "hard delete annotation preview fixtures",
+      status:
+        Number(audit.remaining_dataset_count) === 0 &&
+        Number(audit.remaining_annotation_count) === 0 &&
+        Number(audit.remaining_label_count) === 0
+          ? "passed"
+          : "failed",
+      audit,
+    });
+  }
+  return audit;
+}
+
+async function runPostgresJson(sql) {
+  const container = process.env.API_JOURNEY_DB_CONTAINER || "ws2-postgres";
+  const user = process.env.API_JOURNEY_DB_USER || "user";
+  const database = process.env.API_JOURNEY_DB_NAME || "tfc";
+  const { stdout } = await execFileAsync(
+    "docker",
+    ["exec", container, "psql", "-U", user, "-d", database, "-At", "-c", sql],
+    { maxBuffer: 10 * 1024 * 1024 },
+  );
+  const text = stdout.trim();
+  assert(text, "Postgres DB audit returned no JSON output.");
+  return JSON.parse(text);
+}
+
+function sqlTextLiteral(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
 }
 
 async function installRuntimeConfig(page, auth) {

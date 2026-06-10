@@ -90,11 +90,19 @@ def _create_eval_template(organization, workspace):
 
 
 @pytest.mark.django_db
-def test_prompt_bulk_delete_stamps_deleted_at_on_template_and_versions(
+def test_prompt_bulk_delete_stamps_deleted_at_on_template_versions_and_eval_configs(
     auth_client, organization, workspace, user
 ):
     template, version = _create_prompt_template(
         organization, workspace, user, "Prompt bulk delete contract"
+    )
+    eval_template = _create_eval_template(organization, workspace)
+    eval_config = PromptEvalConfig.no_workspace_objects.create(
+        name="Prompt bulk delete eval config",
+        prompt_template=template,
+        eval_template=eval_template,
+        user=user,
+        mapping={"text": "name"},
     )
 
     response = auth_client.post(
@@ -110,10 +118,13 @@ def test_prompt_bulk_delete_stamps_deleted_at_on_template_and_versions(
     assert template.deleted_at is not None
     assert version.deleted is True
     assert version.deleted_at is not None
+    eval_config.refresh_from_db()
+    assert eval_config.deleted is True
+    assert eval_config.deleted_at is not None
 
 
 @pytest.mark.django_db
-def test_prompt_folder_delete_stamps_deleted_at_and_cascades_prompt_versions(
+def test_prompt_folder_delete_stamps_deleted_at_and_cascades_prompt_versions_and_eval_configs(
     auth_client, organization, workspace, user
 ):
     folder = PromptFolder.no_workspace_objects.create(
@@ -124,6 +135,14 @@ def test_prompt_folder_delete_stamps_deleted_at_and_cascades_prompt_versions(
     )
     template, version = _create_prompt_template(
         organization, workspace, user, "Prompt folder cascade contract", folder
+    )
+    eval_template = _create_eval_template(organization, workspace)
+    eval_config = PromptEvalConfig.no_workspace_objects.create(
+        name="Prompt folder delete eval config",
+        prompt_template=template,
+        eval_template=eval_template,
+        user=user,
+        mapping={"text": "name"},
     )
 
     response = auth_client.delete(f"/model-hub/prompt-folders/{folder.id}/")
@@ -138,6 +157,9 @@ def test_prompt_folder_delete_stamps_deleted_at_and_cascades_prompt_versions(
     assert template.deleted_at is not None
     assert version.deleted is True
     assert version.deleted_at is not None
+    eval_config.refresh_from_db()
+    assert eval_config.deleted is True
+    assert eval_config.deleted_at is not None
 
 
 @pytest.mark.django_db

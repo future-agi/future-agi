@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import process from "node:process";
 import { promisify } from "node:util";
 import {
+  apiPath,
   assert,
   createAuthenticatedContext,
   currentUserId,
@@ -19,6 +20,7 @@ const execFileAsync = promisify(execFile);
 const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
 const QUEUE_PREFIX = "ui_aq_form_";
 const COPY_PREFIX = `Copy of ${QUEUE_PREFIX}`;
+const LABEL_PREFIX = `${QUEUE_PREFIX}label_`;
 const SCREENSHOT_PATH =
   process.env.ANNOTATION_QUEUE_FORM_SCREENSHOT ||
   "/tmp/annotation-queue-create-duplicate-drawer-smoke.png";
@@ -48,11 +50,20 @@ async function main() {
       organizationId: auth.organizationId,
       evidence: cleanupEvidence,
     });
+    await hardDeleteLabelFixturesByPrefix({
+      organizationId: auth.organizationId,
+      evidence: cleanupEvidence,
+    });
     fixture = await seedDuplicateSourceQueue({
       runId: auth.runId,
       organizationId: auth.organizationId,
       workspaceId: auth.workspaceId,
       userId,
+    });
+    fixture.member = await loadSelectableOrgMember({
+      client: auth.client,
+      organizationId: auth.organizationId,
+      currentUserId: userId,
     });
 
     browser = await puppeteer.launch({
@@ -67,14 +78,14 @@ async function main() {
     await installBrowserState(page, auth);
 
     page.on("request", (request) => {
-      if (!isAnnotationQueueApiUrl(request.url())) return;
+      if (!isJourneyApiUrl(request.url())) return;
       if (request.method() !== "GET" && request.method() !== "OPTIONS") {
         browserMutations.push(`${request.method()} ${request.url()}`);
       }
     });
     page.on("response", (response) => {
       const url = response.url();
-      if (isAnnotationQueueApiUrl(url) && response.status() >= 500) {
+      if (isJourneyApiUrl(url) && response.status() >= 500) {
         apiFailures.push(`${response.status()} ${url}`);
       }
     });
@@ -95,8 +106,38 @@ async function main() {
     );
     await waitForVisibleText(page, "Annotation queues", { exact: true });
 
-    const createResult = await exerciseCreateDrawer(page, fixture.createName);
+    const createResult = await exerciseCreateDrawer(page, fixture);
     assertCreateResult(createResult, fixture.createName);
+
+    await waitForResponseDuring(
+      page,
+      "annotation queue source search",
+      (response) =>
+        isQueueListResponse(response, {
+          search: fixture.sourceName,
+          archived: "false",
+        }),
+      () => setSearchValue(page, fixture.sourceName),
+    );
+    await waitForVisibleText(page, fixture.sourceName, { exact: true });
+
+    const archiveResult = createResult.created
+      ? await archiveQueueThroughList(page, {
+          id: createResult.id,
+          name: fixture.createName,
+        })
+      : null;
+
+    const retryResult = createResult.created
+      ? await exerciseCreateDrawer(page, {
+          ...fixture,
+          createName: fixture.retryName,
+          labelName: fixture.retryLabelName,
+        })
+      : null;
+    if (retryResult) {
+      assertCreateResult(retryResult, fixture.retryName);
+    }
 
     await waitForResponseDuring(
       page,
@@ -118,6 +159,13 @@ async function main() {
       sourceName: fixture.sourceName,
       createName: fixture.createName,
       copyName: fixture.copyName,
+      retryName: fixture.retryName,
+      labelName: fixture.labelName,
+      labelId: createResult.label?.id,
+      retryLabelName: fixture.retryLabelName,
+      retryLabelId: retryResult?.label?.id,
+      selectedMemberId: fixture.member?.id,
+      creatorUserId: userId,
     });
     assert(
       Number(dbAudit.source_queue_count) === 1,
@@ -128,10 +176,78 @@ async function main() {
         Number(dbAudit.create_queue_count) === 1,
         `Created queue not found in DB audit: ${JSON.stringify(dbAudit)}`,
       );
+      assert(
+        Number(dbAudit.created_label_count) === 1,
+        `Created annotation label not found in DB audit: ${JSON.stringify(
+          dbAudit,
+        )}`,
+      );
+      assert(
+        Number(dbAudit.create_label_binding_count) === 1,
+        `Created queue label binding not found in DB audit: ${JSON.stringify(
+          dbAudit,
+        )}`,
+      );
+      if (fixture.member) {
+        assert(
+          Number(dbAudit.selected_member_count) === 1,
+          `Selected member not persisted on queue: ${JSON.stringify(dbAudit)}`,
+        );
+        const selectedRoles = Array.isArray(dbAudit.selected_member_roles)
+          ? dbAudit.selected_member_roles
+          : [];
+        assert(
+          selectedRoles.includes("annotator") &&
+            selectedRoles.includes("reviewer"),
+          `Selected member roles did not persist annotator+reviewer: ${JSON.stringify(
+            dbAudit,
+          )}`,
+        );
+      } else if (createResult.roleToggle) {
+        assert(
+          Number(dbAudit.creator_member_count) === 1,
+          `Creator member not persisted on queue: ${JSON.stringify(dbAudit)}`,
+        );
+        const creatorRoles = Array.isArray(dbAudit.creator_member_roles)
+          ? dbAudit.creator_member_roles
+          : [];
+        assert(
+          creatorRoles.includes("manager") &&
+            creatorRoles.includes("reviewer") &&
+            creatorRoles.includes("annotator"),
+          `Creator roles did not persist manager+reviewer+annotator: ${JSON.stringify(
+            dbAudit,
+          )}`,
+        );
+      }
+      assert(
+        Number(dbAudit.archived_create_queue_count) === 1,
+        `Created queue was not archived through the browser: ${JSON.stringify(
+          dbAudit,
+        )}`,
+      );
     } else {
       assert(
         Number(dbAudit.create_queue_count) === 0,
         `Blocked create left DB residue: ${JSON.stringify(dbAudit)}`,
+      );
+    }
+    if (retryResult?.created) {
+      assert(
+        Number(dbAudit.retry_queue_count) === 1,
+        `Retry queue not found in DB audit: ${JSON.stringify(dbAudit)}`,
+      );
+      assert(
+        Number(dbAudit.retry_label_count) === 1,
+        `Retry annotation label not found in DB audit: ${JSON.stringify(
+          dbAudit,
+        )}`,
+      );
+      assert(
+        Number(dbAudit.retry_label_binding_count) === 1,
+        `Retry queue label binding not found in DB audit: ${JSON.stringify(
+          dbAudit,
+        )}`,
       );
     }
     if (duplicateResult.created) {
@@ -162,6 +278,16 @@ async function main() {
       Number(cleanup.remaining_queue_count) === 0,
       `Annotation queue form cleanup left residue: ${JSON.stringify(cleanup)}`,
     );
+    const labelCleanup = await hardDeleteLabelFixturesByPrefix({
+      organizationId: auth.organizationId,
+      evidence: cleanupEvidence,
+    });
+    assert(
+      Number(labelCleanup.remaining_label_count) === 0,
+      `Annotation label form cleanup left residue: ${JSON.stringify(
+        labelCleanup,
+      )}`,
+    );
 
     console.log(
       JSON.stringify(
@@ -173,7 +299,17 @@ async function main() {
           workspace_id: auth.workspaceId,
           source_queue_id: fixture.sourceId,
           create_result: summarizeCreateResult(createResult),
+          archive_result: archiveResult,
+          retry_result: retryResult ? summarizeCreateResult(retryResult) : null,
           duplicate_result: summarizeCreateResult(duplicateResult),
+          selected_member: fixture.member
+            ? {
+                id: fixture.member.id,
+                email: fixture.member.email,
+                name: fixture.member.name,
+              }
+            : null,
+          role_toggle: createResult.roleToggle || null,
           db_audit: dbAudit,
           browser_mutations: browserMutations.map(maskRequest),
           screenshot: SCREENSHOT_PATH,
@@ -219,6 +355,10 @@ async function main() {
         organizationId: auth.organizationId,
         evidence: cleanupEvidence,
       });
+      await hardDeleteLabelFixturesByPrefix({
+        organizationId: auth.organizationId,
+        evidence: cleanupEvidence,
+      });
     } catch (cleanupError) {
       if (caughtError) {
         caughtError.message = `${caughtError.message}; cleanup failed: ${cleanupError.message}`;
@@ -231,7 +371,7 @@ async function main() {
   if (caughtError) throw caughtError;
 }
 
-async function exerciseCreateDrawer(page, createName) {
+async function exerciseCreateDrawer(page, fixture) {
   await clickButtonWithText(page, "Create Queue");
   await waitForVisibleText(page, "Create annotation queue", { exact: true });
   await submitAnnotationQueueForm(page);
@@ -239,13 +379,26 @@ async function exerciseCreateDrawer(page, createName) {
   await setFieldByPlaceholder(
     page,
     "eg: Hallucination analysis v2",
-    createName,
+    fixture.createName,
   );
   await setFieldByPlaceholder(
     page,
     "Brief description of this queue's purpose",
     "Browser smoke create form",
   );
+  const label = await createAndSelectLabelInQueueDrawer(
+    page,
+    fixture.labelName,
+  );
+  let resultRoleToggle = null;
+  if (fixture.member) {
+    await selectReviewerMemberInQueueDrawer(page, fixture.member);
+  } else {
+    resultRoleToggle = await toggleCreatorReviewerRoleInQueueDrawer(
+      page,
+      fixture.userId,
+    );
+  }
   const response = await waitForResponseDuring(
     page,
     "annotation queue create submit",
@@ -256,6 +409,9 @@ async function exerciseCreateDrawer(page, createName) {
   );
   const payload = await responseJson(response);
   const result = normalizeCreateResponse(response, payload);
+  result.requestBody = parseRequestJson(response.request());
+  result.label = label;
+  result.roleToggle = resultRoleToggle;
   if (result.created) {
     await waitForNoVisibleText(page, "Create annotation queue");
   } else {
@@ -264,6 +420,276 @@ async function exerciseCreateDrawer(page, createName) {
     await waitForNoVisibleText(page, "Create annotation queue");
   }
   return result;
+}
+
+async function toggleCreatorReviewerRoleInQueueDrawer(page, userId) {
+  const initial = await waitForAnnotatorRole(page, userId, "Reviewer");
+  if (initial.disabled) {
+    return {
+      user_id: userId,
+      role: "reviewer",
+      available: false,
+      reason: "reviewer role checkbox disabled",
+      initial,
+    };
+  }
+  if (!initial.checked) {
+    await clickAnnotatorRole(page, userId, "Reviewer");
+    await waitForAnnotatorRole(page, userId, "Reviewer", {
+      checked: true,
+      disabled: false,
+    });
+  }
+  await clickAnnotatorRole(page, userId, "Reviewer");
+  await waitForAnnotatorRole(page, userId, "Reviewer", {
+    checked: false,
+    disabled: false,
+  });
+  await clickAnnotatorRole(page, userId, "Reviewer");
+  await waitForAnnotatorRole(page, userId, "Reviewer", {
+    checked: true,
+    disabled: false,
+  });
+  return {
+    user_id: userId,
+    role: "reviewer",
+    available: true,
+    toggled_off: true,
+    toggled_on: true,
+    initial,
+  };
+}
+
+async function clickAnnotatorRole(page, userId, roleLabel) {
+  const clicked = await page.evaluate(
+    ({ memberId, role }) => {
+      const row = document.querySelector(
+        `[data-testid="annotator-row-${memberId}"]`,
+      );
+      const label = Array.from(row?.querySelectorAll("label") || []).find(
+        (candidate) =>
+          window.normalizeText(candidate.textContent).includes(role),
+      );
+      const checkbox = label?.querySelector('input[type="checkbox"]');
+      if (!row || !label || !checkbox) {
+        return { ok: false, reason: "role checkbox missing" };
+      }
+      if (checkbox.disabled) return { ok: false, reason: "role disabled" };
+      checkbox.click();
+      return { ok: true };
+    },
+    { memberId: userId, role: roleLabel },
+  );
+  assert(
+    clicked.ok,
+    `Could not click ${roleLabel} role for ${userId}: ${JSON.stringify(
+      clicked,
+    )}`,
+  );
+}
+
+async function waitForAnnotatorRole(
+  page,
+  userId,
+  roleLabel,
+  expected = {},
+  timeout = 30000,
+) {
+  const startedAt = Date.now();
+  let state = null;
+  while (Date.now() - startedAt < timeout) {
+    state = await readAnnotatorRoleState(page, userId, roleLabel);
+    if (
+      state.found &&
+      (expected.checked === undefined || state.checked === expected.checked) &&
+      (expected.disabled === undefined || state.disabled === expected.disabled)
+    ) {
+      return state;
+    }
+    await delay(250);
+  }
+  throw new Error(
+    `Timed out waiting for ${roleLabel} role state on ${userId}: ${JSON.stringify(
+      { expected, last: state },
+    )}`,
+  );
+}
+
+async function readAnnotatorRoleState(page, userId, roleLabel) {
+  return page.evaluate(
+    ({ memberId, role }) => {
+      const row = document.querySelector(
+        `[data-testid="annotator-row-${memberId}"]`,
+      );
+      const label = Array.from(row?.querySelectorAll("label") || []).find(
+        (candidate) =>
+          window.normalizeText(candidate.textContent).includes(role),
+      );
+      const checkbox = label?.querySelector('input[type="checkbox"]');
+      if (!row || !label || !checkbox) {
+        return {
+          found: false,
+          row_found: Boolean(row),
+          labels: Array.from(row?.querySelectorAll("label") || []).map(
+            (candidate) => window.normalizeText(candidate.textContent),
+          ),
+        };
+      }
+      return {
+        found: true,
+        checked: checkbox.checked,
+        disabled: checkbox.disabled,
+        label: window.normalizeText(label.textContent),
+      };
+    },
+    { memberId: userId, role: roleLabel },
+  );
+}
+
+async function createAndSelectLabelInQueueDrawer(page, labelName) {
+  await clickButtonWithText(page, "Create new label");
+  await waitForVisibleText(page, "Create Label", { exact: true });
+  await setFieldByPlaceholder(
+    page,
+    "e.g. Relevance, Tone, Accuracy",
+    labelName,
+  );
+  await selectCreateLabelType(page, "Text");
+
+  const response = await waitForResponseDuring(
+    page,
+    "annotation label create submit",
+    (candidate) => {
+      const url = new URL(candidate.url());
+      return (
+        url.pathname === "/model-hub/annotations-labels/" &&
+        candidate.request().method() === "POST"
+      );
+    },
+    () => submitCreateLabelForm(page),
+  );
+  const payload = await responseJson(response);
+  const data = payload?.result || payload;
+  const labelId = data?.id || data?.label_id || null;
+  assert(
+    response.status() >= 200 && response.status() < 300 && isUuid(labelId),
+    `Label create did not return a UUID: ${JSON.stringify(payload)}`,
+  );
+  await waitForVisibleText(page, labelName, { exact: true });
+  return { id: String(labelId), name: data?.name || labelName };
+}
+
+async function selectCreateLabelType(page, typeLabel) {
+  const selected = await page.evaluate((expectedTypeLabel) => {
+    const form = window.visibleElements("form").find((candidate) => {
+      const text = window.normalizeText(candidate.textContent);
+      return text.includes("Create Label") && text.includes("Type");
+    });
+    if (!form) {
+      return { ok: false, reason: "create label form missing" };
+    }
+    const label = Array.from(form.querySelectorAll("label")).find((candidate) =>
+      window.normalizeText(candidate.textContent).startsWith(expectedTypeLabel),
+    );
+    const radio = label?.querySelector('input[type="radio"]');
+    if (!label || !radio) {
+      return { ok: false, reason: "type radio missing" };
+    }
+    if (!radio.checked) {
+      radio.click();
+    }
+    return {
+      ok: true,
+      checked: radio.checked,
+      label: window.normalizeText(label.textContent),
+    };
+  }, typeLabel);
+  assert(
+    selected.ok,
+    `Could not select create-label type ${typeLabel}: ${JSON.stringify(
+      selected,
+    )}`,
+  );
+  await waitForVisibleText(page, "Placeholder Text", { exact: true });
+}
+
+async function submitCreateLabelForm(page) {
+  const submitted = await page.evaluate(() => {
+    const forms = window.visibleElements("form");
+    const form = forms.find((candidate) =>
+      window.normalizeText(candidate.textContent).includes("Create Label"),
+    );
+    const submitter = form
+      ? Array.from(form.querySelectorAll("button")).find(
+          (button) =>
+            window.normalizeText(button.textContent) === "Create" &&
+            !button.disabled,
+        )
+      : null;
+    if (!form || !submitter) return false;
+    const event =
+      typeof SubmitEvent === "function"
+        ? new SubmitEvent("submit", {
+            bubbles: true,
+            cancelable: true,
+            submitter,
+          })
+        : new Event("submit", { bubbles: true, cancelable: true });
+    form.dispatchEvent(event);
+    return true;
+  });
+  assert(submitted, "Could not submit annotation label form.");
+}
+
+async function selectReviewerMemberInQueueDrawer(page, member) {
+  await waitForResponseDuring(
+    page,
+    "annotation queue member search",
+    (candidate) => {
+      const url = new URL(candidate.url());
+      return (
+        url.pathname ===
+          `/model-hub/organizations/${member.organizationId}/users/` &&
+        candidate.request().method() === "GET" &&
+        url.searchParams.get("search") === member.search
+      );
+    },
+    () =>
+      setInputValue(
+        page,
+        'input[placeholder="Search members..."]',
+        member.search,
+      ),
+  );
+  await waitForVisibleText(page, member.visibleText);
+  const toggled = await page.evaluate((memberId) => {
+    const row = document.querySelector(
+      `[data-testid="annotator-row-${memberId}"]`,
+    );
+    if (!row) return { ok: false, reason: "row missing" };
+    const memberCheckbox = Array.from(
+      row.querySelectorAll('input[type="checkbox"]'),
+    ).find((input) => !input.disabled);
+    if (!memberCheckbox)
+      return { ok: false, reason: "member checkbox missing" };
+    memberCheckbox.click();
+
+    const reviewerLabel = Array.from(row.querySelectorAll("label")).find(
+      (label) => window.normalizeText(label.textContent) === "Reviewer",
+    );
+    const reviewerCheckbox = reviewerLabel?.querySelector(
+      'input[type="checkbox"]',
+    );
+    if (!reviewerCheckbox || reviewerCheckbox.disabled) {
+      return { ok: false, reason: "reviewer checkbox missing" };
+    }
+    reviewerCheckbox.click();
+    return { ok: true };
+  }, member.id);
+  assert(
+    toggled.ok,
+    `Could not select reviewer member ${member.id}: ${JSON.stringify(toggled)}`,
+  );
 }
 
 async function exerciseDuplicateDrawer(page, fixture) {
@@ -301,6 +727,60 @@ async function exerciseDuplicateDrawer(page, fixture) {
   return result;
 }
 
+async function archiveQueueThroughList(page, { id, name }) {
+  await waitForResponseDuring(
+    page,
+    "annotation queue created queue search",
+    (response) =>
+      isQueueListResponse(response, {
+        search: name,
+        archived: "false",
+      }),
+    () => setSearchValue(page, name),
+  );
+  await waitForVisibleText(page, name, { exact: true });
+  await openQueueActionsForName(page, name);
+  await clickVisibleText(page, "Archive", { exact: true });
+  await waitForVisibleText(page, "Archive Queue", { exact: true });
+  const response = await waitForResponseDuring(
+    page,
+    "annotation queue archive submit",
+    (candidate) => {
+      const url = new URL(candidate.url());
+      return (
+        url.pathname === `/model-hub/annotation-queues/${id}/` &&
+        candidate.request().method() === "DELETE"
+      );
+    },
+    () => clickButtonWithText(page, "Archive"),
+  );
+  const payload = await responseJson(response);
+  assert(
+    response.status() >= 200 && response.status() < 300,
+    `Archive returned non-2xx: ${response.status()} ${JSON.stringify(payload)}`,
+  );
+  await waitForVisibleText(page, "Queue archived", { exact: false });
+  await waitForResponseDuring(
+    page,
+    "annotation queue archived tab search",
+    (candidate) =>
+      isQueueListResponse(candidate, {
+        search: name,
+        archived: "true",
+      }),
+    () => clickVisibleText(page, "Archived", { exact: true }),
+  );
+  await waitForVisibleText(page, name, { exact: true });
+  await clickVisibleText(page, "Active", { exact: true });
+  await waitForNoVisibleText(page, name);
+  return {
+    status: response.status(),
+    id,
+    name,
+    response: payload?.result || payload,
+  };
+}
+
 function normalizeCreateResponse(response, payload) {
   const created = response.status() >= 200 && response.status() < 300;
   const data = payload?.result || payload;
@@ -309,6 +789,8 @@ function normalizeCreateResponse(response, payload) {
     status: response.status(),
     id: data?.id || null,
     name: data?.name || null,
+    label_ids: data?.label_ids || null,
+    annotator_ids: data?.annotator_ids || null,
     code: payload?.code || payload?.error?.code || null,
     message:
       payload?.message ||
@@ -348,6 +830,9 @@ function summarizeCreateResult(result) {
     created: result.created,
     status: result.status,
     id: result.id,
+    label_ids: result.requestBody?.label_ids || result.label_ids,
+    annotator_ids: result.requestBody?.annotator_ids || result.annotator_ids,
+    annotator_roles: result.requestBody?.annotator_roles || null,
     code: result.code,
     message: result.message ? String(result.message).slice(0, 180) : null,
   };
@@ -364,6 +849,9 @@ async function seedDuplicateSourceQueue({
   const sourceName = `${QUEUE_PREFIX}${suffix}_source`;
   const createName = `${QUEUE_PREFIX}${suffix}_create`;
   const copyName = `Copy of ${sourceName}`;
+  const labelName = `${LABEL_PREFIX}${suffix}`;
+  const retryName = `${QUEUE_PREFIX}${suffix}_retry`;
+  const retryLabelName = `${LABEL_PREFIX}${suffix}_retry`;
   const fullRoles = ["manager", "reviewer", "annotator"];
   const sql = `
 WITH inserted_queue AS (
@@ -454,10 +942,14 @@ SELECT json_build_object(
     "Expected manager membership on source queue fixture.",
   );
   return {
+    userId,
     sourceId,
     sourceName,
     createName,
     copyName,
+    labelName,
+    retryName,
+    retryLabelName,
   };
 }
 
@@ -466,13 +958,106 @@ async function loadFormJourneyAudit({
   sourceName,
   createName,
   copyName,
+  retryName,
+  labelName,
+  labelId,
+  retryLabelName,
+  retryLabelId,
+  selectedMemberId,
+  creatorUserId,
 }) {
   const sql = `
 SELECT json_build_object(
   'source_queue_count', COUNT(*) FILTER (WHERE name = ${sqlTextLiteral(sourceName)}),
   'create_queue_count', COUNT(*) FILTER (WHERE name = ${sqlTextLiteral(createName)}),
+  'archived_create_queue_count', COUNT(*) FILTER (WHERE name = ${sqlTextLiteral(createName)} AND deleted = TRUE),
   'copy_queue_count', COUNT(*) FILTER (WHERE name = ${sqlTextLiteral(copyName)}),
+  'retry_queue_count', COUNT(*) FILTER (WHERE name = ${sqlTextLiteral(retryName || "")}),
   'active_fixture_count', COUNT(*) FILTER (WHERE deleted = FALSE),
+  'created_label_count', (
+    SELECT COUNT(*)
+    FROM model_hub_annotationslabels label
+    WHERE label.name = ${sqlTextLiteral(labelName || "")}
+      AND label.organization_id = ${sqlUuid(organizationId)}
+      AND label.deleted = FALSE
+  ),
+  'retry_label_count', (
+    SELECT COUNT(*)
+    FROM model_hub_annotationslabels label
+    WHERE label.name = ${sqlTextLiteral(retryLabelName || "")}
+      AND label.organization_id = ${sqlUuid(organizationId)}
+      AND label.deleted = FALSE
+  ),
+  'create_label_binding_count', (
+    SELECT COUNT(*)
+    FROM model_hub_annotationqueuelabel ql
+    JOIN model_hub_annotationqueue q ON q.id = ql.queue_id
+    WHERE q.name = ${sqlTextLiteral(createName)}
+      AND q.organization_id = ${sqlUuid(organizationId)}
+      AND ql.deleted = FALSE
+      ${labelId ? `AND ql.label_id = ${sqlUuid(labelId)}` : ""}
+  ),
+  'retry_label_binding_count', (
+    SELECT COUNT(*)
+    FROM model_hub_annotationqueuelabel ql
+    JOIN model_hub_annotationqueue q ON q.id = ql.queue_id
+    WHERE q.name = ${sqlTextLiteral(retryName || "")}
+      AND q.organization_id = ${sqlUuid(organizationId)}
+      AND ql.deleted = FALSE
+      ${retryLabelId ? `AND ql.label_id = ${sqlUuid(retryLabelId)}` : ""}
+  ),
+  'selected_member_count', (
+    SELECT COUNT(*)
+    FROM model_hub_annotationqueueannotator qa
+    JOIN model_hub_annotationqueue q ON q.id = qa.queue_id
+    WHERE q.name = ${sqlTextLiteral(createName)}
+      AND q.organization_id = ${sqlUuid(organizationId)}
+      AND qa.deleted = FALSE
+      ${selectedMemberId ? `AND qa.user_id = ${sqlUuid(selectedMemberId)}` : "AND FALSE"}
+  ),
+  'selected_member_roles', (
+    SELECT COALESCE(jsonb_agg(DISTINCT role_value), '[]'::jsonb)
+    FROM (
+      SELECT jsonb_array_elements_text(
+        CASE
+          WHEN jsonb_typeof(qa.roles) = 'array' THEN qa.roles
+          ELSE to_jsonb(ARRAY[qa.role])
+        END
+      ) AS role_value
+      FROM model_hub_annotationqueueannotator qa
+      JOIN model_hub_annotationqueue q ON q.id = qa.queue_id
+      WHERE q.name = ${sqlTextLiteral(createName)}
+        AND q.organization_id = ${sqlUuid(organizationId)}
+        AND qa.deleted = FALSE
+        ${selectedMemberId ? `AND qa.user_id = ${sqlUuid(selectedMemberId)}` : "AND FALSE"}
+    ) roles
+  ),
+  'creator_member_count', (
+    SELECT COUNT(*)
+    FROM model_hub_annotationqueueannotator qa
+    JOIN model_hub_annotationqueue q ON q.id = qa.queue_id
+    WHERE q.name = ${sqlTextLiteral(createName)}
+      AND q.organization_id = ${sqlUuid(organizationId)}
+      AND qa.deleted = FALSE
+      ${creatorUserId ? `AND qa.user_id = ${sqlUuid(creatorUserId)}` : "AND FALSE"}
+  ),
+  'creator_member_roles', (
+    SELECT COALESCE(jsonb_agg(DISTINCT role_value), '[]'::jsonb)
+    FROM (
+      SELECT jsonb_array_elements_text(
+        CASE
+          WHEN jsonb_typeof(qa.roles) = 'array' THEN qa.roles
+          ELSE to_jsonb(ARRAY[qa.role])
+        END
+      ) AS role_value
+      FROM model_hub_annotationqueueannotator qa
+      JOIN model_hub_annotationqueue q ON q.id = qa.queue_id
+      WHERE q.name = ${sqlTextLiteral(createName)}
+        AND q.organization_id = ${sqlUuid(organizationId)}
+        AND qa.deleted = FALSE
+        ${creatorUserId ? `AND qa.user_id = ${sqlUuid(creatorUserId)}` : "AND FALSE"}
+    ) roles
+  ),
   'manager_membership_count', (
     SELECT COUNT(*)
     FROM model_hub_annotationqueueannotator qa
@@ -488,6 +1073,85 @@ WHERE (${fixtureNamePredicate("name")})
   AND organization_id = ${sqlUuid(organizationId)};
 `;
   return runPostgresJson(sql);
+}
+
+async function hardDeleteLabelFixturesByPrefix({ organizationId, evidence }) {
+  const sql = `
+WITH target_labels AS (
+  SELECT id
+  FROM model_hub_annotationslabels
+  WHERE name LIKE ${sqlTextLiteral(`${LABEL_PREFIX}%`)}
+    AND organization_id = ${sqlUuid(organizationId)}
+),
+deleted_bindings AS (
+  DELETE FROM model_hub_annotationqueuelabel
+  WHERE label_id IN (SELECT id FROM target_labels)
+  RETURNING id
+),
+deleted_labels AS (
+  DELETE FROM model_hub_annotationslabels
+  WHERE id IN (SELECT id FROM target_labels)
+  RETURNING id
+)
+SELECT json_build_object(
+  'deleted_label_count', (SELECT COUNT(*) FROM deleted_labels),
+  'deleted_binding_count', (SELECT COUNT(*) FROM deleted_bindings),
+  'remaining_label_count', (
+    SELECT COUNT(*)
+    FROM model_hub_annotationslabels
+    WHERE name LIKE ${sqlTextLiteral(`${LABEL_PREFIX}%`)}
+      AND organization_id = ${sqlUuid(organizationId)}
+      AND id NOT IN (SELECT id FROM deleted_labels)
+  )
+);
+`;
+  const result = await runPostgresJson(sql);
+  if (
+    Number(result.deleted_label_count) > 0 ||
+    Number(result.deleted_binding_count) > 0 ||
+    Number(result.remaining_label_count) > 0
+  ) {
+    evidence.push({
+      cleanup: "hard delete annotation label form fixtures",
+      status: Number(result.remaining_label_count) === 0 ? "passed" : "failed",
+      audit: result,
+    });
+  }
+  return result;
+}
+
+async function loadSelectableOrgMember({
+  client,
+  organizationId,
+  currentUserId,
+}) {
+  const response = await client.get(
+    apiPath("/model-hub/organizations/{organization_id}/users/", {
+      organization_id: organizationId,
+    }),
+    { query: { page: 1, limit: 30, is_active: true } },
+  );
+  const members = Array.isArray(response?.results)
+    ? response.results
+    : Array.isArray(response)
+      ? response
+      : [];
+  const member = members.find(
+    (candidate) =>
+      candidate?.id &&
+      String(candidate.id) !== String(currentUserId) &&
+      (candidate.email || candidate.name),
+  );
+  if (!member) return null;
+  const search = member.email || member.name;
+  return {
+    id: String(member.id),
+    email: member.email || "",
+    name: member.name || "",
+    search,
+    visibleText: member.email || member.name,
+    organizationId,
+  };
 }
 
 async function hardDeleteQueueFixturesByPrefix({ organizationId, evidence }) {
@@ -847,6 +1511,12 @@ async function responseJson(response) {
   }
 }
 
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function isAnnotationQueueApiUrl(rawUrl) {
   const url = new URL(rawUrl);
   return (
@@ -854,6 +1524,16 @@ function isAnnotationQueueApiUrl(rawUrl) {
       new URL(process.env.API_BASE || "http://localhost:8003").origin &&
     url.pathname.startsWith("/model-hub/annotation-queues/")
   );
+}
+
+function isJourneyApiUrl(rawUrl) {
+  const url = new URL(rawUrl);
+  const apiOrigin = new URL(process.env.API_BASE || "http://localhost:8003")
+    .origin;
+  if (url.origin !== apiOrigin) return false;
+  if (url.pathname.startsWith("/model-hub/annotation-queues/")) return true;
+  if (url.pathname.startsWith("/model-hub/annotations-labels/")) return true;
+  return /^\/model-hub\/organizations\/[^/]+\/users\/?$/.test(url.pathname);
 }
 
 function isQueueListResponse(response, expectedQuery = {}) {
@@ -875,6 +1555,16 @@ function maskRequest(rawRequest) {
   const [method, rawUrl] = rawRequest.split(" ");
   const url = new URL(rawUrl);
   return `${method} ${url.pathname}`;
+}
+
+function parseRequestJson(request) {
+  const body = request.postData();
+  if (!body) return null;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
 }
 
 function sqlUuid(value) {

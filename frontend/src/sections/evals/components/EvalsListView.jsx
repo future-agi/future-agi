@@ -495,13 +495,15 @@ const EvalsListView = () => {
         cell: ({ getValue }) => {
           const name = getValue();
           return (
-            <CustomTooltip size="small" type="black" show arrow title={name || ""} placement="top">
-              <Typography
-                variant="s1"
-
-                noWrap
-
-              >
+            <CustomTooltip
+              size="small"
+              type="black"
+              show
+              arrow
+              title={name || ""}
+              placement="top"
+            >
+              <Typography variant="s1" noWrap>
                 {name}
               </Typography>
             </CustomTooltip>

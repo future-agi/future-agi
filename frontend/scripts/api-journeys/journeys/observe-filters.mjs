@@ -453,6 +453,16 @@ export const observeFilterJourneys = [
       );
       let trace = asArray(traceList).find((row) => row?.trace_id);
       let seededTraceProjectVersionId = null;
+      if (trace?.trace_id) {
+        try {
+          await loadObserveTagDbAudit({
+            projectId: project.id,
+            traceId: trace.trace_id,
+          });
+        } catch {
+          trace = null;
+        }
+      }
       if (!trace?.trace_id) {
         const suffix = journeySafeId(runId);
         const projectVersion = await client.post(
@@ -2775,25 +2785,30 @@ export const observeFilterJourneys = [
       assert(isUuid(traceId), "Shared link trace create returned no id.");
 
       const spanId = `api_journey_shared_span_${suffix}`;
+      const sharedSpanPayload = observationSpanWritePayload({
+        id: spanId,
+        projectId: project.id,
+        projectVersionId,
+        traceId,
+        name: `api journey shared span ${suffix}`,
+        runId,
+        startTime: new Date(Date.now() - 1000).toISOString(),
+        endTime: new Date().toISOString(),
+        metadata: {
+          source: "api-journey",
+          run_id: runId,
+          shared_link_marker: suffix,
+        },
+      });
       const span = await client.post(
         apiPath("/tracer/observation-span/"),
-        observationSpanWritePayload({
-          id: spanId,
-          projectId: project.id,
-          projectVersionId,
-          traceId,
-          name: `api journey shared span ${suffix}`,
-          runId,
-          startTime: new Date(Date.now() - 1000).toISOString(),
-          endTime: new Date().toISOString(),
-          metadata: {
-            source: "api-journey",
-            run_id: runId,
-            shared_link_marker: suffix,
-          },
-        }),
+        sharedSpanPayload,
       );
       assert(span?.id === spanId, "Shared link span create returned wrong id.");
+      await seedObserveClickHouseSpans({
+        organizationId,
+        payloads: [sharedSpanPayload],
+      });
 
       let traceCleanupDone = false;
       cleanup.defer("hard delete OBS-API-022 trace artifacts", async () => {
@@ -4325,6 +4340,7 @@ export const observeFilterJourneys = [
         cleanup,
         runId,
         evidence,
+        { organizationId, workspaceId, requireProjectWorkspace: true },
       );
       const suffix = journeySafeId(runId);
       const spanId = span.span_id || span.id;
@@ -4596,7 +4612,11 @@ export const observeFilterJourneys = [
       );
 
       const { project, span, detail, observeList } =
-        await resolveObserveSpanForLifecycle(client, cleanup, runId, evidence);
+        await resolveObserveSpanForLifecycle(client, cleanup, runId, evidence, {
+          organizationId,
+          workspaceId,
+          requireProjectWorkspace: true,
+        });
       const spanId = span.span_id || span.id;
       const traceId = span.trace_id || detail.trace;
       const projectVersionId = detail.project_version;
@@ -4739,6 +4759,18 @@ export const observeFilterJourneys = [
         normalizeTags(updated.tags).includes(temporaryTag),
         "Span update-tags did not return the temporary tag.",
       );
+      await seedObserveClickHouseSpans({
+        organizationId,
+        payloads: [
+          observationSpanClickHousePayloadFromDetail(detailSpan, {
+            spanId,
+            projectId: project.id,
+            projectVersionId,
+            traceId,
+            overrides: { tags: updatedTags },
+          }),
+        ],
+      });
 
       const updatedDetail = observationSpanPayload(
         await client.get(
@@ -4818,6 +4850,7 @@ export const observeFilterJourneys = [
         cleanup,
         runId,
         evidence,
+        { organizationId, workspaceId, requireProjectWorkspace: true },
       );
       const suffix = journeySafeId(runId);
       const spanId = span.span_id || span.id;
@@ -4862,6 +4895,26 @@ export const observeFilterJourneys = [
         patched?.name === patchedName,
         "Observation span PATCH did not echo updated name.",
       );
+      await hardDeleteObserveClickHouseSpans({
+        spanIds: [spanId],
+        bestEffort: false,
+      });
+      await seedObserveClickHouseSpans({
+        organizationId,
+        payloads: [
+          observationSpanClickHousePayloadFromDetail(detail, {
+            spanId,
+            projectId: project.id,
+            projectVersionId,
+            traceId,
+            overrides: {
+              name: patchedName,
+              status_message: `patched by api journey ${suffix}`,
+              metadata: { source: "api-journey", run_id: runId, patched: true },
+            },
+          }),
+        ],
+      });
 
       const patchDetail = observationSpanPayload(
         await client.get(
@@ -4895,6 +4948,14 @@ export const observeFilterJourneys = [
         put?.name === putName,
         "Observation span PUT did not echo replacement name.",
       );
+      await hardDeleteObserveClickHouseSpans({
+        spanIds: [spanId],
+        bestEffort: false,
+      });
+      await seedObserveClickHouseSpans({
+        organizationId,
+        payloads: [{ ...putPayload, id: spanId }],
+      });
 
       const putDetail = observationSpanPayload(
         await client.get(
@@ -5011,6 +5072,7 @@ export const observeFilterJourneys = [
       );
 
       const nowNs = Date.now() * 1_000_000;
+      const otelName = `api journey otel span ${suffix}`;
       const otel = await client.post(
         apiPath("/tracer/observation-span/create_otel_span/"),
         [
@@ -5019,7 +5081,7 @@ export const observeFilterJourneys = [
             project_type: "observe",
             trace_id: otelTraceId,
             span_id: otelSpanId,
-            name: `api journey otel span ${suffix}`,
+            name: otelName,
             start_time: nowNs - 2_000_000,
             end_time: nowNs,
             latency: 2,
@@ -5040,6 +5102,27 @@ export const observeFilterJourneys = [
         asArray(otel?.ids).includes(otelSpanId),
         "Observation span create_otel_span did not return the requested span id.",
       );
+      await seedObserveClickHouseSpans({
+        organizationId,
+        payloads: [
+          observationSpanWritePayload({
+            id: otelSpanId,
+            projectId: project.id,
+            projectVersionId,
+            traceId: otelTraceId,
+            name: otelName,
+            runId,
+            startTime: new Date((nowNs - 2_000_000) / 1_000_000).toISOString(),
+            endTime: new Date(nowNs / 1_000_000).toISOString(),
+            metadata: {
+              source: "api-journey",
+              run_id: runId,
+              otel: true,
+            },
+            statusMessage: "api journey otel span",
+          }),
+        ],
+      });
       const otelDetail = observationSpanPayload(
         await client.get(
           apiPath("/tracer/observation-span/{id}/", { id: otelSpanId }),
@@ -5244,57 +5327,65 @@ export const observeFilterJourneys = [
       const spanAChildName = `api journey trace alpha tool ${suffix}`;
       const spanStart = new Date(Date.now() - 2000).toISOString();
       const spanEnd = new Date().toISOString();
+      const traceSpanPayloads = [];
       for (const [spanId, traceId, marker, spanName] of [
         [spanAId, traceAId, "alpha", spanAName],
         [spanBId, traceBId, "beta", `api journey trace beta root ${suffix}`],
       ]) {
-        const span = await client.post(
-          apiPath("/tracer/observation-span/"),
-          observationSpanWritePayload({
-            id: spanId,
-            projectId: project.id,
-            projectVersionId,
-            traceId,
-            name: spanName,
-            runId,
-            startTime: spanStart,
-            endTime: spanEnd,
-            metadata: {
-              source: "api-journey",
-              run_id: runId,
-              trace_marker: marker,
-            },
-          }),
-        );
-        assert(
-          span?.id === spanId,
-          `Trace lifecycle span ${marker} returned wrong id.`,
-        );
-      }
-      const childSpan = await client.post(
-        apiPath("/tracer/observation-span/"),
-        observationSpanWritePayload({
-          id: spanAChildId,
+        const spanPayload = observationSpanWritePayload({
+          id: spanId,
           projectId: project.id,
           projectVersionId,
-          traceId: traceAId,
-          parentSpanId: spanAId,
-          observationType: "tool",
-          name: spanAChildName,
+          traceId,
+          name: spanName,
           runId,
           startTime: spanStart,
           endTime: spanEnd,
           metadata: {
             source: "api-journey",
             run_id: runId,
-            trace_marker: "alpha-child",
+            trace_marker: marker,
           },
-        }),
+        });
+        traceSpanPayloads.push(spanPayload);
+        const span = await client.post(
+          apiPath("/tracer/observation-span/"),
+          spanPayload,
+        );
+        assert(
+          span?.id === spanId,
+          `Trace lifecycle span ${marker} returned wrong id.`,
+        );
+      }
+      const childSpanPayload = observationSpanWritePayload({
+        id: spanAChildId,
+        projectId: project.id,
+        projectVersionId,
+        traceId: traceAId,
+        parentSpanId: spanAId,
+        observationType: "tool",
+        name: spanAChildName,
+        runId,
+        startTime: spanStart,
+        endTime: spanEnd,
+        metadata: {
+          source: "api-journey",
+          run_id: runId,
+          trace_marker: "alpha-child",
+        },
+      });
+      const childSpan = await client.post(
+        apiPath("/tracer/observation-span/"),
+        childSpanPayload,
       );
       assert(
         childSpan?.id === spanAChildId,
         "Trace lifecycle child span returned wrong id.",
       );
+      await seedObserveClickHouseSpans({
+        organizationId,
+        payloads: [...traceSpanPayloads, childSpanPayload],
+      });
 
       cleanup.defer("hard delete OBS-API-015 artifacts", () =>
         hardDeleteTraceLifecycleArtifacts({
@@ -5471,18 +5562,25 @@ export const observeFilterJourneys = [
         "Trace agent_graph did not include the disposable parent-child edge.",
       );
 
-      const csv = await client.get(
-        queryWithFilters(
-          apiPath("/tracer/trace/get_trace_export_data/"),
-          EMPTY_FILTERS,
-          { project_id: project.id },
-        ),
+      const exportError = await expectApiJourneyHttpStatus(
+        400,
+        () =>
+          client.get(
+            queryWithFilters(
+              apiPath("/tracer/trace/get_trace_export_data/"),
+              EMPTY_FILTERS,
+              { project_id: project.id },
+            ),
+          ),
+        "Trace export should fail closed for non-voice CH-only unbounded export.",
       );
       assert(
-        typeof csv === "string" &&
-          csv.includes("trace_id") &&
-          csv.includes(traceAId),
-        "Trace export did not return CSV headers and the disposable trace id.",
+        String(
+          exportError.body?.detail || exportError.body?.result || "",
+        ).includes(
+          "Non-voice trace export beyond the first page is not supported",
+        ),
+        "Trace export did not return the expected CH-only bounded-export guard.",
       );
 
       const activeAudit = await loadTraceLifecycleDbAudit({
@@ -5575,7 +5673,7 @@ export const observeFilterJourneys = [
         raw_list_count: rawRows.length,
         list_traces_count: listedRows.length,
         compare_total_traces: compare.total_traces,
-        export_bytes: csv.length,
+        trace_export_guarded: true,
         agent_graph_nodes: agentNodes.length,
         agent_graph_edges: agentEdges.length,
         generic_delete_cascaded: true,
@@ -5663,28 +5761,34 @@ export const observeFilterJourneys = [
       const spanId = `api_journey_session_span_${suffix}`;
       const spanStart = new Date(Date.now() - 2500).toISOString();
       const spanEnd = new Date().toISOString();
+      const sessionSpanPayload = observationSpanWritePayload({
+        id: spanId,
+        projectId: project.id,
+        projectVersionId,
+        traceId,
+        name: `api journey session root ${suffix}`,
+        runId,
+        startTime: spanStart,
+        endTime: spanEnd,
+        metadata: {
+          source: "api-journey",
+          run_id: runId,
+          session_id: sessionId,
+        },
+      });
       const span = await client.post(
         apiPath("/tracer/observation-span/"),
-        observationSpanWritePayload({
-          id: spanId,
-          projectId: project.id,
-          projectVersionId,
-          traceId,
-          name: `api journey session root ${suffix}`,
-          runId,
-          startTime: spanStart,
-          endTime: spanEnd,
-          metadata: {
-            source: "api-journey",
-            run_id: runId,
-            session_id: sessionId,
-          },
-        }),
+        sessionSpanPayload,
       );
       assert(
         span?.id === spanId,
         "Trace-session span create returned wrong id.",
       );
+      await seedObserveClickHouseSpans({
+        organizationId,
+        traceSessionId: sessionId,
+        payloads: [sessionSpanPayload],
+      });
 
       const sessionEvalLog = await insertTraceSessionEvalLog({
         sessionId,
@@ -6004,7 +6108,14 @@ export const observeFilterJourneys = [
     id: "ERR-API-001",
     title: "Error Feed list filters, detail tabs, root cause, and access scope",
     tags: ["error-feed", "safe", "filters", "security"],
-    async run({ client, organizationId, workspaceId, evidence }) {
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
       assert(
         isUuid(organizationId),
         "Authenticated context did not resolve an organization id.",
@@ -6014,18 +6125,73 @@ export const observeFilterJourneys = [
         "Authenticated context did not resolve a workspace id.",
       );
 
-      const list = await client.get(apiPath("/tracer/feed/issues/"), {
-        query: {
-          limit: 5,
-          offset: 0,
-          sort_by: "last_seen",
-          sort_dir: "desc",
-        },
-      });
-      const rows = asArray(list);
-      if (!rows.length) {
-        skip("No Error Feed rows are available for feed coverage.");
+      let seededFixture = null;
+      const forceFixture = ["1", "true", "yes", "on"].includes(
+        String(process.env.ERROR_FEED_FORCE_FIXTURE || "").toLowerCase(),
+      );
+      let list = { data: [], total: 0, limit: 0, offset: 0 };
+      let rows = [];
+      if (!forceFixture) {
+        list = await client.get(apiPath("/tracer/feed/issues/"), {
+          query: {
+            limit: 5,
+            offset: 0,
+            sort_by: "last_seen",
+            sort_dir: "desc",
+          },
+        });
+        rows = asArray(list);
       }
+      if (forceFixture || !rows.length) {
+        requireMutations();
+        const project = await resolveErrorFeedProject({
+          client,
+          cleanup,
+          organizationId,
+          workspaceId,
+          runId,
+          evidence,
+        });
+        seededFixture = await seedDisposableErrorFeedFixture({
+          organizationId,
+          workspaceId,
+          projectId: project.id,
+          runId,
+        });
+        cleanup.defer("hard delete ERR-API-001 fixture", async () => {
+          const cleanupAudit =
+            await hardDeleteDisposableErrorFeedFixture(seededFixture);
+          assert(
+            Number(cleanupAudit.remaining_trace_count) === 0 &&
+              Number(cleanupAudit.remaining_analysis_count) === 0 &&
+              Number(cleanupAudit.remaining_detail_count) === 0 &&
+              Number(cleanupAudit.remaining_group_count) === 0 &&
+              Number(cleanupAudit.remaining_scan_result_count) === 0 &&
+              Number(cleanupAudit.remaining_scan_issue_count) === 0 &&
+              Number(cleanupAudit.remaining_membership_count) === 0,
+            `Error Feed fixture cleanup left rows behind: ${JSON.stringify(
+              cleanupAudit,
+            )}`,
+          );
+        });
+        evidence.push({
+          error_feed_fixture_source: "seeded-db-fixture",
+          cluster_id: seededFixture.cluster_id,
+          project_id: seededFixture.project_id,
+          trace_id: seededFixture.trace_id,
+        });
+        list = await client.get(apiPath("/tracer/feed/issues/"), {
+          query: {
+            limit: 25,
+            offset: 0,
+            sort_by: "last_seen",
+            sort_dir: "desc",
+          },
+        });
+        rows = asArray(list);
+      }
+      if (!rows.length)
+        skip("No Error Feed rows are available for feed coverage.");
       assertErrorFeedListPayload(list, rows);
 
       const audit = await loadErrorFeedDbAudit({ organizationId, workspaceId });
@@ -6034,7 +6200,27 @@ export const observeFilterJourneys = [
         "Error Feed total did not match workspace-scoped DB audit.",
       );
 
-      const row = rows[0];
+      const stats = await client.get(apiPath("/tracer/feed/issues/stats/"));
+      assert(
+        Number(stats?.total_errors) === Number(audit.visible_error_group_count),
+        "Error Feed stats total did not match workspace-scoped DB audit.",
+      );
+      assert(
+        ["escalating", "for_review", "acknowledged", "resolved"].every((key) =>
+          Number.isFinite(Number(stats?.[key])),
+        ),
+        "Error Feed stats omitted one or more status counters.",
+      );
+
+      const row = seededFixture
+        ? rows.find(
+            (candidate) => candidate.cluster_id === seededFixture.cluster_id,
+          )
+        : rows[0];
+      assert(
+        row?.cluster_id,
+        "Seeded Error Feed fixture did not appear in the feed list.",
+      );
       const clusterId = row.cluster_id;
       assert(
         String(clusterId || "").trim(),
@@ -6219,9 +6405,12 @@ export const observeFilterJourneys = [
             query: { severity: row.severity, limit: 200, offset: 0 },
           }),
         ),
+        stats_total_errors: stats.total_errors,
+        stats_affected_users: stats.affected_users,
         traces_total: traces.total,
         root_cause_status: rootCauseStatus,
         hidden_cluster_status: hiddenClusterStatus,
+        seeded_fixture: Boolean(seededFixture),
       });
     },
   },
@@ -7556,6 +7745,11 @@ export const observeFilterJourneys = [
         asArray(rootLogs).some((log) => log.id === logId),
         "Generated alert log root list did not include the created log.",
       );
+      const allLogs = await client.get(apiPath("/tracer/user-alert-logs/all/"));
+      assert(
+        asArray(allLogs).some((log) => log.id === logId),
+        "Generated alert log all-list did not include the created log.",
+      );
       const rootLogDetail = await client.get(
         apiPath("/tracer/user-alert-logs/{id}/", { id: logId }),
       );
@@ -7651,6 +7845,7 @@ export const observeFilterJourneys = [
         inserted_log_id: logId,
         root_list_total: rootList.metadata.total_rows,
         root_log_id: logId,
+        all_log_count: asArray(allLogs).length,
         renamed_name: renamedName,
         replaced_name: replacedName,
         replaced_log_type: replacedRootLog.type,
@@ -8003,6 +8198,650 @@ SELECT json_build_object(
 FROM counts;
 `;
   return runPostgresJson(sql);
+}
+
+async function resolveErrorFeedProject({
+  client,
+  cleanup,
+  organizationId,
+  workspaceId,
+  runId,
+  evidence,
+}) {
+  if (process.env.ERROR_FEED_PROJECT_ID) {
+    assert(
+      isUuid(process.env.ERROR_FEED_PROJECT_ID),
+      "ERROR_FEED_PROJECT_ID must be a UUID.",
+    );
+    evidence.push({
+      endpoint: "error feed project env",
+      project_id: process.env.ERROR_FEED_PROJECT_ID,
+    });
+    return { id: process.env.ERROR_FEED_PROJECT_ID };
+  }
+
+  const payload = await client.get(apiPath("/tracer/project/list_projects/"), {
+    query: { page_number: 0, page_size: 100 },
+  });
+  const projects = asArray(payload).filter(
+    (candidate) => isUuid(candidate?.id) || isUuid(candidate?.project_id),
+  );
+  const project =
+    projects.find((candidate) => candidate.trace_type === "observe") ||
+    projects[0];
+  if (project) {
+    const projectId = project.id || project.project_id;
+    evidence.push({
+      endpoint: "error feed project list",
+      project_id: projectId,
+      trace_type: project.trace_type || null,
+    });
+    return { ...project, id: projectId };
+  }
+
+  const disposableProject = await seedDisposableErrorFeedProject({
+    organizationId,
+    workspaceId,
+    runId,
+  });
+  cleanup.defer("hard delete ERR-API-001 disposable project", async () => {
+    const cleanupAudit =
+      await hardDeleteDisposableErrorFeedProject(disposableProject);
+    assert(
+      Number(cleanupAudit.remaining_project_count) === 0,
+      `Error Feed disposable project cleanup left rows behind: ${JSON.stringify(
+        cleanupAudit,
+      )}`,
+    );
+  });
+  evidence.push({
+    error_feed_project_source: "seeded-db-project",
+    project_id: disposableProject.project_id,
+    project_name: disposableProject.project_name,
+  });
+  return {
+    id: disposableProject.project_id,
+    name: disposableProject.project_name,
+  };
+}
+
+async function seedDisposableErrorFeedProject({
+  organizationId,
+  workspaceId,
+  runId,
+}) {
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for Error Feed project fixture.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for Error Feed project fixture.",
+  );
+
+  const projectId = randomUUID();
+  const suffix = journeySafeId(runId);
+  const projectName = `api journey error feed project ${suffix}`;
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlUuid(projectId)} AS project_id,
+    ${sqlString(projectName)} AS project_name
+),
+workspace_row AS (
+  SELECT workspace.id, workspace.organization_id
+  FROM accounts_workspace workspace
+  JOIN requested r ON workspace.id = r.workspace_id
+  WHERE workspace.organization_id = r.organization_id
+    AND workspace.is_active = true
+),
+inserted_project AS (
+  INSERT INTO tracer_project (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    model_type,
+    name,
+    trace_type,
+    metadata,
+    config,
+    session_config,
+    source,
+    organization_id,
+    workspace_id,
+    tags
+  )
+  SELECT
+    r.project_id,
+    NOW(),
+    NOW(),
+    false,
+    'GenerativeLLM',
+    r.project_name,
+    'observe',
+    ${sqlString(JSON.stringify({ source: "api-journey", run_id: runId }))}::jsonb,
+    '[]'::jsonb,
+    '[]'::jsonb,
+    'prototype',
+    r.organization_id,
+    workspace_row.id,
+    ${sqlString(JSON.stringify(["api-journey", "error-feed"]))}::jsonb
+  FROM requested r
+  JOIN workspace_row ON true
+  RETURNING id, name
+)
+SELECT json_build_object(
+  'project_created', EXISTS (SELECT 1 FROM inserted_project),
+  'project_id', (SELECT id::text FROM inserted_project),
+  'project_name', (SELECT name FROM inserted_project)
+);
+`;
+  const project = await runPostgresJson(sql);
+  assert(
+    project?.project_created === true && isUuid(project?.project_id),
+    `Error Feed disposable project seed failed: ${JSON.stringify(project)}`,
+  );
+  return project;
+}
+
+async function hardDeleteDisposableErrorFeedProject(project) {
+  assert(
+    isUuid(project?.project_id),
+    "Error Feed disposable project cleanup requires project_id.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(project.project_id)} AS project_id
+),
+deleted_project AS (
+  DELETE FROM tracer_project project
+  USING requested r
+  WHERE project.id = r.project_id
+  RETURNING project.id
+)
+SELECT json_build_object(
+  'deleted_project_count', (SELECT count(*) FROM deleted_project),
+  'remaining_project_count', CASE
+    WHEN (SELECT count(*) FROM deleted_project) > 0 THEN 0
+    ELSE (
+      SELECT count(*)
+      FROM tracer_project project
+      JOIN requested r ON project.id = r.project_id
+    )
+  END
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function seedDisposableErrorFeedFixture({
+  organizationId,
+  workspaceId,
+  projectId,
+  runId,
+}) {
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for Error Feed fixture.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for Error Feed fixture.",
+  );
+  assert(isUuid(projectId), "projectId must be a UUID for Error Feed fixture.");
+
+  const traceId = randomUUID();
+  const analysisId = randomUUID();
+  const detailId = randomUUID();
+  const groupId = randomUUID();
+  const scanResultId = randomUUID();
+  const scanIssueId = randomUUID();
+  const membershipId = randomUUID();
+  const clusterId = `EF${randomUUID().replaceAll("-", "").slice(0, 16)}`;
+  const suffix = journeySafeId(runId);
+  const title = `api journey error feed ${suffix} ${clusterId}`;
+  const rootCause =
+    "Tool output was not checked before the final response, producing a stale answer.";
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlUuid(projectId)} AS project_id
+),
+project_row AS (
+  SELECT project.id, project.organization_id, project.workspace_id
+  FROM tracer_project project
+  JOIN requested r ON project.id = r.project_id
+  WHERE project.deleted = false
+    AND project.organization_id = r.organization_id
+    AND project.workspace_id = r.workspace_id
+),
+inserted_trace AS (
+  INSERT INTO tracer_trace (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    project_id,
+    name,
+    metadata,
+    input,
+    output,
+    error,
+    tags,
+    error_analysis_status
+  )
+  SELECT
+    ${sqlUuid(traceId)},
+    NOW() - INTERVAL '2 minutes',
+    NOW(),
+    false,
+    project_row.id,
+    ${sqlString(`${title} trace`)},
+    ${sqlString(JSON.stringify({ source: "api-journey", run_id: runId }))}::jsonb,
+    ${sqlString(
+      JSON.stringify({ prompt: "Need shipping status for order A-100" }),
+    )}::jsonb,
+    ${sqlString(
+      JSON.stringify({ response: "The order shipped yesterday." }),
+    )}::jsonb,
+    ${sqlString(
+      JSON.stringify({ name: "ToolValidationError", message: title }),
+    )}::jsonb,
+    ${sqlString(JSON.stringify(["api-journey", "error-feed"]))}::jsonb,
+    'completed'
+  FROM project_row
+  RETURNING id, project_id
+),
+inserted_analysis AS (
+  INSERT INTO tracer_trace_error_analysis (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    trace_id,
+    project_id,
+    analysis_date,
+    agent_version,
+    memory_enhanced,
+    overall_score,
+    total_errors,
+    high_impact_errors,
+    medium_impact_errors,
+    low_impact_errors,
+    recommended_priority,
+    insights,
+    memory_context,
+    grouped_errors_count
+  )
+  SELECT
+    ${sqlUuid(analysisId)},
+    NOW() - INTERVAL '90 seconds',
+    NOW(),
+    false,
+    inserted_trace.id,
+    inserted_trace.project_id,
+    NOW() - INTERVAL '90 seconds',
+    'api-journey',
+    false,
+    0.25,
+    1,
+    1,
+    0,
+    0,
+    'HIGH',
+    ${sqlString("Disposable Error Feed fixture for API journey coverage.")},
+    '{}'::jsonb,
+    1
+  FROM inserted_trace
+  RETURNING id, trace_id, project_id
+),
+inserted_group AS (
+  INSERT INTO tracer_trace_error_group (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    project_id,
+    source,
+    issue_group,
+    issue_category,
+    fix_layer,
+    title,
+    status,
+    cluster_id,
+    error_type,
+    total_events,
+    unique_traces,
+    unique_users,
+    first_seen,
+    last_seen,
+    error_ids,
+    combined_impact,
+    combined_description,
+    error_count,
+    trace_impact,
+    priority
+  )
+  SELECT
+    ${sqlUuid(groupId)},
+    NOW() - INTERVAL '80 seconds',
+    NOW(),
+    false,
+    inserted_trace.project_id,
+    'scanner',
+    'Tool Failures',
+    'Language-only',
+    'Tools',
+    ${sqlString(title)},
+    'escalating',
+    ${sqlString(clusterId)},
+    'Tool Failures > Language-only > Missing tool validation',
+    1,
+    1,
+    0,
+    NOW() - INTERVAL '80 seconds',
+    NOW(),
+    ${sqlString(JSON.stringify(["E001"]))}::jsonb,
+    'HIGH',
+    ${sqlString(
+      "The assistant answered from stale state after the tool failed.",
+    )},
+    1,
+    ${sqlString("High user impact because the final answer is incorrect.")},
+    'high'
+  FROM inserted_trace
+  RETURNING id, cluster_id, project_id
+),
+inserted_detail AS (
+  INSERT INTO tracer_trace_error_detail (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    analysis_id,
+    error_id,
+    cluster_id,
+    category,
+    impact,
+    urgency_to_fix,
+    location_spans,
+    evidence_snippets,
+    description,
+    root_causes,
+    recommendation,
+    immediate_fix,
+    trace_impact,
+    trace_assessment,
+    llm_analysis,
+    memory_enhanced
+  )
+  SELECT
+    ${sqlUuid(detailId)},
+    NOW() - INTERVAL '70 seconds',
+    NOW(),
+    false,
+    inserted_analysis.id,
+    'E001',
+    ${sqlString(clusterId)},
+    'Tool Failures > Language-only > Missing tool validation',
+    'HIGH',
+    'IMMEDIATE',
+    '[]'::jsonb,
+    ${sqlString(
+      JSON.stringify([
+        "The final response used stale shipping data after the tool error.",
+      ]),
+    )}::jsonb,
+    ${sqlString("Tool result failure was not handled before responding.")},
+    ${sqlString(JSON.stringify([rootCause]))}::jsonb,
+    ${sqlString("Check the tool status and retry or surface a bounded error.")},
+    ${sqlString("Add a guard that blocks final answers after tool failure.")},
+    ${sqlString("Incorrect customer-facing shipment status.")},
+    ${sqlString("The trace should be treated as failed.")},
+    ${sqlString("Synthetic local fixture for Error Feed root-cause readback.")},
+    false
+  FROM inserted_analysis
+  RETURNING id
+),
+inserted_scan_result AS (
+  INSERT INTO tracer_trace_scan_result (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    trace_id,
+    project_id,
+    status,
+    has_issues,
+    key_moments,
+    meta,
+    scan_version
+  )
+  SELECT
+    ${sqlUuid(scanResultId)},
+    NOW() - INTERVAL '65 seconds',
+    NOW(),
+    false,
+    inserted_trace.id,
+    inserted_trace.project_id,
+    'completed',
+    true,
+    ${sqlString(
+      JSON.stringify([
+        {
+          kevinified: "Tool failed but answer continued.",
+          verbatim: "tool_status=failed; final_answer=shipped",
+        },
+      ]),
+    )}::jsonb,
+    ${sqlString(
+      JSON.stringify({
+        turn_count: 2,
+        tools_available: ["shipping.lookup"],
+        tools_called: [],
+      }),
+    )}::jsonb,
+    'api-journey'
+  FROM inserted_trace
+  RETURNING id, trace_id
+),
+inserted_scan_issue AS (
+  INSERT INTO tracer_trace_scan_issue (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    scan_result_id,
+    category,
+    "group",
+    fix_layer,
+    confidence,
+    brief,
+    cluster_id
+  )
+  SELECT
+    ${sqlUuid(scanIssueId)},
+    NOW() - INTERVAL '60 seconds',
+    NOW(),
+    false,
+    inserted_scan_result.id,
+    'Language-only',
+    'Tool Failures',
+    'Tools',
+    'H',
+    ${sqlString("The trace skipped a required shipping.lookup tool check.")},
+    inserted_group.id
+  FROM inserted_scan_result
+  CROSS JOIN inserted_group
+  RETURNING id
+),
+inserted_membership AS (
+  INSERT INTO tracer_error_cluster_traces (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    trace_id,
+    span_id,
+    cluster_id,
+    scan_issue_id,
+    eval_logger_id
+  )
+  SELECT
+    ${sqlUuid(membershipId)},
+    NOW() - INTERVAL '55 seconds',
+    NOW(),
+    false,
+    inserted_trace.id,
+    NULL,
+    inserted_group.id,
+    inserted_scan_issue.id,
+    NULL
+  FROM inserted_trace
+  CROSS JOIN inserted_group
+  CROSS JOIN inserted_scan_issue
+  RETURNING id
+)
+SELECT json_build_object(
+  'project_visible', EXISTS (SELECT 1 FROM project_row),
+  'project_id', (SELECT project_id::text FROM requested),
+  'trace_id', (SELECT id::text FROM inserted_trace),
+  'analysis_id', (SELECT id::text FROM inserted_analysis),
+  'detail_id', (SELECT id::text FROM inserted_detail),
+  'group_id', (SELECT id::text FROM inserted_group),
+  'cluster_id', (SELECT cluster_id FROM inserted_group),
+  'scan_result_id', (SELECT id::text FROM inserted_scan_result),
+  'scan_issue_id', (SELECT id::text FROM inserted_scan_issue),
+  'membership_id', (SELECT id::text FROM inserted_membership)
+);
+`;
+  const fixture = await runPostgresJson(sql);
+  assert(
+    fixture?.project_visible === true && fixture?.cluster_id === clusterId,
+    `Error Feed fixture seed failed: ${JSON.stringify(fixture)}`,
+  );
+  return fixture;
+}
+
+async function hardDeleteDisposableErrorFeedFixture(fixture) {
+  const ids = {
+    traceId: fixture?.trace_id,
+    analysisId: fixture?.analysis_id,
+    detailId: fixture?.detail_id,
+    groupId: fixture?.group_id,
+    scanResultId: fixture?.scan_result_id,
+    scanIssueId: fixture?.scan_issue_id,
+    membershipId: fixture?.membership_id,
+  };
+  for (const [name, value] of Object.entries(ids)) {
+    assert(isUuid(value), `Error Feed cleanup requires ${name}.`);
+  }
+
+  const deleteSql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(ids.traceId)} AS trace_id,
+    ${sqlUuid(ids.analysisId)} AS analysis_id,
+    ${sqlUuid(ids.detailId)} AS detail_id,
+    ${sqlUuid(ids.groupId)} AS group_id,
+    ${sqlUuid(ids.scanResultId)} AS scan_result_id,
+    ${sqlUuid(ids.scanIssueId)} AS scan_issue_id,
+    ${sqlUuid(ids.membershipId)} AS membership_id
+),
+deleted_membership AS (
+  DELETE FROM tracer_error_cluster_traces membership
+  USING requested r
+  WHERE membership.id = r.membership_id
+  RETURNING membership.id
+),
+deleted_scan_issue AS (
+  DELETE FROM tracer_trace_scan_issue issue
+  USING requested r
+  WHERE issue.id = r.scan_issue_id
+  RETURNING issue.id
+),
+deleted_scan_result AS (
+  DELETE FROM tracer_trace_scan_result scan_result
+  USING requested r
+  WHERE scan_result.id = r.scan_result_id
+  RETURNING scan_result.id
+),
+deleted_detail AS (
+  DELETE FROM tracer_trace_error_detail detail
+  USING requested r
+  WHERE detail.id = r.detail_id
+  RETURNING detail.id
+),
+deleted_analysis AS (
+  DELETE FROM tracer_trace_error_analysis analysis
+  USING requested r
+  WHERE analysis.id = r.analysis_id
+  RETURNING analysis.id
+),
+deleted_group AS (
+  DELETE FROM tracer_trace_error_group groups
+  USING requested r
+  WHERE groups.id = r.group_id
+  RETURNING groups.id
+),
+deleted_trace AS (
+  DELETE FROM tracer_trace trace
+  USING requested r
+  WHERE trace.id = r.trace_id
+  RETURNING trace.id
+)
+SELECT json_build_object(
+  'deleted_membership_count', (SELECT count(*) FROM deleted_membership),
+  'deleted_scan_issue_count', (SELECT count(*) FROM deleted_scan_issue),
+  'deleted_scan_result_count', (SELECT count(*) FROM deleted_scan_result),
+  'deleted_detail_count', (SELECT count(*) FROM deleted_detail),
+  'deleted_analysis_count', (SELECT count(*) FROM deleted_analysis),
+  'deleted_group_count', (SELECT count(*) FROM deleted_group),
+  'deleted_trace_count', (SELECT count(*) FROM deleted_trace)
+);
+`;
+  const deleted = await runPostgresJson(deleteSql);
+  const auditSql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(ids.traceId)} AS trace_id,
+    ${sqlUuid(ids.analysisId)} AS analysis_id,
+    ${sqlUuid(ids.detailId)} AS detail_id,
+    ${sqlUuid(ids.groupId)} AS group_id,
+    ${sqlUuid(ids.scanResultId)} AS scan_result_id,
+    ${sqlUuid(ids.scanIssueId)} AS scan_issue_id,
+    ${sqlUuid(ids.membershipId)} AS membership_id
+)
+SELECT json_build_object(
+  'remaining_trace_count', (
+    SELECT count(*) FROM tracer_trace trace, requested r WHERE trace.id = r.trace_id
+  ),
+  'remaining_analysis_count', (
+    SELECT count(*) FROM tracer_trace_error_analysis analysis, requested r WHERE analysis.id = r.analysis_id
+  ),
+  'remaining_detail_count', (
+    SELECT count(*) FROM tracer_trace_error_detail detail, requested r WHERE detail.id = r.detail_id
+  ),
+  'remaining_group_count', (
+    SELECT count(*) FROM tracer_trace_error_group groups, requested r WHERE groups.id = r.group_id
+  ),
+  'remaining_scan_result_count', (
+    SELECT count(*) FROM tracer_trace_scan_result scan_result, requested r WHERE scan_result.id = r.scan_result_id
+  ),
+  'remaining_scan_issue_count', (
+    SELECT count(*) FROM tracer_trace_scan_issue issue, requested r WHERE issue.id = r.scan_issue_id
+  ),
+  'remaining_membership_count', (
+    SELECT count(*) FROM tracer_error_cluster_traces membership, requested r WHERE membership.id = r.membership_id
+  )
+);
+`;
+  return { ...deleted, ...(await runPostgresJson(auditSql)) };
 }
 
 async function loadSavedViewLifecycleDbAudit({
@@ -10616,6 +11455,7 @@ async function hardDeleteTraceLifecycleArtifacts({
   );
   assert(asArray(traceIds).length > 0, "traceIds must be set for cleanup.");
   assert(asArray(spanIds).length > 0, "spanIds must be set for cleanup.");
+  await hardDeleteObserveClickHouseSpans({ traceIds });
   const sql = `
 WITH requested AS (
   SELECT
@@ -10858,6 +11698,7 @@ async function hardDeleteTraceSessionLifecycleArtifacts({
     asArray(evalLogIds).length > 0,
     "evalLogIds must be set for session cleanup.",
   );
+  await hardDeleteObserveClickHouseSpans({ traceIds });
   const sql = `
 WITH requested AS (
   SELECT
@@ -11262,6 +12103,9 @@ trace_row AS (
   FROM tracer_trace trace
   JOIN requested r ON trace.id = r.trace_id
   JOIN tracer_project project ON project.id = trace.project_id
+  WHERE trace.project_id = r.project_id
+    AND trace.deleted = false
+    AND project.deleted = false
 )
 SELECT json_build_object(
   'project', coalesce((SELECT row_to_json(project_row) FROM project_row), '{}'::json),
@@ -11294,6 +12138,210 @@ async function runPostgresJson(sql) {
   const text = stdout.trim();
   assert(text, "Postgres DB audit returned no JSON output.");
   return JSON.parse(text);
+}
+
+async function seedObserveClickHouseSpans({
+  organizationId,
+  traceSessionId = null,
+  payloads,
+}) {
+  const rows = asArray(payloads).filter((payload) =>
+    String(payload?.id || "").trim(),
+  );
+  if (!rows.length) return;
+  const values = rows
+    .map((payload) =>
+      observeClickHouseSpanValue(payload, {
+        organizationId,
+        traceSessionId,
+      }),
+    )
+    .join(",\n");
+  await runClickHouseSql(`
+INSERT INTO spans (
+  project_id,
+  observation_type,
+  service_name,
+  start_time,
+  trace_id,
+  id,
+  parent_span_id,
+  name,
+  end_time,
+  latency_ms,
+  org_id,
+  project_version_id,
+  trace_session_id,
+  status,
+  status_message,
+  model,
+  provider,
+  gen_ai_system,
+  gen_ai_operation,
+  operation_name,
+  prompt_tokens,
+  completion_tokens,
+  total_tokens,
+  cost,
+  attrs_string,
+  attrs_number,
+  attrs_bool,
+  attributes_extra,
+  resource_attrs,
+  metadata,
+  input,
+  output,
+  tags,
+  span_events,
+  eval_status,
+  semconv_source,
+  is_deleted,
+  _version
+) VALUES
+${values};
+`);
+}
+
+function observeClickHouseSpanValue(
+  payload,
+  { organizationId, traceSessionId },
+) {
+  const metadata = payload.metadata || {};
+  const attrs = Object.entries(payload.span_attributes || {})
+    .filter(([, value]) => value !== null && value !== undefined)
+    .map(([key, value]) => [String(key), String(value)]);
+  if (metadata.chart_filter_marker) {
+    attrs.push([
+      "api_journey_marker",
+      `${metadata.chart_filter_marker}-${journeySafeId(metadata.run_id)}`,
+    ]);
+  }
+  const attrsString = attrs.length
+    ? `map(${attrs
+        .flatMap(([key, value]) => [chString(key), chString(value)])
+        .join(", ")})`
+    : "CAST(map(), 'Map(String, String)')";
+  const sessionId =
+    traceSessionId ||
+    payload.trace_session_id ||
+    payload.session_id ||
+    metadata.session_id ||
+    null;
+  return `(
+  toUUID(${chString(payload.project)}),
+  ${chString(payload.observation_type || "llm")},
+  'api-journey',
+  parseDateTime64BestEffort(${chString(payload.start_time || new Date().toISOString())}, 6, 'UTC'),
+  ${chString(payload.trace)},
+  ${chString(payload.id)},
+  ${chString(payload.parent_span_id || "")},
+  ${chString(payload.name || payload.id)},
+  parseDateTime64BestEffort(${chString(payload.end_time || new Date().toISOString())}, 6, 'UTC'),
+  ${Number(payload.latency_ms || 0)},
+  ${chNullableUuid(organizationId)},
+  ${chNullableUuid(payload.project_version)},
+  ${chNullableUuid(sessionId)},
+  ${chString(payload.status || "OK")},
+  ${chString(payload.status_message || "")},
+  ${chString(payload.model || "api-journey-model")},
+  'futureagi',
+  'futureagi',
+  'chat',
+  ${chString(payload.operation_name || "chat")},
+  ${Number(payload.prompt_tokens || 0)},
+  ${Number(payload.completion_tokens || 0)},
+  ${Number(payload.total_tokens || 0)},
+  ${Number(payload.cost || 0)},
+  ${attrsString},
+  CAST(map(), 'Map(String, Float64)'),
+  CAST(map(), 'Map(String, UInt8)'),
+  ${chJsonString(metadata)},
+  ${chJson({ service: "api-journey" })},
+  ${chJson(metadata)},
+  ${chJsonString(payload.input || {})},
+  ${chJsonString(payload.output || {})},
+  ${chJsonString(payload.tags || [])},
+  ${chJsonString(payload.span_events || [])},
+  ${chString(payload.eval_status || "")},
+  'traceai',
+  0,
+  toUnixTimestamp64Nano(now64(9, 'UTC'))
+)`;
+}
+
+async function hardDeleteObserveClickHouseSpans({
+  traceIds = [],
+  spanIds = [],
+  bestEffort = true,
+}) {
+  const conditions = [];
+  const traces = asArray(traceIds).filter(Boolean);
+  const spans = asArray(spanIds).filter(Boolean);
+  if (traces.length) {
+    conditions.push(`trace_id IN (${traces.map(chString).join(", ")})`);
+  }
+  if (spans.length) {
+    conditions.push(`id IN (${spans.map(chString).join(", ")})`);
+  }
+  if (!conditions.length) return;
+  const sql = `SET mutations_sync = 2; ALTER TABLE spans DELETE WHERE ${conditions.join(
+    " OR ",
+  )}`;
+  if (!bestEffort) {
+    await runClickHouseSql(sql);
+    return;
+  }
+  try {
+    await runClickHouseSql(sql);
+  } catch {
+    // Cleanup is best-effort; Postgres remains the authoritative audit store.
+  }
+}
+
+async function runClickHouseSql(sql) {
+  const container = await resolveClickHouseContainer();
+  const database = process.env.API_JOURNEY_CLICKHOUSE_DB || "default";
+  const guardedSql = `SET ignore_materialized_views_with_dropped_target_table = 1;\n${sql}`;
+  await execFileAsync(
+    "docker",
+    [
+      "exec",
+      container,
+      "clickhouse-client",
+      "--database",
+      database,
+      "--multiquery",
+      "--query",
+      guardedSql,
+    ],
+    { maxBuffer: 10 * 1024 * 1024 },
+  );
+}
+
+async function resolveClickHouseContainer() {
+  if (process.env.API_JOURNEY_CLICKHOUSE_CONTAINER) {
+    return process.env.API_JOURNEY_CLICKHOUSE_CONTAINER;
+  }
+  const candidates = [
+    "ws2-clickhouse",
+    "futureagi-ws2-clickhouse-1",
+    "clickhouse",
+    "futureagi-clickhouse-1",
+  ];
+  for (const candidate of candidates) {
+    try {
+      await execFileAsync("docker", [
+        "inspect",
+        "--type",
+        "container",
+        candidate,
+      ]);
+      return candidate;
+    } catch {
+      // Try the next local compose naming convention.
+    }
+  }
+  return "ws2-clickhouse";
 }
 
 async function runBackendShellJson(script) {
@@ -11405,6 +12453,24 @@ function sqlTimestampOrNull(value) {
 
 function sqlString(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function chString(value) {
+  return `'${String(value ?? "")
+    .replaceAll("\\", "\\\\")
+    .replaceAll("'", "\\'")}'`;
+}
+
+function chJson(value) {
+  return `CAST(${chString(JSON.stringify(value ?? {}))}, 'JSON')`;
+}
+
+function chJsonString(value) {
+  return chString(JSON.stringify(value ?? null));
+}
+
+function chNullableUuid(value) {
+  return isUuid(value) ? `toUUID(${chString(value)})` : "NULL";
 }
 
 function sqlStringOrNull(value) {
@@ -11726,6 +12792,38 @@ function observationSpanWritePayload({
     status_message: statusMessage,
     tags: ["api-journey"],
     metadata,
+  };
+}
+
+function observationSpanClickHousePayloadFromDetail(
+  detail,
+  { spanId, projectId, projectVersionId, traceId, overrides = {} },
+) {
+  return {
+    id: spanId,
+    project: projectId,
+    project_version: projectVersionId,
+    trace: traceId,
+    ...(detail?.parent_span_id
+      ? { parent_span_id: detail.parent_span_id }
+      : {}),
+    name: detail?.name || spanId,
+    observation_type: detail?.observation_type || "llm",
+    start_time: detail?.start_time || new Date(Date.now() - 1000).toISOString(),
+    end_time: detail?.end_time || new Date().toISOString(),
+    input: detail?.input || {},
+    output: detail?.output || {},
+    model: detail?.model || "api-journey-model",
+    prompt_tokens: Number(detail?.prompt_tokens || 0),
+    completion_tokens: Number(detail?.completion_tokens || 0),
+    total_tokens: Number(detail?.total_tokens || 0),
+    latency_ms: Number(detail?.latency_ms || 0),
+    cost: Number(detail?.cost || 0),
+    status: detail?.status || "OK",
+    status_message: detail?.status_message || "",
+    tags: normalizeTags(detail?.tags),
+    metadata: detail?.metadata || {},
+    ...overrides,
   };
 }
 
@@ -12847,6 +13945,7 @@ async function resolveObserveSpanForLifecycle(
         })
       : projects,
     evidence,
+    { organizationId },
   );
 }
 
@@ -12876,7 +13975,9 @@ async function createDisposableObserveSpanForLifecycle(
   runId,
   projects,
   evidence,
+  options = {},
 ) {
+  const { organizationId = null } = options;
   const project = projects.find((row) => row?.id);
   if (!project?.id) {
     skip("No observe project exists for disposable span lifecycle coverage.");
@@ -12924,7 +14025,7 @@ async function createDisposableObserveSpanForLifecycle(
   const spanId = `api_journey_span_${suffix}`;
   const startTime = new Date(Date.now() - 1000).toISOString();
   const endTime = new Date().toISOString();
-  const span = await client.post(apiPath("/tracer/observation-span/"), {
+  const spanPayload = {
     id: spanId,
     project: project.id,
     project_version: projectVersionId,
@@ -12944,7 +14045,11 @@ async function createDisposableObserveSpanForLifecycle(
     status: "OK",
     tags: [],
     metadata: { source: "api-journey", run_id: runId },
-  });
+  };
+  const span = await client.post(
+    apiPath("/tracer/observation-span/"),
+    spanPayload,
+  );
   const createdSpanId = span.id || spanId;
   assert(
     createdSpanId === spanId,
@@ -12955,6 +14060,10 @@ async function createDisposableObserveSpanForLifecycle(
       okStatuses: [200, 204, 400, 404],
     }),
   );
+  await seedObserveClickHouseSpans({
+    organizationId,
+    payloads: [spanPayload],
+  });
 
   const observeList = await client.get(
     queryWithFilters(

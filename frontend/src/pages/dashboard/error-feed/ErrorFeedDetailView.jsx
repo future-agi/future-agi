@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useCallback, useMemo } from "react";
 import {
   Box,
   Button,
@@ -27,6 +27,10 @@ import TracesTab from "./components/TracesTab";
 import StateGraphTab from "./components/StateGraphTab";
 import TrendsTab from "./components/TrendsTab";
 import { useErrorFeedStore } from "./store";
+import {
+  buildErrorFeedAddEvalsPath,
+  resolveErrorFeedAddEvalsContext,
+} from "./buildErrorFeedAddEvalsDraft";
 
 // ── Detail page skeleton ─────────────────────────────────────────────────────
 function DetailSkeleton() {
@@ -106,6 +110,17 @@ export default function ErrorFeedDetailView() {
       representativeTrace: detail.representativeTrace,
     };
   }, [detail]);
+  const addEvalsContext = useMemo(
+    () => resolveErrorFeedAddEvalsContext(currentError),
+    [currentError],
+  );
+  const handleAddEvals = useCallback(() => {
+    const path = buildErrorFeedAddEvalsPath({
+      error: currentError,
+      returnTo: `${window.location.pathname}${window.location.search}`,
+    });
+    if (path) navigate(path);
+  }, [currentError, navigate]);
 
   if (isLoading || !currentError) {
     return <DetailSkeleton />;
@@ -250,6 +265,8 @@ export default function ErrorFeedDetailView() {
               alignItems="center"
               gap={0.75}
               flexShrink={0}
+              flexWrap="wrap"
+              justifyContent="flex-end"
             >
               <Tooltip title="Copy cluster ID" arrow>
                 <IconButton
@@ -275,6 +292,24 @@ export default function ErrorFeedDetailView() {
                   <Iconify icon="mdi:share-variant-outline" width={14} />
                 </IconButton>
               </Tooltip>
+              {addEvalsContext && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<Iconify icon="mdi:playlist-plus" width={13} />}
+                  onClick={handleAddEvals}
+                  sx={{
+                    height: 30,
+                    fontSize: "12px",
+                    borderRadius: "6px",
+                    textTransform: "none",
+                    borderColor: "divider",
+                    color: "text.secondary",
+                  }}
+                >
+                  Add Evals
+                </Button>
+              )}
               <Button
                 size="small"
                 variant="contained"

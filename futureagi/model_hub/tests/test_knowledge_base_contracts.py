@@ -116,6 +116,28 @@ class TestLegacyKnowledgeBaseLifecycle:
         assert other_kb.deleted is False
         assert other_kb.deleted_at is None
 
+    @patch("model_hub.views.develop_dataset.remove_kb_files.delay")
+    def test_delete_soft_deletes_when_file_removal_scheduling_fails(
+        self, mock_remove_kb_files, auth_client, organization, workspace
+    ):
+        kb = _create_kb(organization, workspace, name="delete-temporal-down")
+        mock_remove_kb_files.side_effect = RuntimeError("temporal unavailable")
+
+        response = auth_client.delete(
+            "/model-hub/knowledge-base/",
+            {"kb_ids": [str(kb.id)]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_remove_kb_files.assert_called_once_with(
+            None, str(organization.id), [str(kb.id)]
+        )
+
+        kb.refresh_from_db()
+        assert kb.deleted is True
+        assert kb.deleted_at is not None
+
     def test_files_endpoint_rejects_deleted_kb(
         self, auth_client, organization, workspace
     ):

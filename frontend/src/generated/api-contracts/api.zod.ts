@@ -5629,9 +5629,7 @@ export const AgentccGatewaysSetBudgetParams = zod.object({
 
 export const AgentccGatewaysSetBudgetBody = zod.object({
   "level": zod.string().min(1),
-  "config": zod.record(zod.string(), zod.object({
-
-}).passthrough())
+  "config": zod.record(zod.string(), zod.unknown().describe('Any valid JSON value.'))
 })
 
 export const AgentccGatewaysSetBudgetResponse = zod.object({
@@ -5664,9 +5662,7 @@ export const agentccGatewaysSubmitBatchBodyMaxConcurrencyDefault = 5;
 
 
 export const AgentccGatewaysSubmitBatchBody = zod.object({
-  "requests": zod.array(zod.record(zod.string(), zod.object({
-
-}).passthrough())),
+  "requests": zod.array(zod.record(zod.string(), zod.unknown().describe('Any valid JSON value.'))),
   "max_concurrency": zod.number().min(1).default(agentccGatewaysSubmitBatchBodyMaxConcurrencyDefault)
 })
 
@@ -5699,9 +5695,7 @@ export const agentccGatewaysTestMcpToolBodyArgumentsDefault = {  };
 
 export const AgentccGatewaysTestMcpToolBody = zod.object({
   "name": zod.string().min(1),
-  "arguments": zod.record(zod.string(), zod.object({
-
-}).passthrough()).default(agentccGatewaysTestMcpToolBodyArgumentsDefault)
+  "arguments": zod.record(zod.string(), zod.unknown().describe('Any valid JSON value.')).default(agentccGatewaysTestMcpToolBodyArgumentsDefault)
 })
 
 
@@ -5879,9 +5873,7 @@ export const AgentccGatewaysUpdateGuardrailParams = zod.object({
 
 export const AgentccGatewaysUpdateGuardrailBody = zod.object({
   "name": zod.string().min(1),
-  "config": zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.'))
+  "config": zod.record(zod.string(), zod.unknown().describe('Any valid JSON value.'))
 })
 
 export const AgentccGatewaysUpdateGuardrailResponse = zod.object({
@@ -5910,9 +5902,7 @@ export const AgentccGatewaysUpdateMcpGuardrailsParams = zod.object({
 })
 
 export const AgentccGatewaysUpdateMcpGuardrailsBody = zod.object({
-  "config": zod.record(zod.string(), zod.object({
-
-}).passthrough())
+  "config": zod.record(zod.string(), zod.unknown().describe('Any valid JSON value.'))
 })
 
 export const AgentccGatewaysUpdateMcpGuardrailsResponse = zod.object({
@@ -5945,9 +5935,7 @@ export const AgentccGatewaysUpdateMcpServerParams = zod.object({
 
 export const AgentccGatewaysUpdateMcpServerBody = zod.object({
   "server_id": zod.string().min(1),
-  "config": zod.record(zod.string(), zod.object({
-
-}).passthrough())
+  "config": zod.record(zod.string(), zod.unknown().describe('Any valid JSON value.'))
 })
 
 export const AgentccGatewaysUpdateMcpServerResponse = zod.object({
@@ -5979,9 +5967,7 @@ export const AgentccGatewaysUpdateProviderParams = zod.object({
 
 export const AgentccGatewaysUpdateProviderBody = zod.object({
   "name": zod.string().min(1),
-  "config": zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.'))
+  "config": zod.record(zod.string(), zod.unknown().describe('Any valid JSON value.'))
 })
 
 export const AgentccGatewaysUpdateProviderResponse = zod.object({
@@ -33882,9 +33868,7 @@ export const TracerDashboardMetricsResponse = zod.object({
   "type": zod.string().optional(),
   "unit": zod.string().optional(),
   "output_type": zod.string().optional(),
-  "choices": zod.array(zod.object({
-
-}).passthrough().describe('Any valid JSON value.')).optional(),
+  "choices": zod.array(zod.unknown().describe('Any valid JSON value.')).optional(),
   "allowed_aggregations": zod.array(zod.string().min(1)).optional(),
   "data_type": zod.string().optional()
 }))
@@ -39015,16 +38999,10 @@ export const TracerProjectListResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 }))
 })
 
@@ -39043,16 +39021,10 @@ export const TracerProjectCreateBody = zod.object({
   "metadata": zod.object({
 
 }).passthrough().optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 })
 
 
@@ -39081,16 +39053,10 @@ export const TracerProjectFetchSystemMetricsResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 }))
 })
 
@@ -39129,16 +39095,10 @@ export const TracerProjectGetGraphDataResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 }))
 })
 
@@ -39287,16 +39247,10 @@ export const TracerProjectListProjectsResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 }))
 })
 
@@ -39326,16 +39280,10 @@ export const TracerProjectProjectSdkCodeResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 }))
 })
 
@@ -39351,16 +39299,10 @@ export const TracerProjectUpdateProjectConfigBody = zod.object({
   "metadata": zod.object({
 
 }).passthrough().optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 })
 
 
@@ -39375,16 +39317,10 @@ export const TracerProjectUpdateProjectNameBody = zod.object({
   "metadata": zod.object({
 
 }).passthrough().optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 })
 
 
@@ -39399,16 +39335,10 @@ export const TracerProjectUpdateProjectSessionConfigBody = zod.object({
   "metadata": zod.object({
 
 }).passthrough().optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 })
 
 
@@ -39438,16 +39368,10 @@ export const TracerProjectReadResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.'),
   "sampling_rate": zod.number()
 })
 })
@@ -39468,16 +39392,10 @@ export const TracerProjectUpdateBody = zod.object({
   "metadata": zod.object({
 
 }).passthrough().optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 })
 
 export const tracerProjectUpdateResponseNameMax = 255;
@@ -39496,16 +39414,10 @@ export const TracerProjectUpdateResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 })
 
 
@@ -39524,16 +39436,10 @@ export const TracerProjectPartialUpdateBody = zod.object({
   "metadata": zod.object({
 
 }).passthrough().optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 })
 
 export const tracerProjectPartialUpdateResponseNameMax = 255;
@@ -39552,16 +39458,10 @@ export const TracerProjectPartialUpdateResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 })
 
 
@@ -39588,16 +39488,10 @@ export const TracerProjectUpdateTagsBody = zod.object({
   "metadata": zod.object({
 
 }).passthrough().optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 })
 
 export const tracerProjectUpdateTagsResponseNameMax = 255;
@@ -39616,16 +39510,10 @@ export const TracerProjectUpdateTagsResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "config": zod.unknown().optional().describe('Any valid JSON value.'),
   "source": zod.enum(['demo', 'prototype', 'simulator']).optional(),
-  "session_config": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
-  "tags": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.')
+  "session_config": zod.unknown().optional().describe('Any valid JSON value.'),
+  "tags": zod.unknown().optional().describe('Any valid JSON value.')
 })
 
 

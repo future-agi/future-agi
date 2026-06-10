@@ -1,6 +1,8 @@
 import {
   Box,
   Button,
+  Alert,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -20,14 +22,17 @@ import { ShowComponent } from "src/components/show";
 import { enqueueSnackbar } from "notistack";
 import { copyToClipboard } from "src/utils/utils";
 import SvgColor from "src/components/svg-color";
+import { HOST_API } from "src/config-global";
 
 const CreateApiKey = ({ open, onClose, refreshGrid }) => {
   const [keyName, setKeyName] = useState("");
   const [showKeys, setShowKeys] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
   const handleClose = () => {
     setKeyName("");
     setShowKeys(false);
+    setTestResult(null);
     reset();
     onClose();
   };
@@ -44,6 +49,7 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
       }),
     onSuccess: () => {
       setShowKeys(true);
+      setTestResult(null);
       refreshGrid();
     },
   });
@@ -60,6 +66,45 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
     maskedSecretKey:
       keyResult.masked_secret_key || keyResult.maskedSecretKey || "",
   };
+
+  const { mutate: handleTestKey, isPending: testingKey } = useMutation({
+    mutationFn: async () => {
+      const headers = {
+        "X-Api-Key": keys.apiKey,
+        "X-Secret-Key": keys.secretKey,
+      };
+      const organizationId = sessionStorage.getItem("organizationId");
+      const workspaceId = sessionStorage.getItem("workspaceId");
+      if (organizationId) headers["X-Organization-Id"] = organizationId;
+      if (workspaceId) headers["X-Workspace-Id"] = workspaceId;
+
+      const response = await fetch(new URL(endpoints.auth.me, HOST_API), {
+        method: "GET",
+        headers,
+        credentials: "omit",
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || body?.status === false) {
+        throw new Error("The key test failed. Please try again.");
+      }
+      return body;
+    },
+    onSuccess: (data) => {
+      const email = data?.email || data?.user?.email;
+      setTestResult({
+        status: "success",
+        message: email
+          ? `Test passed for ${email}`
+          : "Test passed for this organization",
+      });
+    },
+    onError: (error) => {
+      setTestResult({
+        status: "error",
+        message: error?.message || "The key test failed. Please try again.",
+      });
+    },
+  });
 
   return (
     <Dialog
@@ -134,6 +179,28 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
                 visible again in your Future AGI account. If you lose it, you’ll
                 need to generate a new one.
               </Typography>
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  flexWrap: "wrap",
+                }}
+              >
+                <Typography
+                  typography="s1"
+                  fontWeight="fontWeightMedium"
+                  color="text.primary"
+                >
+                  Scope
+                </Typography>
+                <Chip
+                  label="Organization scoped"
+                  size="small"
+                  variant="outlined"
+                  sx={{ borderRadius: "4px" }}
+                />
+              </Box>
               <Box display="flex" gap={1}>
                 <TextField
                   label={"API key"}
@@ -208,6 +275,33 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
                   />
                 </Box>
               </Box>
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  flexWrap: "wrap",
+                }}
+              >
+                <LoadingButton
+                  size="small"
+                  variant="outlined"
+                  onClick={() => handleTestKey()}
+                  loading={testingKey}
+                  disabled={!keys.apiKey || !keys.secretKey}
+                >
+                  Test key
+                </LoadingButton>
+              </Box>
+              {testResult && (
+                <Alert
+                  severity={testResult.status}
+                  data-api-key-test-status={testResult.status}
+                  sx={{ py: 0.5 }}
+                >
+                  {testResult.message}
+                </Alert>
+              )}
               <Divider orientation="horizontal" />
             </Box>
           </ShowComponent>
