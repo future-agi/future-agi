@@ -48,6 +48,10 @@ from tracer.services.clickhouse.query_builders.simulation_dashboard import (
     SimulationQueryBuilder,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2.id_remap_sql import (
+    remap_left_join,
+    resolved_id_expr,
+)
 from tracer.utils.sql_queries import SQL_query_handler
 
 logger = structlog.get_logger(__name__)
@@ -1055,6 +1059,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             "FROM tracer_eval_logger "
                             "WHERE _peerdb_is_deleted = 0 AND deleted = 0 "
                             "AND custom_eval_config_id != toUUID('00000000-0000-0000-0000-000000000000') "
+                            "AND created_at >= now() - INTERVAL 90 DAY "
                             "AND dictGet('trace_dict', 'project_id', trace_id) IN %(project_ids)s",
                             {"project_ids": project_ids},
                             timeout_ms=5000,
@@ -2187,15 +2192,36 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     # type is non-nullable by default — the Nullable
                     # wrapper isn't always preserved through the MV chain.
                     null_uuid = "00000000-0000-0000-0000-000000000000"
-                    sql = (
-                        f"SELECT DISTINCT {col_expr} AS val "
-                        f"FROM spans "
-                        f"WHERE project_id IN %(project_ids)s "
-                        f"AND is_deleted = 0 "
-                        f"AND {col_expr} NOT IN ('', '{null_uuid}') "
-                        f"ORDER BY val "
-                        f"LIMIT 500"
-                    )
+                    if metric_name == "session":
+                        ts_remap_join = remap_left_join(
+                            "sp.trace_session_id",
+                            "trace_session_id_remap",
+                            "ts_remap",
+                        )
+                        ts_resolved = resolved_id_expr(
+                            "sp.trace_session_id", "ts_remap"
+                        )
+                        col_expr = f"toString({ts_resolved})"
+                        sql = (
+                            f"SELECT DISTINCT {col_expr} AS val "
+                            f"FROM spans AS sp "
+                            f"{ts_remap_join} "
+                            f"WHERE sp.project_id IN %(project_ids)s "
+                            f"AND sp.is_deleted = 0 "
+                            f"AND {col_expr} NOT IN ('', '{null_uuid}') "
+                            f"ORDER BY val "
+                            f"LIMIT 500"
+                        )
+                    else:
+                        sql = (
+                            f"SELECT DISTINCT {col_expr} AS val "
+                            f"FROM spans "
+                            f"WHERE project_id IN %(project_ids)s "
+                            f"AND is_deleted = 0 "
+                            f"AND {col_expr} NOT IN ('', '{null_uuid}') "
+                            f"ORDER BY val "
+                            f"LIMIT 500"
+                        )
                     result = analytics.execute_ch_query(
                         sql, {"project_ids": project_ids}, timeout_ms=5000
                     )

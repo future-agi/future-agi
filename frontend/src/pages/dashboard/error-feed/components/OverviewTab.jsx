@@ -1651,7 +1651,10 @@ export default function OverviewTab({ _error: currentError }) {
   const deepAnalysisRef = useRef(null);
 
   useEffect(() => {
-    if (deepAnalysisState === DEEP_ANALYSIS_STATUS.DONE && deepAnalysisRef.current) {
+    if (
+      deepAnalysisState === DEEP_ANALYSIS_STATUS.DONE &&
+      deepAnalysisRef.current
+    ) {
       deepAnalysisRef.current.scrollIntoView({
         behavior: "smooth",
         block: "start",

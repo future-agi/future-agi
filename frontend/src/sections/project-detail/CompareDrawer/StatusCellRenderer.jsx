@@ -12,7 +12,7 @@ const StatusCellRenderer = ({ value }) => {
     displayValue =
       typeof normalized.score === "number"
         ? normalized.score * 100
-        : (normalized.choice ?? "");
+        : normalized.choice ?? "";
   }
 
   let color;

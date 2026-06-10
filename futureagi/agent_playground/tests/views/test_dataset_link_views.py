@@ -10,7 +10,7 @@ from rest_framework import status
 from agent_playground.models.choices import GraphVersionStatus
 from agent_playground.models.graph import Graph
 from agent_playground.models.graph_version import GraphVersion
-from model_hub.models.develop_dataset import Cell, Column, Row
+from model_hub.models.develop_dataset import Cell, Dataset, Row
 
 # =============================================================================
 # Dataset retrieve
@@ -515,12 +515,42 @@ class TestDatasetExecute:
         with patch(
             "agent_playground.views.dataset_link.execute_rows",
             return_value=fake_ids,
-        ):
+        ) as mock_execute_rows:
             url = reverse("graph-dataset-execute", kwargs={"graph_id": graph.id})
-            response = authenticated_client.post(url, data={}, format="json")
+            response = authenticated_client.post(
+                url, data={"task_queue": "agent-playground-test"}, format="json"
+            )
 
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data["result"]["execution_ids"] == fake_ids
+        assert (
+            mock_execute_rows.call_args.kwargs["task_queue"] == "agent-playground-test"
+        )
+        assert mock_execute_rows.call_args.kwargs["row_ids"] is None
+
+    def test_success_with_row_ids(
+        self,
+        authenticated_client,
+        graph,
+        graph_dataset,
+        active_graph_version,
+        dataset_row_with_cells,
+    ):
+        """Calls execute_rows with validated row_ids from the graph dataset."""
+        row, _ = dataset_row_with_cells
+        fake_ids = [str(uuid.uuid4())]
+        with patch(
+            "agent_playground.views.dataset_link.execute_rows",
+            return_value=fake_ids,
+        ) as mock_execute_rows:
+            url = reverse("graph-dataset-execute", kwargs={"graph_id": graph.id})
+            response = authenticated_client.post(
+                url, data={"row_ids": [str(row.id)]}, format="json"
+            )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data["result"]["execution_ids"] == fake_ids
+        assert mock_execute_rows.call_args.kwargs["row_ids"] == [row.id]
 
     def test_not_found_no_active_version(
         self,
@@ -556,3 +586,79 @@ class TestDatasetExecute:
             response = authenticated_client.post(url, data={}, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_bad_request_empty_row_ids_does_not_dispatch(
+        self,
+        authenticated_client,
+        graph,
+        graph_dataset,
+        active_graph_version,
+    ):
+        """400 when row_ids is provided but empty, without dispatching work."""
+        with patch(
+            "agent_playground.views.dataset_link.execute_rows",
+        ) as mock_execute_rows:
+            url = reverse("graph-dataset-execute", kwargs={"graph_id": graph.id})
+            response = authenticated_client.post(
+                url, data={"row_ids": []}, format="json"
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        mock_execute_rows.assert_not_called()
+
+    def test_not_found_missing_row_ids_does_not_dispatch(
+        self,
+        authenticated_client,
+        graph,
+        graph_dataset,
+        active_graph_version,
+    ):
+        """404 when requested row_ids do not exist in the graph dataset."""
+        missing = uuid.uuid4()
+        with patch(
+            "agent_playground.views.dataset_link.execute_rows",
+        ) as mock_execute_rows:
+            url = reverse("graph-dataset-execute", kwargs={"graph_id": graph.id})
+            response = authenticated_client.post(
+                url, data={"row_ids": [str(missing)]}, format="json"
+            )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert str(missing) in str(response.data)
+        mock_execute_rows.assert_not_called()
+
+    def test_not_found_foreign_dataset_row_id_does_not_dispatch(
+        self,
+        authenticated_client,
+        graph,
+        graph_dataset,
+        active_graph_version,
+        organization,
+        workspace,
+        user,
+    ):
+        """404 when row_ids exist but belong to another dataset."""
+        other_dataset = Dataset.no_workspace_objects.create(
+            name="Other Dataset",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            source="graph",
+            model_type="GenerativeLLM",
+        )
+        foreign_row = Row.no_workspace_objects.create(
+            dataset=other_dataset,
+            order=1,
+        )
+
+        with patch(
+            "agent_playground.views.dataset_link.execute_rows",
+        ) as mock_execute_rows:
+            url = reverse("graph-dataset-execute", kwargs={"graph_id": graph.id})
+            response = authenticated_client.post(
+                url, data={"row_ids": [str(foreign_row.id)]}, format="json"
+            )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert str(foreign_row.id) in str(response.data)
+        mock_execute_rows.assert_not_called()

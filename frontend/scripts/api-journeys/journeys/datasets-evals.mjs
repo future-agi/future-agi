@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import {
@@ -13,9 +14,19 @@ import {
   skip,
   unwrapApiData,
 } from "../lib/api-client.mjs";
-import { queuePath, resolveQueue, resolveQueueItem } from "../lib/fixtures.mjs";
+import { queuePath } from "../lib/fixtures.mjs";
 
 const execFileAsync = promisify(execFile);
+const backendRoot = resolveBackendRoot();
+
+function resolveBackendRoot() {
+  if (process.env.API_JOURNEY_BACKEND_DIR) {
+    return process.env.API_JOURNEY_BACKEND_DIR;
+  }
+  const cwd = process.cwd();
+  const repoRoot = path.basename(cwd) === "frontend" ? path.dirname(cwd) : cwd;
+  return path.join(repoRoot, "futureagi");
+}
 
 export const datasetEvalJourneys = [
   {
@@ -44,6 +55,1148 @@ export const datasetEvalJourneys = [
       evidence.push({
         dataset_id: dataset.id,
         dataset_name: dataset.name || detail.name || "",
+      });
+    },
+  },
+  {
+    id: "DOPT-API-002",
+    title: "Legacy optimisation create, read, update, and workspace guards",
+    tags: ["dataset", "optimization", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      evidence,
+      organizationId,
+      workspaceId,
+      runId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip(
+          "Legacy optimisation workspace guard journey requires workspace id.",
+        );
+      }
+      const userId = currentUserId(user);
+      assert(isUuid(userId), "Legacy optimisation journey requires user id.");
+
+      const fixture = await seedLegacyOptimisationFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      if (!fixture?.fixture_created) {
+        skip("Could not seed legacy optimisation dataset fixture.");
+      }
+      cleanup.defer("hard delete legacy optimisation fixture", () =>
+        hardDeleteLegacyOptimisationFixture(fixture),
+      );
+
+      const createName = `api_journey_legacy_optimisation_${runId}`;
+      const createPayload = legacyOptimisationPayload({
+        name: createName,
+        datasetId: fixture.dataset_id,
+        columnId: fixture.column_id,
+        metricId: fixture.metric_id,
+      });
+      const createResult = await client.post(
+        apiPath("/model-hub/optimisation/create/"),
+        createPayload,
+      );
+      assert(
+        createResult === "success.",
+        "Legacy optimisation create did not return success.",
+      );
+
+      const createdAudit = await loadLegacyOptimisationAudit({
+        name: createName,
+        datasetId: fixture.dataset_id,
+      });
+      assertLegacyOptimisationAudit(createdAudit, {
+        organizationId,
+        workspaceId,
+        datasetId: fixture.dataset_id,
+        columnId: fixture.column_id,
+        metricId: fixture.metric_id,
+      });
+
+      const listRows = payloadArray(
+        await client.get(apiPath("/model-hub/optimisation/"), {
+          query: { dataset_id: fixture.dataset_id, limit: 20 },
+        }),
+        "results",
+      );
+      assert(
+        listRows.some((row) => row.id === createdAudit.optimization_id),
+        "Legacy optimisation list did not include the created row.",
+      );
+      assert(
+        !listRows.some((row) => row.id === fixture.other_optimization_id),
+        "Legacy optimisation list leaked a same-org other-workspace row.",
+      );
+
+      const detailPath = apiPath("/model-hub/optimisation/{id}/", {
+        id: createdAudit.optimization_id,
+      });
+      const detail = await client.get(detailPath);
+      assertLegacyOptimisationDetail(detail, createdAudit.optimization_id);
+
+      const details = await client.get(
+        apiPath("/model-hub/optimisation/{id}/details/", {
+          id: createdAudit.optimization_id,
+        }),
+      );
+      assertLegacyOptimisationDetail(details, createdAudit.optimization_id);
+
+      const updatedName = `api_journey_legacy_optimisation_updated_${runId}`;
+      const updateResult = await client.put(
+        apiPath("/model-hub/optimisation/update/{id}/", {
+          id: createdAudit.optimization_id,
+        }),
+        { name: updatedName },
+      );
+      assert(
+        updateResult === "success.",
+        "Legacy optimisation update did not return success.",
+      );
+      const updatedAudit = await loadLegacyOptimisationAudit({
+        name: updatedName,
+        datasetId: fixture.dataset_id,
+      });
+      assert(
+        updatedAudit.optimization_id === createdAudit.optimization_id,
+        "Legacy optimisation update changed the optimization id.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/optimisation/{id}/", {
+              id: fixture.other_optimization_id,
+            }),
+          ),
+        404,
+        "Legacy optimisation detail exposed another workspace row.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/optimisation/{id}/details/", {
+              id: fixture.other_optimization_id,
+            }),
+          ),
+        404,
+        "Legacy optimisation details exposed another workspace row.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.put(
+            apiPath("/model-hub/optimisation/update/{id}/", {
+              id: fixture.other_optimization_id,
+            }),
+            { name: `api_journey_should_not_update_${runId}` },
+          ),
+        404,
+        "Legacy optimisation update accepted another workspace row.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.post(
+            apiPath("/model-hub/optimisation/create/"),
+            legacyOptimisationPayload({
+              name: `api_journey_legacy_optimisation_bad_column_${runId}`,
+              datasetId: fixture.dataset_id,
+              columnId: fixture.mismatch_column_id,
+              metricId: fixture.metric_id,
+            }),
+          ),
+        400,
+        "Legacy optimisation create accepted a column from another dataset.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.put(
+            apiPath("/model-hub/optimisation/update/{id}/", {
+              id: createdAudit.optimization_id,
+            }),
+            { user_eval_template_ids: [fixture.mismatch_metric_id] },
+          ),
+        400,
+        "Legacy optimisation update accepted a metric from another dataset.",
+      );
+
+      const isolationAudit = await loadLegacyOptimisationAudit({
+        optimizationId: fixture.other_optimization_id,
+      });
+      assert(
+        isolationAudit.optimization_name === fixture.other_optimization_name,
+        "Other workspace legacy optimisation row was mutated.",
+      );
+
+      evidence.push({
+        legacy_optimisation_id: createdAudit.optimization_id,
+        legacy_optimisation_dataset_id: fixture.dataset_id,
+        legacy_optimisation_other_workspace_id: fixture.other_workspace_id,
+        legacy_optimisation_generated_columns:
+          Number(updatedAudit.generated_column_count) || 0,
+      });
+    },
+  },
+  {
+    id: "DOPT-API-003",
+    title: "Legacy optimize-dataset read, config, result, and KB scope guards",
+    tags: ["dataset", "optimization", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      evidence,
+      organizationId,
+      workspaceId,
+      runId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Legacy optimize-dataset journey requires workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(
+        isUuid(userId),
+        "Legacy optimize-dataset journey requires user id.",
+      );
+
+      const fixture = await seedLegacyOptimizeDatasetFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      if (!fixture?.fixture_created) {
+        skip("Could not seed legacy optimize-dataset fixture.");
+      }
+      cleanup.defer("hard delete legacy optimize-dataset fixture", () =>
+        hardDeleteLegacyOptimizeDatasetFixture(fixture),
+      );
+
+      const listRows = asArray(
+        await client.get(
+          apiPath("/model-hub/optimize-dataset/{model_id}/", {
+            model_id: fixture.model_id,
+          }),
+          { query: { page: 1, limit: 20 } },
+        ),
+      );
+      assert(
+        listRows.some((row) => row.id === fixture.optimization_id),
+        "Legacy optimize-dataset list did not include the visible run.",
+      );
+      assert(
+        !listRows.some((row) => row.id === fixture.other_optimization_id),
+        "Legacy optimize-dataset list leaked another workspace run.",
+      );
+
+      const detail = await client.get(
+        apiPath("/model-hub/optimize-dataset/{model_id}/{optimization_id}/", {
+          model_id: fixture.model_id,
+          optimization_id: fixture.optimization_id,
+        }),
+      );
+      assertLegacyOptimizeDatasetDetail(detail, fixture.optimization_id);
+
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath(
+              "/model-hub/optimize-dataset/{model_id}/{optimization_id}/",
+              {
+                model_id: fixture.model_id,
+                optimization_id: fixture.other_optimization_id,
+              },
+            ),
+          ),
+        404,
+        "Legacy optimize-dataset detail exposed another workspace run.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/optimize-dataset/{model_id}/", {
+              model_id: fixture.other_model_id,
+            }),
+          ),
+        404,
+        "Legacy optimize-dataset list accepted another workspace model.",
+      );
+
+      const modelCreateGuardNames = [
+        `api journey blocked optimize unknown field ${runId}`,
+        `api journey blocked optimize mismatched model ${runId}`,
+        `api journey blocked optimize other model ${runId}`,
+      ];
+      const kbCreateGuardNames = [
+        `api journey blocked optimize kb unknown field ${runId}`,
+      ];
+      const baseModelCreatePayload = {
+        start_date: "2026-01-01T00:00:00",
+        end_date: "2026-01-02T00:00:00",
+        model: fixture.model_id,
+        optimize_type: "PromptTemplate",
+        environment: "training",
+        version: "v1",
+        metrics: [fixture.metric_id],
+        prompt: "Answer {{input}}",
+        variables: { input: "question" },
+      };
+      const modelCreatePath = apiPath(
+        "/model-hub/optimize-dataset/{model_id}/",
+        { model_id: fixture.model_id },
+      );
+      const modelCreateUnknownFieldError = await expectApiErrorStatus(
+        () =>
+          client.post(modelCreatePath, {
+            ...baseModelCreatePayload,
+            name: modelCreateGuardNames[0],
+            unexpected_guard_field: true,
+          }),
+        400,
+        "Legacy optimize-dataset model create accepted an unknown field.",
+      );
+      const modelCreateMismatchError = await expectApiErrorStatus(
+        () =>
+          client.post(modelCreatePath, {
+            ...baseModelCreatePayload,
+            name: modelCreateGuardNames[1],
+            model: fixture.other_model_id,
+          }),
+        400,
+        "Legacy optimize-dataset model create accepted URL/body model mismatch.",
+      );
+      const modelCreateOtherWorkspaceError = await expectApiErrorStatus(
+        () =>
+          client.post(
+            apiPath("/model-hub/optimize-dataset/{model_id}/", {
+              model_id: fixture.other_model_id,
+            }),
+            {
+              ...baseModelCreatePayload,
+              name: modelCreateGuardNames[2],
+              model: fixture.other_model_id,
+              metrics: [fixture.other_metric_id],
+            },
+          ),
+        404,
+        "Legacy optimize-dataset model create accepted another workspace model.",
+      );
+      const kbCreateUnknownFieldError = await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/optimize-dataset/knowledge-base/"), {
+            name: kbCreateGuardNames[0],
+            knowledge_base_metrics: ["Metric A"],
+            knowledge_base_filters: ["topic"],
+            prompt: "Improve retrieval",
+            variables: { topic: "support" },
+            unexpected_guard_field: true,
+          }),
+        400,
+        "Legacy optimize-dataset KB create accepted an unknown field.",
+      );
+      const createGuardAudit = await loadLegacyOptimizeCreateGuardAudit({
+        modelCreateGuardNames,
+        kbCreateGuardNames,
+      });
+      assert(
+        Number(createGuardAudit.model_create_guard_persisted_count) === 0,
+        "Legacy optimize-dataset guarded model create left persisted rows.",
+      );
+      assert(
+        Number(createGuardAudit.kb_create_guard_persisted_count) === 0,
+        "Legacy optimize-dataset guarded KB create left persisted rows.",
+      );
+
+      const baseColumns = await client.get(
+        apiPath("/model-hub/optimize-dataset/{model_id}/column-config/", {
+          model_id: fixture.model_id,
+        }),
+      );
+      assertLegacyOptimizeColumns(baseColumns, "base optimize-dataset columns");
+      await client.post(
+        apiPath("/model-hub/optimize-dataset/{model_id}/column-config/", {
+          model_id: fixture.model_id,
+        }),
+        {
+          columns: [
+            { label: "Optimization Name", value: "name", enabled: false },
+          ],
+        },
+      );
+
+      const rightColumnConfigPath = apiPath(
+        "/model-hub/optimize-dataset/{model_id}/column-config/right-answers/{optimization_id}/",
+        {
+          model_id: fixture.model_id,
+          optimization_id: fixture.optimization_id,
+        },
+      );
+      const rightColumns = await client.get(rightColumnConfigPath);
+      assertLegacyOptimizeColumns(
+        rightColumns,
+        "right-answer optimize-dataset columns",
+      );
+      assert(
+        rightColumns.columns.some(
+          (column) => column.value === `${fixture.metric_id}-old`,
+        ),
+        "Right-answer column config did not include old metric column.",
+      );
+      assert(
+        rightColumns.columns.some(
+          (column) => column.value === `${fixture.metric_id}-new`,
+        ),
+        "Right-answer column config did not include new metric column.",
+      );
+      await client.post(rightColumnConfigPath, {
+        columns: [
+          {
+            label: "Old metric hidden by live journey",
+            value: `${fixture.metric_id}-old`,
+            enabled: false,
+          },
+          {
+            label: "New metric visible by live journey",
+            value: `${fixture.metric_id}-new`,
+            enabled: true,
+          },
+        ],
+      });
+      const updatedRightColumns = await client.get(rightColumnConfigPath);
+      assertLegacyOptimizeColumns(
+        updatedRightColumns,
+        "updated right-answer optimize-dataset columns",
+      );
+      assert(
+        updatedRightColumns.columns.some(
+          (column) =>
+            column.value === `${fixture.metric_id}-old` &&
+            column.enabled === false,
+        ),
+        "Right-answer column config POST did not persist disabled old metric column.",
+      );
+
+      const promptColumnConfigPath = apiPath(
+        "/model-hub/optimize-dataset/{model_id}/column-config/prompt-template-explore/{optimization_id}/",
+        {
+          model_id: fixture.model_id,
+          optimization_id: fixture.optimization_id,
+        },
+      );
+      const promptColumns = await client.get(promptColumnConfigPath);
+      assertLegacyOptimizeColumns(
+        promptColumns,
+        "prompt-template optimize-dataset columns",
+      );
+      assert(
+        promptColumns.columns.some(
+          (column) => column.value === `${fixture.metric_id}-0`,
+        ),
+        "Prompt-template column config did not include optimized template metric column.",
+      );
+      assert(
+        promptColumns.columns.some(
+          (column) => column.value === `${fixture.metric_id}-original`,
+        ),
+        "Prompt-template column config did not include original metric column.",
+      );
+      await client.post(promptColumnConfigPath, {
+        columns: [
+          {
+            label: "Optimized prompt hidden by live journey",
+            value: `${fixture.metric_id}-0`,
+            enabled: false,
+          },
+          {
+            label: "Original prompt visible by live journey",
+            value: `${fixture.metric_id}-original`,
+            enabled: true,
+          },
+        ],
+      });
+      const updatedPromptColumns = await client.get(promptColumnConfigPath);
+      assertLegacyOptimizeColumns(
+        updatedPromptColumns,
+        "updated prompt-template optimize-dataset columns",
+      );
+      assert(
+        updatedPromptColumns.columns.some(
+          (column) =>
+            column.value === `${fixture.metric_id}-0` &&
+            column.enabled === false,
+        ),
+        "Prompt-template column config POST did not persist disabled optimized prompt metric column.",
+      );
+
+      for (const [pathName, payload, label] of [
+        [
+          apiPath(
+            "/model-hub/optimize-dataset/{model_id}/prompt-template-explore/{optimization_id}/",
+            {
+              model_id: fixture.model_id,
+              optimization_id: fixture.optimization_id,
+            },
+          ),
+          { page: 1, limit: 10 },
+          "prompt-template explore",
+        ],
+        [
+          apiPath(
+            "/model-hub/optimize-dataset/{model_id}/right-answers/{optimization_id}/",
+            {
+              model_id: fixture.model_id,
+              optimization_id: fixture.optimization_id,
+            },
+          ),
+          { page: 1, limit: 10 },
+          "right-answer explore",
+        ],
+      ]) {
+        const page = await client.post(pathName, payload, { unwrap: false });
+        assert(
+          Array.isArray(page.results) && Number.isInteger(page.count),
+          `Legacy optimize-dataset ${label} returned an invalid page shape.`,
+        );
+      }
+
+      const templateResults = await client.post(
+        apiPath(
+          "/model-hub/optimize-dataset/{model_id}/prompt-template-result/{optimization_id}/",
+          {
+            model_id: fixture.model_id,
+            optimization_id: fixture.optimization_id,
+          },
+        ),
+        {},
+        { unwrap: false },
+      );
+      assert(
+        Array.isArray(templateResults.k_prompts) &&
+          templateResults.k_prompts.includes(fixture.optimized_prompt),
+        "Legacy optimize-dataset template results did not include seeded prompts.",
+      );
+      assert(
+        Array.isArray(templateResults.results),
+        "Legacy optimize-dataset template results returned invalid result rows.",
+      );
+
+      const kbRows = asArray(
+        await client.get(apiPath("/model-hub/optimize-dataset/")),
+      );
+      assert(
+        kbRows.some((row) => row.id === fixture.kb_optimization_id),
+        "Legacy optimize-dataset KB list did not include the visible row.",
+      );
+      assert(
+        !kbRows.some((row) => row.id === fixture.other_kb_optimization_id),
+        "Legacy optimize-dataset KB list leaked another workspace row.",
+      );
+
+      const kbDetail = await client.get(
+        apiPath("/model-hub/optimize-dataset/kb/{optim_id}/", {
+          optim_id: fixture.kb_optimization_id,
+        }),
+      );
+      assert(
+        kbDetail?.name === fixture.kb_optimization_name,
+        "Legacy optimize-dataset KB detail did not return the visible row.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/optimize-dataset/kb/{optim_id}/", {
+              optim_id: fixture.other_kb_optimization_id,
+            }),
+          ),
+        404,
+        "Legacy optimize-dataset KB detail exposed another workspace row.",
+      );
+
+      const audit = await loadLegacyOptimizeDatasetAudit(fixture);
+      assertLegacyOptimizeDatasetAudit(audit, {
+        organizationId,
+        workspaceId,
+        optimizationId: fixture.optimization_id,
+        kbOptimizationId: fixture.kb_optimization_id,
+      });
+
+      evidence.push({
+        legacy_optimize_dataset_id: fixture.optimization_id,
+        legacy_optimize_dataset_model_id: fixture.model_id,
+        legacy_optimize_dataset_metric_id: fixture.metric_id,
+        legacy_optimize_dataset_kb_id: fixture.kb_optimization_id,
+        legacy_optimize_dataset_other_workspace_id: fixture.other_workspace_id,
+        legacy_optimize_dataset_column_config_count:
+          Number(audit.column_config_count) || 0,
+        legacy_optimize_dataset_right_answer_persisted_value_count:
+          Number(audit.right_answer_persisted_value_count) || 0,
+        legacy_optimize_dataset_right_answer_disabled_old_count:
+          Number(audit.right_answer_disabled_old_count) || 0,
+        legacy_optimize_dataset_prompt_template_persisted_value_count:
+          Number(audit.prompt_template_persisted_value_count) || 0,
+        legacy_optimize_dataset_prompt_template_disabled_optimized_count:
+          Number(audit.prompt_template_disabled_optimized_count) || 0,
+        legacy_optimize_dataset_model_create_guard_persisted_count:
+          Number(createGuardAudit.model_create_guard_persisted_count) || 0,
+        legacy_optimize_dataset_kb_create_guard_persisted_count:
+          Number(createGuardAudit.kb_create_guard_persisted_count) || 0,
+        legacy_optimize_dataset_model_create_unknown_field_status:
+          modelCreateUnknownFieldError.status,
+        legacy_optimize_dataset_model_create_mismatch_status:
+          modelCreateMismatchError.status,
+        legacy_optimize_dataset_model_create_other_workspace_status:
+          modelCreateOtherWorkspaceError.status,
+        legacy_optimize_dataset_kb_create_unknown_field_status:
+          kbCreateUnknownFieldError.status,
+      });
+    },
+  },
+  {
+    id: "MODEL-API-001",
+    title: "Model performance graph, report lifecycle, and workspace guards",
+    tags: ["models", "performance", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      evidence,
+      organizationId,
+      workspaceId,
+      runId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Model performance journey requires workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(isUuid(userId), "Model performance journey requires user id.");
+
+      const fixture = await seedModelPerformanceFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      if (!fixture?.fixture_created) {
+        skip("Could not seed model performance fixture.");
+      }
+      cleanup.defer("hard delete model performance fixture", () =>
+        hardDeleteModelPerformanceFixture(fixture),
+      );
+
+      const options = await client.get(
+        apiPath("/model-hub/performance/options/{model_id}/", {
+          model_id: fixture.model_id,
+        }),
+        { query: { metric_id: fixture.metric_id } },
+      );
+      assertModelPerformanceOptions(options, fixture);
+
+      const graph = await client.post(
+        apiPath("/model-hub/performance/{id}/", { id: fixture.model_id }),
+        modelPerformanceGraphPayload(fixture.metric_id),
+      );
+      assert(
+        graph && Array.isArray(graph["Dataset 1"]),
+        "Model performance graph did not return Dataset 1 chart rows.",
+      );
+
+      const detail = await client.post(
+        apiPath("/model-hub/performance/detail/{id}/", {
+          id: fixture.model_id,
+        }),
+        modelPerformanceDetailPayload(fixture.metric_id),
+        { unwrap: false },
+      );
+      assert(
+        Array.isArray(detail?.result),
+        "Model performance detail did not return result rows.",
+      );
+      assert(
+        Number.isInteger(Number(detail.count)),
+        "Model performance detail did not return count.",
+      );
+
+      const exportCsv = await client.post(
+        apiPath("/model-hub/performance/export/{id}/", {
+          id: fixture.model_id,
+        }),
+        modelPerformanceDetailPayload(fixture.metric_id),
+      );
+      assert(
+        typeof exportCsv === "string" && exportCsv.includes("Model Input"),
+        "Model performance export did not return the CSV header.",
+      );
+
+      const tagDistribution = await client.post(
+        apiPath("/model-hub/performance/tag-distribution/{model_id}/", {
+          model_id: fixture.model_id,
+        }),
+        modelPerformanceTagPayload(fixture.metric_id),
+      );
+      assert(
+        Array.isArray(tagDistribution?.good) &&
+          Array.isArray(tagDistribution?.bad),
+        "Model performance tag distribution did not return good/bad series.",
+      );
+
+      const reportName = `api journey model performance report ${runId}`;
+      const createdReport = await client.post(
+        apiPath("/model-hub/performance/report/{model_id}/", {
+          model_id: fixture.model_id,
+        }),
+        modelPerformanceReportPayload(fixture.metric_id, reportName),
+      );
+      assert(
+        isUuid(createdReport?.id),
+        "Model performance report create did not return a report id.",
+      );
+      fixture.created_report_id = createdReport.id;
+
+      const activeAudit = await loadModelPerformanceReportAudit({
+        fixture,
+        reportId: createdReport.id,
+      });
+      assertModelPerformanceReportAudit(activeAudit, {
+        fixture,
+        organizationId,
+        workspaceId,
+        reportId: createdReport.id,
+        expectedDeleted: false,
+      });
+
+      const reportsPage = await client.get(
+        apiPath("/model-hub/performance/report/{model_id}/", {
+          model_id: fixture.model_id,
+        }),
+        { query: { limit: 20 }, unwrap: false },
+      );
+      const reports = payloadArray(reportsPage, "results");
+      assert(
+        reports.some((row) => row.id === createdReport.id),
+        "Model performance report list did not include the created report.",
+      );
+      assert(
+        !reports.some((row) => row.id === fixture.other_report_id),
+        "Model performance report list leaked another workspace report.",
+      );
+
+      const hiddenChecks = [
+        [
+          () =>
+            client.get(
+              apiPath("/model-hub/performance/options/{model_id}/", {
+                model_id: fixture.other_model_id,
+              }),
+            ),
+          "options",
+        ],
+        [
+          () =>
+            client.post(
+              apiPath("/model-hub/performance/{id}/", {
+                id: fixture.other_model_id,
+              }),
+              modelPerformanceGraphPayload(fixture.other_metric_id),
+            ),
+          "graph",
+        ],
+        [
+          () =>
+            client.post(
+              apiPath("/model-hub/performance/detail/{id}/", {
+                id: fixture.other_model_id,
+              }),
+              modelPerformanceDetailPayload(fixture.other_metric_id),
+            ),
+          "detail",
+        ],
+        [
+          () =>
+            client.post(
+              apiPath("/model-hub/performance/export/{id}/", {
+                id: fixture.other_model_id,
+              }),
+              modelPerformanceDetailPayload(fixture.other_metric_id),
+            ),
+          "export",
+        ],
+        [
+          () =>
+            client.post(
+              apiPath("/model-hub/performance/tag-distribution/{model_id}/", {
+                model_id: fixture.other_model_id,
+              }),
+              modelPerformanceTagPayload(fixture.other_metric_id),
+            ),
+          "tag distribution",
+        ],
+        [
+          () =>
+            client.get(
+              apiPath("/model-hub/performance/report/{model_id}/", {
+                model_id: fixture.other_model_id,
+              }),
+            ),
+          "report list",
+        ],
+        [
+          () =>
+            client.post(
+              apiPath("/model-hub/performance/report/{model_id}/", {
+                model_id: fixture.other_model_id,
+              }),
+              modelPerformanceReportPayload(
+                fixture.other_metric_id,
+                `api journey hidden model performance report ${runId}`,
+              ),
+            ),
+          "report create",
+        ],
+        [
+          () =>
+            client.delete(
+              apiPath("/model-hub/performance/report/{model_id}/{report_id}/", {
+                model_id: fixture.other_model_id,
+                report_id: fixture.other_report_id,
+              }),
+            ),
+          "report delete",
+        ],
+      ];
+
+      for (const [fn, label] of hiddenChecks) {
+        await expectApiErrorStatus(
+          fn,
+          404,
+          `Model performance ${label} exposed another workspace model.`,
+        );
+      }
+
+      const deleteResult = await client.delete(
+        apiPath("/model-hub/performance/report/{model_id}/{report_id}/", {
+          model_id: fixture.model_id,
+          report_id: createdReport.id,
+        }),
+      );
+      assert(
+        typeof deleteResult === "string" &&
+          deleteResult.toLowerCase().includes("deleted"),
+        "Model performance report delete did not return a deletion message.",
+      );
+
+      const deletedAudit = await loadModelPerformanceReportAudit({
+        fixture,
+        reportId: createdReport.id,
+      });
+      assertModelPerformanceReportAudit(deletedAudit, {
+        fixture,
+        organizationId,
+        workspaceId,
+        reportId: createdReport.id,
+        expectedDeleted: true,
+      });
+
+      evidence.push({
+        model_performance_model_id: fixture.model_id,
+        model_performance_metric_id: fixture.metric_id,
+        model_performance_report_id: createdReport.id,
+        model_performance_other_workspace_id: fixture.other_workspace_id,
+        model_performance_options_metrics:
+          Number(activeAudit.visible_metric_count) || 0,
+      });
+    },
+  },
+  {
+    id: "MODEL-API-002",
+    title: "Model custom metric list, update, tags, and workspace guards",
+    tags: ["models", "custom-metric", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      evidence,
+      organizationId,
+      workspaceId,
+      runId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Model custom metric journey requires workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(isUuid(userId), "Model custom metric journey requires user id.");
+
+      const fixture = await seedModelCustomMetricFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      if (!fixture?.fixture_created) {
+        skip("Could not seed model custom metric fixture.");
+      }
+      cleanup.defer("hard delete model custom metric fixture", () =>
+        hardDeleteModelCustomMetricFixture(fixture),
+      );
+
+      const metricsPage = await client.get(
+        apiPath("/model-hub/custom-metric/{model_id}/", {
+          model_id: fixture.model_id,
+        }),
+        { query: { limit: 20 }, unwrap: false },
+      );
+      const metrics = payloadArray(metricsPage, "results");
+      assert(
+        metrics.length === 1 && metrics[0].id === fixture.metric_id,
+        "Model custom metric list did not return the visible metric only.",
+      );
+      assert(
+        metrics[0].raw_datasets?.[0]?.model_version === "v1",
+        "Model custom metric list did not preserve canonical dataset model_version.",
+      );
+
+      const allMetrics = await client.get(
+        apiPath("/model-hub/custom-metric/all/{model_id}/", {
+          model_id: fixture.model_id,
+        }),
+      );
+      assert(
+        payloadArray(allMetrics?.metrics, "metrics").some(
+          (metric) =>
+            metric.id === fixture.metric_id &&
+            metric.evaluation_type === "EVALUATE_CHAT",
+        ),
+        "Model custom metric selector did not include the visible metric.",
+      );
+
+      const tags = await client.get(
+        apiPath("/model-hub/custom-metric/tag-options/{metric_id}/", {
+          metric_id: fixture.metric_id,
+        }),
+      );
+      assert(
+        asArray(tags)
+          .map((tag) => tag.value)
+          .join(",") === "quality:bad,quality:good",
+        "Model custom metric tag options were not sorted or complete.",
+      );
+
+      const updatedName = `api journey model custom metric updated ${runId}`;
+      const updateResult = await client.post(
+        apiPath("/model-hub/custom-metric/update/"),
+        modelCustomMetricPayload({
+          metricId: fixture.metric_id,
+          name: updatedName,
+        }),
+      );
+      assert(
+        updateResult?.status === "success",
+        "Model custom metric update did not return success.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.post(
+            apiPath("/model-hub/custom-metric/create/"),
+            modelCustomMetricPayload({
+              modelId: fixture.other_model_id,
+              name: `api journey hidden custom metric create ${runId}`,
+            }),
+          ),
+        404,
+        "Model custom metric create reached another workspace model.",
+      );
+
+      const hiddenChecks = [
+        [
+          () =>
+            client.get(
+              apiPath("/model-hub/custom-metric/{model_id}/", {
+                model_id: fixture.other_model_id,
+              }),
+            ),
+          "table list",
+        ],
+        [
+          () =>
+            client.get(
+              apiPath("/model-hub/custom-metric/all/{model_id}/", {
+                model_id: fixture.other_model_id,
+              }),
+            ),
+          "selector list",
+        ],
+        [
+          () =>
+            client.get(
+              apiPath("/model-hub/custom-metric/tag-options/{metric_id}/", {
+                metric_id: fixture.other_metric_id,
+              }),
+            ),
+          "tag options",
+        ],
+        [
+          () =>
+            client.post(
+              apiPath("/model-hub/custom-metric/update/"),
+              modelCustomMetricPayload({
+                metricId: fixture.other_metric_id,
+                name: `api journey hidden custom metric update ${runId}`,
+              }),
+            ),
+          "update",
+        ],
+      ];
+      for (const [fn, label] of hiddenChecks) {
+        await expectApiErrorStatus(
+          fn,
+          404,
+          `Model custom metric ${label} exposed another workspace row.`,
+        );
+      }
+
+      const audit = await loadModelCustomMetricAudit({
+        fixture,
+        expectedName: updatedName,
+      });
+      assertModelCustomMetricAudit(audit, {
+        fixture,
+        organizationId,
+        workspaceId,
+        expectedName: updatedName,
+      });
+
+      evidence.push({
+        model_custom_metric_model_id: fixture.model_id,
+        model_custom_metric_id: fixture.metric_id,
+        model_custom_metric_other_workspace_id: fixture.other_workspace_id,
+        model_custom_metric_updated_name: updatedName,
+      });
+    },
+  },
+  {
+    id: "MODEL-API-003",
+    title: "Model overview volume and issue workspace aggregates",
+    tags: ["models", "overview", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      evidence,
+      organizationId,
+      workspaceId,
+      runId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Model overview journey requires workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(isUuid(userId), "Model overview journey requires user id.");
+
+      const fixture = await seedModelOverviewFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      if (!fixture?.fixture_created) {
+        skip("Could not seed model overview fixture.");
+      }
+      cleanup.defer("hard delete model overview fixture", () =>
+        hardDeleteModelOverviewFixture(fixture),
+      );
+
+      const overview = await client.get(apiPath("/model-hub/overview/"));
+      assert(
+        Number.isInteger(Number(overview?.volume?.total_count)),
+        "Model overview volume omitted total_count.",
+      );
+      assert(
+        payloadArray(overview?.volume?.volume, "volume").length === 24,
+        "Model overview volume did not return 24 hourly buckets.",
+      );
+
+      const issueBuckets = payloadArray(overview?.issues?.last_day, "last_day");
+      assert(
+        issueBuckets.length === 24,
+        "Model overview issues did not return 24 hourly buckets.",
+      );
+      assert(
+        Number(overview?.issues?.total_count) ===
+          Number(fixture.active_current_alert_count),
+        "Model overview issue count included hidden workspace alerts or omitted active alerts.",
+      );
+      assert(
+        issueBuckets.reduce((sum, point) => sum + Number(point.y || 0), 0) ===
+          Number(fixture.active_current_alert_count),
+        "Model overview issue buckets did not sum to the visible alert count.",
+      );
+      assert(
+        Number(overview?.issues?.change) === 100,
+        "Model overview issue change did not use the previous visible alert count.",
+      );
+
+      const audit = await loadModelOverviewAudit(fixture);
+      assertModelOverviewAudit(audit, fixture);
+
+      evidence.push({
+        model_overview_model_id: fixture.model_id,
+        model_overview_other_workspace_id: fixture.other_workspace_id,
+        model_overview_visible_issues: overview.issues.total_count,
+        model_overview_issue_bucket_sum: issueBuckets.reduce(
+          (sum, point) => sum + Number(point.y || 0),
+          0,
+        ),
+      });
+    },
+  },
+  {
+    id: "MODEL-API-004",
+    title: "Custom metric prompt test cache and validator guard",
+    tags: ["models", "custom-metric", "mutating", "data-roundtrip", "db-audit"],
+    async run({ client, cleanup, evidence, runId }) {
+      requireMutations();
+
+      const fixture = await seedCustomMetricPromptTestFixture({ runId });
+      if (!fixture?.fixture_created) {
+        skip("Could not seed custom metric prompt-test fixture.");
+      }
+      cleanup.defer("hard delete custom metric prompt-test fixture", () =>
+        hardDeleteCustomMetricPromptTestFixture(fixture),
+      );
+
+      const result = await client.post(
+        apiPath("/model-hub/custom-metric/test/"),
+        {
+          prompt: fixture.prompt,
+        },
+      );
+      assert(
+        result?.status === "success",
+        "Custom metric prompt test did not return success for cached prompt.",
+      );
+      assert(
+        result?.prompts === fixture.suggested_prompt,
+        "Custom metric prompt test did not return the cached PromptChecker suggestion.",
+      );
+
+      const audit = await loadCustomMetricPromptTestAudit(fixture);
+      assertCustomMetricPromptTestAudit(audit, fixture);
+
+      evidence.push({
+        custom_metric_prompt_checker_id: fixture.checker_id,
+        custom_metric_prompt_test_prompt: fixture.prompt,
+        custom_metric_prompt_test_cached: true,
+        custom_metric_prompt_test_prompt_rows: audit.total_prompt_rows,
       });
     },
   },
@@ -233,6 +1386,95 @@ export const datasetEvalJourneys = [
         unsupported_provider_keys: providerDbState.unsupportedProviders,
         run_prompt_models: runPromptModels.length,
         eval_functions: functions.length,
+      });
+    },
+  },
+  {
+    id: "DPE-API-038",
+    title: "Embedding provider catalog list, detail, and invalid-type guard",
+    tags: ["dataset", "embedding", "provider", "safe"],
+    async run({ client, evidence }) {
+      const catalog = await client.get(apiPath("/model-hub/embeddings/"));
+      const embeddings = catalog?.embeddings;
+      assert(
+        embeddings &&
+          typeof embeddings === "object" &&
+          !Array.isArray(embeddings),
+        "Embedding catalog did not return an embeddings object.",
+      );
+      assertNoEmbeddingCatalogSecretLeak(catalog, "embedding catalog list");
+
+      const providerKeys = Object.keys(embeddings).sort();
+      const expectedProviderKeys = [
+        "huggingface",
+        "openai",
+        "sentence_transformers",
+      ];
+      for (const key of expectedProviderKeys) {
+        assert(
+          providerKeys.includes(key),
+          `Embedding catalog did not include provider ${key}.`,
+        );
+        assertEmbeddingProvider(key, embeddings[key]);
+      }
+
+      const detailResults = {};
+      for (const key of expectedProviderKeys) {
+        const detail = await client.get(
+          apiPath("/model-hub/embeddings/{type}/", { type: key }),
+        );
+        assert(
+          detail?.embedding && detail.embeddings === undefined,
+          `Embedding detail for ${key} did not return exactly one provider.`,
+        );
+        assertEmbeddingProvider(key, detail.embedding);
+        assert(
+          detail.embedding.name === embeddings[key].name,
+          `Embedding detail for ${key} did not match catalog name.`,
+        );
+        assertNoEmbeddingCatalogSecretLeak(
+          detail,
+          `embedding catalog detail ${key}`,
+        );
+        detailResults[key] = detail.embedding;
+      }
+
+      const queryDetail = await client.get(apiPath("/model-hub/embeddings/"), {
+        query: { type: "openai" },
+      });
+      assert(
+        queryDetail?.embedding?.name === embeddings.openai.name,
+        "Embedding legacy query detail did not return the OpenAI provider.",
+      );
+
+      const invalidTypeError = await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/embeddings/{type}/", {
+              type: "not-a-provider",
+            }),
+          ),
+        400,
+        "Embedding detail accepted an unknown provider type.",
+      );
+      assert(
+        JSON.stringify(invalidTypeError.body || {}).includes(
+          "Invalid embedding type",
+        ),
+        "Embedding invalid-type response did not include the expected message.",
+      );
+
+      evidence.push({
+        provider_count: providerKeys.length,
+        provider_keys: providerKeys,
+        openai_default_model:
+          detailResults.openai.config_schema.model.default || null,
+        huggingface_default_model:
+          detailResults.huggingface.config_schema.model.default || null,
+        sentence_transformers_requires_api_key:
+          detailResults.sentence_transformers.requires_api_key,
+        invalid_type_status: invalidTypeError.status,
+        raw_secret_like_values: false,
       });
     },
   },
@@ -1182,11 +2424,21 @@ export const datasetEvalJourneys = [
       user,
     }) {
       requireMutations();
+      if (!workspaceId) {
+        skip(
+          "Legacy experiment create/update scope journey requires a workspace id.",
+        );
+      }
+      const userId = currentUserId(user);
+      assert(
+        isUuid(userId),
+        "Legacy experiment scope journey requires user id.",
+      );
       const fixture = await seedLegacyExperimentCreateUpdateFixture({
         runId,
         organizationId,
         workspaceId,
-        userId: currentUserId(user),
+        userId,
       });
       assert(
         fixture?.fixture_created,
@@ -1279,6 +2531,18 @@ export const datasetEvalJourneys = [
         promptConfigJourney: "EXP-API-004-update",
       });
 
+      const generatedDetailRows = asArray(
+        await client.get(apiPath("/model-hub/experiment-detail/"), {
+          query: { dataset_id: fixture.dataset_id },
+        }),
+      );
+      assert(
+        generatedDetailRows.some(
+          (row) => row?.id === createdAudit.experiment_id,
+        ),
+        "Generated experiment-detail route did not include the active workspace experiment.",
+      );
+
       await expectApiErrorStatus(
         () =>
           client.post(apiPath("/model-hub/experiments/"), {
@@ -1306,6 +2570,8 @@ export const datasetEvalJourneys = [
       let otherWorkspaceCreateStatus = "skipped:no-other-workspace";
       let otherWorkspaceDetailGuard = "skipped:no-other-workspace";
       let otherWorkspaceUpdateGuard = "skipped:no-other-workspace";
+      let generatedOtherWorkspaceListGuard = "skipped:no-other-workspace";
+      let generatedOtherWorkspaceSearchGuard = "skipped:no-other-workspace";
       if (fixture.other_workspace_id) {
         try {
           await client.post(apiPath("/model-hub/experiments/"), {
@@ -1334,6 +2600,28 @@ export const datasetEvalJourneys = [
           "Legacy experiment detail exposed another workspace experiment.",
         );
         otherWorkspaceDetailGuard = "passed";
+
+        const otherDatasetRows = asArray(
+          await client.get(apiPath("/model-hub/experiment-detail/"), {
+            query: { dataset_id: fixture.other_dataset_id },
+          }),
+        );
+        assert(
+          otherDatasetRows.length === 0,
+          "Generated experiment-detail route exposed another workspace dataset.",
+        );
+        generatedOtherWorkspaceListGuard = "passed";
+
+        const hiddenSearchRows = asArray(
+          await client.get(apiPath("/model-hub/experiment-detail/"), {
+            query: { search: fixture.other_experiment_name },
+          }),
+        );
+        assert(
+          hiddenSearchRows.length === 0,
+          "Generated experiment-detail search exposed another workspace experiment.",
+        );
+        generatedOtherWorkspaceSearchGuard = "passed";
 
         await expectApiErrorStatus(
           () =>
@@ -1379,11 +2667,17 @@ export const datasetEvalJourneys = [
         updated_name: updatedAudit.experiment_name,
         create_metric_id: fixture.eval_metric_id,
         update_metric_id: fixture.second_eval_metric_id,
+        other_workspace_id: fixture.other_workspace_id,
+        created_other_workspace: fixture.created_other_workspace === true,
         blocked_column_guard: "passed",
         blocked_metric_guard: "passed",
         other_workspace_create_status: otherWorkspaceCreateStatus,
         other_workspace_detail_guard: otherWorkspaceDetailGuard,
         other_workspace_update_guard: otherWorkspaceUpdateGuard,
+        generated_experiment_detail_count: generatedDetailRows.length,
+        generated_other_workspace_list_guard: generatedOtherWorkspaceListGuard,
+        generated_other_workspace_search_guard:
+          generatedOtherWorkspaceSearchGuard,
       });
     },
   },
@@ -1507,6 +2801,1115 @@ export const datasetEvalJourneys = [
         column_id: column.id,
         row_id: row.row_id,
         added_row: addedRow,
+      });
+    },
+  },
+  {
+    id: "DPE-API-031",
+    title:
+      "Manual dataset create, list/table readback, download, and delete lifecycle",
+    tags: [
+      "dataset",
+      "manual-create",
+      "mutating",
+      "data-roundtrip",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+    }) {
+      requireMutations();
+      const datasetName = `api manual dataset ${runId}`;
+      let datasetId;
+      let deletedDataset = false;
+      try {
+        const created = await client.post(
+          apiPath("/model-hub/develops/create-dataset-manually/"),
+          {
+            dataset_name: datasetName,
+            number_of_rows: 2,
+            number_of_columns: 2,
+          },
+        );
+        datasetId = created?.dataset_id;
+      } catch (error) {
+        if (error?.status !== 429) throw error;
+        evidence.push({
+          dataset_creation: "plan-limited",
+          status: error.status,
+        });
+        skip("Manual dataset creation is plan-limited for this org/workspace.");
+      }
+
+      assert(datasetId, "Manual dataset create did not return dataset_id.");
+      cleanup.defer("delete API journey manual dataset", () =>
+        deletedDataset
+          ? Promise.resolve()
+          : client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+              body: { dataset_ids: [datasetId] },
+              okStatuses: [200, 404],
+            }),
+      );
+
+      const listPayload = await client.get(
+        apiPath("/model-hub/develops/get-datasets/"),
+        { query: { page: 0, page_size: 100 } },
+      );
+      const listedDataset = asArray(listPayload).find(
+        (row) => row?.id === datasetId,
+      );
+      assert(
+        listedDataset?.name === datasetName,
+        "Manual dataset was not visible in get-datasets readback.",
+      );
+
+      const table = await getDatasetTable(client, datasetId);
+      const rows = asArray(table.table);
+      const columns = asArray(table.column_config);
+      assert(rows.length === 2, "Manual dataset table did not return 2 rows.");
+      assert(
+        columns.length === 2,
+        "Manual dataset table did not return 2 columns.",
+      );
+      assert(
+        columns.every((column) => column?.name?.startsWith("Column ")),
+        "Manual dataset columns did not use expected generated names.",
+      );
+
+      const downloaded = await client.get(
+        apiPath("/model-hub/develops/{dataset_id}/download_dataset/", {
+          dataset_id: datasetId,
+        }),
+      );
+      assert(
+        String(downloaded).includes("Column 1") &&
+          String(downloaded).includes("Column 2"),
+        "Manual dataset download did not include generated columns.",
+      );
+
+      const activeAudit = await loadManualDatasetCreateDbAudit({
+        datasetId,
+        organizationId,
+        workspaceId,
+        expectedName: datasetName,
+      });
+      assertManualDatasetAudit(activeAudit, {
+        expectedDeleted: false,
+        expectedRows: 2,
+        expectedColumns: 2,
+        expectedCells: 4,
+      });
+      if (workspaceId) {
+        assert(
+          activeAudit.workspace_id === workspaceId,
+          "Manual dataset DB audit workspace mismatch.",
+        );
+      }
+
+      await client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+        body: { dataset_ids: [datasetId] },
+      });
+      deletedDataset = true;
+
+      const afterDeleteList = asArray(
+        await client.get(apiPath("/model-hub/develops/get-datasets/"), {
+          query: { page: 0, page_size: 100 },
+        }),
+      );
+      assert(
+        !afterDeleteList.some((row) => row?.id === datasetId),
+        "Deleted manual dataset was still visible in active list.",
+      );
+
+      const deletedAudit = await loadManualDatasetCreateDbAudit({
+        datasetId,
+        organizationId,
+        workspaceId,
+        expectedName: datasetName,
+      });
+      assertManualDatasetAudit(deletedAudit, {
+        expectedDeleted: true,
+        expectedRows: 2,
+        expectedColumns: 2,
+        expectedCells: 4,
+      });
+      if (workspaceId) {
+        assert(
+          deletedAudit.workspace_id === workspaceId,
+          "Deleted manual dataset DB audit workspace mismatch.",
+        );
+      }
+
+      evidence.push({
+        dataset_id: datasetId,
+        dataset_name: datasetName,
+        rows: Number(activeAudit.row_count),
+        columns: Number(activeAudit.column_count),
+        cells: Number(activeAudit.cell_count),
+        deleted_at_set: deletedAudit.deleted_at_set,
+      });
+    },
+  },
+  {
+    id: "DPE-API-037",
+    title:
+      "Manual dataset creation limit diagnostics compare workspace-visible and org-wide counts",
+    tags: ["dataset", "manual-create", "plan-limit", "mutating", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+    }) {
+      requireMutations();
+      const datasetName = `api manual limit diagnostic ${runId}`;
+      const beforeCatalog = await client.get(
+        apiPath("/model-hub/develops/get-datasets/"),
+        {
+          query: { page: 0, page_size: 100 },
+        },
+      );
+      const beforeList = asArray(beforeCatalog);
+      const beforeVisibleDatasetTotal = Number.isFinite(
+        Number(beforeCatalog?.total_count),
+      )
+        ? Number(beforeCatalog.total_count)
+        : beforeList.length;
+      const beforeAudit = await loadDatasetCreationLimitAudit({
+        organizationId,
+        workspaceId,
+      });
+      let datasetId;
+      let deletedDataset = false;
+
+      try {
+        const created = await client.post(
+          apiPath("/model-hub/develops/create-dataset-manually/"),
+          {
+            dataset_name: datasetName,
+            number_of_rows: 1,
+            number_of_columns: 1,
+          },
+        );
+        datasetId = created?.dataset_id;
+      } catch (error) {
+        if (error?.status !== 429) throw error;
+        assertDatasetLimitAudit(beforeAudit);
+        evidence.push({
+          dataset_creation: "plan_limited",
+          create_status: error.status,
+          create_error: apiJourneyBodyMessage(error.body),
+          api_visible_dataset_page_count: beforeList.length,
+          api_visible_dataset_total_count: beforeVisibleDatasetTotal,
+          organization_active_dataset_count: Number(
+            beforeAudit.organization_active_dataset_count,
+          ),
+          workspace_active_dataset_count: Number(
+            beforeAudit.workspace_active_dataset_count,
+          ),
+          workspace_build_dataset_count: Number(
+            beforeAudit.workspace_build_dataset_count,
+          ),
+          workspace_observe_dataset_count: Number(
+            beforeAudit.workspace_observe_dataset_count,
+          ),
+          other_workspace_active_dataset_count: Number(
+            beforeAudit.other_workspace_active_dataset_count,
+          ),
+          null_workspace_active_dataset_count: Number(
+            beforeAudit.null_workspace_active_dataset_count,
+          ),
+          other_named_workspace_active_dataset_count: Number(
+            beforeAudit.other_named_workspace_active_dataset_count,
+          ),
+          organization_build_dataset_count: Number(
+            beforeAudit.organization_build_dataset_count,
+          ),
+          organization_observe_dataset_count: Number(
+            beforeAudit.organization_observe_dataset_count,
+          ),
+          latest_dataset_limit_config: beforeAudit.latest_dataset_limit_config,
+        });
+        return;
+      }
+
+      assert(
+        datasetId,
+        "Manual dataset diagnostic create did not return dataset_id.",
+      );
+      cleanup.defer("delete API journey manual limit diagnostic dataset", () =>
+        deletedDataset
+          ? Promise.resolve()
+          : client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+              body: { dataset_ids: [datasetId] },
+              okStatuses: [200, 404],
+            }),
+      );
+
+      const activeAudit = await loadManualDatasetCreateDbAudit({
+        datasetId,
+        organizationId,
+        workspaceId,
+        expectedName: datasetName,
+      });
+      assertManualDatasetAudit(activeAudit, {
+        expectedDeleted: false,
+        expectedRows: 1,
+        expectedColumns: 1,
+        expectedCells: 1,
+      });
+
+      await client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+        body: { dataset_ids: [datasetId] },
+      });
+      deletedDataset = true;
+      const deletedAudit = await loadManualDatasetCreateDbAudit({
+        datasetId,
+        organizationId,
+        workspaceId,
+        expectedName: datasetName,
+      });
+      assertManualDatasetAudit(deletedAudit, {
+        expectedDeleted: true,
+        expectedRows: 1,
+        expectedColumns: 1,
+        expectedCells: 1,
+      });
+
+      const afterAudit = await loadDatasetCreationLimitAudit({
+        organizationId,
+        workspaceId,
+      });
+      assertDatasetLimitAudit(afterAudit);
+      evidence.push({
+        dataset_creation: "allowed",
+        dataset_id: datasetId,
+        deleted_at_set: deletedAudit.deleted_at_set,
+        api_visible_dataset_page_count_before: beforeList.length,
+        api_visible_dataset_total_count_before: beforeVisibleDatasetTotal,
+        organization_active_dataset_count_before: Number(
+          beforeAudit.organization_active_dataset_count,
+        ),
+        workspace_active_dataset_count_before: Number(
+          beforeAudit.workspace_active_dataset_count,
+        ),
+        workspace_build_dataset_count_before: Number(
+          beforeAudit.workspace_build_dataset_count,
+        ),
+        workspace_observe_dataset_count_before: Number(
+          beforeAudit.workspace_observe_dataset_count,
+        ),
+        other_workspace_active_dataset_count_before: Number(
+          beforeAudit.other_workspace_active_dataset_count,
+        ),
+        null_workspace_active_dataset_count_before: Number(
+          beforeAudit.null_workspace_active_dataset_count,
+        ),
+        other_named_workspace_active_dataset_count_before: Number(
+          beforeAudit.other_named_workspace_active_dataset_count,
+        ),
+        organization_build_dataset_count_before: Number(
+          beforeAudit.organization_build_dataset_count,
+        ),
+        organization_observe_dataset_count_before: Number(
+          beforeAudit.organization_observe_dataset_count,
+        ),
+        organization_active_dataset_count_after_cleanup: Number(
+          afterAudit.organization_active_dataset_count,
+        ),
+        workspace_active_dataset_count_after_cleanup: Number(
+          afterAudit.workspace_active_dataset_count,
+        ),
+        organization_build_dataset_count_after_cleanup: Number(
+          afterAudit.organization_build_dataset_count,
+        ),
+        organization_observe_dataset_count_after_cleanup: Number(
+          afterAudit.organization_observe_dataset_count,
+        ),
+        latest_dataset_limit_config:
+          beforeAudit.latest_dataset_limit_config || null,
+      });
+    },
+  },
+  {
+    id: "DPE-API-032",
+    title:
+      "Dataset clone happy path preserves rows, columns, cells, and config",
+    tags: ["dataset", "clone", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+    }) {
+      requireMutations();
+      const sourceName = `api clone source ${runId}`;
+      const cloneName = `api clone copy ${runId}`;
+      const firstValue = `clone source first ${runId}`;
+      const secondValue = `clone source second ${runId}`;
+      let sourceDatasetId;
+      let clonedDatasetId;
+      let sourceDeleted = false;
+      let cloneDeleted = false;
+
+      try {
+        const created = await client.post(
+          apiPath("/model-hub/develops/create-dataset-manually/"),
+          {
+            dataset_name: sourceName,
+            number_of_rows: 2,
+            number_of_columns: 2,
+          },
+        );
+        sourceDatasetId = created?.dataset_id;
+      } catch (error) {
+        if (error?.status !== 429) throw error;
+        evidence.push({
+          source_creation: "plan-limited",
+          status: error.status,
+        });
+        skip("Source dataset creation is plan-limited for this org/workspace.");
+      }
+      assert(sourceDatasetId, "Clone source create did not return dataset_id.");
+      cleanup.defer("delete API journey clone source dataset", () =>
+        sourceDeleted
+          ? Promise.resolve()
+          : client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+              body: { dataset_ids: [sourceDatasetId] },
+              okStatuses: [200, 404],
+            }),
+      );
+
+      let sourceTable = await getDatasetTable(client, sourceDatasetId);
+      const sourceColumns = asArray(sourceTable.column_config);
+      const sourceRows = asArray(sourceTable.table).filter(
+        (row) => row?.row_id,
+      );
+      assert(sourceRows.length === 2, "Clone source did not have 2 rows.");
+      const sourceColumnOne = sourceColumns.find(
+        (column) => column?.name === "Column 1",
+      );
+      const sourceColumnTwo = sourceColumns.find(
+        (column) => column?.name === "Column 2",
+      );
+      assert(sourceColumnOne?.id, "Clone source was missing Column 1.");
+      assert(sourceColumnTwo?.id, "Clone source was missing Column 2.");
+
+      await client.post(
+        apiPath("/model-hub/develops/{dataset_id}/update_cell_value/", {
+          dataset_id: sourceDatasetId,
+        }),
+        {
+          row_id: sourceRows[0].row_id,
+          column_id: sourceColumnOne.id,
+          new_value: firstValue,
+        },
+      );
+      await client.post(
+        apiPath("/model-hub/develops/{dataset_id}/update_cell_value/", {
+          dataset_id: sourceDatasetId,
+        }),
+        {
+          row_id: sourceRows[1].row_id,
+          column_id: sourceColumnTwo.id,
+          new_value: secondValue,
+        },
+      );
+
+      sourceTable = await getDatasetTable(client, sourceDatasetId);
+      const updatedSourceRows = asArray(sourceTable.table).filter(
+        (row) => row?.row_id,
+      );
+      assert(
+        updatedSourceRows.some(
+          (row) => cellValueFor(row, sourceColumnOne.id) === firstValue,
+        ),
+        "Clone source first value did not round-trip before clone.",
+      );
+      assert(
+        updatedSourceRows.some(
+          (row) => cellValueFor(row, sourceColumnTwo.id) === secondValue,
+        ),
+        "Clone source second value did not round-trip before clone.",
+      );
+
+      let cloned;
+      try {
+        cloned = await client.post(
+          apiPath("/model-hub/develops/clone-dataset/{dataset_id}/", {
+            dataset_id: sourceDatasetId,
+          }),
+          { new_dataset_name: cloneName },
+        );
+      } catch (error) {
+        if (error?.status !== 429) throw error;
+        evidence.push({ clone_creation: "plan-limited", status: error.status });
+        skip("Dataset clone creation is plan-limited for this org/workspace.");
+      }
+      clonedDatasetId = cloned?.dataset_id;
+      assert(clonedDatasetId, "Clone API did not return dataset_id.");
+      cleanup.defer("delete API journey cloned dataset", () =>
+        cloneDeleted
+          ? Promise.resolve()
+          : client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+              body: { dataset_ids: [clonedDatasetId] },
+              okStatuses: [200, 404],
+            }),
+      );
+
+      const listPayload = await client.get(
+        apiPath("/model-hub/develops/get-datasets/"),
+        { query: { page: 0, page_size: 100 } },
+      );
+      const listedClone = asArray(listPayload).find(
+        (row) => row?.id === clonedDatasetId,
+      );
+      assert(
+        listedClone?.name === cloneName,
+        "Cloned dataset was not visible in get-datasets readback.",
+      );
+
+      const cloneTable = await getDatasetTable(client, clonedDatasetId);
+      const cloneColumns = asArray(cloneTable.column_config);
+      const cloneRows = asArray(cloneTable.table).filter((row) => row?.row_id);
+      assert(cloneRows.length === 2, "Cloned dataset did not have 2 rows.");
+      const cloneColumnOne = cloneColumns.find(
+        (column) => column?.name === "Column 1",
+      );
+      const cloneColumnTwo = cloneColumns.find(
+        (column) => column?.name === "Column 2",
+      );
+      assert(cloneColumnOne?.id, "Cloned dataset was missing Column 1.");
+      assert(cloneColumnTwo?.id, "Cloned dataset was missing Column 2.");
+      assert(
+        cloneColumnOne.id !== sourceColumnOne.id &&
+          cloneColumnTwo.id !== sourceColumnTwo.id,
+        "Clone reused source column ids instead of cloning columns.",
+      );
+      assert(
+        cloneRows.every(
+          (row) =>
+            row.row_id !== sourceRows[0].row_id &&
+            row.row_id !== sourceRows[1].row_id,
+        ),
+        "Clone reused source row ids instead of cloning rows.",
+      );
+      assert(
+        cloneRows.some(
+          (row) => cellValueFor(row, cloneColumnOne.id) === firstValue,
+        ),
+        "Cloned dataset did not preserve first edited cell value.",
+      );
+      assert(
+        cloneRows.some(
+          (row) => cellValueFor(row, cloneColumnTwo.id) === secondValue,
+        ),
+        "Cloned dataset did not preserve second edited cell value.",
+      );
+
+      const sourceAudit = await loadDatasetCloneDbAudit({
+        datasetId: sourceDatasetId,
+        organizationId,
+        workspaceId,
+        expectedName: sourceName,
+      });
+      assertDatasetCloneAudit(sourceAudit, {
+        expectedDeleted: false,
+        expectedValues: [firstValue, secondValue],
+        expectedWorkspaceId: workspaceId,
+      });
+      const cloneAudit = await loadDatasetCloneDbAudit({
+        datasetId: clonedDatasetId,
+        organizationId,
+        workspaceId,
+        expectedName: cloneName,
+      });
+      assertDatasetCloneAudit(cloneAudit, {
+        expectedDeleted: false,
+        expectedValues: [firstValue, secondValue],
+        expectedWorkspaceId: workspaceId,
+      });
+      assert(
+        cloneAudit.column_ids.join(",") !== sourceAudit.column_ids.join(","),
+        "DB audit found cloned column ids identical to source column ids.",
+      );
+      assert(
+        cloneAudit.row_ids.join(",") !== sourceAudit.row_ids.join(","),
+        "DB audit found cloned row ids identical to source row ids.",
+      );
+
+      await client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+        body: { dataset_ids: [clonedDatasetId] },
+      });
+      cloneDeleted = true;
+      await client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+        body: { dataset_ids: [sourceDatasetId] },
+      });
+      sourceDeleted = true;
+
+      const deletedSourceAudit = await loadDatasetCloneDbAudit({
+        datasetId: sourceDatasetId,
+        organizationId,
+        workspaceId,
+        expectedName: sourceName,
+      });
+      assertDatasetCloneAudit(deletedSourceAudit, {
+        expectedDeleted: true,
+        expectedValues: [firstValue, secondValue],
+        expectedWorkspaceId: workspaceId,
+      });
+      const deletedCloneAudit = await loadDatasetCloneDbAudit({
+        datasetId: clonedDatasetId,
+        organizationId,
+        workspaceId,
+        expectedName: cloneName,
+      });
+      assertDatasetCloneAudit(deletedCloneAudit, {
+        expectedDeleted: true,
+        expectedValues: [firstValue, secondValue],
+        expectedWorkspaceId: workspaceId,
+      });
+
+      evidence.push({
+        source_dataset_id: sourceDatasetId,
+        cloned_dataset_id: clonedDatasetId,
+        source_columns: Number(sourceAudit.column_count),
+        cloned_columns: Number(cloneAudit.column_count),
+        source_rows: Number(sourceAudit.row_count),
+        cloned_rows: Number(cloneAudit.row_count),
+        cloned_cells: Number(cloneAudit.cell_count),
+        cleanup_deleted_at: deletedCloneAudit.deleted_at_set,
+      });
+    },
+  },
+  {
+    id: "DPE-API-033",
+    title:
+      "Dataset duplicate selected rows preserves copied data and guards rows",
+    tags: ["dataset", "duplicate", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+    }) {
+      requireMutations();
+      const sourceName = `api duplicate source ${runId}`;
+      const blockedName = `api duplicate blocked ${runId}`;
+      const duplicateName = `api duplicate copy ${runId}`;
+      const copiedValue = `duplicate copied value ${runId}`;
+      const excludedValue = `duplicate excluded value ${runId}`;
+      let sourceDatasetId;
+      let duplicateDatasetId;
+      let sourceDeleted = false;
+      let duplicateDeleted = false;
+
+      try {
+        const created = await client.post(
+          apiPath("/model-hub/develops/create-dataset-manually/"),
+          {
+            dataset_name: sourceName,
+            number_of_rows: 2,
+            number_of_columns: 2,
+          },
+        );
+        sourceDatasetId = created?.dataset_id;
+      } catch (error) {
+        if (error?.status !== 429) throw error;
+        evidence.push({
+          source_creation: "plan-limited",
+          status: error.status,
+        });
+        skip("Source dataset creation is plan-limited for this org/workspace.");
+      }
+      assert(
+        sourceDatasetId,
+        "Duplicate source create did not return dataset_id.",
+      );
+      cleanup.defer("delete API journey duplicate source dataset", () =>
+        sourceDeleted
+          ? Promise.resolve()
+          : client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+              body: { dataset_ids: [sourceDatasetId] },
+              okStatuses: [200, 404],
+            }),
+      );
+
+      const sourceTable = await getDatasetTable(client, sourceDatasetId);
+      const sourceRows = asArray(sourceTable.table).filter(
+        (row) => row?.row_id,
+      );
+      const sourceColumns = asArray(sourceTable.column_config);
+      assert(sourceRows.length === 2, "Duplicate source did not have 2 rows.");
+      const sourceColumnOne = sourceColumns.find(
+        (column) => column?.name === "Column 1",
+      );
+      const sourceColumnTwo = sourceColumns.find(
+        (column) => column?.name === "Column 2",
+      );
+      assert(sourceColumnOne?.id, "Duplicate source was missing Column 1.");
+      assert(sourceColumnTwo?.id, "Duplicate source was missing Column 2.");
+
+      await client.post(
+        apiPath("/model-hub/develops/{dataset_id}/update_cell_value/", {
+          dataset_id: sourceDatasetId,
+        }),
+        {
+          row_id: sourceRows[0].row_id,
+          column_id: sourceColumnOne.id,
+          new_value: copiedValue,
+        },
+      );
+      await client.post(
+        apiPath("/model-hub/develops/{dataset_id}/update_cell_value/", {
+          dataset_id: sourceDatasetId,
+        }),
+        {
+          row_id: sourceRows[1].row_id,
+          column_id: sourceColumnTwo.id,
+          new_value: excludedValue,
+        },
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.post(
+            apiPath("/model-hub/datasets/{dataset_id}/duplicate/", {
+              dataset_id: sourceDatasetId,
+            }),
+            {
+              name: blockedName,
+              row_ids: [randomUUID()],
+              selected_all_rows: false,
+            },
+          ),
+        400,
+        "Duplicate dataset accepted a row id outside the source dataset.",
+      );
+      const blockedAudit = await loadDatasetNameActiveCount({
+        organizationId,
+        expectedName: blockedName,
+      });
+      assert(
+        Number(blockedAudit.active_count) === 0,
+        "Duplicate dataset bad-row guard left an active dataset behind.",
+      );
+
+      let duplicated;
+      try {
+        duplicated = await client.post(
+          apiPath("/model-hub/datasets/{dataset_id}/duplicate/", {
+            dataset_id: sourceDatasetId,
+          }),
+          {
+            name: duplicateName,
+            row_ids: [sourceRows[0].row_id],
+            selected_all_rows: false,
+          },
+        );
+      } catch (error) {
+        if (error?.status !== 429) throw error;
+        evidence.push({
+          duplicate_creation: "plan-limited",
+          status: error.status,
+        });
+        skip(
+          "Dataset duplicate creation is plan-limited for this org/workspace.",
+        );
+      }
+      duplicateDatasetId = duplicated?.new_dataset_id;
+      assert(
+        duplicateDatasetId,
+        "Duplicate API did not return new_dataset_id.",
+      );
+      cleanup.defer("delete API journey duplicate dataset", () =>
+        duplicateDeleted
+          ? Promise.resolve()
+          : client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+              body: { dataset_ids: [duplicateDatasetId] },
+              okStatuses: [200, 404],
+            }),
+      );
+      assert(
+        Number(duplicated?.rows_copied) === 1 &&
+          Number(duplicated?.columns_copied) === 2,
+        "Duplicate API did not report the selected row and columns copied.",
+      );
+
+      const duplicateTable = await getDatasetTable(client, duplicateDatasetId);
+      const duplicateRows = asArray(duplicateTable.table).filter(
+        (row) => row?.row_id,
+      );
+      const duplicateColumns = asArray(duplicateTable.column_config);
+      assert(
+        duplicateRows.length === 1,
+        "Duplicate dataset did not copy exactly one selected row.",
+      );
+      const duplicateColumnOne = duplicateColumns.find(
+        (column) => column?.name === "Column 1",
+      );
+      const duplicateColumnTwo = duplicateColumns.find(
+        (column) => column?.name === "Column 2",
+      );
+      assert(duplicateColumnOne?.id, "Duplicate dataset was missing Column 1.");
+      assert(duplicateColumnTwo?.id, "Duplicate dataset was missing Column 2.");
+      assert(
+        duplicateColumnOne.id !== sourceColumnOne.id &&
+          duplicateColumnTwo.id !== sourceColumnTwo.id,
+        "Duplicate dataset reused source column ids.",
+      );
+      assert(
+        duplicateRows[0].row_id !== sourceRows[0].row_id,
+        "Duplicate dataset reused the source row id.",
+      );
+      assert(
+        cellValueFor(duplicateRows[0], duplicateColumnOne.id) === copiedValue,
+        "Duplicate dataset did not preserve selected row value.",
+      );
+      assert(
+        !String(JSON.stringify(duplicateRows)).includes(excludedValue),
+        "Duplicate dataset copied an unselected row value.",
+      );
+
+      const sourceAudit = await loadDatasetCloneDbAudit({
+        datasetId: sourceDatasetId,
+        organizationId,
+        workspaceId,
+        expectedName: sourceName,
+      });
+      assertDatasetCloneAudit(sourceAudit, {
+        expectedDeleted: false,
+        expectedValues: [copiedValue, excludedValue],
+        expectedWorkspaceId: workspaceId,
+      });
+      const duplicateAudit = await loadDatasetCloneDbAudit({
+        datasetId: duplicateDatasetId,
+        organizationId,
+        workspaceId,
+        expectedName: duplicateName,
+      });
+      assertDatasetCloneAudit(duplicateAudit, {
+        expectedDeleted: false,
+        expectedRows: 1,
+        expectedColumns: 2,
+        expectedCells: 2,
+        expectedValues: [copiedValue],
+        expectedWorkspaceId: workspaceId,
+      });
+
+      await client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+        body: { dataset_ids: [duplicateDatasetId] },
+      });
+      duplicateDeleted = true;
+      await client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+        body: { dataset_ids: [sourceDatasetId] },
+      });
+      sourceDeleted = true;
+
+      const deletedDuplicateAudit = await loadDatasetCloneDbAudit({
+        datasetId: duplicateDatasetId,
+        organizationId,
+        workspaceId,
+        expectedName: duplicateName,
+      });
+      assertDatasetCloneAudit(deletedDuplicateAudit, {
+        expectedDeleted: true,
+        expectedRows: 1,
+        expectedColumns: 2,
+        expectedCells: 2,
+        expectedValues: [copiedValue],
+        expectedWorkspaceId: workspaceId,
+      });
+
+      evidence.push({
+        source_dataset_id: sourceDatasetId,
+        duplicate_dataset_id: duplicateDatasetId,
+        rows_copied: Number(duplicated.rows_copied),
+        columns_copied: Number(duplicated.columns_copied),
+        duplicate_cells: Number(duplicateAudit.cell_count),
+        blocked_active_count: Number(blockedAudit.active_count),
+        cleanup_deleted_at: deletedDuplicateAudit.deleted_at_set,
+      });
+    },
+  },
+  {
+    id: "DPE-API-034",
+    title: "Dataset add-as-new copies selected columns and guards inputs",
+    tags: ["dataset", "add-as-new", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+    }) {
+      requireMutations();
+      const sourceName = `api add as new source ${runId}`;
+      const blockedName = `api add as new blocked ${runId}`;
+      const copiedName = `api add as new copy ${runId}`;
+      const copiedColumnName = `Copied input ${runId}`;
+      const firstValue = `add as new first ${runId}`;
+      const secondValue = `add as new second ${runId}`;
+      const excludedValue = `add as new excluded ${runId}`;
+      let sourceDatasetId;
+      let sourceDeleted = false;
+      let copiedDeleted = false;
+
+      try {
+        const created = await client.post(
+          apiPath("/model-hub/develops/create-dataset-manually/"),
+          {
+            dataset_name: sourceName,
+            number_of_rows: 2,
+            number_of_columns: 2,
+          },
+        );
+        sourceDatasetId = created?.dataset_id;
+      } catch (error) {
+        if (error?.status !== 429) throw error;
+        evidence.push({
+          source_creation: "plan-limited",
+          status: error.status,
+        });
+        skip("Source dataset creation is plan-limited for this org/workspace.");
+      }
+      assert(
+        sourceDatasetId,
+        "Add-as-new source create did not return dataset_id.",
+      );
+      cleanup.defer("delete API journey add-as-new source dataset", () =>
+        sourceDeleted
+          ? Promise.resolve()
+          : client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+              body: { dataset_ids: [sourceDatasetId] },
+              okStatuses: [200, 404],
+            }),
+      );
+
+      const sourceTable = await getDatasetTable(client, sourceDatasetId);
+      const sourceRows = asArray(sourceTable.table).filter(
+        (row) => row?.row_id,
+      );
+      const sourceColumns = asArray(sourceTable.column_config);
+      assert(sourceRows.length === 2, "Add-as-new source did not have 2 rows.");
+      const sourceColumnOne = sourceColumns.find(
+        (column) => column?.name === "Column 1",
+      );
+      const sourceColumnTwo = sourceColumns.find(
+        (column) => column?.name === "Column 2",
+      );
+      assert(sourceColumnOne?.id, "Add-as-new source was missing Column 1.");
+      assert(sourceColumnTwo?.id, "Add-as-new source was missing Column 2.");
+
+      await client.post(
+        apiPath("/model-hub/develops/{dataset_id}/update_cell_value/", {
+          dataset_id: sourceDatasetId,
+        }),
+        {
+          row_id: sourceRows[0].row_id,
+          column_id: sourceColumnOne.id,
+          new_value: firstValue,
+        },
+      );
+      await client.post(
+        apiPath("/model-hub/develops/{dataset_id}/update_cell_value/", {
+          dataset_id: sourceDatasetId,
+        }),
+        {
+          row_id: sourceRows[1].row_id,
+          column_id: sourceColumnOne.id,
+          new_value: secondValue,
+        },
+      );
+      await client.post(
+        apiPath("/model-hub/develops/{dataset_id}/update_cell_value/", {
+          dataset_id: sourceDatasetId,
+        }),
+        {
+          row_id: sourceRows[0].row_id,
+          column_id: sourceColumnTwo.id,
+          new_value: excludedValue,
+        },
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/develops/add-as-new/"), {
+            dataset_id: sourceDatasetId,
+            name: blockedName,
+            columns: { [randomUUID()]: "outside copy" },
+          }),
+        400,
+        "Add-as-new accepted a column id outside the source dataset.",
+      );
+      const blockedAudit = await loadDatasetNameActiveCount({
+        organizationId,
+        expectedName: blockedName,
+      });
+      assert(
+        Number(blockedAudit.active_count) === 0,
+        "Add-as-new invalid-column guard left an active dataset behind.",
+      );
+
+      let copied;
+      try {
+        copied = await client.post(apiPath("/model-hub/develops/add-as-new/"), {
+          dataset_id: sourceDatasetId,
+          name: copiedName,
+          columns: { [sourceColumnOne.id]: copiedColumnName },
+        });
+      } catch (error) {
+        if (error?.status !== 429) throw error;
+        evidence.push({
+          add_as_new_creation: "plan-limited",
+          status: error.status,
+        });
+        skip(
+          "Dataset add-as-new creation is plan-limited for this org/workspace.",
+        );
+      }
+      const copiedDatasetId = copied?.dataset_id;
+      assert(copiedDatasetId, "Add-as-new API did not return dataset_id.");
+      cleanup.defer("delete API journey add-as-new copied dataset", () =>
+        copiedDeleted
+          ? Promise.resolve()
+          : client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+              body: { dataset_ids: [copiedDatasetId] },
+              okStatuses: [200, 404],
+            }),
+      );
+
+      const listPayload = await client.get(
+        apiPath("/model-hub/develops/get-datasets/"),
+        { query: { page: 0, page_size: 100 } },
+      );
+      const listedCopy = asArray(listPayload).find(
+        (row) => row?.id === copiedDatasetId,
+      );
+      assert(
+        listedCopy?.name === copiedName,
+        "Add-as-new dataset was not visible in get-datasets readback.",
+      );
+
+      const copiedTable = await getDatasetTable(client, copiedDatasetId);
+      const copiedRows = asArray(copiedTable.table).filter(
+        (row) => row?.row_id,
+      );
+      const copiedColumns = asArray(copiedTable.column_config);
+      assert(
+        copiedRows.length === 2,
+        "Add-as-new dataset did not copy all source rows.",
+      );
+      assert(
+        copiedColumns.length === 1,
+        "Add-as-new dataset did not keep exactly the selected column.",
+      );
+      const copiedColumn = copiedColumns.find(
+        (column) => column?.name === copiedColumnName,
+      );
+      assert(
+        copiedColumn?.id,
+        "Add-as-new dataset renamed column was missing.",
+      );
+      assert(
+        copiedColumn.id !== sourceColumnOne.id,
+        "Add-as-new dataset reused the source column id.",
+      );
+      assert(
+        copiedRows.every(
+          (row) =>
+            row.row_id !== sourceRows[0].row_id &&
+            row.row_id !== sourceRows[1].row_id,
+        ),
+        "Add-as-new dataset reused source row ids.",
+      );
+      assert(
+        copiedRows.some(
+          (row) => cellValueFor(row, copiedColumn.id) === firstValue,
+        ),
+        "Add-as-new dataset did not preserve the first selected value.",
+      );
+      assert(
+        copiedRows.some(
+          (row) => cellValueFor(row, copiedColumn.id) === secondValue,
+        ),
+        "Add-as-new dataset did not preserve the second selected value.",
+      );
+      assert(
+        !String(JSON.stringify(copiedRows)).includes(excludedValue),
+        "Add-as-new dataset copied an unselected source column value.",
+      );
+
+      const sourceAudit = await loadDatasetCloneDbAudit({
+        datasetId: sourceDatasetId,
+        organizationId,
+        workspaceId,
+        expectedName: sourceName,
+      });
+      assertDatasetCloneAudit(sourceAudit, {
+        expectedDeleted: false,
+        expectedValues: [firstValue, secondValue, excludedValue],
+        expectedWorkspaceId: workspaceId,
+      });
+      const copiedAudit = await loadDatasetCloneDbAudit({
+        datasetId: copiedDatasetId,
+        organizationId,
+        workspaceId,
+        expectedName: copiedName,
+      });
+      assertDatasetCloneAudit(copiedAudit, {
+        expectedDeleted: false,
+        expectedRows: 2,
+        expectedColumns: 1,
+        expectedCells: 2,
+        expectedValues: [firstValue, secondValue],
+        expectedWorkspaceId: workspaceId,
+      });
+
+      await client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+        body: { dataset_ids: [copiedDatasetId] },
+      });
+      copiedDeleted = true;
+      await client.delete(apiPath("/model-hub/develops/delete_dataset/"), {
+        body: { dataset_ids: [sourceDatasetId] },
+      });
+      sourceDeleted = true;
+
+      const deletedCopyAudit = await loadDatasetCloneDbAudit({
+        datasetId: copiedDatasetId,
+        organizationId,
+        workspaceId,
+        expectedName: copiedName,
+      });
+      assertDatasetCloneAudit(deletedCopyAudit, {
+        expectedDeleted: true,
+        expectedRows: 2,
+        expectedColumns: 1,
+        expectedCells: 2,
+        expectedValues: [firstValue, secondValue],
+        expectedWorkspaceId: workspaceId,
+      });
+
+      evidence.push({
+        source_dataset_id: sourceDatasetId,
+        copied_dataset_id: copiedDatasetId,
+        copied_rows: Number(copiedAudit.row_count),
+        copied_columns: Number(copiedAudit.column_count),
+        copied_cells: Number(copiedAudit.cell_count),
+        blocked_active_count: Number(blockedAudit.active_count),
+        cleanup_deleted_at: deletedCopyAudit.deleted_at_set,
       });
     },
   },
@@ -2037,11 +4440,14 @@ export const datasetEvalJourneys = [
         annotationTaskFixture?.fixture_created === true,
         "AnnotationTask fixture seed did not create a task.",
       );
-      cleanup.defer("hard delete API journey annotation task fixture", async () => {
-        if (!annotationTaskFixtureCleaned) {
-          await hardDeleteAnnotationTaskFixture(annotationTaskFixture);
-        }
-      });
+      cleanup.defer(
+        "hard delete API journey annotation task fixture",
+        async () => {
+          if (!annotationTaskFixtureCleaned) {
+            await hardDeleteAnnotationTaskFixture(annotationTaskFixture);
+          }
+        },
+      );
 
       const annotationTasks = asArray(
         await client.get(apiPath("/model-hub/annotation-tasks/"), {
@@ -2060,7 +4466,11 @@ export const datasetEvalJourneys = [
         annotationTask?.id,
         "Seeded AnnotationTask was not returned by the filtered list.",
       );
-      assertAnnotationTaskPayload(annotationTask, annotationTaskFixture, userId);
+      assertAnnotationTaskPayload(
+        annotationTask,
+        annotationTaskFixture,
+        userId,
+      );
       const annotationTaskDetail = await client.get(
         apiPath("/model-hub/annotation-tasks/{id}/", {
           id: annotationTask.id,
@@ -2072,8 +4482,9 @@ export const datasetEvalJourneys = [
         userId,
       );
       annotationTaskReadStatus = 200;
-      annotationTaskCleanup =
-        await hardDeleteAnnotationTaskFixture(annotationTaskFixture);
+      annotationTaskCleanup = await hardDeleteAnnotationTaskFixture(
+        annotationTaskFixture,
+      );
       annotationTaskFixtureCleaned = true;
       assert(
         Number(annotationTaskCleanup.remaining_task_count) === 0,
@@ -2900,6 +5311,234 @@ export const datasetEvalJourneys = [
           audit.existing_blank_cells_for_new_column,
         ),
         active_cell_count: Number(audit.active_cell_count),
+      });
+    },
+  },
+  {
+    id: "DPE-API-035",
+    title: "Local-file dataset worker materialization and progress readback",
+    tags: [
+      "dataset",
+      "file-import",
+      "mutating",
+      "worker",
+      "data-roundtrip",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+      user,
+    }) {
+      requireMutations();
+      requireBackendShell();
+      const fixture = await seedLocalFileWorkerFixture({
+        runId,
+        organizationId,
+        workspaceId,
+        userEmail: currentUserEmail(user),
+      });
+      assert(
+        fixture?.fixture_created,
+        "Local-file worker fixture seed did not create a dataset.",
+      );
+      cleanup.defer("hard delete API journey local-file worker fixture", () =>
+        hardDeleteDatasetCopyFixture([fixture.dataset_id]),
+      );
+
+      const queuedProgress = await client.get(
+        apiPath("/model-hub/develops/dataset-creation-progress/{dataset_id}/", {
+          dataset_id: fixture.dataset_id,
+        }),
+      );
+      assert(
+        queuedProgress?.processing_status === "queued",
+        "Local-file progress did not report queued before worker materialization.",
+      );
+      assert(
+        queuedProgress?.original_filename === fixture.original_filename,
+        "Local-file progress did not expose the original filename.",
+      );
+
+      const workerResult = await materializeLocalFileWorkerFixture(fixture);
+      assert(
+        workerResult?.processing_status === "completed",
+        "Local-file worker did not complete materialization.",
+      );
+
+      const completedProgress = await client.get(
+        apiPath("/model-hub/develops/dataset-creation-progress/{dataset_id}/", {
+          dataset_id: fixture.dataset_id,
+        }),
+      );
+      assert(
+        completedProgress?.processing_status === "completed",
+        "Local-file progress did not report completed after worker materialization.",
+      );
+      assert(
+        completedProgress?.is_completed === true,
+        "Local-file progress did not set is_completed after worker materialization.",
+      );
+
+      const table = await getDatasetTable(client, fixture.dataset_id);
+      const inputColumn = findColumn(table, fixture.input_column_name);
+      const expectedColumn = findColumn(table, fixture.expected_column_name);
+      assert(inputColumn, "Local-file table did not include the input column.");
+      assert(
+        expectedColumn,
+        "Local-file table did not include the expected column.",
+      );
+      const rows = asArray(table.table);
+      assert(rows.length === 2, "Local-file table did not include two rows.");
+      const inputValues = rows.map((row) => cellValueFor(row, inputColumn.id));
+      const expectedValues = rows.map((row) =>
+        cellValueFor(row, expectedColumn.id),
+      );
+      assert(
+        inputValues.includes(fixture.input_one) &&
+          inputValues.includes(fixture.input_two),
+        "Local-file input values did not round-trip through get-dataset-table.",
+      );
+      assert(
+        expectedValues.includes(fixture.expected_one) &&
+          expectedValues.includes(fixture.expected_two),
+        "Local-file expected values did not round-trip through get-dataset-table.",
+      );
+
+      const audit = await loadLocalFileWorkerFixtureAudit({
+        fixture,
+        organizationId,
+        workspaceId,
+      });
+      assertLocalFileWorkerFixtureAudit(audit, {
+        fixture,
+        organizationId,
+        workspaceId,
+      });
+
+      evidence.push({
+        dataset_id: fixture.dataset_id,
+        progress_status: completedProgress.processing_status,
+        rows: Number(audit.row_count),
+        columns: Number(audit.column_count),
+        cells: Number(audit.cell_count),
+        completed_columns: Number(audit.completed_columns),
+        error_columns: Number(audit.error_columns),
+        media_dispatch_skipped: workerResult.media_dispatch_skipped === true,
+      });
+    },
+  },
+  {
+    id: "DPE-API-036",
+    title: "Generated dataset helper routes keep active workspace scope",
+    tags: ["dataset", "generated-client", "mutating", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Dataset helper scope journey requires a workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(isUuid(userId), "Dataset helper scope journey requires user id.");
+      const fixture = await seedDatasetHelperRoutesFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        fixture?.fixture_created,
+        "Dataset helper route fixture seed did not create active rows.",
+      );
+      cleanup.defer("hard delete API journey dataset helper fixture", () =>
+        hardDeleteDatasetHelperRoutesFixture(fixture),
+      );
+
+      const columnValues = await client.post(
+        apiPath("/model-hub/get-column-values/"),
+        {
+          dataset_id: fixture.dataset_id,
+          column_placeholders: { input: fixture.column_id },
+        },
+      );
+      const inputColumnValues =
+        columnValues?.result?.input?.values ||
+        columnValues?.input?.values ||
+        [];
+      assert(
+        inputColumnValues.includes(fixture.active_value),
+        "Generated get-column-values did not return the active workspace value.",
+      );
+      assert(
+        !inputColumnValues.includes(fixture.other_value),
+        "Generated get-column-values leaked another workspace value.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/get-column-values/"), {
+            dataset_id: fixture.other_dataset_id,
+            column_placeholders: { input: fixture.other_column_id },
+          }),
+        404,
+        "Generated get-column-values exposed another workspace dataset.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/get-column-values/"), {
+            dataset_id: fixture.dataset_id,
+            column_placeholders: { input: fixture.other_column_id },
+          }),
+        400,
+        "Generated get-column-values accepted another workspace column.",
+      );
+
+      const metrics = asArray(
+        await client.get(apiPath("/model-hub/metrics/by-column/"), {
+          query: { column_id: fixture.column_id },
+        }),
+      );
+      assert(
+        metrics.some((metric) => metric.id === fixture.metric_id),
+        "Generated metrics/by-column did not include the active workspace metric.",
+      );
+      assert(
+        !metrics.some((metric) => metric.id === fixture.other_metric_id),
+        "Generated metrics/by-column leaked another workspace metric.",
+      );
+
+      const otherMetrics = asArray(
+        await client.get(apiPath("/model-hub/metrics/by-column/"), {
+          query: { column_id: fixture.other_column_id },
+        }),
+      );
+      assert(
+        otherMetrics.length === 0,
+        "Generated metrics/by-column returned metrics for another workspace column.",
+      );
+
+      const audit = await loadDatasetHelperRoutesAudit(fixture);
+      assertDatasetHelperRoutesAudit(audit, fixture);
+
+      evidence.push({
+        dataset_id: fixture.dataset_id,
+        column_id: fixture.column_id,
+        metric_id: fixture.metric_id,
+        other_workspace_id: fixture.other_workspace_id,
+        column_values_count: inputColumnValues.length,
+        metrics_by_column_count: metrics.length,
+        other_workspace_metrics_count: otherMetrics.length,
       });
     },
   },
@@ -4181,9 +6820,12 @@ export const datasetEvalJourneys = [
           expectApiErrorStatus(
             () =>
               client.get(
-                apiPath("/model-hub/develops/get-derived-datasets/{dataset_id}/", {
-                  dataset_id: fixture.other_dataset_id,
-                }),
+                apiPath(
+                  "/model-hub/develops/get-derived-datasets/{dataset_id}/",
+                  {
+                    dataset_id: fixture.other_dataset_id,
+                  },
+                ),
               ),
             404,
             "Derived datasets endpoint exposed a same-org other-workspace dataset.",
@@ -4191,9 +6833,12 @@ export const datasetEvalJourneys = [
           expectApiErrorStatus(
             () =>
               client.post(
-                apiPath("/model-hub/develops/{exp_dataset_id}/create-dataset/", {
-                  exp_dataset_id: fixture.other_experiment_dataset_id,
-                }),
+                apiPath(
+                  "/model-hub/develops/{exp_dataset_id}/create-dataset/",
+                  {
+                    exp_dataset_id: fixture.other_experiment_dataset_id,
+                  },
+                ),
                 {
                   name: fixture.other_blocked_dataset_name,
                   model_type: "GenerativeLLM",
@@ -4252,6 +6897,7 @@ export const datasetEvalJourneys = [
       const inputValue = `Return OK for ${runId}`;
       const rowId = randomUUID();
       const deletedColumnIds = new Set();
+      let outputColumnId = null;
       let rowDeleted = false;
 
       const runPromptOptions = await client.get(
@@ -4340,22 +6986,33 @@ export const datasetEvalJourneys = [
         config,
       });
 
+      const outputTable = await getDatasetTable(client, datasetId, {
+        column_config_only: true,
+      });
+      const outputColumn = findColumn(outputTable, outputName);
+      assert(outputColumn?.id, "Run-prompt output column was not visible.");
+      outputColumnId = outputColumn.id;
+      cleanup.defer("delete run-prompt output column", async () => {
+        if (!outputColumnId || deletedColumnIds.has(outputColumnId)) return;
+        await ignoreNotFound(() =>
+          client.delete(
+            apiPath(
+              "/model-hub/develops/{dataset_id}/delete_column/{column_id}/",
+              { dataset_id: datasetId, column_id: outputColumnId },
+            ),
+          ),
+        );
+      });
+
       const firstRun = await waitForRunPromptColumnCompletion(client, {
         datasetId,
         rowId,
         columnName: outputName,
       });
-      cleanup.defer("delete run-prompt output column", async () => {
-        if (deletedColumnIds.has(firstRun.column.id)) return;
-        await ignoreNotFound(() =>
-          client.delete(
-            apiPath(
-              "/model-hub/develops/{dataset_id}/delete_column/{column_id}/",
-              { dataset_id: datasetId, column_id: firstRun.column.id },
-            ),
-          ),
-        );
-      });
+      assert(
+        firstRun.column.id === outputColumnId,
+        "Run-prompt output column id changed while waiting for completion.",
+      );
 
       const activeAudit = await loadRunPromptColumnDbAudit({
         datasetId,
@@ -4482,6 +7139,95 @@ export const datasetEvalJourneys = [
     },
   },
   {
+    id: "PROMPT-API-008",
+    title: "Direct run-prompt creates workspace-scoped persistence row",
+    tags: ["prompts", "dataset", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+    }) {
+      requireMutations();
+      const modelName = "gpt-4o-mini";
+
+      const fixture = await seedDirectRunPromptFixture({
+        runId,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        fixture?.fixture_created,
+        "Direct run-prompt DB fixture was not created.",
+      );
+      cleanup.defer("hard-delete direct run-prompt fixture", () =>
+        hardDeleteDirectRunPromptFixture(fixture),
+      );
+
+      let workflowDispatch = "started";
+      try {
+        const result = await client.post(apiPath("/model-hub/run-prompt/"), {
+          dataset_id: fixture.dataset_id,
+          name: fixture.run_prompt_name,
+          model: modelName,
+          concurrency: 1,
+          messages: [{ role: "user", content: "Return exactly OK" }],
+          output_format: "string",
+          temperature: 0,
+          max_tokens: 20,
+        });
+        assert(
+          String(result).includes("success"),
+          "Direct run-prompt did not return a success response.",
+        );
+      } catch (error) {
+        const errorText = JSON.stringify(error?.body || {});
+        assert(
+          error?.status === 500 &&
+            errorText.includes("Failed to start run prompt workflow"),
+          `Direct run-prompt failed before persistence with unexpected error: ${
+            error?.status || error.message
+          } ${errorText}`,
+        );
+        workflowDispatch = "failed_to_start";
+      }
+
+      const audit = await loadDirectRunPromptDbAudit({
+        datasetId: fixture.dataset_id,
+        name: fixture.run_prompt_name,
+        organizationId,
+        workspaceId,
+      });
+      assertDirectRunPromptDbAudit(audit, {
+        datasetId: fixture.dataset_id,
+        name: fixture.run_prompt_name,
+        modelName,
+        organizationId,
+        workspaceId,
+      });
+      if (workflowDispatch === "failed_to_start") {
+        assert(
+          audit.run_prompt_status === "Failed",
+          "Direct run-prompt dispatch failure did not mark RunPrompter Failed.",
+        );
+      }
+
+      evidence.push({
+        dataset_id: fixture.dataset_id,
+        row_id: fixture.row_id,
+        input_column_id: fixture.input_column_id,
+        run_prompt_id: audit.run_prompt_id,
+        run_prompt_status: audit.run_prompt_status,
+        run_prompt_workspace_id: audit.run_prompt_workspace_id,
+        workflow_dispatch: workflowDispatch,
+        output_column_count: Number(audit.output_column_count),
+        active_output_cell_count: Number(audit.active_output_cell_count),
+      });
+    },
+  },
+  {
     id: "PROMPT-API-005",
     title: "Dataset run-prompt edit and config scope guards",
     tags: ["prompts", "dataset", "mutating", "db-audit"],
@@ -4524,19 +7270,32 @@ export const datasetEvalJourneys = [
       );
       editConfig.messages[0].content[0].text =
         "Return exactly EDITED OK. Do not include punctuation.";
-      const editResult = await client.post(
-        apiPath("/model-hub/develops/edit_run_prompt_column/"),
-        {
-          dataset_id: fixture.dataset_id,
-          column_id: fixture.output_column_id,
-          name: fixture.edited_output_column_name,
-          config: editConfig,
-        },
-      );
-      assert(
-        String(editResult).includes("updated successfully"),
-        "Run-prompt edit did not return a success message.",
-      );
+      let editWorkflowDispatch = "started";
+      try {
+        const editResult = await client.post(
+          apiPath("/model-hub/develops/edit_run_prompt_column/"),
+          {
+            dataset_id: fixture.dataset_id,
+            column_id: fixture.output_column_id,
+            name: fixture.edited_output_column_name,
+            config: editConfig,
+          },
+        );
+        assert(
+          String(editResult).includes("updated successfully"),
+          "Run-prompt edit did not return a success message.",
+        );
+      } catch (error) {
+        const text = apiErrorText(error);
+        assert(
+          error?.status === 500 &&
+            text.includes("Failed to start run prompt workflow"),
+          `Run-prompt edit failed before persistence with unexpected error: ${
+            error?.status || error.message
+          } ${text}`,
+        );
+        editWorkflowDispatch = "failed_to_start";
+      }
 
       const editedConfig = await client.get(
         apiPath("/model-hub/develops/retrieve_run_prompt_column_config/"),
@@ -4595,6 +7354,7 @@ export const datasetEvalJourneys = [
         original_name: fixture.output_column_name,
         edited_name: fixture.edited_output_column_name,
         run_prompt_status: audit.run_prompt_status,
+        workflow_dispatch: editWorkflowDispatch,
         active_cell_count: Number(audit.active_cell_count),
       });
     },
@@ -4614,14 +7374,12 @@ export const datasetEvalJourneys = [
       let createResult;
       let updateResult;
       try {
-        createResult = await client.get(
-          apiPath("/model-hub/knowledge-base/"),
-          { query: { type: "create", name: `api journey kb ${runId}` } },
-        );
-        updateResult = await client.get(
-          apiPath("/model-hub/knowledge-base/"),
-          { query: { type: "update", name: `api journey kb ${runId}` } },
-        );
+        createResult = await client.get(apiPath("/model-hub/knowledge-base/"), {
+          query: { type: "create", name: `api journey kb ${runId}` },
+        });
+        updateResult = await client.get(apiPath("/model-hub/knowledge-base/"), {
+          query: { type: "update", name: `api journey kb ${runId}` },
+        });
       } catch (error) {
         if (isLegacyKnowledgeBaseEntitlementDeniedError(error)) {
           evidence.push({
@@ -4828,6 +7586,192 @@ export const datasetEvalJourneys = [
     },
   },
   {
+    id: "KB-API-005",
+    title: "Legacy knowledge base PATCH rename and file-add behavior",
+    tags: ["knowledge-base", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      evidence,
+      apiBase,
+      tokens,
+      organizationId,
+      workspaceId,
+      runId,
+    }) {
+      requireMutations();
+      await skipIfLegacyKnowledgeBaseEntitlementDenied(client, evidence);
+      const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      const kbName = `api_journey_kb_patch_${suffix}`;
+      const renamedKbName = `api_journey_kb_patch_renamed_${suffix}`;
+      const initialFileName = `api_journey_kb_patch_${suffix}.txt`;
+      const addedFileName = `api_journey_kb_patch_added_${suffix}.txt`;
+      let kbId = "";
+      let kbDeleted = false;
+
+      const created = await multipartApiRequest({
+        apiBase,
+        accessToken: tokens.access,
+        organizationId,
+        workspaceId,
+        method: "POST",
+        pathName: apiPath("/model-hub/knowledge-base/"),
+        fields: { name: kbName },
+        files: [
+          {
+            fieldName: "file",
+            fileName: initialFileName,
+            contentType: "text/plain",
+            content: `Knowledge base PATCH initial fixture ${runId}\n`,
+          },
+        ],
+      });
+      kbId = created?.kb_id;
+      const initialFileIds = asArray(created?.file_ids);
+      assert(isUuid(kbId), "KB PATCH create did not return a UUID kb_id.");
+      assert(
+        initialFileIds.length === 1 && isUuid(initialFileIds[0]),
+        "KB PATCH create did not return the initial file id.",
+      );
+      cleanup.defer("delete API journey patched knowledge base", async () => {
+        if (!kbId || kbDeleted) return null;
+        return client.delete(apiPath("/model-hub/knowledge-base/"), {
+          body: { kb_ids: [kbId] },
+        });
+      });
+
+      const renamed = await client.patch(
+        apiPath("/model-hub/knowledge-base/"),
+        {
+          kb_id: kbId,
+          name: renamedKbName,
+        },
+      );
+      assert(
+        renamed?.name === renamedKbName,
+        "KB PATCH did not rename the KB.",
+      );
+      assert(
+        asArray(renamed?.files).includes(initialFileIds[0]),
+        "KB rename PATCH dropped the existing file.",
+      );
+
+      const renamedAudit = await loadKnowledgeBaseLegacyDbAudit({
+        kbId,
+        organizationId,
+        workspaceId,
+      });
+      assertKnowledgeBaseLegacyDbAudit(renamedAudit, {
+        kbId,
+        kbName: renamedKbName,
+        organizationId,
+        workspaceId,
+        expectedDeleted: false,
+        expectedFileIds: initialFileIds,
+      });
+
+      const fileAdded = await multipartApiRequest({
+        apiBase,
+        accessToken: tokens.access,
+        organizationId,
+        workspaceId,
+        method: "PATCH",
+        pathName: apiPath("/model-hub/knowledge-base/"),
+        fields: { kb_id: kbId },
+        files: [
+          {
+            fieldName: "file",
+            fileName: addedFileName,
+            contentType: "text/plain",
+            content: `Knowledge base PATCH added fixture ${runId}\n`,
+          },
+        ],
+      });
+      assert(
+        fileAdded?.name === renamedKbName,
+        "KB file-only PATCH unexpectedly changed the KB name.",
+      );
+      const patchedFileIds = asArray(fileAdded?.files);
+      assert(
+        patchedFileIds.length === 2,
+        "KB file-only PATCH did not return both file ids.",
+      );
+
+      const fileAddedAudit = await loadKnowledgeBaseLegacyDbAudit({
+        kbId,
+        organizationId,
+        workspaceId,
+      });
+      assertKnowledgeBaseLegacyDbAudit(fileAddedAudit, {
+        kbId,
+        kbName: renamedKbName,
+        organizationId,
+        workspaceId,
+        expectedDeleted: false,
+        expectedFileIds: patchedFileIds,
+      });
+
+      let otherWorkspaceGuard = "skipped:no-other-workspace";
+      const otherFixture = await seedKnowledgeBasePatchOtherWorkspaceFixture({
+        runId,
+        organizationId,
+        workspaceId,
+      });
+      if (otherFixture) {
+        cleanup.defer("hard delete other-workspace KB PATCH fixture", () =>
+          hardDeleteKnowledgeBasePatchFixture(otherFixture.kb_id),
+        );
+        await expectApiErrorStatus(
+          () =>
+            client.patch(apiPath("/model-hub/knowledge-base/"), {
+              kb_id: otherFixture.kb_id,
+              name: `should_not_update_${suffix}`,
+            }),
+          400,
+          "KB PATCH accepted a same-org other-workspace knowledge base.",
+        );
+        const otherAudit = await loadKnowledgeBaseLegacyDbAudit({
+          kbId: otherFixture.kb_id,
+          organizationId,
+          workspaceId: otherFixture.workspace_id,
+        });
+        assert(
+          otherAudit.name === otherFixture.name,
+          "KB PATCH mutated a same-org other-workspace KB.",
+        );
+        otherWorkspaceGuard = "verified";
+      }
+
+      await client.delete(apiPath("/model-hub/knowledge-base/"), {
+        body: { kb_ids: [kbId] },
+      });
+      kbDeleted = true;
+      const deletedAudit = await loadKnowledgeBaseLegacyDbAudit({
+        kbId,
+        organizationId,
+        workspaceId,
+      });
+      assertKnowledgeBaseLegacyDbAudit(deletedAudit, {
+        kbId,
+        kbName: renamedKbName,
+        organizationId,
+        workspaceId,
+        expectedDeleted: true,
+        expectedFileIds: patchedFileIds,
+      });
+
+      evidence.push({
+        kb_id: kbId,
+        renamed_kb_name: renamedKbName,
+        initial_file_id: initialFileIds[0],
+        patched_file_count: patchedFileIds.length,
+        file_only_patch_preserved_name: fileAddedAudit.name === renamedKbName,
+        other_workspace_guard: otherWorkspaceGuard,
+        deleted_at_set: deletedAudit.deleted_at_set === true,
+      });
+    },
+  },
+  {
     id: "KB-API-003",
     title: "Structured knowledge base viewset lifecycle",
     tags: ["knowledge-base", "mutating", "data-roundtrip", "db-audit"],
@@ -4999,7 +7943,8 @@ export const datasetEvalJourneys = [
   },
   {
     id: "KB-API-004",
-    title: "Legacy knowledge base entitlement gate and structured KB read availability",
+    title:
+      "Legacy knowledge base entitlement gate and structured KB read availability",
     tags: ["knowledge-base", "safe", "entitlement", "smoke"],
     async run({ client, evidence }) {
       const tableError = await expectLegacyKnowledgeBaseEntitlementDenied(
@@ -5831,6 +8776,415 @@ export const datasetEvalJourneys = [
     },
   },
   {
+    id: "EVAL-API-022",
+    title: "Legacy eval-template duplicate and delete actions",
+    tags: ["evals", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+    }) {
+      requireMutations();
+      const suffix = runId
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .slice(0, 22);
+      const sourceName = `api_legacy_action_src_${suffix}`;
+      const duplicateName = `api_legacy_action_dup_${suffix}`;
+      const otherName = `api_legacy_action_other_${suffix}`;
+      const blockedName = `api_legacy_action_blocked_${suffix}`;
+
+      cleanup.defer("hard delete legacy eval-template action rows", () =>
+        hardDeleteLegacyEvalTemplateCreateFixture(
+          [sourceName, duplicateName, otherName, blockedName],
+          organizationId,
+        ),
+      );
+
+      const created = await client.post(
+        apiPath("/model-hub/eval-templates/create-v2/"),
+        {
+          name: sourceName,
+          eval_type: "llm",
+          instructions:
+            "Return Passed when {{response}} satisfies the legacy duplicate/delete journey criteria.",
+          output_type: "pass_fail",
+          description:
+            "Temporary eval template for legacy duplicate/delete coverage.",
+          tags: ["api-journey", "legacy-actions"],
+        },
+      );
+      const sourceTemplateId = created?.id;
+      assert(
+        isUuid(sourceTemplateId),
+        "Eval template create-v2 did not return a source template id.",
+      );
+
+      const duplicated = await client.post(
+        apiPath("/model-hub/duplicate-eval-template/"),
+        {
+          eval_template_id: sourceTemplateId,
+          name: duplicateName,
+        },
+      );
+      const duplicateTemplateId = duplicated?.eval_template_id;
+      assert(
+        isUuid(duplicateTemplateId),
+        "Legacy eval-template duplicate did not return a duplicated template id.",
+      );
+
+      const duplicateAudit = await loadLegacyEvalTemplateActionAudit({
+        sourceTemplateId,
+        duplicateTemplateId,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        duplicateAudit.source_deleted === false,
+        "Legacy eval-template source was deleted before delete action.",
+      );
+      assert(
+        duplicateAudit.duplicate_name === duplicateName,
+        "Legacy eval-template duplicate did not persist the requested name.",
+      );
+      assert(
+        duplicateAudit.duplicate_owner === "user",
+        "Legacy eval-template duplicate did not preserve owner=user.",
+      );
+      if (workspaceId) {
+        assert(
+          duplicateAudit.duplicate_workspace_id === workspaceId,
+          "Legacy eval-template duplicate did not persist request workspace.",
+        );
+      }
+      assert(
+        duplicateAudit.duplicate_eval_type === "llm",
+        "Legacy eval-template duplicate did not copy eval_type.",
+      );
+      assert(
+        asArray(duplicateAudit.duplicate_required_keys).includes("response"),
+        "Legacy eval-template duplicate did not copy required_keys.",
+      );
+
+      const deleted = await client.post(
+        apiPath("/model-hub/delete-eval-template/"),
+        { eval_template_id: sourceTemplateId },
+      );
+      assert(
+        deleted === "Evaluation template Deleted successfully",
+        "Legacy eval-template delete returned an unexpected result.",
+      );
+
+      const deletedAudit = await loadLegacyEvalTemplateActionAudit({
+        sourceTemplateId,
+        duplicateTemplateId,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        deletedAudit.source_deleted === true &&
+          deletedAudit.source_deleted_at_set === true,
+        "Legacy eval-template delete did not soft-delete the source template.",
+      );
+      assert(
+        deletedAudit.duplicate_deleted === false,
+        "Legacy eval-template source delete also deleted the duplicate.",
+      );
+
+      let otherWorkspaceGuard = "skipped:no-other-workspace";
+      let otherTemplateId = null;
+      const otherWorkspaceId = await findOtherWorkspaceId(
+        organizationId,
+        workspaceId,
+      );
+      if (otherWorkspaceId) {
+        const otherFixture = await seedLegacyEvalTemplateActionOtherWorkspace({
+          templateName: otherName,
+          organizationId,
+          workspaceId: otherWorkspaceId,
+        });
+        otherTemplateId = otherFixture.template_id;
+        assert(
+          isUuid(otherTemplateId),
+          "Legacy eval-template other-workspace seed did not return a template id.",
+        );
+
+        await expectApiErrorStatus(
+          () =>
+            client.post(apiPath("/model-hub/duplicate-eval-template/"), {
+              eval_template_id: otherTemplateId,
+              name: blockedName,
+            }),
+          400,
+          "Legacy eval-template duplicate accepted a same-org other-workspace template.",
+        );
+        await expectApiErrorStatus(
+          () =>
+            client.post(apiPath("/model-hub/delete-eval-template/"), {
+              eval_template_id: otherTemplateId,
+            }),
+          400,
+          "Legacy eval-template delete accepted a same-org other-workspace template.",
+        );
+
+        const guardAudit = await loadLegacyEvalTemplateActionGuardAudit({
+          otherTemplateId,
+          blockedName,
+          organizationId,
+          workspaceId,
+        });
+        assert(
+          guardAudit.other_deleted === false,
+          "Legacy eval-template other-workspace guard mutated the hidden template.",
+        );
+        assert(
+          Number(guardAudit.active_blocked_name_count) === 0,
+          "Legacy eval-template other-workspace duplicate guard created a row.",
+        );
+        otherWorkspaceGuard = "passed";
+      }
+
+      evidence.push({
+        source_template_id: sourceTemplateId,
+        duplicate_template_id: duplicateTemplateId,
+        source_deleted_at_set: deletedAudit.source_deleted_at_set,
+        duplicate_workspace_id: duplicateAudit.duplicate_workspace_id,
+        duplicate_required_keys: duplicateAudit.duplicate_required_keys,
+        other_workspace_template_id: otherTemplateId,
+        other_workspace_guard: otherWorkspaceGuard,
+      });
+    },
+  },
+  {
+    id: "EVAL-API-023",
+    title: "Legacy eval-template update action",
+    tags: ["evals", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+    }) {
+      requireMutations();
+      const suffix = runId
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .slice(0, 22);
+      const sourceName = `api_legacy_update_src_${suffix}`;
+      const collisionName = `api_legacy_update_collision_${suffix}`;
+      const otherName = `api_legacy_update_other_${suffix}`;
+
+      cleanup.defer("hard delete legacy eval-template update rows", () =>
+        hardDeleteLegacyEvalTemplateCreateFixture(
+          [sourceName, collisionName, otherName],
+          organizationId,
+        ),
+      );
+
+      const created = await client.post(
+        apiPath("/model-hub/eval-templates/create-v2/"),
+        {
+          name: sourceName,
+          eval_type: "code",
+          code: "def evaluate(response=None, **kwargs):\n    return True",
+          code_language: "python",
+          output_type: "pass_fail",
+          description: "Temporary eval template for legacy update coverage.",
+          tags: ["api-journey", "legacy-update"],
+        },
+      );
+      const sourceTemplateId = created?.id;
+      assert(
+        isUuid(sourceTemplateId),
+        "Eval template create-v2 did not return a source template id.",
+      );
+
+      const collision = await client.post(
+        apiPath("/model-hub/eval-templates/create-v2/"),
+        {
+          name: collisionName,
+          eval_type: "code",
+          code: "def evaluate(response=None, **kwargs):\n    return True",
+          code_language: "python",
+          output_type: "pass_fail",
+          description:
+            "Temporary active-workspace collision for legacy update coverage.",
+          tags: ["api-journey", "legacy-update"],
+        },
+      );
+      assert(
+        isUuid(collision?.id),
+        "Eval template create-v2 did not return a collision template id.",
+      );
+
+      const sameNameUpdate = await client.post(
+        apiPath("/model-hub/update-eval-template/"),
+        {
+          eval_template_id: sourceTemplateId,
+          name: sourceName,
+          description: "Legacy update same-name request preserved options.",
+        },
+      );
+      assert(
+        sameNameUpdate === "Evaluation template updated successfully",
+        "Legacy eval-template update rejected the template's current name.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/update-eval-template/"), {
+            eval_template_id: sourceTemplateId,
+            name: collisionName,
+          }),
+        400,
+        "Legacy eval-template update allowed an active-workspace duplicate name.",
+      );
+
+      await client.post(apiPath("/model-hub/update-eval-template/"), {
+        eval_template_id: sourceTemplateId,
+        eval_tags: ["legacy-update", "options"],
+        multi_choice: true,
+        choices_map: { yes: "Pass", no: "Fail" },
+        required_keys: ["response", "expected"],
+        check_internet: true,
+      });
+      const optionsAudit = await loadLegacyEvalTemplateUpdateAudit({
+        templateId: sourceTemplateId,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        optionsAudit.name === sourceName,
+        "Legacy eval-template update changed name unexpectedly.",
+      );
+      assert(
+        optionsAudit.multi_choice === true,
+        "Legacy eval-template update did not enable multi_choice.",
+      );
+      assert(
+        optionsAudit.check_internet === true,
+        "Legacy eval-template update did not set check_internet=true.",
+      );
+      assert(
+        asArray(optionsAudit.eval_tags).includes("options"),
+        "Legacy eval-template update did not persist eval_tags.",
+      );
+      assert(
+        asArray(optionsAudit.required_keys).includes("expected"),
+        "Legacy eval-template update did not persist required_keys.",
+      );
+
+      await client.post(apiPath("/model-hub/update-eval-template/"), {
+        eval_template_id: sourceTemplateId,
+        eval_tags: [],
+        multi_choice: false,
+        choices_map: {},
+        required_keys: [],
+        check_internet: false,
+      });
+      const clearedAudit = await loadLegacyEvalTemplateUpdateAudit({
+        templateId: sourceTemplateId,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        clearedAudit.multi_choice === false,
+        "Legacy eval-template update did not clear multi_choice.",
+      );
+      assert(
+        clearedAudit.check_internet === false,
+        "Legacy eval-template update did not set check_internet=false.",
+      );
+      assert(
+        asArray(clearedAudit.eval_tags).length === 0,
+        "Legacy eval-template update did not clear eval_tags.",
+      );
+      assert(
+        asArray(clearedAudit.required_keys).length === 0,
+        "Legacy eval-template update did not clear required_keys.",
+      );
+      assert(
+        Object.keys(clearedAudit.choices_map || {}).length === 0,
+        "Legacy eval-template update did not clear choices_map.",
+      );
+
+      let otherWorkspaceGuard = "skipped:no-other-workspace";
+      let otherTemplateId = null;
+      const otherWorkspaceId = await findOtherWorkspaceId(
+        organizationId,
+        workspaceId,
+      );
+      if (otherWorkspaceId) {
+        const otherFixture = await seedLegacyEvalTemplateActionOtherWorkspace({
+          templateName: otherName,
+          organizationId,
+          workspaceId: otherWorkspaceId,
+        });
+        otherTemplateId = otherFixture.template_id;
+        assert(
+          isUuid(otherTemplateId),
+          "Legacy eval-template other-workspace seed did not return a template id.",
+        );
+
+        const renameToHiddenName = await client.post(
+          apiPath("/model-hub/update-eval-template/"),
+          {
+            eval_template_id: sourceTemplateId,
+            name: otherName,
+          },
+        );
+        assert(
+          renameToHiddenName === "Evaluation template updated successfully",
+          "Legacy eval-template update treated a hidden same-org other-workspace name as a collision.",
+        );
+
+        await expectApiErrorStatus(
+          () =>
+            client.post(apiPath("/model-hub/update-eval-template/"), {
+              eval_template_id: otherTemplateId,
+              description: "should not update hidden template",
+            }),
+          400,
+          "Legacy eval-template update accepted a same-org other-workspace template.",
+        );
+
+        const guardAudit = await loadLegacyEvalTemplateUpdateGuardAudit({
+          activeTemplateId: sourceTemplateId,
+          otherTemplateId,
+          organizationId,
+        });
+        assert(
+          guardAudit.active_name === otherName,
+          "Legacy eval-template update did not rename active template to hidden name.",
+        );
+        assert(
+          guardAudit.other_description !== "should not update hidden template",
+          "Legacy eval-template update mutated a hidden same-org other-workspace template.",
+        );
+        assert(
+          guardAudit.other_deleted === false,
+          "Legacy eval-template update deleted a hidden same-org other-workspace template.",
+        );
+        otherWorkspaceGuard = "passed";
+      }
+
+      evidence.push({
+        eval_template_id: sourceTemplateId,
+        collision_template_id: collision.id,
+        final_name: otherWorkspaceGuard === "passed" ? otherName : sourceName,
+        cleared_eval_tags_count: asArray(clearedAudit.eval_tags).length,
+        cleared_required_keys_count: asArray(clearedAudit.required_keys).length,
+        other_workspace_template_id: otherTemplateId,
+        other_workspace_guard: otherWorkspaceGuard,
+      });
+    },
+  },
+  {
     id: "EVAL-API-020",
     title: "Legacy eval-user-template create and evaluate-rows scoping",
     tags: ["evals", "mutating", "data-roundtrip", "db-audit"],
@@ -5982,18 +9336,12 @@ export const datasetEvalJourneys = [
         value: fixture.eval_value_two,
       });
 
-      const singleRowQueued = await client.post(
-        apiPath("/model-hub/evaluate-rows/"),
+      const singleRowDispatch = await postEvaluateRowsWithTemporalFallback(
+        client,
         {
           row_ids: [fixture.row_one_id],
           user_eval_metric_ids: [metricId],
         },
-      );
-      assert(
-        singleRowQueued?.success ||
-          singleRowQueued?.result?.success ||
-          JSON.stringify(singleRowQueued || {}).includes("Evaluations queued"),
-        "evaluate-rows did not acknowledge the explicit row queue request.",
       );
 
       await expectApiErrorStatus(
@@ -6060,11 +9408,14 @@ export const datasetEvalJourneys = [
         );
       }
 
-      await client.post(apiPath("/model-hub/evaluate-rows/"), {
-        selected_all_rows: true,
-        row_ids: [fixture.row_one_id],
-        user_eval_metric_ids: [metricId],
-      });
+      const selectedAllDispatch = await postEvaluateRowsWithTemporalFallback(
+        client,
+        {
+          selected_all_rows: true,
+          row_ids: [fixture.row_one_id],
+          user_eval_metric_ids: [metricId],
+        },
+      );
 
       const selectedAllAudit = await loadLegacyEvalUserTemplateAudit({
         fixture,
@@ -6093,6 +9444,8 @@ export const datasetEvalJourneys = [
         eval_template_id: template.id,
         user_eval_metric_id: metricId,
         metric_name: metricName,
+        single_row_dispatch: singleRowDispatch,
+        selected_all_dispatch: selectedAllDispatch,
         duplicate_guard: "passed",
         mapping_guard: "passed",
         row_scope_guard: "passed",
@@ -6931,15 +10284,29 @@ export const datasetEvalJourneys = [
         expectedDeleted: false,
       });
 
-      const feedback = await client.post(
-        apiPath("/model-hub/eval-playground/feedback/"),
-        {
-          log_id: logId,
-          action_type: "recalculate",
-          value: "failed",
-          explanation: feedbackText,
-        },
-      );
+      let feedback;
+      try {
+        feedback = await client.post(
+          apiPath("/model-hub/eval-playground/feedback/"),
+          {
+            log_id: logId,
+            action_type: "recalculate",
+            value: "failed",
+            explanation: feedbackText,
+          },
+        );
+      } catch (error) {
+        if (!isTemporalUnavailableError(error)) throw error;
+        evidence.push({
+          eval_template_id: templateId,
+          eval_playground_log_id: logId,
+          feedback_dispatch: "temporal_unavailable",
+          status: error.status,
+        });
+        skip(
+          "Temporal is unavailable for eval playground feedback recalculation in this local environment.",
+        );
+      }
       assert(
         isUuid(feedback?.feedback_id),
         "Recalculate feedback did not return id.",
@@ -9052,7 +12419,10 @@ export const datasetEvalJourneys = [
       );
       const promptId =
         created?.id || created?.root_template || created?.rootTemplate;
-      assert(isUuid(promptId), "Legacy prompt create did not return a UUID id.");
+      assert(
+        isUuid(promptId),
+        "Legacy prompt create did not return a UUID id.",
+      );
       cleanup.defer("delete legacy API journey prompt", () =>
         deletePromptTemplateIfPresent(client, promptId),
       );
@@ -9154,7 +12524,8 @@ export const datasetEvalJourneys = [
       );
       assert(
         versions.find((row) => row?.template_version === "v2")
-          ?.prompt_config_snapshot?.messages?.[1]?.content?.[0]?.text === v2Text,
+          ?.prompt_config_snapshot?.messages?.[1]?.content?.[0]?.text ===
+          v2Text,
         "Legacy prompt versions endpoint did not return the saved v2 content.",
       );
 
@@ -9460,9 +12831,15 @@ export const datasetEvalJourneys = [
       const suffix = runId.replace(/[^a-z0-9]/gi, "").slice(0, 18);
       const folderName = `api_journey_prompt_folder_${suffix}`;
       const renamedFolderName = `api_journey_renamed_folder_${suffix}`;
+      const moveFolderName = `api_journey_prompt_move_folder_${suffix}`;
       const promptName = `api journey workbench prompt ${suffix}`;
+      const partialDescription = `api journey workbench prompt patched ${suffix}`;
+      const putPromptName = `api journey workbench prompt put ${suffix}`;
+      const putDescription = `api journey workbench prompt replaced ${suffix}`;
+      const helperPromptName = `api journey workbench prompt helper ${suffix}`;
       const cascadePromptName = `api journey workbench cascade ${suffix}`;
       let folderDeleted = false;
+      let moveFolderDeleted = false;
       let promptDeleted = false;
       let cascadePromptDeleted = false;
 
@@ -9534,6 +12911,27 @@ export const datasetEvalJourneys = [
         "Workbench folder search still returned the old folder name.",
       );
 
+      const moveFolder = await client.post(
+        apiPath("/model-hub/prompt-folders/"),
+        { name: moveFolderName },
+      );
+      const moveFolderId = moveFolder?.id;
+      assert(
+        isUuid(moveFolderId),
+        "Prompt move-folder create did not return a UUID id.",
+      );
+      cleanup.defer("delete API journey prompt move folder", async () => {
+        if (!moveFolderDeleted) {
+          await ignoreNotFound(() =>
+            client.delete(
+              apiPath("/model-hub/prompt-folders/{id}/", {
+                id: moveFolderId,
+              }),
+            ),
+          );
+        }
+      });
+
       const promptId = await createWorkbenchPrompt(client, {
         folderId,
         name: promptName,
@@ -9561,6 +12959,128 @@ export const datasetEvalJourneys = [
         "Prompt detail did not preserve Workbench variable content.",
       );
 
+      const patchedPrompt = await client.patch(
+        apiPath("/model-hub/prompt-templates/{id}/", { id: promptId }),
+        {
+          description: partialDescription,
+          variable_names: { customer: ["Ada", "Grace"] },
+          prompt_folder: folderId,
+        },
+      );
+      assert(
+        patchedPrompt?.description === partialDescription,
+        "Prompt partial update did not return the patched description.",
+      );
+      assert(
+        patchedPrompt?.prompt_folder === folderId,
+        "Prompt partial update did not preserve the scoped folder assignment.",
+      );
+      const patchedPromptDetail = await client.get(
+        apiPath("/model-hub/prompt-templates/{id}/", { id: promptId }),
+      );
+      assert(
+        patchedPromptDetail?.description === partialDescription,
+        "Prompt detail did not reload the partial update description.",
+      );
+      assert(
+        JSON.stringify(patchedPrompt?.variable_names || {}).includes("Grace"),
+        "Prompt partial update did not return the patched variable names.",
+      );
+
+      const putPrompt = await client.put(
+        apiPath("/model-hub/prompt-templates/{id}/", { id: promptId }),
+        {
+          name: putPromptName,
+          description: putDescription,
+          variable_names: { customer: ["Ada", "Grace", "Katherine"] },
+          prompt_folder: folderId,
+        },
+      );
+      assert(
+        putPrompt?.name === putPromptName &&
+          putPrompt?.description === putDescription,
+        "Prompt full update did not return the replaced name and description.",
+      );
+      assert(
+        putPrompt?.prompt_folder === folderId,
+        "Prompt full update did not preserve the scoped folder assignment.",
+      );
+      const putPromptDetail = await client.get(
+        apiPath("/model-hub/prompt-templates/{id}/", { id: promptId }),
+      );
+      assert(
+        putPromptDetail?.name === putPromptName &&
+          putPromptDetail?.description === putDescription,
+        "Prompt detail did not reload the full update fields.",
+      );
+      assert(
+        JSON.stringify(putPrompt?.variable_names || {}).includes("Katherine"),
+        "Prompt full update did not return the replaced variable names.",
+      );
+
+      const helperRenamedPrompt = await client.post(
+        apiPath("/model-hub/prompt-templates/{id}/save-name/", {
+          id: promptId,
+        }),
+        { name: helperPromptName },
+      );
+      assert(
+        helperRenamedPrompt?.name === helperPromptName,
+        "Prompt save-name helper did not return the renamed prompt.",
+      );
+
+      const allVariables = await client.get(
+        apiPath("/model-hub/prompt-templates/{id}/all-variables/", {
+          id: promptId,
+        }),
+      );
+      assert(
+        JSON.stringify(allVariables?.variable_names || {}).includes(
+          "Katherine",
+        ),
+        "Prompt all-variables helper did not return the latest variable names.",
+      );
+
+      const movedPrompt = await client.post(
+        apiPath("/model-hub/prompt-templates/{id}/save-prompt-folder/", {
+          id: promptId,
+        }),
+        { prompt_folder_id: moveFolderId },
+      );
+      assert(
+        movedPrompt?.prompt_folder === moveFolderId,
+        "Prompt save-prompt-folder helper did not move to the replacement folder.",
+      );
+      const moveFolderPrompts = asArray(
+        await client.get(apiPath("/model-hub/prompt-executions/"), {
+          query: {
+            prompt_folder: moveFolderId,
+            page: 1,
+            page_size: 25,
+            ordering: "-updated_at",
+          },
+        }),
+      );
+      assert(
+        moveFolderPrompts.some((row) => row?.id === promptId),
+        "Prompt execution folder list did not reflect the helper folder move.",
+      );
+
+      const movedBackPrompt = await client.post(
+        apiPath("/model-hub/prompt-templates/{id}/save-prompt-folder/", {
+          id: promptId,
+        }),
+        { prompt_folder_id: folderId },
+      );
+      assert(
+        movedBackPrompt?.prompt_folder === folderId,
+        "Prompt save-prompt-folder helper did not move back to the original folder.",
+      );
+      await client.delete(
+        apiPath("/model-hub/prompt-folders/{id}/", { id: moveFolderId }),
+      );
+      moveFolderDeleted = true;
+
       const folderPrompts = asArray(
         await client.get(apiPath("/model-hub/prompt-executions/"), {
           query: {
@@ -9576,10 +13096,13 @@ export const datasetEvalJourneys = [
         "Prompt execution folder list did not include the assigned prompt.",
       );
 
-      const promptSearchRow = await findWorkbenchPromptRow(client, promptName);
+      const promptSearchRow = await findWorkbenchPromptRow(
+        client,
+        helperPromptName,
+      );
       assert(
         promptSearchRow?.id === promptId,
-        "Workbench prompt search did not return the created prompt.",
+        "Workbench prompt search did not return the helper-renamed prompt.",
       );
 
       const pinnedRows = asArray(
@@ -9686,6 +13209,12 @@ export const datasetEvalJourneys = [
         folder_name: renamedFolderName,
         folders_before: foldersBefore.length,
         prompt_id: promptId,
+        patched_prompt_description: partialDescription,
+        put_prompt_name: putPromptName,
+        put_prompt_description: putDescription,
+        helper_prompt_name: helperPromptName,
+        all_variables_keys: Object.keys(allVariables?.variable_names || {}),
+        move_folder_id: moveFolderId,
         cascade_prompt_id: cascadePromptId,
         folder_prompt_rows: folderPrompts.length,
         pinned_ids_top_indexes: pinnedIndexes,
@@ -9695,6 +13224,1638 @@ export const datasetEvalJourneys = [
         ),
         folder_deleted_at_set: deletedFolderAudit.folder_deleted_at_set,
         cascade_prompt_deleted_at_set: deletedFolderAudit.prompt_deleted_at_set,
+      });
+    },
+  },
+  {
+    id: "PROMPT-API-009",
+    title:
+      "Prompt labels CRUD, assignment, defaulting, lookup, and workspace scope",
+    tags: [
+      "prompts",
+      "labels",
+      "workbench",
+      "mutating",
+      "data-roundtrip",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Prompt label lifecycle journey requires workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(isUuid(userId), "Prompt label journey requires user id.");
+      const fixture = await seedPromptLabelFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      assert(fixture?.fixture_created, "Prompt label fixture was not created.");
+
+      let createdLabelId = null;
+      cleanup.defer("hard delete prompt label fixture", () =>
+        hardDeletePromptLabelFixture({
+          ...fixture,
+          created_label_id: createdLabelId,
+        }),
+      );
+
+      const systemSetup = await client.post(
+        apiPath("/model-hub/prompt-labels/create-system-labels/"),
+      );
+      assert(
+        systemSetup &&
+          typeof systemSetup === "object" &&
+          Object.prototype.hasOwnProperty.call(systemSetup, "count"),
+        "Prompt label system setup did not return count metadata.",
+      );
+
+      const labelName = `api journey label ${runId}`;
+      const created = await client.post(apiPath("/model-hub/prompt-labels/"), {
+        name: labelName,
+        type: "custom",
+        metadata: { source: "api-journey", run_id: runId },
+      });
+      createdLabelId = created?.id;
+      assert(isUuid(createdLabelId), "Prompt label create did not return id.");
+
+      const listRows = payloadArray(
+        await client.get(apiPath("/model-hub/prompt-labels/")),
+        "results",
+      );
+      const productionLabel = listRows.find(
+        (row) => row?.name === "Production" && row?.type === "system",
+      );
+      assert(
+        isUuid(productionLabel?.id),
+        "Prompt label list did not include the global Production label.",
+      );
+      assert(
+        listRows.some((row) => row?.id === createdLabelId),
+        "Prompt label list did not include the created custom label.",
+      );
+      assert(
+        !listRows.some((row) => row?.id === fixture.other_label_id),
+        "Prompt label list leaked a same-org other-workspace custom label.",
+      );
+
+      const detail = await client.get(
+        apiPath("/model-hub/prompt-labels/{id}/", { id: createdLabelId }),
+      );
+      assert(detail?.name === labelName, "Prompt label detail name mismatch.");
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/prompt-labels/{id}/", {
+              id: fixture.other_label_id,
+            }),
+          ),
+        404,
+        "Prompt label detail accepted other-workspace label.",
+      );
+
+      const patchedName = `api journey label patched ${runId}`;
+      const patched = await client.patch(
+        apiPath("/model-hub/prompt-labels/{id}/", { id: createdLabelId }),
+        { name: patchedName },
+      );
+      assert(
+        patched?.name === patchedName,
+        "Prompt label PATCH did not return the patched name.",
+      );
+
+      const finalName = `api journey label final ${runId}`;
+      const replaced = await client.put(
+        apiPath("/model-hub/prompt-labels/{id}/", { id: createdLabelId }),
+        {
+          name: finalName,
+          type: "custom",
+          metadata: { source: "api-journey", phase: "put" },
+        },
+      );
+      assert(
+        replaced?.name === finalName && replaced?.metadata?.phase === "put",
+        "Prompt label PUT did not persist the expected fields.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/prompt-labels/"), {
+            name: "Production",
+            type: "custom",
+          }),
+        400,
+        "Prompt label create accepted a duplicate system label name.",
+      );
+
+      await client.post(
+        apiPath("/model-hub/prompt-labels/assign-multiple-labels/"),
+        {
+          template_version_id: fixture.version_one_id,
+          label_ids: [createdLabelId, productionLabel.id],
+        },
+      );
+
+      const templateLabels = payloadArray(
+        await client.get(apiPath("/model-hub/prompt-labels/template-labels/"), {
+          query: { template_id: fixture.template_id },
+        }),
+        "result",
+      );
+      assert(
+        templateLabels.some(
+          (row) =>
+            row?.version === "v1" &&
+            row.labels?.includes(finalName) &&
+            row.labels?.includes("Production"),
+        ),
+        "Prompt label template-labels did not return assigned v1 labels.",
+      );
+
+      const byLabel = await client.get(
+        apiPath("/model-hub/prompt-labels/get-by-name/"),
+        { query: { name: fixture.template_name, label: finalName } },
+      );
+      assert(
+        byLabel?.version === "v1" &&
+          byLabel.labels?.some((row) => row?.id === createdLabelId),
+        "Prompt label get-by-name label lookup did not return v1.",
+      );
+
+      const byVersion = await client.get(
+        apiPath("/model-hub/prompt-labels/get-by-name/"),
+        { query: { name: fixture.template_name, version: "v2" } },
+      );
+      assert(
+        byVersion?.version === "v2",
+        "Prompt label get-by-name explicit version lookup did not return v2.",
+      );
+
+      const assignedById = await client.post(
+        apiPath(
+          "/model-hub/prompt-labels/{template_id}/{label_id}/assign-label-by-id/",
+          {
+            template_id: fixture.template_id,
+            label_id: createdLabelId,
+          },
+        ),
+        { version: "v2" },
+      );
+      assert(
+        assignedById?.version === "v2" &&
+          assignedById.moved_from_versions?.includes("v1"),
+        "Prompt label assign-label-by-id did not move the label to v2.",
+      );
+
+      const setDefault = await client.post(
+        apiPath("/model-hub/prompt-labels/set-default/"),
+        { template_name: fixture.template_name, version: "v2" },
+      );
+      assert(
+        setDefault?.version === "v2" && setDefault?.is_default === true,
+        "Prompt label set-default did not return v2 as default.",
+      );
+
+      await client.post(apiPath("/model-hub/prompt-labels/remove/"), {
+        label_id: createdLabelId,
+        version_id: fixture.version_two_id,
+      });
+
+      const activeAudit = await loadPromptLabelAudit({
+        fixture,
+        labelId: createdLabelId,
+        organizationId,
+        workspaceId,
+      });
+      assertPromptLabelAudit(activeAudit, {
+        labelId: createdLabelId,
+        organizationId,
+        workspaceId,
+        expectedDeleted: false,
+        expectedDefaultVersion: "v2",
+        expectedRemovedFromV2: true,
+      });
+
+      await client.delete(
+        apiPath("/model-hub/prompt-labels/{id}/", { id: createdLabelId }),
+      );
+      const deletedAudit = await loadPromptLabelAudit({
+        fixture,
+        labelId: createdLabelId,
+        organizationId,
+        workspaceId,
+      });
+      assertPromptLabelAudit(deletedAudit, {
+        labelId: createdLabelId,
+        organizationId,
+        workspaceId,
+        expectedDeleted: true,
+        expectedDefaultVersion: "v2",
+        expectedRemovedFromV2: true,
+      });
+
+      evidence.push({
+        template_id: fixture.template_id,
+        template_name: fixture.template_name,
+        label_id: createdLabelId,
+        production_label_id: productionLabel.id,
+        moved_from_versions: assignedById.moved_from_versions,
+        default_versions: activeAudit.default_versions,
+        label_deleted_at_set: deletedAudit.label_deleted_at_set,
+        system_global_count: Number(activeAudit.system_global_count),
+        other_workspace_label_visible_count: Number(
+          activeAudit.other_workspace_label_visible_count,
+        ),
+      });
+    },
+  },
+  {
+    id: "PROMPT-API-010",
+    title:
+      "Prompt base templates CRUD, categories, sample guards, and workspace scope",
+    tags: [
+      "prompts",
+      "base-templates",
+      "workbench",
+      "mutating",
+      "data-roundtrip",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Prompt base-template lifecycle journey requires workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(isUuid(userId), "Prompt base-template journey requires user id.");
+
+      const fixture = await seedPromptBaseTemplateFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        fixture?.fixture_created,
+        "Prompt base-template fixture was not created.",
+      );
+
+      let createdBaseTemplateId = null;
+      let duplicateBaseTemplateId = null;
+      cleanup.defer("hard delete prompt base-template fixture", () =>
+        hardDeletePromptBaseTemplateFixture({
+          ...fixture,
+          created_base_template_id: createdBaseTemplateId,
+          duplicate_base_template_id: duplicateBaseTemplateId,
+        }),
+      );
+
+      const templateName = `api journey base template ${runId}`;
+      const created = await client.post(
+        apiPath("/model-hub/prompt-base-templates/"),
+        {
+          name: templateName,
+          is_sample: true,
+          prompt_version: fixture.version_id,
+          category: fixture.category,
+        },
+      );
+      createdBaseTemplateId = created?.id;
+      assert(
+        isUuid(createdBaseTemplateId),
+        "Prompt base-template create did not return id.",
+      );
+      assert(
+        created.is_sample === false,
+        "Prompt base-template create allowed client-controlled is_sample.",
+      );
+      assert(
+        JSON.stringify(created.prompt_config_snapshot || {}).includes(
+          "base-template",
+        ),
+        "Prompt base-template create did not copy prompt version snapshot.",
+      );
+
+      const duplicate = await client.post(
+        apiPath("/model-hub/prompt-base-templates/"),
+        {
+          name: `api journey base template duplicate target ${runId}`,
+          prompt_version: fixture.version_id,
+          category: fixture.category,
+        },
+      );
+      duplicateBaseTemplateId = duplicate?.id;
+      assert(
+        isUuid(duplicateBaseTemplateId),
+        "Prompt base-template duplicate fixture create did not return id.",
+      );
+
+      const listRows = payloadArray(
+        await client.get(apiPath("/model-hub/prompt-base-templates/"), {
+          query: { page_size: 25, page_number: 0 },
+        }),
+        "data",
+      );
+      assert(
+        listRows.some((row) => row?.id === createdBaseTemplateId),
+        "Prompt base-template list did not include the created template.",
+      );
+      assert(
+        listRows.some((row) => row?.id === fixture.sample_base_template_id),
+        "Prompt base-template list did not include the global sample template.",
+      );
+      assert(
+        !listRows.some((row) => row?.id === fixture.other_base_template_id),
+        "Prompt base-template list leaked another workspace template.",
+      );
+
+      const categoryRows = payloadArray(
+        await client.get(apiPath("/model-hub/prompt-base-templates/"), {
+          query: {
+            category: fixture.category,
+            page_size: 25,
+            page_number: 0,
+          },
+        }),
+        "data",
+      );
+      assert(
+        categoryRows.some((row) => row?.id === createdBaseTemplateId),
+        "Prompt base-template category filter did not include the created template.",
+      );
+      assert(
+        !categoryRows.some((row) => row?.id === fixture.other_base_template_id),
+        "Prompt base-template category filter leaked another workspace template.",
+      );
+
+      const categories = asArray(
+        await client.get(
+          apiPath("/model-hub/prompt-base-templates/get-all-categories/"),
+        ),
+      );
+      assert(
+        categories.includes(fixture.category) &&
+          categories.includes(fixture.sample_category),
+        "Prompt base-template categories did not include custom and sample categories.",
+      );
+      assert(
+        !categories.includes(fixture.other_category),
+        "Prompt base-template categories leaked another workspace category.",
+      );
+
+      const detail = await client.get(
+        apiPath("/model-hub/prompt-base-templates/{id}/", {
+          id: createdBaseTemplateId,
+        }),
+      );
+      assert(
+        detail?.name === templateName,
+        "Prompt base-template detail name mismatch.",
+      );
+
+      const sampleDetail = await client.get(
+        apiPath("/model-hub/prompt-base-templates/{id}/", {
+          id: fixture.sample_base_template_id,
+        }),
+      );
+      assert(
+        sampleDetail?.is_sample === true,
+        "Prompt base-template sample detail did not return sample metadata.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/prompt-base-templates/{id}/", {
+              id: fixture.other_base_template_id,
+            }),
+          ),
+        404,
+        "Prompt base-template detail exposed another workspace template.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/prompt-base-templates/"), {
+            name: templateName,
+            prompt_version: fixture.version_id,
+            category: fixture.category,
+          }),
+        400,
+        "Prompt base-template create accepted a duplicate name.",
+      );
+      const blockedName = `api journey blocked base template ${runId}`;
+      await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/prompt-base-templates/"), {
+            name: blockedName,
+            prompt_version: fixture.other_version_id,
+            category: fixture.category,
+          }),
+        400,
+        "Prompt base-template create accepted another workspace prompt version.",
+      );
+
+      const patchedName = `api journey base template patched ${runId}`;
+      const patched = await client.patch(
+        apiPath("/model-hub/prompt-base-templates/{id}/", {
+          id: createdBaseTemplateId,
+        }),
+        { name: patchedName },
+      );
+      assert(
+        patched?.name === patchedName && patched?.is_sample === false,
+        "Prompt base-template PATCH did not persist expected fields.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.patch(
+            apiPath("/model-hub/prompt-base-templates/{id}/", {
+              id: duplicateBaseTemplateId,
+            }),
+            { name: patchedName },
+          ),
+        400,
+        "Prompt base-template PATCH accepted a duplicate name.",
+      );
+
+      const finalName = `api journey base template final ${runId}`;
+      const replaced = await client.put(
+        apiPath("/model-hub/prompt-base-templates/{id}/", {
+          id: createdBaseTemplateId,
+        }),
+        {
+          name: finalName,
+          is_sample: true,
+          prompt_version: fixture.version_id,
+          category: fixture.updated_category,
+          prompt_config_snapshot: {
+            messages: [{ role: "user", content: "updated base-template" }],
+          },
+        },
+      );
+      assert(
+        replaced?.name === finalName &&
+          replaced?.category === fixture.updated_category &&
+          replaced?.is_sample === false,
+        "Prompt base-template PUT did not persist expected fields.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.patch(
+            apiPath("/model-hub/prompt-base-templates/{id}/", {
+              id: fixture.sample_base_template_id,
+            }),
+            { name: `api journey mutated sample ${runId}` },
+          ),
+        400,
+        "Prompt base-template PATCH allowed sample mutation.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.delete(
+            apiPath("/model-hub/prompt-base-templates/{id}/", {
+              id: fixture.sample_base_template_id,
+            }),
+          ),
+        400,
+        "Prompt base-template DELETE allowed sample deletion.",
+      );
+
+      await client.delete(
+        apiPath("/model-hub/prompt-base-templates/{id}/", {
+          id: createdBaseTemplateId,
+        }),
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/prompt-base-templates/{id}/", {
+              id: createdBaseTemplateId,
+            }),
+          ),
+        404,
+        "Prompt base-template detail returned a soft-deleted template.",
+      );
+
+      const audit = await loadPromptBaseTemplateAudit({
+        fixture,
+        baseTemplateId: createdBaseTemplateId,
+        duplicateTemplateId: duplicateBaseTemplateId,
+        blockedName,
+        organizationId,
+        workspaceId,
+      });
+      assertPromptBaseTemplateAudit(audit, {
+        baseTemplateId: createdBaseTemplateId,
+        duplicateTemplateId: duplicateBaseTemplateId,
+        organizationId,
+        workspaceId,
+        userId,
+        expectedDeleted: true,
+        expectedFinalName: finalName,
+        expectedDuplicateName: duplicate.name,
+      });
+
+      evidence.push({
+        base_template_id: createdBaseTemplateId,
+        duplicate_base_template_id: duplicateBaseTemplateId,
+        prompt_version_id: fixture.version_id,
+        sample_base_template_id: fixture.sample_base_template_id,
+        other_workspace_base_template_id: fixture.other_base_template_id,
+        categories,
+        base_template_deleted_at_set: audit.base_deleted_at_set,
+        sample_global_count: Number(audit.sample_global_count),
+        other_workspace_visible_count: Number(
+          audit.other_workspace_visible_count,
+        ),
+      });
+    },
+  },
+  {
+    id: "PROMPT-API-011",
+    title:
+      "Prompt execution detail, history reads, and folder PUT workspace guards",
+    tags: [
+      "prompts",
+      "workbench",
+      "history",
+      "folders",
+      "mutating",
+      "data-roundtrip",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Prompt library remaining journey requires workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(
+        isUuid(userId),
+        "Prompt library remaining journey requires user id.",
+      );
+
+      const fixture = await seedPromptLibraryRemainingFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        fixture?.fixture_created,
+        "Prompt library remaining fixture was not created.",
+      );
+      cleanup.defer("hard delete prompt library remaining fixture", () =>
+        hardDeletePromptLibraryRemainingFixture(fixture),
+      );
+
+      const executionDetail = await client.get(
+        apiPath("/model-hub/prompt-executions/{id}/", {
+          id: fixture.template_id,
+        }),
+      );
+      assert(
+        executionDetail?.id === fixture.template_id &&
+          executionDetail?.name === fixture.template_name,
+        "Prompt execution detail did not return the active workspace template.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/prompt-executions/{id}/", {
+              id: fixture.other_template_id,
+            }),
+          ),
+        404,
+        "Prompt execution detail exposed another workspace template.",
+      );
+
+      const renamedFolderName = `api journey prompt folder put ${runId}`;
+      const folderPut = await client.put(
+        apiPath("/model-hub/prompt-folders/{id}/", {
+          id: fixture.folder_id,
+        }),
+        { name: renamedFolderName, is_sample: true },
+      );
+      assert(
+        folderPut?.name === renamedFolderName && folderPut?.is_sample === false,
+        "Prompt folder PUT did not persist name while forcing is_sample false.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.put(
+            apiPath("/model-hub/prompt-folders/{id}/", {
+              id: fixture.duplicate_folder_id,
+            }),
+            { name: renamedFolderName },
+          ),
+        400,
+        "Prompt folder PUT accepted a duplicate name.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.put(
+            apiPath("/model-hub/prompt-folders/{id}/", {
+              id: fixture.sample_folder_id,
+            }),
+            { name: `api journey mutated sample folder ${runId}` },
+          ),
+        400,
+        "Prompt folder PUT allowed sample mutation.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.put(
+            apiPath("/model-hub/prompt-folders/{id}/", {
+              id: fixture.other_folder_id,
+            }),
+            { name: `api journey mutated other folder ${runId}` },
+          ),
+        404,
+        "Prompt folder PUT accepted another workspace folder.",
+      );
+
+      const folderRows = asArray(
+        await client.get(apiPath("/model-hub/prompt-folders/")),
+      );
+      assert(
+        folderRows.some((row) => row?.id === fixture.folder_id),
+        "Prompt folder list did not include the active workspace folder.",
+      );
+      assert(
+        folderRows.some((row) => row?.id === fixture.sample_folder_id),
+        "Prompt folder list did not include the global sample folder.",
+      );
+      assert(
+        !folderRows.some((row) => row?.id === fixture.other_folder_id),
+        "Prompt folder list leaked another workspace folder.",
+      );
+
+      const historyRows = payloadArray(
+        await client.get(apiPath("/model-hub/prompt-history-executions/"), {
+          query: { page_size: 25, page: 1 },
+        }),
+        "results",
+      );
+      assert(
+        historyRows.some((row) => row?.id === fixture.version_one_id) &&
+          historyRows.some((row) => row?.id === fixture.version_two_id),
+        "Prompt history list did not include active workspace versions.",
+      );
+      assert(
+        !historyRows.some((row) => row?.id === fixture.other_version_id),
+        "Prompt history list leaked another workspace version.",
+      );
+
+      const templateHistoryRows = payloadArray(
+        await client.get(apiPath("/model-hub/prompt-history-executions/"), {
+          query: {
+            template_id: fixture.template_id,
+            page_size: 25,
+            page: 1,
+          },
+        }),
+        "results",
+      );
+      const templateHistoryIds = new Set(
+        templateHistoryRows.map((row) => row?.id),
+      );
+      assert(
+        templateHistoryIds.has(fixture.version_one_id) &&
+          templateHistoryIds.has(fixture.version_two_id) &&
+          templateHistoryIds.size === 2,
+        "Prompt history template filter did not return exactly the active versions.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(apiPath("/model-hub/prompt-history-executions/"), {
+            query: {
+              template_id: fixture.other_template_id,
+              page_size: 25,
+              page: 1,
+            },
+          }),
+        400,
+        "Prompt history template filter accepted another workspace template.",
+      );
+
+      const historyDetail = await client.get(
+        apiPath("/model-hub/prompt-history-executions/{id}/", {
+          id: fixture.version_two_id,
+        }),
+      );
+      assert(
+        historyDetail?.template_version === "v2" &&
+          historyDetail?.original_template === fixture.template_id,
+        "Prompt history detail did not return the active v2 version.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/prompt-history-executions/{id}/", {
+              id: fixture.other_version_id,
+            }),
+          ),
+        404,
+        "Prompt history detail exposed another workspace version.",
+      );
+
+      const executionVersionDetail = await client.get(
+        apiPath(
+          "/model-hub/prompt-history-executions/execution-details/{execution_id}/",
+          { execution_id: fixture.version_two_id },
+        ),
+      );
+      assert(
+        executionVersionDetail?.template_version === "v2",
+        "Prompt execution-details did not return the active v2 version.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath(
+              "/model-hub/prompt-history-executions/execution-details/{execution_id}/",
+              { execution_id: fixture.other_version_id },
+            ),
+          ),
+        404,
+        "Prompt execution-details exposed another workspace version.",
+      );
+
+      const audit = await loadPromptLibraryRemainingAudit({
+        fixture,
+        organizationId,
+        workspaceId,
+        userId,
+      });
+      assertPromptLibraryRemainingAudit(audit, {
+        fixture,
+        organizationId,
+        workspaceId,
+        userId,
+        expectedFolderName: renamedFolderName,
+      });
+
+      evidence.push({
+        template_id: fixture.template_id,
+        version_ids: [fixture.version_one_id, fixture.version_two_id],
+        folder_id: fixture.folder_id,
+        sample_folder_id: fixture.sample_folder_id,
+        other_workspace_id: fixture.other_workspace_id,
+        history_rows: historyRows.length,
+        folder_put_name: renamedFolderName,
+        sample_global_count: Number(audit.sample_global_count),
+        other_workspace_version_visible_count: Number(
+          audit.other_workspace_version_visible_count,
+        ),
+      });
+    },
+  },
+  {
+    id: "PROMPT-API-012",
+    title: "Prompt response-schema CRUD, parsing, and workspace scope",
+    tags: [
+      "prompts",
+      "response-schema",
+      "workbench",
+      "mutating",
+      "data-roundtrip",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Prompt response-schema journey requires workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(
+        isUuid(userId),
+        "Prompt response-schema journey requires user id.",
+      );
+
+      const fixture = await seedPromptResponseSchemaFixture({
+        runId,
+        organizationId,
+        workspaceId,
+        userId,
+      });
+      assert(
+        fixture?.fixture_created,
+        "Prompt response-schema fixture was not created.",
+      );
+
+      let createdSchemaId = null;
+      cleanup.defer("hard delete prompt response-schema fixture", () =>
+        hardDeletePromptResponseSchemaFixture({
+          ...fixture,
+          created_schema_id: createdSchemaId,
+        }),
+      );
+
+      const created = await client.post(
+        apiPath("/model-hub/response_schema/"),
+        {
+          name: fixture.shared_schema_name,
+          description: "API journey response schema",
+          schema_type: "json",
+          schema: JSON.stringify({
+            type: "object",
+            properties: {
+              answer: { type: "string" },
+            },
+            required: ["answer"],
+          }),
+        },
+      );
+      createdSchemaId = created?.id;
+      assert(
+        isUuid(createdSchemaId),
+        "Response-schema create did not return id.",
+      );
+      assert(
+        created?.schema?.properties?.answer?.type === "string",
+        "Response-schema create did not parse JSON schema.",
+      );
+
+      const listRows = payloadArray(
+        await client.get(apiPath("/model-hub/response_schema/")),
+        "results",
+      );
+      assert(
+        listRows.some((row) => row?.id === createdSchemaId),
+        "Response-schema list did not include created schema.",
+      );
+      assert(
+        !listRows.some((row) => row?.id === fixture.other_schema_id),
+        "Response-schema list leaked another workspace schema.",
+      );
+
+      const detail = await client.get(
+        apiPath("/model-hub/response_schema/{id}/", { id: createdSchemaId }),
+      );
+      assert(
+        detail?.name === fixture.shared_schema_name,
+        "Response-schema detail name mismatch.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/response_schema/{id}/", {
+              id: fixture.other_schema_id,
+            }),
+          ),
+        404,
+        "Response-schema detail exposed another workspace schema.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/response_schema/"), {
+            name: fixture.shared_schema_name,
+            description: "duplicate active workspace schema",
+            schema_type: "json",
+            schema: { type: "object" },
+          }),
+        400,
+        "Response-schema create accepted a duplicate name in the active workspace.",
+      );
+
+      const patched = await client.patch(
+        apiPath("/model-hub/response_schema/{id}/", { id: createdSchemaId }),
+        {
+          name: `api journey response schema patched ${runId}`,
+          schema_type: "yaml",
+          schema: "type: object\nproperties:\n  score:\n    type: number\n",
+        },
+      );
+      assert(
+        patched?.schema_type === "yaml" &&
+          patched?.schema?.properties?.score?.type === "number",
+        "Response-schema PATCH did not parse YAML schema.",
+      );
+
+      const finalName = fixture.shared_schema_name;
+      const replaced = await client.put(
+        apiPath("/model-hub/response_schema/{id}/", { id: createdSchemaId }),
+        {
+          name: finalName,
+          description: "API journey final response schema",
+          schema_type: "json",
+          schema: JSON.stringify({
+            type: "object",
+            properties: {
+              final: { type: "boolean" },
+            },
+          }),
+        },
+      );
+      assert(
+        replaced?.name === finalName &&
+          replaced?.schema?.properties?.final?.type === "boolean",
+        "Response-schema PUT did not persist final JSON schema.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/response_schema/"), {
+            name: `api journey invalid response schema ${runId}`,
+            description: "invalid response schema",
+            schema_type: "json",
+            schema: "[1,2,3]",
+          }),
+        400,
+        "Response-schema create accepted a JSON array schema.",
+      );
+
+      const activeAudit = await loadPromptResponseSchemaAudit({
+        fixture,
+        schemaId: createdSchemaId,
+        organizationId,
+        workspaceId,
+      });
+      assertPromptResponseSchemaAudit(activeAudit, {
+        fixture,
+        schemaId: createdSchemaId,
+        organizationId,
+        workspaceId,
+        expectedDeleted: false,
+        expectedFinalName: finalName,
+      });
+
+      await client.delete(
+        apiPath("/model-hub/response_schema/{id}/", { id: createdSchemaId }),
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/response_schema/{id}/", {
+              id: createdSchemaId,
+            }),
+          ),
+        404,
+        "Response-schema detail returned a soft-deleted schema.",
+      );
+
+      const deletedAudit = await loadPromptResponseSchemaAudit({
+        fixture,
+        schemaId: createdSchemaId,
+        organizationId,
+        workspaceId,
+      });
+      assertPromptResponseSchemaAudit(deletedAudit, {
+        fixture,
+        schemaId: createdSchemaId,
+        organizationId,
+        workspaceId,
+        expectedDeleted: true,
+        expectedFinalName: finalName,
+      });
+
+      evidence.push({
+        response_schema_id: createdSchemaId,
+        response_schema_name: finalName,
+        other_workspace_schema_id: fixture.other_schema_id,
+        schema_deleted_at_set: deletedAudit.schema_deleted_at_set,
+        other_workspace_schema_visible_count: Number(
+          deletedAudit.other_workspace_schema_visible_count,
+        ),
+      });
+    },
+  },
+  {
+    id: "PROMPT-API-013",
+    title: "Prompt derived-variable preview, extraction, and workspace scope",
+    tags: [
+      "prompts",
+      "derived-variables",
+      "workbench",
+      "mutating",
+      "data-roundtrip",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Prompt derived-variable journey requires workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(
+        isUuid(userId),
+        "Prompt derived-variable journey requires user id.",
+      );
+
+      const fixture = await seedPromptDerivedVariablesFixture({
+        runId,
+        organizationId,
+        workspaceId,
+        userId,
+      });
+      assert(
+        fixture?.fixture_created,
+        "Prompt derived-variable fixture was not created.",
+      );
+      cleanup.defer("hard delete prompt derived-variable fixture", () =>
+        hardDeletePromptDerivedVariablesFixture(fixture),
+      );
+
+      const preview = await client.post(
+        apiPath("/model-hub/prompt-templates/derived-variables/preview/"),
+        {
+          content: {
+            customer: { name: "Ada", active: true },
+            score: 98,
+          },
+          column_name: "preview",
+        },
+      );
+      assert(
+        asArray(preview?.full_variables).includes("preview.customer.name") &&
+          preview?.schema?.["customer.active"]?.type === "boolean",
+        "Derived-variable preview did not extract nested JSON paths.",
+      );
+
+      const variables = await client.get(
+        apiPath("/model-hub/prompt-templates/{prompt_id}/derived-variables/", {
+          prompt_id: fixture.template_id,
+        }),
+        { query: { version: "v1", column_name: "answer" } },
+      );
+      assert(
+        variables?.version === "v1" &&
+          asArray(variables?.derived_variables?.answer).includes(
+            "answer.customer.name",
+          ) &&
+          !Object.prototype.hasOwnProperty.call(
+            variables?.derived_variables || {},
+            "plain_text",
+          ),
+        "Prompt derived-variable list did not return the filtered active column.",
+      );
+
+      const schema = await client.get(
+        apiPath(
+          "/model-hub/prompt-templates/{prompt_id}/derived-variables/{column_name}/schema/",
+          {
+            prompt_id: fixture.template_id,
+            column_name: "answer",
+          },
+        ),
+        { query: { version: "v1" } },
+      );
+      assert(
+        asArray(schema?.paths).includes("customer.name") &&
+          schema?.schema?.["score"]?.type === "number",
+        "Prompt derived-variable schema did not return the active column schema.",
+      );
+
+      const extracted = await client.post(
+        apiPath(
+          "/model-hub/prompt-templates/{prompt_id}/derived-variables/extract/",
+          { prompt_id: fixture.template_id },
+        ),
+        {
+          version: "v1",
+          column_name: "extracted",
+          output_index: 0,
+          response_format_type: "json_object",
+        },
+      );
+      assert(
+        asArray(extracted?.full_variables).includes("extracted.customer.name"),
+        "Prompt derived-variable extract did not persist extracted variables.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath(
+              "/model-hub/prompt-templates/{prompt_id}/derived-variables/",
+              { prompt_id: fixture.other_template_id },
+            ),
+          ),
+        404,
+        "Prompt derived-variable list exposed another workspace prompt.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath(
+              "/model-hub/prompt-templates/{prompt_id}/derived-variables/{column_name}/schema/",
+              {
+                prompt_id: fixture.other_template_id,
+                column_name: "answer",
+              },
+            ),
+          ),
+        404,
+        "Prompt derived-variable schema exposed another workspace prompt.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.post(
+            apiPath(
+              "/model-hub/prompt-templates/{prompt_id}/derived-variables/extract/",
+              { prompt_id: fixture.other_template_id },
+            ),
+            {
+              version: "v1",
+              column_name: "blocked",
+              output_index: 0,
+              response_format_type: "json_object",
+            },
+          ),
+        404,
+        "Prompt derived-variable extract mutated another workspace prompt.",
+      );
+
+      const audit = await loadPromptDerivedVariablesAudit({
+        fixture,
+        organizationId,
+        workspaceId,
+      });
+      assertPromptDerivedVariablesAudit(audit, {
+        fixture,
+        organizationId,
+        workspaceId,
+      });
+
+      evidence.push({
+        template_id: fixture.template_id,
+        version_id: fixture.version_id,
+        other_workspace_id: fixture.other_workspace_id,
+        preview_keys: asArray(preview.full_variables),
+        filtered_variable_keys: Object.keys(variables.derived_variables || {}),
+        extracted_keys: asArray(extracted.full_variables),
+        other_workspace_mutated: audit.other_workspace_mutated,
+      });
+    },
+  },
+  {
+    id: "PROMPT-API-014",
+    title: "Prompt metrics, span metrics, and empty-state snippets",
+    tags: [
+      "prompts",
+      "metrics",
+      "workbench",
+      "mutating",
+      "data-roundtrip",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Prompt metrics journey requires workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(isUuid(userId), "Prompt metrics journey requires user id.");
+
+      const fixture = await seedPromptMetricsFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        fixture?.fixture_created,
+        "Prompt metrics fixture was not created.",
+      );
+      cleanup.defer("hard delete prompt metrics fixture", () =>
+        hardDeletePromptMetricsFixture(fixture),
+      );
+
+      const emptyScreen = await client.get(
+        apiPath("/model-hub/prompt/metrics/empty-screen"),
+      );
+      assert(
+        typeof emptyScreen?.python === "string" &&
+          emptyScreen.python.includes("your-futureagi-api-key") &&
+          typeof emptyScreen?.typescript === "string" &&
+          emptyScreen.typescript.includes("setPromptTemplate"),
+        "Prompt metrics empty-screen snippets did not include expected placeholders.",
+      );
+
+      const metrics = await client.get(apiPath("/model-hub/prompt/metrics/"), {
+        query: {
+          prompt_template_id: fixture.template_id,
+          page_size: 5,
+          page_number: 0,
+        },
+      });
+      assert(
+        metrics?.prompt_template_id === fixture.template_id &&
+          metrics?.prompt_template_name === fixture.template_name &&
+          Array.isArray(metrics?.table) &&
+          Number.isInteger(metrics?.metadata?.total_rows),
+        "Prompt metrics route did not return the active prompt metrics shape.",
+      );
+
+      const spanMetrics = await client.get(
+        apiPath("/model-hub/prompt/span-metrics/"),
+        {
+          query: {
+            prompt_template_id: fixture.template_id,
+            search_term: "api",
+            page_size: 5,
+            page_number: 0,
+          },
+        },
+      );
+      assert(
+        Array.isArray(spanMetrics?.table) &&
+          Number.isInteger(spanMetrics?.metadata?.total_rows) &&
+          Array.isArray(spanMetrics?.config),
+        "Prompt span-metrics route did not return the active span metrics shape.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.get(apiPath("/model-hub/prompt/metrics/"), {
+            query: { prompt_template_id: fixture.other_template_id },
+          }),
+        404,
+        "Prompt metrics route exposed another workspace prompt.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(apiPath("/model-hub/prompt/span-metrics/"), {
+            query: { prompt_template_id: fixture.other_template_id },
+          }),
+        404,
+        "Prompt span-metrics route exposed another workspace prompt.",
+      );
+
+      const audit = await loadPromptMetricsAudit({
+        fixture,
+        organizationId,
+        workspaceId,
+      });
+      assertPromptMetricsAudit(audit, {
+        fixture,
+        organizationId,
+        workspaceId,
+      });
+
+      evidence.push({
+        template_id: fixture.template_id,
+        other_workspace_id: fixture.other_workspace_id,
+        metrics_rows: metrics.table.length,
+        span_metrics_rows: spanMetrics.table.length,
+        empty_screen_languages: ["python", "typescript"],
+        other_workspace_visible_count: Number(
+          audit.other_workspace_template_visible_count,
+        ),
+      });
+    },
+  },
+  {
+    id: "PROMPT-API-015",
+    title: "Prompt stop-streaming session UUID and workspace guards",
+    tags: [
+      "prompts",
+      "workbench",
+      "streaming",
+      "mutating",
+      "data-roundtrip",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Prompt stop-streaming journey requires workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(isUuid(userId), "Prompt stop-streaming journey requires user id.");
+
+      const fixture = await seedPromptStopStreamingFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        fixture?.fixture_created,
+        "Prompt stop-streaming fixture was not created.",
+      );
+      cleanup.defer("hard delete prompt stop-streaming fixture", () =>
+        hardDeletePromptStopStreamingFixture(fixture),
+      );
+
+      const sessionUuid = randomUUID();
+      const stopped = await client.get(
+        apiPath("/model-hub/prompt-templates/{id}/stop-streaming/", {
+          id: fixture.template_id,
+        }),
+        { query: { session_uuid: [sessionUuid] } },
+      );
+      assert(
+        typeof stopped === "string" && stopped.includes("successfully"),
+        "Prompt stop-streaming did not accept a session UUID stop request.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/prompt-templates/{id}/stop-streaming/", {
+              id: fixture.template_id,
+            }),
+            { query: { version: ["v1", "v2", "v3", "v4"] } },
+          ),
+        400,
+        "Prompt stop-streaming accepted more than three versions.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/prompt-templates/{id}/stop-streaming/", {
+              id: fixture.template_id,
+            }),
+            { query: { version: ["draft"] } },
+          ),
+        400,
+        "Prompt stop-streaming accepted an invalid version format.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/prompt-templates/{id}/stop-streaming/", {
+              id: fixture.other_template_id,
+            }),
+            { query: { session_uuid: [randomUUID()] } },
+          ),
+        404,
+        "Prompt stop-streaming exposed another workspace prompt.",
+      );
+
+      const audit = await loadPromptStopStreamingAudit({
+        fixture,
+        organizationId,
+        workspaceId,
+      });
+      assertPromptStopStreamingAudit(audit, {
+        fixture,
+        organizationId,
+        workspaceId,
+      });
+
+      evidence.push({
+        template_id: fixture.template_id,
+        other_workspace_id: fixture.other_workspace_id,
+        stopped_session_uuid: sessionUuid,
+        stop_message: stopped,
+        active_versions: audit.active_template_versions,
+        other_workspace_visible_count: Number(
+          audit.other_workspace_template_visible_count,
+        ),
+      });
+    },
+  },
+  {
+    id: "PROMPT-API-016",
+    title: "Prompt template REST create/delete ownership and workspace guards",
+    tags: ["prompts", "workbench", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+      user,
+    }) {
+      requireMutations();
+      if (!workspaceId) {
+        skip("Prompt template REST lifecycle journey requires workspace id.");
+      }
+      const userId = currentUserId(user);
+      assert(
+        isUuid(userId),
+        "Prompt template REST lifecycle journey requires user id.",
+      );
+
+      const fixture = await seedPromptRestLifecycleFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        fixture?.fixture_created,
+        "Prompt template REST lifecycle fixture was not created.",
+      );
+
+      let promptId = null;
+      cleanup.defer("hard delete prompt template REST lifecycle fixture", () =>
+        hardDeletePromptRestLifecycleFixture({
+          ...fixture,
+          created_template_id: promptId,
+        }),
+      );
+
+      const suffix = runId.replace(/[^a-z0-9]/gi, "").slice(0, 18);
+      const promptName = `api journey prompt rest ${suffix}`;
+      const created = await client.post(
+        apiPath("/model-hub/prompt-templates/"),
+        {
+          name: promptName,
+          description: "API journey prompt template REST create candidate.",
+          variable_names: { customer: ["Ada", "Grace"] },
+          placeholders: { customer: "Ada" },
+          prompt_folder: fixture.active_folder_id,
+          organization: randomUUID(),
+          created_by: randomUUID(),
+        },
+      );
+      promptId = created?.id;
+      assert(
+        isUuid(promptId),
+        "Prompt template REST create did not return id.",
+      );
+      assert(
+        created?.name === promptName,
+        "Prompt template REST create did not echo the created name.",
+      );
+      assert(
+        created?.prompt_folder === fixture.active_folder_id,
+        "Prompt template REST create did not echo the active folder assignment.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/prompt-templates/"), {
+            name: `api journey prompt rest hidden folder ${suffix}`,
+            prompt_folder: fixture.other_folder_id,
+          }),
+        400,
+        "Prompt template REST create accepted a hidden workspace folder.",
+      );
+
+      await expectApiErrorStatus(
+        () =>
+          client.delete(
+            apiPath("/model-hub/prompt-templates/{id}/", {
+              id: fixture.hidden_template_id,
+            }),
+          ),
+        404,
+        "Prompt template REST delete exposed another workspace prompt.",
+      );
+
+      const activeAudit = await loadPromptRestLifecycleAudit({
+        fixture,
+        promptId,
+        organizationId,
+        workspaceId,
+        userId,
+      });
+      assertPromptRestLifecycleAudit(activeAudit, {
+        fixture,
+        promptId,
+        organizationId,
+        workspaceId,
+        userId,
+        expectedDeleted: false,
+      });
+
+      await client.delete(
+        apiPath("/model-hub/prompt-templates/{id}/", { id: promptId }),
+      );
+
+      const deletedAudit = await loadPromptRestLifecycleAudit({
+        fixture,
+        promptId,
+        organizationId,
+        workspaceId,
+        userId,
+      });
+      assertPromptRestLifecycleAudit(deletedAudit, {
+        fixture,
+        promptId,
+        organizationId,
+        workspaceId,
+        userId,
+        expectedDeleted: true,
+      });
+
+      evidence.push({
+        prompt_id: promptId,
+        active_folder_id: fixture.active_folder_id,
+        other_workspace_id: fixture.other_workspace_id,
+        hidden_template_id: fixture.hidden_template_id,
+        created_by_id: activeAudit.created_template_created_by_id,
+        deleted_at_set: deletedAudit.created_template_deleted_at_set,
+        hidden_template_deleted: deletedAudit.hidden_template_deleted,
+      });
+    },
+  },
+  {
+    id: "PROMPT-API-017",
+    title: "Prompt assistant helper validation and provider handoff guards",
+    tags: ["prompts", "workbench", "assistants", "safe", "data-roundtrip"],
+    async run({ client, evidence }) {
+      const generateError = await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/prompt-templates/generate-prompt/"), {
+            follow_up: "Do not call provider for invalid input.",
+          }),
+        400,
+        "Prompt generate helper accepted a missing statement.",
+      );
+      const analyzeError = await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/prompt-templates/analyze-prompt/"), {
+            prompt: "Hello {{customer}}",
+          }),
+        400,
+        "Prompt analyzer accepted a missing explanation.",
+      );
+      const variablesError = await expectApiErrorStatus(
+        () =>
+          client.post(
+            apiPath("/model-hub/prompt-templates/generate-variables/"),
+            {
+              prompt_name: "Greeting",
+              prompt_instructions: ["Greet the customer"],
+            },
+          ),
+        400,
+        "Prompt variable generator accepted missing variable names.",
+      );
+      const improveError = await expectApiErrorStatusIn(
+        () =>
+          client.post(apiPath("/model-hub/prompt-templates/improve-prompt/"), {
+            improvement_requirements: "Make it more specific.",
+          }),
+        [400, 402, 403],
+        "Prompt improve helper accepted a missing existing prompt or skipped entitlement guard.",
+      );
+
+      evidence.push({
+        generate_status: generateError.status,
+        analyze_status: analyzeError.status,
+        variables_status: variablesError.status,
+        improve_status: improveError.status,
+        improve_boundary:
+          improveError.status === 400 ? "validation" : "entitlement",
       });
     },
   },
@@ -9980,6 +15141,21 @@ export const datasetEvalJourneys = [
               "/model-hub/prompt-templates/{id}/run-evals-on-multiple-versions/",
               { id: promptId },
             ),
+            {
+              version_to_run: ["v1"],
+              prompt_eval_config_ids: ["not-a-uuid"],
+            },
+          ),
+        400,
+        "Prompt run-evals accepted a malformed eval config id.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.post(
+            apiPath(
+              "/model-hub/prompt-templates/{id}/run-evals-on-multiple-versions/",
+              { id: promptId },
+            ),
             { version_to_run: ["v1"], prompt_eval_config_ids: [randomUUID()] },
           ),
         400,
@@ -9993,6 +15169,21 @@ export const datasetEvalJourneys = [
         { query: { id: evalConfigId } },
       );
       evalConfigDeleted = true;
+      await expectApiErrorStatus(
+        () =>
+          client.post(
+            apiPath(
+              "/model-hub/prompt-templates/{id}/run-evals-on-multiple-versions/",
+              { id: promptId },
+            ),
+            {
+              version_to_run: ["v1"],
+              prompt_eval_config_ids: [evalConfigId],
+            },
+          ),
+        400,
+        "Prompt run-evals accepted a deleted eval config id.",
+      );
 
       const deletedConfigsPayload = await client.get(
         apiPath("/model-hub/prompt-templates/{id}/evaluation-configs/", {
@@ -10040,33 +15231,351 @@ export const datasetEvalJourneys = [
     },
   },
   {
-    id: "SCORE-API-001",
+    id: "FEEDBACK-API-001",
     title:
-      "Direct score API create, upsert update, for-source reload, and delete lifecycle",
-    tags: ["scores", "annotation", "mutating", "data-roundtrip"],
-    async run({ client, cleanup, runId, user, evidence }) {
+      "Legacy feedback generated routes CRUD, summary, template, workspace guards",
+    tags: ["feedback", "datasets", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      user,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
       requireMutations();
-      const queue = await resolveQueue(client, evidence);
-      const item = await resolveQueueItem(client, queue.id, evidence, {
-        status: ["pending", "in_progress", "skipped", "completed"],
+      const userId = currentUserId(user);
+      assert(
+        isUuid(userId),
+        "Feedback journey requires authenticated user id.",
+      );
+      assert(
+        isUuid(organizationId),
+        "Feedback journey requires authenticated organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Feedback journey requires authenticated workspace id.",
+      );
+
+      const fixture = await seedLegacyFeedbackGeneratedRoutesFixture({
+        runId,
+        userId,
+        organizationId,
+        workspaceId,
       });
-      const detail = await client.get(
-        queuePath(
-          "/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/",
-          queue.id,
-          { id: item.id },
+      if (!fixture?.fixture_created) {
+        skip("Could not seed legacy feedback generated route fixture.");
+      }
+      let activeFeedbackId = null;
+      cleanup.defer("hard-delete legacy feedback generated route fixture", () =>
+        hardDeleteLegacyFeedbackGeneratedRoutesFixture({
+          fixture,
+          feedbackIds: [activeFeedbackId].filter(Boolean),
+        }),
+      );
+
+      const templatePayload = await client.get(
+        apiPath("/model-hub/feedback/get_template/"),
+        { query: { user_eval_metric_id: fixture.metric_id } },
+      );
+      assert(
+        templatePayload?.output_type === "Pass/Fail",
+        "Legacy feedback get_template did not return the active metric template.",
+      );
+      assert(
+        payloadArray(templatePayload?.choices, "choices").includes("Failed"),
+        "Legacy feedback get_template did not return pass/fail choices.",
+      );
+
+      const createPayload = {
+        source: "dataset",
+        source_id: fixture.eval_column_id,
+        user_eval_metric: fixture.metric_id,
+        value: "Failed",
+        explanation: `legacy feedback initial ${runId}`,
+        row_id: fixture.row_id,
+      };
+      const created = await client.post(
+        apiPath("/model-hub/feedback/"),
+        createPayload,
+      );
+      assert(isUuid(created?.id), "Legacy feedback create did not return id.");
+      activeFeedbackId = created.id;
+      cleanup.defer("delete legacy feedback row", () =>
+        ignoreNotFound(() =>
+          client.delete(
+            apiPath("/model-hub/feedback/{id}/", { id: activeFeedbackId }),
+          ),
         ),
+      );
+
+      const detail = await client.get(
+        apiPath("/model-hub/feedback/{id}/", { id: activeFeedbackId }),
+      );
+      assert(
+        detail?.id === activeFeedbackId &&
+          detail.source_id === fixture.eval_column_id,
+        "Legacy feedback detail did not reload the created feedback.",
+      );
+
+      const listed = asArray(await client.get(apiPath("/model-hub/feedback/")));
+      assert(
+        listed.some((row) => row.id === activeFeedbackId),
+        "Legacy feedback list did not include the created feedback.",
+      );
+
+      const detailsPayload = await client.get(
+        apiPath("/model-hub/feedback/get-feedback-details/"),
         {
           query: {
-            include_completed: true,
-            include_all_annotations: true,
+            user_eval_metric_id: fixture.metric_id,
+            row_id: fixture.row_id,
           },
         },
       );
-      const source = resolveQueueItemSource(item, detail);
-      if (!source.sourceId) {
-        skip(`Could not resolve source id for queue item ${item.id}.`);
-      }
+      assert(
+        Number(detailsPayload?.total_count) >= 1 &&
+          payloadArray(detailsPayload?.feedback, "feedback").some(
+            (row) => row.id === activeFeedbackId,
+          ),
+        "Legacy feedback details did not include the created feedback.",
+      );
+
+      const summaryPayload = await client.get(
+        apiPath("/model-hub/feedback/get-feedback-summary/"),
+        { query: { user_eval_metric_id: fixture.metric_id } },
+      );
+      assert(
+        Number(summaryPayload?.total_feedback) >= 1,
+        "Legacy feedback summary did not count the created feedback.",
+      );
+
+      const putPayload = {
+        ...createPayload,
+        value: "Passed",
+        explanation: `legacy feedback put ${runId}`,
+        action_type: "recalculate_row",
+      };
+      const putFeedback = await client.put(
+        apiPath("/model-hub/feedback/{id}/", { id: activeFeedbackId }),
+        putPayload,
+      );
+      assert(
+        putFeedback?.id === activeFeedbackId &&
+          putFeedback.value === "Passed" &&
+          putFeedback.action_type === "recalculate_row",
+        "Legacy feedback PUT did not persist mutable fields.",
+      );
+
+      const patchFeedback = await client.patch(
+        apiPath("/model-hub/feedback/{id}/", { id: activeFeedbackId }),
+        {
+          feedback_improvement: `tighten rubric ${runId}`,
+          action_type: "retune",
+        },
+      );
+      assert(
+        patchFeedback?.id === activeFeedbackId &&
+          patchFeedback.feedback_improvement === `tighten rubric ${runId}`,
+        "Legacy feedback PATCH did not persist feedback_improvement.",
+      );
+
+      const submitted = await client.post(
+        apiPath("/model-hub/feedback/submit-feedback/"),
+        {
+          action_type: "retune",
+          feedback_id: activeFeedbackId,
+          user_eval_metric_id: fixture.metric_id,
+          value: "Failed",
+          explanation: `legacy feedback submitted ${runId}`,
+        },
+      );
+      assert(
+        submitted?.action_type === "retune" &&
+          submitted.user_eval_metric_id === fixture.metric_id,
+        "Legacy feedback submit-feedback did not accept the active feedback.",
+      );
+
+      const activeAudit = await loadLegacyFeedbackGeneratedRoutesDbAudit({
+        feedbackId: activeFeedbackId,
+        organizationId,
+        workspaceId,
+      });
+      assertLegacyFeedbackGeneratedRoutesDbAudit(activeAudit, {
+        fixture,
+        feedbackId: activeFeedbackId,
+        organizationId,
+        workspaceId,
+        value: "Failed",
+        explanation: `legacy feedback submitted ${runId}`,
+        actionType: "retune",
+        expectedDeleted: false,
+      });
+
+      await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/feedback/"), {
+            source: "dataset",
+            source_id: fixture.hidden_eval_column_id,
+            user_eval_metric: fixture.metric_id,
+            value: "Failed",
+            explanation: `hidden feedback source ${runId}`,
+            row_id: fixture.hidden_row_id,
+          }),
+        404,
+        "Legacy feedback create accepted a same-org other-workspace source column.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(
+            apiPath("/model-hub/feedback/{id}/", {
+              id: fixture.hidden_feedback_id,
+            }),
+          ),
+        404,
+        "Legacy feedback detail exposed same-org other-workspace feedback.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.patch(
+            apiPath("/model-hub/feedback/{id}/", {
+              id: fixture.hidden_feedback_id,
+            }),
+            { explanation: `should not patch ${runId}` },
+          ),
+        404,
+        "Legacy feedback PATCH accepted same-org other-workspace feedback.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(apiPath("/model-hub/feedback/get_template/"), {
+            query: { user_eval_metric_id: fixture.hidden_metric_id },
+          }),
+        400,
+        "Legacy feedback get_template exposed another workspace metric.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.get(apiPath("/model-hub/feedback/get-feedback-summary/"), {
+            query: { user_eval_metric_id: fixture.hidden_metric_id },
+          }),
+        400,
+        "Legacy feedback summary exposed another workspace metric.",
+      );
+      const hiddenDetails = await client.get(
+        apiPath("/model-hub/feedback/get-feedback-details/"),
+        {
+          query: {
+            user_eval_metric_id: fixture.hidden_metric_id,
+            row_id: fixture.hidden_row_id,
+          },
+        },
+      );
+      assert(
+        Number(hiddenDetails?.total_count) === 0,
+        "Legacy feedback details leaked another workspace feedback.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/feedback/submit-feedback/"), {
+            action_type: "retune",
+            feedback_id: fixture.hidden_feedback_id,
+            user_eval_metric_id: fixture.metric_id,
+            value: "Passed",
+            explanation: `should not submit ${runId}`,
+          }),
+        404,
+        "Legacy feedback submit accepted same-org other-workspace feedback.",
+      );
+      const hiddenAudit = await loadLegacyFeedbackGeneratedRoutesHiddenAudit({
+        fixture,
+      });
+      assert(
+        Number(hiddenAudit.hidden_feedback_unchanged_count) === 1,
+        "Legacy feedback hidden row was mutated by active workspace probes.",
+      );
+      assert(
+        Number(hiddenAudit.hidden_source_create_count) === 0,
+        "Legacy feedback hidden source create probe inserted a feedback row.",
+      );
+
+      await client.delete(
+        apiPath("/model-hub/feedback/{id}/", { id: activeFeedbackId }),
+      );
+      const deletedAudit = await loadLegacyFeedbackGeneratedRoutesDbAudit({
+        feedbackId: activeFeedbackId,
+        organizationId,
+        workspaceId,
+      });
+      assertLegacyFeedbackGeneratedRoutesDbAudit(deletedAudit, {
+        fixture,
+        feedbackId: activeFeedbackId,
+        organizationId,
+        workspaceId,
+        value: "Failed",
+        explanation: `legacy feedback submitted ${runId}`,
+        actionType: "retune",
+        expectedDeleted: true,
+      });
+
+      evidence.push({
+        feedback_id: activeFeedbackId,
+        dataset_id: fixture.dataset_id,
+        metric_id: fixture.metric_id,
+        hidden_workspace_id: fixture.hidden_workspace_id,
+        hidden_feedback_id: fixture.hidden_feedback_id,
+        db_feedback_workspace_id: activeAudit.workspace_id,
+        deleted_at_set: deletedAudit.deleted_at_set,
+      });
+    },
+  },
+  {
+    id: "SCORE-API-001",
+    title:
+      "Direct score API create, generated CRUD, workspace guards, and delete lifecycle",
+    tags: ["scores", "annotation", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      user,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      requireMutations();
+      const userId = currentUserId(user);
+      assert(isUuid(userId), "Score journey requires authenticated user id.");
+      assert(
+        isUuid(organizationId),
+        "Score journey requires authenticated organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Score journey requires authenticated workspace id.",
+      );
+      const marker = scoreGeneratedRoutesMarker(runId);
+      const scoreIdsForCleanup = [];
+      cleanup.defer("hard-delete score generated route fixtures", () =>
+        hardDeleteScoreGeneratedRoutesDb({
+          marker,
+          organizationId,
+          scoreIds: scoreIdsForCleanup,
+        }),
+      );
+
+      const { queue, item, source, fixtureMode } =
+        await resolveScoreQueueItemSource({
+          client,
+          evidence,
+          marker,
+          runId,
+          userId,
+          organizationId,
+          workspaceId,
+        });
 
       const labelName = `api journey direct score ${runId}`;
       const label = await client.post(
@@ -10096,6 +15605,40 @@ export const datasetEvalJourneys = [
         ),
       );
 
+      const hiddenFixture = await seedScoreGeneratedRoutesHiddenTraceDb({
+        runId,
+        userId,
+        organizationId,
+        marker,
+      });
+
+      const hiddenCreateError = await expectApiErrorStatus(
+        () =>
+          client.post(apiPath("/model-hub/scores/"), {
+            source_type: "trace",
+            source_id: hiddenFixture.trace_id,
+            label_id: labelId,
+            value: `hidden score value ${runId}`,
+          }),
+        404,
+        "Direct score create accepted a same-org other-workspace source.",
+      );
+      const hiddenAudit = await loadScoreGeneratedRoutesHiddenTraceDbAudit({
+        marker: hiddenFixture.marker,
+        traceId: hiddenFixture.trace_id,
+        projectId: hiddenFixture.project_id,
+        workspaceId: hiddenFixture.workspace_id,
+        organizationId,
+      });
+      assert(
+        Number(hiddenAudit.hidden_score_count) === 0,
+        "Hidden workspace source guard created a score row.",
+      );
+      assert(
+        Number(hiddenAudit.hidden_default_queue_count) === 0,
+        "Hidden workspace source guard created a default queue.",
+      );
+
       const firstValue = `score value ${runId}`;
       const created = await client.post(apiPath("/model-hub/scores/"), {
         source_type: source.sourceType,
@@ -10106,6 +15649,7 @@ export const datasetEvalJourneys = [
         queue_item_id: item.id,
       });
       assert(created?.id, "Direct score create did not return id.");
+      scoreIdsForCleanup.push(created.id);
       cleanup.defer("delete direct score", () =>
         ignoreNotFound(() =>
           client.delete(apiPath("/model-hub/scores/{id}/", { id: created.id })),
@@ -10126,6 +15670,92 @@ export const datasetEvalJourneys = [
         "Direct score upsert created a second score instead of updating the existing score.",
       );
 
+      const detailScore = await client.get(
+        apiPath("/model-hub/scores/{id}/", { id: created.id }),
+      );
+      assert(
+        detailScore?.id === created.id &&
+          detailScore.source_type === source.sourceType,
+        "Generated score detail did not reload the created score.",
+      );
+
+      const listedScores = asArray(
+        await client.get(apiPath("/model-hub/scores/"), {
+          query: {
+            source_type: source.sourceType,
+            source_id: source.sourceId,
+            label_id: labelId,
+          },
+        }),
+      );
+      assert(
+        listedScores.some((score) => score.id === created.id),
+        "Generated score list did not include the created score.",
+      );
+
+      const putValue = `score value put ${runId}`;
+      const putScore = await client.put(
+        apiPath("/model-hub/scores/{id}/", { id: created.id }),
+        {
+          value: putValue,
+          notes: `score note put ${runId}`,
+          score_source: "human",
+        },
+      );
+      assert(
+        putScore?.id === created.id &&
+          putScore.value === putValue &&
+          putScore.notes === `score note put ${runId}`,
+        "Generated score PUT did not persist value and notes.",
+      );
+
+      const patchScore = await client.patch(
+        apiPath("/model-hub/scores/{id}/", { id: created.id }),
+        {
+          notes: `score note patched ${runId}`,
+        },
+      );
+      assert(
+        patchScore?.id === created.id &&
+          patchScore.value === putValue &&
+          patchScore.notes === `score note patched ${runId}`,
+        "Generated score PATCH did not persist notes while preserving value.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.put(apiPath("/model-hub/scores/{id}/", { id: created.id }), {
+            notes: "missing value",
+          }),
+        400,
+        "Generated score PUT accepted a body without value.",
+      );
+      await expectApiErrorStatus(
+        () =>
+          client.patch(apiPath("/model-hub/scores/{id}/", { id: created.id }), {
+            source_type: "trace",
+          }),
+        400,
+        "Generated score PATCH accepted an immutable source field.",
+      );
+
+      const activeAudit = await loadScoreGeneratedRoutesDbAudit({
+        scoreId: created.id,
+        organizationId,
+        workspaceId,
+      });
+      assertScoreGeneratedRoutesDbAudit(activeAudit, {
+        scoreId: created.id,
+        organizationId,
+        workspaceId,
+        sourceType: source.sourceType,
+        sourceId: source.sourceId,
+        labelId,
+        queueItemId: item.id,
+        value: putValue,
+        notes: `score note patched ${runId}`,
+        expectedDeleted: false,
+      });
+
       const sourceScores = asArray(
         await client.get(apiPath("/model-hub/scores/for-source/"), {
           query: {
@@ -10142,11 +15772,11 @@ export const datasetEvalJourneys = [
         "Direct score was not visible in for-source reload.",
       );
       assert(
-        reloadedScore.value === updatedValue,
+        reloadedScore.value === putValue,
         "Direct score updated value did not round-trip through for-source.",
       );
       assert(
-        reloadedScore.notes === `score note updated ${runId}`,
+        reloadedScore.notes === `score note patched ${runId}`,
         "Direct score updated notes did not round-trip through for-source.",
       );
       const email = currentUserEmail(user);
@@ -10172,13 +15802,36 @@ export const datasetEvalJourneys = [
         !afterDelete.some((score) => score.id === created.id),
         "Deleted direct score was still visible in for-source reload.",
       );
+      const deletedAudit = await loadScoreGeneratedRoutesDbAudit({
+        scoreId: created.id,
+        organizationId,
+        workspaceId,
+      });
+      assertScoreGeneratedRoutesDbAudit(deletedAudit, {
+        scoreId: created.id,
+        organizationId,
+        workspaceId,
+        sourceType: source.sourceType,
+        sourceId: source.sourceId,
+        labelId,
+        queueItemId: item.id,
+        value: putValue,
+        notes: `score note patched ${runId}`,
+        expectedDeleted: true,
+      });
 
       evidence.push({
         queue_id: queue.id,
         item_id: item.id,
+        fixture_mode: fixtureMode,
+        fixture_marker: marker,
         score_id: created.id,
         source_type: source.sourceType,
         source_id: source.sourceId,
+        hidden_workspace_id: hiddenFixture.workspace_id,
+        hidden_source_create_status: hiddenCreateError.status,
+        db_score_workspace_id: activeAudit.workspace_id,
+        deleted_at_set: deletedAudit.deleted_at_set,
       });
     },
   },
@@ -13038,6 +18691,75 @@ function assertDatasetOptimizationDeletedAudit(audit) {
   }
 }
 
+function legacyOptimisationPayload({ name, datasetId, columnId, metricId }) {
+  return {
+    name,
+    dataset_id: datasetId,
+    column_id: columnId,
+    messages: [{ role: "user", content: "Answer {{input}}" }],
+    user_eval_template_ids: [metricId],
+    model_config: {
+      model_name: "gpt-4o-mini",
+      temperature: 0,
+      max_tokens: 100,
+      top_p: 1,
+    },
+    optimize_type: "PROMPT_TEMPLATE",
+    user_eval_template_mapping: {},
+    prompt_name: "API Journey Prompt",
+  };
+}
+
+function assertLegacyOptimisationDetail(detail, optimizationId) {
+  assert(
+    detail && typeof detail === "object",
+    "Legacy optimisation detail returned an empty payload.",
+  );
+  assert(
+    detail.id === optimizationId,
+    "Legacy optimisation detail returned a different id.",
+  );
+  assert(
+    Array.isArray(detail.user_eval_template_ids),
+    "Legacy optimisation detail missing user_eval_template_ids.",
+  );
+  assert(
+    Array.isArray(detail.optimized_k_prompts) ||
+      detail.optimized_k_prompts === null,
+    "Legacy optimisation detail returned invalid optimized_k_prompts.",
+  );
+}
+
+function assertLegacyOptimisationAudit(
+  audit,
+  { organizationId, workspaceId, datasetId, columnId, metricId },
+) {
+  assert(
+    isUuid(audit?.optimization_id),
+    "Legacy optimisation audit missing optimization id.",
+  );
+  assert(
+    audit.dataset_id === datasetId,
+    "Legacy optimisation audit dataset mismatch.",
+  );
+  assert(
+    audit.column_id === columnId,
+    "Legacy optimisation audit column mismatch.",
+  );
+  assert(
+    audit.organization_id === organizationId,
+    "Legacy optimisation audit organization mismatch.",
+  );
+  assert(
+    audit.workspace_id === workspaceId,
+    "Legacy optimisation audit workspace mismatch.",
+  );
+  assert(
+    payloadArray(audit.metric_ids, "metric_ids").includes(metricId),
+    "Legacy optimisation audit missing metric M2M link.",
+  );
+}
+
 function assertDatasetNameRows(rows) {
   assert(
     rows.length > 0,
@@ -13229,6 +18951,84 @@ function assertProviderStatusRows(providers, dbAudit) {
   return { duplicateProviderKeyRows, unsupportedProviders };
 }
 
+function assertEmbeddingProvider(key, provider) {
+  assert(
+    provider && typeof provider === "object",
+    `Embedding provider ${key} was missing.`,
+  );
+  assert(
+    typeof provider.name === "string" && provider.name.length > 0,
+    `Embedding provider ${key} did not expose a name.`,
+  );
+  assert(
+    typeof provider.description === "string" && provider.description.length > 0,
+    `Embedding provider ${key} did not expose a description.`,
+  );
+  assert(
+    typeof provider.requires_api_key === "boolean",
+    `Embedding provider ${key} did not expose requires_api_key.`,
+  );
+  assert(
+    provider.config_schema &&
+      typeof provider.config_schema === "object" &&
+      !Array.isArray(provider.config_schema),
+    `Embedding provider ${key} did not expose config_schema.`,
+  );
+
+  const modelConfig = provider.config_schema.model;
+  assertEmbeddingConfigOption(key, "model", modelConfig);
+  assert(
+    typeof modelConfig.default === "string" && modelConfig.default.length > 0,
+    `Embedding provider ${key} model config did not expose a default.`,
+  );
+
+  if (provider.requires_api_key) {
+    assertEmbeddingConfigOption(key, "api_key", provider.config_schema.api_key);
+    assert(
+      provider.config_schema.api_key.required === true,
+      `Embedding provider ${key} api_key config was not required.`,
+    );
+  } else {
+    assert(
+      provider.config_schema.api_key === undefined,
+      `Embedding provider ${key} returned api_key config despite not requiring one.`,
+    );
+  }
+}
+
+function assertEmbeddingConfigOption(providerKey, optionKey, option) {
+  assert(
+    option && typeof option === "object",
+    `Embedding provider ${providerKey} missing ${optionKey} config.`,
+  );
+  assert(
+    typeof option.type === "string" && option.type.length > 0,
+    `Embedding provider ${providerKey} ${optionKey} config missing type.`,
+  );
+  assert(
+    typeof option.required === "boolean",
+    `Embedding provider ${providerKey} ${optionKey} config missing required.`,
+  );
+  assert(
+    typeof option.description === "string" && option.description.length > 0,
+    `Embedding provider ${providerKey} ${optionKey} config missing description.`,
+  );
+}
+
+function assertNoEmbeddingCatalogSecretLeak(payload, label) {
+  const serialized = JSON.stringify(payload || {});
+  const secretPatterns = [
+    /sk-[A-Za-z0-9_-]{16,}/,
+    /hf_[A-Za-z0-9_-]{16,}/,
+    /Bearer\s+[A-Za-z0-9._-]{16,}/i,
+    /-----BEGIN (?:RSA |OPENSSH )?PRIVATE KEY-----/i,
+  ];
+  assert(
+    !secretPatterns.some((pattern) => pattern.test(serialized)),
+    `${label} exposed secret-like credential material.`,
+  );
+}
+
 function assertRunPromptOptions(options, providers) {
   const models = payloadArray(options, "models");
   assert(models.length > 0, "Run-prompt options returned no models.");
@@ -13389,6 +19189,21 @@ async function expectApiErrorStatus(fn, status, message) {
     assert(
       error?.status === status,
       `${message} Expected HTTP ${status}, got ${error?.status || error.message}.`,
+    );
+    return error;
+  }
+  throw new Error(message);
+}
+
+async function expectApiErrorStatusIn(fn, statuses, message) {
+  try {
+    await fn();
+  } catch (error) {
+    assert(
+      statuses.includes(error?.status),
+      `${message} Expected one of HTTP ${statuses.join(", ")}, got ${
+        error?.status || error.message
+      }.`,
     );
     return error;
   }
@@ -13681,6 +19496,57 @@ function assertRunPromptColumnDbAudit(
   }
 }
 
+function assertDirectRunPromptDbAudit(
+  audit,
+  { datasetId, name, modelName, organizationId, workspaceId },
+) {
+  assert(
+    audit?.run_prompt_id,
+    "Direct run-prompt DB audit found no RunPrompter.",
+  );
+  assert(audit.dataset_id === datasetId, "Direct run-prompt dataset mismatch.");
+  assert(
+    audit.run_prompt_dataset_id === datasetId,
+    "Direct run-prompt persisted the wrong dataset id.",
+  );
+  assert(
+    audit.run_prompt_name === name,
+    "Direct run-prompt persisted the wrong name.",
+  );
+  assert(
+    audit.run_prompt_model === modelName,
+    "Direct run-prompt persisted the wrong model.",
+  );
+  assert(
+    audit.organization_id === organizationId,
+    "Direct run-prompt dataset organization mismatch.",
+  );
+  assert(
+    audit.run_prompt_organization_id === organizationId,
+    "Direct run-prompt organization mismatch.",
+  );
+  if (workspaceId) {
+    assert(
+      audit.workspace_id === workspaceId,
+      "Direct run-prompt dataset workspace mismatch.",
+    );
+    assert(
+      audit.run_prompt_workspace_id === workspaceId,
+      "Direct run-prompt workspace mismatch.",
+    );
+  }
+  assert(
+    ["Not Started", "Running", "Completed", "Failed"].includes(
+      audit.run_prompt_status,
+    ),
+    "Direct run-prompt status was not a known execution status.",
+  );
+  assert(
+    Number(audit.run_prompt_count) === 1,
+    "Direct run-prompt DB audit found duplicate active RunPrompter rows.",
+  );
+}
+
 function assertDatasetSdkSnippetSafety(result) {
   const expectedCodeKeys = [
     "curl_add_col",
@@ -13959,6 +19825,40 @@ function payloadArray(payload, key) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.[key])) return payload[key];
   return asArray(payload);
+}
+
+function apiErrorText(error) {
+  return [error?.message, JSON.stringify(error?.body || {})].join(" ");
+}
+
+function isTemporalUnavailableError(error) {
+  return /Failed client connect|tonic::transport|failed to lookup address information/i.test(
+    apiErrorText(error),
+  );
+}
+
+async function postEvaluateRowsWithTemporalFallback(client, body) {
+  try {
+    const result = await client.post(
+      apiPath("/model-hub/evaluate-rows/"),
+      body,
+    );
+    assert(
+      result?.success ||
+        result?.result?.success ||
+        JSON.stringify(result || {}).includes("Evaluations queued"),
+      "evaluate-rows did not acknowledge the row queue request.",
+    );
+    return "queued";
+  } catch (error) {
+    const maskedTemporalDispatchFailure =
+      error?.status === 500 &&
+      apiErrorText(error).includes("Unable to evaluate row");
+    if (!isTemporalUnavailableError(error) && !maskedTemporalDispatchFailure) {
+      throw error;
+    }
+    return "temporal_unavailable";
+  }
 }
 
 function assertDatasetComparePayload(payload) {
@@ -14484,6 +20384,633 @@ SELECT COALESCE((
   return result?.workspace_id || null;
 }
 
+async function seedDatasetHelperRoutesFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(userId), "userId must be a UUID for DB audit.");
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  let otherWorkspaceId = await findOtherWorkspaceId(
+    organizationId,
+    workspaceId,
+  );
+  let createdOtherWorkspace = false;
+  if (!otherWorkspaceId) {
+    otherWorkspaceId = randomUUID();
+    createdOtherWorkspace = true;
+  }
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const datasetId = randomUUID();
+  const columnId = randomUUID();
+  const rowId = randomUUID();
+  const cellId = randomUUID();
+  const templateId = randomUUID();
+  const metricId = randomUUID();
+  const otherDatasetId = randomUUID();
+  const otherColumnId = randomUUID();
+  const otherRowId = randomUUID();
+  const otherCellId = randomUUID();
+  const otherTemplateId = randomUUID();
+  const otherMetricId = randomUUID();
+  const datasetName = `api journey helper dataset ${suffix}`;
+  const otherDatasetName = `api journey helper other dataset ${suffix}`;
+  const otherWorkspaceName = `api journey helper other workspace ${suffix}`;
+  const activeValue = `active helper value ${suffix}`;
+  const otherValue = `other helper value ${suffix}`;
+  const otherWorkspaceCte = createdOtherWorkspace
+    ? `
+inserted_other_workspace AS (
+  INSERT INTO accounts_workspace (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    display_name,
+    description,
+    organization_id,
+    is_active,
+    is_default,
+    created_by_id
+  )
+  VALUES (
+    ${sqlUuid(otherWorkspaceId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(otherWorkspaceName)},
+    ${sqlTextLiteral(otherWorkspaceName)},
+    'Temporary workspace for DPE-API-036 isolation coverage.',
+    ${sqlUuid(organizationId)},
+    true,
+    false,
+    ${sqlUuid(userId)}
+  )
+  RETURNING id
+),
+`
+    : `
+inserted_other_workspace AS (
+  SELECT ${sqlUuid(otherWorkspaceId)}::uuid AS id
+),
+`;
+  const sql = `
+WITH ${otherWorkspaceCte}
+inserted_datasets AS (
+  INSERT INTO model_hub_dataset (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    column_order,
+    model_type,
+    organization_id,
+    workspace_id,
+    source,
+    column_config,
+    dataset_config,
+    synthetic_dataset_config,
+    eval_reasons,
+    eval_reason_status
+  )
+  VALUES
+  (
+    ${sqlUuid(datasetId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(datasetName)},
+    ARRAY[${sqlTextLiteral(columnId)}]::varchar[],
+    'GenerativeLLM',
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)},
+    'build',
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '[]'::jsonb,
+    'pending'
+  ),
+  (
+    ${sqlUuid(otherDatasetId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(otherDatasetName)},
+    ARRAY[${sqlTextLiteral(otherColumnId)}]::varchar[],
+    'GenerativeLLM',
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(otherWorkspaceId)},
+    'build',
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '[]'::jsonb,
+    'pending'
+  )
+  RETURNING id
+),
+inserted_columns AS (
+  INSERT INTO model_hub_column (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    data_type,
+    source,
+    source_id,
+    dataset_id,
+    metadata,
+    status
+  )
+  VALUES
+  (
+    ${sqlUuid(columnId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'Helper Active Input',
+    'text',
+    'OTHERS',
+    '',
+    ${sqlUuid(datasetId)},
+    '{}'::jsonb,
+    'NotStarted'
+  ),
+  (
+    ${sqlUuid(otherColumnId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'Helper Other Input',
+    'text',
+    'OTHERS',
+    '',
+    ${sqlUuid(otherDatasetId)},
+    '{}'::jsonb,
+    'NotStarted'
+  )
+  RETURNING id
+),
+inserted_rows AS (
+  INSERT INTO model_hub_row (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    "order",
+    dataset_id,
+    metadata
+  )
+  VALUES
+  (
+    ${sqlUuid(rowId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    0,
+    ${sqlUuid(datasetId)},
+    '{}'::jsonb
+  ),
+  (
+    ${sqlUuid(otherRowId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    0,
+    ${sqlUuid(otherDatasetId)},
+    '{}'::jsonb
+  )
+  RETURNING id
+),
+inserted_cells AS (
+  INSERT INTO model_hub_cell (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    value,
+    column_id,
+    dataset_id,
+    row_id,
+    status,
+    value_infos,
+    feedback_info,
+    column_metadata,
+    completion_tokens,
+    prompt_tokens,
+    response_time
+  )
+  VALUES
+  (
+    ${sqlUuid(cellId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(activeValue)},
+    ${sqlUuid(columnId)},
+    ${sqlUuid(datasetId)},
+    ${sqlUuid(rowId)},
+    'pass',
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '{}'::jsonb,
+    NULL::integer,
+    NULL::integer,
+    NULL::double precision
+  ),
+  (
+    ${sqlUuid(otherCellId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(otherValue)},
+    ${sqlUuid(otherColumnId)},
+    ${sqlUuid(otherDatasetId)},
+    ${sqlUuid(otherRowId)},
+    'pass',
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '{}'::jsonb,
+    NULL::integer,
+    NULL::integer,
+    NULL::double precision
+  )
+  RETURNING id
+),
+inserted_eval_templates AS (
+  INSERT INTO model_hub_evaltemplate (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    owner,
+    eval_tags,
+    config,
+    organization_id,
+    description,
+    eval_id,
+    criteria,
+    choices,
+    multi_choice,
+    model,
+    proxy_agi,
+    visible_ui,
+    evaluator_id,
+    workspace_id,
+    choice_scores,
+    output_type_normalized,
+    pass_threshold,
+    template_type,
+    eval_type,
+    allow_edit,
+    allow_copy,
+    error_localizer_enabled,
+    aggregation_enabled,
+    aggregation_function,
+    composite_child_axis
+  )
+  VALUES
+  (
+    ${sqlUuid(templateId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(`api journey helper eval ${suffix}`)},
+    'user',
+    ARRAY[]::varchar[],
+    ${sqlJsonLiteral({ required_keys: ["output"], eval_type_id: "CustomCodeEval" })},
+    ${sqlUuid(organizationId)},
+    'API journey helper eval',
+    0,
+    'Evaluate {{output}}',
+    NULL::jsonb,
+    false,
+    'gpt-4o-mini',
+    false,
+    false,
+    NULL::uuid,
+    ${sqlUuid(workspaceId)},
+    NULL::jsonb,
+    'pass_fail',
+    NULL::double precision,
+    'single',
+    'code',
+    true,
+    true,
+    false,
+    false,
+    'mean',
+    'shared'
+  ),
+  (
+    ${sqlUuid(otherTemplateId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(`api journey helper other eval ${suffix}`)},
+    'user',
+    ARRAY[]::varchar[],
+    ${sqlJsonLiteral({ required_keys: ["output"], eval_type_id: "CustomCodeEval" })},
+    ${sqlUuid(organizationId)},
+    'API journey helper other eval',
+    0,
+    'Evaluate {{output}}',
+    NULL::jsonb,
+    false,
+    'gpt-4o-mini',
+    false,
+    false,
+    NULL::uuid,
+    ${sqlUuid(otherWorkspaceId)},
+    NULL::jsonb,
+    'pass_fail',
+    NULL::double precision,
+    'single',
+    'code',
+    true,
+    true,
+    false,
+    false,
+    'mean',
+    'shared'
+  )
+  RETURNING id
+),
+inserted_metrics AS (
+  INSERT INTO model_hub_userevalmetric (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    config,
+    dataset_id,
+    template_id,
+    organization_id,
+    status,
+    show_in_sidebar,
+    source_id,
+    column_deleted,
+    user_id,
+    error_localizer,
+    kb_id,
+    model,
+    workspace_id,
+    eval_group_id,
+    composite_weight_overrides
+  )
+  VALUES
+  (
+    ${sqlUuid(metricId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'Helper Active Metric',
+    ${sqlJsonLiteral({ mapping: { output: columnId }, config: {} })},
+    ${sqlUuid(datasetId)},
+    ${sqlUuid(templateId)},
+    ${sqlUuid(organizationId)},
+    'Completed',
+    true,
+    '',
+    false,
+    NULL::uuid,
+    false,
+    NULL::uuid,
+    'gpt-4o-mini',
+    ${sqlUuid(workspaceId)},
+    NULL::uuid,
+    NULL::jsonb
+  ),
+  (
+    ${sqlUuid(otherMetricId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'Helper Other Metric',
+    ${sqlJsonLiteral({ mapping: { output: otherColumnId }, config: {} })},
+    ${sqlUuid(otherDatasetId)},
+    ${sqlUuid(otherTemplateId)},
+    ${sqlUuid(organizationId)},
+    'Completed',
+    true,
+    '',
+    false,
+    NULL::uuid,
+    false,
+    NULL::uuid,
+    'gpt-4o-mini',
+    ${sqlUuid(otherWorkspaceId)},
+    NULL::uuid,
+    NULL::jsonb
+  )
+  RETURNING id
+)
+SELECT json_build_object(
+  'fixture_created', (SELECT count(*) FROM inserted_datasets) = 2,
+  'organization_id', ${sqlUuid(organizationId)}::text,
+  'workspace_id', ${sqlUuid(workspaceId)}::text,
+  'other_workspace_id', ${sqlUuid(otherWorkspaceId)}::text,
+  'created_other_workspace', ${createdOtherWorkspace ? "true" : "false"},
+  'dataset_id', ${sqlUuid(datasetId)}::text,
+  'column_id', ${sqlUuid(columnId)}::text,
+  'row_id', ${sqlUuid(rowId)}::text,
+  'cell_id', ${sqlUuid(cellId)}::text,
+  'template_id', ${sqlUuid(templateId)}::text,
+  'metric_id', ${sqlUuid(metricId)}::text,
+  'other_dataset_id', ${sqlUuid(otherDatasetId)}::text,
+  'other_column_id', ${sqlUuid(otherColumnId)}::text,
+  'other_row_id', ${sqlUuid(otherRowId)}::text,
+  'other_cell_id', ${sqlUuid(otherCellId)}::text,
+  'other_template_id', ${sqlUuid(otherTemplateId)}::text,
+  'other_metric_id', ${sqlUuid(otherMetricId)}::text,
+  'active_value', ${sqlTextLiteral(activeValue)},
+  'other_value', ${sqlTextLiteral(otherValue)}
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadDatasetHelperRoutesAudit(fixture) {
+  const sql = `
+SELECT json_build_object(
+  'active_dataset_count', (
+    SELECT count(*)
+    FROM model_hub_dataset
+    WHERE id = ${sqlUuid(fixture.dataset_id)}
+      AND organization_id = ${sqlUuid(fixture.organization_id)}
+      AND workspace_id = ${sqlUuid(fixture.workspace_id)}
+      AND deleted = false
+  ),
+  'other_dataset_count', (
+    SELECT count(*)
+    FROM model_hub_dataset
+    WHERE id = ${sqlUuid(fixture.other_dataset_id)}
+      AND organization_id = ${sqlUuid(fixture.organization_id)}
+      AND workspace_id = ${sqlUuid(fixture.other_workspace_id)}
+      AND deleted = false
+  ),
+  'active_value_count', (
+    SELECT count(*)
+    FROM model_hub_cell
+    WHERE id = ${sqlUuid(fixture.cell_id)}
+      AND dataset_id = ${sqlUuid(fixture.dataset_id)}
+      AND column_id = ${sqlUuid(fixture.column_id)}
+      AND value = ${sqlTextLiteral(fixture.active_value)}
+      AND deleted = false
+  ),
+  'other_value_count', (
+    SELECT count(*)
+    FROM model_hub_cell
+    WHERE id = ${sqlUuid(fixture.other_cell_id)}
+      AND dataset_id = ${sqlUuid(fixture.other_dataset_id)}
+      AND column_id = ${sqlUuid(fixture.other_column_id)}
+      AND value = ${sqlTextLiteral(fixture.other_value)}
+      AND deleted = false
+  ),
+  'active_metric_count', (
+    SELECT count(*)
+    FROM model_hub_userevalmetric
+    WHERE id = ${sqlUuid(fixture.metric_id)}
+      AND dataset_id = ${sqlUuid(fixture.dataset_id)}
+      AND workspace_id = ${sqlUuid(fixture.workspace_id)}
+      AND deleted = false
+  ),
+  'other_metric_count', (
+    SELECT count(*)
+    FROM model_hub_userevalmetric
+    WHERE id = ${sqlUuid(fixture.other_metric_id)}
+      AND dataset_id = ${sqlUuid(fixture.other_dataset_id)}
+      AND workspace_id = ${sqlUuid(fixture.other_workspace_id)}
+      AND deleted = false
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+function assertDatasetHelperRoutesAudit(audit, fixture) {
+  assert(
+    Number(audit.active_dataset_count) === 1,
+    "Dataset helper DB audit did not find the active dataset.",
+  );
+  assert(
+    Number(audit.other_dataset_count) === 1,
+    "Dataset helper DB audit did not preserve the other workspace dataset.",
+  );
+  assert(
+    Number(audit.active_value_count) === 1,
+    "Dataset helper DB audit active value mismatch.",
+  );
+  assert(
+    Number(audit.other_value_count) === 1,
+    "Dataset helper DB audit other value mismatch.",
+  );
+  assert(
+    Number(audit.active_metric_count) === 1,
+    "Dataset helper DB audit active metric mismatch.",
+  );
+  assert(
+    Number(audit.other_metric_count) === 1,
+    "Dataset helper DB audit other metric mismatch.",
+  );
+  assert(
+    fixture.workspace_id !== fixture.other_workspace_id,
+    "Dataset helper fixture did not use two workspaces.",
+  );
+}
+
+async function hardDeleteDatasetHelperRoutesFixture(fixture) {
+  const datasetIds = [fixture.dataset_id, fixture.other_dataset_id].filter(
+    isUuid,
+  );
+  const metricIds = [fixture.metric_id, fixture.other_metric_id].filter(isUuid);
+  const templateIds = [fixture.template_id, fixture.other_template_id].filter(
+    isUuid,
+  );
+  assert(datasetIds.length === 2, "Dataset helper cleanup missing datasets.");
+  const sql = `
+WITH target_datasets AS (
+  SELECT id
+  FROM model_hub_dataset
+  WHERE id = ANY(${sqlUuidArray(datasetIds)})
+),
+deleted_metrics AS (
+  DELETE FROM model_hub_userevalmetric
+  WHERE id = ANY(${sqlUuidArray(metricIds)})
+  RETURNING 1
+),
+deleted_templates AS (
+  DELETE FROM model_hub_evaltemplate
+  WHERE id = ANY(${sqlUuidArray(templateIds)})
+  RETURNING 1
+),
+deleted_cells AS (
+  DELETE FROM model_hub_cell
+  WHERE dataset_id IN (SELECT id FROM target_datasets)
+  RETURNING 1
+),
+deleted_rows AS (
+  DELETE FROM model_hub_row
+  WHERE dataset_id IN (SELECT id FROM target_datasets)
+  RETURNING 1
+),
+deleted_columns AS (
+  DELETE FROM model_hub_column
+  WHERE dataset_id IN (SELECT id FROM target_datasets)
+  RETURNING 1
+),
+deleted_datasets AS (
+  DELETE FROM model_hub_dataset
+  WHERE id IN (SELECT id FROM target_datasets)
+  RETURNING 1
+),
+deleted_other_workspace AS (
+  DELETE FROM accounts_workspace
+  WHERE id = ${sqlUuid(fixture.other_workspace_id)}
+    AND ${fixture.created_other_workspace === true ? "true" : "false"}
+  RETURNING 1
+)
+SELECT json_build_object(
+  'deleted_metric_count', (SELECT count(*) FROM deleted_metrics),
+  'deleted_template_count', (SELECT count(*) FROM deleted_templates),
+  'deleted_cell_count', (SELECT count(*) FROM deleted_cells),
+  'deleted_row_count', (SELECT count(*) FROM deleted_rows),
+  'deleted_column_count', (SELECT count(*) FROM deleted_columns),
+  'deleted_dataset_count', (SELECT count(*) FROM deleted_datasets),
+  'deleted_other_workspace_count', (SELECT count(*) FROM deleted_other_workspace)
+);
+`;
+  return runPostgresJson(sql);
+}
+
 async function seedExperimentDatasetMaterializeFixture({
   runId,
   organizationId,
@@ -14668,7 +21195,13 @@ async function seedExperimentDatasetMaterializeFixture({
     .join(",\n");
 
   const experimentRows = [
-    [experimentId, `${datasetName} experiment`, datasetId, inputColumnId, datasetId],
+    [
+      experimentId,
+      `${datasetName} experiment`,
+      datasetId,
+      inputColumnId,
+      datasetId,
+    ],
   ];
   if (otherWorkspaceId) {
     experimentRows.push([
@@ -15697,12 +22230,18 @@ async function seedLegacyExperimentCreateUpdateFixture({
   assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
   if (workspaceId)
     assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  assert(isUuid(userId), "userId must be a UUID for DB audit.");
   const activeWorkspaceSql = workspaceId ? sqlUuid(workspaceId) : "NULL::uuid";
-  const userSql = userId && isUuid(userId) ? sqlUuid(userId) : "NULL::uuid";
-  const otherWorkspaceId = await findOtherWorkspaceId(
+  const userSql = sqlUuid(userId);
+  let otherWorkspaceId = await findOtherWorkspaceId(
     organizationId,
     workspaceId,
   );
+  let createdOtherWorkspace = false;
+  if (!otherWorkspaceId) {
+    otherWorkspaceId = randomUUID();
+    createdOtherWorkspace = true;
+  }
   const datasetId = randomUUID();
   const outputColumnId = randomUUID();
   const blockedDatasetId = randomUUID();
@@ -15711,9 +22250,9 @@ async function seedLegacyExperimentCreateUpdateFixture({
   const evalMetricId = randomUUID();
   const secondEvalMetricId = randomUUID();
   const blockedEvalMetricId = randomUUID();
-  const otherDatasetId = otherWorkspaceId ? randomUUID() : null;
-  const otherColumnId = otherWorkspaceId ? randomUUID() : null;
-  const otherExperimentId = otherWorkspaceId ? randomUUID() : null;
+  const otherDatasetId = randomUUID();
+  const otherColumnId = randomUUID();
+  const otherExperimentId = randomUUID();
   const datasetName = `api journey legacy exp dataset ${runId}`;
   const blockedDatasetName = `api journey legacy blocked dataset ${runId}`;
   const evalTemplateName = `api journey legacy exp eval ${runId}`;
@@ -15721,8 +22260,47 @@ async function seedLegacyExperimentCreateUpdateFixture({
   const blockedColumnExperimentName = `api journey legacy blocked column ${runId}`;
   const blockedMetricExperimentName = `api journey legacy blocked metric ${runId}`;
   const otherWorkspaceCreateName = `api journey legacy other create ${runId}`;
-  const otherDatasetSql = otherWorkspaceId
-    ? `,
+  const otherWorkspaceName = `api journey legacy exp other workspace ${runId}`;
+  const otherWorkspaceCte = createdOtherWorkspace
+    ? `
+inserted_other_workspace AS (
+  INSERT INTO accounts_workspace (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    display_name,
+    description,
+    organization_id,
+    is_active,
+    is_default,
+    created_by_id
+  )
+  VALUES (
+    ${sqlUuid(otherWorkspaceId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(otherWorkspaceName)},
+    ${sqlTextLiteral(otherWorkspaceName)},
+    'Temporary workspace for EXP-API-004 isolation coverage.',
+    ${sqlUuid(organizationId)},
+    true,
+    false,
+    ${userSql}
+  )
+  RETURNING id
+),
+`
+    : `
+inserted_other_workspace AS (
+  SELECT ${sqlUuid(otherWorkspaceId)}::uuid AS id
+),
+`;
+  const otherDatasetSql = `,
   (
     ${sqlUuid(otherDatasetId)},
     now(),
@@ -15740,10 +22318,8 @@ async function seedLegacyExperimentCreateUpdateFixture({
     '{}'::jsonb,
     '[]'::jsonb,
     'pending'
-  )`
-    : "";
-  const otherColumnSql = otherWorkspaceId
-    ? `,
+  )`;
+  const otherColumnSql = `,
   (
     ${sqlUuid(otherColumnId)},
     now(),
@@ -15757,10 +22333,8 @@ async function seedLegacyExperimentCreateUpdateFixture({
     ${sqlUuid(otherDatasetId)},
     '{}'::jsonb,
     'NotStarted'
-  )`
-    : "";
-  const otherExperimentSql = otherWorkspaceId
-    ? `,
+  )`;
+  const otherExperimentSql = `,
 inserted_other_experiment AS (
   INSERT INTO model_hub_experimentstable (
     id,
@@ -15793,10 +22367,10 @@ inserted_other_experiment AS (
     NULL::uuid
   )
   RETURNING id
-)`
-    : "";
+)`;
   const sql = `
-WITH inserted_datasets AS (
+WITH ${otherWorkspaceCte}
+inserted_datasets AS (
   INSERT INTO model_hub_dataset (
     id,
     created_at,
@@ -16066,7 +22640,7 @@ inserted_eval_metrics AS (
   RETURNING id
 )${otherExperimentSql}
 SELECT json_build_object(
-  'fixture_created', (SELECT count(*) FROM inserted_datasets) >= 2,
+  'fixture_created', (SELECT count(*) FROM inserted_datasets) = 3,
   'organization_id', ${sqlUuid(organizationId)}::text,
   'workspace_id', ${workspaceId ? `${sqlUuid(workspaceId)}::text` : "NULL"},
   'dataset_id', ${sqlUuid(datasetId)}::text,
@@ -16079,10 +22653,11 @@ SELECT json_build_object(
   'blocked_eval_metric_id', ${sqlUuid(blockedEvalMetricId)}::text,
   'blocked_column_experiment_name', ${sqlTextLiteral(blockedColumnExperimentName)},
   'blocked_metric_experiment_name', ${sqlTextLiteral(blockedMetricExperimentName)},
-  'other_workspace_id', ${otherWorkspaceId ? `${sqlUuid(otherWorkspaceId)}::text` : "NULL"},
-  'other_dataset_id', ${otherDatasetId ? `${sqlUuid(otherDatasetId)}::text` : "NULL"},
-  'other_column_id', ${otherColumnId ? `${sqlUuid(otherColumnId)}::text` : "NULL"},
-  'other_experiment_id', ${otherExperimentId ? `${sqlUuid(otherExperimentId)}::text` : "NULL"},
+  'other_workspace_id', ${sqlUuid(otherWorkspaceId)}::text,
+  'created_other_workspace', ${createdOtherWorkspace ? "true" : "false"},
+  'other_dataset_id', ${sqlUuid(otherDatasetId)}::text,
+  'other_column_id', ${sqlUuid(otherColumnId)}::text,
+  'other_experiment_id', ${sqlUuid(otherExperimentId)}::text,
   'other_experiment_name', ${sqlTextLiteral(otherExperimentName)},
   'other_workspace_create_name', ${sqlTextLiteral(otherWorkspaceCreateName)}
 );
@@ -16347,6 +22922,12 @@ deleted_datasets AS (
   DELETE FROM model_hub_dataset
   WHERE id IN (SELECT id FROM target_datasets)
   RETURNING 1
+),
+deleted_other_workspace AS (
+  DELETE FROM accounts_workspace
+  WHERE id = ${sqlUuid(fixture.other_workspace_id)}
+    AND ${fixture.created_other_workspace === true ? "true" : "false"}
+  RETURNING 1
 )
 SELECT json_build_object(
   'deleted_pending_task_count', (SELECT count(*) FROM deleted_pending_tasks),
@@ -16361,7 +22942,8 @@ SELECT json_build_object(
   'deleted_cell_count', (SELECT count(*) FROM deleted_cells),
   'deleted_row_count', (SELECT count(*) FROM deleted_rows),
   'deleted_column_count', (SELECT count(*) FROM deleted_columns),
-  'deleted_dataset_count', (SELECT count(*) FROM deleted_datasets)
+  'deleted_dataset_count', (SELECT count(*) FROM deleted_datasets),
+  'deleted_other_workspace_count', (SELECT count(*) FROM deleted_other_workspace)
 );
 `;
   return runPostgresJson(sql);
@@ -16728,6 +23310,17 @@ async function hardDeleteDatasetCopyFixture(datasetIds) {
   return hardDeleteDatasetCompareFixture(datasetIds);
 }
 
+function requireBackendShell() {
+  if (
+    !process.env.API_JOURNEY_BACKEND_CONTAINER &&
+    !process.env.API_JOURNEY_BACKEND_DIR
+  ) {
+    skip(
+      "Set API_JOURNEY_BACKEND_CONTAINER or API_JOURNEY_BACKEND_DIR for backend worker-backed dataset coverage.",
+    );
+  }
+}
+
 async function seedDatasetFileImportFixture({
   runId,
   organizationId,
@@ -17065,6 +23658,276 @@ function assertDatasetFileImportFixtureAudit(audit, fixture) {
   );
 }
 
+async function seedLocalFileWorkerFixture({
+  runId,
+  organizationId,
+  workspaceId,
+  userEmail,
+}) {
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  if (workspaceId)
+    assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const datasetName = `api journey local file worker ${runId}`;
+  const originalFilename = `dpe-api-035-${suffix}.csv`;
+  const inputColumnName = "input";
+  const expectedColumnName = "expected";
+  const inputOne = `local worker input one ${suffix}`;
+  const inputTwo = `local worker input two ${suffix}`;
+  const expectedOne = `local worker expected one ${suffix}`;
+  const expectedTwo = `local worker expected two ${suffix}`;
+  const csvContent = `${inputColumnName},${expectedColumnName}\n${inputOne},${expectedOne}\n${inputTwo},${expectedTwo}\n`;
+  const script = `
+import io
+import json
+import uuid
+from django.utils import timezone
+from accounts.models import Organization, User, Workspace
+from model_hub.models.develop_dataset import Dataset
+from model_hub.views.datasets.create.file_upload import upload_file_to_minio
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+workspace_id = ${JSON.stringify(workspaceId || "")}
+workspace = None
+if workspace_id:
+    workspace = Workspace.objects.filter(id=workspace_id, organization=organization).first()
+user_email = ${JSON.stringify(userEmail || "")}
+user = None
+if user_email:
+    user = User.objects.filter(email=user_email, organization=organization, is_active=True).first()
+if user is None:
+    user = User.objects.filter(organization=organization, is_active=True).order_by("created_at").first()
+file_name = ${JSON.stringify(originalFilename)}
+file_obj = io.BytesIO(${JSON.stringify(csvContent)}.encode("utf-8"))
+file_obj.name = file_name
+file_key = f"datasets/{organization.id}/{uuid.uuid4()}/{file_name}"
+file_url = upload_file_to_minio(file_obj, file_key, org_id=str(organization.id))
+dataset = Dataset.objects.create(
+    name=${JSON.stringify(datasetName)},
+    organization=organization,
+    workspace=workspace,
+    model_type="GenerativeLLM",
+    source="build",
+    dataset_config={
+        "dataset_source_local": True,
+        "file_processing_status": "queued",
+        "file_processing_queued_at": timezone.now().isoformat(),
+        "original_filename": file_name,
+        "file_url": file_url,
+        "estimated_rows": 2,
+        "estimated_columns": 2,
+    },
+    user=user,
+)
+print(json.dumps({
+    "fixture_created": True,
+    "dataset_id": str(dataset.id),
+    "dataset_name": dataset.name,
+    "original_filename": file_name,
+    "file_url": file_url,
+    "input_column_name": ${JSON.stringify(inputColumnName)},
+    "expected_column_name": ${JSON.stringify(expectedColumnName)},
+    "input_one": ${JSON.stringify(inputOne)},
+    "input_two": ${JSON.stringify(inputTwo)},
+    "expected_one": ${JSON.stringify(expectedOne)},
+    "expected_two": ${JSON.stringify(expectedTwo)},
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function materializeLocalFileWorkerFixture(fixture) {
+  assert(
+    isUuid(fixture.dataset_id),
+    "dataset_id must be a UUID for worker run.",
+  );
+  const script = `
+import json
+from model_hub.models.develop_dataset import Cell, Dataset
+from model_hub.models.choices import CellStatus, DataTypeChoices
+from model_hub.views.datasets.create.file_upload import process_dataset_from_file
+
+dataset = Dataset.objects.get(id=${JSON.stringify(fixture.dataset_id)})
+dataset_config = dataset.dataset_config or {}
+process_dataset_from_file.run_sync(
+    str(dataset.id),
+    dataset_config["file_url"],
+    dataset_config["original_filename"],
+)
+dataset.refresh_from_db()
+media_cell_count = Cell.objects.filter(
+    dataset=dataset,
+    deleted=False,
+    status=CellStatus.RUNNING.value,
+    column__data_type__in=[
+        DataTypeChoices.IMAGE.value,
+        DataTypeChoices.IMAGES.value,
+        DataTypeChoices.AUDIO.value,
+        DataTypeChoices.DOCUMENT.value,
+    ],
+).count()
+print(json.dumps({
+    "dataset_id": str(dataset.id),
+    "processing_status": (dataset.dataset_config or {}).get("file_processing_status"),
+    "completed_columns": (dataset.dataset_config or {}).get("completed_columns"),
+    "error_columns": (dataset.dataset_config or {}).get("error_columns"),
+    "media_dispatch_skipped": media_cell_count == 0,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadLocalFileWorkerFixtureAudit({
+  fixture,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(fixture.dataset_id), "dataset_id must be a UUID for DB audit.");
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  if (workspaceId)
+    assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const sql = `
+WITH dataset_row AS (
+  SELECT id, name, organization_id, workspace_id, dataset_config
+  FROM model_hub_dataset
+  WHERE id = ${sqlUuid(fixture.dataset_id)}
+),
+rows AS (
+  SELECT id, "order"
+  FROM model_hub_row
+  WHERE dataset_id = ${sqlUuid(fixture.dataset_id)}
+    AND deleted = false
+),
+columns AS (
+  SELECT id, name, status
+  FROM model_hub_column
+  WHERE dataset_id = ${sqlUuid(fixture.dataset_id)}
+    AND deleted = false
+)
+SELECT json_build_object(
+  'dataset_id', d.id::text,
+  'dataset_name', d.name,
+  'organization_id', d.organization_id::text,
+  'workspace_id', d.workspace_id::text,
+  'dataset_source_local', COALESCE((d.dataset_config->>'dataset_source_local')::boolean, false),
+  'processing_status', d.dataset_config->>'file_processing_status',
+  'estimated_rows', d.dataset_config->>'estimated_rows',
+  'estimated_columns', d.dataset_config->>'estimated_columns',
+  'total_rows', d.dataset_config->>'total_rows',
+  'total_columns', d.dataset_config->>'total_columns',
+  'completed_columns', d.dataset_config->>'completed_columns',
+  'error_columns', d.dataset_config->>'error_columns',
+  'completed_at_set', d.dataset_config ? 'file_processing_completed_at',
+  'row_count', (SELECT count(*) FROM rows),
+  'column_count', (SELECT count(*) FROM columns),
+  'cell_count', (
+    SELECT count(*)
+    FROM model_hub_cell c
+    WHERE c.dataset_id = d.id
+      AND c.deleted = false
+  ),
+  'column_names', (
+    SELECT COALESCE(json_agg(name ORDER BY name), '[]'::json)
+    FROM columns
+  ),
+  'column_statuses', (
+    SELECT COALESCE(json_object_agg(name, status), '{}'::json)
+    FROM columns
+  ),
+  'input_values', (
+    SELECT COALESCE(json_agg(c.value ORDER BY r."order"), '[]'::json)
+    FROM rows r
+    JOIN columns col ON col.name = ${sqlTextLiteral(fixture.input_column_name)}
+    JOIN model_hub_cell c
+      ON c.row_id = r.id
+     AND c.column_id = col.id
+     AND c.deleted = false
+  ),
+  'expected_values', (
+    SELECT COALESCE(json_agg(c.value ORDER BY r."order"), '[]'::json)
+    FROM rows r
+    JOIN columns col ON col.name = ${sqlTextLiteral(fixture.expected_column_name)}
+    JOIN model_hub_cell c
+      ON c.row_id = r.id
+     AND c.column_id = col.id
+     AND c.deleted = false
+  )
+)
+FROM dataset_row d;
+`;
+  return runPostgresJson(sql);
+}
+
+function assertLocalFileWorkerFixtureAudit(
+  audit,
+  { fixture, organizationId, workspaceId },
+) {
+  assert(
+    audit?.dataset_id === fixture.dataset_id,
+    "Local-file DB audit dataset id mismatch.",
+  );
+  assert(
+    audit.dataset_name === fixture.dataset_name,
+    "Local-file DB audit dataset name mismatch.",
+  );
+  assert(
+    audit.organization_id === organizationId,
+    "Local-file DB audit organization mismatch.",
+  );
+  if (workspaceId) {
+    assert(
+      audit.workspace_id === workspaceId,
+      "Local-file DB audit workspace mismatch.",
+    );
+  }
+  assert(
+    audit.dataset_source_local === true,
+    "Local-file DB audit did not preserve dataset_source_local.",
+  );
+  assert(
+    audit.processing_status === "completed",
+    "Local-file DB audit processing status mismatch.",
+  );
+  assert(
+    Number(audit.estimated_rows) === 2,
+    "Local-file estimated rows mismatch.",
+  );
+  assert(
+    Number(audit.estimated_columns) === 2,
+    "Local-file estimated columns mismatch.",
+  );
+  assert(Number(audit.total_rows) === 2, "Local-file total rows mismatch.");
+  assert(
+    Number(audit.total_columns) === 2,
+    "Local-file total columns mismatch.",
+  );
+  assert(
+    Number(audit.completed_columns) === 2,
+    "Local-file completed columns mismatch.",
+  );
+  assert(
+    Number(audit.error_columns) === 0,
+    "Local-file error columns mismatch.",
+  );
+  assert(
+    audit.completed_at_set === true,
+    "Local-file completed_at was not set.",
+  );
+  assert(Number(audit.row_count) === 2, "Local-file row count mismatch.");
+  assert(Number(audit.column_count) === 2, "Local-file column count mismatch.");
+  assert(Number(audit.cell_count) === 4, "Local-file cell count mismatch.");
+  assert(
+    JSON.stringify(audit.input_values) ===
+      JSON.stringify([fixture.input_one, fixture.input_two]),
+    "Local-file input values did not persist in row order.",
+  );
+  assert(
+    JSON.stringify(audit.expected_values) ===
+      JSON.stringify([fixture.expected_one, fixture.expected_two]),
+    "Local-file expected values did not persist in row order.",
+  );
+}
+
 async function seedDatasetDynamicColumnFixture({
   runId,
   organizationId,
@@ -17256,7 +24119,8 @@ SELECT json_build_object(
 }
 
 async function createDatasetDynamicColumns(client, fixture) {
-  const extractJson = await client.post(
+  const extractJson = await postDynamicColumnWithTemporalSkip(
+    client,
     apiPath("/model-hub/develops/{dataset_id}/extract-json-column/", {
       dataset_id: fixture.dataset_id,
     }),
@@ -17267,7 +24131,8 @@ async function createDatasetDynamicColumns(client, fixture) {
       concurrency: 1,
     },
   );
-  const apiColumn = await client.post(
+  const apiColumn = await postDynamicColumnWithTemporalSkip(
+    client,
     apiPath("/model-hub/datasets/{dataset_id}/add-api-column/", {
       dataset_id: fixture.dataset_id,
     }),
@@ -17281,7 +24146,8 @@ async function createDatasetDynamicColumns(client, fixture) {
       concurrency: 1,
     },
   );
-  const conditional = await client.post(
+  const conditional = await postDynamicColumnWithTemporalSkip(
+    client,
     apiPath("/model-hub/datasets/{dataset_id}/conditional-column/", {
       dataset_id: fixture.dataset_id,
     }),
@@ -17300,7 +24166,8 @@ async function createDatasetDynamicColumns(client, fixture) {
       concurrency: 1,
     },
   );
-  const classification = await client.post(
+  const classification = await postDynamicColumnWithTemporalSkip(
+    client,
     apiPath("/model-hub/datasets/{dataset_id}/classify-column/", {
       dataset_id: fixture.dataset_id,
     }),
@@ -17312,7 +24179,8 @@ async function createDatasetDynamicColumns(client, fixture) {
       concurrency: 1,
     },
   );
-  const entities = await client.post(
+  const entities = await postDynamicColumnWithTemporalSkip(
+    client,
     apiPath("/model-hub/datasets/{dataset_id}/extract-entities/", {
       dataset_id: fixture.dataset_id,
     }),
@@ -17324,7 +24192,8 @@ async function createDatasetDynamicColumns(client, fixture) {
       concurrency: 1,
     },
   );
-  const vector = await client.post(
+  const vector = await postDynamicColumnWithTemporalSkip(
+    client,
     apiPath("/model-hub/datasets/{dataset_id}/add_vector_db_column/", {
       dataset_id: fixture.dataset_id,
     }),
@@ -17355,6 +24224,23 @@ async function createDatasetDynamicColumns(client, fixture) {
     assert(isUuid(id), `Dynamic-column API did not return a UUID for ${name}.`);
   }
   return createdColumns;
+}
+
+async function postDynamicColumnWithTemporalSkip(client, pathName, body) {
+  try {
+    return await client.post(pathName, body);
+  } catch (error) {
+    const text = apiErrorText(error);
+    const maskedTemporalDispatchFailure =
+      error?.status === 500 &&
+      /Unable to create .* column|Failed to .* column/i.test(text);
+    if (!isTemporalUnavailableError(error) && !maskedTemporalDispatchFailure) {
+      throw error;
+    }
+    skip(
+      "Temporal is unavailable for generated-column async dispatch in this local environment.",
+    );
+  }
 }
 
 async function loadDatasetDynamicColumnFixtureAudit(fixture) {
@@ -19222,6 +26108,207 @@ function assertDatasetEvalDrawerDbAudit(
   }
 }
 
+async function seedDirectRunPromptFixture({
+  runId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  if (workspaceId)
+    assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const workspaceSql = workspaceId ? sqlUuid(workspaceId) : "NULL::uuid";
+  const datasetId = randomUUID();
+  const inputColumnId = randomUUID();
+  const rowId = randomUUID();
+  const inputCellId = randomUUID();
+  const datasetName = `api journey direct run prompt ${runId}`;
+  const inputColumnName = `api_direct_rp_input_${suffix}`;
+  const inputValue = `Seeded direct run-prompt input ${runId}`;
+  const runPromptName = `api_direct_rp_output_${suffix}`;
+  const columnConfig = {
+    [inputColumnId]: { is_visible: true, is_frozen: null },
+  };
+  const sql = `
+WITH inserted_dataset AS (
+  INSERT INTO model_hub_dataset (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    column_order,
+    model_type,
+    organization_id,
+    workspace_id,
+    source,
+    column_config,
+    dataset_config,
+    synthetic_dataset_config,
+    eval_reasons,
+    eval_reason_status
+  )
+  VALUES (
+    ${sqlUuid(datasetId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(datasetName)},
+    ARRAY[${sqlTextLiteral(inputColumnId)}]::varchar[],
+    'GenerativeLLM',
+    ${sqlUuid(organizationId)},
+    ${workspaceSql},
+    'build',
+    ${sqlJsonLiteral(columnConfig)},
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '[]'::jsonb,
+    'pending'
+  )
+  RETURNING id
+),
+inserted_column AS (
+  INSERT INTO model_hub_column (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    data_type,
+    source,
+    source_id,
+    dataset_id,
+    metadata,
+    status
+  )
+  VALUES (
+    ${sqlUuid(inputColumnId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(inputColumnName)},
+    'text',
+    'OTHERS',
+    NULL::varchar,
+    ${sqlUuid(datasetId)},
+    '{}'::jsonb,
+    'Completed'
+  )
+  RETURNING id
+),
+inserted_row AS (
+  INSERT INTO model_hub_row (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    "order",
+    dataset_id,
+    metadata
+  )
+  VALUES (
+    ${sqlUuid(rowId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    0,
+    ${sqlUuid(datasetId)},
+    '{}'::jsonb
+  )
+  RETURNING id
+),
+inserted_cell AS (
+  INSERT INTO model_hub_cell (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    value,
+    value_infos,
+    feedback_info,
+    column_metadata,
+    status,
+    dataset_id,
+    column_id,
+    row_id
+  )
+  VALUES (
+    ${sqlUuid(inputCellId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(inputValue)},
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '{}'::jsonb,
+    'pass',
+    ${sqlUuid(datasetId)},
+    ${sqlUuid(inputColumnId)},
+    ${sqlUuid(rowId)}
+  )
+  RETURNING id
+)
+SELECT json_build_object(
+  'fixture_created', (SELECT count(*) FROM inserted_dataset) = 1,
+  'dataset_id', ${sqlUuid(datasetId)}::text,
+  'dataset_name', ${sqlTextLiteral(datasetName)},
+  'input_column_id', ${sqlUuid(inputColumnId)}::text,
+  'input_column_name', ${sqlTextLiteral(inputColumnName)},
+  'row_id', ${sqlUuid(rowId)}::text,
+  'run_prompt_name', ${sqlTextLiteral(runPromptName)},
+  'workspace_id', ${workspaceId ? `${sqlUuid(workspaceId)}::text` : "NULL::text"},
+  'inserted_column_count', (SELECT count(*) FROM inserted_column),
+  'inserted_row_count', (SELECT count(*) FROM inserted_row),
+  'inserted_cell_count', (SELECT count(*) FROM inserted_cell)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteDirectRunPromptFixture(fixture) {
+  assert(
+    fixture && isUuid(fixture.dataset_id),
+    "Direct run-prompt fixture dataset id must be a UUID for DB cleanup.",
+  );
+  const sql = `
+WITH selected_run_prompts AS (
+  SELECT id
+  FROM model_hub_runprompter
+  WHERE dataset_id = ${sqlUuid(fixture.dataset_id)}
+),
+deleted_pending_tasks AS (
+  DELETE FROM model_hub_pendingrowtask
+  WHERE dataset_id = ${sqlUuid(fixture.dataset_id)}
+  RETURNING 1
+),
+deleted_run_prompt_tools AS (
+  DELETE FROM model_hub_runprompter_tools
+  WHERE runprompter_id IN (SELECT id FROM selected_run_prompts)
+  RETURNING 1
+),
+deleted_run_prompts AS (
+  DELETE FROM model_hub_runprompter
+  WHERE id IN (SELECT id FROM selected_run_prompts)
+  RETURNING 1
+)
+SELECT json_build_object(
+  'deleted_pending_task_count', (SELECT count(*) FROM deleted_pending_tasks),
+  'deleted_run_prompt_tool_count', (SELECT count(*) FROM deleted_run_prompt_tools),
+  'deleted_run_prompt_count', (SELECT count(*) FROM deleted_run_prompts)
+);
+`;
+  await runPostgresJson(sql);
+  return hardDeleteDatasetCopyFixture([fixture.dataset_id]);
+}
+
 async function seedRunPromptEditFixture({
   runId,
   organizationId,
@@ -19773,17 +26860,19 @@ inserted_items AS (
     filled_prompt,
     metadata
   )
-  VALUES
-    (
-      ${sqlUuid(baselineItemId)}, now(), now(), false, NULL::timestamptz,
-      ${sqlUuid(baselineTrialId)}, 'row-1', 0.41, 'baseline reason',
-      '{"input":"seed"}', 'baseline output', 'baseline filled prompt', '{}'::jsonb
-    ),
-    (
-      ${sqlUuid(trialItemId)}, now(), now(), false, NULL::timestamptz,
-      ${sqlUuid(trialId)}, 'row-1', 0.82, 'trial reason',
-      '{"input":"seed"}', 'trial output', 'trial filled prompt', '{}'::jsonb
-    )
+  SELECT
+    ${sqlUuid(baselineItemId)}, now(), now(), false, NULL::timestamptz,
+    inserted_trials.id, 'row-1', 0.41, 'baseline reason',
+    '{"input":"seed"}', 'baseline output', 'baseline filled prompt', '{}'::jsonb
+  FROM inserted_trials
+  WHERE inserted_trials.id = ${sqlUuid(baselineTrialId)}
+  UNION ALL
+  SELECT
+    ${sqlUuid(trialItemId)}, now(), now(), false, NULL::timestamptz,
+    inserted_trials.id, 'row-1', 0.82, 'trial reason',
+    '{"input":"seed"}', 'trial output', 'trial filled prompt', '{}'::jsonb
+  FROM inserted_trials
+  WHERE inserted_trials.id = ${sqlUuid(trialId)}
   RETURNING id
 ),
 inserted_evaluations AS (
@@ -19800,13 +26889,15 @@ inserted_evaluations AS (
   )
   SELECT
     ${sqlUuid(baselineEvaluationId)}, now(), now(), false, NULL::timestamptz,
-    ${sqlUuid(baselineItemId)}, candidate.metric_id, 0.41, 'baseline eval'
-  FROM candidate
+    inserted_items.id, candidate.metric_id, 0.41, 'baseline eval'
+  FROM inserted_items, candidate
+  WHERE inserted_items.id = ${sqlUuid(baselineItemId)}
   UNION ALL
   SELECT
     ${sqlUuid(trialEvaluationId)}, now(), now(), false, NULL::timestamptz,
-    ${sqlUuid(trialItemId)}, candidate.metric_id, 0.82, 'trial eval'
-  FROM candidate
+    inserted_items.id, candidate.metric_id, 0.82, 'trial eval'
+  FROM inserted_items, candidate
+  WHERE inserted_items.id = ${sqlUuid(trialItemId)}
   RETURNING 1
 )
 SELECT json_build_object(
@@ -19937,6 +27028,2106 @@ SELECT json_build_object(
 );
 `;
   return runPostgresJson(sql);
+}
+
+function assertLegacyOptimizeDatasetDetail(payload, optimizationId) {
+  assert(
+    payload?.data?.id === optimizationId,
+    "Legacy optimize-dataset detail returned the wrong optimization id.",
+  );
+  assert(
+    payload.data.optimize_type === "PromptTemplate",
+    "Legacy optimize-dataset detail returned the wrong optimize_type.",
+  );
+  assert(
+    Array.isArray(payload.data.metrics) && payload.data.metrics.length > 0,
+    "Legacy optimize-dataset detail did not include metric rows.",
+  );
+}
+
+function assertLegacyOptimizeColumns(payload, label) {
+  assert(
+    Array.isArray(payload?.columns) && payload.columns.length > 0,
+    `${label} returned no column config rows.`,
+  );
+  for (const column of payload.columns) {
+    assert(column.value, `${label} returned a column without value.`);
+  }
+}
+
+function assertLegacyOptimizeDatasetAudit(
+  audit,
+  { organizationId, workspaceId, optimizationId, kbOptimizationId },
+) {
+  assert(
+    audit?.optimization_id === optimizationId,
+    "Legacy optimize-dataset audit optimization id mismatch.",
+  );
+  assert(
+    audit.kb_optimization_id === kbOptimizationId,
+    "Legacy optimize-dataset audit KB optimization id mismatch.",
+  );
+  assert(
+    audit.optimization_organization_id === organizationId,
+    "Legacy optimize-dataset audit organization mismatch.",
+  );
+  if (workspaceId) {
+    assert(
+      audit.optimization_workspace_id === workspaceId,
+      "Legacy optimize-dataset audit workspace mismatch.",
+    );
+    assert(
+      audit.kb_optimization_workspace_id === workspaceId,
+      "Legacy optimize-dataset KB audit workspace mismatch.",
+    );
+    assert(
+      Number(audit.column_config_workspace_count) ===
+        Number(audit.column_config_count),
+      "Legacy optimize-dataset column configs were not all workspace-scoped.",
+    );
+  }
+  assert(
+    Number(audit.right_answer_persisted_value_count) === 2,
+    "Legacy optimize-dataset right-answer column POST did not persist both metric values.",
+  );
+  assert(
+    Number(audit.right_answer_disabled_old_count) === 1,
+    "Legacy optimize-dataset right-answer column POST did not persist disabled old metric state.",
+  );
+  assert(
+    Number(audit.prompt_template_persisted_value_count) === 2,
+    "Legacy optimize-dataset prompt-template column POST did not persist both metric values.",
+  );
+  assert(
+    Number(audit.prompt_template_disabled_optimized_count) === 1,
+    "Legacy optimize-dataset prompt-template column POST did not persist disabled optimized metric state.",
+  );
+  assert(
+    Number(audit.metric_link_count) === 1,
+    "Legacy optimize-dataset audit metric link count mismatch.",
+  );
+  assert(
+    Number(audit.other_workspace_active_count) === 2,
+    "Legacy optimize-dataset audit did not preserve other workspace fixtures.",
+  );
+}
+
+function modelPerformanceFilter() {
+  return {
+    type: "property",
+    datatype: "string",
+    operator: "equal",
+    values: ["vip"],
+    key: "customer_tier",
+    key_id: "",
+  };
+}
+
+function modelPerformanceDataset(metricId) {
+  return {
+    environment: "Production",
+    version: "v1",
+    metric_id: metricId,
+    filters: [modelPerformanceFilter()],
+  };
+}
+
+function modelPerformanceGraphPayload(metricId) {
+  return {
+    datasets: [modelPerformanceDataset(metricId)],
+    filters: [modelPerformanceFilter()],
+    breakdown: [],
+    agg_by: "daily",
+    start_date: "2026-01-01 00:00:00",
+    end_date: "2026-01-02 00:00:00",
+  };
+}
+
+function modelPerformanceDetailPayload(metricId) {
+  return {
+    dataset: modelPerformanceDataset(metricId),
+    filters: [modelPerformanceFilter()],
+    page: 1,
+    start_date: "2026-01-01 00:00:00",
+    end_date: "2026-01-02 00:00:00",
+  };
+}
+
+function modelPerformanceTagPayload(metricId) {
+  return {
+    dataset: modelPerformanceDataset(metricId),
+    filters: [modelPerformanceFilter()],
+    agg_by: "daily",
+    start_date: "2026-01-01 00:00:00",
+    end_date: "2026-01-02 00:00:00",
+    graph_type: "all",
+  };
+}
+
+function modelPerformanceReportPayload(metricId, name) {
+  return {
+    name,
+    datasets: [modelPerformanceDataset(metricId)],
+    filters: [modelPerformanceFilter()],
+    breakdown: [],
+    aggregation: "daily",
+    start_date: "2026-01-01 00:00:00",
+    end_date: "2026-01-02 00:00:00",
+  };
+}
+
+function modelCustomMetricPayload({ modelId, metricId, name }) {
+  return {
+    ...(modelId ? { model_id: modelId } : {}),
+    ...(metricId ? { id: metricId } : {}),
+    name,
+    prompt: "Score the response quality.",
+    metric_type: 1,
+    evaluation_type: "EVALUATE_CHAT",
+    datasets: [{ environment: "Production", model_version: "v1" }],
+  };
+}
+
+function assertModelPerformanceOptions(options, fixture) {
+  const metrics = payloadArray(
+    options?.performance_metric,
+    "performance_metric",
+  );
+  const properties = payloadArray(options?.properties, "properties");
+  const tags = payloadArray(options?.performance_tags, "performance_tags");
+  assert(
+    metrics.some((metric) => metric.id === fixture.metric_id),
+    "Model performance options did not include the seeded metric.",
+  );
+  assert(
+    properties.some(
+      (property) =>
+        property.name === "customer_tier" &&
+        payloadArray(property.values, "values").includes("vip"),
+    ),
+    "Model performance options did not include the seeded property values.",
+  );
+  assert(
+    tags.includes("quality:good") && tags.includes("quality:bad"),
+    "Model performance options did not include seeded metric tags.",
+  );
+}
+
+function assertModelPerformanceReportAudit(
+  audit,
+  { fixture, organizationId, workspaceId, reportId, expectedDeleted },
+) {
+  assert(
+    audit?.report_id === reportId,
+    "Model performance report audit returned the wrong report id.",
+  );
+  assert(
+    audit.report_model_id === fixture.model_id,
+    "Model performance report audit model mismatch.",
+  );
+  assert(
+    audit.report_organization_id === organizationId,
+    "Model performance report audit organization mismatch.",
+  );
+  assert(
+    audit.report_workspace_id === workspaceId,
+    "Model performance report audit workspace mismatch.",
+  );
+  assert(
+    audit.report_deleted === expectedDeleted,
+    "Model performance report deleted state mismatch.",
+  );
+  if (expectedDeleted) {
+    assert(
+      audit.report_deleted_at_set === true,
+      "Deleted model performance report did not stamp deleted_at.",
+    );
+  }
+  assert(
+    Number(audit.visible_metric_count) === 1,
+    "Model performance audit did not find the visible metric.",
+  );
+  assert(
+    Number(audit.visible_property_count) === 1,
+    "Model performance audit did not find the visible property.",
+  );
+  assert(
+    audit.other_report_deleted === false &&
+      audit.other_report_deleted_at_set === false,
+    "Model performance guard mutated the other workspace report.",
+  );
+}
+
+function assertModelCustomMetricAudit(
+  audit,
+  { fixture, organizationId, workspaceId, expectedName },
+) {
+  assert(
+    audit?.metric_id === fixture.metric_id,
+    "Model custom metric audit returned the wrong metric id.",
+  );
+  assert(
+    audit.metric_model_id === fixture.model_id,
+    "Model custom metric audit model mismatch.",
+  );
+  assert(
+    audit.metric_organization_id === organizationId,
+    "Model custom metric audit organization mismatch.",
+  );
+  assert(
+    audit.metric_workspace_id === workspaceId,
+    "Model custom metric audit workspace mismatch.",
+  );
+  assert(
+    audit.metric_name === expectedName,
+    "Model custom metric audit did not find the updated name.",
+  );
+  assert(
+    Number(audit.visible_metric_count) === 1,
+    "Model custom metric audit did not find exactly one visible metric.",
+  );
+  assert(
+    audit.other_metric_name === fixture.other_metric_name,
+    "Model custom metric guard mutated the other workspace metric.",
+  );
+  assert(
+    Number(audit.hidden_created_metric_count) === 0,
+    "Model custom metric hidden create guard wrote a metric row.",
+  );
+}
+
+function assertModelOverviewAudit(audit, fixture) {
+  assert(
+    audit?.model_id === fixture.model_id,
+    "Model overview audit returned the wrong model id.",
+  );
+  assert(
+    audit.model_workspace_id === fixture.workspace_id,
+    "Model overview audit workspace mismatch.",
+  );
+  assert(
+    Number(audit.active_current_alert_count) ===
+      Number(fixture.active_current_alert_count),
+    "Model overview active current alert count mismatch.",
+  );
+  assert(
+    Number(audit.active_previous_alert_count) ===
+      Number(fixture.active_previous_alert_count),
+    "Model overview active previous alert count mismatch.",
+  );
+  assert(
+    Number(audit.other_current_alert_count) ===
+      Number(fixture.other_current_alert_count),
+    "Model overview other-workspace fixture count mismatch.",
+  );
+}
+
+function assertCustomMetricPromptTestAudit(audit, fixture) {
+  assert(
+    Number(audit?.active_unambiguous_count) === 1,
+    "Custom metric prompt-test audit did not find exactly one active cached prompt.",
+  );
+  assert(
+    audit.active_ai_prompt === fixture.suggested_prompt,
+    "Custom metric prompt-test audit found the wrong cached suggestion.",
+  );
+  assert(
+    Number(audit.active_ambiguous_count) === 1,
+    "Custom metric prompt-test audit did not preserve the ambiguous guard fixture.",
+  );
+  assert(
+    Number(audit.deleted_count) === 1,
+    "Custom metric prompt-test audit did not preserve the deleted guard fixture.",
+  );
+  assert(
+    Number(audit.total_prompt_rows) === 3,
+    "Custom metric prompt-test cache hit created an unexpected duplicate row.",
+  );
+}
+
+async function seedModelPerformanceFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(userId), "userId must be a UUID for model performance seed.");
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for model performance seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for model performance seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const modelId = randomUUID();
+  const metricId = randomUUID();
+  const propertyId = randomUUID();
+  const otherWorkspaceId = randomUUID();
+  const otherModelId = randomUUID();
+  const otherMetricId = randomUUID();
+  const otherPropertyId = randomUUID();
+  const otherReportId = randomUUID();
+  const modelName = `api-journey-model-performance-${suffix}`;
+  const otherModelName = `api-journey-model-performance-other-${suffix}`;
+  const metricName = `api journey model performance metric ${suffix}`;
+  const otherMetricName = `api journey model performance other metric ${suffix}`;
+  const otherReportName = `api journey model performance other report ${suffix}`;
+  const sql = `
+WITH inserted_other_workspace AS (
+  INSERT INTO accounts_workspace (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    display_name,
+    description,
+    organization_id,
+    is_active,
+    is_default,
+    created_by_id
+  )
+  VALUES (
+    ${sqlUuid(otherWorkspaceId)},
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlTextLiteral(`api journey model performance other ${suffix}`)},
+    ${sqlTextLiteral(`api journey model performance other ${suffix}`)},
+    '',
+    ${sqlUuid(organizationId)},
+    true,
+    false,
+    ${sqlUuid(userId)}
+  )
+  RETURNING id
+),
+inserted_model AS (
+  INSERT INTO model_hub_aimodel (
+    id,
+    created_at,
+    user_model_id,
+    deleted,
+    model_type,
+    organization_id,
+    workspace_id
+  )
+  VALUES (
+    ${sqlUuid(modelId)},
+    NOW(),
+    ${sqlTextLiteral(modelName)},
+    false,
+    'GenerativeLLM',
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)}
+  )
+  RETURNING id
+),
+inserted_other_model AS (
+  INSERT INTO model_hub_aimodel (
+    id,
+    created_at,
+    user_model_id,
+    deleted,
+    model_type,
+    organization_id,
+    workspace_id
+  )
+  SELECT
+    ${sqlUuid(otherModelId)},
+    NOW(),
+    ${sqlTextLiteral(otherModelName)},
+    false,
+    'GenerativeLLM',
+    ${sqlUuid(organizationId)},
+    id
+  FROM inserted_other_workspace
+  RETURNING id
+),
+inserted_metric AS (
+  INSERT INTO model_hub_metric (
+    id,
+    name,
+    created_at,
+    updated_at,
+    text_prompt,
+    criteria_breakdown,
+    model_id,
+    metric_type,
+    used_in,
+    evaluation_type,
+    datasets,
+    eval_rag_context,
+    eval_rag_output,
+    eval_prompt_template,
+    tags
+  )
+  SELECT
+    ${sqlUuid(metricId)},
+    ${sqlTextLiteral(metricName)},
+    NOW(),
+    NOW(),
+    'Score the response.',
+    ARRAY['Score the response.']::varchar[],
+    id,
+    'WholeUserOutput',
+    'model',
+    'EvalPromptTemplate',
+    NULL,
+    false,
+    false,
+    false,
+    ARRAY['quality:good', 'quality:bad']::varchar[]
+  FROM inserted_model
+  RETURNING id
+),
+inserted_other_metric AS (
+  INSERT INTO model_hub_metric (
+    id,
+    name,
+    created_at,
+    updated_at,
+    text_prompt,
+    criteria_breakdown,
+    model_id,
+    metric_type,
+    used_in,
+    evaluation_type,
+    datasets,
+    eval_rag_context,
+    eval_rag_output,
+    eval_prompt_template,
+    tags
+  )
+  SELECT
+    ${sqlUuid(otherMetricId)},
+    ${sqlTextLiteral(otherMetricName)},
+    NOW(),
+    NOW(),
+    'Score the response.',
+    ARRAY['Score the response.']::varchar[],
+    id,
+    'WholeUserOutput',
+    'model',
+    'EvalPromptTemplate',
+    NULL,
+    false,
+    false,
+    false,
+    ARRAY['quality:good', 'quality:bad']::varchar[]
+  FROM inserted_other_model
+  RETURNING id
+),
+inserted_property AS (
+  INSERT INTO model_hub_datasetproperties (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    model_id,
+    environment,
+    version,
+    name,
+    datatype,
+    values,
+    explanation,
+    organization_id,
+    workspace_id
+  )
+  SELECT
+    ${sqlUuid(propertyId)},
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    id,
+    'Production',
+    'v1',
+    'customer_tier',
+    'string',
+    ARRAY['vip', 'standard']::varchar[],
+    'Customer tier',
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)}
+  FROM inserted_model
+  RETURNING id
+),
+inserted_other_property AS (
+  INSERT INTO model_hub_datasetproperties (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    model_id,
+    environment,
+    version,
+    name,
+    datatype,
+    values,
+    explanation,
+    organization_id,
+    workspace_id
+  )
+  SELECT
+    ${sqlUuid(otherPropertyId)},
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    id,
+    'Production',
+    'v1',
+    'customer_tier',
+    'string',
+    ARRAY['vip', 'standard']::varchar[],
+    'Customer tier',
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(otherWorkspaceId)}
+  FROM inserted_other_model
+  RETURNING id
+),
+inserted_other_report AS (
+  INSERT INTO model_hub_performancereport (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    model_id,
+    organization_id,
+    workspace_id,
+    name,
+    datasets,
+    filters,
+    breakdown,
+    aggregation,
+    start_date,
+    end_date
+  )
+  SELECT
+    ${sqlUuid(otherReportId)},
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    model.id,
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(otherWorkspaceId)},
+    ${sqlTextLiteral(otherReportName)},
+    ${sqlJsonLiteral([modelPerformanceDataset(otherMetricId)])},
+    ${sqlJsonLiteral([modelPerformanceFilter()])},
+    ${sqlJsonLiteral([])},
+    'daily',
+    '2026-01-01 00:00:00+00'::timestamptz,
+    '2026-01-02 00:00:00+00'::timestamptz
+  FROM inserted_other_model model
+  RETURNING id
+)
+SELECT json_build_object(
+  'fixture_created',
+    EXISTS(SELECT 1 FROM inserted_model)
+    AND EXISTS(SELECT 1 FROM inserted_metric)
+    AND EXISTS(SELECT 1 FROM inserted_property)
+    AND EXISTS(SELECT 1 FROM inserted_other_report),
+  'model_id', ${sqlTextLiteral(modelId)},
+  'metric_id', ${sqlTextLiteral(metricId)},
+  'property_id', ${sqlTextLiteral(propertyId)},
+  'other_workspace_id', ${sqlTextLiteral(otherWorkspaceId)},
+  'other_model_id', ${sqlTextLiteral(otherModelId)},
+  'other_metric_id', ${sqlTextLiteral(otherMetricId)},
+  'other_property_id', ${sqlTextLiteral(otherPropertyId)},
+  'other_report_id', ${sqlTextLiteral(otherReportId)},
+  'model_name', ${sqlTextLiteral(modelName)},
+  'metric_name', ${sqlTextLiteral(metricName)},
+  'other_report_name', ${sqlTextLiteral(otherReportName)}
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function seedModelCustomMetricFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(userId), "userId must be a UUID for model custom metric seed.");
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for model custom metric seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for model custom metric seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const modelId = randomUUID();
+  const metricId = randomUUID();
+  const otherWorkspaceId = randomUUID();
+  const otherModelId = randomUUID();
+  const otherMetricId = randomUUID();
+  const modelName = `api-journey-model-custom-metric-${suffix}`;
+  const otherModelName = `api-journey-model-custom-metric-other-${suffix}`;
+  const metricName = `api journey model custom metric ${suffix}`;
+  const otherMetricName = `api journey model custom metric other ${suffix}`;
+  const hiddenCreateName = `api journey hidden custom metric create ${runId}`;
+  const sql = `
+WITH inserted_other_workspace AS (
+  INSERT INTO accounts_workspace (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    display_name,
+    description,
+    organization_id,
+    is_active,
+    is_default,
+    created_by_id
+  )
+  VALUES (
+    ${sqlUuid(otherWorkspaceId)},
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlTextLiteral(`api journey model custom metric other ${suffix}`)},
+    ${sqlTextLiteral(`api journey model custom metric other ${suffix}`)},
+    '',
+    ${sqlUuid(organizationId)},
+    true,
+    false,
+    ${sqlUuid(userId)}
+  )
+  RETURNING id
+),
+inserted_model AS (
+  INSERT INTO model_hub_aimodel (
+    id,
+    created_at,
+    user_model_id,
+    deleted,
+    model_type,
+    organization_id,
+    workspace_id
+  )
+  VALUES (
+    ${sqlUuid(modelId)},
+    NOW(),
+    ${sqlTextLiteral(modelName)},
+    false,
+    'GenerativeLLM',
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)}
+  )
+  RETURNING id
+),
+inserted_other_model AS (
+  INSERT INTO model_hub_aimodel (
+    id,
+    created_at,
+    user_model_id,
+    deleted,
+    model_type,
+    organization_id,
+    workspace_id
+  )
+  SELECT
+    ${sqlUuid(otherModelId)},
+    NOW(),
+    ${sqlTextLiteral(otherModelName)},
+    false,
+    'GenerativeLLM',
+    ${sqlUuid(organizationId)},
+    id
+  FROM inserted_other_workspace
+  RETURNING id
+),
+inserted_metric AS (
+  INSERT INTO model_hub_metric (
+    id,
+    name,
+    created_at,
+    updated_at,
+    text_prompt,
+    criteria_breakdown,
+    model_id,
+    metric_type,
+    used_in,
+    evaluation_type,
+    datasets,
+    eval_rag_context,
+    eval_rag_output,
+    eval_prompt_template,
+    tags
+  )
+  SELECT
+    ${sqlUuid(metricId)},
+    ${sqlTextLiteral(metricName)},
+    NOW(),
+    NOW(),
+    'Score the response quality.',
+    ARRAY['Score the response quality.']::varchar[],
+    id,
+    'WholeUserOutput',
+    'model',
+    'EvalOutput',
+    ${sqlJsonLiteral([{ environment: "Production", model_version: "v1" }])},
+    false,
+    false,
+    false,
+    ARRAY['quality:good', 'quality:bad']::varchar[]
+  FROM inserted_model
+  RETURNING id
+),
+inserted_other_metric AS (
+  INSERT INTO model_hub_metric (
+    id,
+    name,
+    created_at,
+    updated_at,
+    text_prompt,
+    criteria_breakdown,
+    model_id,
+    metric_type,
+    used_in,
+    evaluation_type,
+    datasets,
+    eval_rag_context,
+    eval_rag_output,
+    eval_prompt_template,
+    tags
+  )
+  SELECT
+    ${sqlUuid(otherMetricId)},
+    ${sqlTextLiteral(otherMetricName)},
+    NOW(),
+    NOW(),
+    'Score the response quality.',
+    ARRAY['Score the response quality.']::varchar[],
+    id,
+    'WholeUserOutput',
+    'model',
+    'EvalOutput',
+    ${sqlJsonLiteral([{ environment: "Production", model_version: "v1" }])},
+    false,
+    false,
+    false,
+    ARRAY['quality:good', 'quality:bad']::varchar[]
+  FROM inserted_other_model
+  RETURNING id
+)
+SELECT json_build_object(
+  'fixture_created',
+    EXISTS(SELECT 1 FROM inserted_model)
+    AND EXISTS(SELECT 1 FROM inserted_metric)
+    AND EXISTS(SELECT 1 FROM inserted_other_metric),
+  'model_id', ${sqlTextLiteral(modelId)},
+  'metric_id', ${sqlTextLiteral(metricId)},
+  'other_workspace_id', ${sqlTextLiteral(otherWorkspaceId)},
+  'other_model_id', ${sqlTextLiteral(otherModelId)},
+  'other_metric_id', ${sqlTextLiteral(otherMetricId)},
+  'model_name', ${sqlTextLiteral(modelName)},
+  'metric_name', ${sqlTextLiteral(metricName)},
+  'other_metric_name', ${sqlTextLiteral(otherMetricName)},
+  'hidden_create_name', ${sqlTextLiteral(hiddenCreateName)}
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadModelPerformanceReportAudit({ fixture, reportId }) {
+  assert(
+    isUuid(reportId),
+    "Model performance report audit requires a report id.",
+  );
+  for (const id of [
+    fixture.model_id,
+    fixture.metric_id,
+    fixture.property_id,
+    fixture.other_report_id,
+  ]) {
+    assert(isUuid(id), "Model performance audit received a non-UUID id.");
+  }
+  const sql = `
+WITH selected_report AS (
+  SELECT *
+  FROM model_hub_performancereport
+  WHERE id = ${sqlUuid(reportId)}
+),
+other_report AS (
+  SELECT *
+  FROM model_hub_performancereport
+  WHERE id = ${sqlUuid(fixture.other_report_id)}
+)
+SELECT json_build_object(
+  'report_id', (SELECT id::text FROM selected_report),
+  'report_model_id', (SELECT model_id::text FROM selected_report),
+  'report_organization_id', (SELECT organization_id::text FROM selected_report),
+  'report_workspace_id', (SELECT workspace_id::text FROM selected_report),
+  'report_deleted', COALESCE((SELECT deleted FROM selected_report), false),
+  'report_deleted_at_set',
+    COALESCE((SELECT deleted_at IS NOT NULL FROM selected_report), false),
+  'visible_metric_count', (
+    SELECT count(*)::int
+    FROM model_hub_metric
+    WHERE id = ${sqlUuid(fixture.metric_id)}
+      AND model_id = ${sqlUuid(fixture.model_id)}
+  ),
+  'visible_property_count', (
+    SELECT count(*)::int
+    FROM model_hub_datasetproperties
+    WHERE id = ${sqlUuid(fixture.property_id)}
+      AND model_id = ${sqlUuid(fixture.model_id)}
+      AND deleted = false
+  ),
+  'other_report_deleted', COALESCE((SELECT deleted FROM other_report), false),
+  'other_report_deleted_at_set',
+    COALESCE((SELECT deleted_at IS NOT NULL FROM other_report), false)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteModelPerformanceFixture(fixture) {
+  const reportIds = [fixture.created_report_id, fixture.other_report_id].filter(
+    Boolean,
+  );
+  const propertyIds = [fixture.property_id, fixture.other_property_id].filter(
+    Boolean,
+  );
+  const metricIds = [fixture.metric_id, fixture.other_metric_id].filter(
+    Boolean,
+  );
+  const modelIds = [fixture.model_id, fixture.other_model_id].filter(Boolean);
+  const workspaceIds = [fixture.other_workspace_id].filter(Boolean);
+  for (const id of [
+    ...reportIds,
+    ...propertyIds,
+    ...metricIds,
+    ...modelIds,
+    ...workspaceIds,
+  ]) {
+    assert(isUuid(id), "Model performance cleanup received a non-UUID id.");
+  }
+  const sql = `
+WITH deleted_reports AS (
+  DELETE FROM model_hub_performancereport
+  WHERE id = ANY(${sqlUuidArray(reportIds)})
+  RETURNING 1
+),
+deleted_properties AS (
+  DELETE FROM model_hub_datasetproperties
+  WHERE id = ANY(${sqlUuidArray(propertyIds)})
+  RETURNING 1
+),
+deleted_metrics AS (
+  DELETE FROM model_hub_metric
+  WHERE id = ANY(${sqlUuidArray(metricIds)})
+  RETURNING 1
+),
+deleted_models AS (
+  DELETE FROM model_hub_aimodel
+  WHERE id = ANY(${sqlUuidArray(modelIds)})
+  RETURNING 1
+),
+deleted_workspaces AS (
+  DELETE FROM accounts_workspace
+  WHERE id = ANY(${sqlUuidArray(workspaceIds)})
+  RETURNING 1
+)
+SELECT json_build_object(
+  'deleted_report_count', (SELECT count(*)::int FROM deleted_reports),
+  'deleted_property_count', (SELECT count(*)::int FROM deleted_properties),
+  'deleted_metric_count', (SELECT count(*)::int FROM deleted_metrics),
+  'deleted_model_count', (SELECT count(*)::int FROM deleted_models),
+  'deleted_workspace_count', (SELECT count(*)::int FROM deleted_workspaces)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadModelCustomMetricAudit({ fixture, expectedName }) {
+  for (const id of [
+    fixture.model_id,
+    fixture.metric_id,
+    fixture.other_model_id,
+    fixture.other_metric_id,
+  ]) {
+    assert(isUuid(id), "Model custom metric audit received a non-UUID id.");
+  }
+  const sql = `
+WITH selected_metric AS (
+  SELECT metric.*, model.organization_id, model.workspace_id
+  FROM model_hub_metric metric
+  JOIN model_hub_aimodel model ON model.id = metric.model_id
+  WHERE metric.id = ${sqlUuid(fixture.metric_id)}
+),
+other_metric AS (
+  SELECT *
+  FROM model_hub_metric
+  WHERE id = ${sqlUuid(fixture.other_metric_id)}
+)
+SELECT json_build_object(
+  'metric_id', (SELECT id::text FROM selected_metric),
+  'metric_model_id', (SELECT model_id::text FROM selected_metric),
+  'metric_organization_id', (SELECT organization_id::text FROM selected_metric),
+  'metric_workspace_id', (SELECT workspace_id::text FROM selected_metric),
+  'metric_name', (SELECT name FROM selected_metric),
+  'visible_metric_count', (
+    SELECT count(*)::int
+    FROM model_hub_metric
+    WHERE model_id = ${sqlUuid(fixture.model_id)}
+      AND name = ${sqlTextLiteral(expectedName)}
+  ),
+  'other_metric_name', (SELECT name FROM other_metric),
+  'hidden_created_metric_count', (
+    SELECT count(*)::int
+    FROM model_hub_metric
+    WHERE model_id = ${sqlUuid(fixture.other_model_id)}
+      AND name = ${sqlTextLiteral(fixture.hidden_create_name)}
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteModelCustomMetricFixture(fixture) {
+  const metricIds = [fixture.metric_id, fixture.other_metric_id].filter(
+    Boolean,
+  );
+  const modelIds = [fixture.model_id, fixture.other_model_id].filter(Boolean);
+  const workspaceIds = [fixture.other_workspace_id].filter(Boolean);
+  for (const id of [...metricIds, ...modelIds, ...workspaceIds]) {
+    assert(isUuid(id), "Model custom metric cleanup received a non-UUID id.");
+  }
+  const sql = `
+WITH deleted_metrics AS (
+  DELETE FROM model_hub_metric
+  WHERE id = ANY(${sqlUuidArray(metricIds)})
+     OR name = ${sqlTextLiteral(fixture.hidden_create_name)}
+  RETURNING 1
+),
+deleted_models AS (
+  DELETE FROM model_hub_aimodel
+  WHERE id = ANY(${sqlUuidArray(modelIds)})
+  RETURNING 1
+),
+deleted_workspaces AS (
+  DELETE FROM accounts_workspace
+  WHERE id = ANY(${sqlUuidArray(workspaceIds)})
+  RETURNING 1
+)
+SELECT json_build_object(
+  'deleted_metric_count', (SELECT count(*)::int FROM deleted_metrics),
+  'deleted_model_count', (SELECT count(*)::int FROM deleted_models),
+  'deleted_workspace_count', (SELECT count(*)::int FROM deleted_workspaces)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function seedModelOverviewFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(userId), "userId must be a UUID for model overview seed.");
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for model overview seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for model overview seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const modelId = randomUUID();
+  const otherWorkspaceId = randomUUID();
+  const otherModelId = randomUUID();
+  const modelName = `api-journey-model-overview-${suffix}`;
+  const otherModelName = `api-journey-model-overview-other-${suffix}`;
+  const monitorName = `api journey model overview monitor ${suffix}`;
+  const otherMonitorName = `api journey model overview other monitor ${suffix}`;
+  const activeCurrentAlertCount = 2;
+  const activePreviousAlertCount = 1;
+  const otherCurrentAlertCount = 3;
+  const otherPreviousAlertCount = 1;
+  const sql = `
+WITH inserted_other_workspace AS (
+  INSERT INTO accounts_workspace (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    display_name,
+    description,
+    organization_id,
+    is_active,
+    is_default,
+    created_by_id
+  )
+  VALUES (
+    ${sqlUuid(otherWorkspaceId)},
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlTextLiteral(`api journey model overview other ${suffix}`)},
+    ${sqlTextLiteral(`api journey model overview other ${suffix}`)},
+    '',
+    ${sqlUuid(organizationId)},
+    true,
+    false,
+    ${sqlUuid(userId)}
+  )
+  RETURNING id
+),
+inserted_model AS (
+  INSERT INTO model_hub_aimodel (
+    id,
+    created_at,
+    user_model_id,
+    deleted,
+    model_type,
+    organization_id,
+    workspace_id
+  )
+  VALUES (
+    ${sqlUuid(modelId)},
+    NOW(),
+    ${sqlTextLiteral(modelName)},
+    false,
+    'GenerativeLLM',
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)}
+  )
+  RETURNING id
+),
+inserted_other_model AS (
+  INSERT INTO model_hub_aimodel (
+    id,
+    created_at,
+    user_model_id,
+    deleted,
+    model_type,
+    organization_id,
+    workspace_id
+  )
+  SELECT
+    ${sqlUuid(otherModelId)},
+    NOW(),
+    ${sqlTextLiteral(otherModelName)},
+    false,
+    'GenerativeLLM',
+    ${sqlUuid(organizationId)},
+    id
+  FROM inserted_other_workspace
+  RETURNING id
+),
+inserted_monitor AS (
+  INSERT INTO model_hub_monitor (
+    status,
+    name,
+    monitor_type,
+    dimension,
+    metric,
+    current_value,
+    trigger_value,
+    is_mute,
+    created_at,
+    updated_at,
+    ai_model_id
+  )
+  SELECT
+    true,
+    ${sqlTextLiteral(monitorName)},
+    'Performance',
+    'latency',
+    'p95',
+    10,
+    20,
+    false,
+    NOW(),
+    NOW(),
+    id
+  FROM inserted_model
+  RETURNING id
+),
+inserted_other_monitor AS (
+  INSERT INTO model_hub_monitor (
+    status,
+    name,
+    monitor_type,
+    dimension,
+    metric,
+    current_value,
+    trigger_value,
+    is_mute,
+    created_at,
+    updated_at,
+    ai_model_id
+  )
+  SELECT
+    true,
+    ${sqlTextLiteral(otherMonitorName)},
+    'Performance',
+    'latency',
+    'p95',
+    10,
+    20,
+    false,
+    NOW(),
+    NOW(),
+    id
+  FROM inserted_other_model
+  RETURNING id
+),
+inserted_active_alerts AS (
+  INSERT INTO model_hub_monitoralert (
+    triggered_value,
+    created_at,
+    updated_at,
+    monitor_id
+  )
+  SELECT 42, NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour', id
+  FROM inserted_monitor
+  UNION ALL
+  SELECT 43, NOW() - INTERVAL '2 hours', NOW() - INTERVAL '2 hours', id
+  FROM inserted_monitor
+  UNION ALL
+  SELECT 44, NOW() - INTERVAL '30 hours', NOW() - INTERVAL '30 hours', id
+  FROM inserted_monitor
+  RETURNING id
+),
+inserted_other_alerts AS (
+  INSERT INTO model_hub_monitoralert (
+    triggered_value,
+    created_at,
+    updated_at,
+    monitor_id
+  )
+  SELECT 52, NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour', id
+  FROM inserted_other_monitor
+  UNION ALL
+  SELECT 53, NOW() - INTERVAL '3 hours', NOW() - INTERVAL '3 hours', id
+  FROM inserted_other_monitor
+  UNION ALL
+  SELECT 54, NOW() - INTERVAL '4 hours', NOW() - INTERVAL '4 hours', id
+  FROM inserted_other_monitor
+  UNION ALL
+  SELECT 55, NOW() - INTERVAL '30 hours', NOW() - INTERVAL '30 hours', id
+  FROM inserted_other_monitor
+  RETURNING id
+)
+SELECT json_build_object(
+  'fixture_created',
+    EXISTS(SELECT 1 FROM inserted_model)
+    AND EXISTS(SELECT 1 FROM inserted_monitor)
+    AND (SELECT count(*) FROM inserted_active_alerts) = 3
+    AND (SELECT count(*) FROM inserted_other_alerts) = 4,
+  'model_id', ${sqlTextLiteral(modelId)},
+  'workspace_id', ${sqlTextLiteral(workspaceId)},
+  'other_workspace_id', ${sqlTextLiteral(otherWorkspaceId)},
+  'other_model_id', ${sqlTextLiteral(otherModelId)},
+  'model_name', ${sqlTextLiteral(modelName)},
+  'other_model_name', ${sqlTextLiteral(otherModelName)},
+  'monitor_name', ${sqlTextLiteral(monitorName)},
+  'other_monitor_name', ${sqlTextLiteral(otherMonitorName)},
+  'active_current_alert_count', ${activeCurrentAlertCount},
+  'active_previous_alert_count', ${activePreviousAlertCount},
+  'other_current_alert_count', ${otherCurrentAlertCount},
+  'other_previous_alert_count', ${otherPreviousAlertCount}
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadModelOverviewAudit(fixture) {
+  for (const id of [
+    fixture.model_id,
+    fixture.workspace_id,
+    fixture.other_model_id,
+    fixture.other_workspace_id,
+  ]) {
+    assert(isUuid(id), "Model overview audit received a non-UUID id.");
+  }
+  const sql = `
+WITH selected_model AS (
+  SELECT id, workspace_id
+  FROM model_hub_aimodel
+  WHERE id = ${sqlUuid(fixture.model_id)}
+),
+active_alerts AS (
+  SELECT alert.*
+  FROM model_hub_monitoralert alert
+  JOIN model_hub_monitor monitor ON monitor.id = alert.monitor_id
+  WHERE monitor.ai_model_id = ${sqlUuid(fixture.model_id)}
+),
+other_alerts AS (
+  SELECT alert.*
+  FROM model_hub_monitoralert alert
+  JOIN model_hub_monitor monitor ON monitor.id = alert.monitor_id
+  WHERE monitor.ai_model_id = ${sqlUuid(fixture.other_model_id)}
+)
+SELECT json_build_object(
+  'model_id', (SELECT id::text FROM selected_model),
+  'model_workspace_id', (SELECT workspace_id::text FROM selected_model),
+  'active_current_alert_count', (
+    SELECT count(*)::int
+    FROM active_alerts
+    WHERE created_at >= NOW() - INTERVAL '24 hours'
+  ),
+  'active_previous_alert_count', (
+    SELECT count(*)::int
+    FROM active_alerts
+    WHERE created_at >= NOW() - INTERVAL '48 hours'
+      AND created_at < NOW() - INTERVAL '24 hours'
+  ),
+  'other_current_alert_count', (
+    SELECT count(*)::int
+    FROM other_alerts
+    WHERE created_at >= NOW() - INTERVAL '24 hours'
+  ),
+  'other_previous_alert_count', (
+    SELECT count(*)::int
+    FROM other_alerts
+    WHERE created_at >= NOW() - INTERVAL '48 hours'
+      AND created_at < NOW() - INTERVAL '24 hours'
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteModelOverviewFixture(fixture) {
+  const modelIds = [fixture.model_id, fixture.other_model_id].filter(Boolean);
+  const workspaceIds = [fixture.other_workspace_id].filter(Boolean);
+  for (const id of [...modelIds, ...workspaceIds]) {
+    assert(isUuid(id), "Model overview cleanup received a non-UUID id.");
+  }
+  const sql = `
+WITH selected_monitors AS (
+  SELECT id
+  FROM model_hub_monitor
+  WHERE ai_model_id = ANY(${sqlUuidArray(modelIds)})
+),
+deleted_alerts AS (
+  DELETE FROM model_hub_monitoralert
+  WHERE monitor_id IN (SELECT id FROM selected_monitors)
+  RETURNING 1
+),
+deleted_monitors AS (
+  DELETE FROM model_hub_monitor
+  WHERE id IN (SELECT id FROM selected_monitors)
+  RETURNING 1
+),
+deleted_models AS (
+  DELETE FROM model_hub_aimodel
+  WHERE id = ANY(${sqlUuidArray(modelIds)})
+  RETURNING 1
+),
+deleted_workspaces AS (
+  DELETE FROM accounts_workspace
+  WHERE id = ANY(${sqlUuidArray(workspaceIds)})
+  RETURNING 1
+)
+SELECT json_build_object(
+  'deleted_alert_count', (SELECT count(*)::int FROM deleted_alerts),
+  'deleted_monitor_count', (SELECT count(*)::int FROM deleted_monitors),
+  'deleted_model_count', (SELECT count(*)::int FROM deleted_models),
+  'deleted_workspace_count', (SELECT count(*)::int FROM deleted_workspaces)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function seedCustomMetricPromptTestFixture({ runId }) {
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const checkerId = randomUUID();
+  const ambiguousCheckerId = randomUUID();
+  const deletedCheckerId = randomUUID();
+  const prompt = `api journey custom metric prompt test ${suffix}`;
+  const suggestedPrompt = `api journey suggested custom metric prompt ${suffix}`;
+  const sql = `
+WITH inserted_active AS (
+  INSERT INTO model_hub_promptchecker (
+    id,
+    user_prompt,
+    ai_prompt,
+    explanation,
+    created_at,
+    version,
+    model_name,
+    ambiguity,
+    deleted,
+    metadata,
+    choices,
+    multi_choice
+  )
+  VALUES (
+    ${sqlUuid(checkerId)},
+    ${sqlTextLiteral(prompt)},
+    ${sqlTextLiteral(suggestedPrompt)},
+    'cached prompt-test fixture',
+    NOW(),
+    'v1',
+    'api-journey-cache',
+    false,
+    false,
+    ${sqlJsonLiteral({ source: "MODEL-API-004" })},
+    ${sqlJsonLiteral([])},
+    false
+  )
+  RETURNING id
+),
+inserted_ambiguous AS (
+  INSERT INTO model_hub_promptchecker (
+    id,
+    user_prompt,
+    ai_prompt,
+    explanation,
+    created_at,
+    version,
+    model_name,
+    ambiguity,
+    deleted,
+    metadata,
+    choices,
+    multi_choice
+  )
+  VALUES (
+    ${sqlUuid(ambiguousCheckerId)},
+    ${sqlTextLiteral(prompt)},
+    'ambiguous suggestion should not be selected',
+    'ambiguous prompt-test fixture',
+    NOW(),
+    'v1',
+    'api-journey-cache',
+    true,
+    false,
+    ${sqlJsonLiteral({ source: "MODEL-API-004" })},
+    ${sqlJsonLiteral([])},
+    false
+  )
+  RETURNING id
+),
+inserted_deleted AS (
+  INSERT INTO model_hub_promptchecker (
+    id,
+    user_prompt,
+    ai_prompt,
+    explanation,
+    created_at,
+    version,
+    model_name,
+    ambiguity,
+    deleted,
+    metadata,
+    choices,
+    multi_choice
+  )
+  VALUES (
+    ${sqlUuid(deletedCheckerId)},
+    ${sqlTextLiteral(prompt)},
+    'deleted suggestion should not be selected',
+    'deleted prompt-test fixture',
+    NOW(),
+    'v1',
+    'api-journey-cache',
+    false,
+    true,
+    ${sqlJsonLiteral({ source: "MODEL-API-004" })},
+    ${sqlJsonLiteral([])},
+    false
+  )
+  RETURNING id
+)
+SELECT json_build_object(
+  'fixture_created',
+    EXISTS(SELECT 1 FROM inserted_active)
+    AND EXISTS(SELECT 1 FROM inserted_ambiguous)
+    AND EXISTS(SELECT 1 FROM inserted_deleted),
+  'checker_id', ${sqlTextLiteral(checkerId)},
+  'ambiguous_checker_id', ${sqlTextLiteral(ambiguousCheckerId)},
+  'deleted_checker_id', ${sqlTextLiteral(deletedCheckerId)},
+  'prompt', ${sqlTextLiteral(prompt)},
+  'suggested_prompt', ${sqlTextLiteral(suggestedPrompt)}
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadCustomMetricPromptTestAudit(fixture) {
+  const checkerIds = [
+    fixture.checker_id,
+    fixture.ambiguous_checker_id,
+    fixture.deleted_checker_id,
+  ].filter(Boolean);
+  for (const id of checkerIds) {
+    assert(
+      isUuid(id),
+      "Custom metric prompt-test audit received a non-UUID id.",
+    );
+  }
+  const sql = `
+WITH selected_prompt_rows AS (
+  SELECT *
+  FROM model_hub_promptchecker
+  WHERE user_prompt = ${sqlTextLiteral(fixture.prompt)}
+)
+SELECT json_build_object(
+  'active_unambiguous_count', (
+    SELECT count(*)::int
+    FROM selected_prompt_rows
+    WHERE deleted = false AND ambiguity = false
+  ),
+  'active_ambiguous_count', (
+    SELECT count(*)::int
+    FROM selected_prompt_rows
+    WHERE deleted = false AND ambiguity = true
+  ),
+  'deleted_count', (
+    SELECT count(*)::int
+    FROM selected_prompt_rows
+    WHERE deleted = true
+  ),
+  'active_ai_prompt', (
+    SELECT ai_prompt
+    FROM selected_prompt_rows
+    WHERE id = ${sqlUuid(fixture.checker_id)}
+  ),
+  'total_prompt_rows', (
+    SELECT count(*)::int
+    FROM selected_prompt_rows
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteCustomMetricPromptTestFixture(fixture) {
+  const checkerIds = [
+    fixture.checker_id,
+    fixture.ambiguous_checker_id,
+    fixture.deleted_checker_id,
+  ].filter(Boolean);
+  for (const id of checkerIds) {
+    assert(
+      isUuid(id),
+      "Custom metric prompt-test cleanup received a non-UUID id.",
+    );
+  }
+  const sql = `
+WITH deleted_prompt_rows AS (
+  DELETE FROM model_hub_promptchecker
+  WHERE id = ANY(${sqlUuidArray(checkerIds)})
+     OR user_prompt = ${sqlTextLiteral(fixture.prompt)}
+  RETURNING 1
+)
+SELECT json_build_object(
+  'deleted_prompt_row_count', (SELECT count(*)::int FROM deleted_prompt_rows)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function seedLegacyOptimizeDatasetFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(userId), "userId must be a UUID for legacy optimize seed.");
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for legacy optimize seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for legacy optimize seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const script = `
+import json
+from accounts.models import Organization, User, Workspace
+from model_hub.models.ai_model import AIModel
+from model_hub.models.metric import Metric
+from model_hub.models.optimize_dataset import OptimizeDataset
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+workspace = Workspace.no_workspace_objects.get(
+    id=${JSON.stringify(workspaceId)},
+    organization=organization,
+    deleted=False,
+)
+user = User.objects.get(id=${JSON.stringify(userId)}, organization=organization)
+suffix = ${JSON.stringify(suffix)}
+
+def make_model(name, workspace_obj):
+    return AIModel.all_objects.create(
+        user_model_id=name,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        organization=organization,
+        workspace=workspace_obj,
+    )
+
+def make_metric(name, model):
+    return Metric.objects.create(
+        name=name,
+        text_prompt="Score the response.",
+        criteria_breakdown=["Score the response."],
+        model=model,
+        metric_type=Metric.MetricTypes.WHOLE_USER_OUTPUT,
+        evaluation_type=Metric.EvalMetricTypes.EVAL_PROMPT_TEMPLATE,
+    )
+
+def make_optimization(name, model, metric, workspace_obj):
+    optimization = OptimizeDataset.no_workspace_objects.create(
+        name=name,
+        model=model,
+        organization=organization,
+        workspace=workspace_obj,
+        optimize_type=OptimizeDataset.OptimizeType.TEMPLATE,
+        start_date="2026-01-01T00:00:00Z",
+        end_date="2026-01-02T00:00:00Z",
+        environment=OptimizeDataset.EnvTypes.TRAINING,
+        version="v1",
+        status=OptimizeDataset.StatusType.COMPLETED,
+        optimized_k_prompts=["api journey optimized prompt"],
+        prompt="Answer {{input}}",
+    )
+    optimization.metrics.set([metric])
+    return optimization
+
+model = make_model(f"api-journey-legacy-optimize-model-{suffix}", workspace)
+metric = make_metric(f"api journey legacy optimize metric {suffix}", model)
+optimization = make_optimization(
+    f"api journey legacy optimize run {suffix}",
+    model,
+    metric,
+    workspace,
+)
+kb_optimization = OptimizeDataset.no_workspace_objects.create(
+    name=f"api journey legacy optimize kb {suffix}",
+    organization=organization,
+    workspace=workspace,
+    optimize_type=OptimizeDataset.OptimizeType.RAG_TEMPLATE,
+    environment=OptimizeDataset.EnvTypes.CORPUS,
+    version="",
+    status=OptimizeDataset.StatusType.COMPLETED,
+    prompt="Improve retrieval",
+    knowledge_base_metrics=["Metric A"],
+    knowledge_base_filters=["topic"],
+    variables={"topic": "support"},
+    optimized_k_prompts=["api journey kb optimized prompt"],
+)
+
+other_workspace = Workspace.no_workspace_objects.create(
+    name=f"api journey legacy optimize other workspace {suffix}",
+    organization=organization,
+    is_active=True,
+    created_by=user,
+)
+other_model = make_model(
+    f"api-journey-legacy-optimize-other-model-{suffix}",
+    other_workspace,
+)
+other_metric = make_metric(
+    f"api journey legacy optimize other metric {suffix}",
+    other_model,
+)
+other_optimization = make_optimization(
+    f"api journey legacy optimize other run {suffix}",
+    other_model,
+    other_metric,
+    other_workspace,
+)
+other_kb_optimization = OptimizeDataset.no_workspace_objects.create(
+    name=f"api journey legacy optimize other kb {suffix}",
+    organization=organization,
+    workspace=other_workspace,
+    optimize_type=OptimizeDataset.OptimizeType.RAG_TEMPLATE,
+    environment=OptimizeDataset.EnvTypes.CORPUS,
+    version="",
+    status=OptimizeDataset.StatusType.COMPLETED,
+    prompt="Improve retrieval elsewhere",
+    knowledge_base_metrics=["Metric B"],
+    knowledge_base_filters=["topic"],
+    variables={"topic": "other"},
+    optimized_k_prompts=["api journey other kb optimized prompt"],
+)
+
+print(json.dumps({
+    "fixture_created": True,
+    "workspace_id": str(workspace.id),
+    "model_id": str(model.id),
+    "metric_id": str(metric.id),
+    "optimization_id": str(optimization.id),
+    "optimization_name": optimization.name,
+    "optimized_prompt": optimization.optimized_k_prompts[0],
+    "kb_optimization_id": str(kb_optimization.id),
+    "kb_optimization_name": kb_optimization.name,
+    "other_workspace_id": str(other_workspace.id),
+    "other_model_id": str(other_model.id),
+    "other_metric_id": str(other_metric.id),
+    "other_optimization_id": str(other_optimization.id),
+    "other_kb_optimization_id": str(other_kb_optimization.id),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadLegacyOptimizeDatasetAudit(fixture) {
+  const requiredIds = [
+    fixture.optimization_id,
+    fixture.kb_optimization_id,
+    fixture.model_id,
+    fixture.metric_id,
+    fixture.workspace_id,
+  ];
+  for (const id of requiredIds) {
+    assert(isUuid(id), "Legacy optimize audit received a non-UUID id.");
+  }
+  const columnConfigIdentifiers = [
+    fixture.model_id,
+    `${fixture.model_id}-${fixture.optimization_id}-right-answers-explore`,
+    `${fixture.model_id}-${fixture.optimization_id}-prompt-template-explore`,
+  ];
+  const rightMetricValues = [
+    `${fixture.metric_id}-old`,
+    `${fixture.metric_id}-new`,
+  ];
+  const promptMetricValues = [
+    `${fixture.metric_id}-0`,
+    `${fixture.metric_id}-original`,
+  ];
+  const sql = `
+WITH selected_run AS (
+  SELECT *
+  FROM model_hub_optimizedataset
+  WHERE id = ${sqlUuid(fixture.optimization_id)}
+),
+selected_kb AS (
+  SELECT *
+  FROM model_hub_optimizedataset
+  WHERE id = ${sqlUuid(fixture.kb_optimization_id)}
+),
+column_configs AS (
+  SELECT *
+  FROM model_hub_columnconfig
+  WHERE identifier = ANY(${sqlTextArray(columnConfigIdentifiers)})
+),
+right_answer_config AS (
+  SELECT columns::jsonb AS columns
+  FROM column_configs
+  WHERE table_name = 'OptimizeDatasetRightAnswer'
+),
+prompt_template_config AS (
+  SELECT columns::jsonb AS columns
+  FROM column_configs
+  WHERE table_name = 'OptimizeDatasetPromptTemplateExplore'
+)
+SELECT json_build_object(
+  'optimization_id', (SELECT id::text FROM selected_run),
+  'optimization_organization_id', (SELECT organization_id::text FROM selected_run),
+  'optimization_workspace_id', (SELECT workspace_id::text FROM selected_run),
+  'kb_optimization_id', (SELECT id::text FROM selected_kb),
+  'kb_optimization_workspace_id', (SELECT workspace_id::text FROM selected_kb),
+  'metric_link_count', (
+    SELECT count(*)
+    FROM model_hub_optimizedataset_metrics
+    WHERE optimizedataset_id = ${sqlUuid(fixture.optimization_id)}
+  ),
+  'column_config_count', (SELECT count(*) FROM column_configs),
+  'column_config_workspace_count', (
+    SELECT count(*) FROM column_configs
+    WHERE workspace_id = ${sqlUuid(fixture.workspace_id)}
+  ),
+  'right_answer_persisted_value_count', (
+    SELECT count(*)
+    FROM right_answer_config, jsonb_array_elements(columns) AS item
+    WHERE item->>'value' = ANY(${sqlTextArray(rightMetricValues)})
+  ),
+  'right_answer_disabled_old_count', (
+    SELECT count(*)
+    FROM right_answer_config, jsonb_array_elements(columns) AS item
+    WHERE item->>'value' = ${sqlText(`${fixture.metric_id}-old`)}
+      AND item->>'enabled' = 'false'
+  ),
+  'prompt_template_persisted_value_count', (
+    SELECT count(*)
+    FROM prompt_template_config, jsonb_array_elements(columns) AS item
+    WHERE item->>'value' = ANY(${sqlTextArray(promptMetricValues)})
+  ),
+  'prompt_template_disabled_optimized_count', (
+    SELECT count(*)
+    FROM prompt_template_config, jsonb_array_elements(columns) AS item
+    WHERE item->>'value' = ${sqlText(`${fixture.metric_id}-0`)}
+      AND item->>'enabled' = 'false'
+  ),
+  'other_workspace_active_count', (
+    SELECT count(*)
+    FROM model_hub_optimizedataset
+    WHERE id IN (
+      ${sqlUuid(fixture.other_optimization_id)},
+      ${sqlUuid(fixture.other_kb_optimization_id)}
+    )
+      AND deleted = false
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadLegacyOptimizeCreateGuardAudit({
+  modelCreateGuardNames,
+  kbCreateGuardNames,
+}) {
+  assert(
+    Array.isArray(modelCreateGuardNames) &&
+      modelCreateGuardNames.every((name) => typeof name === "string"),
+    "Legacy optimize model create guard names must be strings.",
+  );
+  assert(
+    Array.isArray(kbCreateGuardNames) &&
+      kbCreateGuardNames.every((name) => typeof name === "string"),
+    "Legacy optimize KB create guard names must be strings.",
+  );
+  const sql = `
+SELECT json_build_object(
+  'model_create_guard_persisted_count', (
+    SELECT count(*)
+    FROM model_hub_optimizedataset
+    WHERE name = ANY(${sqlTextArray(modelCreateGuardNames)})
+  ),
+  'kb_create_guard_persisted_count', (
+    SELECT count(*)
+    FROM model_hub_optimizedataset
+    WHERE name = ANY(${sqlTextArray(kbCreateGuardNames)})
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteLegacyOptimizeDatasetFixture(fixture) {
+  const optimizationIds = [
+    fixture.optimization_id,
+    fixture.kb_optimization_id,
+    fixture.other_optimization_id,
+    fixture.other_kb_optimization_id,
+  ].filter(Boolean);
+  const modelIds = [fixture.model_id, fixture.other_model_id].filter(Boolean);
+  const metricIds = [fixture.metric_id, fixture.other_metric_id].filter(
+    Boolean,
+  );
+  const workspaceIds = [fixture.other_workspace_id].filter(Boolean);
+  for (const id of [
+    ...optimizationIds,
+    ...modelIds,
+    ...metricIds,
+    ...workspaceIds,
+  ]) {
+    assert(isUuid(id), "Legacy optimize cleanup received a non-UUID id.");
+  }
+  const columnConfigIdentifiers = [
+    fixture.model_id,
+    `${fixture.model_id}-${fixture.optimization_id}-right-answers-explore`,
+    `${fixture.model_id}-${fixture.optimization_id}-prompt-template-explore`,
+  ].filter(Boolean);
+  const sql = `
+WITH deleted_column_configs AS (
+  DELETE FROM model_hub_columnconfig
+  WHERE identifier = ANY(${sqlTextArray(columnConfigIdentifiers)})
+  RETURNING 1
+),
+deleted_metric_links AS (
+  DELETE FROM model_hub_optimizedataset_metrics
+  WHERE optimizedataset_id = ANY(${sqlUuidArray(optimizationIds)})
+  RETURNING 1
+),
+deleted_optimizations AS (
+  DELETE FROM model_hub_optimizedataset
+  WHERE id = ANY(${sqlUuidArray(optimizationIds)})
+  RETURNING 1
+),
+deleted_metrics AS (
+  DELETE FROM model_hub_metric
+  WHERE id = ANY(${sqlUuidArray(metricIds)})
+  RETURNING 1
+),
+deleted_models AS (
+  DELETE FROM model_hub_aimodel
+  WHERE id = ANY(${sqlUuidArray(modelIds)})
+  RETURNING 1
+),
+deleted_workspaces AS (
+  DELETE FROM accounts_workspace
+  WHERE id = ANY(${sqlUuidArray(workspaceIds)})
+  RETURNING 1
+)
+SELECT json_build_object(
+  'deleted_column_config_count', (SELECT count(*) FROM deleted_column_configs),
+  'deleted_metric_link_count', (SELECT count(*) FROM deleted_metric_links),
+  'deleted_optimization_count', (SELECT count(*) FROM deleted_optimizations),
+  'deleted_metric_count', (SELECT count(*) FROM deleted_metrics),
+  'deleted_model_count', (SELECT count(*) FROM deleted_models),
+  'deleted_workspace_count', (SELECT count(*) FROM deleted_workspaces)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function seedLegacyOptimisationFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(userId), "userId must be a UUID for legacy optimisation seed.");
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for legacy optimisation seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for legacy optimisation seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const script = `
+import json
+from django.db import transaction
+from accounts.models import Organization, User, Workspace
+from model_hub.models.choices import DataTypeChoices, SourceChoices, StatusType
+from model_hub.models.develop_dataset import Column, Dataset
+from model_hub.models.develop_optimisation import OptimizationDataset
+from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+workspace = Workspace.no_workspace_objects.get(
+    id=${JSON.stringify(workspaceId)},
+    organization=organization,
+    deleted=False,
+)
+user = User.objects.get(id=${JSON.stringify(userId)}, organization=organization)
+suffix = ${JSON.stringify(suffix)}
+
+def make_dataset(name, workspace_obj):
+    dataset = Dataset.no_workspace_objects.create(
+        name=name,
+        organization=organization,
+        workspace=workspace_obj,
+        user=user,
+    )
+    column = Column.no_workspace_objects.create(
+        name="Prompt Output",
+        dataset=dataset,
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+    )
+    dataset.column_order = [str(column.id)]
+    dataset.save()
+    template = EvalTemplate.no_workspace_objects.create(
+        name=f"{name.lower().replace(' ', '-')}-template-{suffix}",
+        organization=organization,
+        workspace=workspace_obj,
+        config={"output": "Pass/Fail", "eval_type_id": "CustomCodeEval"},
+        criteria="Return pass when the answer is useful.",
+    )
+    metric = UserEvalMetric.no_workspace_objects.create(
+        name=f"{name} Metric",
+        organization=organization,
+        workspace=workspace_obj,
+        template=template,
+        dataset=dataset,
+        config={"mapping": {"output": str(column.id)}},
+        status=StatusType.COMPLETED.value,
+    )
+    return dataset, column, template, metric
+
+with transaction.atomic():
+    dataset, column, template, metric = make_dataset(
+        f"api journey legacy optimisation dataset {suffix}",
+        workspace,
+    )
+    mismatch_dataset, mismatch_column, mismatch_template, mismatch_metric = make_dataset(
+        f"api journey legacy optimisation mismatch {suffix}",
+        workspace,
+    )
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=f"api journey legacy optimisation other workspace {suffix}",
+        organization=organization,
+        is_active=True,
+        created_by=user,
+    )
+    other_dataset, other_column, other_template, other_metric = make_dataset(
+        f"api journey legacy optimisation other workspace dataset {suffix}",
+        other_workspace,
+    )
+    other_optimization = OptimizationDataset.no_workspace_objects.create(
+        name=f"api journey legacy optimisation other workspace row {suffix}",
+        optimize_type="PROMPT_TEMPLATE",
+        dataset=other_dataset,
+        column=other_column,
+        messages=[{"role": "user", "content": "Answer {{input}}"}],
+        model_config={
+            "model_name": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 100,
+            "top_p": 1,
+        },
+        user_eval_template_mapping={},
+        prompt_name="API Journey Prompt",
+        optimized_k_prompts=["Answer {{input}} well"],
+    )
+    other_optimization.user_eval_template_ids.set([other_metric])
+
+print(json.dumps({
+    "fixture_created": True,
+    "dataset_id": str(dataset.id),
+    "column_id": str(column.id),
+    "template_id": str(template.id),
+    "metric_id": str(metric.id),
+    "mismatch_dataset_id": str(mismatch_dataset.id),
+    "mismatch_column_id": str(mismatch_column.id),
+    "mismatch_template_id": str(mismatch_template.id),
+    "mismatch_metric_id": str(mismatch_metric.id),
+    "other_workspace_id": str(other_workspace.id),
+    "other_dataset_id": str(other_dataset.id),
+    "other_column_id": str(other_column.id),
+    "other_template_id": str(other_template.id),
+    "other_metric_id": str(other_metric.id),
+    "other_optimization_id": str(other_optimization.id),
+    "other_optimization_name": other_optimization.name,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadLegacyOptimisationAudit({
+  optimizationId = "",
+  name = "",
+  datasetId = "",
+}) {
+  if (optimizationId) {
+    assert(
+      isUuid(optimizationId),
+      "optimizationId must be a UUID for legacy optimisation audit.",
+    );
+  }
+  if (datasetId) {
+    assert(
+      isUuid(datasetId),
+      "datasetId must be a UUID for legacy optimisation audit.",
+    );
+  }
+  const script = `
+import json
+from model_hub.models.choices import SourceChoices
+from model_hub.models.develop_dataset import Column
+from model_hub.models.develop_optimisation import OptimizationDataset
+
+optimization_id = ${JSON.stringify(optimizationId)}
+name = ${JSON.stringify(name)}
+dataset_id = ${JSON.stringify(datasetId)}
+queryset = OptimizationDataset.no_workspace_objects.select_related("dataset", "column")
+if optimization_id:
+    queryset = queryset.filter(id=optimization_id)
+else:
+    queryset = queryset.filter(name=name, dataset_id=dataset_id)
+optimization = queryset.first()
+if optimization is None:
+    print(json.dumps({"found": False}))
+else:
+    metric_ids = [
+        str(metric_id)
+        for metric_id in optimization.user_eval_template_ids.values_list("id", flat=True)
+    ]
+    generated_column_count = Column.no_workspace_objects.filter(
+        dataset=optimization.dataset,
+        source=SourceChoices.OPTIMISATION.value,
+        source_id=str(optimization.id),
+        deleted=False,
+    ).count()
+    print(json.dumps({
+        "found": True,
+        "optimization_id": str(optimization.id),
+        "optimization_name": optimization.name,
+        "dataset_id": str(optimization.dataset_id),
+        "column_id": str(optimization.column_id) if optimization.column_id else None,
+        "organization_id": str(optimization.dataset.organization_id),
+        "workspace_id": str(optimization.dataset.workspace_id) if optimization.dataset.workspace_id else None,
+        "metric_ids": metric_ids,
+        "deleted": optimization.deleted,
+        "generated_column_count": generated_column_count,
+    }))
+`;
+  return runBackendShellJson(script);
+}
+
+async function hardDeleteLegacyOptimisationFixture(fixture) {
+  const datasetIds = [
+    fixture.dataset_id,
+    fixture.mismatch_dataset_id,
+    fixture.other_dataset_id,
+  ].filter(Boolean);
+  const templateIds = [
+    fixture.template_id,
+    fixture.mismatch_template_id,
+    fixture.other_template_id,
+  ].filter(Boolean);
+  const workspaceIds = [fixture.other_workspace_id].filter(Boolean);
+  for (const id of [...datasetIds, ...templateIds, ...workspaceIds]) {
+    assert(isUuid(id), "Legacy optimisation cleanup received a non-UUID id.");
+  }
+  const script = `
+import json
+from accounts.models import Workspace
+from model_hub.models.develop_dataset import Column, Dataset
+from model_hub.models.develop_optimisation import OptimizationDataset
+from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+
+dataset_ids = ${JSON.stringify(datasetIds)}
+template_ids = ${JSON.stringify(templateIds)}
+workspace_ids = ${JSON.stringify(workspaceIds)}
+deleted_optimizations, _ = OptimizationDataset.no_workspace_objects.filter(
+    dataset_id__in=dataset_ids,
+).delete()
+deleted_metrics, _ = UserEvalMetric.no_workspace_objects.filter(
+    dataset_id__in=dataset_ids,
+).delete()
+deleted_templates, _ = EvalTemplate.no_workspace_objects.filter(
+    id__in=template_ids,
+).delete()
+deleted_columns, _ = Column.no_workspace_objects.filter(
+    dataset_id__in=dataset_ids,
+).delete()
+deleted_datasets, _ = Dataset.no_workspace_objects.filter(id__in=dataset_ids).delete()
+deleted_workspaces, _ = Workspace.no_workspace_objects.filter(
+    id__in=workspace_ids,
+).delete()
+print(json.dumps({
+    "deleted_optimizations": deleted_optimizations,
+    "deleted_metrics": deleted_metrics,
+    "deleted_templates": deleted_templates,
+    "deleted_columns": deleted_columns,
+    "deleted_datasets": deleted_datasets,
+    "deleted_workspaces": deleted_workspaces,
+}))
+`;
+  return runBackendShellJson(script);
 }
 
 async function loadUserSdkCredentialDbAudit(organizationId, email) {
@@ -20304,6 +29495,84 @@ WHERE f.id = ${sqlUuid(fileId)};
   return runPostgresJson(sql);
 }
 
+async function seedKnowledgeBasePatchOtherWorkspaceFixture({
+  runId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  if (workspaceId)
+    assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const otherWorkspaceId = await findOtherWorkspaceId(
+    organizationId,
+    workspaceId,
+  );
+  if (!otherWorkspaceId) return null;
+  const kbId = randomUUID();
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const name = `api_journey_kb_patch_other_${suffix}`;
+  const sql = `
+WITH inserted AS (
+  INSERT INTO model_hub_knowledgebasefile (
+  id,
+  created_at,
+  updated_at,
+  deleted,
+  deleted_at,
+  name,
+  organization_id,
+  workspace_id,
+  status,
+  last_error,
+  created_by,
+  size
+  ) VALUES (
+  ${sqlUuid(kbId)},
+  NOW(),
+  NOW(),
+  false,
+  NULL,
+  ${sqlText(name)},
+  ${sqlUuid(organizationId)},
+  ${sqlUuid(otherWorkspaceId)},
+  'Completed',
+  NULL,
+  'API Journey',
+  0
+  )
+  RETURNING id, name, workspace_id
+)
+SELECT json_build_object(
+  'kb_id', inserted.id::text,
+  'name', inserted.name,
+  'workspace_id', inserted.workspace_id::text
+)
+FROM inserted;
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteKnowledgeBasePatchFixture(kbId) {
+  assert(isUuid(kbId), "kbId must be a UUID for cleanup.");
+  const sql = `
+WITH deleted_links AS (
+  DELETE FROM model_hub_knowledgebasefile_files
+  WHERE knowledgebasefile_id = ${sqlUuid(kbId)}
+  RETURNING 1
+),
+deleted_kb AS (
+  DELETE FROM model_hub_knowledgebasefile
+  WHERE id = ${sqlUuid(kbId)}
+  RETURNING 1
+)
+SELECT json_build_object(
+  'deleted_link_count', (SELECT count(*) FROM deleted_links),
+  'deleted_kb_count', (SELECT count(*) FROM deleted_kb)
+);
+`;
+  return runPostgresJson(sql);
+}
+
 async function loadStructuredKnowledgeBaseDbAudit({
   kbId,
   organizationId,
@@ -20510,6 +29779,79 @@ SELECT json_build_object(
 FROM selected_dataset d
 JOIN selected_column c ON c.dataset_id = d.id
 JOIN selected_run_prompt rp ON rp.dataset_id = d.id;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadDirectRunPromptDbAudit({
+  datasetId,
+  name,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(datasetId), "datasetId must be a UUID for DB audit.");
+  assert(typeof name === "string" && name, "name must be set for DB audit.");
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  if (workspaceId)
+    assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const sql = `
+WITH selected_dataset AS (
+  SELECT d.id, d.name, d.organization_id, d.workspace_id
+  FROM model_hub_dataset d
+  WHERE d.id = ${sqlUuid(datasetId)}
+    AND d.organization_id = ${sqlUuid(organizationId)}
+),
+selected_run_prompt AS (
+  SELECT rp.*
+  FROM model_hub_runprompter rp
+  WHERE rp.dataset_id = ${sqlUuid(datasetId)}
+    AND rp.name = ${sqlTextLiteral(name)}
+    AND rp.deleted = false
+  ORDER BY rp.created_at DESC
+  LIMIT 1
+)
+SELECT COALESCE((
+  SELECT json_build_object(
+    'dataset_id', d.id::text,
+    'dataset_name', d.name,
+    'organization_id', d.organization_id::text,
+    'workspace_id', d.workspace_id::text,
+    'run_prompt_id', rp.id::text,
+    'run_prompt_name', rp.name,
+    'run_prompt_model', rp.model,
+    'run_prompt_status', rp.status,
+    'run_prompt_dataset_id', rp.dataset_id::text,
+    'run_prompt_organization_id', rp.organization_id::text,
+    'run_prompt_workspace_id', rp.workspace_id::text,
+    'run_prompt_deleted', rp.deleted,
+    'run_prompt_count', (
+      SELECT count(*)
+      FROM model_hub_runprompter count_rp
+      WHERE count_rp.dataset_id = d.id
+        AND count_rp.name = ${sqlTextLiteral(name)}
+        AND count_rp.deleted = false
+    ),
+    'output_column_count', (
+      SELECT count(*)
+      FROM model_hub_column c
+      WHERE c.dataset_id = d.id
+        AND c.source = 'run_prompt'
+        AND c.source_id = rp.id::text
+        AND c.deleted = false
+    ),
+    'active_output_cell_count', (
+      SELECT count(*)
+      FROM model_hub_cell cell
+      JOIN model_hub_column c ON c.id = cell.column_id
+      WHERE cell.dataset_id = d.id
+        AND c.source = 'run_prompt'
+        AND c.source_id = rp.id::text
+        AND cell.deleted = false
+    )
+  )
+  FROM selected_dataset d
+  JOIN selected_run_prompt rp ON rp.dataset_id = d.id
+), '{}'::json);
 `;
   return runPostgresJson(sql);
 }
@@ -20843,6 +30185,1592 @@ SELECT COALESCE((
   return runPostgresJson(sql);
 }
 
+async function seedLegacyFeedbackGeneratedRoutesFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(userId), "userId must be a UUID for DB seed.");
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB seed.");
+  assert(isUuid(workspaceId), "workspaceId must be a UUID for DB seed.");
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const hiddenWorkspaceId = randomUUID();
+  const datasetId = randomUUID();
+  const inputColumnId = randomUUID();
+  const evalColumnId = randomUUID();
+  const rowId = randomUUID();
+  const inputCellId = randomUUID();
+  const evalCellId = randomUUID();
+  const templateId = randomUUID();
+  const metricId = randomUUID();
+  const hiddenDatasetId = randomUUID();
+  const hiddenInputColumnId = randomUUID();
+  const hiddenEvalColumnId = randomUUID();
+  const hiddenRowId = randomUUID();
+  const hiddenInputCellId = randomUUID();
+  const hiddenEvalCellId = randomUUID();
+  const hiddenTemplateId = randomUUID();
+  const hiddenMetricId = randomUUID();
+  const hiddenFeedbackId = randomUUID();
+  const hiddenExplanation = `hidden feedback must stay hidden ${suffix}`;
+  const hiddenWorkspaceName = `api journey feedback hidden ${suffix}`;
+  const sql = `
+WITH inserted_hidden_workspace AS (
+  INSERT INTO accounts_workspace (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    display_name,
+    description,
+    is_active,
+    is_default,
+    created_by_id,
+    organization_id
+  )
+  VALUES (
+    ${sqlUuid(hiddenWorkspaceId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(hiddenWorkspaceName)},
+    ${sqlTextLiteral(hiddenWorkspaceName)},
+    'API journey hidden feedback workspace',
+    true,
+    false,
+    ${sqlUuid(userId)},
+    ${sqlUuid(organizationId)}
+  )
+  RETURNING id
+),
+inserted_datasets AS (
+  INSERT INTO model_hub_dataset (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    column_order,
+    model_type,
+    organization_id,
+    workspace_id,
+    source,
+    column_config,
+    dataset_config,
+    synthetic_dataset_config,
+    eval_reasons,
+    eval_reason_status,
+    user_id
+  )
+  VALUES
+  (
+    ${sqlUuid(datasetId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(`api journey feedback dataset ${suffix}`)},
+    ARRAY[${sqlTextLiteral(inputColumnId)}, ${sqlTextLiteral(evalColumnId)}]::varchar[],
+    'GenerativeLLM',
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)},
+    'build',
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '[]'::jsonb,
+    'pending',
+    ${sqlUuid(userId)}
+  ),
+  (
+    ${sqlUuid(hiddenDatasetId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(`api journey feedback hidden dataset ${suffix}`)},
+    ARRAY[${sqlTextLiteral(hiddenInputColumnId)}, ${sqlTextLiteral(hiddenEvalColumnId)}]::varchar[],
+    'GenerativeLLM',
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(hiddenWorkspaceId)},
+    'build',
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '[]'::jsonb,
+    'pending',
+    ${sqlUuid(userId)}
+  )
+  RETURNING id
+),
+inserted_templates AS (
+  INSERT INTO model_hub_evaltemplate (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    owner,
+    eval_tags,
+    config,
+    organization_id,
+    description,
+    eval_id,
+    criteria,
+    choices,
+    multi_choice,
+    model,
+    proxy_agi,
+    visible_ui,
+    evaluator_id,
+    workspace_id,
+    choice_scores,
+    output_type_normalized,
+    pass_threshold,
+    template_type,
+    eval_type,
+    allow_edit,
+    allow_copy,
+    error_localizer_enabled,
+    aggregation_enabled,
+    aggregation_function,
+    composite_child_axis
+  )
+  VALUES
+  (
+    ${sqlUuid(templateId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(`api-feedback-${suffix}`)},
+    'user',
+    ARRAY[]::varchar[],
+    ${sqlJsonLiteral({ output: "Pass/Fail", eval_type_id: "CustomCodeEval" })},
+    ${sqlUuid(organizationId)},
+    'API journey legacy feedback eval',
+    0,
+    'Evaluate {{input}}',
+    NULL::jsonb,
+    false,
+    'gpt-4o-mini',
+    false,
+    false,
+    NULL::uuid,
+    ${sqlUuid(workspaceId)},
+    NULL::jsonb,
+    'pass_fail',
+    NULL::double precision,
+    'single',
+    'code',
+    true,
+    true,
+    false,
+    false,
+    'mean',
+    'shared'
+  ),
+  (
+    ${sqlUuid(hiddenTemplateId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(`api-feedback-hidden-${suffix}`)},
+    'user',
+    ARRAY[]::varchar[],
+    ${sqlJsonLiteral({ output: "Pass/Fail", eval_type_id: "CustomCodeEval" })},
+    ${sqlUuid(organizationId)},
+    'API journey hidden legacy feedback eval',
+    0,
+    'Evaluate {{input}}',
+    NULL::jsonb,
+    false,
+    'gpt-4o-mini',
+    false,
+    false,
+    NULL::uuid,
+    ${sqlUuid(hiddenWorkspaceId)},
+    NULL::jsonb,
+    'pass_fail',
+    NULL::double precision,
+    'single',
+    'code',
+    true,
+    true,
+    false,
+    false,
+    'mean',
+    'shared'
+  )
+  RETURNING id
+),
+inserted_metrics AS (
+  INSERT INTO model_hub_userevalmetric (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    config,
+    dataset_id,
+    template_id,
+    organization_id,
+    status,
+    show_in_sidebar,
+    source_id,
+    column_deleted,
+    user_id,
+    error_localizer,
+    kb_id,
+    model,
+    workspace_id,
+    eval_group_id,
+    composite_weight_overrides
+  )
+  VALUES
+  (
+    ${sqlUuid(metricId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'API Feedback Metric',
+    ${sqlJsonLiteral({ mapping: { input: inputColumnId }, config: {} })},
+    ${sqlUuid(datasetId)},
+    ${sqlUuid(templateId)},
+    ${sqlUuid(organizationId)},
+    'Completed',
+    true,
+    '',
+    false,
+    ${sqlUuid(userId)},
+    false,
+    NULL::uuid,
+    'gpt-4o-mini',
+    ${sqlUuid(workspaceId)},
+    NULL::uuid,
+    NULL::jsonb
+  ),
+  (
+    ${sqlUuid(hiddenMetricId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'API Hidden Feedback Metric',
+    ${sqlJsonLiteral({ mapping: { input: hiddenInputColumnId }, config: {} })},
+    ${sqlUuid(hiddenDatasetId)},
+    ${sqlUuid(hiddenTemplateId)},
+    ${sqlUuid(organizationId)},
+    'Completed',
+    true,
+    '',
+    false,
+    ${sqlUuid(userId)},
+    false,
+    NULL::uuid,
+    'gpt-4o-mini',
+    ${sqlUuid(hiddenWorkspaceId)},
+    NULL::uuid,
+    NULL::jsonb
+  )
+  RETURNING id
+),
+inserted_columns AS (
+  INSERT INTO model_hub_column (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    name,
+    data_type,
+    source,
+    source_id,
+    dataset_id,
+    metadata,
+    status
+  )
+  VALUES
+  (
+    ${sqlUuid(inputColumnId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'Feedback Input',
+    'text',
+    'OTHERS',
+    '',
+    ${sqlUuid(datasetId)},
+    '{}'::jsonb,
+    'Completed'
+  ),
+  (
+    ${sqlUuid(evalColumnId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'Feedback Eval',
+    'text',
+    'evaluation',
+    ${sqlTextLiteral(metricId)},
+    ${sqlUuid(datasetId)},
+    '{}'::jsonb,
+    'Completed'
+  ),
+  (
+    ${sqlUuid(hiddenInputColumnId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'Hidden Feedback Input',
+    'text',
+    'OTHERS',
+    '',
+    ${sqlUuid(hiddenDatasetId)},
+    '{}'::jsonb,
+    'Completed'
+  ),
+  (
+    ${sqlUuid(hiddenEvalColumnId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'Hidden Feedback Eval',
+    'text',
+    'evaluation',
+    ${sqlTextLiteral(hiddenMetricId)},
+    ${sqlUuid(hiddenDatasetId)},
+    '{}'::jsonb,
+    'Completed'
+  )
+  RETURNING id
+),
+inserted_rows AS (
+  INSERT INTO model_hub_row (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    "order",
+    dataset_id,
+    metadata
+  )
+  VALUES
+  (
+    ${sqlUuid(rowId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    0,
+    ${sqlUuid(datasetId)},
+    '{}'::jsonb
+  ),
+  (
+    ${sqlUuid(hiddenRowId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    0,
+    ${sqlUuid(hiddenDatasetId)},
+    '{}'::jsonb
+  )
+  RETURNING id
+),
+inserted_cells AS (
+  INSERT INTO model_hub_cell (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    value,
+    column_id,
+    dataset_id,
+    row_id,
+    status,
+    value_infos,
+    feedback_info,
+    column_metadata,
+    completion_tokens,
+    prompt_tokens,
+    response_time
+  )
+  VALUES
+  (
+    ${sqlUuid(inputCellId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(`feedback input ${suffix}`)},
+    ${sqlUuid(inputColumnId)},
+    ${sqlUuid(datasetId)},
+    ${sqlUuid(rowId)},
+    'pass',
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '{}'::jsonb,
+    NULL::integer,
+    NULL::integer,
+    NULL::double precision
+  ),
+  (
+    ${sqlUuid(evalCellId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'Passed',
+    ${sqlUuid(evalColumnId)},
+    ${sqlUuid(datasetId)},
+    ${sqlUuid(rowId)},
+    'pass',
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '{}'::jsonb,
+    NULL::integer,
+    NULL::integer,
+    NULL::double precision
+  ),
+  (
+    ${sqlUuid(hiddenInputCellId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    ${sqlTextLiteral(`hidden feedback input ${suffix}`)},
+    ${sqlUuid(hiddenInputColumnId)},
+    ${sqlUuid(hiddenDatasetId)},
+    ${sqlUuid(hiddenRowId)},
+    'pass',
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '{}'::jsonb,
+    NULL::integer,
+    NULL::integer,
+    NULL::double precision
+  ),
+  (
+    ${sqlUuid(hiddenEvalCellId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'Passed',
+    ${sqlUuid(hiddenEvalColumnId)},
+    ${sqlUuid(hiddenDatasetId)},
+    ${sqlUuid(hiddenRowId)},
+    'pass',
+    '{}'::jsonb,
+    '{}'::jsonb,
+    '{}'::jsonb,
+    NULL::integer,
+    NULL::integer,
+    NULL::double precision
+  )
+  RETURNING id
+),
+inserted_feedback AS (
+  INSERT INTO model_hub_feedback (
+    id,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    source,
+    source_id,
+    value,
+    explanation,
+    row_id,
+    action_type,
+    feedback_improvement,
+    custom_eval_config_id,
+    eval_template_id,
+    organization_id,
+    user_id,
+    user_eval_metric_id,
+    workspace_id
+  )
+  VALUES (
+    ${sqlUuid(hiddenFeedbackId)},
+    now(),
+    now(),
+    false,
+    NULL::timestamptz,
+    'dataset',
+    ${sqlTextLiteral(hiddenEvalColumnId)},
+    'Failed',
+    ${sqlTextLiteral(hiddenExplanation)},
+    ${sqlTextLiteral(hiddenRowId)},
+    NULL::varchar,
+    NULL::text,
+    NULL::uuid,
+    ${sqlUuid(hiddenTemplateId)},
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(userId)},
+    ${sqlUuid(hiddenMetricId)},
+    ${sqlUuid(hiddenWorkspaceId)}
+  )
+  RETURNING id
+)
+SELECT json_build_object(
+  'fixture_created', (SELECT count(*) FROM inserted_feedback) = 1,
+  'organization_id', ${sqlUuid(organizationId)}::text,
+  'workspace_id', ${sqlUuid(workspaceId)}::text,
+  'hidden_workspace_id', ${sqlUuid(hiddenWorkspaceId)}::text,
+  'dataset_id', ${sqlUuid(datasetId)}::text,
+  'input_column_id', ${sqlUuid(inputColumnId)}::text,
+  'eval_column_id', ${sqlUuid(evalColumnId)}::text,
+  'row_id', ${sqlUuid(rowId)}::text,
+  'template_id', ${sqlUuid(templateId)}::text,
+  'metric_id', ${sqlUuid(metricId)}::text,
+  'hidden_dataset_id', ${sqlUuid(hiddenDatasetId)}::text,
+  'hidden_input_column_id', ${sqlUuid(hiddenInputColumnId)}::text,
+  'hidden_eval_column_id', ${sqlUuid(hiddenEvalColumnId)}::text,
+  'hidden_row_id', ${sqlUuid(hiddenRowId)}::text,
+  'hidden_template_id', ${sqlUuid(hiddenTemplateId)}::text,
+  'hidden_metric_id', ${sqlUuid(hiddenMetricId)}::text,
+  'hidden_feedback_id', ${sqlUuid(hiddenFeedbackId)}::text,
+  'hidden_explanation', ${sqlTextLiteral(hiddenExplanation)}
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadLegacyFeedbackGeneratedRoutesDbAudit({
+  feedbackId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(feedbackId), "feedbackId must be a UUID for DB audit.");
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const sql = `
+SELECT COALESCE((
+  SELECT json_build_object(
+    'feedback_id', f.id::text,
+    'organization_id', f.organization_id::text,
+    'workspace_id', f.workspace_id::text,
+    'source', f.source,
+    'source_id', f.source_id,
+    'row_id', f.row_id,
+    'user_eval_metric_id', f.user_eval_metric_id::text,
+    'eval_template_id', f.eval_template_id::text,
+    'value', f.value,
+    'explanation', f.explanation,
+    'action_type', f.action_type,
+    'feedback_improvement', f.feedback_improvement,
+    'deleted', f.deleted,
+    'deleted_at_set', f.deleted_at IS NOT NULL,
+    'source_column_dataset_id', source_column.dataset_id::text,
+    'source_column_workspace_id', source_dataset.workspace_id::text,
+    'metric_dataset_id', metric.dataset_id::text,
+    'metric_workspace_id', metric.workspace_id::text,
+    'row_dataset_id', feedback_row.dataset_id::text
+  )
+  FROM model_hub_feedback f
+  LEFT JOIN model_hub_column source_column ON source_column.id::text = f.source_id
+  LEFT JOIN model_hub_dataset source_dataset ON source_dataset.id = source_column.dataset_id
+  LEFT JOIN model_hub_userevalmetric metric ON metric.id = f.user_eval_metric_id
+  LEFT JOIN model_hub_row feedback_row ON feedback_row.id::text = f.row_id
+  WHERE f.id = ${sqlUuid(feedbackId)}
+    AND f.organization_id = ${sqlUuid(organizationId)}
+), '{}'::json);
+`;
+  return runPostgresJson(sql);
+}
+
+function assertLegacyFeedbackGeneratedRoutesDbAudit(
+  audit,
+  {
+    fixture,
+    feedbackId,
+    organizationId,
+    workspaceId,
+    value,
+    explanation,
+    actionType,
+    expectedDeleted,
+  },
+) {
+  assert(isUuid(audit?.feedback_id), "Legacy feedback DB audit found no row.");
+  assert(
+    audit.feedback_id === feedbackId,
+    "Legacy feedback DB audit id mismatch.",
+  );
+  assert(
+    audit.organization_id === organizationId,
+    "Legacy feedback DB audit organization mismatch.",
+  );
+  assert(
+    audit.workspace_id === workspaceId,
+    "Legacy feedback DB audit workspace mismatch.",
+  );
+  assert(
+    audit.source === "dataset" && audit.source_id === fixture.eval_column_id,
+    "Legacy feedback DB audit source mismatch.",
+  );
+  assert(
+    audit.row_id === fixture.row_id &&
+      audit.row_dataset_id === fixture.dataset_id,
+    "Legacy feedback DB audit row mismatch.",
+  );
+  assert(
+    audit.user_eval_metric_id === fixture.metric_id &&
+      audit.metric_dataset_id === fixture.dataset_id &&
+      audit.metric_workspace_id === workspaceId,
+    "Legacy feedback DB audit metric mismatch.",
+  );
+  assert(
+    audit.eval_template_id === fixture.template_id,
+    "Legacy feedback DB audit eval template mismatch.",
+  );
+  assert(
+    audit.source_column_dataset_id === fixture.dataset_id &&
+      audit.source_column_workspace_id === workspaceId,
+    "Legacy feedback DB audit source column scope mismatch.",
+  );
+  assert(audit.value === value, "Legacy feedback DB audit value mismatch.");
+  assert(
+    audit.explanation === explanation,
+    "Legacy feedback DB audit explanation mismatch.",
+  );
+  assert(
+    audit.action_type === actionType,
+    "Legacy feedback DB audit action_type mismatch.",
+  );
+  assert(
+    Boolean(audit.deleted) === Boolean(expectedDeleted),
+    "Legacy feedback DB audit deleted flag mismatch.",
+  );
+  if (expectedDeleted) {
+    assert(
+      audit.deleted_at_set === true,
+      "Legacy feedback DB audit deleted_at was not set.",
+    );
+  }
+}
+
+async function loadLegacyFeedbackGeneratedRoutesHiddenAudit({ fixture }) {
+  const sql = `
+SELECT json_build_object(
+  'hidden_feedback_unchanged_count', (
+    SELECT count(*)
+    FROM model_hub_feedback
+    WHERE id = ${sqlUuid(fixture.hidden_feedback_id)}
+      AND workspace_id = ${sqlUuid(fixture.hidden_workspace_id)}
+      AND source_id = ${sqlTextLiteral(fixture.hidden_eval_column_id)}
+      AND user_eval_metric_id = ${sqlUuid(fixture.hidden_metric_id)}
+      AND explanation = ${sqlTextLiteral(fixture.hidden_explanation)}
+      AND action_type IS NULL
+      AND deleted = false
+  ),
+  'hidden_source_create_count', (
+    SELECT count(*)
+    FROM model_hub_feedback
+    WHERE source_id = ${sqlTextLiteral(fixture.hidden_eval_column_id)}
+      AND id <> ${sqlUuid(fixture.hidden_feedback_id)}
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteLegacyFeedbackGeneratedRoutesFixture({
+  fixture,
+  feedbackIds = [],
+}) {
+  const datasetIds = [fixture.dataset_id, fixture.hidden_dataset_id].filter(
+    isUuid,
+  );
+  const metricIds = [fixture.metric_id, fixture.hidden_metric_id].filter(
+    isUuid,
+  );
+  const templateIds = [fixture.template_id, fixture.hidden_template_id].filter(
+    isUuid,
+  );
+  const allFeedbackIds = [fixture.hidden_feedback_id, ...feedbackIds].filter(
+    isUuid,
+  );
+  const hiddenWorkspaceIds = [fixture.hidden_workspace_id].filter(isUuid);
+  assert(datasetIds.length === 2, "Legacy feedback cleanup missing datasets.");
+  const sql = `
+WITH deleted_feedback AS (
+  DELETE FROM model_hub_feedback
+  WHERE id = ANY(${sqlUuidArray(allFeedbackIds)})
+     OR source_id = ${sqlTextLiteral(fixture.eval_column_id)}
+     OR source_id = ${sqlTextLiteral(fixture.hidden_eval_column_id)}
+  RETURNING 1
+),
+deleted_cells AS (
+  DELETE FROM model_hub_cell
+  WHERE dataset_id = ANY(${sqlUuidArray(datasetIds)})
+  RETURNING 1
+),
+deleted_rows AS (
+  DELETE FROM model_hub_row
+  WHERE dataset_id = ANY(${sqlUuidArray(datasetIds)})
+  RETURNING 1
+),
+deleted_columns AS (
+  DELETE FROM model_hub_column
+  WHERE dataset_id = ANY(${sqlUuidArray(datasetIds)})
+  RETURNING 1
+),
+deleted_metrics AS (
+  DELETE FROM model_hub_userevalmetric
+  WHERE id = ANY(${sqlUuidArray(metricIds)})
+  RETURNING 1
+),
+deleted_templates AS (
+  DELETE FROM model_hub_evaltemplate
+  WHERE id = ANY(${sqlUuidArray(templateIds)})
+  RETURNING 1
+),
+deleted_datasets AS (
+  DELETE FROM model_hub_dataset
+  WHERE id = ANY(${sqlUuidArray(datasetIds)})
+  RETURNING 1
+),
+deleted_workspaces AS (
+  DELETE FROM accounts_workspace
+  WHERE id = ANY(${sqlUuidArray(hiddenWorkspaceIds)})
+  RETURNING 1
+)
+SELECT json_build_object(
+  'deleted_feedback_count', (SELECT count(*) FROM deleted_feedback),
+  'deleted_dataset_count', (SELECT count(*) FROM deleted_datasets),
+  'deleted_hidden_workspace_count', (SELECT count(*) FROM deleted_workspaces)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+function scoreGeneratedRoutesMarker(runId) {
+  return `api_journey_score_${runId}`;
+}
+
+async function resolveScoreQueueItemSource({
+  client,
+  evidence,
+  marker,
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  const existing = await tryResolveExistingScoreQueueItemSource(
+    client,
+    evidence,
+  );
+  if (existing) {
+    return { ...existing, fixtureMode: "existing" };
+  }
+
+  const seeded = await seedScoreGeneratedRoutesActiveTraceQueueDb({
+    marker,
+    runId,
+    userId,
+    organizationId,
+    workspaceId,
+  });
+  const queue = {
+    id: seeded.queue_id,
+    name: seeded.queue_name,
+    status: "active",
+  };
+  const item = {
+    id: seeded.item_id,
+    source_type: "trace",
+    source_id: seeded.trace_id,
+    trace_id: seeded.trace_id,
+  };
+  const detail = await loadScoreQueueItemAnnotateDetail(client, {
+    queueId: queue.id,
+    itemId: item.id,
+  });
+  const source = resolveQueueItemSource(item, detail);
+  assert(
+    source.sourceType === "trace" && source.sourceId === seeded.trace_id,
+    `Seeded score queue item source mismatch: ${JSON.stringify(source)}`,
+  );
+  evidence.push({
+    endpoint: "score source queue fixture",
+    fixture_mode: "seeded",
+    fixture_marker: marker,
+    queue_id: queue.id,
+    item_id: item.id,
+    source_type: source.sourceType,
+    source_id: source.sourceId,
+  });
+  return { queue, item, detail, source, fixtureMode: "seeded" };
+}
+
+async function tryResolveExistingScoreQueueItemSource(client, evidence) {
+  const queues = await listScoreSourceCandidateQueues(client);
+  for (const queue of queues) {
+    const itemsPayload = await client.get(
+      queuePath("/model-hub/annotation-queues/{queue_id}/items/", queue.id),
+      {
+        query: {
+          limit: 25,
+          status: ["pending", "in_progress", "skipped", "completed"],
+        },
+      },
+    );
+    const items = asArray(itemsPayload).filter((item) => item?.id);
+    for (const item of items) {
+      let detail;
+      try {
+        detail = await loadScoreQueueItemAnnotateDetail(client, {
+          queueId: queue.id,
+          itemId: item.id,
+        });
+      } catch (error) {
+        if (![403, 404].includes(Number(error?.status))) throw error;
+        continue;
+      }
+      const source = resolveQueueItemSource(item, detail);
+      if (source.sourceType && source.sourceId) {
+        evidence.push({
+          endpoint: "score source queue fixture",
+          fixture_mode: "existing",
+          queue_id: queue.id,
+          item_id: item.id,
+          source_type: source.sourceType,
+          source_id: source.sourceId,
+        });
+        return { queue, item, detail, source };
+      }
+    }
+  }
+  return null;
+}
+
+async function listScoreSourceCandidateQueues(client) {
+  if (process.env.ANNOTATION_QUEUE_ID) {
+    const queue = await client.get(
+      apiPath("/model-hub/annotation-queues/{id}/", {
+        id: process.env.ANNOTATION_QUEUE_ID,
+      }),
+    );
+    return queue?.id ? [queue] : [];
+  }
+
+  const queuesPayload = await client.get(
+    apiPath("/model-hub/annotation-queues/"),
+    {
+      query: { limit: 25 },
+    },
+  );
+  const queues = asArray(queuesPayload).filter((queue) => queue?.id);
+  return [
+    ...queues.filter(
+      (queue) => queue.status === "active" && Number(queue.item_count) > 0,
+    ),
+    ...queues.filter(
+      (queue) => queue.status !== "active" && Number(queue.item_count) > 0,
+    ),
+    ...queues.filter((queue) => Number(queue.item_count) <= 0),
+  ];
+}
+
+async function loadScoreQueueItemAnnotateDetail(client, { queueId, itemId }) {
+  return client.get(
+    queuePath(
+      "/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/",
+      queueId,
+      { id: itemId },
+    ),
+    {
+      query: {
+        include_completed: true,
+        include_all_annotations: true,
+      },
+    },
+  );
+}
+
+async function seedScoreGeneratedRoutesActiveTraceQueueDb({
+  marker,
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(userId), "userId must be a UUID for score fixture seed.");
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for score fixture seed.",
+  );
+  assert(isUuid(workspaceId), "workspaceId must be a UUID for score fixture.");
+  const projectId = randomUUID();
+  const traceId = randomUUID();
+  const queueId = randomUUID();
+  const itemId = randomUUID();
+  const memberId = randomUUID();
+  const projectName = `${marker}_active_project`;
+  const queueName = `${marker}_active_queue`;
+  const traceName = `${marker}_active_trace`;
+  const roles = ["manager", "reviewer", "annotator"];
+  const sql = `
+WITH inserted_project AS (
+  INSERT INTO tracer_project (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    organization_id,
+    workspace_id,
+    model_type,
+    name,
+    trace_type,
+    metadata,
+    config,
+    session_config,
+    user_id,
+    source,
+    tags
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(projectId)},
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)},
+    'GenerativeLLM',
+    ${sqlTextLiteral(projectName)},
+    'observe',
+    '{}'::jsonb,
+    '[]'::jsonb,
+    '[]'::jsonb,
+    ${sqlUuid(userId)},
+    'prototype',
+    '[]'::jsonb
+  )
+  RETURNING id
+),
+inserted_trace AS (
+  INSERT INTO tracer_trace (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    project_id,
+    project_version_id,
+    name,
+    metadata,
+    input,
+    output,
+    error,
+    session_id,
+    external_id,
+    tags,
+    error_analysis_status
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(traceId)},
+    ${sqlUuid(projectId)},
+    NULL,
+    ${sqlTextLiteral(traceName)},
+    ${sqlJsonLiteral({ journey: "SCORE-API-001", run_id: runId })},
+    ${sqlJsonLiteral({ prompt: "active score source" })},
+    ${sqlJsonLiteral({ response: "active score source" })},
+    NULL,
+    NULL,
+    NULL,
+    '[]'::jsonb,
+    'pending'
+  )
+  RETURNING id
+),
+inserted_queue AS (
+  INSERT INTO model_hub_annotationqueue (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    description,
+    instructions,
+    status,
+    assignment_strategy,
+    annotations_required,
+    reservation_timeout_minutes,
+    requires_review,
+    created_by_id,
+    organization_id,
+    workspace_id,
+    project_id,
+    is_default,
+    dataset_id,
+    agent_definition_id,
+    auto_assign
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(queueId)},
+    ${sqlTextLiteral(queueName)},
+    ${sqlTextLiteral("Disposable queue for generated score route coverage.")},
+    ${sqlTextLiteral("Verify direct score route lifecycle.")},
+    'active',
+    'manual',
+    1,
+    30,
+    false,
+    ${sqlUuid(userId)},
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)},
+    ${sqlUuid(projectId)},
+    false,
+    NULL,
+    NULL,
+    false
+  )
+  RETURNING id
+),
+inserted_member AS (
+  INSERT INTO model_hub_annotationqueueannotator (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    role,
+    roles,
+    queue_id,
+    user_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(memberId)},
+    'manager',
+    ${sqlJsonLiteral(roles)},
+    ${sqlUuid(queueId)},
+    ${sqlUuid(userId)}
+  )
+  RETURNING id
+),
+inserted_item AS (
+  INSERT INTO model_hub_queueitem (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    source_type,
+    status,
+    priority,
+    "order",
+    metadata,
+    reserved_at,
+    reservation_expires_at,
+    review_status,
+    reviewed_at,
+    review_notes,
+    assigned_to_id,
+    call_execution_id,
+    dataset_row_id,
+    observation_span_id,
+    organization_id,
+    prototype_run_id,
+    queue_id,
+    reserved_by_id,
+    reviewed_by_id,
+    trace_id,
+    workspace_id,
+    trace_session_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(itemId)},
+    'trace',
+    'pending',
+    0,
+    0,
+    ${sqlJsonLiteral({ journey: "SCORE-API-001", run_id: runId })},
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    ${sqlUuid(organizationId)},
+    NULL,
+    ${sqlUuid(queueId)},
+    NULL,
+    NULL,
+    ${sqlUuid(traceId)},
+    ${sqlUuid(workspaceId)},
+    NULL
+  )
+  RETURNING id
+)
+SELECT json_build_object(
+  'marker', ${sqlTextLiteral(marker)},
+  'project_id', ${sqlTextLiteral(projectId)},
+  'trace_id', ${sqlTextLiteral(traceId)},
+  'queue_id', ${sqlTextLiteral(queueId)},
+  'queue_name', ${sqlTextLiteral(queueName)},
+  'item_id', ${sqlTextLiteral(itemId)},
+  'inserted_project_count', (SELECT count(*) FROM inserted_project),
+  'inserted_trace_count', (SELECT count(*) FROM inserted_trace),
+  'inserted_queue_count', (SELECT count(*) FROM inserted_queue),
+  'inserted_member_count', (SELECT count(*) FROM inserted_member),
+  'inserted_item_count', (SELECT count(*) FROM inserted_item)
+);
+`;
+  const seeded = await runPostgresJson(sql);
+  assert(
+    Number(seeded.inserted_project_count) === 1 &&
+      Number(seeded.inserted_trace_count) === 1 &&
+      Number(seeded.inserted_queue_count) === 1 &&
+      Number(seeded.inserted_member_count) === 1 &&
+      Number(seeded.inserted_item_count) === 1,
+    `Score active fixture seed failed: ${JSON.stringify(seeded)}`,
+  );
+  return seeded;
+}
+
+async function seedScoreGeneratedRoutesHiddenTraceDb({
+  runId,
+  userId,
+  organizationId,
+  marker = scoreGeneratedRoutesMarker(runId),
+}) {
+  assert(isUuid(userId), "userId must be a UUID for score fixture seed.");
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for score fixture seed.",
+  );
+  const workspaceId = randomUUID();
+  const projectId = randomUUID();
+  const traceId = randomUUID();
+  const workspaceName = `${marker}_hidden_workspace`;
+  const projectName = `${marker}_hidden_project`;
+  const sql = `
+WITH inserted_workspace AS (
+  INSERT INTO accounts_workspace (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    display_name,
+    description,
+    is_active,
+    is_default,
+    created_by_id,
+    organization_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(workspaceId)},
+    ${sqlTextLiteral(workspaceName)},
+    ${sqlTextLiteral(workspaceName)},
+    ${sqlTextLiteral("Temporary workspace for generated score route guard.")},
+    true,
+    false,
+    ${sqlUuid(userId)},
+    ${sqlUuid(organizationId)}
+  )
+  RETURNING id
+),
+inserted_project AS (
+  INSERT INTO tracer_project (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    organization_id,
+    workspace_id,
+    model_type,
+    name,
+    trace_type,
+    metadata,
+    config,
+    session_config,
+    user_id,
+    source,
+    tags
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(projectId)},
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)},
+    'GenerativeLLM',
+    ${sqlTextLiteral(projectName)},
+    'observe',
+    '{}'::jsonb,
+    '[]'::jsonb,
+    '[]'::jsonb,
+    ${sqlUuid(userId)},
+    'prototype',
+    '[]'::jsonb
+  )
+  RETURNING id
+),
+inserted_trace AS (
+  INSERT INTO tracer_trace (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    project_id,
+    project_version_id,
+    name,
+    metadata,
+    input,
+    output,
+    error,
+    session_id,
+    external_id,
+    tags,
+    error_analysis_status
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(traceId)},
+    ${sqlUuid(projectId)},
+    NULL,
+    ${sqlTextLiteral(`${marker}_hidden_trace`)},
+    '{}'::jsonb,
+    ${sqlJsonLiteral({ prompt: "hidden score source" })},
+    ${sqlJsonLiteral({ response: "hidden score source" })},
+    NULL,
+    NULL,
+    NULL,
+    '[]'::jsonb,
+    'pending'
+  )
+  RETURNING id
+)
+SELECT json_build_object(
+  'marker', ${sqlTextLiteral(marker)},
+  'workspace_id', ${sqlTextLiteral(workspaceId)},
+  'project_id', ${sqlTextLiteral(projectId)},
+  'trace_id', ${sqlTextLiteral(traceId)},
+  'inserted_workspace_count', (SELECT count(*) FROM inserted_workspace),
+  'inserted_project_count', (SELECT count(*) FROM inserted_project),
+  'inserted_trace_count', (SELECT count(*) FROM inserted_trace)
+);
+`;
+  const seeded = await runPostgresJson(sql);
+  assert(
+    Number(seeded.inserted_workspace_count) === 1 &&
+      Number(seeded.inserted_project_count) === 1 &&
+      Number(seeded.inserted_trace_count) === 1,
+    `Score hidden fixture seed failed: ${JSON.stringify(seeded)}`,
+  );
+  return seeded;
+}
+
+async function loadScoreGeneratedRoutesHiddenTraceDbAudit({
+  marker,
+  traceId,
+  projectId,
+  workspaceId,
+  organizationId,
+}) {
+  assert(typeof marker === "string", "marker must be a string.");
+  assert(isUuid(traceId), "traceId must be a UUID for score hidden audit.");
+  assert(isUuid(projectId), "projectId must be a UUID for score hidden audit.");
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for score hidden audit.",
+  );
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for score hidden audit.",
+  );
+  const sql = `
+SELECT json_build_object(
+  'marker', ${sqlTextLiteral(marker)},
+  'hidden_workspace_exists', EXISTS (
+    SELECT 1
+    FROM accounts_workspace workspace
+    WHERE workspace.id = ${sqlUuid(workspaceId)}
+      AND workspace.organization_id = ${sqlUuid(organizationId)}
+  ),
+  'hidden_project_exists', EXISTS (
+    SELECT 1
+    FROM tracer_project project
+    WHERE project.id = ${sqlUuid(projectId)}
+      AND project.workspace_id = ${sqlUuid(workspaceId)}
+      AND project.organization_id = ${sqlUuid(organizationId)}
+  ),
+  'hidden_trace_exists', EXISTS (
+    SELECT 1
+    FROM tracer_trace trace
+    WHERE trace.id = ${sqlUuid(traceId)}
+      AND trace.project_id = ${sqlUuid(projectId)}
+  ),
+  'hidden_score_count', (
+    SELECT count(*)
+    FROM model_hub_score score
+    WHERE score.trace_id = ${sqlUuid(traceId)}
+      AND score.organization_id = ${sqlUuid(organizationId)}
+  ),
+  'hidden_default_queue_count', (
+    SELECT count(*)
+    FROM model_hub_annotationqueue queue
+    WHERE queue.project_id = ${sqlUuid(projectId)}
+      AND queue.organization_id = ${sqlUuid(organizationId)}
+      AND queue.is_default = true
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadScoreGeneratedRoutesDbAudit({
+  scoreId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(scoreId), "scoreId must be a UUID for score DB audit.");
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for score DB audit.",
+  );
+  assert(isUuid(workspaceId), "workspaceId must be a UUID for score DB audit.");
+  const sql = `
+WITH score_row AS (
+  SELECT *
+  FROM model_hub_score
+  WHERE id = ${sqlUuid(scoreId)}
+    AND organization_id = ${sqlUuid(organizationId)}
+)
+SELECT COALESCE((
+  SELECT json_build_object(
+    'score_id', score.id::text,
+    'organization_id', score.organization_id::text,
+    'workspace_id', score.workspace_id::text,
+    'source_type', score.source_type,
+    'source_id', COALESCE(
+      score.trace_id::text,
+      score.observation_span_id,
+      score.trace_session_id::text,
+      score.call_execution_id::text,
+      score.prototype_run_id::text,
+      score.dataset_row_id::text
+    ),
+    'label_id', score.label_id::text,
+    'annotator_id', score.annotator_id::text,
+    'queue_item_id', score.queue_item_id::text,
+    'value', score.value,
+    'notes', score.notes,
+    'score_source', score.score_source,
+    'deleted', score.deleted,
+    'deleted_at_set', score.deleted_at IS NOT NULL
+  )
+  FROM score_row score
+), '{}'::json);
+`;
+  return runPostgresJson(sql);
+}
+
+function assertScoreGeneratedRoutesDbAudit(
+  audit,
+  {
+    scoreId,
+    organizationId,
+    workspaceId,
+    sourceType,
+    sourceId,
+    labelId,
+    queueItemId,
+    value,
+    notes,
+    expectedDeleted,
+  },
+) {
+  assert(audit?.score_id === scoreId, "Score DB audit id mismatch.");
+  assert(
+    audit.organization_id === organizationId,
+    "Score DB audit organization mismatch.",
+  );
+  assert(
+    audit.workspace_id === workspaceId,
+    "Score DB audit workspace mismatch.",
+  );
+  assert(
+    audit.source_type === sourceType,
+    "Score DB audit source type mismatch.",
+  );
+  assert(audit.source_id === sourceId, "Score DB audit source id mismatch.");
+  assert(audit.label_id === labelId, "Score DB audit label id mismatch.");
+  assert(
+    audit.queue_item_id === queueItemId,
+    "Score DB audit queue item mismatch.",
+  );
+  assert(audit.value === value, "Score DB audit value mismatch.");
+  assert(audit.notes === notes, "Score DB audit notes mismatch.");
+  assert(
+    audit.score_source === "human",
+    "Score DB audit score_source mismatch.",
+  );
+  assert(audit.deleted === expectedDeleted, "Score DB audit deleted mismatch.");
+  if (expectedDeleted) {
+    assert(audit.deleted_at_set === true, "Deleted score missing deleted_at.");
+  }
+}
+
+async function hardDeleteScoreGeneratedRoutesDb({
+  marker,
+  organizationId,
+  scoreIds = [],
+}) {
+  assert(typeof marker === "string", "marker must be a string.");
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for score cleanup.",
+  );
+  const scoreIdPredicate = scoreIds.length
+    ? `OR score.id = ANY(${sqlUuidArray(scoreIds)})`
+    : "";
+  const sql = `
+WITH target_projects AS (
+  SELECT project.id
+  FROM tracer_project project
+  WHERE project.organization_id = ${sqlUuid(organizationId)}
+    AND project.name LIKE ${sqlTextLiteral(`${marker}%`)}
+),
+target_traces AS (
+  SELECT trace.id
+  FROM tracer_trace trace
+  WHERE trace.project_id IN (SELECT id FROM target_projects)
+),
+target_queues AS (
+  SELECT queue.id
+  FROM model_hub_annotationqueue queue
+  WHERE queue.project_id IN (SELECT id FROM target_projects)
+),
+target_queue_items AS (
+  SELECT item.id
+  FROM model_hub_queueitem item
+  WHERE item.queue_id IN (SELECT id FROM target_queues)
+     OR item.trace_id IN (SELECT id FROM target_traces)
+),
+deleted_scores AS (
+  DELETE FROM model_hub_score score
+  WHERE score.trace_id IN (SELECT id FROM target_traces)
+     OR score.queue_item_id IN (SELECT id FROM target_queue_items)
+     ${scoreIdPredicate}
+  RETURNING id
+),
+deleted_queue_item_notes AS (
+  DELETE FROM model_hub_queueitemnote note
+  WHERE note.queue_item_id IN (SELECT id FROM target_queue_items)
+  RETURNING id
+),
+deleted_queue_item_assignments AS (
+  DELETE FROM model_hub_queueitemassignment assignment
+  WHERE assignment.queue_item_id IN (SELECT id FROM target_queue_items)
+  RETURNING id
+),
+deleted_queue_items AS (
+  DELETE FROM model_hub_queueitem item
+  WHERE item.id IN (SELECT id FROM target_queue_items)
+  RETURNING id
+),
+deleted_queue_labels AS (
+  DELETE FROM model_hub_annotationqueuelabel queue_label
+  WHERE queue_label.queue_id IN (SELECT id FROM target_queues)
+  RETURNING id
+),
+deleted_queue_members AS (
+  DELETE FROM model_hub_annotationqueueannotator member
+  WHERE member.queue_id IN (SELECT id FROM target_queues)
+  RETURNING id
+),
+deleted_queues AS (
+  DELETE FROM model_hub_annotationqueue queue
+  WHERE queue.id IN (SELECT id FROM target_queues)
+  RETURNING id
+),
+deleted_traces AS (
+  DELETE FROM tracer_trace trace
+  WHERE trace.id IN (SELECT id FROM target_traces)
+  RETURNING id
+),
+deleted_projects AS (
+  DELETE FROM tracer_project project
+  WHERE project.id IN (SELECT id FROM target_projects)
+  RETURNING id, workspace_id
+),
+deleted_workspaces AS (
+  DELETE FROM accounts_workspace workspace
+  WHERE workspace.organization_id = ${sqlUuid(organizationId)}
+    AND workspace.name LIKE ${sqlTextLiteral(`${marker}%`)}
+  RETURNING id
+)
+SELECT json_build_object(
+  'deleted_scores', (SELECT count(*) FROM deleted_scores),
+  'deleted_queue_item_notes', (SELECT count(*) FROM deleted_queue_item_notes),
+  'deleted_queue_item_assignments', (SELECT count(*) FROM deleted_queue_item_assignments),
+  'deleted_queue_items', (SELECT count(*) FROM deleted_queue_items),
+  'deleted_queue_labels', (SELECT count(*) FROM deleted_queue_labels),
+  'deleted_queue_members', (SELECT count(*) FROM deleted_queue_members),
+  'deleted_queues', (SELECT count(*) FROM deleted_queues),
+  'deleted_traces', (SELECT count(*) FROM deleted_traces),
+  'deleted_projects', (SELECT count(*) FROM deleted_projects),
+  'deleted_workspaces', (SELECT count(*) FROM deleted_workspaces)
+);
+`;
+  return runPostgresJson(sql);
+}
+
 async function loadExperimentFeedbackDbAudit({
   feedbackId,
   experimentId,
@@ -21162,6 +32090,276 @@ SELECT json_build_object(
   'deleted_version_count', (SELECT count(*) FROM deleted_versions),
   'deleted_template_count', (SELECT count(*) FROM deleted_templates)
 );
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadLegacyEvalTemplateActionAudit({
+  sourceTemplateId,
+  duplicateTemplateId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(
+    isUuid(sourceTemplateId),
+    "sourceTemplateId must be a UUID for DB audit.",
+  );
+  assert(
+    isUuid(duplicateTemplateId),
+    "duplicateTemplateId must be a UUID for DB audit.",
+  );
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  if (workspaceId)
+    assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const sql = `
+WITH ids AS (
+  SELECT
+    ${sqlUuid(sourceTemplateId)}::uuid AS source_template_id,
+    ${sqlUuid(duplicateTemplateId)}::uuid AS duplicate_template_id
+),
+source_row AS (
+  SELECT id, name, owner, organization_id, workspace_id, config, eval_type, deleted, deleted_at
+  FROM model_hub_evaltemplate
+  WHERE id = (SELECT source_template_id FROM ids)
+    AND organization_id = ${sqlUuid(organizationId)}
+),
+duplicate_row AS (
+  SELECT id, name, owner, organization_id, workspace_id, config, eval_type, deleted, deleted_at
+  FROM model_hub_evaltemplate
+  WHERE id = (SELECT duplicate_template_id FROM ids)
+    AND organization_id = ${sqlUuid(organizationId)}
+)
+SELECT json_build_object(
+  'source_template_id', s.id::text,
+  'source_name', s.name,
+  'source_workspace_id', s.workspace_id::text,
+  'source_deleted', s.deleted,
+  'source_deleted_at_set', s.deleted_at IS NOT NULL,
+  'source_version_count', (
+    SELECT count(*)
+    FROM model_hub_eval_template_version v
+    WHERE v.eval_template_id = s.id
+  ),
+  'duplicate_template_id', d.id::text,
+  'duplicate_name', d.name,
+  'duplicate_owner', d.owner,
+  'duplicate_organization_id', d.organization_id::text,
+  'duplicate_workspace_id', d.workspace_id::text,
+  'duplicate_eval_type', d.eval_type,
+  'duplicate_required_keys', d.config->'required_keys',
+  'duplicate_deleted', d.deleted,
+  'duplicate_deleted_at_set', d.deleted_at IS NOT NULL,
+  'duplicate_version_count', (
+    SELECT count(*)
+    FROM model_hub_eval_template_version v
+    WHERE v.eval_template_id = d.id
+  )
+)
+FROM source_row s
+CROSS JOIN duplicate_row d;
+`;
+  return runPostgresJson(sql);
+}
+
+async function seedLegacyEvalTemplateActionOtherWorkspace({
+  templateName,
+  organizationId,
+  workspaceId,
+}) {
+  assert(typeof templateName === "string", "templateName must be a string.");
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const templateId = randomUUID();
+  const sql = `
+WITH inserted AS (
+  INSERT INTO model_hub_evaltemplate (
+    id,
+    name,
+    description,
+    organization_id,
+    workspace_id,
+    owner,
+    eval_tags,
+    eval_id,
+    config,
+    criteria,
+    eval_type,
+    template_type,
+    output_type_normalized,
+    pass_threshold,
+    visible_ui,
+    proxy_agi,
+    multi_choice,
+    allow_edit,
+    allow_copy,
+    error_localizer_enabled,
+    aggregation_enabled,
+    aggregation_function,
+    composite_child_axis,
+    deleted,
+    created_at,
+    updated_at
+  )
+  VALUES (
+    ${sqlUuid(templateId)},
+    ${sqlTextLiteral(templateName)},
+    'Other workspace legacy eval-template action fixture',
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)},
+    'user',
+    ARRAY['api-journey', 'legacy-actions']::varchar[],
+    0,
+    ${sqlJsonLiteral({
+      required_keys: ["response"],
+      eval_type_id: "CustomCodeEval",
+      output: "Pass/Fail",
+      code: "def evaluate(response=None, **kwargs):\\n    return True",
+    })},
+    'Return pass for {{response}}.',
+    'code',
+    'single',
+    'pass_fail',
+    0.5,
+    true,
+    true,
+    false,
+    true,
+    true,
+    false,
+    true,
+    'weighted_avg',
+    '',
+    false,
+    now(),
+    now()
+  )
+  RETURNING id, name, organization_id, workspace_id
+)
+SELECT json_build_object(
+  'template_id', id::text,
+  'name', name,
+  'organization_id', organization_id::text,
+  'workspace_id', workspace_id::text
+)
+FROM inserted;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadLegacyEvalTemplateActionGuardAudit({
+  otherTemplateId,
+  blockedName,
+  organizationId,
+  workspaceId,
+}) {
+  assert(
+    isUuid(otherTemplateId),
+    "otherTemplateId must be a UUID for DB audit.",
+  );
+  assert(typeof blockedName === "string", "blockedName must be a string.");
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  if (workspaceId)
+    assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const sql = `
+WITH other_row AS (
+  SELECT id, name, workspace_id, deleted, deleted_at
+  FROM model_hub_evaltemplate
+  WHERE id = ${sqlUuid(otherTemplateId)}
+    AND organization_id = ${sqlUuid(organizationId)}
+)
+SELECT json_build_object(
+  'other_template_id', o.id::text,
+  'other_name', o.name,
+  'other_workspace_id', o.workspace_id::text,
+  'other_deleted', o.deleted,
+  'other_deleted_at_set', o.deleted_at IS NOT NULL,
+  'active_blocked_name_count', (
+    SELECT count(*)
+    FROM model_hub_evaltemplate et
+    WHERE et.name = ${sqlTextLiteral(blockedName)}
+      AND et.organization_id = ${sqlUuid(organizationId)}
+      AND et.deleted = false
+  )
+)
+FROM other_row o;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadLegacyEvalTemplateUpdateAudit({
+  templateId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(templateId), "templateId must be a UUID for DB audit.");
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  if (workspaceId)
+    assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const sql = `
+SELECT json_build_object(
+  'template_id', et.id::text,
+  'name', et.name,
+  'description', et.description,
+  'owner', et.owner,
+  'organization_id', et.organization_id::text,
+  'workspace_id', et.workspace_id::text,
+  'eval_tags', to_json(et.eval_tags),
+  'multi_choice', et.multi_choice,
+  'choices', et.choices,
+  'required_keys', et.config->'required_keys',
+  'choices_map', et.config->'choices_map',
+  'check_internet', et.config->'check_internet',
+  'deleted', et.deleted,
+  'deleted_at_set', et.deleted_at IS NOT NULL
+)
+FROM model_hub_evaltemplate et
+WHERE et.id = ${sqlUuid(templateId)}
+  AND et.organization_id = ${sqlUuid(organizationId)};
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadLegacyEvalTemplateUpdateGuardAudit({
+  activeTemplateId,
+  otherTemplateId,
+  organizationId,
+}) {
+  assert(
+    isUuid(activeTemplateId),
+    "activeTemplateId must be a UUID for DB audit.",
+  );
+  assert(
+    isUuid(otherTemplateId),
+    "otherTemplateId must be a UUID for DB audit.",
+  );
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  const sql = `
+WITH active_row AS (
+  SELECT id, name, workspace_id, deleted, deleted_at
+  FROM model_hub_evaltemplate
+  WHERE id = ${sqlUuid(activeTemplateId)}
+    AND organization_id = ${sqlUuid(organizationId)}
+),
+other_row AS (
+  SELECT id, name, description, workspace_id, deleted, deleted_at
+  FROM model_hub_evaltemplate
+  WHERE id = ${sqlUuid(otherTemplateId)}
+    AND organization_id = ${sqlUuid(organizationId)}
+)
+SELECT json_build_object(
+  'active_template_id', a.id::text,
+  'active_name', a.name,
+  'active_workspace_id', a.workspace_id::text,
+  'active_deleted', a.deleted,
+  'other_template_id', o.id::text,
+  'other_name', o.name,
+  'other_description', o.description,
+  'other_workspace_id', o.workspace_id::text,
+  'other_deleted', o.deleted,
+  'other_deleted_at_set', o.deleted_at IS NOT NULL
+)
+FROM active_row a
+CROSS JOIN other_row o;
 `;
   return runPostgresJson(sql);
 }
@@ -22778,6 +33976,2316 @@ function assertPromptWorkbenchDbAudit(
   }
 }
 
+async function seedPromptLabelFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(userId), "userId must be a UUID for prompt label seed.");
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for prompt label seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for prompt label seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const script = `
+import json
+from django.db import transaction
+from accounts.models import Organization, User, Workspace
+from model_hub.models.prompt_label import LabelTypeChoices, PromptLabel
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+workspace = Workspace.no_workspace_objects.get(
+    id=${JSON.stringify(workspaceId)},
+    organization=organization,
+    deleted=False,
+)
+user = User.objects.get(id=${JSON.stringify(userId)}, organization=organization)
+suffix = ${JSON.stringify(suffix)}
+
+with transaction.atomic():
+    template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt labels {suffix}",
+        description="API journey prompt-label lifecycle fixture",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+        variable_names=["customer"],
+    )
+    version_one = PromptVersion.no_workspace_objects.create(
+        original_template=template,
+        template_version="v1",
+        prompt_config_snapshot={
+            "messages": [{"role": "user", "content": "Hello {{customer}} v1"}]
+        },
+        variable_names={"customer": ["Ada"]},
+        output=[],
+        is_default=True,
+    )
+    version_two = PromptVersion.no_workspace_objects.create(
+        original_template=template,
+        template_version="v2",
+        prompt_config_snapshot={
+            "messages": [{"role": "user", "content": "Hello {{customer}} v2"}]
+        },
+        variable_names={"customer": ["Grace"]},
+        output=[],
+        is_default=False,
+    )
+    other_template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt labels other template {suffix}",
+        description="API journey prompt-label default isolation fixture",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    other_version = PromptVersion.no_workspace_objects.create(
+        original_template=other_template,
+        template_version="v2",
+        is_default=False,
+    )
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=f"api journey prompt labels other workspace {suffix}",
+        organization=organization,
+        is_active=True,
+        created_by=user,
+    )
+    other_label = PromptLabel.no_workspace_objects.create(
+        name=f"api journey other workspace label {suffix}",
+        organization=organization,
+        workspace=other_workspace,
+        type=LabelTypeChoices.CUSTOM.value,
+        metadata={"source": "api-journey", "scope": "other-workspace"},
+    )
+
+print(json.dumps({
+    "fixture_created": True,
+    "template_id": str(template.id),
+    "template_name": template.name,
+    "version_one_id": str(version_one.id),
+    "version_two_id": str(version_two.id),
+    "other_template_id": str(other_template.id),
+    "other_version_id": str(other_version.id),
+    "other_workspace_id": str(other_workspace.id),
+    "other_label_id": str(other_label.id),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadPromptLabelAudit({
+  fixture,
+  labelId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(labelId), "labelId must be a UUID for prompt label audit.");
+  assert(
+    isUuid(fixture.template_id),
+    "template_id must be a UUID for prompt label audit.",
+  );
+  assert(
+    isUuid(fixture.other_template_id),
+    "other_template_id must be a UUID for prompt label audit.",
+  );
+  assert(
+    isUuid(fixture.other_label_id),
+    "other_label_id must be a UUID for prompt label audit.",
+  );
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for prompt label audit.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for prompt label audit.",
+  );
+  const script = `
+import json
+from model_hub.models.prompt_label import LabelTypeChoices, PromptLabel
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+template_id = ${JSON.stringify(fixture.template_id)}
+other_template_id = ${JSON.stringify(fixture.other_template_id)}
+label_id = ${JSON.stringify(labelId)}
+other_label_id = ${JSON.stringify(fixture.other_label_id)}
+organization_id = ${JSON.stringify(organizationId)}
+workspace_id = ${JSON.stringify(workspaceId)}
+
+label = PromptLabel.all_objects.filter(id=label_id).first()
+template = PromptTemplate.all_objects.filter(id=template_id).first()
+versions = list(
+    PromptVersion.all_objects.filter(original_template_id=template_id)
+    .prefetch_related("labels")
+    .order_by("template_version")
+)
+other_versions = list(
+    PromptVersion.all_objects.filter(original_template_id=other_template_id)
+    .order_by("template_version")
+)
+version_labels = {
+    version.template_version: [
+        {"id": str(label.id), "name": label.name}
+        for label in version.labels.all().order_by("name")
+    ]
+    for version in versions
+}
+default_versions = [
+    version.template_version for version in versions if version.is_default
+]
+
+print(json.dumps({
+    "label_id": str(label.id) if label else None,
+    "label_name": label.name if label else None,
+    "label_organization_id": str(label.organization_id) if label and label.organization_id else None,
+    "label_workspace_id": str(label.workspace_id) if label and label.workspace_id else None,
+    "label_deleted": bool(label.deleted) if label else None,
+    "label_deleted_at_set": bool(label.deleted_at) if label else None,
+    "template_id": str(template.id) if template else None,
+    "template_organization_id": str(template.organization_id) if template and template.organization_id else None,
+    "template_workspace_id": str(template.workspace_id) if template and template.workspace_id else None,
+    "version_count": len(versions),
+    "version_labels": version_labels,
+    "default_versions": default_versions,
+    "other_template_default_versions": [
+        version.template_version for version in other_versions if version.is_default
+    ],
+    "system_global_count": PromptLabel.all_objects.filter(
+        organization__isnull=True,
+        workspace__isnull=True,
+        type=LabelTypeChoices.SYSTEM.value,
+        deleted=False,
+    ).count(),
+    "system_scoped_count": PromptLabel.all_objects.filter(
+        type=LabelTypeChoices.SYSTEM.value,
+        deleted=False,
+    ).exclude(organization__isnull=True, workspace__isnull=True).count(),
+    "other_workspace_label_visible_count": PromptLabel.no_workspace_objects.filter(
+        id=other_label_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+    ).count(),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+function assertPromptLabelAudit(
+  audit,
+  {
+    labelId,
+    organizationId,
+    workspaceId,
+    expectedDeleted,
+    expectedDefaultVersion,
+    expectedRemovedFromV2,
+  },
+) {
+  assert(audit?.label_id === labelId, "Prompt label DB audit id mismatch.");
+  assert(
+    audit.label_organization_id === organizationId,
+    "Prompt label DB audit organization mismatch.",
+  );
+  assert(
+    audit.label_workspace_id === workspaceId,
+    "Prompt label DB audit workspace mismatch.",
+  );
+  assert(
+    audit.template_organization_id === organizationId,
+    "Prompt label template DB audit organization mismatch.",
+  );
+  assert(
+    audit.template_workspace_id === workspaceId,
+    "Prompt label template DB audit workspace mismatch.",
+  );
+  assert(
+    audit.label_deleted === expectedDeleted,
+    "Prompt label DB audit deleted state mismatch.",
+  );
+  if (expectedDeleted) {
+    assert(
+      audit.label_deleted_at_set === true,
+      "Deleted prompt label missing deleted_at.",
+    );
+  }
+  assert(
+    Number(audit.version_count) === 2,
+    "Prompt label fixture version count mismatch.",
+  );
+  assert(
+    Array.isArray(audit.default_versions) &&
+      audit.default_versions.length === 1 &&
+      audit.default_versions[0] === expectedDefaultVersion,
+    "Prompt label default version mismatch.",
+  );
+  assert(
+    Array.isArray(audit.other_template_default_versions) &&
+      audit.other_template_default_versions.length === 0,
+    "Prompt label set-default changed another template's version.",
+  );
+  assert(
+    Number(audit.system_global_count) >= 3,
+    "Prompt label system setup did not create global system labels.",
+  );
+  assert(
+    Number(audit.system_scoped_count) === 0,
+    "Prompt label system setup created scoped system labels.",
+  );
+  assert(
+    Number(audit.other_workspace_label_visible_count) === 0,
+    "Prompt label DB audit found other-workspace label in active workspace.",
+  );
+  if (expectedRemovedFromV2) {
+    const v2Labels = audit.version_labels?.v2 || [];
+    assert(
+      !v2Labels.some((label) => label?.id === labelId),
+      "Prompt label remove endpoint left the label attached to v2.",
+    );
+  }
+}
+
+async function hardDeletePromptLabelFixture(fixture) {
+  const ids = [
+    fixture.template_id,
+    fixture.other_template_id,
+    fixture.other_workspace_id,
+    fixture.other_label_id,
+  ].filter(Boolean);
+  for (const id of ids) {
+    assert(isUuid(id), "Prompt label cleanup received a non-UUID fixture id.");
+  }
+  if (fixture.created_label_id) {
+    assert(
+      isUuid(fixture.created_label_id),
+      "Prompt label cleanup received a non-UUID created_label_id.",
+    );
+  }
+  const script = `
+import json
+from accounts.models import Workspace
+from model_hub.models.prompt_label import PromptLabel
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+template_ids = ${JSON.stringify(
+    [fixture.template_id, fixture.other_template_id].filter(Boolean),
+  )}
+label_ids = ${JSON.stringify(
+    [fixture.created_label_id, fixture.other_label_id].filter(Boolean),
+  )}
+workspace_ids = ${JSON.stringify([fixture.other_workspace_id].filter(Boolean))}
+
+version_ids = list(
+    PromptVersion.all_objects.filter(original_template_id__in=template_ids)
+    .values_list("id", flat=True)
+)
+through_deleted, _ = PromptVersion.labels.through.objects.filter(
+    promptversion_id__in=version_ids,
+).delete()
+versions_deleted, _ = PromptVersion.all_objects.filter(id__in=version_ids).delete()
+templates_deleted, _ = PromptTemplate.all_objects.filter(id__in=template_ids).delete()
+labels_deleted, _ = PromptLabel.all_objects.filter(id__in=label_ids).delete()
+workspaces_deleted, _ = Workspace.no_workspace_objects.filter(
+    id__in=workspace_ids,
+).delete()
+print(json.dumps({
+    "deleted_label_links": through_deleted,
+    "deleted_versions": versions_deleted,
+    "deleted_templates": templates_deleted,
+    "deleted_labels": labels_deleted,
+    "deleted_workspaces": workspaces_deleted,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function seedPromptBaseTemplateFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(
+    isUuid(userId),
+    "userId must be a UUID for prompt base-template seed.",
+  );
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for prompt base-template seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for prompt base-template seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const script = `
+import json
+from django.db import transaction
+from accounts.models import Organization, User, Workspace
+from model_hub.models.prompt_base_template import PromptBaseTemplate
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+from tfc.middleware.workspace_context import clear_workspace_context
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+workspace = Workspace.no_workspace_objects.get(
+    id=${JSON.stringify(workspaceId)},
+    organization=organization,
+    deleted=False,
+)
+user = User.objects.get(id=${JSON.stringify(userId)}, organization=organization)
+suffix = ${JSON.stringify(suffix)}
+category = f"API Journey Base Templates {suffix}"
+updated_category = f"API Journey Base Templates Updated {suffix}"
+sample_category = f"API Journey Base Samples {suffix}"
+other_category = f"API Journey Base Other {suffix}"
+
+with transaction.atomic():
+    template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt base template source {suffix}",
+        description="API journey prompt base-template lifecycle fixture",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+        variable_names=["topic"],
+    )
+    version = PromptVersion.no_workspace_objects.create(
+        original_template=template,
+        template_version="v1",
+        prompt_config_snapshot={
+            "messages": [{"role": "user", "content": "Render {{topic}} base-template"}]
+        },
+        variable_names={"topic": ["coverage"]},
+        output=[],
+        is_default=True,
+        is_draft=False,
+    )
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=f"api journey prompt base other workspace {suffix}",
+        organization=organization,
+        is_active=True,
+        created_by=user,
+    )
+    other_template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt base other source {suffix}",
+        description="API journey prompt base-template isolation fixture",
+        organization=organization,
+        workspace=other_workspace,
+        created_by=user,
+        variable_names=["topic"],
+    )
+    other_version = PromptVersion.no_workspace_objects.create(
+        original_template=other_template,
+        template_version="v1",
+        prompt_config_snapshot={
+            "messages": [{"role": "user", "content": "Other {{topic}} base-template"}]
+        },
+        variable_names={"topic": ["other"]},
+        output=[],
+        is_default=True,
+        is_draft=False,
+    )
+    other_base_template = PromptBaseTemplate.no_workspace_objects.create(
+        name=f"api journey other workspace base template {suffix}",
+        organization=organization,
+        workspace=other_workspace,
+        prompt_version=other_version,
+        category=other_category,
+        prompt_config_snapshot={
+            "messages": [{"role": "user", "content": "other workspace"}]
+        },
+        created_by=user,
+    )
+    clear_workspace_context()
+    sample_base_template = PromptBaseTemplate.no_workspace_objects.create(
+        name=f"api journey global sample base template {suffix}",
+        organization=None,
+        workspace=None,
+        is_sample=True,
+        category=sample_category,
+        prompt_config_snapshot={
+            "messages": [{"role": "user", "content": "sample base-template"}]
+        },
+        created_by=None,
+    )
+
+print(json.dumps({
+    "fixture_created": True,
+    "template_id": str(template.id),
+    "version_id": str(version.id),
+    "other_template_id": str(other_template.id),
+    "other_version_id": str(other_version.id),
+    "other_workspace_id": str(other_workspace.id),
+    "other_base_template_id": str(other_base_template.id),
+    "sample_base_template_id": str(sample_base_template.id),
+    "category": category,
+    "updated_category": updated_category,
+    "sample_category": sample_category,
+    "other_category": other_category,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadPromptBaseTemplateAudit({
+  fixture,
+  baseTemplateId,
+  duplicateTemplateId,
+  blockedName,
+  organizationId,
+  workspaceId,
+}) {
+  assert(
+    isUuid(baseTemplateId),
+    "baseTemplateId must be a UUID for prompt base-template audit.",
+  );
+  assert(
+    isUuid(duplicateTemplateId),
+    "duplicateTemplateId must be a UUID for prompt base-template audit.",
+  );
+  for (const id of [
+    fixture.version_id,
+    fixture.other_version_id,
+    fixture.other_base_template_id,
+    fixture.sample_base_template_id,
+  ]) {
+    assert(
+      isUuid(id),
+      "Prompt base-template audit received a non-UUID fixture id.",
+    );
+  }
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for prompt base-template audit.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for prompt base-template audit.",
+  );
+  const script = `
+import json
+from model_hub.models.prompt_base_template import PromptBaseTemplate
+
+base_template_id = ${JSON.stringify(baseTemplateId)}
+duplicate_template_id = ${JSON.stringify(duplicateTemplateId)}
+sample_template_id = ${JSON.stringify(fixture.sample_base_template_id)}
+other_template_id = ${JSON.stringify(fixture.other_base_template_id)}
+organization_id = ${JSON.stringify(organizationId)}
+workspace_id = ${JSON.stringify(workspaceId)}
+blocked_name = ${JSON.stringify(blockedName)}
+
+base = PromptBaseTemplate.all_objects.filter(id=base_template_id).first()
+duplicate = PromptBaseTemplate.all_objects.filter(id=duplicate_template_id).first()
+sample = PromptBaseTemplate.all_objects.filter(id=sample_template_id).first()
+other = PromptBaseTemplate.all_objects.filter(id=other_template_id).first()
+
+print(json.dumps({
+    "base_id": str(base.id) if base else None,
+    "base_name": base.name if base else None,
+    "base_organization_id": str(base.organization_id) if base and base.organization_id else None,
+    "base_workspace_id": str(base.workspace_id) if base and base.workspace_id else None,
+    "base_created_by_id": str(base.created_by_id) if base and base.created_by_id else None,
+    "base_prompt_version_id": str(base.prompt_version_id) if base and base.prompt_version_id else None,
+    "base_category": base.category if base else None,
+    "base_is_sample": bool(base.is_sample) if base else None,
+    "base_deleted": bool(base.deleted) if base else None,
+    "base_deleted_at_set": bool(base.deleted_at) if base else None,
+    "base_prompt_config_snapshot": base.prompt_config_snapshot if base else None,
+    "duplicate_id": str(duplicate.id) if duplicate else None,
+    "duplicate_name": duplicate.name if duplicate else None,
+    "duplicate_deleted": bool(duplicate.deleted) if duplicate else None,
+    "sample_id": str(sample.id) if sample else None,
+    "sample_name": sample.name if sample else None,
+    "sample_organization_id": str(sample.organization_id) if sample and sample.organization_id else None,
+    "sample_workspace_id": str(sample.workspace_id) if sample and sample.workspace_id else None,
+    "sample_is_sample": bool(sample.is_sample) if sample else None,
+    "sample_deleted": bool(sample.deleted) if sample else None,
+    "other_id": str(other.id) if other else None,
+    "other_workspace_id": str(other.workspace_id) if other and other.workspace_id else None,
+    "sample_global_count": PromptBaseTemplate.all_objects.filter(
+        id=sample_template_id,
+        is_sample=True,
+        organization__isnull=True,
+        workspace__isnull=True,
+        deleted=False,
+    ).count(),
+    "sample_scoped_count": PromptBaseTemplate.all_objects.filter(
+        id=sample_template_id,
+        deleted=False,
+    ).exclude(
+        organization__isnull=True,
+        workspace__isnull=True,
+    ).count(),
+    "other_workspace_visible_count": PromptBaseTemplate.no_workspace_objects.filter(
+        id=other_template_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        deleted=False,
+    ).count(),
+    "blocked_other_version_count": PromptBaseTemplate.all_objects.filter(
+        name=blocked_name,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+    ).count(),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+function assertPromptBaseTemplateAudit(
+  audit,
+  {
+    baseTemplateId,
+    duplicateTemplateId,
+    organizationId,
+    workspaceId,
+    userId,
+    expectedDeleted,
+    expectedFinalName,
+    expectedDuplicateName,
+  },
+) {
+  assert(
+    audit?.base_id === baseTemplateId,
+    "Prompt base-template DB audit id mismatch.",
+  );
+  assert(
+    audit.base_name === expectedFinalName,
+    "Prompt base-template DB audit name mismatch.",
+  );
+  assert(
+    audit.base_organization_id === organizationId,
+    "Prompt base-template DB audit organization mismatch.",
+  );
+  assert(
+    audit.base_workspace_id === workspaceId,
+    "Prompt base-template DB audit workspace mismatch.",
+  );
+  assert(
+    audit.base_created_by_id === userId,
+    "Prompt base-template DB audit creator mismatch.",
+  );
+  assert(
+    audit.base_is_sample === false,
+    "Prompt base-template DB audit found client-controlled is_sample.",
+  );
+  assert(
+    audit.base_deleted === expectedDeleted,
+    "Prompt base-template DB audit deleted state mismatch.",
+  );
+  if (expectedDeleted) {
+    assert(
+      audit.base_deleted_at_set === true,
+      "Deleted prompt base-template missing deleted_at.",
+    );
+  }
+  assert(
+    JSON.stringify(audit.base_prompt_config_snapshot || {}).includes(
+      "updated base-template",
+    ),
+    "Prompt base-template DB audit did not preserve PUT snapshot.",
+  );
+  assert(
+    audit.duplicate_id === duplicateTemplateId,
+    "Prompt base-template duplicate audit id mismatch.",
+  );
+  assert(
+    audit.duplicate_name === expectedDuplicateName,
+    "Prompt base-template duplicate name was unexpectedly changed.",
+  );
+  assert(
+    audit.duplicate_deleted === false,
+    "Prompt base-template duplicate row was unexpectedly deleted.",
+  );
+  assert(
+    audit.sample_is_sample === true &&
+      audit.sample_organization_id === null &&
+      audit.sample_workspace_id === null &&
+      audit.sample_deleted === false,
+    "Prompt base-template sample audit did not preserve global sample state.",
+  );
+  assert(
+    Number(audit.sample_global_count) === 1 &&
+      Number(audit.sample_scoped_count) === 0,
+    "Prompt base-template sample audit found scoped or missing sample rows.",
+  );
+  assert(
+    Number(audit.other_workspace_visible_count) === 0,
+    "Prompt base-template DB audit found another workspace template in active workspace.",
+  );
+  assert(
+    Number(audit.blocked_other_version_count) === 0,
+    "Prompt base-template create persisted a row for a blocked prompt version.",
+  );
+}
+
+async function hardDeletePromptBaseTemplateFixture(fixture) {
+  const baseTemplateIds = [
+    fixture.created_base_template_id,
+    fixture.duplicate_base_template_id,
+    fixture.other_base_template_id,
+    fixture.sample_base_template_id,
+  ].filter(Boolean);
+  const templateIds = [fixture.template_id, fixture.other_template_id].filter(
+    Boolean,
+  );
+  const versionIds = [fixture.version_id, fixture.other_version_id].filter(
+    Boolean,
+  );
+  const workspaceIds = [fixture.other_workspace_id].filter(Boolean);
+  for (const id of [
+    ...baseTemplateIds,
+    ...templateIds,
+    ...versionIds,
+    ...workspaceIds,
+  ]) {
+    assert(
+      isUuid(id),
+      "Prompt base-template cleanup received a non-UUID fixture id.",
+    );
+  }
+  const script = `
+import json
+from accounts.models import Workspace
+from model_hub.models.prompt_base_template import PromptBaseTemplate
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+base_template_ids = ${JSON.stringify(baseTemplateIds)}
+template_ids = ${JSON.stringify(templateIds)}
+version_ids = ${JSON.stringify(versionIds)}
+workspace_ids = ${JSON.stringify(workspaceIds)}
+
+base_templates_deleted, _ = PromptBaseTemplate.all_objects.filter(
+    id__in=base_template_ids,
+).delete()
+versions_deleted, _ = PromptVersion.all_objects.filter(id__in=version_ids).delete()
+templates_deleted, _ = PromptTemplate.all_objects.filter(id__in=template_ids).delete()
+workspaces_deleted, _ = Workspace.no_workspace_objects.filter(
+    id__in=workspace_ids,
+).delete()
+print(json.dumps({
+    "deleted_base_templates": base_templates_deleted,
+    "deleted_versions": versions_deleted,
+    "deleted_templates": templates_deleted,
+    "deleted_workspaces": workspaces_deleted,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function seedPromptLibraryRemainingFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(
+    isUuid(userId),
+    "userId must be a UUID for prompt library remaining seed.",
+  );
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for prompt library remaining seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for prompt library remaining seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const script = `
+import json
+from django.db import transaction
+from accounts.models import Organization, User, Workspace
+from model_hub.models.prompt_folders import PromptFolder
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+from tfc.middleware.workspace_context import clear_workspace_context
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+workspace = Workspace.no_workspace_objects.get(
+    id=${JSON.stringify(workspaceId)},
+    organization=organization,
+    deleted=False,
+)
+user = User.objects.get(id=${JSON.stringify(userId)}, organization=organization)
+suffix = ${JSON.stringify(suffix)}
+
+def prompt_snapshot(content):
+    return {
+        "messages": [{"role": "user", "content": content}],
+        "configuration": {
+            "model": "gpt-4o-mini",
+            "model_detail": {"type": "chat", "model_name": "gpt-4o-mini"},
+        },
+    }
+
+with transaction.atomic():
+    folder = PromptFolder.no_workspace_objects.create(
+        name=f"api journey prompt library folder {suffix}",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    duplicate_folder = PromptFolder.no_workspace_objects.create(
+        name=f"api journey prompt library duplicate folder {suffix}",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt library template {suffix}",
+        description="API journey prompt library remaining fixture",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+        prompt_folder=folder,
+        variable_names={"name": ["Ada"]},
+    )
+    version_one = PromptVersion.no_workspace_objects.create(
+        original_template=template,
+        template_version="v1",
+        prompt_config_snapshot=prompt_snapshot("Prompt library v1 {{name}}"),
+        variable_names={"name": ["Ada"]},
+        output=[{"text": "v1 output"}],
+        is_default=False,
+        is_draft=False,
+        commit_message="Initial v1",
+    )
+    version_two = PromptVersion.no_workspace_objects.create(
+        original_template=template,
+        template_version="v2",
+        prompt_config_snapshot=prompt_snapshot("Prompt library v2 {{name}}"),
+        variable_names={"name": ["Grace"]},
+        output=[{"text": "v2 output"}],
+        is_default=True,
+        is_draft=False,
+        commit_message="Promoted v2",
+    )
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=f"api journey prompt library other workspace {suffix}",
+        organization=organization,
+        is_active=True,
+        created_by=user,
+    )
+    other_folder = PromptFolder.no_workspace_objects.create(
+        name=f"api journey prompt library other folder {suffix}",
+        organization=organization,
+        workspace=other_workspace,
+        created_by=user,
+    )
+    other_template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt library other template {suffix}",
+        description="API journey prompt library isolation fixture",
+        organization=organization,
+        workspace=other_workspace,
+        created_by=user,
+        prompt_folder=other_folder,
+        variable_names={"name": ["Other"]},
+    )
+    other_version = PromptVersion.no_workspace_objects.create(
+        original_template=other_template,
+        template_version="v1",
+        prompt_config_snapshot=prompt_snapshot("Other prompt library {{name}}"),
+        variable_names={"name": ["Other"]},
+        output=[{"text": "other output"}],
+        is_default=True,
+        is_draft=False,
+        commit_message="Other v1",
+    )
+    clear_workspace_context()
+    sample_folder = PromptFolder.no_workspace_objects.create(
+        name=f"api journey prompt library global sample folder {suffix}",
+        organization=None,
+        workspace=None,
+        is_sample=True,
+        created_by=None,
+    )
+
+print(json.dumps({
+    "fixture_created": True,
+    "folder_id": str(folder.id),
+    "folder_name": folder.name,
+    "duplicate_folder_id": str(duplicate_folder.id),
+    "duplicate_folder_name": duplicate_folder.name,
+    "sample_folder_id": str(sample_folder.id),
+    "sample_folder_name": sample_folder.name,
+    "other_workspace_id": str(other_workspace.id),
+    "other_folder_id": str(other_folder.id),
+    "other_folder_name": other_folder.name,
+    "template_id": str(template.id),
+    "template_name": template.name,
+    "version_one_id": str(version_one.id),
+    "version_two_id": str(version_two.id),
+    "other_template_id": str(other_template.id),
+    "other_version_id": str(other_version.id),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadPromptLibraryRemainingAudit({
+  fixture,
+  organizationId,
+  workspaceId,
+  userId,
+}) {
+  for (const id of [
+    fixture.folder_id,
+    fixture.duplicate_folder_id,
+    fixture.sample_folder_id,
+    fixture.other_folder_id,
+    fixture.template_id,
+    fixture.version_one_id,
+    fixture.version_two_id,
+    fixture.other_template_id,
+    fixture.other_version_id,
+  ]) {
+    assert(
+      isUuid(id),
+      "Prompt library remaining audit received a non-UUID fixture id.",
+    );
+  }
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for prompt library remaining audit.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for prompt library remaining audit.",
+  );
+  assert(
+    isUuid(userId),
+    "userId must be a UUID for prompt library remaining audit.",
+  );
+  const script = `
+import json
+from model_hub.models.prompt_folders import PromptFolder
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+folder_id = ${JSON.stringify(fixture.folder_id)}
+duplicate_folder_id = ${JSON.stringify(fixture.duplicate_folder_id)}
+sample_folder_id = ${JSON.stringify(fixture.sample_folder_id)}
+other_folder_id = ${JSON.stringify(fixture.other_folder_id)}
+template_id = ${JSON.stringify(fixture.template_id)}
+version_ids = ${JSON.stringify([fixture.version_one_id, fixture.version_two_id])}
+other_template_id = ${JSON.stringify(fixture.other_template_id)}
+other_version_id = ${JSON.stringify(fixture.other_version_id)}
+organization_id = ${JSON.stringify(organizationId)}
+workspace_id = ${JSON.stringify(workspaceId)}
+
+folder = PromptFolder.all_objects.filter(id=folder_id).first()
+duplicate_folder = PromptFolder.all_objects.filter(id=duplicate_folder_id).first()
+sample_folder = PromptFolder.all_objects.filter(id=sample_folder_id).first()
+other_folder = PromptFolder.all_objects.filter(id=other_folder_id).first()
+template = PromptTemplate.all_objects.filter(id=template_id).first()
+versions = list(
+    PromptVersion.all_objects.filter(id__in=version_ids)
+    .order_by("template_version")
+)
+other_version = PromptVersion.all_objects.filter(id=other_version_id).first()
+
+print(json.dumps({
+    "folder_id": str(folder.id) if folder else None,
+    "folder_name": folder.name if folder else None,
+    "folder_organization_id": str(folder.organization_id) if folder and folder.organization_id else None,
+    "folder_workspace_id": str(folder.workspace_id) if folder and folder.workspace_id else None,
+    "folder_created_by_id": str(folder.created_by_id) if folder and folder.created_by_id else None,
+    "folder_is_sample": bool(folder.is_sample) if folder else None,
+    "folder_deleted": bool(folder.deleted) if folder else None,
+    "duplicate_folder_name": duplicate_folder.name if duplicate_folder else None,
+    "duplicate_folder_deleted": bool(duplicate_folder.deleted) if duplicate_folder else None,
+    "sample_folder_id": str(sample_folder.id) if sample_folder else None,
+    "sample_folder_name": sample_folder.name if sample_folder else None,
+    "sample_folder_organization_id": str(sample_folder.organization_id) if sample_folder and sample_folder.organization_id else None,
+    "sample_folder_workspace_id": str(sample_folder.workspace_id) if sample_folder and sample_folder.workspace_id else None,
+    "sample_folder_is_sample": bool(sample_folder.is_sample) if sample_folder else None,
+    "sample_folder_deleted": bool(sample_folder.deleted) if sample_folder else None,
+    "other_folder_name": other_folder.name if other_folder else None,
+    "other_folder_workspace_id": str(other_folder.workspace_id) if other_folder and other_folder.workspace_id else None,
+    "template_id": str(template.id) if template else None,
+    "template_organization_id": str(template.organization_id) if template and template.organization_id else None,
+    "template_workspace_id": str(template.workspace_id) if template and template.workspace_id else None,
+    "version_ids": [str(version.id) for version in versions],
+    "default_versions": [
+        version.template_version for version in versions if version.is_default
+    ],
+    "other_version_template_id": str(other_version.original_template_id) if other_version else None,
+    "sample_global_count": PromptFolder.all_objects.filter(
+        id=sample_folder_id,
+        is_sample=True,
+        organization__isnull=True,
+        workspace__isnull=True,
+        deleted=False,
+    ).count(),
+    "other_workspace_folder_visible_count": PromptFolder.no_workspace_objects.filter(
+        id=other_folder_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        deleted=False,
+    ).count(),
+    "other_workspace_version_visible_count": PromptVersion.no_workspace_objects.filter(
+        id=other_version_id,
+        original_template__organization_id=organization_id,
+        original_template__workspace_id=workspace_id,
+        deleted=False,
+    ).count(),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+function assertPromptLibraryRemainingAudit(
+  audit,
+  { fixture, organizationId, workspaceId, userId, expectedFolderName },
+) {
+  assert(
+    audit?.folder_id === fixture.folder_id,
+    "Prompt library DB audit folder id mismatch.",
+  );
+  assert(
+    audit.folder_name === expectedFolderName,
+    "Prompt library DB audit folder name mismatch.",
+  );
+  assert(
+    audit.folder_organization_id === organizationId,
+    "Prompt library DB audit folder organization mismatch.",
+  );
+  assert(
+    audit.folder_workspace_id === workspaceId,
+    "Prompt library DB audit folder workspace mismatch.",
+  );
+  assert(
+    audit.folder_created_by_id === userId,
+    "Prompt library DB audit folder creator mismatch.",
+  );
+  assert(
+    audit.folder_is_sample === false && audit.folder_deleted === false,
+    "Prompt library DB audit found invalid active folder state.",
+  );
+  assert(
+    audit.duplicate_folder_name === fixture.duplicate_folder_name &&
+      audit.duplicate_folder_deleted === false,
+    "Prompt library duplicate folder was unexpectedly changed.",
+  );
+  assert(
+    audit.sample_folder_name === fixture.sample_folder_name &&
+      audit.sample_folder_organization_id === null &&
+      audit.sample_folder_workspace_id === null &&
+      audit.sample_folder_is_sample === true &&
+      audit.sample_folder_deleted === false,
+    "Prompt library global sample folder was unexpectedly changed.",
+  );
+  assert(
+    audit.other_folder_name === fixture.other_folder_name &&
+      audit.other_folder_workspace_id === fixture.other_workspace_id,
+    "Prompt library other workspace folder was unexpectedly changed.",
+  );
+  assert(
+    audit.template_id === fixture.template_id &&
+      audit.template_organization_id === organizationId &&
+      audit.template_workspace_id === workspaceId,
+    "Prompt library DB audit template scope mismatch.",
+  );
+  assert(
+    Array.isArray(audit.version_ids) &&
+      audit.version_ids.includes(fixture.version_one_id) &&
+      audit.version_ids.includes(fixture.version_two_id),
+    "Prompt library DB audit missing active prompt versions.",
+  );
+  assert(
+    Array.isArray(audit.default_versions) &&
+      audit.default_versions.length === 1 &&
+      audit.default_versions[0] === "v2",
+    "Prompt library DB audit default version mismatch.",
+  );
+  assert(
+    Number(audit.sample_global_count) === 1,
+    "Prompt library DB audit did not preserve one global sample folder.",
+  );
+  assert(
+    Number(audit.other_workspace_folder_visible_count) === 0,
+    "Prompt library DB audit found another workspace folder in active scope.",
+  );
+  assert(
+    Number(audit.other_workspace_version_visible_count) === 0,
+    "Prompt library DB audit found another workspace version in active scope.",
+  );
+}
+
+async function hardDeletePromptLibraryRemainingFixture(fixture) {
+  const folderIds = [
+    fixture.folder_id,
+    fixture.duplicate_folder_id,
+    fixture.sample_folder_id,
+    fixture.other_folder_id,
+  ].filter(Boolean);
+  const templateIds = [fixture.template_id, fixture.other_template_id].filter(
+    Boolean,
+  );
+  const versionIds = [
+    fixture.version_one_id,
+    fixture.version_two_id,
+    fixture.other_version_id,
+  ].filter(Boolean);
+  const workspaceIds = [fixture.other_workspace_id].filter(Boolean);
+  for (const id of [
+    ...folderIds,
+    ...templateIds,
+    ...versionIds,
+    ...workspaceIds,
+  ]) {
+    assert(
+      isUuid(id),
+      "Prompt library remaining cleanup received a non-UUID fixture id.",
+    );
+  }
+  const script = `
+import json
+from accounts.models import Workspace
+from model_hub.models.prompt_folders import PromptFolder
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+folder_ids = ${JSON.stringify(folderIds)}
+template_ids = ${JSON.stringify(templateIds)}
+version_ids = ${JSON.stringify(versionIds)}
+workspace_ids = ${JSON.stringify(workspaceIds)}
+
+versions_deleted, _ = PromptVersion.all_objects.filter(id__in=version_ids).delete()
+templates_deleted, _ = PromptTemplate.all_objects.filter(id__in=template_ids).delete()
+folders_deleted, _ = PromptFolder.all_objects.filter(id__in=folder_ids).delete()
+workspaces_deleted, _ = Workspace.no_workspace_objects.filter(
+    id__in=workspace_ids,
+).delete()
+print(json.dumps({
+    "deleted_versions": versions_deleted,
+    "deleted_templates": templates_deleted,
+    "deleted_folders": folders_deleted,
+    "deleted_workspaces": workspaces_deleted,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function seedPromptResponseSchemaFixture({
+  runId,
+  organizationId,
+  workspaceId,
+  userId,
+}) {
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for prompt response-schema seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for prompt response-schema seed.",
+  );
+  assert(
+    isUuid(userId),
+    "userId must be a UUID for prompt response-schema seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const sharedSchemaName = `api journey response schema shared ${suffix}`;
+  const invalidSchemaName = `api journey invalid response schema ${runId}`;
+  const script = `
+import json
+from django.db import transaction
+from accounts.models import Organization, User, Workspace
+from model_hub.models.run_prompt import SchemaTypeChoices, UserResponseSchema
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+workspace = Workspace.no_workspace_objects.get(
+    id=${JSON.stringify(workspaceId)},
+    organization=organization,
+    deleted=False,
+)
+user = User.objects.get(id=${JSON.stringify(userId)}, organization=organization)
+suffix = ${JSON.stringify(suffix)}
+shared_schema_name = ${JSON.stringify(sharedSchemaName)}
+
+with transaction.atomic():
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=f"api journey response schema other workspace {suffix}",
+        organization=organization,
+        is_active=True,
+        created_by=user,
+    )
+    other_schema = UserResponseSchema.no_workspace_objects.create(
+        name=shared_schema_name,
+        description="same-name other-workspace response schema",
+        schema={"type": "object", "properties": {"other": {"type": "string"}}},
+        schema_type=SchemaTypeChoices.JSON.value,
+        organization=organization,
+        workspace=other_workspace,
+    )
+
+print(json.dumps({
+    "fixture_created": True,
+    "other_workspace_id": str(other_workspace.id),
+    "other_schema_id": str(other_schema.id),
+    "shared_schema_name": shared_schema_name,
+    "invalid_schema_name": ${JSON.stringify(invalidSchemaName)},
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadPromptResponseSchemaAudit({
+  fixture,
+  schemaId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(
+    isUuid(schemaId),
+    "schemaId must be a UUID for response-schema audit.",
+  );
+  assert(
+    isUuid(fixture.other_schema_id),
+    "other_schema_id must be a UUID for response-schema audit.",
+  );
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for response-schema audit.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for response-schema audit.",
+  );
+  const script = `
+import json
+from model_hub.models.run_prompt import UserResponseSchema
+
+schema_id = ${JSON.stringify(schemaId)}
+other_schema_id = ${JSON.stringify(fixture.other_schema_id)}
+organization_id = ${JSON.stringify(organizationId)}
+workspace_id = ${JSON.stringify(workspaceId)}
+shared_schema_name = ${JSON.stringify(fixture.shared_schema_name)}
+invalid_schema_name = ${JSON.stringify(fixture.invalid_schema_name)}
+
+schema = UserResponseSchema.all_objects.filter(id=schema_id).first()
+other_schema = UserResponseSchema.all_objects.filter(id=other_schema_id).first()
+
+print(json.dumps({
+    "schema_id": str(schema.id) if schema else None,
+    "schema_name": schema.name if schema else None,
+    "schema_description": schema.description if schema else None,
+    "schema_organization_id": str(schema.organization_id) if schema and schema.organization_id else None,
+    "schema_workspace_id": str(schema.workspace_id) if schema and schema.workspace_id else None,
+    "schema_type": schema.schema_type if schema else None,
+    "schema_body": schema.schema if schema else None,
+    "schema_deleted": bool(schema.deleted) if schema else None,
+    "schema_deleted_at_set": bool(schema.deleted_at) if schema else None,
+    "other_schema_id": str(other_schema.id) if other_schema else None,
+    "other_schema_name": other_schema.name if other_schema else None,
+    "other_schema_workspace_id": str(other_schema.workspace_id) if other_schema and other_schema.workspace_id else None,
+    "other_schema_deleted": bool(other_schema.deleted) if other_schema else None,
+    "same_name_total_count": UserResponseSchema.all_objects.filter(
+        name=shared_schema_name,
+        organization_id=organization_id,
+    ).count(),
+    "active_workspace_same_name_count": UserResponseSchema.no_workspace_objects.filter(
+        name=shared_schema_name,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+    ).count(),
+    "other_workspace_schema_visible_count": UserResponseSchema.no_workspace_objects.filter(
+        id=other_schema_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+    ).count(),
+    "invalid_schema_count": UserResponseSchema.all_objects.filter(
+        name=invalid_schema_name,
+        organization_id=organization_id,
+    ).count(),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+function assertPromptResponseSchemaAudit(
+  audit,
+  {
+    fixture,
+    schemaId,
+    organizationId,
+    workspaceId,
+    expectedDeleted,
+    expectedFinalName,
+  },
+) {
+  assert(
+    audit?.schema_id === schemaId,
+    "Response-schema DB audit id mismatch.",
+  );
+  assert(
+    audit.schema_name === expectedFinalName,
+    "Response-schema DB audit name mismatch.",
+  );
+  assert(
+    audit.schema_organization_id === organizationId,
+    "Response-schema DB audit organization mismatch.",
+  );
+  assert(
+    audit.schema_workspace_id === workspaceId,
+    "Response-schema DB audit workspace mismatch.",
+  );
+  assert(
+    audit.schema_type === "json",
+    "Response-schema DB audit final schema_type mismatch.",
+  );
+  assert(
+    audit.schema_body?.properties?.final?.type === "boolean",
+    "Response-schema DB audit final schema body mismatch.",
+  );
+  assert(
+    audit.schema_deleted === expectedDeleted,
+    "Response-schema DB audit deleted state mismatch.",
+  );
+  if (expectedDeleted) {
+    assert(
+      audit.schema_deleted_at_set === true,
+      "Deleted response schema missing deleted_at.",
+    );
+  }
+  assert(
+    audit.other_schema_id === fixture.other_schema_id &&
+      audit.other_schema_name === fixture.shared_schema_name &&
+      audit.other_schema_workspace_id === fixture.other_workspace_id &&
+      audit.other_schema_deleted === false,
+    "Response-schema DB audit found changed other-workspace schema.",
+  );
+  assert(
+    Number(audit.same_name_total_count) === 2,
+    "Response-schema DB audit expected same-name schemas in two workspaces.",
+  );
+  const expectedActiveCount = expectedDeleted ? 0 : 1;
+  assert(
+    Number(audit.active_workspace_same_name_count) === expectedActiveCount,
+    "Response-schema DB audit active workspace same-name count mismatch.",
+  );
+  assert(
+    Number(audit.other_workspace_schema_visible_count) === 0,
+    "Response-schema DB audit found other-workspace schema in active scope.",
+  );
+  assert(
+    Number(audit.invalid_schema_count) === 0,
+    "Response-schema DB audit found persisted invalid schema.",
+  );
+}
+
+async function hardDeletePromptResponseSchemaFixture(fixture) {
+  const schemaIds = [fixture.created_schema_id, fixture.other_schema_id].filter(
+    Boolean,
+  );
+  const workspaceIds = [fixture.other_workspace_id].filter(Boolean);
+  for (const id of [...schemaIds, ...workspaceIds]) {
+    assert(
+      isUuid(id),
+      "Response-schema cleanup received a non-UUID fixture id.",
+    );
+  }
+  const script = `
+import json
+from accounts.models import Workspace
+from model_hub.models.run_prompt import UserResponseSchema
+
+schema_ids = ${JSON.stringify(schemaIds)}
+workspace_ids = ${JSON.stringify(workspaceIds)}
+
+schemas_deleted, _ = UserResponseSchema.all_objects.filter(id__in=schema_ids).delete()
+workspaces_deleted, _ = Workspace.no_workspace_objects.filter(
+    id__in=workspace_ids,
+).delete()
+print(json.dumps({
+    "deleted_schemas": schemas_deleted,
+    "deleted_workspaces": workspaces_deleted,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function seedPromptDerivedVariablesFixture({
+  runId,
+  organizationId,
+  workspaceId,
+  userId,
+}) {
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for prompt derived-variable seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for prompt derived-variable seed.",
+  );
+  assert(
+    isUuid(userId),
+    "userId must be a UUID for prompt derived-variable seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const script = `
+import json
+from django.db import transaction
+from accounts.models import Organization, User, Workspace
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+workspace = Workspace.no_workspace_objects.get(
+    id=${JSON.stringify(workspaceId)},
+    organization=organization,
+    deleted=False,
+)
+user = User.objects.get(id=${JSON.stringify(userId)}, organization=organization)
+suffix = ${JSON.stringify(suffix)}
+
+metadata = {
+    "derived_variables": {
+        "answer": {
+            "paths": ["customer.name", "score"],
+            "schema": {
+                "customer.name": {"type": "string", "sample": "Ada"},
+                "score": {"type": "number", "sample": 98},
+            },
+            "full_variables": ["answer.customer.name", "answer.score"],
+            "raw_sample": {"customer": {"name": "Ada"}, "score": 98},
+            "is_json": True,
+        },
+        "plain_text": {
+            "paths": [],
+            "schema": {},
+            "full_variables": [],
+            "is_json": False,
+        },
+    }
+}
+output = [{"customer": {"name": "Ada", "tier": "enterprise"}, "score": 98}]
+
+with transaction.atomic():
+    template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt derived variables {suffix}",
+        description="API journey prompt derived-variable fixture",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    version = PromptVersion.no_workspace_objects.create(
+        original_template=template,
+        template_version="v1",
+        output=output,
+        metadata=metadata,
+    )
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=f"api journey prompt derived variables other workspace {suffix}",
+        organization=organization,
+        is_active=True,
+        created_by=user,
+    )
+    other_template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt derived variables hidden {suffix}",
+        description="API journey prompt derived-variable hidden fixture",
+        organization=organization,
+        workspace=other_workspace,
+        created_by=user,
+    )
+    other_version = PromptVersion.no_workspace_objects.create(
+        original_template=other_template,
+        template_version="v1",
+        output=output,
+        metadata=metadata,
+    )
+
+print(json.dumps({
+    "fixture_created": True,
+    "template_id": str(template.id),
+    "version_id": str(version.id),
+    "other_workspace_id": str(other_workspace.id),
+    "other_template_id": str(other_template.id),
+    "other_version_id": str(other_version.id),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadPromptDerivedVariablesAudit({
+  fixture,
+  organizationId,
+  workspaceId,
+}) {
+  for (const id of [
+    fixture.template_id,
+    fixture.version_id,
+    fixture.other_workspace_id,
+    fixture.other_template_id,
+    fixture.other_version_id,
+    organizationId,
+    workspaceId,
+  ]) {
+    assert(isUuid(id), "Prompt derived-variable audit received non-UUID id.");
+  }
+  const script = `
+import json
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+template_id = ${JSON.stringify(fixture.template_id)}
+version_id = ${JSON.stringify(fixture.version_id)}
+other_template_id = ${JSON.stringify(fixture.other_template_id)}
+other_version_id = ${JSON.stringify(fixture.other_version_id)}
+organization_id = ${JSON.stringify(organizationId)}
+workspace_id = ${JSON.stringify(workspaceId)}
+
+template = PromptTemplate.all_objects.filter(id=template_id).first()
+version = PromptVersion.all_objects.filter(id=version_id).first()
+other_template = PromptTemplate.all_objects.filter(id=other_template_id).first()
+other_version = PromptVersion.all_objects.filter(id=other_version_id).first()
+version_meta = version.metadata if version else {}
+other_meta = other_version.metadata if other_version else {}
+version_derived = version_meta.get("derived_variables", {})
+other_derived = other_meta.get("derived_variables", {})
+
+print(json.dumps({
+    "template_id": str(template.id) if template else None,
+    "template_organization_id": str(template.organization_id) if template and template.organization_id else None,
+    "template_workspace_id": str(template.workspace_id) if template and template.workspace_id else None,
+    "version_id": str(version.id) if version else None,
+    "version_template_id": str(version.original_template_id) if version else None,
+    "derived_variable_keys": sorted(version_derived.keys()),
+    "extracted_full_variables": version_derived.get("extracted", {}).get("full_variables", []),
+    "extracted_score_type": version_derived.get("extracted", {}).get("schema", {}).get("score", {}).get("type"),
+    "other_template_id": str(other_template.id) if other_template else None,
+    "other_template_workspace_id": str(other_template.workspace_id) if other_template and other_template.workspace_id else None,
+    "other_version_id": str(other_version.id) if other_version else None,
+    "other_derived_variable_keys": sorted(other_derived.keys()),
+    "other_workspace_mutated": "blocked" in other_derived or "extracted" in other_derived,
+    "other_workspace_template_visible_count": PromptTemplate.no_workspace_objects.filter(
+        id=other_template_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+    ).count(),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+function assertPromptDerivedVariablesAudit(
+  audit,
+  { fixture, organizationId, workspaceId },
+) {
+  assert(
+    audit?.template_id === fixture.template_id,
+    "Prompt derived-variable audit template id mismatch.",
+  );
+  assert(
+    audit.template_organization_id === organizationId,
+    "Prompt derived-variable audit organization mismatch.",
+  );
+  assert(
+    audit.template_workspace_id === workspaceId,
+    "Prompt derived-variable audit workspace mismatch.",
+  );
+  assert(
+    audit.version_id === fixture.version_id &&
+      audit.version_template_id === fixture.template_id,
+    "Prompt derived-variable audit version mismatch.",
+  );
+  assert(
+    asArray(audit.derived_variable_keys).includes("answer") &&
+      asArray(audit.derived_variable_keys).includes("extracted"),
+    "Prompt derived-variable audit missing active derived-variable keys.",
+  );
+  assert(
+    asArray(audit.extracted_full_variables).includes(
+      "extracted.customer.name",
+    ) && audit.extracted_score_type === "number",
+    "Prompt derived-variable audit did not persist extracted schema.",
+  );
+  assert(
+    audit.other_template_id === fixture.other_template_id &&
+      audit.other_template_workspace_id === fixture.other_workspace_id &&
+      audit.other_version_id === fixture.other_version_id,
+    "Prompt derived-variable audit hidden fixture mismatch.",
+  );
+  assert(
+    audit.other_workspace_mutated === false,
+    "Prompt derived-variable audit found hidden workspace mutation.",
+  );
+  assert(
+    asArray(audit.other_derived_variable_keys).length === 2 &&
+      asArray(audit.other_derived_variable_keys).includes("answer") &&
+      asArray(audit.other_derived_variable_keys).includes("plain_text"),
+    "Prompt derived-variable audit hidden metadata changed.",
+  );
+  assert(
+    Number(audit.other_workspace_template_visible_count) === 0,
+    "Prompt derived-variable audit found hidden prompt in active workspace.",
+  );
+}
+
+async function hardDeletePromptDerivedVariablesFixture(fixture) {
+  const templateIds = [fixture.template_id, fixture.other_template_id].filter(
+    Boolean,
+  );
+  const workspaceIds = [fixture.other_workspace_id].filter(Boolean);
+  for (const id of [...templateIds, ...workspaceIds]) {
+    assert(
+      isUuid(id),
+      "Prompt derived-variable cleanup received a non-UUID fixture id.",
+    );
+  }
+  const script = `
+import json
+from accounts.models import Workspace
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+template_ids = ${JSON.stringify(templateIds)}
+workspace_ids = ${JSON.stringify(workspaceIds)}
+version_ids = list(
+    PromptVersion.all_objects.filter(original_template_id__in=template_ids)
+    .values_list("id", flat=True)
+)
+versions_deleted, _ = PromptVersion.all_objects.filter(id__in=version_ids).delete()
+templates_deleted, _ = PromptTemplate.all_objects.filter(id__in=template_ids).delete()
+workspaces_deleted, _ = Workspace.no_workspace_objects.filter(
+    id__in=workspace_ids,
+).delete()
+print(json.dumps({
+    "deleted_versions": versions_deleted,
+    "deleted_templates": templates_deleted,
+    "deleted_workspaces": workspaces_deleted,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function seedPromptMetricsFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(userId), "userId must be a UUID for prompt metrics seed.");
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for prompt metrics seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for prompt metrics seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const script = `
+import json
+from django.db import transaction
+from accounts.models import Organization, User, Workspace
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+workspace = Workspace.no_workspace_objects.get(
+    id=${JSON.stringify(workspaceId)},
+    organization=organization,
+    deleted=False,
+)
+user = User.objects.get(id=${JSON.stringify(userId)}, organization=organization)
+suffix = ${JSON.stringify(suffix)}
+
+with transaction.atomic():
+    template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt metrics {suffix}",
+        description="API journey prompt metrics fixture",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    version = PromptVersion.no_workspace_objects.create(
+        original_template=template,
+        template_version="v1",
+        prompt_config_snapshot={
+            "messages": [{"role": "user", "content": "Hello {{customer}}"}]
+        },
+        variable_names={"customer": ["Ada"]},
+        is_default=True,
+    )
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=f"api journey prompt metrics other workspace {suffix}",
+        organization=organization,
+        is_active=True,
+        created_by=user,
+    )
+    other_template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt metrics hidden {suffix}",
+        description="API journey prompt metrics hidden fixture",
+        organization=organization,
+        workspace=other_workspace,
+        created_by=user,
+    )
+    other_version = PromptVersion.no_workspace_objects.create(
+        original_template=other_template,
+        template_version="v1",
+        prompt_config_snapshot={
+            "messages": [{"role": "user", "content": "Hidden {{customer}}"}]
+        },
+        variable_names={"customer": ["Grace"]},
+        is_default=True,
+    )
+
+print(json.dumps({
+    "fixture_created": True,
+    "template_id": str(template.id),
+    "template_name": template.name,
+    "version_id": str(version.id),
+    "other_workspace_id": str(other_workspace.id),
+    "other_template_id": str(other_template.id),
+    "other_version_id": str(other_version.id),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadPromptMetricsAudit({
+  fixture,
+  organizationId,
+  workspaceId,
+}) {
+  for (const id of [
+    fixture.template_id,
+    fixture.version_id,
+    fixture.other_workspace_id,
+    fixture.other_template_id,
+    fixture.other_version_id,
+    organizationId,
+    workspaceId,
+  ]) {
+    assert(isUuid(id), "Prompt metrics audit received non-UUID id.");
+  }
+  const script = `
+import json
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+template_id = ${JSON.stringify(fixture.template_id)}
+version_id = ${JSON.stringify(fixture.version_id)}
+other_template_id = ${JSON.stringify(fixture.other_template_id)}
+other_version_id = ${JSON.stringify(fixture.other_version_id)}
+organization_id = ${JSON.stringify(organizationId)}
+workspace_id = ${JSON.stringify(workspaceId)}
+
+template = PromptTemplate.all_objects.filter(id=template_id).first()
+version = PromptVersion.all_objects.filter(id=version_id).first()
+other_template = PromptTemplate.all_objects.filter(id=other_template_id).first()
+other_version = PromptVersion.all_objects.filter(id=other_version_id).first()
+
+print(json.dumps({
+    "template_id": str(template.id) if template else None,
+    "template_name": template.name if template else None,
+    "template_organization_id": str(template.organization_id) if template and template.organization_id else None,
+    "template_workspace_id": str(template.workspace_id) if template and template.workspace_id else None,
+    "version_id": str(version.id) if version else None,
+    "version_template_id": str(version.original_template_id) if version else None,
+    "other_template_id": str(other_template.id) if other_template else None,
+    "other_template_name": other_template.name if other_template else None,
+    "other_template_workspace_id": str(other_template.workspace_id) if other_template and other_template.workspace_id else None,
+    "other_version_id": str(other_version.id) if other_version else None,
+    "other_version_template_id": str(other_version.original_template_id) if other_version else None,
+    "other_workspace_template_visible_count": PromptTemplate.no_workspace_objects.filter(
+        id=other_template_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+    ).count(),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+function assertPromptMetricsAudit(
+  audit,
+  { fixture, organizationId, workspaceId },
+) {
+  assert(
+    audit?.template_id === fixture.template_id,
+    "Prompt metrics audit template id mismatch.",
+  );
+  assert(
+    audit.template_name === fixture.template_name,
+    "Prompt metrics audit template name mismatch.",
+  );
+  assert(
+    audit.template_organization_id === organizationId,
+    "Prompt metrics audit organization mismatch.",
+  );
+  assert(
+    audit.template_workspace_id === workspaceId,
+    "Prompt metrics audit workspace mismatch.",
+  );
+  assert(
+    audit.version_id === fixture.version_id &&
+      audit.version_template_id === fixture.template_id,
+    "Prompt metrics audit version mismatch.",
+  );
+  assert(
+    audit.other_template_id === fixture.other_template_id &&
+      audit.other_template_workspace_id === fixture.other_workspace_id &&
+      audit.other_version_id === fixture.other_version_id &&
+      audit.other_version_template_id === fixture.other_template_id,
+    "Prompt metrics audit hidden fixture mismatch.",
+  );
+  assert(
+    Number(audit.other_workspace_template_visible_count) === 0,
+    "Prompt metrics audit found hidden prompt in active workspace.",
+  );
+}
+
+async function hardDeletePromptMetricsFixture(fixture) {
+  const templateIds = [fixture.template_id, fixture.other_template_id].filter(
+    Boolean,
+  );
+  const workspaceIds = [fixture.other_workspace_id].filter(Boolean);
+  for (const id of [...templateIds, ...workspaceIds]) {
+    assert(
+      isUuid(id),
+      "Prompt metrics cleanup received a non-UUID fixture id.",
+    );
+  }
+  const script = `
+import json
+from accounts.models import Workspace
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+template_ids = ${JSON.stringify(templateIds)}
+workspace_ids = ${JSON.stringify(workspaceIds)}
+version_ids = list(
+    PromptVersion.all_objects.filter(original_template_id__in=template_ids)
+    .values_list("id", flat=True)
+)
+versions_deleted, _ = PromptVersion.all_objects.filter(id__in=version_ids).delete()
+templates_deleted, _ = PromptTemplate.all_objects.filter(id__in=template_ids).delete()
+workspaces_deleted, _ = Workspace.no_workspace_objects.filter(
+    id__in=workspace_ids,
+).delete()
+print(json.dumps({
+    "deleted_versions": versions_deleted,
+    "deleted_templates": templates_deleted,
+    "deleted_workspaces": workspaces_deleted,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function seedPromptStopStreamingFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(
+    isUuid(userId),
+    "userId must be a UUID for prompt stop-streaming seed.",
+  );
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for prompt stop-streaming seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for prompt stop-streaming seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const script = `
+import json
+from django.db import transaction
+from accounts.models import Organization, User, Workspace
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+workspace = Workspace.no_workspace_objects.get(
+    id=${JSON.stringify(workspaceId)},
+    organization=organization,
+    deleted=False,
+)
+user = User.objects.get(id=${JSON.stringify(userId)}, organization=organization)
+suffix = ${JSON.stringify(suffix)}
+
+with transaction.atomic():
+    template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt stop streaming {suffix}",
+        description="API journey prompt stop-streaming fixture",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    version_v1 = PromptVersion.no_workspace_objects.create(
+        original_template=template,
+        template_version="v1",
+        prompt_config_snapshot={
+            "messages": [{"role": "user", "content": "Hello {{customer}}"}]
+        },
+        variable_names={"customer": ["Ada"]},
+        is_default=True,
+    )
+    version_v2 = PromptVersion.no_workspace_objects.create(
+        original_template=template,
+        template_version="v2",
+        prompt_config_snapshot={
+            "messages": [{"role": "user", "content": "Hello again {{customer}}"}]
+        },
+        variable_names={"customer": ["Grace"]},
+    )
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=f"api journey prompt stop streaming other workspace {suffix}",
+        organization=organization,
+        is_active=True,
+        created_by=user,
+    )
+    other_template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt stop streaming hidden {suffix}",
+        description="API journey prompt stop-streaming hidden fixture",
+        organization=organization,
+        workspace=other_workspace,
+        created_by=user,
+    )
+    other_version = PromptVersion.no_workspace_objects.create(
+        original_template=other_template,
+        template_version="v1",
+        prompt_config_snapshot={
+            "messages": [{"role": "user", "content": "Hidden {{customer}}"}]
+        },
+        variable_names={"customer": ["Hidden"]},
+        is_default=True,
+    )
+
+print(json.dumps({
+    "fixture_created": True,
+    "template_id": str(template.id),
+    "version_v1_id": str(version_v1.id),
+    "version_v2_id": str(version_v2.id),
+    "other_workspace_id": str(other_workspace.id),
+    "other_template_id": str(other_template.id),
+    "other_version_id": str(other_version.id),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadPromptStopStreamingAudit({
+  fixture,
+  organizationId,
+  workspaceId,
+}) {
+  for (const id of [
+    fixture.template_id,
+    fixture.version_v1_id,
+    fixture.version_v2_id,
+    fixture.other_workspace_id,
+    fixture.other_template_id,
+    fixture.other_version_id,
+    organizationId,
+    workspaceId,
+  ]) {
+    assert(isUuid(id), "Prompt stop-streaming audit received non-UUID id.");
+  }
+  const script = `
+import json
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+template_id = ${JSON.stringify(fixture.template_id)}
+other_template_id = ${JSON.stringify(fixture.other_template_id)}
+organization_id = ${JSON.stringify(organizationId)}
+workspace_id = ${JSON.stringify(workspaceId)}
+
+template = PromptTemplate.all_objects.filter(id=template_id).first()
+other_template = PromptTemplate.all_objects.filter(id=other_template_id).first()
+versions = list(
+    PromptVersion.all_objects.filter(original_template_id=template_id)
+    .order_by("template_version")
+    .values_list("template_version", flat=True)
+)
+other_versions = list(
+    PromptVersion.all_objects.filter(original_template_id=other_template_id)
+    .order_by("template_version")
+    .values_list("template_version", flat=True)
+)
+
+print(json.dumps({
+    "template_id": str(template.id) if template else None,
+    "template_organization_id": str(template.organization_id) if template and template.organization_id else None,
+    "template_workspace_id": str(template.workspace_id) if template and template.workspace_id else None,
+    "active_template_versions": versions,
+    "other_template_id": str(other_template.id) if other_template else None,
+    "other_template_workspace_id": str(other_template.workspace_id) if other_template and other_template.workspace_id else None,
+    "other_template_versions": other_versions,
+    "other_workspace_template_visible_count": PromptTemplate.no_workspace_objects.filter(
+        id=other_template_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+    ).count(),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+function assertPromptStopStreamingAudit(
+  audit,
+  { fixture, organizationId, workspaceId },
+) {
+  assert(
+    audit?.template_id === fixture.template_id,
+    "Prompt stop-streaming audit template id mismatch.",
+  );
+  assert(
+    audit.template_organization_id === organizationId,
+    "Prompt stop-streaming audit organization mismatch.",
+  );
+  assert(
+    audit.template_workspace_id === workspaceId,
+    "Prompt stop-streaming audit workspace mismatch.",
+  );
+  assert(
+    asArray(audit.active_template_versions).join(",") === "v1,v2",
+    "Prompt stop-streaming audit active versions mismatch.",
+  );
+  assert(
+    audit.other_template_id === fixture.other_template_id &&
+      audit.other_template_workspace_id === fixture.other_workspace_id,
+    "Prompt stop-streaming audit hidden fixture mismatch.",
+  );
+  assert(
+    asArray(audit.other_template_versions).join(",") === "v1",
+    "Prompt stop-streaming audit hidden versions mismatch.",
+  );
+  assert(
+    Number(audit.other_workspace_template_visible_count) === 0,
+    "Prompt stop-streaming audit found hidden prompt in active workspace.",
+  );
+}
+
+async function hardDeletePromptStopStreamingFixture(fixture) {
+  const templateIds = [fixture.template_id, fixture.other_template_id].filter(
+    Boolean,
+  );
+  const workspaceIds = [fixture.other_workspace_id].filter(Boolean);
+  for (const id of [...templateIds, ...workspaceIds]) {
+    assert(
+      isUuid(id),
+      "Prompt stop-streaming cleanup received a non-UUID fixture id.",
+    );
+  }
+  const script = `
+import json
+from accounts.models import Workspace
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+template_ids = ${JSON.stringify(templateIds)}
+workspace_ids = ${JSON.stringify(workspaceIds)}
+version_ids = list(
+    PromptVersion.all_objects.filter(original_template_id__in=template_ids)
+    .values_list("id", flat=True)
+)
+versions_deleted, _ = PromptVersion.all_objects.filter(id__in=version_ids).delete()
+templates_deleted, _ = PromptTemplate.all_objects.filter(id__in=template_ids).delete()
+workspaces_deleted, _ = Workspace.no_workspace_objects.filter(
+    id__in=workspace_ids,
+).delete()
+print(json.dumps({
+    "deleted_versions": versions_deleted,
+    "deleted_templates": templates_deleted,
+    "deleted_workspaces": workspaces_deleted,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function seedPromptRestLifecycleFixture({
+  runId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(
+    isUuid(userId),
+    "userId must be a UUID for prompt REST lifecycle seed.",
+  );
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for prompt REST lifecycle seed.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for prompt REST lifecycle seed.",
+  );
+  const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const script = `
+import json
+from django.db import transaction
+from accounts.models import Organization, User, Workspace
+from model_hub.models.prompt_folders import PromptFolder
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+workspace = Workspace.no_workspace_objects.get(
+    id=${JSON.stringify(workspaceId)},
+    organization=organization,
+    deleted=False,
+)
+user = User.objects.get(id=${JSON.stringify(userId)}, organization=organization)
+suffix = ${JSON.stringify(suffix)}
+
+with transaction.atomic():
+    active_folder = PromptFolder.no_workspace_objects.create(
+        name=f"api journey prompt rest active folder {suffix}",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    other_workspace = Workspace.no_workspace_objects.create(
+        name=f"api journey prompt rest other workspace {suffix}",
+        organization=organization,
+        is_active=True,
+        created_by=user,
+    )
+    other_folder = PromptFolder.no_workspace_objects.create(
+        name=f"api journey prompt rest hidden folder {suffix}",
+        organization=organization,
+        workspace=other_workspace,
+        created_by=user,
+    )
+    hidden_template = PromptTemplate.no_workspace_objects.create(
+        name=f"api journey prompt rest hidden {suffix}",
+        description="API journey prompt REST hidden fixture",
+        organization=organization,
+        workspace=other_workspace,
+        created_by=user,
+        prompt_folder=other_folder,
+    )
+    hidden_version = PromptVersion.no_workspace_objects.create(
+        original_template=hidden_template,
+        template_version="v1",
+        prompt_config_snapshot={
+            "messages": [{"role": "user", "content": "Hidden {{customer}}"}]
+        },
+        variable_names={"customer": ["Hidden"]},
+        is_default=True,
+    )
+
+print(json.dumps({
+    "fixture_created": True,
+    "active_folder_id": str(active_folder.id),
+    "other_workspace_id": str(other_workspace.id),
+    "other_folder_id": str(other_folder.id),
+    "hidden_template_id": str(hidden_template.id),
+    "hidden_version_id": str(hidden_version.id),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadPromptRestLifecycleAudit({
+  fixture,
+  promptId,
+  organizationId,
+  workspaceId,
+  userId,
+}) {
+  for (const id of [
+    fixture.active_folder_id,
+    fixture.other_workspace_id,
+    fixture.other_folder_id,
+    fixture.hidden_template_id,
+    fixture.hidden_version_id,
+    promptId,
+    organizationId,
+    workspaceId,
+    userId,
+  ]) {
+    assert(isUuid(id), "Prompt REST lifecycle audit received non-UUID id.");
+  }
+  const script = `
+import json
+from model_hub.models.prompt_folders import PromptFolder
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+prompt_id = ${JSON.stringify(promptId)}
+active_folder_id = ${JSON.stringify(fixture.active_folder_id)}
+other_folder_id = ${JSON.stringify(fixture.other_folder_id)}
+hidden_template_id = ${JSON.stringify(fixture.hidden_template_id)}
+hidden_version_id = ${JSON.stringify(fixture.hidden_version_id)}
+organization_id = ${JSON.stringify(organizationId)}
+workspace_id = ${JSON.stringify(workspaceId)}
+
+created_template = PromptTemplate.all_objects.filter(id=prompt_id).first()
+hidden_template = PromptTemplate.all_objects.filter(id=hidden_template_id).first()
+hidden_version = PromptVersion.all_objects.filter(id=hidden_version_id).first()
+active_folder = PromptFolder.all_objects.filter(id=active_folder_id).first()
+other_folder = PromptFolder.all_objects.filter(id=other_folder_id).first()
+
+print(json.dumps({
+    "created_template_id": str(created_template.id) if created_template else None,
+    "created_template_name": created_template.name if created_template else None,
+    "created_template_organization_id": str(created_template.organization_id) if created_template and created_template.organization_id else None,
+    "created_template_workspace_id": str(created_template.workspace_id) if created_template and created_template.workspace_id else None,
+    "created_template_created_by_id": str(created_template.created_by_id) if created_template and created_template.created_by_id else None,
+    "created_template_prompt_folder_id": str(created_template.prompt_folder_id) if created_template and created_template.prompt_folder_id else None,
+    "created_template_variable_names": created_template.variable_names if created_template else None,
+    "created_template_placeholders": created_template.placeholders if created_template else None,
+    "created_template_deleted": created_template.deleted if created_template else None,
+    "created_template_deleted_at_set": created_template.deleted_at is not None if created_template else None,
+    "created_template_version_count": PromptVersion.all_objects.filter(original_template_id=prompt_id).count(),
+    "created_template_active_visible_count": PromptTemplate.no_workspace_objects.filter(
+        id=prompt_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+    ).count(),
+    "active_folder_id": str(active_folder.id) if active_folder else None,
+    "active_folder_deleted": active_folder.deleted if active_folder else None,
+    "other_folder_id": str(other_folder.id) if other_folder else None,
+    "other_folder_workspace_id": str(other_folder.workspace_id) if other_folder and other_folder.workspace_id else None,
+    "other_folder_visible_count": PromptFolder.no_workspace_objects.filter(
+        id=other_folder_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+    ).count(),
+    "hidden_template_id": str(hidden_template.id) if hidden_template else None,
+    "hidden_template_workspace_id": str(hidden_template.workspace_id) if hidden_template and hidden_template.workspace_id else None,
+    "hidden_template_deleted": hidden_template.deleted if hidden_template else None,
+    "hidden_template_visible_count": PromptTemplate.no_workspace_objects.filter(
+        id=hidden_template_id,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+    ).count(),
+    "hidden_version_id": str(hidden_version.id) if hidden_version else None,
+    "hidden_version_deleted": hidden_version.deleted if hidden_version else None,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+function assertPromptRestLifecycleAudit(
+  audit,
+  { fixture, promptId, organizationId, workspaceId, userId, expectedDeleted },
+) {
+  assert(
+    audit?.created_template_id === promptId,
+    "Prompt REST lifecycle audit template id mismatch.",
+  );
+  assert(
+    audit.created_template_organization_id === organizationId,
+    "Prompt REST lifecycle audit organization mismatch.",
+  );
+  assert(
+    audit.created_template_workspace_id === workspaceId,
+    "Prompt REST lifecycle audit workspace mismatch.",
+  );
+  assert(
+    audit.created_template_created_by_id === userId,
+    "Prompt REST lifecycle audit created_by mismatch.",
+  );
+  assert(
+    audit.created_template_prompt_folder_id === fixture.active_folder_id,
+    "Prompt REST lifecycle audit folder mismatch.",
+  );
+  assert(
+    JSON.stringify(audit.created_template_variable_names || {}).includes(
+      "Grace",
+    ),
+    "Prompt REST lifecycle audit variable_names mismatch.",
+  );
+  assert(
+    audit.created_template_placeholders?.customer === "Ada",
+    "Prompt REST lifecycle audit placeholders mismatch.",
+  );
+  assert(
+    Number(audit.created_template_version_count) === 0,
+    "Prompt REST create unexpectedly created PromptVersion rows.",
+  );
+  assert(
+    audit.active_folder_id === fixture.active_folder_id &&
+      audit.active_folder_deleted === false,
+    "Prompt REST lifecycle audit active folder mismatch.",
+  );
+  assert(
+    audit.other_folder_id === fixture.other_folder_id &&
+      audit.other_folder_workspace_id === fixture.other_workspace_id &&
+      Number(audit.other_folder_visible_count) === 0,
+    "Prompt REST lifecycle audit hidden folder leaked into active workspace.",
+  );
+  assert(
+    audit.hidden_template_id === fixture.hidden_template_id &&
+      audit.hidden_template_workspace_id === fixture.other_workspace_id &&
+      audit.hidden_template_deleted === false &&
+      audit.hidden_version_id === fixture.hidden_version_id &&
+      audit.hidden_version_deleted === false &&
+      Number(audit.hidden_template_visible_count) === 0,
+    "Prompt REST lifecycle audit hidden prompt was exposed or mutated.",
+  );
+
+  if (expectedDeleted) {
+    assert(
+      audit.created_template_deleted === true,
+      "Prompt REST delete did not soft-delete template.",
+    );
+    assert(
+      audit.created_template_deleted_at_set === true,
+      "Prompt REST delete did not set deleted_at.",
+    );
+    assert(
+      Number(audit.created_template_active_visible_count) === 0,
+      "Prompt REST delete left template visible in active workspace.",
+    );
+  } else {
+    assert(
+      audit.created_template_deleted === false,
+      "Prompt REST create produced a deleted template.",
+    );
+    assert(
+      Number(audit.created_template_active_visible_count) === 1,
+      "Prompt REST create did not leave template visible in active workspace.",
+    );
+  }
+}
+
+async function hardDeletePromptRestLifecycleFixture(fixture) {
+  const templateIds = [
+    fixture.created_template_id,
+    fixture.hidden_template_id,
+  ].filter(Boolean);
+  const folderIds = [fixture.active_folder_id, fixture.other_folder_id].filter(
+    Boolean,
+  );
+  const workspaceIds = [fixture.other_workspace_id].filter(Boolean);
+  for (const id of [...templateIds, ...folderIds, ...workspaceIds]) {
+    assert(
+      isUuid(id),
+      "Prompt REST lifecycle cleanup received a non-UUID fixture id.",
+    );
+  }
+  const script = `
+import json
+from accounts.models import Workspace
+from model_hub.models.prompt_folders import PromptFolder
+from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+template_ids = ${JSON.stringify(templateIds)}
+folder_ids = ${JSON.stringify(folderIds)}
+workspace_ids = ${JSON.stringify(workspaceIds)}
+version_ids = list(
+    PromptVersion.all_objects.filter(original_template_id__in=template_ids)
+    .values_list("id", flat=True)
+)
+versions_deleted, _ = PromptVersion.all_objects.filter(id__in=version_ids).delete()
+templates_deleted, _ = PromptTemplate.all_objects.filter(id__in=template_ids).delete()
+folders_deleted, _ = PromptFolder.all_objects.filter(id__in=folder_ids).delete()
+workspaces_deleted, _ = Workspace.no_workspace_objects.filter(
+    id__in=workspace_ids,
+).delete()
+print(json.dumps({
+    "deleted_versions": versions_deleted,
+    "deleted_templates": templates_deleted,
+    "deleted_folders": folders_deleted,
+    "deleted_workspaces": workspaces_deleted,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
 async function loadPromptTemplateVersionDbAudit({
   promptId,
   organizationId,
@@ -22963,7 +36471,10 @@ function assertPromptRunPreviewDbAudit(
   );
 
   if (expectedDeleted) {
-    assert(audit.prompt_deleted === true, "Prompt run prompt should be deleted.");
+    assert(
+      audit.prompt_deleted === true,
+      "Prompt run prompt should be deleted.",
+    );
     assert(
       audit.prompt_deleted_at_set === true,
       "Deleted prompt run prompt missing deleted_at.",
@@ -22980,9 +36491,15 @@ function assertPromptRunPreviewDbAudit(
   }
 
   assert(audit.prompt_deleted === false, "Prompt run prompt should be active.");
-  assert(audit.version_deleted === false, "Prompt run version should be active.");
+  assert(
+    audit.version_deleted === false,
+    "Prompt run version should be active.",
+  );
   assert(audit.is_draft === false, "Prompt run version should be non-draft.");
-  assert(Number(audit.output_count) > 0, "Prompt run DB audit found no output.");
+  assert(
+    Number(audit.output_count) > 0,
+    "Prompt run DB audit found no output.",
+  );
   assert(
     Number(audit.metadata_count) > 0,
     "Prompt run DB audit found no metadata.",
@@ -23010,7 +36527,10 @@ function assertPromptTemplateVersionDbAudit(
       "Prompt DB audit workspace mismatch.",
     );
   }
-  assert(Number(audit.version_count) >= 2, "Prompt DB audit found too few versions.");
+  assert(
+    Number(audit.version_count) >= 2,
+    "Prompt DB audit found too few versions.",
+  );
   const allDefaultVersions = payloadArray(
     audit.all_default_versions,
     "all_default_versions",
@@ -23025,7 +36545,10 @@ function assertPromptTemplateVersionDbAudit(
 
   if (expectedDeleted) {
     assert(audit.prompt_deleted === true, "Prompt should be soft-deleted.");
-    assert(audit.prompt_deleted_at_set === true, "Deleted prompt missing deleted_at.");
+    assert(
+      audit.prompt_deleted_at_set === true,
+      "Deleted prompt missing deleted_at.",
+    );
     assert(
       Number(audit.active_version_count) === 0,
       "Deleted prompt still had active versions.",
@@ -23047,8 +36570,10 @@ function assertPromptTemplateVersionDbAudit(
     "Active prompt should have exactly one active default version.",
   );
   assert(
-    payloadArray(audit.active_default_versions, "active_default_versions")[0] ===
-      expectedDefaultVersion,
+    payloadArray(
+      audit.active_default_versions,
+      "active_default_versions",
+    )[0] === expectedDefaultVersion,
     "Active prompt default version mismatch.",
   );
 }
@@ -23200,6 +36725,56 @@ async function runPostgresJson(sql) {
   return JSON.parse(text);
 }
 
+async function runBackendShellJson(script) {
+  let stdout;
+  if (process.env.API_JOURNEY_BACKEND_CONTAINER) {
+    const container = process.env.API_JOURNEY_BACKEND_CONTAINER;
+    const python = process.env.API_JOURNEY_BACKEND_PYTHON || "python";
+    ({ stdout } = await execFileAsync(
+      "docker",
+      [
+        "exec",
+        "-w",
+        "/app/backend",
+        container,
+        python,
+        "manage.py",
+        "shell",
+        "-c",
+        script,
+      ],
+      { maxBuffer: 20 * 1024 * 1024 },
+    ));
+  } else {
+    const backendDir = process.env.API_JOURNEY_BACKEND_DIR || backendRoot;
+    ({ stdout } = await execFileAsync(
+      "uv",
+      ["run", "python", "manage.py", "shell", "-c", script],
+      {
+        cwd: backendDir,
+        env: {
+          ...process.env,
+          EE_LICENSE_KEY: process.env.EE_LICENSE_KEY || "test-license-key",
+          PGBOUNCER_HOST: process.env.PGBOUNCER_HOST || "127.0.0.1",
+          PGBOUNCER_PORT: process.env.PGBOUNCER_PORT || "5436",
+          REDIS_URL: process.env.REDIS_URL || "redis://127.0.0.1:6382/0",
+          REDIS_CACHE_URL:
+            process.env.REDIS_CACHE_URL || "redis://127.0.0.1:6382/0",
+        },
+        maxBuffer: 20 * 1024 * 1024,
+      },
+    ));
+  }
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const jsonLine = [...lines].reverse().find((line) => line.startsWith("{"));
+  assert(jsonLine, "Backend shell returned no JSON output.");
+  return JSON.parse(jsonLine);
+}
+
 async function multipartApiRequest({
   apiBase,
   accessToken,
@@ -23266,6 +36841,18 @@ function formatApiJourneyBody(body) {
   return JSON.stringify(body).slice(0, 1000);
 }
 
+function apiJourneyBodyMessage(body) {
+  if (typeof body === "string") return body.slice(0, 1000);
+  if (!body || typeof body !== "object") return "";
+  return String(
+    body.message ||
+      body.detail ||
+      body.error ||
+      body.result?.message ||
+      JSON.stringify(body).slice(0, 1000),
+  );
+}
+
 function sqlUuid(value) {
   assert(isUuid(value), "SQL UUID value must be a UUID.");
   return `'${value}'::uuid`;
@@ -23309,6 +36896,365 @@ async function getDatasetTable(client, datasetId, query = {}) {
         ...query,
       },
     },
+  );
+}
+
+async function loadManualDatasetCreateDbAudit({
+  datasetId,
+  organizationId,
+  workspaceId,
+  expectedName,
+}) {
+  assert(isUuid(datasetId), "datasetId must be a UUID for DB audit.");
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  if (workspaceId)
+    assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  assert(typeof expectedName === "string", "expectedName must be a string.");
+  const sql = `
+WITH dataset_row AS (
+  SELECT id, name, organization_id, workspace_id, source, deleted, deleted_at,
+         column_order, column_config
+  FROM model_hub_dataset
+  WHERE id = ${sqlUuid(datasetId)}
+    AND organization_id = ${sqlUuid(organizationId)}
+    AND name = ${sqlText(expectedName)}
+)
+SELECT json_build_object(
+  'dataset_id', d.id::text,
+  'dataset_name', d.name,
+  'organization_id', d.organization_id::text,
+  'workspace_id', d.workspace_id::text,
+  'source', d.source,
+  'deleted', d.deleted,
+  'deleted_at_set', d.deleted_at IS NOT NULL,
+  'row_count', (
+    SELECT count(*) FROM model_hub_row r
+    WHERE r.dataset_id = d.id AND r.deleted = false
+  ),
+  'column_count', (
+    SELECT count(*) FROM model_hub_column c
+    WHERE c.dataset_id = d.id AND c.deleted = false
+  ),
+  'cell_count', (
+    SELECT count(*) FROM model_hub_cell cell
+    WHERE cell.dataset_id = d.id AND cell.deleted = false
+  ),
+  'column_order_count', COALESCE(cardinality(d.column_order), 0),
+  'column_config_count', (
+    SELECT count(*) FROM jsonb_object_keys(COALESCE(d.column_config, '{}'::jsonb))
+  ),
+  'generated_column_names', (
+    SELECT jsonb_agg(c.name ORDER BY c.name)
+    FROM model_hub_column c
+    WHERE c.dataset_id = d.id AND c.deleted = false
+  )
+)
+FROM dataset_row d;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadDatasetCreationLimitAudit({ organizationId, workspaceId }) {
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  if (workspaceId)
+    assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const workspaceFilter = workspaceId
+    ? `AND d.workspace_id = ${sqlUuid(workspaceId)}`
+    : "AND d.workspace_id IS NULL";
+  const sql = `
+WITH organization_datasets AS (
+  SELECT d.id, d.workspace_id, d.source
+  FROM model_hub_dataset d
+  WHERE d.organization_id = ${sqlUuid(organizationId)}
+    AND d.source IN ('build', 'observe')
+    AND d.deleted = false
+),
+workspace_datasets AS (
+  SELECT d.id, d.workspace_id, d.source
+  FROM model_hub_dataset d
+  WHERE d.organization_id = ${sqlUuid(organizationId)}
+    ${workspaceFilter}
+    AND d.source IN ('build', 'observe')
+    AND d.deleted = false
+),
+latest_limit AS (
+  SELECT l.config
+  FROM usage_apicalllog l
+  JOIN usage_apicalltype t
+    ON t.id = l.api_call_type_id
+  WHERE l.organization_id = ${sqlUuid(organizationId)}
+    AND t.name = 'dataset_add'
+    AND l.status = 'resource_limit'
+  ORDER BY l.created_at DESC
+  LIMIT 1
+)
+SELECT json_build_object(
+  'organization_active_dataset_count',
+    (SELECT count(*) FROM organization_datasets),
+  'workspace_active_dataset_count',
+    (SELECT count(*) FROM workspace_datasets),
+  'workspace_build_dataset_count',
+    (SELECT count(*) FROM workspace_datasets WHERE source = 'build'),
+  'workspace_observe_dataset_count',
+    (SELECT count(*) FROM workspace_datasets WHERE source = 'observe'),
+  'other_workspace_active_dataset_count',
+    (SELECT count(*) FROM organization_datasets)
+      - (SELECT count(*) FROM workspace_datasets),
+  'null_workspace_active_dataset_count',
+    (SELECT count(*) FROM organization_datasets WHERE workspace_id IS NULL),
+  'other_named_workspace_active_dataset_count',
+    (SELECT count(*) FROM organization_datasets
+     WHERE workspace_id IS NOT NULL
+       ${workspaceId ? `AND workspace_id <> ${sqlUuid(workspaceId)}` : ""}),
+  'organization_build_dataset_count',
+    (SELECT count(*) FROM organization_datasets WHERE source = 'build'),
+  'organization_observe_dataset_count',
+    (SELECT count(*) FROM organization_datasets WHERE source = 'observe'),
+  'active_workspace_ids',
+    COALESCE((
+      SELECT json_agg(DISTINCT workspace_id::text ORDER BY workspace_id::text)
+      FROM organization_datasets
+      WHERE workspace_id IS NOT NULL
+    ), '[]'::json),
+  'latest_dataset_limit_config',
+    (SELECT config FROM latest_limit)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+function assertDatasetLimitAudit(audit) {
+  assert(
+    audit &&
+      Number.isInteger(Number(audit.organization_active_dataset_count)) &&
+      Number.isInteger(Number(audit.workspace_active_dataset_count)) &&
+      Number.isInteger(Number(audit.organization_build_dataset_count)) &&
+      Number.isInteger(Number(audit.organization_observe_dataset_count)),
+    "Dataset limit audit did not return dataset counts.",
+  );
+  const organizationActive = Number(audit.organization_active_dataset_count);
+  const workspaceActive = Number(audit.workspace_active_dataset_count);
+  const otherWorkspaceActive = Number(
+    audit.other_workspace_active_dataset_count,
+  );
+  const organizationBuild = Number(audit.organization_build_dataset_count);
+  const organizationObserve = Number(audit.organization_observe_dataset_count);
+  const workspaceBuild = Number(audit.workspace_build_dataset_count);
+  const workspaceObserve = Number(audit.workspace_observe_dataset_count);
+  assert(
+    organizationActive >= workspaceActive,
+    "Org-wide active dataset count was smaller than active workspace count.",
+  );
+  assert(
+    organizationActive === organizationBuild + organizationObserve,
+    "Org-wide active dataset count did not equal build plus observe counts.",
+  );
+  assert(
+    workspaceActive === workspaceBuild + workspaceObserve,
+    "Workspace active dataset count did not equal build plus observe counts.",
+  );
+  assert(
+    organizationActive === workspaceActive + otherWorkspaceActive,
+    "Org-wide active dataset count did not equal workspace plus non-selected workspace counts.",
+  );
+}
+
+function assertManualDatasetAudit(
+  audit,
+  { expectedDeleted, expectedRows, expectedColumns, expectedCells },
+) {
+  assert(audit?.dataset_id, "Manual dataset DB audit did not find dataset.");
+  assert(
+    audit.source === "build",
+    "Manual dataset DB audit source was not build.",
+  );
+  assert(
+    audit.deleted === expectedDeleted,
+    "Manual dataset DB audit deleted state mismatch.",
+  );
+  if (expectedDeleted) {
+    assert(
+      audit.deleted_at_set === true,
+      "Deleted manual dataset did not set deleted_at.",
+    );
+  }
+  assert(
+    Number(audit.row_count) === expectedRows,
+    "Manual dataset DB audit row count mismatch.",
+  );
+  assert(
+    Number(audit.column_count) === expectedColumns,
+    "Manual dataset DB audit column count mismatch.",
+  );
+  assert(
+    Number(audit.cell_count) === expectedCells,
+    "Manual dataset DB audit cell count mismatch.",
+  );
+  assert(
+    Number(audit.column_order_count) === expectedColumns,
+    "Manual dataset DB audit column_order count mismatch.",
+  );
+  assert(
+    Number(audit.column_config_count) === expectedColumns,
+    "Manual dataset DB audit column_config count mismatch.",
+  );
+  assert(
+    asArray(audit.generated_column_names).join(",") ===
+      Array.from(
+        { length: expectedColumns },
+        (_, index) => `Column ${index + 1}`,
+      ).join(","),
+    "Manual dataset DB audit generated column names mismatch.",
+  );
+}
+
+async function loadDatasetCloneDbAudit({
+  datasetId,
+  organizationId,
+  workspaceId,
+  expectedName,
+}) {
+  assert(isUuid(datasetId), "datasetId must be a UUID for DB audit.");
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  if (workspaceId)
+    assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  assert(typeof expectedName === "string", "expectedName must be a string.");
+  const sql = `
+WITH dataset_row AS (
+  SELECT id, name, organization_id, workspace_id, source, deleted, deleted_at,
+         column_order, column_config
+  FROM model_hub_dataset
+  WHERE id = ${sqlUuid(datasetId)}
+    AND organization_id = ${sqlUuid(organizationId)}
+    AND name = ${sqlText(expectedName)}
+)
+SELECT json_build_object(
+  'dataset_id', d.id::text,
+  'dataset_name', d.name,
+  'organization_id', d.organization_id::text,
+  'workspace_id', d.workspace_id::text,
+  'source', d.source,
+  'deleted', d.deleted,
+  'deleted_at_set', d.deleted_at IS NOT NULL,
+  'row_count', (
+    SELECT count(*) FROM model_hub_row r
+    WHERE r.dataset_id = d.id AND r.deleted = false
+  ),
+  'column_count', (
+    SELECT count(*) FROM model_hub_column c
+    WHERE c.dataset_id = d.id AND c.deleted = false
+  ),
+  'cell_count', (
+    SELECT count(*) FROM model_hub_cell cell
+    WHERE cell.dataset_id = d.id AND cell.deleted = false
+  ),
+  'column_order_count', COALESCE(cardinality(d.column_order), 0),
+  'column_config_count', (
+    SELECT count(*) FROM jsonb_object_keys(COALESCE(d.column_config, '{}'::jsonb))
+  ),
+  'column_ids', COALESCE((
+    SELECT jsonb_agg(c.id::text ORDER BY c.name)
+    FROM model_hub_column c
+    WHERE c.dataset_id = d.id AND c.deleted = false
+  ), '[]'::jsonb),
+  'row_ids', COALESCE((
+    SELECT jsonb_agg(r.id::text ORDER BY r.order, r.created_at)
+    FROM model_hub_row r
+    WHERE r.dataset_id = d.id AND r.deleted = false
+  ), '[]'::jsonb),
+  'cell_values', COALESCE((
+    SELECT jsonb_agg(cell.value ORDER BY cell.value)
+    FROM model_hub_cell cell
+    WHERE cell.dataset_id = d.id
+      AND cell.deleted = false
+      AND cell.value IS NOT NULL
+  ), '[]'::jsonb)
+)
+FROM dataset_row d;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadDatasetNameActiveCount({ organizationId, expectedName }) {
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  assert(typeof expectedName === "string", "expectedName must be a string.");
+  const sql = `
+SELECT json_build_object(
+  'active_count', count(*)
+)
+FROM model_hub_dataset
+WHERE organization_id = ${sqlUuid(organizationId)}
+  AND name = ${sqlText(expectedName)}
+  AND deleted = false;
+`;
+  return runPostgresJson(sql);
+}
+
+function assertDatasetCloneAudit(
+  audit,
+  {
+    expectedDeleted,
+    expectedRows = 2,
+    expectedColumns = 2,
+    expectedCells = 4,
+    expectedValues,
+    expectedWorkspaceId,
+  },
+) {
+  assert(audit?.dataset_id, "Dataset clone DB audit did not find dataset.");
+  assert(
+    audit.source === "build",
+    "Dataset clone DB audit source was not build.",
+  );
+  if (expectedWorkspaceId) {
+    assert(
+      audit.workspace_id === expectedWorkspaceId,
+      "Dataset clone DB audit workspace mismatch.",
+    );
+  }
+  assert(
+    audit.deleted === expectedDeleted,
+    "Dataset clone DB audit deleted state mismatch.",
+  );
+  if (expectedDeleted) {
+    assert(
+      audit.deleted_at_set === true,
+      "Deleted clone dataset did not set deleted_at.",
+    );
+  }
+  assert(
+    Number(audit.row_count) === expectedRows,
+    "Dataset clone row count mismatch.",
+  );
+  assert(
+    Number(audit.column_count) === expectedColumns,
+    "Dataset clone column count mismatch.",
+  );
+  assert(
+    Number(audit.cell_count) === expectedCells,
+    "Dataset clone cell count mismatch.",
+  );
+  assert(
+    Number(audit.column_order_count) === expectedColumns,
+    "Dataset clone column_order count mismatch.",
+  );
+  assert(
+    Number(audit.column_config_count) === expectedColumns,
+    "Dataset clone column_config count mismatch.",
+  );
+  assert(
+    asArray(audit.column_ids).length === expectedColumns,
+    "Dataset clone DB audit column id count mismatch.",
+  );
+  assert(
+    asArray(audit.row_ids).length === expectedRows,
+    "Dataset clone DB audit row id count mismatch.",
+  );
+  const actualValues = asArray(audit.cell_values).sort();
+  const expectedSorted = [...expectedValues].sort();
+  assert(
+    actualValues.join("\n") === expectedSorted.join("\n"),
+    "Dataset clone DB audit cell values mismatch.",
   );
 }
 

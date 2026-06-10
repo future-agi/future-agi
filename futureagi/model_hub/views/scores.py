@@ -8,6 +8,7 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
 from model_hub.models.annotation_queues import QueueItem
 from model_hub.models.choices import QueueItemStatus
@@ -23,6 +24,7 @@ from model_hub.serializers.scores import (
     ScoreListQuerySerializer,
     ScoreResponseSerializer,
     ScoreSerializer,
+    UpdateScoreSerializer,
 )
 from model_hub.utils.annotation_queue_helpers import (
     resolve_default_queue_item_for_source,
@@ -326,7 +328,10 @@ class ScoreViewSet(viewsets.ModelViewSet):
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
         source_obj = resolve_source_object(
-            source_type, source_id, organization=request.organization
+            source_type,
+            source_id,
+            organization=request.organization,
+            workspace=getattr(request, "workspace", None),
         )
         if not source_obj:
             return self._gm.not_found(f"Source not found: {source_type}={source_id}")
@@ -379,6 +384,8 @@ class ScoreViewSet(viewsets.ModelViewSet):
                     "score_source": data.get("score_source", "human"),
                     "notes": data.get("notes", ""),
                     "organization": request.organization,
+                    "workspace": getattr(request, "workspace", None)
+                    or getattr(queue_item, "workspace", None),
                 },
             )
 
@@ -424,7 +431,10 @@ class ScoreViewSet(viewsets.ModelViewSet):
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
         source_obj = resolve_source_object(
-            source_type, source_id, organization=request.organization
+            source_type,
+            source_id,
+            organization=request.organization,
+            workspace=getattr(request, "workspace", None),
         )
         if not source_obj:
             return self._gm.not_found(f"Source not found: {source_type}={source_id}")
@@ -438,6 +448,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
                     "observation_span",
                     span_notes_source_id,
                     organization=request.organization,
+                    workspace=getattr(request, "workspace", None),
                 )
                 if not span_notes_target:
                     return self._gm.not_found(
@@ -494,6 +505,8 @@ class ScoreViewSet(viewsets.ModelViewSet):
                         "score_source": score_data.get("score_source", "human"),
                         "notes": per_score_notes,
                         "organization": request.organization,
+                        "workspace": getattr(request, "workspace", None)
+                        or getattr(queue_item, "workspace", None),
                     },
                 )
                 created_scores.append(score)
@@ -569,6 +582,57 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 "errors": errors,
             }
         )
+
+    def _can_mutate_score(self, request, score):
+        is_owner_or_admin = request.user.get_organization_role(
+            request.organization
+        ) in (OrganizationRoles.OWNER, OrganizationRoles.ADMIN)
+        return score.annotator_id == request.user.pk or is_owner_or_admin
+
+    def _get_scoped_score(self, request, pk):
+        try:
+            score = self.get_queryset().get(pk=pk)
+        except Score.DoesNotExist:
+            return None
+        if not self._can_mutate_score(request, score):
+            return "forbidden"
+        return score
+
+    def _update_score(self, request, *, partial=False, pk=None):
+        if not partial and "value" not in request.validated_data:
+            return self._gm.bad_request({"value": ["This field is required."]})
+
+        score = self._get_scoped_score(request, pk)
+        if score is None:
+            return self._gm.not_found("Score not found.")
+        if score == "forbidden":
+            return self._gm.bad_request(
+                "You do not have permission to update this score."
+            )
+
+        update_fields = []
+        for field_name in ("value", "notes", "score_source"):
+            if field_name in request.validated_data:
+                setattr(score, field_name, request.validated_data[field_name])
+                update_fields.append(field_name)
+        score.save(update_fields=[*update_fields, "updated_at"])
+        return Response(ScoreSerializer(score).data)
+
+    @validated_request(
+        request_serializer=UpdateScoreSerializer,
+        responses={200: ScoreSerializer, **ERROR_RESPONSES},
+        partial_request_validation=True,
+    )
+    def update(self, request, *args, **kwargs):
+        return self._update_score(request, partial=False, pk=kwargs.get("pk"))
+
+    @validated_request(
+        request_serializer=UpdateScoreSerializer,
+        responses={200: ScoreSerializer, **ERROR_RESPONSES},
+        partial_request_validation=True,
+    )
+    def partial_update(self, request, *args, **kwargs):
+        return self._update_score(request, partial=True, pk=kwargs.get("pk"))
 
     @validated_request(
         query_serializer=ScoreForSourceQuerySerializer,

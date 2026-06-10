@@ -11,6 +11,9 @@ logger = structlog.get_logger(__name__)
 
 
 def mixpanel_slack_notfy(msg):
+    if not settings.ERROR_LOGS_WEBHOOK:
+        logger.debug("Skipping Slack notification: ERROR_LOGS_WEBHOOK is not set")
+        return
     try:
         data = msg + "\n" + f"ENV_TYPE: {os.getenv('ENV_TYPE')}"
         webhook = WebhookClient(settings.ERROR_LOGS_WEBHOOK)

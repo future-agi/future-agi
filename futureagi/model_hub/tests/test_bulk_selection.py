@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import pytest
+from django.utils import timezone
 
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
@@ -22,10 +23,14 @@ from model_hub.services.bulk_selection import (
     ResolveResult,
     _validate_user_scoped_filters,
     _resolve_trace_ids_clickhouse,
+    resolve_filtered_span_ids,
+    resolve_filtered_session_ids,
     resolve_filtered_trace_ids,
 )
+from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
+from tracer.models.trace_session import TraceSession
 
 
 # --------------------------------------------------------------------------
@@ -312,6 +317,102 @@ class TestIsolation:
         )
         assert result.total_matching == 0
         assert result.ids == []
+
+    def test_default_workspace_includes_legacy_null_workspace_project(
+        self, organization, workspace, db
+    ):
+        """Default workspace keeps parity with Observe lists for legacy rows."""
+        legacy_project = Project.objects.create(
+            name="Legacy Null Workspace Observe",
+            organization=organization,
+            workspace=None,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        legacy_trace = Trace.objects.create(
+            project=legacy_project,
+            name="legacy-null-workspace-trace",
+        )
+
+        result = resolve_filtered_trace_ids(
+            project_id=legacy_project.id,
+            filters=[],
+            organization=organization,
+            workspace=workspace,
+        )
+
+        assert result.total_matching == 1
+        assert result.ids == [legacy_trace.id]
+
+    def test_default_workspace_includes_legacy_null_workspace_spans(
+        self, organization, workspace, db
+    ):
+        legacy_project = Project.objects.create(
+            name="Legacy Null Workspace Spans",
+            organization=organization,
+            workspace=None,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        legacy_trace = Trace.objects.create(project=legacy_project, name="legacy-trace")
+        legacy_span = ObservationSpan.objects.create(
+            id="legacy-null-workspace-span",
+            project=legacy_project,
+            trace=legacy_trace,
+            name="legacy span",
+            observation_type="llm",
+            start_time=timezone.now(),
+            status="ok",
+        )
+
+        result = resolve_filtered_span_ids(
+            project_id=legacy_project.id,
+            filters=[],
+            organization=organization,
+            workspace=workspace,
+        )
+
+        assert result.total_matching == 1
+        assert result.ids == [legacy_span.id]
+
+    def test_default_workspace_includes_legacy_null_workspace_sessions(
+        self, organization, workspace, db
+    ):
+        legacy_project = Project.objects.create(
+            name="Legacy Null Workspace Sessions",
+            organization=organization,
+            workspace=None,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        legacy_session = TraceSession.objects.create(
+            project=legacy_project,
+            name="legacy session",
+        )
+        legacy_trace = Trace.objects.create(
+            project=legacy_project,
+            session=legacy_session,
+            name="legacy session trace",
+        )
+        ObservationSpan.objects.create(
+            id="legacy-null-workspace-session-span",
+            project=legacy_project,
+            trace=legacy_trace,
+            name="legacy session span",
+            observation_type="llm",
+            start_time=timezone.now(),
+            status="ok",
+        )
+
+        result = resolve_filtered_session_ids(
+            project_id=legacy_project.id,
+            filters=[],
+            organization=organization,
+            workspace=workspace,
+        )
+
+        assert result.total_matching == 1
+        assert result.ids == [legacy_session.id]
 
     def test_project_scoping(
         self, observe_project, seeded_traces, organization, workspace

@@ -29,7 +29,7 @@ End-to-end tests that verify the full span lifecycle: OTLP ingestion through fi-
 |------------|-------|----------------------------|
 | PostgreSQL | 15432 | Django test DB             |
 | Redis      | 16379 | Cache/Celery               |
-| ClickHouse | 18123 | HTTP (queries + inserts)   |
+| ClickHouse | 18123 | HTTP (queries + inserts into `test_tfc`) |
 | ClickHouse | 19000 | Native TCP                 |
 | MinIO      | 19005 | Object storage (GCS stub)  |
 
@@ -44,7 +44,7 @@ End-to-end tests that verify the full span lifecycle: OTLP ingestion through fi-
 Build tag: `//go:build integration`. Requires `CH_TEST_HOST` env var (set by `run-e2e.sh`).
 
 ```bash
-CH_TEST_HOST=localhost:18123 go test -tags integration -v ./exporter/clickhouse25exporter/
+CH_TEST_HOST=localhost:18123 CH_TEST_DATABASE=test_tfc go test -tags integration -v ./exporter/clickhouse25exporter/
 ```
 
 ### Python (Django)

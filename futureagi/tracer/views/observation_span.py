@@ -321,6 +321,107 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         return query_Set[start:end]
 
+    @staticmethod
+    def _to_iso(value):
+        if not value:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+    def _span_queryset_postgres(self, request, project_id, project_version_id=None):
+        qs = ObservationSpan.no_workspace_objects.filter(
+            _project_workspace_scope_q(request),
+            project_id=project_id,
+            project__organization=_get_request_organization(request),
+        )
+        if project_version_id:
+            qs = qs.filter(project_version_id=project_version_id)
+        return qs.select_related("trace", "end_user").order_by(
+            "-start_time", "-created_at"
+        )
+
+    def _span_row_from_postgres(self, span):
+        end_user = getattr(span, "end_user", None)
+        return {
+            "span_id": span.id,
+            "input": span.input,
+            "output": span.output,
+            "trace_id": str(span.trace_id),
+            "created_at": self._to_iso(span.created_at),
+            "node_type": span.observation_type,
+            "span_name": span.name,
+            "user_id": getattr(end_user, "user_id", None) if end_user else None,
+            "user_id_type": getattr(end_user, "user_id_type", None)
+            if end_user
+            else None,
+            "user_id_hash": getattr(end_user, "user_id_hash", None)
+            if end_user
+            else None,
+            "start_time": self._to_iso(span.start_time),
+            "status": span.status,
+            "latency_ms": span.latency_ms,
+            "total_tokens": span.total_tokens,
+            "prompt_tokens": span.prompt_tokens,
+            "completion_tokens": span.completion_tokens,
+            "model": span.model,
+            "provider": span.provider,
+            "cost": round(span.cost, 6) if span.cost else 0,
+        }
+
+    def _list_spans_postgres(
+        self, request, project_id, validated_data, project_version_id=None
+    ):
+        qs = self._span_queryset_postgres(
+            request, project_id, project_version_id=project_version_id
+        )
+        total_count = qs.count()
+        page_number = validated_data.get("page_number", 0)
+        page_size = validated_data.get("page_size", 30)
+        start = page_number * page_size
+        rows = [
+            self._span_row_from_postgres(span) for span in qs[start : start + page_size]
+        ]
+        column_config = get_default_span_config()
+        return self._gm.success_response(
+            {
+                "metadata": {"total_rows": total_count},
+                "table": rows,
+                "config": column_config,
+                "column_config": column_config,
+            }
+        )
+
+    @staticmethod
+    def _metric_field(metric_id):
+        return {
+            "latency": "latency_ms",
+            "avg_latency": "latency_ms",
+            "latency_ms": "latency_ms",
+            "tokens": "total_tokens",
+            "total_tokens": "total_tokens",
+            "prompt_tokens": "prompt_tokens",
+            "completion_tokens": "completion_tokens",
+            "cost": "cost",
+        }.get(metric_id, metric_id)
+
+    def _system_metric_graph_postgres(
+        self, request, project_id, filters, interval, metric_id
+    ):
+        field_name = self._metric_field(metric_id)
+        rows = []
+        for span in self._span_queryset_postgres(request, project_id):
+            value = getattr(span, field_name, None)
+            if value is None:
+                continue
+            rows.append(
+                {
+                    "timestamp": self._to_iso(span.start_time or span.created_at),
+                    "value": float(value),
+                }
+            )
+        return {"metric_name": metric_id, "data": rows}
+
     def retrieve(self, request, *args, **kwargs):
         try:
             observation_span_id = kwargs.get("pk")
@@ -955,13 +1056,26 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # eval/annotation pivots live in `_list_spans_non_observe_clickhouse`
             # via SpanListQueryBuilder.
             analytics = AnalyticsQueryService()
-            return self._list_spans_non_observe_clickhouse(
-                request,
-                project_version_id,
-                project_version,
-                analytics,
-                validated_data,
-            )
+            try:
+                return self._list_spans_non_observe_clickhouse(
+                    request,
+                    project_version_id,
+                    project_version,
+                    analytics,
+                    validated_data,
+                )
+            except Exception:
+                logger.warning(
+                    "list_spans_clickhouse_failed, falling back to postgres",
+                    project_version_id=project_version_id,
+                    exc_info=True,
+                )
+                return self._list_spans_postgres(
+                    request,
+                    str(project_version.project_id),
+                    validated_data,
+                    project_version_id=project_version_id,
+                )
 
         except Exception as e:
             logger.exception(f"Error in fetching the spans list: {str(e)}")
@@ -1215,9 +1329,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # pivot now lives in `_list_spans_clickhouse` via
             # SpanListQueryBuilder.
             analytics = AnalyticsQueryService()
-            return self._list_spans_clickhouse(
-                request, project_id, validated_data, analytics
-            )
+            try:
+                return self._list_spans_clickhouse(
+                    request, project_id, validated_data, analytics
+                )
+            except Exception:
+                logger.warning(
+                    "list_spans_observe_clickhouse_failed, falling back to postgres",
+                    project_id=project_id,
+                    exc_info=True,
+                )
+                return self._list_spans_postgres(request, project_id, validated_data)
 
         except Exception as e:
             logger.exception(f"Error in fetching the spans list of observe: {str(e)}")
@@ -1743,15 +1865,29 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # fetch_annotation_graph_ch).
             analytics = AnalyticsQueryService()
             if type == "SYSTEM_METRIC":
-                return self._gm.success_response(
-                    fetch_system_metric_graph_ch(
-                        analytics=analytics,
-                        project_id=project_id,
-                        filters=filters,
-                        interval=interval,
-                        metric_id=req_data_config.get("id", "latency"),
+                metric_id = req_data_config.get("id", "latency")
+                try:
+                    return self._gm.success_response(
+                        fetch_system_metric_graph_ch(
+                            analytics=analytics,
+                            project_id=project_id,
+                            filters=filters,
+                            interval=interval,
+                            metric_id=metric_id,
+                        )
                     )
-                )
+                except Exception:
+                    logger.warning(
+                        "span_graph_clickhouse_failed, falling back to postgres",
+                        project_id=project_id,
+                        metric_id=metric_id,
+                        exc_info=True,
+                    )
+                    return self._gm.success_response(
+                        self._system_metric_graph_postgres(
+                            request, project_id, filters, interval, metric_id
+                        )
+                    )
             elif type == "EVAL":
                 return self._gm.success_response(
                     fetch_eval_graph_ch(

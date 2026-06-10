@@ -17,7 +17,10 @@ const IndividualExperimentSummaryView = () => {
     isLoading: isMetadataLoading,
     isError: isMetadataError,
   } = useQuery({
-    queryKey: ["individual-experiment-dataset-metadata", individualExperimentId],
+    queryKey: [
+      "individual-experiment-dataset-metadata",
+      individualExperimentId,
+    ],
     queryFn: () =>
       axios.get(
         endpoints.develop.individualExperimentDataset(individualExperimentId),
@@ -33,7 +36,8 @@ const IndividualExperimentSummaryView = () => {
 
   const { data, isLoading: isSummaryLoading } = useQuery({
     queryKey: ["experiment-summary", summaryExperimentId],
-    enabled: Boolean(summaryExperimentId) && (!isMetadataLoading || isMetadataError),
+    enabled:
+      Boolean(summaryExperimentId) && (!isMetadataLoading || isMetadataError),
     queryFn: () =>
       axios.get(endpoints.develop.experiment.getSummary(summaryExperimentId)),
     select: (e) => e?.data?.result,

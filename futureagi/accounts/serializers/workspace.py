@@ -30,15 +30,19 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
 
     def get_admin_names(self, obj):
         """Get admin names for the workspace"""
-        admin_memberships = WorkspaceMembership.no_workspace_objects.filter(
-            workspace=obj,
-            role__in=[
-                OrganizationRoles.WORKSPACE_ADMIN,
-                OrganizationRoles.OWNER,
-                OrganizationRoles.ADMIN,
-            ],
-            is_active=True,
-        ).select_related("user")
+        # Use the prefetched cache when the view supplies it (avoids the
+        # per-workspace N+1); fall back to a direct query otherwise.
+        admin_memberships = getattr(obj, "admin_memberships_cache", None)
+        if admin_memberships is None:
+            admin_memberships = WorkspaceMembership.no_workspace_objects.filter(
+                workspace=obj,
+                role__in=[
+                    OrganizationRoles.WORKSPACE_ADMIN,
+                    OrganizationRoles.OWNER,
+                    OrganizationRoles.ADMIN,
+                ],
+                is_active=True,
+            ).select_related("user")
 
         return [
             {"name": membership.user.name, "id": str(membership.user.id)}
@@ -200,6 +204,7 @@ class DeleteUserSerializer(serializers.Serializer):
 class SwitchWorkspaceSerializer(serializers.Serializer):
     """Serializer for switching workspaces"""
 
+    old_workspace_id = serializers.UUIDField(required=False)
     new_workspace_id = serializers.UUIDField()
 
 

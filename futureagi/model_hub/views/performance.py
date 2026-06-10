@@ -2,20 +2,6 @@ import csv
 import traceback
 
 import structlog
-
-
-def _escape_csv_cell(value):
-    """Defang CSV-formula injection: prefix a leading formula trigger with a
-    single quote so spreadsheet apps (Excel/Sheets/LibreOffice) treat the cell
-    as a literal string rather than evaluating it as a formula. Triggers per
-    OWASP CSV-injection guidance: =, +, -, @, tab, carriage return.
-    """
-    if value is None:
-        return ""
-    s = str(value)
-    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
-        return "'" + s
-    return s
 from django.db.models import Case, Prefetch, When
 from django.http import HttpResponse
 from drf_yasg import openapi
@@ -27,7 +13,6 @@ from rest_framework.views import APIView
 
 from accounts.utils import get_request_organization
 from model_hub.models import DatasetProperties
-from model_hub.models.ai_model import AIModel
 from model_hub.models.conversations import Conversation, Message, Node
 from model_hub.models.metric import Metric
 from model_hub.serializers.contracts import (
@@ -49,11 +34,27 @@ from model_hub.utils.performance_ch import (
     get_performance_details_query,
     get_top_tags_distribution,
 )
+from model_hub.utils.workspace_scope import scoped_ai_model_queryset
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+
+
+def _escape_csv_cell(value):
+    """Defang CSV-formula injection by forcing formula-looking cells to text."""
+    if value is None:
+        return ""
+    s = str(value)
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
+
+
+def _get_scoped_model(request, model_id):
+    return scoped_ai_model_queryset(request).filter(id=model_id).first()
+
 
 PERFORMANCE_CHART_ROW_SCHEMA = openapi.Schema(
     type=openapi.TYPE_ARRAY,
@@ -106,9 +107,8 @@ class PerformanceView(APIView):
         user = request.user
         user_organization = user.organization
 
-        model = AIModel.objects.get(id=id)
-
-        if not model:
+        model = _get_scoped_model(request, id)
+        if model is None:
             return self._gm.not_found(get_error_message("AI_MODEL_NOT_FOUND"))
 
         query_data = request.validated_data
@@ -216,6 +216,10 @@ class PerformanceDetailsView(APIView):
         user = request.user
         organization = user.organization
 
+        model = _get_scoped_model(request, id)
+        if model is None:
+            return self._gm.not_found(get_error_message("AI_MODEL_NOT_FOUND"))
+
         limit = 30
         query_data = request.validated_data
 
@@ -229,14 +233,14 @@ class PerformanceDetailsView(APIView):
 
         metric_id = dataset["metric_id"]
 
-        metric_model = Metric.objects.get(id=metric_id)
+        metric_model = Metric.objects.filter(id=metric_id, model=model).first()
 
         if metric_model:
             is_next = False
 
             performance = calculate_performance_details(
                 organization.id,
-                id,
+                model.id,
                 dataset,
                 filters,
                 start_date,
@@ -413,9 +417,7 @@ class PerformanceDetailsView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        else:
-            response = {"dataset_a": {}}
-            return Response(data=response, status=status.HTTP_200_OK)
+        return self._gm.not_found("Metric not found")
 
 
 class PerformanceDetailsExport(APIView):
@@ -437,6 +439,10 @@ class PerformanceDetailsExport(APIView):
         user = request.user
         organization = user.organization
 
+        model = _get_scoped_model(request, id)
+        if model is None:
+            return self._gm.not_found(get_error_message("AI_MODEL_NOT_FOUND"))
+
         query_data = request.validated_data
 
         dataset = query_data["dataset"]
@@ -444,11 +450,14 @@ class PerformanceDetailsExport(APIView):
         start_date = query_data["start_date"]
         end_date = query_data["end_date"]
 
-        metric_model = Metric.objects.filter(id=dataset["metric_id"]).first()
+        metric_model = Metric.objects.filter(
+            id=dataset["metric_id"],
+            model=model,
+        ).first()
         if metric_model:
             performance = calculate_performance_details(
                 organization.id,
-                id,
+                model.id,
                 dataset,
                 filters,
                 start_date,
@@ -521,12 +530,9 @@ class GetPerformanceOptionsView(APIView):
         search_query = request.query_params.get("search_query")
         metric_id = request.query_params.get("metric_id")
 
-        models = AIModel.objects.filter(id=model_id)
-
-        if len(models) == 0:
+        model = _get_scoped_model(request, model_id)
+        if model is None:
             return self._gm.not_found(get_error_message("AI_MODEL_NOT_FOUND"))
-
-        model = models[0]
 
         metrics = Metric.objects.filter(
             model=model,
@@ -556,7 +562,9 @@ class GetPerformanceOptionsView(APIView):
         tags = []
 
         if metric_id:
-            metric = Metric.objects.filter(id=metric_id).values("tags").first()
+            metric = (
+                Metric.objects.filter(id=metric_id, model=model).values("tags").first()
+            )
             if metric and metric["tags"]:
                 tags = metric["tags"]
                 if search_query:
@@ -609,6 +617,10 @@ class GetPerformanceTagDistributionView(APIView):
     )
     def post(self, request, model_id, *args, **kwargs):
         user_organization = get_request_organization(self.request)
+        model = _get_scoped_model(request, model_id)
+        if model is None:
+            return self._gm.not_found(get_error_message("AI_MODEL_NOT_FOUND"))
+
         query_data = request.validated_data
 
         datasets = query_data["dataset"]
@@ -621,7 +633,7 @@ class GetPerformanceTagDistributionView(APIView):
         if graph_type == "all":
             good_tags_distribution = get_all_tags_distribution(
                 user_organization.id,
-                model_id,
+                model.id,
                 datasets,
                 filters,
                 agg_by,
@@ -632,7 +644,7 @@ class GetPerformanceTagDistributionView(APIView):
 
             bad_tags_distribution = get_all_tags_distribution(
                 user_organization.id,
-                model_id,
+                model.id,
                 datasets,
                 filters,
                 agg_by,
@@ -650,7 +662,7 @@ class GetPerformanceTagDistributionView(APIView):
         else:
             top_tags_distribution = get_top_tags_distribution(
                 user_organization.id,
-                model_id,
+                model.id,
                 datasets,
                 filters,
                 start_date,

@@ -113,7 +113,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     # --- Multi-org helpers ---
 
     def get_membership(self, organization):
-        """Get the active OrganizationMembership for a specific org, or None."""
+        """Get the active OrganizationMembership for a specific org, or None.
+
+        Membership changes can happen during invite, removal, and org-switch
+        flows. Always query the current active row so access-control decisions
+        do not reuse stale per-instance state after a membership is changed.
+        """
         try:
             return OrganizationMembership.no_workspace_objects.get(
                 user=self, organization=organization, is_active=True
@@ -145,11 +150,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     def can_access_organization(self, organization):
         """Check if user has access to a specific organization.
 
-        Uses OrganizationMembership as source of truth.
+        Uses OrganizationMembership as source of truth. Routed through the
+        memoized get_membership so repeated access checks in one request
+        reuse a single query (CORE-BACKEND-1074 / CORE-BACKEND-106X).
         """
-        return OrganizationMembership.no_workspace_objects.filter(
-            user=self, organization=organization, is_active=True
-        ).exists()
+        return self.get_membership(organization) is not None
 
     def get_organization_role(self, organization=None):
         """Get user's role in the given organization.

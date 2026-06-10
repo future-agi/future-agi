@@ -1,6 +1,7 @@
 import traceback
 
 import structlog
+from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -52,6 +53,8 @@ class FetchPromptObserveMetricsView(APIView):
 
             return self._gm.success_response(response)
 
+        except Http404:
+            return self._gm.not_found("Prompt template not found")
         except Exception as e:
             logger.error(f"Error while fetching the prompt-observe metrics: {str(e)}")
             return self._gm.bad_request("Failed to fetch the prompt-observe metrics.")
@@ -88,6 +91,8 @@ class FetchPromptMetricsSpanView(APIView):
 
             return self._gm.success_response(response)
 
+        except Http404:
+            return self._gm.not_found("Prompt template not found")
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error while fetching the prompt-observe metrics: {str(e)}")

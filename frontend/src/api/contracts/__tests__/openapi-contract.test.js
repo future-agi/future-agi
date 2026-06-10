@@ -6,6 +6,7 @@ import {
   validateContractedRequestConfig,
   validateContractedResponse,
 } from "../openapi-contract";
+import { OPENAPI_CONTRACT } from "../openapi-contract.generated";
 
 describe("OpenAPI runtime contract", () => {
   afterEach(() => {
@@ -83,6 +84,98 @@ describe("OpenAPI runtime contract", () => {
     );
   });
 
+  it("keeps generated alert-log mutation request bodies documented", () => {
+    expect(
+      findOpenApiEndpoint("/tracer/user-alert-logs/", "post").contract
+        .requestBody,
+    ).toEqual({ $ref: "#/definitions/UserAlertMonitorLogWriteRequest" });
+    expect(
+      findOpenApiEndpoint(
+        "/tracer/user-alert-logs/7b4d69c3-6a5b-48cf-8d7e-2bcdf488e1e5/",
+        "put",
+      ).contract.requestBody,
+    ).toEqual({ $ref: "#/definitions/UserAlertMonitorLogWriteRequest" });
+    expect(
+      findOpenApiEndpoint(
+        "/tracer/user-alert-logs/7b4d69c3-6a5b-48cf-8d7e-2bcdf488e1e5/",
+        "patch",
+      ).contract.requestBody,
+    ).toEqual({ $ref: "#/definitions/UserAlertMonitorLogWriteRequest" });
+    expect(
+      findOpenApiEndpoint("/tracer/user-alert-logs/resolve/", "post").contract
+        .requestBody,
+    ).toEqual({ $ref: "#/definitions/UserAlertMonitorLogResolveRequest" });
+  });
+
+  it("accepts dashboard custom time ranges without a preset sentinel", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/tracer/dashboard/query/",
+        method: "post",
+        data: {
+          workflow: "observability",
+          project_ids: ["5073ebad-e148-4b2b-a839-bcc51f612294"],
+          time_range: {
+            custom_start: "2026-05-24T14:00:00.000Z",
+            custom_end: "2026-05-31T14:00:00.000Z",
+          },
+          granularity: "day",
+          metrics: [
+            {
+              id: "latency",
+              name: "latency",
+              display_name: "Latency",
+              type: "system_metric",
+              source: "traces",
+              aggregation: "avg",
+              unit: "ms",
+            },
+          ],
+          filters: [],
+          breakdowns: [],
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts JSON-valued Gateway provider config maps", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/agentcc/gateways/default/update-provider/",
+        method: "post",
+        data: {
+          name: "bedrock",
+          config: {
+            api_format: "bedrock",
+            models: ["anthropic.claude-3-haiku-20240307-v1:0"],
+            default_timeout: 45,
+            max_concurrent: 3,
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts JSON-valued Gateway guardrail config maps", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/agentcc/gateways/default/update-guardrail/",
+        method: "post",
+        data: {
+          name: "keyword-blocklist",
+          config: {
+            enabled: true,
+            action: "log",
+            confidence_threshold: 0.65,
+            config: {
+              words: ["browser_guardrail_smoke"],
+            },
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
   it("validates form bodies against the same request schema", () => {
     const body = new FormData();
     body.set("code", "123456");
@@ -95,6 +188,32 @@ describe("OpenAPI runtime contract", () => {
         data: body,
       }),
     ).toMatchObject({ ok: true });
+  });
+
+  it("accepts multipart files for read-only file fields in request schemas", () => {
+    const body = new FormData();
+    body.set("dataset_id", "eeacd5c1-6491-42a6-b72d-5d36ebeee72d");
+    body.set("file", new Blob(["input,output\nhello,world\n"]), "rows.csv");
+
+    expect(
+      validateContractedRequestConfig({
+        url: "/model-hub/develops/add_rows_from_file/",
+        method: "post",
+        data: body,
+      }),
+    ).toMatchObject({ ok: true });
+
+    const invalidBody = new FormData();
+    invalidBody.set("dataset_id", "not-a-uuid");
+    invalidBody.set("file", new Blob(["input\nhello\n"]), "rows.csv");
+
+    expect(
+      validateContractedRequestConfig({
+        url: "/model-hub/develops/add_rows_from_file/",
+        method: "post",
+        data: invalidBody,
+      }).ok,
+    ).toBe(false);
   });
 
   it("keeps form-body coercion isolated from JSON request validation", () => {
@@ -314,6 +433,42 @@ describe("OpenAPI runtime contract", () => {
         method: "post",
       },
     });
+  });
+
+  it("accepts string and structured accounts error result contracts", () => {
+    const resultSchema =
+      OPENAPI_CONTRACT.definitions.AccountsErrorResponse.properties.result;
+
+    expect(resultSchema["x-string-or-object"]).toBe(true);
+    expect(resultSchema.properties.error_code.type).toBe("string");
+
+    expect(
+      validateContractedResponse({
+        status: 400,
+        config: { url: "/accounts/2fa/recovery-codes/", method: "get" },
+        data: {
+          status: false,
+          result: "Invalid code. Please try again.",
+        },
+      }),
+    ).toMatchObject({ ok: true });
+
+    expect(
+      validateContractedResponse({
+        status: 400,
+        config: { url: "/accounts/token/", method: "post" },
+        data: {
+          status: false,
+          code: "LOGIN_INVALID_CREDENTIALS",
+          detail: "Invalid credentials",
+          result: {
+            error: "Invalid credentials",
+            error_code: "LOGIN_INVALID_CREDENTIALS",
+            remaining_attempts: 4,
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
   });
 
   it("accepts arbitrary JSON response fields declared by backend serializers", () => {

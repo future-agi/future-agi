@@ -47,7 +47,8 @@ const DEFAULT_TOOL_GROUPS = [
   {
     id: "datasets",
     name: "Datasets & Knowledge Bases",
-    description: "Create, manage, query datasets; manage knowledge bases for RAG",
+    description:
+      "Create, manage, query datasets; manage knowledge bases for RAG",
   },
   {
     id: "annotations",
@@ -63,7 +64,8 @@ const DEFAULT_TOOL_GROUPS = [
   {
     id: "observability",
     name: "Observability / Traces",
-    description: "Search traces, projects, error analysis, alerts, and annotations",
+    description:
+      "Search traces, projects, error analysis, alerts, and annotations",
   },
   {
     id: "error_feed",
@@ -202,7 +204,8 @@ export default function ToolGroupSelector({ config }) {
     );
   };
 
-  const allEnabled = toolGroups.length > 0 && enabled.length === toolGroups.length;
+  const allEnabled =
+    toolGroups.length > 0 && enabled.length === toolGroups.length;
 
   return (
     <Accordion

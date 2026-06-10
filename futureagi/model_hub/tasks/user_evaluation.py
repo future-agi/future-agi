@@ -668,7 +668,9 @@ def _validate_error_localizer_fields(rule_prompt, input_data, eval_result):
 
     if missing_fields:
         error_msg = f"Missing required fields: {', '.join(missing_fields)}"
-        logger.error(f"ErrorLocalizerTask validation failed - {error_msg}")
+        # Expected, handled: localizer is skipped (FAILED status persisted) when
+        # required fields are absent (e.g. no eval_result). Warning, not error.
+        logger.warning(f"ErrorLocalizerTask validation failed - {error_msg}")
         return ErrorLocalizerStatus.FAILED, error_msg
 
     return ErrorLocalizerStatus.PENDING, ""
@@ -1065,31 +1067,36 @@ def trigger_error_localization_for_simulate(
             rule_prompt, input_data_dict, value
         )
 
+        # Partition per (call_execution, eval_config) so multiple evals on the
+        # same call coexist; update_or_create keeps Temporal retries idempotent
+        # against the workspace-agnostic source_id unique index.
         source_id = uuid.uuid5(
             uuid.NAMESPACE_OID,
             f"simulate:{call_execution.id}:{eval_config.id}",
         )
-        task = ErrorLocalizerTask(
-            eval_template=eval_template,
-            source=ErrorLocalizerSource.SIMULATE,
+        task, _created = ErrorLocalizerTask.no_workspace_objects.update_or_create(
             source_id=source_id,
-            input_data=input_data_dict,
-            input_keys=input_keys,
-            input_types=input_type_dict,
-            eval_result=value,
-            eval_explanation=eval_explanation,
-            rule_prompt=rule_prompt,
-            organization=call_execution.test_execution.run_test.organization,
-            workspace=workspace,
-            metadata={
-                "log_id": log_id,
-                "call_execution_id": str(call_execution.id),
-                "eval_config_id": str(eval_config.id),
+            deleted=False,
+            defaults={
+                "eval_template": eval_template,
+                "source": ErrorLocalizerSource.SIMULATE,
+                "input_data": input_data_dict,
+                "input_keys": input_keys,
+                "input_types": input_type_dict,
+                "eval_result": value,
+                "eval_explanation": eval_explanation,
+                "rule_prompt": rule_prompt,
+                "organization": call_execution.test_execution.run_test.organization,
+                "workspace": workspace,
+                "metadata": {
+                    "log_id": log_id,
+                    "call_execution_id": str(call_execution.id),
+                    "eval_config_id": str(eval_config.id),
+                },
+                "status": initial_status,
+                "error_message": error_message,
             },
-            status=initial_status,
-            error_message=error_message,
         )
-        task.save()
 
         logger.info(
             f"Created ErrorLocalizerTask for Simulate Eval - Call: {call_execution.id}, Config: {eval_config.id}"

@@ -490,6 +490,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                             "AND is_deleted = 0 "
                             "AND (parent_span_id IS NULL OR parent_span_id = %(e)s) "
                             "AND start_time >= %(since)s "
+                            "AND created_at >= %(since)s "
                             "GROUP BY project_id",
                             {"pids": project_ids, "e": "", "since": thirty_days_ago},
                             timeout_ms=5000,
@@ -509,6 +510,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                             "AND is_deleted = 0 "
                             "AND (parent_span_id IS NULL OR parent_span_id = %(e)s) "
                             "AND start_time >= %(since)s "
+                            "AND created_at >= %(since)s "
                             "GROUP BY project_id, day "
                             "ORDER BY project_id, day",
                             {"pids": project_ids, "e": "", "since": thirty_days_ago},

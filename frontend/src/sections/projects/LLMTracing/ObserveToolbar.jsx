@@ -1,19 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
-import {
-  Badge,
-  Button,
-  MenuItem,
-  Popover,
-  Stack,
-} from "@mui/material";
-import {
-  startOfToday,
-  startOfTomorrow,
-  startOfYesterday,
-  sub,
-} from "date-fns";
+import { Badge, Button, MenuItem, Popover, Stack } from "@mui/material";
+import { startOfToday, startOfTomorrow, startOfYesterday, sub } from "date-fns";
 import Iconify from "src/components/iconify";
 import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
@@ -34,8 +23,6 @@ const DATE_OPTIONS = [
   { key: "12M", label: "Past 12M" },
   { key: "Custom", label: "Custom range" },
 ];
-
-const DIRECT_ID_FILTER_FIELDS = new Set(["trace_id", "span_id"]);
 
 const ObserveToolbar = ({
   // Mode: "traces" (default) | "sessions" | "users"
@@ -232,7 +219,7 @@ const ObserveToolbar = ({
         EVAL_METRIC: "eval",
         ANNOTATION: "annotation",
       };
-      const isDirectIdFilter = DIRECT_ID_FILTER_FIELDS.has(gf.column_id);
+      const isDirectIdFilter = ID_ONLY_FIELDS.has(gf.column_id);
       const rawColType =
         gf.filter_config?.col_type ||
         gf.col_type ||

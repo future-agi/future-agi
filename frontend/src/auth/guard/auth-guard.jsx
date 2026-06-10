@@ -57,7 +57,6 @@ function Container({ children }) {
     const isNewOAuthUser = queryParams.get("is_new_user") === "true";
     const returnTo = localStorage.getItem("redirectUrl");
 
-
     if (!authenticated) {
       if (sso_token) {
         if (refreshToken) {

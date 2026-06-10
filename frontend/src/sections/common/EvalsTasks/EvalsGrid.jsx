@@ -178,7 +178,7 @@ const EvalsGrid = forwardRef(
             gridRef?.current?.api?.applyServerSideTransaction(transaction);
           }
         } catch (e) {
-          logger.error("Failed to refresh eval tasks rows", e);
+          logger.warn("Failed to refresh eval tasks rows", e);
         }
       }
     };
