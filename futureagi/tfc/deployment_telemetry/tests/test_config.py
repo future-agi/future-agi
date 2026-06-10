@@ -2,11 +2,13 @@ from unittest.mock import patch
 
 import pytest
 
-from tfc.oss_telemetry.config import (
+from tfc.deployment_telemetry.config import (
     detect_deployment_type,
     get_telemetry_interval_hours,
+    get_telemetry_interval_seconds_override,
     get_telemetry_jitter_seconds,
     get_version,
+    is_self_hosted_deployment,
     telemetry_is_disabled,
 )
 
@@ -27,6 +29,14 @@ def test_valid_intervals(monkeypatch, interval):
 def test_invalid_intervals_fall_back_to_six(monkeypatch, interval):
     monkeypatch.setenv("FUTURE_AGI_TELEMETRY_INTERVAL_HOURS", interval)
     assert get_telemetry_interval_hours() == 6
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"), [("120", 120), ("0", None), ("bad", None)]
+)
+def test_interval_seconds_override(monkeypatch, value, expected):
+    monkeypatch.setenv("FUTURE_AGI_TELEMETRY_INTERVAL_SECONDS", value)
+    assert get_telemetry_interval_seconds_override() == expected
 
 
 def test_default_jitter_is_thirty_minutes(monkeypatch):
@@ -68,8 +78,46 @@ def test_deployment_detection(monkeypatch):
     assert detect_deployment_type() == "kubernetes"
 
     monkeypatch.delenv("KUBERNETES_SERVICE_HOST")
-    with patch("tfc.oss_telemetry.config.os.path.exists", return_value=True):
+    with patch(
+        "tfc.deployment_telemetry.config.os.path.exists",
+        return_value=True,
+    ):
         assert detect_deployment_type() == "docker"
 
-    with patch("tfc.oss_telemetry.config.os.path.exists", return_value=False):
+    with patch(
+        "tfc.deployment_telemetry.config.os.path.exists",
+        return_value=False,
+    ):
         assert detect_deployment_type() == "bare_metal"
+
+
+def test_oss_deployment_sends_telemetry():
+    with patch("tfc.ee_loader.has_ee", return_value=False):
+        assert is_self_hosted_deployment() is True
+
+
+def test_self_hosted_ee_deployment_sends_telemetry():
+    with (
+        patch("tfc.ee_loader.has_ee", return_value=True),
+        patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False),
+    ):
+        assert is_self_hosted_deployment() is True
+
+
+def test_cloud_deployment_does_not_send_telemetry():
+    with (
+        patch("tfc.ee_loader.has_ee", return_value=True),
+        patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+    ):
+        assert is_self_hosted_deployment() is False
+
+
+def test_ee_mode_detection_failure_does_not_send_telemetry():
+    with (
+        patch("tfc.ee_loader.has_ee", return_value=True),
+        patch(
+            "ee.usage.deployment.DeploymentMode.is_cloud",
+            side_effect=RuntimeError,
+        ),
+    ):
+        assert is_self_hosted_deployment() is False

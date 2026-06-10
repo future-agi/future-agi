@@ -7,7 +7,7 @@ from uuid import UUID
 from django.db.models import F
 
 from accounts.models.user import User
-from tfc.oss_telemetry.config import (
+from tfc.deployment_telemetry.config import (
     MAX_PAYLOAD_BYTES,
     MAX_REGISTRATION_USERS,
     detect_deployment_type,

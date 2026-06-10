@@ -5,7 +5,7 @@ import uuid
 from django.db import models
 
 
-class OSSTelemetryState(models.Model):
+class DeploymentTelemetryState(models.Model):
     class RegistrationKind(models.TextChoices):
         MINIMAL_DISABLED = "minimal_disabled", "Minimal disabled"
         FULL = "full", "Full"
@@ -42,8 +42,9 @@ class OSSTelemetryState(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = "OSS telemetry state"
-        verbose_name_plural = "OSS telemetry state"
+        db_table = "deployment_telemetry_state"
+        verbose_name = "deployment telemetry state"
+        verbose_name_plural = "deployment telemetry state"
 
     def __str__(self) -> str:
         return str(self.instance_id)

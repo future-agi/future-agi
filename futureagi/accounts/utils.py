@@ -32,19 +32,19 @@ from tfc.utils.parse_errors import parse_serialized_errors
 logger = structlog.get_logger(__name__)
 
 
-def _fire_oss_telemetry_registration():
+def _fire_deployment_telemetry_registration():
     import threading
 
     try:
-        from tfc.ee_gating import is_oss
+        from tfc.deployment_telemetry.config import is_self_hosted_deployment
 
-        if not is_oss():
+        if not is_self_hosted_deployment():
             return
 
         def _register():
             close_old_connections()
             try:
-                from tfc.oss_telemetry.sender import attempt_registration
+                from tfc.deployment_telemetry.sender import attempt_registration
 
                 attempt_registration()
             finally:
@@ -283,7 +283,7 @@ def first_signup(data, mode=None):
         if generated_password:
             process_post_registration(user.id, generated_password)
 
-        transaction.on_commit(_fire_oss_telemetry_registration)
+        transaction.on_commit(_fire_deployment_telemetry_registration)
         return user
 
     else:

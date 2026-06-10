@@ -2,13 +2,13 @@ from unittest.mock import MagicMock
 
 from django.test import RequestFactory
 
-from tfc.logging.sentry import _scrub_oss_telemetry_event
+from tfc.logging.sentry import _scrub_deployment_telemetry_event
 from tfc.telemetry.middleware import OTelContextMiddleware
 
 
-def test_otel_does_not_capture_oss_request_body():
+def test_otel_does_not_capture_deployment_telemetry_request_body():
     request = RequestFactory().post(
-        "/oss/register",
+        "/telemetry/register/",
         data='{"users":[{"email":"secret@example.com"}]}',
         content_type="application/json",
     )
@@ -20,10 +20,10 @@ def test_otel_does_not_capture_oss_request_body():
     assert "http.request.body" not in captured_attributes
 
 
-def test_sentry_scrubs_oss_request_data_and_frame_variables():
+def test_sentry_scrubs_deployment_telemetry_request_data_and_frame_variables():
     event = {
         "request": {
-            "url": "https://api.futureagi.com/oss/register",
+            "url": "https://api.futureagi.com/telemetry/register/",
             "data": {"users": [{"email": "secret@example.com"}]},
         },
         "exception": {
@@ -37,7 +37,7 @@ def test_sentry_scrubs_oss_request_data_and_frame_variables():
         },
     }
 
-    scrubbed = _scrub_oss_telemetry_event(event)
+    scrubbed = _scrub_deployment_telemetry_event(event)
 
     assert "data" not in scrubbed["request"]
     assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]

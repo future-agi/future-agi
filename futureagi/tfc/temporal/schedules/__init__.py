@@ -15,7 +15,9 @@ from tfc.temporal.schedules.config import ScheduleConfig
 from tfc.temporal.schedules.billing import BILLING_SCHEDULES
 from tfc.temporal.schedules.integrations import INTEGRATION_SCHEDULES
 from tfc.temporal.schedules.model_hub import MODEL_HUB_SCHEDULES
-from tfc.temporal.schedules.oss_telemetry import OSS_TELEMETRY_SCHEDULES
+from tfc.temporal.schedules.deployment_telemetry import (
+    DEPLOYMENT_TELEMETRY_SCHEDULES,
+)
 from tfc.temporal.schedules.retention import RETENTION_SCHEDULES
 from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
 from tfc.temporal.schedules.tracer import TRACER_SCHEDULES
@@ -28,7 +30,7 @@ ALL_SCHEDULES = [
     *INTEGRATION_SCHEDULES,
     *BILLING_SCHEDULES,
     *RETENTION_SCHEDULES,
-    *OSS_TELEMETRY_SCHEDULES,
+    *DEPLOYMENT_TELEMETRY_SCHEDULES,
 ]
 
 # Manager functions
@@ -68,7 +70,7 @@ __all__ = [
     "INTEGRATION_SCHEDULES",
     "BILLING_SCHEDULES",
     "RETENTION_SCHEDULES",
-    "OSS_TELEMETRY_SCHEDULES",
+    "DEPLOYMENT_TELEMETRY_SCHEDULES",
     "ALL_SCHEDULES",
     # Async functions (a_ prefix)
     "a_schedule_exists",

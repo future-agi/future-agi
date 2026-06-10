@@ -144,7 +144,10 @@ if has_ee("ee.usage"):
 
         if DeploymentMode.is_cloud():
             urlpatterns += [
-                path("oss/", include("ee.usage.oss_telemetry_urls"))
+                path(
+                    "telemetry/",
+                    include("ee.usage.deployment_telemetry_urls"),
+                )
             ]
     except ImportError:
         pass

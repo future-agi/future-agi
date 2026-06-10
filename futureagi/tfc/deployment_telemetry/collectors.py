@@ -13,7 +13,7 @@ def _safe_count(name: str, collector: Callable[[], int]) -> int:
     try:
         return int(collector())
     except Exception:
-        logger.warning("oss_telemetry_collector_failed", collector=name)
+        logger.warning("deployment_telemetry_collector_failed", collector=name)
         return 0
 
 

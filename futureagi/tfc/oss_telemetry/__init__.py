@@ -1,1 +1,0 @@
-"""OSS deployment telemetry."""

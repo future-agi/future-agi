@@ -10,7 +10,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name="OSSTelemetryState",
+            name="DeploymentTelemetryState",
             fields=[
                 (
                     "id",
@@ -88,8 +88,9 @@ class Migration(migrations.Migration):
                 ("updated_at", models.DateTimeField(auto_now=True)),
             ],
             options={
-                "verbose_name": "OSS telemetry state",
-                "verbose_name_plural": "OSS telemetry state",
+                "db_table": "deployment_telemetry_state",
+                "verbose_name": "deployment telemetry state",
+                "verbose_name_plural": "deployment telemetry state",
             },
         ),
     ]
