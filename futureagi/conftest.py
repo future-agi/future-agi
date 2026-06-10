@@ -3,6 +3,8 @@ Root conftest.py for core-backend tests.
 Provides common fixtures for all test modules.
 """
 
+# ruff: noqa: E402
+
 import sys
 from pathlib import Path
 
@@ -50,7 +52,10 @@ def _apply_ch25_schema_for_tests():
 
     # Outside Docker, the `clickhouse` hostname from the dev .env doesn't
     # resolve; force the test sidecar at localhost:18123.
-    is_test = _os.getenv("DJANGO_SETTINGS_MODULE", "").endswith(".test") or _os.getenv("TESTING") == "true"
+    is_test = (
+        _os.getenv("DJANGO_SETTINGS_MODULE", "").endswith(".test")
+        or _os.getenv("TESTING") == "true"
+    )
     ch_host = _os.getenv("CH25_HOST")
     if not ch_host:
         env_host = _os.getenv("CH_HOST")
@@ -62,15 +67,15 @@ def _apply_ch25_schema_for_tests():
         return
 
     ch_http_port = int(
-        _os.getenv("CH25_HTTP_PORT")
-        or _os.getenv("CH_HTTP_PORT")
-        or 18123
+        _os.getenv("CH25_HTTP_PORT") or _os.getenv("CH_HTTP_PORT") or 18123
     )
     ch_user = _os.getenv("CH25_USER") or _os.getenv("CH_USERNAME") or "default"
     ch_db = _os.getenv("CH25_DATABASE") or _os.getenv("CH_DATABASE") or "test_tfc"
     ch_password = _os.getenv("CH25_PASSWORD") or _os.getenv("CH_PASSWORD") or ""
 
-    schema_dir = Path(__file__).parent / "tracer" / "services" / "clickhouse" / "v2" / "schema"
+    schema_dir = (
+        Path(__file__).parent / "tracer" / "services" / "clickhouse" / "v2" / "schema"
+    )
     if not schema_dir.is_dir():
         return
 
@@ -79,21 +84,30 @@ def _apply_ch25_schema_for_tests():
 
         from tracer.services.clickhouse.v2 import apply_schema as _v2_apply
 
-        rc = _v2_apply.main([
-            "--schema-dir", str(schema_dir),
-            "--ch-host", ch_host,
-            "--ch-http-port", str(ch_http_port),
-            "--ch-user", ch_user,
-            "--ch-database", ch_db,
-        ])
+        rc = _v2_apply.main(
+            [
+                "--schema-dir",
+                str(schema_dir),
+                "--ch-host",
+                ch_host,
+                "--ch-http-port",
+                str(ch_http_port),
+                "--ch-user",
+                ch_user,
+                "--ch-database",
+                ch_db,
+            ]
+        )
         if rc not in (0, 2):
             import sys as _sys
+
             print(
                 f"⚠️  CH25 schema apply returned rc={rc} during pytest_configure",
                 file=_sys.stderr,
             )
     except Exception as exc:
         import sys as _sys
+
         print(
             f"⚠️  CH25 schema apply skipped during pytest_configure: {exc}",
             file=_sys.stderr,
@@ -152,8 +166,6 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(marker)
 
 
-from unittest.mock import patch
-
 import pytest
 from rest_framework.test import APIClient
 from rest_framework.views import APIView
@@ -173,10 +185,9 @@ def _drop_legacy_ch_spans_mvs():
     drop sticks; the same MVs are not re-created by anything else.
     """
     try:
-        import os as _os
+        import clickhouse_connect
 
         from tracer.services.clickhouse.v2 import get_v2_config
-        import clickhouse_connect
 
         cfg = get_v2_config()
         host = cfg["host"]
@@ -234,6 +245,67 @@ def _force_flush_cascade():
         yield
     finally:
         _PgOps.sql_flush = _original
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _make_contenttype_post_migrate_idempotent():
+    """Avoid duplicate content types during TransactionTestCase flush teardown.
+
+    ``transaction=True`` tests call Django ``flush`` after each test, which
+    emits ``post_migrate`` and recreates content types. In the full suite,
+    background DB connection cleanup can make Django attempt the same
+    content-type insert twice. Keep the normal receiver behavior, but use
+    ``ignore_conflicts`` for the insert so teardown stays idempotent.
+    """
+    from django.apps import apps as global_apps
+    from django.contrib.contenttypes.management import (
+        create_contenttypes as _original_create_contenttypes,
+    )
+    from django.contrib.contenttypes.models import ContentType
+    from django.db import DEFAULT_DB_ALIAS, router
+    from django.db.models.signals import post_migrate
+
+    def _safe_create_contenttypes(
+        app_config,
+        verbosity=2,
+        interactive=True,
+        using=DEFAULT_DB_ALIAS,
+        apps=global_apps,
+        **kwargs,
+    ):
+        if not app_config.models_module:
+            return
+        if not router.allow_migrate_model(using, ContentType):
+            return
+
+        ContentType.objects.clear_cache()
+        app_label = app_config.label
+        existing_models = set(
+            ContentType.objects.db_manager(using)
+            .filter(app_label=app_label)
+            .values_list("model", flat=True)
+        )
+        app_models = {
+            model._meta.model_name: model for model in app_config.get_models()
+        }
+        content_types = [
+            ContentType(app_label=app_label, model=model_name)
+            for model_name in app_models
+            if model_name not in existing_models
+        ]
+        if content_types:
+            ContentType.objects.using(using).bulk_create(
+                content_types,
+                ignore_conflicts=True,
+            )
+
+    post_migrate.disconnect(_original_create_contenttypes)
+    post_migrate.connect(_safe_create_contenttypes, weak=False)
+    try:
+        yield
+    finally:
+        post_migrate.disconnect(_safe_create_contenttypes)
+        post_migrate.connect(_original_create_contenttypes)
 
 
 from accounts.models.organization import Organization
