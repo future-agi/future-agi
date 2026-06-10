@@ -83,6 +83,7 @@ const TraceGrid = React.forwardRef(
     const agTheme = useAgTheme();
     const theme = useTheme();
     const [dateInterval] = useUrlState("dateInterval", "day");
+    const [, setDrawerTab] = useUrlState("drawerTab");
     const { openReplaySessionDrawer, currentStep, validatedSteps } =
       useReplaySessionsStoreShallow((state) => ({
         openReplaySessionDrawer: state.openReplaySessionDrawer,
@@ -544,11 +545,18 @@ const TraceGrid = React.forwardRef(
         if (!traceId) {
           return;
         }
+        // Eval-cell click pre-focuses the drawer's Evals tab (read once on
+        // open); any other cell clears it for the default tab.
+        setDrawerTab(
+          event?.colDef?.headerComponentParams?.group === "Evaluation Metrics"
+            ? "evals"
+            : null,
+        );
         setTraceDetailDrawerOpen({ traceId: traceId, filters: filters });
 
         // trackEvent(Events.observeTraceidClicked);
       },
-      [filters, setTraceDetailDrawerOpen],
+      [filters, setTraceDetailDrawerOpen, setDrawerTab],
     );
 
     const shouldDisable = useMemo(() => {

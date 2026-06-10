@@ -52,7 +52,14 @@ const VoiceRightPanel = ({
   hiddenActionIds = [],
   hideAnnotationTab,
 }) => {
-  const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
+  // Seed the tab once on open: eval-cell clicks set ?drawerTab=evals so the
+  // drawer lands on Evals. Read once (lazy init) — never watched after, so
+  // the user can switch tabs freely without being pulled back.
+  const [currentTab, setCurrentTab] = useState(() =>
+    new URLSearchParams(window.location.search).get("drawerTab") === "evals"
+      ? TABS.EVALUATIONS
+      : TABS.ANALYTICS,
+  );
   const isSimulate = data?.module === "simulate";
   // Prefer the conversation root span (where voice-call attributes/raw_log
   // live). `trace.observation_spans.all()` is returned without a guaranteed
@@ -247,6 +254,7 @@ const VoiceRightPanel = ({
       return {
         id: `eval-${id}-${i}`,
         eval_name: e?.name || e?.metric || String(id),
+        eval_task_name: e?.eval_task_name || null,
         score,
         score_label: scoreLabel,
         score_items: scoreItems,
@@ -398,6 +406,7 @@ const VoiceRightPanel = ({
               evals={normalizedEvals}
               emptyMessage="No evaluations for this call"
               showSpanColumn={false}
+              groupByTask
               onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
                 const projectId = data?.project_id;
                 const callId = data?.id;

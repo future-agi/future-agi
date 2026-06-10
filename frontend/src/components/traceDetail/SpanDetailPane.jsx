@@ -1745,8 +1745,14 @@ const SpanDetailPane = ({
   onAction,
   onSelectSpan,
   drawerOpen = true,
+  initialTab,
 }) => {
-  const [activeTab, setActiveTab] = useState("preview");
+  // Seed once on mount from the `initialTab` prop (the parent remounts this
+  // pane per drawer-open via a key, so this re-runs each open). Never watched
+  // after — the user can switch tabs/spans freely without being pulled back.
+  const [activeTab, setActiveTab] = useState(() =>
+    isRootSpan && initialTab === "evals" ? "evals" : "preview",
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState("markdown"); // "markdown" | "json" | "chat"
 
@@ -2777,6 +2783,7 @@ SpanDetailPane.propTypes = {
   onAction: PropTypes.func,
   onSelectSpan: PropTypes.func,
   drawerOpen: PropTypes.bool,
+  initialTab: PropTypes.string,
 };
 
 export default React.memo(SpanDetailPane);

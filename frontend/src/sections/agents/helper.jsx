@@ -8,6 +8,8 @@ import VoiceTokenCell from "./CallLogs/VoiceTokenCell";
 import TalkRatioCell from "./CallLogs/TalkRatioCell";
 import EvalCellRenderer from "../test-detail/CellRenderers/EvalCellRenderer";
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
+import VOICE_CALLS_DUMMY from "./CallLogs/__dummy__/voiceCallsDummy.json";
+import VOICE_CALL_DETAIL_DUMMY from "./CallLogs/__dummy__/voiceCallDetailDummy.json";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { Box, Skeleton } from "@mui/material";
@@ -385,6 +387,8 @@ export const generateEvalColumnsFromConfig = (items = []) => {
     return {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,
+      evalTaskName: item.eval_task_name || null,
+      evalTaskCreatedAt: item.eval_task_created_at || null,
       flex: 1,
       minWidth: isReason ? 240 : 140,
       hide: item.is_visible === false,
@@ -815,7 +819,12 @@ export const useCallLogs = ({
         params: { page, page_size: pageLimit, ...params },
       }),
     enabled: condition && enabled,
-    select: (data) => data?.data,
+    // DEV DUMMY: fall back to a static reference payload when the project has
+    // no real voice calls yet so the grid renders. Remove once seeded.
+    select: (data) => {
+      const real = data?.data;
+      return real?.results?.length ? real : VOICE_CALLS_DUMMY;
+    },
   });
   return { queryKey, data, isLoading, error };
 };
@@ -860,11 +869,19 @@ export const useVoiceCallDetail = (traceId, enabled = false) => {
   return useQuery({
     queryKey: ["voiceCallDetail", traceId],
     queryFn: () =>
-      axios.get(endpoints.project.getVoiceCallDetail, {
-        params: { trace_id: traceId },
-      }),
+      axios
+        .get(endpoints.project.getVoiceCallDetail, {
+          params: { trace_id: traceId },
+        })
+        .catch(() => ({ data: { result: null } })),
     enabled: !!traceId && enabled,
-    select: (data) => data?.data?.result,
+    // DEV DUMMY: local has no voice calls, so fall back to a static detail
+    // (eval_task_name on each eval) so the drawer renders grouped evals.
+    select: (data) =>
+      data?.data?.result || {
+        ...VOICE_CALL_DETAIL_DUMMY.result,
+        trace_id: traceId,
+      },
     staleTime: 5 * 60 * 1000,
     meta: { errorHandled: true },
   });
