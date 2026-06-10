@@ -74,6 +74,9 @@ expose_to_mcp(
                     "default": 20,
                     "description": "Number of templates per page. Range 1-100.",
                     "required": False,
+                    # TH-4667: the paginator reads `limit`; without this
+                    # remap page_size was silently ignored (always 10 rows).
+                    "actual": "limit",
                 },
                 "ordering": {
                     "type": str,
@@ -657,6 +660,9 @@ expose_to_mcp(
                     "type": int,
                     "required": False,
                     "description": "Versions per page.",
+                    # TH-4667: the paginator reads `limit`; without this
+                    # remap page_size was silently ignored.
+                    "actual": "limit",
                 },
             },
         },

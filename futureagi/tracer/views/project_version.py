@@ -122,6 +122,10 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
     serializer_class = ProjectVersionSerializer
+    # TH-4667 (ai_tools bridge): get_queryset filters by `search_name`
+    # (name__icontains below), not `search` — the bridged list tool advertises
+    # `search` and remaps it. page/page_size auto-detect from the paginator.
+    mcp_list_params = {"search": "search_name"}
 
     def get_queryset(self):
         project_version_id = self.kwargs.get("pk")

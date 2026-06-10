@@ -69,6 +69,11 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
     serializer_class = AgentccRequestLogSerializer
     queryset = AgentccRequestLog.no_workspace_objects.all()
     _gm = GeneralMethods()
+    # TH-4667 (ai_tools bridge): _apply_filters (via get_queryset) honors
+    # `search` (q/search full-text) — declared because the helper indirection
+    # hides it from auto-detection. page/page_size auto-detect from the
+    # paginator.
+    mcp_list_params = {"search": "search"}
 
     def get_serializer_class(self):
         if self.action == "retrieve":

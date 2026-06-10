@@ -10,7 +10,15 @@ from model_hub.views.develop_annotations import (
 expose_to_mcp(
     category="annotations",
     tools={
-        "list": {"name": "list_annotation_labels"},
+        "list": {
+            "name": "list_annotation_labels",
+            # TH-4667: the custom list validates query params with
+            # AnnotationLabelsListQuerySerializer (strict; fields include
+            # search/page/limit) INLINE rather than via @validated_request,
+            # so auto-detection can't see the search support — declare it.
+            # page/page_size auto-detect from the paginator (page + limit).
+            "list_params": {"search": "search"},
+        },
         "retrieve": {"name": "get_annotation_label"},
         "create": {"name": "create_annotation_label"},
         "update": {"name": "update_annotation_label"},

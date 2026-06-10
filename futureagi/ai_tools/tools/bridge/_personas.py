@@ -45,6 +45,9 @@ expose_to_mcp(
                     "type": int,
                     "description": "Number of personas per page.",
                     "required": False,
+                    # TH-4667: the paginator reads `limit`; without this
+                    # remap page_size was silently ignored (always 10 rows).
+                    "actual": "limit",
                 },
             }
         }

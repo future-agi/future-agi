@@ -580,7 +580,14 @@ expose_to_mcp(
 expose_to_mcp(
     category="tracing",
     tools={
-        "list": {"name": "list_eval_tasks"},
+        "list": {
+            "name": "list_eval_tasks",
+            # TH-4667: EvalTaskView.get_queryset filters by the `name` query
+            # param (name__icontains), not `search` — remap so the advertised
+            # search actually filters. page/page_size are auto-detected from
+            # the DRF paginator (page + limit).
+            "list_params": {"search": "name"},
+        },
         "retrieve": {"name": "get_eval_task"},
         "create": {"name": "create_eval_task"},
         "update": {"name": "update_eval_task"},
@@ -940,7 +947,14 @@ expose_to_mcp(
 expose_to_mcp(
     category="tracing",
     tools={
-        "list": {"name": "list_alert_monitors"},
+        "list": {
+            "name": "list_alert_monitors",
+            # TH-4667: UserAlertMonitorView reads `search_text` (get_queryset)
+            # and a manual `page_size` — remap. `page` is deliberately NOT
+            # advertised: the view's `page_number` is 0-indexed, which
+            # contradicts the advertised 1-indexed semantics.
+            "list_params": {"search": "search_text", "page_size": "page_size"},
+        },
         "retrieve": {"name": "get_alert_monitor"},
         "create": {
             "name": "create_alert_monitor",

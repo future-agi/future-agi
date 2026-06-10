@@ -121,6 +121,9 @@ expose_to_mcp(
                     "type": int,
                     "required": False,
                     "description": "Experiments per page.",
+                    # TH-4667: the paginator reads `limit`; without this
+                    # remap page_size was silently ignored (always 10 rows).
+                    "actual": "limit",
                 },
             },
         },

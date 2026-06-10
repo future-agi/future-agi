@@ -28,6 +28,7 @@ Two registration approaches:
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 import os
 import sys
@@ -289,6 +290,12 @@ class ViewSetBinding:
     # Tool name that yields valid ids for this tool's pk_field — consumed for
     # input-description hints AND by verify_bridges.py id harvesting (A7).
     id_source: str | None = None
+    # TH-4667 filter integrity: for GET-collection tools whose input model was
+    # auto-built (no explicit query_params), maps each ADVERTISED universal
+    # param ("search"/"page"/"page_size") to the query-param name the view
+    # actually honors (e.g. {"search": "name", "page_size": "limit"}). Params
+    # absent from the map are NOT advertised. None on every other tool shape.
+    collection_param_map: dict | None = None
 
 
 def _resolve_class(dotted_path: str):
@@ -847,6 +854,25 @@ class DRFBridgeTool(BaseTool):
 
         extra_query: dict = {}
         if method == "GET":
+            # TH-4667: advertised universal list params may map to a
+            # differently-named query param the view actually honors
+            # (e.g. search -> 'name' on DatasetView, page_size -> 'limit'
+            # for PageNumberPagination subclasses).
+            cmap = getattr(self.binding, "collection_param_map", None) or {}
+            for advertised, actual in cmap.items():
+                if actual != advertised and advertised in param_dict:
+                    param_dict[actual] = param_dict.pop(advertised)
+            # Same honesty fix for hand-declared query_params: an entry may
+            # declare {"actual": "limit"} when the LLM-facing name differs
+            # from the query param the view reads (keeps the advertised
+            # vocabulary consistent across list tools).
+            qp_config = self.binding.query_params or {}
+            for advertised in list(param_dict):
+                entry = qp_config.get(advertised)
+                if isinstance(entry, dict):
+                    actual = entry.get("actual")
+                    if actual and actual != advertised:
+                        param_dict[actual] = param_dict.pop(advertised)
             query_params = param_dict
             body_data = {}
         else:
@@ -942,6 +968,164 @@ def _find_list_tool_for_viewset(viewset_path: str) -> str | None:
         if binding.action == "list" or binding.method == "GET" and not binding.detail:
             return tool.name
     return None
+
+
+UNIVERSAL_LIST_PARAMS = ("search", "page", "page_size")
+
+
+def _resolve_query_serializer(viewset_cls, action_name: str, method: str | None):
+    """Find the drf-yasg/`@validated_request` QUERY serializer for an action.
+
+    `@validated_request(query_serializer=X)` (and bare `@swagger_auto_schema`)
+    attach a `_swagger_auto_schema` dict to the handler — flat on APIView verb
+    methods, method-keyed on @action methods. The query serializer is the
+    endpoint's validated query-param contract, so its field names are the
+    ground truth for which list params the view honors.
+    """
+    handler = getattr(viewset_cls, action_name, None)
+    if handler is None and method:
+        handler = getattr(viewset_cls, method.lower(), None)
+    if handler is None:
+        return None
+    swagger_data = getattr(handler, "_swagger_auto_schema", None)
+    if not isinstance(swagger_data, dict):
+        return None
+    candidates = [swagger_data]
+    nested = swagger_data.get((method or "").lower())
+    if isinstance(nested, dict):
+        candidates.append(nested)
+    for candidate in candidates:
+        query_serializer = candidate.get("query_serializer")
+        if isinstance(query_serializer, type):
+            return query_serializer
+    return None
+
+
+def _detect_collection_params(
+    viewset_cls, action_name: str, method: str | None, tool_config: dict
+) -> dict[str, str]:
+    """TH-4667: decide which universal list params the view ACTUALLY honors.
+
+    The bridge used to advertise `search`/`page`/`page_size` on every
+    GET-collection tool as "universally safe" — but DRF views without
+    SearchFilter (or a custom handler) silently IGNORE unknown query params,
+    so the model believed it had name-filtered when it had not, then made
+    absence/presence claims off unfiltered data. This function is the
+    registration-time honesty gate: a param is only advertised when a
+    concrete, honored view input is detected (or explicitly documented).
+
+    Returns {advertised_name: actual_query_param} for the subset of
+    UNIVERSAL_LIST_PARAMS the view honors. Detection order:
+
+      1. A resolvable QUERY serializer (`@validated_request(query_serializer=…)`)
+         defines the contract EXCLUSIVELY — strict serializers reject unknown
+         params, so nothing outside its fields may be advertised.
+         search -> 'search' field; page -> 'page'; page_size -> 'page_size'
+         or 'limit' field.
+      2. Otherwise, native DRF machinery, but only when the handler actually
+         runs it (DRF mixin handler, `super().list(`, or a source-visible
+         `filter_queryset`/`paginate_queryset` call):
+           - SearchFilter in filter_backends + non-empty search_fields
+             -> search (backend's `search_param`).
+           - pagination_class -> page (`page_query_param`) and page_size
+             (`page_size_query_param`, only if the paginator declares one).
+      3. Explicit declaration for documented custom handlers, merged LAST
+         (wins over detection; a None value removes a param):
+           - `mcp_list_params` attribute on the ViewSet, or
+           - `"list_params"` in the @expose_to_mcp tool config.
+         e.g. {"search": "search_text"} — the tool still advertises `search`;
+         execute() remaps it to the honored name.
+    """
+    detected: dict[str, str] = {}
+
+    handler = getattr(viewset_cls, action_name, None)
+    if handler is None and method:
+        handler = getattr(viewset_cls, method.lower(), None)
+    handler_module = getattr(handler, "__module__", "") or ""
+    is_drf_default = handler_module.startswith("rest_framework")
+    handler_src = ""
+    if handler is not None and not is_drf_default:
+        try:
+            handler_src = inspect.getsource(handler)
+        except (OSError, TypeError):
+            handler_src = ""
+    runs_filter_backends = (
+        is_drf_default
+        or "super().list(" in handler_src
+        or "filter_queryset" in handler_src
+    )
+    runs_paginator = (
+        is_drf_default
+        or "super().list(" in handler_src
+        or "paginate_queryset" in handler_src
+    )
+
+    query_serializer = _resolve_query_serializer(viewset_cls, action_name, method)
+    if query_serializer is not None:
+        try:
+            serializer_fields = query_serializer().fields
+        except Exception:
+            serializer_fields = {}
+        if "search" in serializer_fields:
+            detected["search"] = "search"
+        if "page" in serializer_fields:
+            detected["page"] = "page"
+        if "page_size" in serializer_fields:
+            detected["page_size"] = "page_size"
+        elif "limit" in serializer_fields:
+            detected["page_size"] = "limit"
+    else:
+        backends = getattr(viewset_cls, "filter_backends", None) or []
+        search_fields = getattr(viewset_cls, "search_fields", None) or []
+        if search_fields and runs_filter_backends:
+            try:
+                from rest_framework.filters import SearchFilter
+
+                for backend in backends:
+                    if isinstance(backend, type) and issubclass(
+                        backend, SearchFilter
+                    ):
+                        detected["search"] = (
+                            getattr(backend, "search_param", None) or "search"
+                        )
+                        break
+            except ImportError:
+                pass
+        if runs_paginator:
+            paginator = getattr(viewset_cls, "pagination_class", None)
+            if paginator is not None:
+                page_param = getattr(paginator, "page_query_param", None)
+                if page_param:
+                    detected["page"] = page_param
+                size_param = getattr(paginator, "page_size_query_param", None)
+                if size_param:
+                    detected["page_size"] = size_param
+
+    for declared in (
+        getattr(viewset_cls, "mcp_list_params", None),
+        tool_config.get("list_params"),
+    ):
+        if not declared:
+            continue
+        for advertised, actual in declared.items():
+            if advertised not in UNIVERSAL_LIST_PARAMS:
+                raise ValueError(
+                    f"list_params/mcp_list_params on "
+                    f"{viewset_cls.__module__}.{viewset_cls.__name__}: "
+                    f"'{advertised}' is not a universal list param "
+                    f"({'/'.join(UNIVERSAL_LIST_PARAMS)})."
+                )
+            if actual is None:
+                detected.pop(advertised, None)
+            elif isinstance(actual, str):
+                detected[advertised] = actual
+            else:
+                raise ValueError(
+                    f"list_params/mcp_list_params on "
+                    f"{viewset_cls.__module__}.{viewset_cls.__name__}: value "
+                    f"for '{advertised}' must be a query-param name or None."
+                )
+    return detected
 
 
 def _register_bridge_tool(
@@ -1072,6 +1256,9 @@ def _register_bridge_tool(
             viewset_cls, action_name, entity_name, resolved_serializer
         )
 
+    # TH-4667: only set for the auto-built GET-collection branch below.
+    collection_param_map: dict | None = None
+
     if query_params:
         annotations = {}
         fields_dict = {}
@@ -1120,28 +1307,44 @@ def _register_bridge_tool(
     ) and not query_params:
         # List/GET-collection actions take OPTIONAL filter/pagination params,
         # never the create-shaped model serializer (which has required fields).
-        # Default to a small set of universally-safe optional filters so the
-        # LLM can call with no args and get the first page.
+        # TH-4667: a param is only advertised when the view DETECTABLY honors
+        # it (see _detect_collection_params) — the old behavior advertised
+        # search/page/page_size on every list tool, and views without
+        # SearchFilter silently ignored them, so the model believed it had
+        # filtered when it had not. extra="forbid" makes a non-advertised
+        # param a loud VALIDATION_ERROR (with a schema hint) instead of a
+        # silent no-op.
+        collection_param_map = _detect_collection_params(
+            viewset_cls, action_name, method, tool_config
+        )
+        from pydantic import ConfigDict
+
+        _list_annotations: dict = {}
+        _list_fields: dict = {}
+        if "search" in collection_param_map:
+            _list_annotations["search"] = str | None
+            _list_fields["search"] = PydanticField(
+                default=None,
+                description="Optional case-insensitive name/text filter.",
+            )
+        if "page" in collection_param_map:
+            _list_annotations["page"] = int | None
+            _list_fields["page"] = PydanticField(
+                default=None, description="Optional 1-indexed page number."
+            )
+        if "page_size" in collection_param_map:
+            _list_annotations["page_size"] = int | None
+            _list_fields["page_size"] = PydanticField(
+                default=None,
+                description="Optional page size (number of items to return).",
+            )
         input_model = type(
             f"Input_{tool_name}",
             (PydanticBaseModel,),
             {
-                "__annotations__": {
-                    "search": str | None,
-                    "page": int | None,
-                    "page_size": int | None,
-                },
-                "search": PydanticField(
-                    default=None,
-                    description="Optional case-insensitive name/text filter.",
-                ),
-                "page": PydanticField(
-                    default=None, description="Optional 1-indexed page number."
-                ),
-                "page_size": PydanticField(
-                    default=None,
-                    description="Optional page size (number of items to return).",
-                ),
+                "__annotations__": _list_annotations,
+                **_list_fields,
+                "model_config": ConfigDict(extra="forbid"),
             },
         )
     elif detail and (
@@ -1252,6 +1455,7 @@ def _register_bridge_tool(
         pk_kwarg=tool_config.get("pk_kwarg"),
         path_kwargs=path_kwargs,
         id_source=id_source,
+        collection_param_map=collection_param_map,
     )
 
     # Phase 3A: classify the tool read|mutate|destructive. Config override
@@ -1326,9 +1530,15 @@ def expose_to_mcp(category: str, tools=None, verb_map: dict | None = None):
          normally auto-classified — see ai_tools/confirmations.py),
          undo_note (confirmation-preview note for cheap compensations),
          undo_prompt (str.format template over the validated args, rendered
-         as data["undo"]["prompt"] on the executed destructive leg), and
+         as data["undo"]["prompt"] on the executed destructive leg),
          confirm_preview (callable(params: dict, context) -> str preview
-         builder for the confirmation card; read-only, workspace-scoped).
+         builder for the confirmation card; read-only, workspace-scoped),
+         and list_params (TH-4667 — GET-collection actions only: declares
+         which universal params a CUSTOM handler honors and under what
+         query-param name, e.g. {"search": "search_text"}; merged over
+         auto-detection, None removes a param. The equivalent
+         `mcp_list_params` class attribute on the ViewSet covers
+         bare/auto-CRUD registrations. See _detect_collection_params).
 
          Custom @actions: method/detail are auto-derived from the DRF
          @action decorator (config still wins); an explicit "name" is
@@ -1336,7 +1546,11 @@ def expose_to_mcp(category: str, tools=None, verb_map: dict | None = None):
          query_params. `path_kwargs` (list or {name: {description,
          id_source}}) adds extra required URL kwargs alongside pk routing.
          A query_params entry may declare "in": "query" to land on the
-         query string even on POST/PUT/PATCH/DELETE.
+         query string even on POST/PUT/PATCH/DELETE. A GET entry may
+         declare "actual": "<param>" when the view reads a different
+         query-param name than the advertised one (TH-4667 — e.g.
+         page_size entries with "actual": "limit" for
+         PageNumberPagination-backed views).
 
          @expose_to_mcp(category="tracing", tools={
              "list": {"query_params": {...}},

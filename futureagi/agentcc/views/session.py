@@ -24,6 +24,10 @@ class AgentccSessionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     serializer_class = AgentccSessionSerializer
     queryset = AgentccSession.no_workspace_objects.all()
     _gm = GeneralMethods()
+    # TH-4667 (ai_tools bridge): get_queryset honors `search` (session_id /
+    # name icontains below) — declared because the custom list handler hides
+    # it from auto-detection. page/page_size auto-detect from the paginator.
+    mcp_list_params = {"search": "search"}
 
     def get_queryset(self):
         qs = super().get_queryset()
