@@ -36,7 +36,7 @@ class ObservabilityService:
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
         headers = {"Authorization": f"Bearer {api_key}"}
-        response = requests.get(api_endpoint, headers=headers)
+        response = requests.get(api_endpoint, headers=headers, timeout=30)
         return response.status_code
 
     @staticmethod
