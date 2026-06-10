@@ -249,6 +249,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
   const [customMode, setCustomMode] = useState(false); // editing a custom template
   const [editId, setEditId] = useState(null);
   const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
   const [editCriteria, setEditCriteria] = useState("");
 
   // Fetch saved custom templates
@@ -276,6 +277,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
       setCustomMode(false);
       setEditId(null);
       setEditName("");
+      setEditDescription("");
       setEditCriteria("");
     },
   });
@@ -292,6 +294,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
     if (!editName.trim() || !editCriteria.trim()) return;
     saveMutation.mutate({
       name: editName.trim(),
+      description: editDescription.trim(),
       criteria: editCriteria.trim(),
     });
   };
@@ -299,6 +302,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
   const handleEdit = (tmpl) => {
     setEditId(tmpl.id);
     setEditName(tmpl.name);
+    setEditDescription(tmpl.description || "");
     setEditCriteria(tmpl.criteria);
     setCustomMode(true);
   };
@@ -326,6 +330,19 @@ function SummarySubmenu({ activeSummary, onSelect }) {
           placeholder="Template name"
           value={editName}
           onChange={(e) => setEditName(e.target.value)}
+          inputProps={{ "aria-label": "Summary template name" }}
+          sx={{
+            mb: 1,
+            "& .MuiInputBase-root": { fontSize: "13px", height: 30 },
+          }}
+        />
+        <TextField
+          size="small"
+          fullWidth
+          placeholder="Description (optional)"
+          value={editDescription}
+          onChange={(e) => setEditDescription(e.target.value)}
+          inputProps={{ "aria-label": "Summary template description" }}
           sx={{
             mb: 1,
             "& .MuiInputBase-root": { fontSize: "13px", height: 30 },
@@ -339,25 +356,32 @@ function SummarySubmenu({ activeSummary, onSelect }) {
           placeholder="Summary criteria — e.g. 'Provide a concise 2-3 sentence summary focusing on accuracy issues and suggested fixes'"
           value={editCriteria}
           onChange={(e) => setEditCriteria(e.target.value)}
+          inputProps={{ "aria-label": "Summary template criteria" }}
           sx={{ mb: 1, "& .MuiInputBase-root": { fontSize: "13px" } }}
         />
         <Box sx={{ display: "flex", gap: 0.5, justifyContent: "flex-end" }}>
           <IconButton
+            aria-label="Cancel summary template edit"
             size="small"
             onClick={() => {
               setCustomMode(false);
               setEditId(null);
               setEditName("");
+              setEditDescription("");
               setEditCriteria("");
             }}
           >
             <Iconify icon="mdi:close" width={16} />
           </IconButton>
           <IconButton
+            aria-label="Save summary template"
             size="small"
             onClick={handleSave}
             disabled={
-              !editName.trim() || !editCriteria.trim() || saveMutation.isLoading
+              !editName.trim() ||
+              !editCriteria.trim() ||
+              saveMutation.isLoading ||
+              saveMutation.isPending
             }
             sx={{ color: "primary.main" }}
           >
@@ -494,6 +518,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
                 </Box>
                 <Box sx={{ display: "flex", gap: 0.25, flexShrink: 0 }}>
                   <IconButton
+                    aria-label={`Edit summary template ${tmpl.name}`}
                     size="small"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -508,10 +533,14 @@ function SummarySubmenu({ activeSummary, onSelect }) {
                     />
                   </IconButton>
                   <IconButton
+                    aria-label={`Delete summary template ${tmpl.name}`}
                     size="small"
                     onClick={(e) => {
                       e.stopPropagation();
                       deleteMutation.mutate(tmpl.id);
+                      if (activeSummary === `custom:${tmpl.id}`) {
+                        onSelect("concise");
+                      }
                     }}
                     sx={{ p: 0.25 }}
                   >
@@ -836,6 +865,7 @@ const ModelSelector = ({
       {/* ── + button + config chips (hidden when showPlus=false, e.g. LLM tab) ── */}
       {showPlus && (
         <IconButton
+          aria-label="Open eval runtime settings"
           size="small"
           disabled={disabled}
           onClick={(e) => setPlusAnchor(e.currentTarget)}
