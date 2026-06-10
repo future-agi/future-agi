@@ -274,13 +274,26 @@ def _resolve_resource(link):
             dashboard = Dashboard.objects.filter(
                 id=link.resource_id,
                 workspace__organization=link.organization,
-            ).first()
+            ).prefetch_related("widgets").first()
             if not dashboard:
                 return None
             return {
                 "id": str(dashboard.id),
                 "name": dashboard.name,
                 "config": dashboard.config,
+                "widgets": [
+                    {
+                        "id": str(w.id),
+                        "name": w.name,
+                        "description": w.description,
+                        "position": w.position,
+                        "width": w.width,
+                        "height": w.height,
+                        "query_config": w.query_config,
+                        "chart_config": w.chart_config,
+                    }
+                    for w in dashboard.widgets.all()
+                ],
             }
 
         # Extend for other resource types as needed
