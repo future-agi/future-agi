@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 
 import structlog
 from django.conf import settings
@@ -6,8 +7,6 @@ from django.db.models import Avg
 from django.db.models.functions import Round
 
 from model_hub.utils.dataset_optimization import calculate_percentage_point_change
-
-logger = structlog.get_logger(__name__)
 from simulate.constants.agent_prompt_optimiser import (
     AGENT_PROMPT_OPTIMISER_RUN_STEPS,
     TRIAL_TABLE_BASE_COLUMNS,
@@ -27,6 +26,8 @@ from simulate.serializers.agent_prompt_optimiser import (
 )
 from simulate.utils.agent_optimiser import get_full_test_execution_data
 from simulate.utils.llm import get_api_key_for_model
+
+logger = structlog.get_logger(__name__)
 
 
 def fetch_agent_level_issues_from_run(optimiser_run: AgentOptimiserRun) -> list[dict]:
@@ -314,7 +315,10 @@ def _run_agent_learning_kit_optimisation(prompt_optimiser_run) -> None:
 
     config = prompt_optimiser_run.configuration or {}
     candidates = config.get("agent_candidates") or [
-        {"type": "llm", "instructions": _resolve_optimiser_base_prompt(prompt_optimiser_run)}
+        {
+            "type": "llm",
+            "instructions": _resolve_optimiser_base_prompt(prompt_optimiser_run),
+        }
     ]
     evaluation_config = config.get("evaluation_config") or {
         "metrics": [{"name": "task_completion"}]
@@ -334,9 +338,49 @@ def _run_agent_learning_kit_optimisation(prompt_optimiser_run) -> None:
     prompt_optimiser_run.result = result
     prompt_optimiser_run.status = AgentPromptOptimiserRun.Status.COMPLETED
     prompt_optimiser_run.save(update_fields=["result", "status", "updated_at"])
+    _store_kit_candidates_as_trials(prompt_optimiser_run, result, candidates)
     logger.info(
         f"Agent prompt optimiser run {prompt_optimiser_run.id} completed via agent-learning-kit."
     )
+
+
+def _store_kit_candidates_as_trials(prompt_optimiser_run, result, candidates) -> None:
+    """Persist the kit's candidate history as PromptTrial rows (TH-5642).
+
+    apply_trial ("directly apply the fix") is trial-based, so without rows a kit
+    run's winning prompt could never be applied. Each history entry carries the
+    candidate's full patch; an empty patch means the baseline candidate, whose
+    instructions come from the submitted candidate list.
+    """
+    history = (result or {}).get("optimization", {}).get("history") or []
+    if not history:
+        return
+    baseline_prompt = ""
+    for cand in candidates or []:
+        if isinstance(cand, Mapping) and cand.get("instructions"):
+            baseline_prompt = str(cand["instructions"])
+            break
+    best_id = (result.get("summary") or {}).get("best_candidate_id")
+    try:
+        for idx, entry in enumerate(history):
+            patch_agent = (entry.get("candidate_patch") or {}).get("agent") or {}
+            prompt = str(patch_agent.get("instructions") or "") or baseline_prompt
+            is_baseline = not (entry.get("candidate_patch") or {})
+            PromptTrial.objects.create(
+                agent_prompt_optimiser_run=prompt_optimiser_run,
+                trial_number=idx,
+                is_baseline=is_baseline,
+                prompt=prompt,
+                average_score=float(entry.get("score") or 0.0),
+                metadata={
+                    "candidate_id": entry.get("candidate_id"),
+                    "selected": entry.get("candidate_id") == best_id,
+                    "evaluation_score": entry.get("evaluation_score"),
+                    "source": "agent_learning_kit",
+                },
+            )
+    except Exception:  # trials are an apply convenience; never fail the run on them
+        logger.exception("failed to store kit candidates as PromptTrials")
 
 
 def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
@@ -362,7 +406,10 @@ def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
         from ee.agenthub.fix_your_agent.fix_your_agent import FixYourAgent
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.fix_your_agent.fix_your_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.fix_your_agent.fix_your_agent",
+                exc_info=True,
+            )
         return
 
     optimiser_run = prompt_optimiser_run.agent_optimiser_run
