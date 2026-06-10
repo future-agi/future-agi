@@ -59,6 +59,14 @@ DESTRUCTIVE_NAME_PREFIXES = (
 
 _MARK_DELETED_RE = re.compile(r"^mark_.+_deleted$")
 
+# Phase 5A exemption (PHASES.md 5A — "memory writes are mutations" under the
+# 3A policy): Falcon workspace-memory writes are a trust feature governed by
+# attribution + the management UX, NOT the confirm gate. ``delete_memory``
+# removes a single KV row the user can recreate in one message, so despite
+# its destructive-shaped name it is classified mutate. Keep this list to
+# memory tools only — anything else delete-shaped stays gated.
+NON_DESTRUCTIVE_NAME_EXEMPTIONS = frozenset({"delete_memory"})
+
 # Name-only fallback for hand-written tools (no HTTP method to inspect).
 # Only feeds the frontend write badge for non-destructive tools; the gate
 # cares solely about "destructive".
@@ -97,6 +105,8 @@ MUTATE_NAME_PREFIXES = (
 
 def _name_is_destructive(name: str) -> bool:
     name = name or ""
+    if name in NON_DESTRUCTIVE_NAME_EXEMPTIONS:
+        return False
     return (
         name.startswith(DESTRUCTIVE_NAME_PREFIXES)
         or "_bulk_" in name

@@ -1,0 +1,131 @@
+# Falcon Cadence — the LLM-spend / live-stack rows of the Falcon regression
+# gate matrix (internal-docs/falcon/TEST_PLAN.md §8.1): bridge sweeps (G6),
+# selection bench (G7), L1 243-tool suite + multi-turn (G9), and the shell
+# E2E smoke. These can NEVER be per-merge gates: they spend real LLM tokens
+# and/or need the live dev stack and dev DB.
+#
+# SPEND IS OPT-IN: the only active trigger is workflow_dispatch with an
+# explicit suite choice. The cron stanza below stays commented until the
+# owner authorizes recurring spend (agent does not self-authorize).
+#
+# RUNNER REQUIREMENT (documented, deliberate): every job shells into the live
+# dev stack (`docker exec ws1-backend ...`) or runs the host-venv WS client.
+# GitHub-hosted runners cannot reach ws1 — these jobs require a self-hosted
+# runner ON the dev box, registered with labels [self-hosted, falcon-dev-stack].
+# Until that runner exists, this file is the executable record of the exact
+# commands: copy-paste each job's `run:` block on the dev box. Either way the
+# command set is pinned here, not in someone's shell history.
+#
+# Secrets/keys: the dev stack containers already hold the LLM provider keys;
+# nothing is injected from GitHub secrets on purpose (no spend from forks).
+
+name: Falcon Cadence (LLM spend, manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Which cadence suite to run (each spends tokens and/or hits the live dev DB)"
+        type: choice
+        required: true
+        default: bridge-sweeps
+        options:
+          - bridge-sweeps      # G6: verify_bridges (reads) + verify_writes (net-zero roundtrips)
+          - selection-bench    # G7: bench_falcon_bridge --selection (the D2 gate)
+          - l1-suite           # G9: 243-tool natural-language suite
+          - multi-turn         # G9: 30-conversation multi-turn suite
+          - e2e-smoke          # shell E2E vs live stack (one real LLM turn + --extended)
+          - all
+  # CRON CADENCE (intentionally commented — uncomment only with owner-approved
+  # recurring spend AND the self-hosted runner registered):
+  # schedule:
+  #   - cron: "0 3 * * *"   # nightly 03:00 UTC — bridge-sweeps (G6)
+  #   - cron: "0 4 * * 1"   # weekly Mon 04:00 UTC — selection-bench (G7) + l1-suite + multi-turn (G9)
+  # The job `if:` conditions below already handle these schedule payloads:
+  # nightly runs bridge-sweeps; the weekly cron runs bench + L1 + multi-turn.
+
+concurrency:
+  group: falcon-cadence
+  cancel-in-progress: false  # never cancel a spend run halfway
+
+jobs:
+  bridge-sweeps:
+    name: G6 — live bridge sweeps (reads + net-zero writes)
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.suite == 'bridge-sweeps' || inputs.suite == 'all') ||
+      (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *')
+    runs-on: [self-hosted, falcon-dev-stack]
+    timeout-minutes: 60
+    steps:
+      - name: verify_bridges — every shipped read bridge returns data (D1)
+        run: docker exec ws1-backend python -m ai_tools.tests.verify_bridges
+      - name: verify_writes — every write tool roundtrips create→delete net-zero
+        run: docker exec ws1-backend python -m ai_tools.tests.verify_writes
+
+  selection-bench:
+    name: G7 — selection bench (D2 gate, deterministic, needs dev-stack registry)
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.suite == 'selection-bench' || inputs.suite == 'all') ||
+      (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 1')
+    runs-on: [self-hosted, falcon-dev-stack]
+    timeout-minutes: 120
+    steps:
+      - name: bench_falcon_bridge --selection — search@1/search@5/active40/reachable per cluster
+        # --selection is deterministic (no LLM, no DB writes) but runs against
+        # the live dev-stack registry; the default no-flag mode is the REAL-LLM
+        # AgentLoop bench — keep it manual-only.
+        run: docker exec ws1-backend python -m ai_tools.tests.bench_falcon_bridge --selection
+
+  l1-suite:
+    name: G9 — L1 243-tool suite (real LLM spend)
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.suite == 'l1-suite' || inputs.suite == 'all') ||
+      (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 1')
+    runs-on: [self-hosted, falcon-dev-stack]
+    timeout-minutes: 300
+    steps:
+      - name: L1 natural-language suite (bar = 243/243, see testing/TEST-PLAN.md)
+        run: docker exec ws1-backend bash -lc "cd /app/backend/ee && python falcon_ai/tests/test_levels.py 1"
+
+  multi-turn:
+    name: G9 — 30-conversation multi-turn suite (real LLM spend)
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.suite == 'multi-turn' || inputs.suite == 'all') ||
+      (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 1')
+    runs-on: [self-hosted, falcon-dev-stack]
+    timeout-minutes: 240
+    steps:
+      - name: Multi-turn conversation suite (bar = no regression)
+        run: docker exec ws1-backend bash -lc "cd /app/backend/ee && python falcon_ai/tests/test_multiturn.py all"
+
+  e2e-smoke:
+    name: Shell E2E smoke vs live stack (one LLM turn + extended)
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.suite == 'e2e-smoke' || inputs.suite == 'all')
+    runs-on: [self-hosted, falcon-dev-stack]
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: futureagi
+    steps:
+      - name: e2e_smoke — login → WS chat → text_delta/done/persistence/tool-completed
+        # Host-side venv with `requests websockets` (TEST_PLAN.md §6 note:
+        # must pass workspace_id on the WS URL like the frontend does).
+        run: .venv/bin/python ee/falcon_ai/testing/e2e_smoke.py --extended
+
+  # groundedness:
+  #   name: Phase 5B — groundedness scoring over Falcon answers
+  #   RUNNER EXISTS, JOB NOT YET WIRED: the 5B scorer + dog-food runner are
+  #   in the tree (ee/falcon_ai/evals/groundedness.py +
+  #   `manage.py falcon_groundedness` — deterministic, zero LLM spend; see
+  #   TEST_PLAN.md §13). Wiring it as a weekly cadence job alongside l1-suite
+  #   awaits the owner's cadence decision (same self-hosted-runner
+  #   requirement as the other jobs). Until then run by hand:
+  #     docker exec ws1-backend bash -lc \
+  #       "cd /app/backend && python manage.py falcon_groundedness --limit 200"
+  #   When wired, flip the TEST_PLAN.md §8.1 groundedness row to enforced.
