@@ -6,6 +6,7 @@ from django.db import models
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from simulate.models.agent_definition import AgentTypeChoices
+from simulate.utils.persona_utils import persona_first as _first
 from tfc.utils.base_model import BaseModel
 
 
@@ -425,38 +426,38 @@ class Persona(BaseModel):
 
     def to_voice_mapper_dict(self):
         """
-        Convert persona to dictionary format expected by voice_mapper.py
-        Takes the first value from each list field or uses a default
+        Convert persona to dictionary format expected by voice_mapper.py.
+        The voice mapper consumes a single string per attribute; only the first
+        selected value is used. _first() warns when more than one value was
+        selected so the silent drop is visible in logs.
         """
         return {
-            "gender": self.gender[0] if self.gender else "male",
-            "age_group": self.age_group[0] if self.age_group else "18-25",
-            "profession": self.occupation[0] if self.occupation else "Other",
-            "location": self.location[0] if self.location else "United States",
-            "personality": (
-                self.personality[0] if self.personality else "Friendly and cooperative"
+            "gender": _first(self.gender, "gender", "male"),
+            "age_group": _first(self.age_group, "age_group", "18-25"),
+            "profession": _first(self.occupation, "occupation", "Other"),
+            "location": _first(self.location, "location", "United States"),
+            "personality": _first(
+                self.personality, "personality", "Friendly and cooperative"
             ),
-            "communication_style": (
-                self.communication_style[0]
-                if self.communication_style
-                else "Direct and concise"
+            "communication_style": _first(
+                self.communication_style, "communication_style", "Direct and concise"
             ),
-            "accent": self.accent[0] if self.accent else "Neutral",
-            "language": self.languages[0] if self.languages else "English",
-            "conversation_speed": (
-                self.conversation_speed[0] if self.conversation_speed else "1.0"
+            "accent": _first(self.accent, "accent", "Neutral"),
+            "language": _first(self.languages, "languages", "English"),
+            "conversation_speed": _first(
+                self.conversation_speed, "conversation_speed", "1.0"
             ),
             "background_sound": (
                 str(self.background_sound).lower()
                 if self.background_sound is not None
                 else "false"
             ),
-            "finished_speaking_sensitivity": (
-                self.finished_speaking_sensitivity[0]
-                if self.finished_speaking_sensitivity
-                else "5"
+            "finished_speaking_sensitivity": _first(
+                self.finished_speaking_sensitivity,
+                "finished_speaking_sensitivity",
+                "5",
             ),
-            "interrupt_sensitivity": (
-                self.interrupt_sensitivity[0] if self.interrupt_sensitivity else "5"
+            "interrupt_sensitivity": _first(
+                self.interrupt_sensitivity, "interrupt_sensitivity", "5"
             ),
         }
