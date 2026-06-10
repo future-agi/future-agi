@@ -136,6 +136,7 @@ from simulate.serializers.test_execution import (
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
+    build_eval_configs_map,
     run_new_evals_on_call_executions_task,
 )
 from simulate.tasks.eval_summary_tasks import run_eval_summary_task
@@ -3208,21 +3209,11 @@ class CallExecutionDetailView(APIView):
                     row_session_id_map[str(row_id)] = baseline_id
 
             # Serialize with the same serializer as the list view, but with full detail
-            eval_config_ids = list((call_execution.eval_outputs or {}).keys())
-            eval_configs_map = (
-                {
-                    str(c.id): c
-                    for c in SimulateEvalConfig.objects.filter(id__in=eval_config_ids)
-                }
-                if eval_config_ids
-                else {}
-            )
-
             serializer = CallExecutionDetailSerializer(
                 call_execution,
                 context={
                     "request": request,
-                    "eval_configs": eval_configs_map,
+                    "eval_configs": build_eval_configs_map(call_execution),
                     "scenarios": {},
                     "row_session_id_map": row_session_id_map,
                     "rows_map": {},

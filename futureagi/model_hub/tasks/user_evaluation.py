@@ -29,7 +29,7 @@ from model_hub.models.error_localizer_model import (
     ErrorLocalizerStatus,
     ErrorLocalizerTask,
 )
-from model_hub.models.evals_metric import UserEvalMetric
+from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.models.evaluation import Evaluation
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.views.develop_optimiser import DevelopOptimizer
@@ -674,7 +674,7 @@ def _validate_error_localizer_fields(rule_prompt, input_data, eval_result):
     return ErrorLocalizerStatus.PENDING, ""
 
 
-def _has_localized_segments(error_analysis: Any) -> bool:
+def _has_localized_segments(error_analysis: dict | list | None) -> bool:
     if not error_analysis:
         return False
     if isinstance(error_analysis, dict):
@@ -695,7 +695,7 @@ def _extract_eval_value(value: Any) -> Any:
     return value
 
 
-def should_run_error_localizer(value: Any, eval_template: Any) -> tuple[bool, str]:
+def should_run_error_localizer(value: Any, eval_template: EvalTemplate | None) -> tuple[bool, str]:
     if eval_template is None:
         return False, "No eval template is attached to this evaluation."
     if getattr(eval_template, "eval_type", "") == "code":

@@ -37,6 +37,16 @@ from tracer.models.observability_provider import ProviderChoices
 logger = structlog.get_logger(__name__)
 
 
+def build_eval_configs_map(call_execution) -> dict[str, "SimulateEvalConfig"]:
+    eval_config_ids = list((call_execution.eval_outputs or {}).keys())
+    if not eval_config_ids:
+        return {}
+    return {
+        str(c.id): c
+        for c in SimulateEvalConfig.objects.filter(id__in=eval_config_ids)
+    }
+
+
 def _empty_call_log_summary(reason: str) -> dict:
     return {
         "total_entries": 0,
