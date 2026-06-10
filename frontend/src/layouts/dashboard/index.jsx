@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React from "react";
 import PropTypes from "prop-types";
 
 import Box from "@mui/material/Box";
@@ -16,7 +16,7 @@ import NavHorizontal from "./nav-horizontal";
 import NavGatewayPanel from "./NavGatewayPanel";
 import FalconAISidebar from "src/sections/falcon-ai/FalconAISidebar";
 import FalconAIFab from "src/sections/falcon-ai/components/FalconAIFab";
-import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
+import usePendingNavigation from "src/sections/falcon-ai/hooks/usePendingNavigation";
 import CreateWorkspaceModal from "./WorkspaceSwitcher/CreateWorkspaceModal";
 import TwoFactorBanner from "src/components/two-factor-enforcement/TwoFactorBanner";
 import { Typography } from "@mui/material";
@@ -30,18 +30,10 @@ export default function DashboardLayout({ children }) {
   const isSOSMode = localStorage.getItem("sosMode");
   const { isOSS } = useDeploymentMode();
   const router = useRouter();
-  const pendingNavigation = useFalconStore((s) => s.pendingNavigation);
-  const clearPendingNavigation = useFalconStore(
-    (s) => s.clearPendingNavigation,
-  );
 
-  // Handle navigation requests from Falcon AI agent
-  useEffect(() => {
-    if (pendingNavigation) {
-      router.push(pendingNavigation);
-      clearPendingNavigation();
-    }
-  }, [pendingNavigation, router, clearPendingNavigation]);
+  // Handle navigation requests from the Falcon AI agent (`navigate` WS event
+  // -> pendingNavigation -> router.push, consumed exactly once)
+  usePendingNavigation(router);
 
   const lgUp = useResponsive("up", "xs");
 

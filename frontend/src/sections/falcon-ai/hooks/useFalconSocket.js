@@ -335,10 +335,31 @@ export const useFalconSocket = () => {
             break;
 
           case "widget_render": {
+            // Route by surface (Phase 4C): events for the Imagine canvas
+            // conversation drive the canvas store; events from ANY other
+            // conversation render as chart cards inline in the chat —
+            // previously they were silently swallowed into the (unmounted)
+            // Imagine store and the user saw nothing.
             import("src/components/imagine/useImagineStore").then(
               ({ default: useImagineStore }) => {
                 const store = useImagineStore.getState();
                 const action = data.action || "add";
+                const isImagineConversation =
+                  !!store.conversationId &&
+                  store.conversationId === data.conversation_id;
+
+                if (!isImagineConversation) {
+                  useFalconStore
+                    .getState()
+                    .applyWidgetEvent(
+                      data.message_id,
+                      action,
+                      data.widget,
+                      data.widgets,
+                    );
+                  return;
+                }
+
                 if (action === "add" && data.widget) {
                   store.addWidget(data.widget);
                 } else if (action === "update" && data.widget) {

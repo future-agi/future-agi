@@ -45,6 +45,7 @@ from ai_tools.tools.bridge import (
 # via ee.falcon_ai.apps.FalconAIConfig.ready().
 from ai_tools.tools.context import (
     # list_workspaces — replaced by DRF bridge on WorkspaceListAPIView
+    navigate,  # noqa: F401  navigate_to_page — whitelisted take-me-there navigation (4C)
     read_schema,  # noqa: F401
     read_taxonomy,  # noqa: F401
     search,  # noqa: F401

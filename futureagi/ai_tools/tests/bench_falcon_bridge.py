@@ -1,16 +1,32 @@
 # ruff: noqa: E402
 """Falcon AI performance benchmark for DRF bridge tools.
 
-Runs 25 tasks (mix of single-step and multi-step) through Falcon's AgentLoop
-with REAL LLM calls. Measures:
-  - tool selection accuracy (did Falcon pick the right tool?)
-  - tool execution latency (how fast did the bridge tool run?)
-  - end-to-end task latency (LLM + tool dispatch)
-  - success rate (did the agent complete the task?)
-  - tool call count per task (efficiency)
+Two benches in one file:
+
+1. LLM bench (default) — runs the TASKS below through Falcon's AgentLoop with
+   REAL LLM calls. Measures:
+     - tool selection accuracy (did Falcon pick the right tool?), per cluster
+     - tool execution latency (how fast did the bridge tool run?)
+     - end-to-end task latency (LLM + tool dispatch)
+     - success rate (did the agent complete the task?)
+     - tool call count per task (efficiency)
+
+2. Selection bench (``--selection``) — deterministic, no LLM, no DB writes.
+   Runs SELECTION_CASES against the two-tier discovery system and measures,
+   per cluster:
+     - search@1 / search@5  — expected tool's rank in ``search_tools`` results
+     - active40             — expected tool inside the ~40-schema active set
+                              (detect_mode → load_tools_for_mode →
+                              filter_tools_for_message)
+     - reachable            — active40 OR search@5 (the two-tier promise:
+                              every tool is in-set or one search away)
+   This is the measuring stick for any scoring/membership change in
+   ``search_tools.py`` / ``modes.py`` — each change must be justified by a
+   per-cluster delta here (improve-or-hold; PHASES.md Phase 2C).
 
 Run via docker:
     docker exec ws1-backend python -m ai_tools.tests.bench_falcon_bridge
+    docker exec ws1-backend python -m ai_tools.tests.bench_falcon_bridge --selection
 """
 
 import asyncio
@@ -229,7 +245,354 @@ TASKS = [
         "msg": "Find workspaces matching 'falcon' in the name",
         "expected_tools": ["list_workspaces"],
     },
+    # --- Phase 2A clusters (added in 2C so accuracy is MEASURED on them) ---
+    # Experiments V2 actions. Fake ids → 404, no side effects; the metric is
+    # tool SELECTION (tool_call_start), not execution success.
+    {
+        "id": 38,
+        "msg": "Stop the running experiment with id 999999",
+        "expected_tools": ["stop_experiment"],
+        "cluster": "experiments_v2",
+    },
+    {
+        "id": 39,
+        "msg": "Rerun the failed cells of experiment 999999",
+        "expected_tools": ["rerun_experiment_cells"],
+        "cluster": "experiments_v2",
+    },
+    {
+        "id": 40,
+        "msg": "Export my experiments to CSV",
+        "expected_tools": ["export_experiments_csv"],
+        "cluster": "experiments_v2",
+    },
+    {
+        "id": 41,
+        "msg": "Suggest a good name for a new experiment",
+        "expected_tools": ["suggest_experiment_name"],
+        "cluster": "experiments_v2",
+    },
+    {
+        "id": 42,
+        "msg": "Compare experiments 999998 and 999999 for me",
+        "expected_tools": ["compare_experiments", "get_experiment_comparison"],
+        "cluster": "experiments_v2",
+    },
+    # Annotator loop (annotation_queues) — the 2A packet E persona flow.
+    {
+        "id": 43,
+        "msg": "Give me the next item to annotate from queue 00000000-0000-0000-0000-000000000000",
+        "expected_tools": ["get_next_queue_item"],
+        "cluster": "annotator_loop",
+    },
+    {
+        "id": 44,
+        "msg": "Mark queue item 00000000-0000-0000-0000-000000000000 as complete",
+        "expected_tools": ["complete_queue_item"],
+        "cluster": "annotator_loop",
+    },
+    {
+        "id": 45,
+        "msg": "Skip annotation queue item 00000000-0000-0000-0000-000000000000",
+        "expected_tools": ["skip_queue_item"],
+        "cluster": "annotator_loop",
+    },
+    {
+        "id": 46,
+        "msg": "Review annotation queue item 00000000-0000-0000-0000-000000000000 and approve it",
+        "expected_tools": ["review_queue_item", "bulk_review_queue_items"],
+        "cluster": "annotator_loop",
+    },
+    {
+        "id": 47,
+        "msg": "How far along is annotation queue 00000000-0000-0000-0000-000000000000? Show its progress",
+        "expected_tools": ["get_queue_progress"],
+        "cluster": "annotator_loop",
+    },
+    {
+        "id": 48,
+        "msg": "Export the annotations of queue 00000000-0000-0000-0000-000000000000",
+        "expected_tools": ["export_queue_annotations"],
+        "cluster": "annotator_loop",
+    },
+    # Dashboards (query engine + widgets, landed in category 'tracing').
+    {
+        "id": 49,
+        "msg": "List my observability dashboards",
+        "expected_tools": ["list_dashboards"],
+        "cluster": "dashboards",
+    },
+    {
+        "id": 50,
+        "msg": "Show me the widgets on dashboard 00000000-0000-0000-0000-000000000000",
+        "expected_tools": ["list_dashboard_widgets", "get_dashboard"],
+        "cluster": "dashboards",
+    },
+    {
+        "id": 51,
+        "msg": "Duplicate widget 00000000-0000-0000-0000-000000000000 on my dashboard",
+        "expected_tools": ["duplicate_dashboard_widget"],
+        "cluster": "dashboards",
+    },
+    {
+        "id": 52,
+        "msg": "What metrics can I plot on a dashboard?",
+        "expected_tools": ["list_dashboard_metrics"],
+        "cluster": "dashboards",
+    },
+    # Destructives — 3A confirmation layer: first call returns a preview +
+    # CONFIRMATION_REQUIRED, zero side effects; cold confirm:true is also
+    # preview-only. Selection is what we measure.
+    {
+        "id": 53,
+        "msg": "Delete annotation queue 00000000-0000-0000-0000-000000000000",
+        "expected_tools": ["delete_annotation_queue"],
+        "cluster": "destructives_confirm",
+    },
+    {
+        "id": 54,
+        "msg": "Permanently delete annotation queue 00000000-0000-0000-0000-000000000000 — hard delete it",
+        "expected_tools": ["hard_delete_annotation_queue"],
+        "cluster": "destructives_confirm",
+    },
+    {
+        "id": 55,
+        "msg": "Restore the deleted annotation queue 00000000-0000-0000-0000-000000000000",
+        "expected_tools": ["restore_annotation_queue"],
+        "cluster": "destructives_confirm",
+    },
+    {
+        "id": 56,
+        "msg": "Delete dashboard 00000000-0000-0000-0000-000000000000",
+        "expected_tools": ["delete_dashboard"],
+        "cluster": "destructives_confirm",
+    },
 ]
+
+# Legacy tasks (ids 1-37) predate per-cluster reporting — label them.
+for _t in TASKS:
+    if "cluster" not in _t:
+        _t["cluster"] = (
+            "trace_projects"
+            if _t["id"] <= 25
+            else "prompts"
+            if _t["id"] <= 32
+            else "accounts"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Deterministic selection bench (no LLM): query → expected tool, per cluster.
+# "expect" = any of these tools counts as a hit (mirrors TaskResult.tools_match).
+# "page" simulates the frontend context page (PAGE_CONTEXT_MAP values) so mode
+# detection / PAGE_TO_MODE membership is exercised; default "general".
+# ---------------------------------------------------------------------------
+SELECTION_CASES = [
+    # --- trace_projects ---
+    {"query": "list all my tracing projects", "expect": ["list_trace_projects"], "cluster": "trace_projects"},
+    {"query": "create a new project for tracing", "expect": ["create_trace_project"], "cluster": "trace_projects"},
+    {"query": "rename my trace project", "expect": ["rename_trace_project"], "cluster": "trace_projects"},
+    {"query": "update project sampling rate", "expect": ["rename_trace_project"], "cluster": "trace_projects"},
+    {"query": "how many projects do I have", "expect": ["list_trace_projects"], "cluster": "trace_projects"},
+    # --- prompts ---
+    {"query": "list my prompt templates", "expect": ["list_prompt_templates"], "cluster": "prompts"},
+    {"query": "show the variables of my prompt template", "expect": ["get_prompt_template_variables"], "cluster": "prompts"},
+    {"query": "improve my prompt", "expect": ["improve_prompt"], "cluster": "prompts"},
+    {"query": "generate a prompt for summarization", "expect": ["generate_prompt"], "cluster": "prompts"},
+    {"query": "analyze my prompt for issues", "expect": ["analyze_prompt"], "cluster": "prompts"},
+    {"query": "compare two prompt versions", "expect": ["compare_prompt_versions"], "cluster": "prompts"},
+    {"query": "commit a new prompt version", "expect": ["commit_prompt_version"], "cluster": "prompts"},
+    {"query": "get the sdk code for my prompt", "expect": ["get_prompt_sdk_code"], "cluster": "prompts"},
+    {"query": "move a prompt into a folder", "expect": ["move_prompt_to_folder"], "cluster": "prompts"},
+    # --- accounts ---
+    {"query": "list all my workspaces", "expect": ["list_workspaces"], "cluster": "accounts"},
+    {"query": "show me everyone on my team", "expect": ["list_users", "list_workspace_members"], "cluster": "accounts"},
+    {"query": "invite new users to my organization", "expect": ["invite_users"], "cluster": "accounts"},
+    {"query": "create an api key", "expect": ["create_api_key"], "cluster": "accounts"},
+    # --- experiments_v2 ---
+    {"query": "stop a running experiment", "expect": ["stop_experiment"], "cluster": "experiments_v2", "page": "experiments"},
+    {"query": "rerun the failed cells of an experiment", "expect": ["rerun_experiment_cells"], "cluster": "experiments_v2", "page": "experiments"},
+    {"query": "export my experiments to csv", "expect": ["export_experiments_csv"], "cluster": "experiments_v2", "page": "experiments"},
+    {"query": "suggest a name for my experiment", "expect": ["suggest_experiment_name"], "cluster": "experiments_v2", "page": "experiments"},
+    {"query": "validate an experiment name", "expect": ["validate_experiment_name"], "cluster": "experiments_v2", "page": "experiments"},
+    {"query": "show the row level diff between experiments", "expect": ["get_experiment_row_diff"], "cluster": "experiments_v2", "page": "experiments"},
+    {"query": "compare two experiments", "expect": ["compare_experiments", "get_experiment_comparison"], "cluster": "experiments_v2", "page": "experiments"},
+    {"query": "submit feedback on an experiment", "expect": ["submit_experiment_feedback", "create_experiment_feedback"], "cluster": "experiments_v2", "page": "experiments"},
+    # --- annotator_loop (page = annotation_queues, as the frontend sends it) ---
+    {"query": "get the next item to annotate", "expect": ["get_next_queue_item"], "cluster": "annotator_loop", "page": "annotation_queues"},
+    {"query": "complete the annotation item", "expect": ["complete_queue_item"], "cluster": "annotator_loop", "page": "annotation_queues"},
+    {"query": "skip this annotation item", "expect": ["skip_queue_item"], "cluster": "annotator_loop", "page": "annotation_queues"},
+    {"query": "review annotation items", "expect": ["review_queue_item", "bulk_review_queue_items"], "cluster": "annotator_loop", "page": "annotation_queues"},
+    {"query": "bulk review the queue items", "expect": ["bulk_review_queue_items"], "cluster": "annotator_loop", "page": "annotation_queues"},
+    {"query": "submit annotations for a queue item", "expect": ["submit_queue_annotations"], "cluster": "annotator_loop", "page": "annotation_queues"},
+    {"query": "annotation queue progress", "expect": ["get_queue_progress"], "cluster": "annotator_loop", "page": "annotation_queues"},
+    {"query": "export queue annotations", "expect": ["export_queue_annotations"], "cluster": "annotator_loop", "page": "annotation_queues"},
+    {"query": "import annotations into a queue", "expect": ["import_queue_annotations"], "cluster": "annotator_loop", "page": "annotation_queues"},
+    {"query": "inter annotator agreement for a queue", "expect": ["get_queue_agreement"], "cluster": "annotator_loop", "page": "annotation_queues"},
+    {"query": "release my reservation on a queue item", "expect": ["release_queue_item_reservation"], "cluster": "annotator_loop", "page": "annotation_queues"},
+    {"query": "send annotated queue items to a dataset", "expect": ["export_queue_to_dataset"], "cluster": "annotator_loop", "page": "annotation_queues"},
+    # --- dashboards (category 'tracing') ---
+    {"query": "list my dashboards", "expect": ["list_dashboards"], "cluster": "dashboards", "page": "tracing"},
+    {"query": "create a dashboard", "expect": ["create_dashboard"], "cluster": "dashboards", "page": "tracing"},
+    {"query": "add a widget to my dashboard", "expect": ["create_dashboard_widget"], "cluster": "dashboards", "page": "tracing"},
+    {"query": "duplicate a dashboard widget", "expect": ["duplicate_dashboard_widget"], "cluster": "dashboards", "page": "tracing"},
+    {"query": "reorder the widgets on my dashboard", "expect": ["reorder_dashboard_widgets"], "cluster": "dashboards", "page": "tracing"},
+    {"query": "preview a widget query", "expect": ["preview_widget_query"], "cluster": "dashboards", "page": "tracing"},
+    {"query": "run a dashboard query", "expect": ["execute_dashboard_query", "execute_widget_query"], "cluster": "dashboards", "page": "tracing"},
+    {"query": "what metrics can dashboards plot", "expect": ["list_dashboard_metrics"], "cluster": "dashboards", "page": "tracing"},
+    # --- destructives_confirm ---
+    {"query": "delete an annotation queue", "expect": ["delete_annotation_queue"], "cluster": "destructives_confirm", "page": "annotation_queues"},
+    {"query": "permanently delete an annotation queue", "expect": ["hard_delete_annotation_queue", "delete_annotation_queue"], "cluster": "destructives_confirm", "page": "annotation_queues"},
+    {"query": "restore a deleted annotation queue", "expect": ["restore_annotation_queue"], "cluster": "destructives_confirm", "page": "annotation_queues"},
+    {"query": "delete a dashboard", "expect": ["delete_dashboard"], "cluster": "destructives_confirm", "page": "tracing"},
+    {"query": "remove many items from an annotation queue at once", "expect": ["bulk_remove_queue_items"], "cluster": "destructives_confirm", "page": "annotation_queues"},
+    {"query": "delete an experiment", "expect": ["delete_experiment"], "cluster": "destructives_confirm", "page": "experiments"},
+    # --- simulation (2A packet C) ---
+    {"query": "add rows to a scenario", "expect": ["add_scenario_rows"], "cluster": "simulation", "page": "agents"},
+    {"query": "duplicate a persona", "expect": ["duplicate_persona"], "cluster": "simulation", "page": "agents"},
+    {"query": "restore an old agent version", "expect": ["restore_agent_version"], "cluster": "simulation", "page": "agents"},
+    {"query": "get the kpis for a run test", "expect": ["get_run_test_kpis"], "cluster": "simulation", "page": "agents"},
+    {"query": "rerun a test execution", "expect": ["rerun_test_execution"], "cluster": "simulation", "page": "agents"},
+    {"query": "get the call transcript", "expect": ["get_call_transcript"], "cluster": "simulation", "page": "agents"},
+    {"query": "cancel a test execution", "expect": ["cancel_test_execution"], "cluster": "simulation", "page": "agents"},
+    # --- evals (2A packet E) ---
+    {"query": "compare versions of an eval template", "expect": ["compare_eval_template_versions"], "cluster": "evals", "page": "evaluations"},
+    {"query": "restore an eval template version", "expect": ["restore_eval_template_version"], "cluster": "evals", "page": "evaluations"},
+    {"query": "duplicate an eval template", "expect": ["duplicate_eval_template"], "cluster": "evals", "page": "evaluations"},
+    {"query": "ground truth status", "expect": ["get_ground_truth_status"], "cluster": "evals", "page": "evaluations"},
+    {"query": "eval usage stats", "expect": ["get_eval_usage_stats"], "cluster": "evals", "page": "evaluations"},
+    {"query": "test an eval template before saving", "expect": ["test_eval_template"], "cluster": "evals", "page": "evaluations"},
+    # --- agentcc (gateway administration) ---
+    {"query": "create a gateway routing policy", "expect": ["create_agentcc_routing_policy"], "cluster": "agentcc", "page": "gateway"},
+    {"query": "set a budget for the gateway", "expect": ["set_gateway_budget"], "cluster": "agentcc", "page": "gateway"},
+    {"query": "list gateway guardrail policies", "expect": ["list_agentcc_guardrail_policys"], "cluster": "agentcc", "page": "gateway"},
+    {"query": "add words to the gateway blocklist", "expect": ["add_blocklist_words"], "cluster": "agentcc", "page": "gateway"},
+    # --- error_feed ---
+    {"query": "show error clusters", "expect": ["list_error_clusters"], "cluster": "error_feed", "page": "tracing"},
+    {"query": "analyze an error cluster", "expect": ["analyze_error_cluster"], "cluster": "error_feed", "page": "tracing"},
+]
+
+
+def run_selection_bench() -> int:
+    """Deterministic two-tier selection accuracy — no LLM, no DB writes.
+
+    For each SELECTION_CASE:
+      - search rank: where the expected tool lands in search_tools(query)
+      - active40:    expected tool inside the ~40-schema active set for the
+                     detected mode (tier-1 load + tier-2 filter)
+      - reachable:   active40 OR search rank < 5 (the two-tier contract)
+    Prints per-cluster and overall accuracy plus active-set token economics.
+    """
+    import json
+
+    from ai_tools.tools.context.search_tools import SearchToolsInput, SearchToolsTool
+    from ee.falcon_ai.modes import (
+        detect_mode,
+        filter_tools_for_message,
+        load_tools_for_mode,
+    )
+
+    ctx = ToolContext(
+        user=None, organization=None, workspace=None, transport="harness"
+    )
+    search = SearchToolsTool()
+
+    rows = []
+    active_set_sizes = []
+    active_set_tokens = []
+    for case in SELECTION_CASES:
+        query = case["query"]
+        expect = case["expect"]
+        page = case.get("page") or "general"
+
+        res = search.execute(SearchToolsInput(query=query, limit=12), ctx)
+        names = [t["name"] for t in (res.data or {}).get("tools", [])]
+        rank = None
+        for e in expect:
+            if e in names:
+                r = names.index(e)
+                rank = r if rank is None else min(rank, r)
+
+        mode = detect_mode(page, query)
+        tier1 = load_tools_for_mode(mode)
+        active = filter_tools_for_message(tier1, query, max_tools=40)
+        active_names = {t.name for t in active}
+        in_active = any(e in active_names for e in expect)
+
+        # Token economics: approximate schema tokens for the active set
+        # (JSON chars / 4) — must hold ~8K with the 40-cap.
+        approx_tokens = 0
+        for t in active:
+            try:
+                schema_str = json.dumps(
+                    {"name": t.name, "description": t.description, "schema": t.input_schema}
+                )
+            except (TypeError, ValueError):
+                schema_str = f"{t.name} {t.description}"
+            approx_tokens += len(schema_str) // 4
+        active_set_sizes.append(len(active))
+        active_set_tokens.append(approx_tokens)
+
+        rows.append(
+            {
+                "cluster": case["cluster"],
+                "query": query,
+                "expect": expect,
+                "rank": rank,
+                "search1": rank == 0,
+                "search5": rank is not None and rank < 5,
+                "active40": in_active,
+                "reachable": in_active or (rank is not None and rank < 5),
+                "mode": mode,
+            }
+        )
+
+    clusters: dict[str, list[dict]] = {}
+    for r in rows:
+        clusters.setdefault(r["cluster"], []).append(r)
+
+    print(f"\n{'=' * 96}")
+    print(f"Selection bench — {len(rows)} cases, {len(clusters)} clusters (deterministic, no LLM)")
+    print(f"{'=' * 96}")
+    print(
+        f"{'cluster':<22} {'n':>3} {'search@1':>9} {'search@5':>9} {'active40':>9} {'reachable':>10}"
+    )
+    def _pct(xs):
+        return f"{100 * sum(xs) / len(xs):5.0f}%" if xs else "  n/a"
+    for cname in sorted(clusters):
+        rs = clusters[cname]
+        print(
+            f"{cname:<22} {len(rs):>3} "
+            f"{_pct([r['search1'] for r in rs]):>9} "
+            f"{_pct([r['search5'] for r in rs]):>9} "
+            f"{_pct([r['active40'] for r in rs]):>9} "
+            f"{_pct([r['reachable'] for r in rs]):>10}"
+        )
+    print("-" * 96)
+    print(
+        f"{'TOTAL':<22} {len(rows):>3} "
+        f"{_pct([r['search1'] for r in rows]):>9} "
+        f"{_pct([r['search5'] for r in rows]):>9} "
+        f"{_pct([r['active40'] for r in rows]):>9} "
+        f"{_pct([r['reachable'] for r in rows]):>10}"
+    )
+    print(
+        f"\nActive-set economics: avg {sum(active_set_sizes) / len(active_set_sizes):.1f} "
+        f"tools/turn, avg ~{sum(active_set_tokens) / len(active_set_tokens):,.0f} tokens, "
+        f"max ~{max(active_set_tokens):,.0f} tokens"
+    )
+
+    misses = [r for r in rows if not r["reachable"]]
+    if misses:
+        print("\nUnreachable (not in active set AND not in search top-5):")
+        for r in misses:
+            print(f"  [{r['cluster']}] '{r['query']}' → {r['expect']} (rank={r['rank']}, mode={r['mode']})")
+    search_misses = [r for r in rows if not r["search5"]]
+    if search_misses:
+        print("\nsearch@5 misses:")
+        for r in search_misses:
+            print(f"  [{r['cluster']}] '{r['query']}' → {r['expect']} (rank={r['rank']})")
+    return 0 if not misses else 1
 
 
 @dataclass
@@ -366,6 +729,18 @@ async def main():
         f"All expected tools called:  {all_expected}/{total} ({100 * all_expected / total:.0f}%)"
     )
 
+    # Per-cluster selection accuracy (the Phase 2C acceptance metric:
+    # improve-or-hold per cluster vs baseline).
+    by_cluster: dict[str, list[TaskResult]] = {}
+    task_clusters = {t["id"]: t.get("cluster", "other") for t in TASKS}
+    for r in results:
+        by_cluster.setdefault(task_clusters.get(r.id, "other"), []).append(r)
+    print("\nPer-cluster selection accuracy (expected tool called):")
+    for cname in sorted(by_cluster):
+        rs = by_cluster[cname]
+        hit = sum(1 for r in rs if r.tools_match)
+        print(f"  {cname:<22} {hit}/{len(rs)} ({100 * hit / len(rs):.0f}%)")
+
     all_latencies = [r.total_latency_ms for r in results]
     if all_latencies:
         all_latencies_sorted = sorted(all_latencies)
@@ -441,4 +816,6 @@ async def main():
 
 
 if __name__ == "__main__":
+    if "--selection" in sys.argv:
+        sys.exit(run_selection_bench())
     sys.exit(asyncio.run(main()))

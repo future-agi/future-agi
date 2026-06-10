@@ -504,6 +504,104 @@ describe("useFalconSocket (unit)", () => {
         "/dashboard/traces",
       );
     });
+
+    it("navigate without a path is a no-op", () => {
+      const { ws } = mountSocket();
+      ws.open();
+      ws.receive("navigate", {});
+      expect(useFalconStore.getState().pendingNavigation).toBeNull();
+    });
+  });
+
+  describe("widget_render routing (Phase 4C)", () => {
+    const WIDGET = {
+      id: "w-1",
+      type: "bar_chart",
+      title: "Token usage",
+      config: { series: [{ name: "Tokens", data: [120, 340, 210] }] },
+    };
+
+    async function getImagineStore() {
+      const { default: useImagineStore } = await import(
+        "src/components/imagine/useImagineStore"
+      );
+      return useImagineStore;
+    }
+
+    it("a chat conversation renders the widget as a message block, not on the Imagine canvas", async () => {
+      const useImagineStore = await getImagineStore();
+      useImagineStore.setState({ widgets: [], conversationId: null });
+
+      const { ws } = mountSocket();
+      ws.open();
+      const id = liveStream(ws); // conv-1, not an Imagine conversation
+
+      ws.receive("widget_render", {
+        message_id: id,
+        action: "add",
+        widget: WIDGET,
+        conversation_id: "conv-1",
+      });
+      await vi.dynamicImportSettled();
+
+      const msg = useFalconStore.getState().messages[0];
+      const widgetBlocks = msg.blocks.filter((b) => b.type === "widget");
+      expect(widgetBlocks).toHaveLength(1);
+      expect(widgetBlocks[0].widget).toEqual(WIDGET);
+      // The Imagine canvas store stays untouched
+      expect(useImagineStore.getState().widgets).toHaveLength(0);
+    });
+
+    it("the Imagine conversation drives the canvas store and adds NO chat block", async () => {
+      const useImagineStore = await getImagineStore();
+      useImagineStore.setState({ widgets: [], conversationId: "conv-1" });
+
+      const { ws } = mountSocket();
+      ws.open();
+      const id = liveStream(ws); // conv-1 IS the imagine conversation here
+
+      ws.receive("widget_render", {
+        message_id: id,
+        action: "add",
+        widget: WIDGET,
+        conversation_id: "conv-1",
+      });
+      await vi.dynamicImportSettled();
+
+      expect(useImagineStore.getState().widgets).toEqual([WIDGET]);
+      const msg = useFalconStore.getState().messages[0];
+      expect(msg.blocks.filter((b) => b.type === "widget")).toHaveLength(0);
+
+      useImagineStore.setState({ widgets: [], conversationId: null });
+    });
+
+    it("replace_all in chat swaps the message's widget blocks", async () => {
+      const useImagineStore = await getImagineStore();
+      useImagineStore.setState({ widgets: [], conversationId: null });
+
+      const { ws } = mountSocket();
+      ws.open();
+      const id = liveStream(ws);
+
+      ws.receive("widget_render", {
+        message_id: id,
+        action: "add",
+        widget: WIDGET,
+        conversation_id: "conv-1",
+      });
+      ws.receive("widget_render", {
+        message_id: id,
+        action: "replace_all",
+        widgets: [{ id: "w-2", type: "metric_card", config: { value: 7 } }],
+        conversation_id: "conv-1",
+      });
+      await vi.dynamicImportSettled();
+
+      const msg = useFalconStore.getState().messages[0];
+      const widgetBlocks = msg.blocks.filter((b) => b.type === "widget");
+      expect(widgetBlocks).toHaveLength(1);
+      expect(widgetBlocks[0].widget.id).toBe("w-2");
+    });
   });
 
   describe("error rendering", () => {

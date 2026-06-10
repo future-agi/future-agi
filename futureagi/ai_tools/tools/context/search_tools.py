@@ -60,16 +60,57 @@ _SYNONYMS = {
     "trace": {"trace", "traces", "span", "spans", "tracing", "observe"},
     "prompt": {"prompt", "prompts", "template", "templates", "workbench"},
     "agent": {"agent", "agents", "definition", "simulator"},
-    "annotation": {"annotation", "annotations", "queue", "label", "labels", "annotate"},
+    # NOTE (2C): keep entity synonym sets to near-equivalents only. Earlier
+    # this set dragged in "queue"/"label", which handed phantom name matches
+    # to sibling tools (remove_queue_label outranked delete_annotation_queue
+    # for "delete an annotation queue") — bench-verified regression.
+    "annotation": {"annotation", "annotations", "annotate"},
     "experiment": {"experiment", "experiments", "run"},
     "knowledge": {"knowledge", "kb", "knowledgebase", "corpus", "rag"},
     "alert": {"alert", "alerts", "monitor", "monitoring"},
-    "dashboard": {"dashboard", "dashboards", "widget", "chart"},
+    # Directional on purpose: widget-words map TO dashboard tools (see
+    # "widget" below) but "dashboard" must not expand to "widget" — that made
+    # delete_dashboard_widget outrank delete_dashboard for "delete a
+    # dashboard" (bench-verified).
+    "dashboard": {"dashboard", "dashboards"},
     "user": {"user", "users", "member", "members", "team", "people", "workspace"},
     "score": {"score", "scores", "rating", "result", "verdict"},
     "optimize": {"optimize", "optimization", "optimisation", "fix", "improve"},
     "scenario": {"scenario", "scenarios", "persona", "personas"},
     "api": {"api", "apikey", "key", "keys", "secret", "secrets"},
+    # Phase 4C: take-me-there navigation — intent words map onto
+    # navigate_to_page's name tokens (navigate/page).
+    "navigate": {"navigate", "go", "take", "visit", "page", "redirect"},
+    "go": {"go", "navigate", "visit"},
+    "take": {"take", "navigate", "go"},
+    "page": {"page", "navigate"},
+    # Phase 4C: chart-shaped answers — chart verbs map onto render_widget's
+    # name tokens (render/widget) and the dashboard query-engine tools.
+    "chart": {"chart", "graph", "plot", "widget", "visualization", "visualize", "render"},
+    "visualize": {"visualize", "visualization", "chart", "graph", "plot", "widget", "render"},
+    "visualization": {"visualization", "visualize", "chart", "widget", "render"},
+    "graph": {"graph", "chart", "plot", "widget", "visualization"},
+    "plot": {"plot", "chart", "graph", "widget", "visualization"},
+    "widget": {"widget", "chart", "visualization", "render", "dashboard"},
+    # Phase 2C: people words → the users-cluster vocabulary ("show me everyone
+    # on my team" must reach list_users / list_workspace_members).
+    "team": {"team", "users", "members", "workspace"},
+    "everyone": {"users", "members", "people"},
+    "people": {"users", "members"},
+    "member": {"member", "members", "user", "users"},
+    "members": {"members", "member", "users", "user"},
+    # Phase 2C: vocabulary for the 2A clusters (gateway admin, annotator
+    # loop, experiments V2, dashboards query engine).
+    "gateway": {"gateway", "agentcc"},
+    "queue": {"queue", "queues", "annotation"},
+    "permanently": {"permanently", "hard"},
+    "permanent": {"permanent", "hard"},
+    "forever": {"forever", "hard"},
+    "stop": {"stop", "cancel", "halt", "terminate"},
+    "copy": {"copy", "duplicate", "clone"},
+    "diff": {"diff", "compare", "comparison"},
+    "csv": {"csv", "export", "download"},
+    "feedback": {"feedback", "review", "rating"},
 }
 
 _STOP = {
@@ -141,6 +182,95 @@ _VERB_TO_PREFIX = {
     "assign": "assign",
     "export": "export",
     "download": "export",
+    # Phase 2C: action verbs shipped by the 2A clusters (experiments V2,
+    # annotator loop, dashboards, version control, gateway). Each left-hand
+    # query word maps to the canonical leading token of real tool names
+    # (stop_experiment, restore_agent_version, duplicate_dashboard_widget,
+    # complete_queue_item, skip_queue_item, review_queue_item,
+    # preview_widget_query, import_queue_annotations, suggest_experiment_name,
+    # validate_experiment_name, improve_prompt, analyze_prompt,
+    # generate_prompt, compare_experiments, rerun_experiment_cells, …).
+    "stop": "stop",
+    "halt": "stop",
+    "terminate": "stop",
+    "cancel": "cancel",
+    "restore": "restore",
+    "recover": "restore",
+    "unarchive": "restore",
+    "undelete": "restore",
+    "duplicate": "duplicate",
+    "copy": "duplicate",
+    "clone": "clone",
+    "complete": "complete",
+    "finish": "complete",
+    "skip": "skip",
+    "review": "review",
+    "approve": "review",
+    "reject": "review",
+    "preview": "preview",
+    "import": "import",
+    "upload": "import",
+    "ingest": "import",
+    "suggest": "suggest",
+    "recommend": "suggest",
+    "validate": "validate",
+    "improve": "improve",
+    "refine": "improve",
+    "enhance": "improve",
+    "analyze": "analyze",
+    "analyse": "analyze",
+    "diagnose": "analyze",
+    "generate": "generate",
+    "synthesize": "generate",
+    "compare": "compare",
+    "diff": "compare",
+    "rerun": "rerun",
+    "retry": "rerun",
+    "run": "run",
+    "execute": "execute",
+    "submit": "submit",
+    "pause": "pause",
+    "resume": "unpause",
+    "release": "release",
+    "reorder": "reorder",
+    "rearrange": "reorder",
+    "merge": "merge",
+    "move": "move",
+    "invite": "invite",
+}
+# Tool leading verbs that should cross-match a related query verb at reduced
+# weight (tool_verb in _VERB_FAMILY[q_verb] → partial alignment bonus). The
+# pre-2C code reused _SYNONYMS for this; the 2A verb families are explicit.
+_VERB_FAMILY = {
+    "stop": {"stop", "cancel", "pause", "delete"},
+    "cancel": {"cancel", "stop", "delete"},
+    "restore": {"restore"},
+    "duplicate": {"duplicate", "clone", "create"},
+    "clone": {"clone", "duplicate", "create"},
+    "complete": {"complete", "submit", "update"},
+    "skip": {"skip"},
+    # review = an ACTION (approve/reject); list/get reads must not piggyback.
+    "review": {"review", "bulk", "submit"},
+    "preview": {"preview", "get"},
+    "import": {"import", "add", "create"},
+    "suggest": {"suggest", "generate"},
+    "validate": {"validate", "test"},
+    "improve": {"improve", "optimize", "analyze"},
+    "analyze": {"analyze", "get"},
+    "generate": {"generate", "create", "suggest"},
+    "compare": {"compare", "get"},
+    "rerun": {"rerun", "run", "execute", "retry"},
+    "run": {"run", "execute", "rerun", "trigger", "create"},
+    "execute": {"execute", "run", "rerun", "trigger"},
+    "submit": {"submit", "create", "complete"},
+    "pause": {"pause", "stop"},
+    "unpause": {"unpause", "run"},
+    "release": {"release"},
+    "reorder": {"reorder", "update"},
+    "merge": {"merge"},
+    "move": {"move", "update"},
+    "invite": {"invite", "add", "create"},
+    "export": {"export", "get", "download"},
 }
 # Leading verbs that actually occur in tool names (used to detect an action
 # mismatch worth demoting). NOTE: ordering of query tokens matters — the FIRST
@@ -172,6 +302,16 @@ def _expand(tokens: list[str]) -> set[str]:
             continue
         out.add(t)
         out |= _SYNONYMS.get(t, set())
+        # Naive singular/plural normalization so "dashboards" matches
+        # `list_dashboard_metrics` and "queues" matches `get_queue_progress`
+        # (2C: the 2A clusters mix singular and plural name tokens freely).
+        if len(t) > 3:
+            if t.endswith("s"):
+                singular = t[:-1]
+                out.add(singular)
+                out |= _SYNONYMS.get(singular, set())
+            else:
+                out.add(t + "s")
     return out
 
 
@@ -235,7 +375,8 @@ class SearchToolsInput(PydanticBaseModel):
         description=(
             "Optional category filter: tracing, datasets, evaluations, prompts, "
             "annotations, annotation_queues, agents, simulation, experiments, "
-            "optimization, users, agentcc, context, web, docs."
+            "optimization, users, agentcc, error_feed, context, web, docs, "
+            "usage, visualization."
         ),
     )
     limit: int = Field(default=12, ge=1, le=40, description="Max tools to return.")
@@ -264,6 +405,9 @@ class SearchToolsTool(BaseTool):
     input_model = SearchToolsInput
 
     def execute(self, params: SearchToolsInput, context: ToolContext) -> ToolResult:
+        import math
+        from collections import Counter
+
         from ai_tools.registry import registry
 
         q_raw = params.query.lower()
@@ -278,10 +422,32 @@ class SearchToolsTool(BaseTool):
         if q_verb:
             q_verb = _VERB_TO_PREFIX.get(q_verb, q_verb)
 
+        all_tools = [t for t in registry.list_all() if t.name != "search_tools"]
+
+        # 2C: document-frequency of name tokens across the registry, so rare
+        # (discriminating) tokens outweigh ubiquitous ones — "progress" (1 tool)
+        # must beat "queue" (40+ tools) when ranking "annotation queue progress".
+        name_df: Counter = Counter()
+        for t in all_tools:
+            for tok in set(_tokens(t.name)):
+                name_df[tok] += 1
+        n_tools = max(len(all_tools), 1)
+        log_n = math.log(n_tools + 1)
+
+        def _rarity(tok: str) -> float:
+            # 0 (everywhere) … 1 (unique to one tool)
+            return math.log((n_tools + 1) / (name_df.get(tok, 1) + 1)) / log_n
+
+        # Per-token expansion (token + synonyms + plural variants) for the
+        # query-coverage bonus below.
+        per_tok_expansion = {
+            t: _expand([t]) for t in q_tokens if t not in _STOP
+        }
+        # Stop-word-stripped query for exact/substring phrase matching.
+        q_compact = " ".join(t for t in q_tokens if t not in _STOP)
+
         scored = []
-        for tool in registry.list_all():
-            if tool.name == "search_tools":
-                continue
+        for tool in all_tools:
             if cat and tool.category != cat:
                 continue
 
@@ -289,10 +455,20 @@ class SearchToolsTool(BaseTool):
             desc_tokens = set(_tokens(tool.description))
             score = 0.0
 
-            # Strong: query words matching the tool NAME.
-            score += 6.0 * len(q_expanded & name_tokens)
-            # Medium: query words present in the description.
-            score += 1.0 * len(q_expanded & desc_tokens)
+            # Strong: query words matching the tool NAME, weighted by rarity
+            # (base 6.0 as before + up to 4.0 for registry-rare tokens).
+            # Rarity applies to CONTENT tokens only: action verbs (delete vs
+            # remove, get vs fetch) are handled by verb alignment below —
+            # weighting them by df would rank `remove_queue_label` above
+            # `delete_annotation_queue` just because "remove" is rarer.
+            for tok in q_expanded & name_tokens:
+                if tok in _VERB_CANON:
+                    score += 6.0
+                else:
+                    score += 6.0 + 4.0 * _rarity(tok)
+            # Medium: query words present in the description — capped so
+            # synonym-rich descriptions can't flood out exact name matches.
+            score += min(3.0, 1.0 * len(q_expanded & desc_tokens))
 
             # Parameter-name match: query words that hit a tool's PARAMETER
             # names — e.g. "sampling rate" surfaces rename_trace_project (param
@@ -307,19 +483,41 @@ class SearchToolsTool(BaseTool):
             if q_expanded & set(_tokens(tool.category)):
                 score += 2.0
             # Phrase / substring bonus: whole query appears in name or desc.
+            # 2C: ALSO compare against the stop-word-stripped query, so
+            # "delete a dashboard" → "delete dashboard" hits exactly — the
+            # raw form misses every name because of articles.
             flat_name = tool.name.replace("_", " ")
             if q_raw in flat_name or flat_name in q_raw:
+                score += 5.0
+            elif q_compact and (q_compact == flat_name):
+                score += 8.0
+            elif q_compact and (q_compact in flat_name or flat_name in q_compact):
                 score += 5.0
             for tok in q_tokens:
                 if len(tok) >= 4 and tok in tool.name:
                     score += 1.5
+
+            # 2C: query coverage — fraction of the user's content words that
+            # are accounted for ANYWHERE in this tool (name, description, or
+            # params). A tool that explains every query word beats one that
+            # nails two words and ignores the third.
+            if per_tok_expansion:
+                content_tokens = name_tokens | desc_tokens | param_tokens
+                covered = sum(
+                    1
+                    for exp in per_tok_expansion.values()
+                    if exp & content_tokens
+                )
+                score += 3.0 * (covered / len(per_tok_expansion))
 
             # Verb alignment: matching action verb on the tool's leading token.
             tool_verb = next(iter(_tokens(tool.name)), "")
             if q_verb and tool_verb:
                 if tool_verb == q_verb:
                     score += 4.0
-                elif tool_verb in _SYNONYMS.get(q_verb, set()):
+                elif tool_verb in _VERB_FAMILY.get(q_verb, set()) or (
+                    tool_verb in _SYNONYMS.get(q_verb, set())
+                ):
                     score += 2.0
                 elif tool_verb in _VERB_CANON:
                     # query wants one action but tool is a different action verb

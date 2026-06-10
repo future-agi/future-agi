@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, Suspense, lazy } from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -8,6 +8,10 @@ import useFalconStore from "../store/useFalconStore";
 import TextBlock from "./TextBlock";
 import ToolCallCard from "./ToolCallCard";
 import CompletionCard from "./CompletionCard";
+
+// Lazy: WidgetBlock pulls the Imagine widget registry (chart libs) — only
+// load it when a message actually carries a widget answer (Phase 4C).
+const WidgetBlock = lazy(() => import("./WidgetBlock"));
 
 export default function AssistantMessage({
   message,
@@ -100,6 +104,25 @@ export default function AssistantMessage({
             }
             if (block.type === "completion_card" && block.card) {
               return <CompletionCard key={block.id} card={block.card} />;
+            }
+            if (block.type === "widget" && block.widget) {
+              return (
+                <Suspense
+                  key={block.id}
+                  fallback={
+                    <Box
+                      sx={{
+                        my: 1,
+                        height: 120,
+                        borderRadius: 1.5,
+                        bgcolor: "action.hover",
+                      }}
+                    />
+                  }
+                >
+                  <WidgetBlock widget={block.widget} />
+                </Suspense>
+              );
             }
             return null;
           })
@@ -267,10 +290,11 @@ AssistantMessage.propTypes = {
     blocks: PropTypes.arrayOf(
       PropTypes.shape({
         id: PropTypes.string,
-        type: PropTypes.oneOf(["text", "tool_call", "completion_card"]),
+        type: PropTypes.oneOf(["text", "tool_call", "completion_card", "widget"]),
         content: PropTypes.string,
         toolCall: PropTypes.object,
         card: PropTypes.object,
+        widget: PropTypes.object,
       }),
     ),
   }).isRequired,
