@@ -165,12 +165,18 @@ class LiteLLMModelManager:
                 f"API key not configured for {provider}. Please add your API key in settings."
             )
         except ApiKey.MultipleObjectsReturned:
-            # Fallback to first match if multiple keys exist (e.g., workspace not specified)
-            api_key_entry = ApiKey.objects.filter(**query).first()
+            api_key_entry = ApiKey.objects.filter(**query).order_by("id").first()
             if not api_key_entry:
                 raise ValueError(
                     f"API key not configured for {provider}. Please add your API key in settings."
                 )
+            logger.warning(
+                "api_key_multiple_objects_returned",
+                provider=provider,
+                organization_id=str(organization_id),
+                workspace_id=str(query.get("workspace_id", "")),
+                selected_key_id=str(api_key_entry.id),
+            )
 
         if api_key_entry.key:
             return api_key_entry.actual_key
