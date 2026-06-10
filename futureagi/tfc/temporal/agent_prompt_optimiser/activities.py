@@ -214,9 +214,18 @@ async def setup_run_activity(input: dict[str, Any]) -> dict[str, Any]:
             execution_data = get_full_test_execution_data(test_execution_id)
 
             if execution_data is None:
-                raise ValueError(
-                    f"Test execution {test_execution_id} not found or has no data"
-                )
+                # The kit optimiser builds its inputs from the agent definition,
+                # not from per-call execution data — don't fail setup for it
+                # (e.g. a still-running execution with no completed calls yet).
+                if (
+                    optimiser_type
+                    == AgentPromptOptimiserRun.OptimiserType.AGENT_LEARNING_KIT
+                ):
+                    execution_data = {}
+                else:
+                    raise ValueError(
+                        f"Test execution {test_execution_id} not found or has no data"
+                    )
 
             # Pin scenario manifest deterministically
             scenario_manifest = _select_scenario_manifest(execution_data)
