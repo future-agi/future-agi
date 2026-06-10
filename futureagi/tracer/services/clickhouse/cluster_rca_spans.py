@@ -6,7 +6,7 @@ is the source of truth for tracing telemetry; the 656 GB PG table is the
 legacy mirror.
 
 Reads are project-scoped, dedup the ReplacingMergeTree via ``LIMIT 1 BY id``,
-and filter ``_peerdb_is_deleted = 0`` — mirroring the prod span_list builder.
+and filter ``is_deleted = 0`` — mirroring the prod span_list builder.
 Returns are column-keyed dicts (the natural DB-row shape); the agent reshapes
 them into LLM-facing payloads with aliases.
 
@@ -16,7 +16,8 @@ on PG and migrate here when needed.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 import structlog
 
@@ -30,8 +31,8 @@ logger = structlog.get_logger(__name__)
 
 # Columns cluster_rca needs off a span. Aliased to the agent's vocabulary.
 # Includes the trace-level fields denormalized onto every span row
-# (trace_name / trace_session_id / trace_external_id / trace_tags) so the
-# agent can derive trace context without a separate PG Trace read.
+# (trace_name / trace_session_id) so the agent can derive trace context
+# without a separate PG Trace read.
 _SPAN_COLS = (
     "toString(id) AS span_id",
     "toString(trace_id) AS trace_id",
@@ -55,14 +56,12 @@ _SPAN_COLS = (
     "tags",
     "trace_name",
     "toString(trace_session_id) AS trace_session_id",
-    "trace_external_id",
-    "trace_tags",
 )
 
 
 def _rows_to_dicts(rows: list, cols: tuple) -> list[dict[str, Any]]:
     keys = [c.split(" AS ")[-1].strip() for c in cols]
-    return [dict(zip(keys, row)) for row in rows]
+    return [dict(zip(keys, row, strict=False)) for row in rows]
 
 
 def _ids_list(trace_ids: Iterable[str]) -> list[str]:
@@ -91,7 +90,7 @@ def spans_for_trace(project_id: str, trace_id: str) -> list[dict[str, Any]]:
     query = f"""
         SELECT {cols}
         FROM spans
-        WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+        WHERE project_id = %(pid)s AND is_deleted = 0
           AND toString(trace_id) = %(tid)s
         ORDER BY start_time
         LIMIT 1 BY id
@@ -101,7 +100,7 @@ def spans_for_trace(project_id: str, trace_id: str) -> list[dict[str, Any]]:
     )
 
 
-def read_span(project_id: str, span_id: str) -> Optional[dict[str, Any]]:
+def read_span(project_id: str, span_id: str) -> dict[str, Any] | None:
     """One span by id (full columns), or None if absent / CH unavailable."""
     if not span_id or not is_clickhouse_enabled():
         return None
@@ -109,7 +108,7 @@ def read_span(project_id: str, span_id: str) -> Optional[dict[str, Any]]:
     query = f"""
         SELECT {cols}
         FROM spans
-        WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+        WHERE project_id = %(pid)s AND is_deleted = 0
           AND toString(id) = %(sid)s
         LIMIT 1 BY id
         LIMIT 1
@@ -133,7 +132,7 @@ def list_spans_in_traces(
         return [], 0
     cols = ", ".join(_SPAN_COLS)
     base = (
-        "FROM spans WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0 "
+        "FROM spans WHERE project_id = %(pid)s AND is_deleted = 0 "
         "AND toString(trace_id) IN %(tids)s"
     )
     params = {"pid": str(project_id), "tids": ids, "limit": limit, "offset": offset}
@@ -171,7 +170,7 @@ def search_spans_in_traces(
     query = f"""
         SELECT {cols}
         FROM spans
-        WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+        WHERE project_id = %(pid)s AND is_deleted = 0
           AND toString(trace_id) IN %(tids)s
           AND {text_pred}
         ORDER BY trace_id, start_time
@@ -183,7 +182,7 @@ def search_spans_in_traces(
 
 
 # group_by token → (CH column, extra predicate) for span_count aggregation.
-_SPAN_AGG_FIELDS: dict[str, tuple[str, Optional[str]]] = {
+_SPAN_AGG_FIELDS: dict[str, tuple[str, str | None]] = {
     "span_tool_name": ("name", "observation_type = 'tool'"),
     "span_status": ("status", None),
     "span_type": ("observation_type", None),
@@ -194,7 +193,7 @@ def aggregate_span_field(
     project_id: str,
     trace_ids: Iterable[str],
     group_by: str,
-) -> Optional[tuple[list[dict[str, Any]], int]]:
+) -> tuple[list[dict[str, Any]], int] | None:
     """span_count grouped by a whitelisted field (deduped via LIMIT 1 BY id).
     Returns (buckets, total) or None if group_by isn't whitelisted."""
     if group_by not in _SPAN_AGG_FIELDS:
@@ -209,7 +208,7 @@ def aggregate_span_field(
         FROM (
             SELECT id, {field}
             FROM spans
-            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+            WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_id) IN %(tids)s
               {extra_pred}
             LIMIT 1 BY id
@@ -221,9 +220,7 @@ def aggregate_span_field(
     return buckets, sum(b["count"] for b in buckets)
 
 
-def trace_roots(
-    project_id: str, trace_ids: Iterable[str]
-) -> dict[str, dict[str, Any]]:
+def trace_roots(project_id: str, trace_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
     """Per-trace representative (root) I/O + context, keyed by trace_id.
 
     The trace's I/O is its earliest span's I/O (argMin on start_time). Used
@@ -240,14 +237,13 @@ def trace_roots(
             argMin(output, start_time) AS output,
             any(trace_name)            AS trace_name,
             toString(any(trace_session_id)) AS trace_session_id,
-            any(trace_external_id)     AS trace_external_id,
             max(status = 'ERROR')      AS has_error,
             min(start_time)            AS first_start
         FROM (
             SELECT trace_id, input, output, trace_name, trace_session_id,
-                   trace_external_id, status, start_time, id
+                   status, start_time, id
             FROM spans
-            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+            WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_id) IN %(tids)s
             LIMIT 1 BY id
         )
@@ -257,9 +253,12 @@ def trace_roots(
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
         out[str(r[0])] = {
-            "input": r[1], "output": r[2], "trace_name": r[3],
-            "trace_session_id": r[4] or None, "trace_external_id": r[5],
-            "has_error": bool(r[6]), "first_start": str(r[7]) if r[7] else None,
+            "input": r[1],
+            "output": r[2],
+            "trace_name": r[3],
+            "trace_session_id": r[4] or None,
+            "has_error": bool(r[5]),
+            "first_start": str(r[6]) if r[6] else None,
         }
     return out
 
@@ -273,7 +272,7 @@ _TRACE_AGG_FIELDS: dict[str, str] = {
 
 def aggregate_trace_field(
     project_id: str, trace_ids: Iterable[str], group_by: str
-) -> Optional[tuple[list[dict[str, Any]], int]]:
+) -> tuple[list[dict[str, Any]], int] | None:
     """trace_count grouped by a CH trace-level field (version / session_id).
     Counts distinct traces per value. Returns (buckets, total) or None if
     group_by isn't a CH trace field (caller falls back to PG/relational)."""
@@ -288,7 +287,7 @@ def aggregate_trace_field(
         FROM (
             SELECT toString(trace_id) AS trace_id, {field} AS k, id
             FROM spans
-            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+            WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_id) IN %(tids)s
             LIMIT 1 BY id
         )
@@ -317,7 +316,7 @@ def timeline_trace_counts(
             SELECT trace_id, min(start_time) AS first_start
             FROM (
                 SELECT trace_id, start_time, id FROM spans
-                WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+                WHERE project_id = %(pid)s AND is_deleted = 0
                   AND toString(trace_id) IN %(tids)s
                 LIMIT 1 BY id
             )
@@ -326,10 +325,7 @@ def timeline_trace_counts(
         GROUP BY b ORDER BY b
     """
     rows = _run(query, {"pid": str(project_id), "tids": ids})
-    return [
-        {"bucket_start": str(r[0]) if r[0] else None, "count": r[1]}
-        for r in rows
-    ]
+    return [{"bucket_start": str(r[0]) if r[0] else None, "count": r[1]} for r in rows]
 
 
 def search_trace_ids(
@@ -342,7 +338,7 @@ def search_trace_ids(
     query = """
         SELECT DISTINCT toString(trace_id)
         FROM spans
-        WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+        WHERE project_id = %(pid)s AND is_deleted = 0
           AND toString(trace_id) IN %(tids)s
           AND (positionCaseInsensitive(input, %(q)s) > 0
             OR positionCaseInsensitive(output, %(q)s) > 0
@@ -356,9 +352,7 @@ def search_trace_ids(
     return [r[0] for r in rows]
 
 
-def distinct_sessions(
-    project_id: str, trace_ids: Iterable[str]
-) -> list[str]:
+def distinct_sessions(project_id: str, trace_ids: Iterable[str]) -> list[str]:
     """Distinct trace_session_id values across a trace set (non-empty)."""
     ids = _ids_list(trace_ids)
     if not ids or not is_clickhouse_enabled():
@@ -366,7 +360,7 @@ def distinct_sessions(
     query = """
         SELECT DISTINCT toString(trace_session_id)
         FROM spans
-        WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+        WHERE project_id = %(pid)s AND is_deleted = 0
           AND toString(trace_id) IN %(tids)s
           AND trace_session_id IS NOT NULL
           AND toString(trace_session_id) != ''
@@ -375,9 +369,7 @@ def distinct_sessions(
     return [r[0] for r in rows if r[0]]
 
 
-def traces_in_session(
-    project_id: str, session_id: str
-) -> dict[str, dict[str, Any]]:
+def traces_in_session(project_id: str, session_id: str) -> dict[str, dict[str, Any]]:
     """Per-trace root info for all traces in one session (chronological via
     first_start). Powers read(session). Returns {trace_id: root-info}."""
     if not session_id or not is_clickhouse_enabled():
@@ -393,7 +385,7 @@ def traces_in_session(
         FROM (
             SELECT trace_id, input, output, trace_name, status, start_time, id
             FROM spans
-            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+            WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_session_id) = %(sid)s
             LIMIT 1 BY id
         )
@@ -404,7 +396,9 @@ def traces_in_session(
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
         out[str(r[0])] = {
-            "input": r[1], "output": r[2], "trace_name": r[3],
+            "input": r[1],
+            "output": r[2],
+            "trace_name": r[3],
             "has_error": bool(r[4]),
             "first_start": str(r[5]) if r[5] else None,
         }
@@ -428,7 +422,7 @@ def error_messages_in_traces(
         FROM (
             SELECT id, status_message
             FROM spans
-            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+            WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_id) IN %(tids)s
               AND status = 'ERROR'
               AND notEmpty(ifNull(status_message, ''))
@@ -438,5 +432,5 @@ def error_messages_in_traces(
     """
     rows = _run(query, {"pid": str(project_id), "tids": ids})
     total = len(rows)
-    page = rows[offset:offset + limit]
+    page = rows[offset : offset + limit]
     return [{"key": r[0], "count": r[1]} for r in page], total

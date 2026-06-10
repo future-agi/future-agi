@@ -15,7 +15,7 @@ Notes on the schema:
   - ``spans`` (the CH table mirroring tracer_observation_span) holds the
     raw JSON in ``span_attributes_raw`` and ``eval_attributes`` (String
     columns, ZSTD-compressed).
-  - ``spans`` also has ``span_attr_str``/``span_attr_num``/``span_attr_bool``
+  - ``spans`` also has ``attrs_string``/``attrs_number``/``attrs_bool``
     Map columns shredded from ``span_attributes``. ``mapContains(...)`` over
     these maps is the cheapest way to test key existence.
 """
@@ -68,7 +68,7 @@ def list_attribute_keys_for_project(project_id: str) -> list[AttributeKey]:
     """Return every distinct span attribute key seen for the project.
 
     Walks the three shredded Map columns on the ``spans`` table
-    (``span_attr_str`` / ``span_attr_num`` / ``span_attr_bool``) and reports
+    (``attrs_string`` / ``attrs_number`` / ``attrs_bool``) and reports
     each key with its inferred type and total occurrence count, sorted by
     occurrences descending.
 
@@ -86,7 +86,7 @@ def list_attribute_keys_for_project(project_id: str) -> list[AttributeKey]:
     query = """
         SELECT key, 'string' AS type, count() AS cnt
         FROM (
-            SELECT arrayJoin(mapKeys(span_attr_str)) AS key
+            SELECT arrayJoin(mapKeys(attrs_string)) AS key
             FROM spans
             WHERE project_id = %(project_id)s
         )
@@ -96,7 +96,7 @@ def list_attribute_keys_for_project(project_id: str) -> list[AttributeKey]:
 
         SELECT key, 'number' AS type, count() AS cnt
         FROM (
-            SELECT arrayJoin(mapKeys(span_attr_num)) AS key
+            SELECT arrayJoin(mapKeys(attrs_number)) AS key
             FROM spans
             WHERE project_id = %(project_id)s
         )
@@ -106,7 +106,7 @@ def list_attribute_keys_for_project(project_id: str) -> list[AttributeKey]:
 
         SELECT key, 'boolean' AS type, count() AS cnt
         FROM (
-            SELECT arrayJoin(mapKeys(span_attr_bool)) AS key
+            SELECT arrayJoin(mapKeys(attrs_bool)) AS key
             FROM spans
             WHERE project_id = %(project_id)s
         )
@@ -132,8 +132,8 @@ def list_attribute_keys_for_project(project_id: str) -> list[AttributeKey]:
 def list_attributes_for_trace(trace_id: str) -> list[TraceAttribute]:
     """Return distinct (key, type, values[]) per attribute on a single trace.
 
-    Walks the three shredded Map columns (``span_attr_str`` /
-    ``span_attr_num`` / ``span_attr_bool``) for every span in the trace,
+    Walks the three shredded Map columns (``attrs_string`` /
+    ``attrs_number`` / ``attrs_bool``) for every span in the trace,
     groups by key, and emits one row per key with the distinct value set
     seen across that trace's spans. A trace with consistent attribute
     values renders cleanly; cross-span drift (e.g. a flag toggled mid-trace)
@@ -158,7 +158,7 @@ def list_attributes_for_trace(trace_id: str) -> list[TraceAttribute]:
             SELECT pair.1 AS key, toString(pair.2) AS value, 'string' AS type
             FROM spans
             ARRAY JOIN arrayZip(
-                mapKeys(span_attr_str), mapValues(span_attr_str)
+                mapKeys(attrs_string), mapValues(attrs_string)
             ) AS pair
             WHERE toString(trace_id) = %(trace_id)s
 
@@ -167,7 +167,7 @@ def list_attributes_for_trace(trace_id: str) -> list[TraceAttribute]:
             SELECT pair.1 AS key, toString(pair.2) AS value, 'number' AS type
             FROM spans
             ARRAY JOIN arrayZip(
-                mapKeys(span_attr_num), mapValues(span_attr_num)
+                mapKeys(attrs_number), mapValues(attrs_number)
             ) AS pair
             WHERE toString(trace_id) = %(trace_id)s
 
@@ -176,7 +176,7 @@ def list_attributes_for_trace(trace_id: str) -> list[TraceAttribute]:
             SELECT pair.1 AS key, toString(pair.2) AS value, 'boolean' AS type
             FROM spans
             ARRAY JOIN arrayZip(
-                mapKeys(span_attr_bool), mapValues(span_attr_bool)
+                mapKeys(attrs_bool), mapValues(attrs_bool)
             ) AS pair
             WHERE toString(trace_id) = %(trace_id)s
         )
@@ -228,8 +228,8 @@ def list_attribute_keys_for_traces(
             SELECT toString(trace_id) AS tid,
                    key, 'string' AS type
             FROM spans
-            ARRAY JOIN mapKeys(span_attr_str) AS key
-            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+            ARRAY JOIN mapKeys(attrs_string) AS key
+            WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_id) IN %(tids)s
 
             UNION ALL
@@ -237,8 +237,8 @@ def list_attribute_keys_for_traces(
             SELECT toString(trace_id) AS tid,
                    key, 'number' AS type
             FROM spans
-            ARRAY JOIN mapKeys(span_attr_num) AS key
-            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+            ARRAY JOIN mapKeys(attrs_number) AS key
+            WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_id) IN %(tids)s
 
             UNION ALL
@@ -246,8 +246,8 @@ def list_attribute_keys_for_traces(
             SELECT toString(trace_id) AS tid,
                    key, 'boolean' AS type
             FROM spans
-            ARRAY JOIN mapKeys(span_attr_bool) AS key
-            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+            ARRAY JOIN mapKeys(attrs_bool) AS key
+            WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_id) IN %(tids)s
         )
         SELECT key, any(type) AS type, uniqExact(tid) AS trace_count
@@ -334,7 +334,7 @@ def scoped_trace_ids(
     query = (
         "SELECT DISTINCT toString(trace_id) FROM spans "
         "WHERE project_id = %(_pid)s "
-        "AND _peerdb_is_deleted = 0 "
+        "AND is_deleted = 0 "
         "AND toString(trace_id) IN %(_tids)s"
         f"{where_clause}"
     )
@@ -390,29 +390,29 @@ def aggregate_attribute_over_traces(
     query = f"""
         WITH vals AS (
             SELECT toString(trace_id) AS trace_id,
-                   toString(span_attr_str[%(key)s]) AS value
+                   toString(attrs_string[%(key)s]) AS value
             FROM spans
-            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+            WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_id) IN %(trace_ids)s
-              AND mapContains(span_attr_str, %(key)s)
+              AND mapContains(attrs_string, %(key)s)
 
             UNION ALL
 
             SELECT toString(trace_id) AS trace_id,
-                   toString(span_attr_num[%(key)s]) AS value
+                   toString(attrs_number[%(key)s]) AS value
             FROM spans
-            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+            WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_id) IN %(trace_ids)s
-              AND mapContains(span_attr_num, %(key)s)
+              AND mapContains(attrs_number, %(key)s)
 
             UNION ALL
 
             SELECT toString(trace_id) AS trace_id,
-                   toString(span_attr_bool[%(key)s]) AS value
+                   toString(attrs_bool[%(key)s]) AS value
             FROM spans
-            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+            WHERE project_id = %(pid)s AND is_deleted = 0
               AND toString(trace_id) IN %(trace_ids)s
-              AND mapContains(span_attr_bool, %(key)s)
+              AND mapContains(attrs_bool, %(key)s)
         )
         SELECT value, {count_expr} AS cnt
         FROM vals
@@ -473,9 +473,9 @@ def trace_ids_with_simulator_call_execution_id(
         FROM spans
         WHERE trace_id IN %(trace_ids)s
           AND (
-                mapContains(span_attr_str,  'fi.simulator.call_execution_id')
-             OR mapContains(span_attr_num,  'fi.simulator.call_execution_id')
-             OR mapContains(span_attr_bool, 'fi.simulator.call_execution_id')
+                mapContains(attrs_string,  'fi.simulator.call_execution_id')
+             OR mapContains(attrs_number,  'fi.simulator.call_execution_id')
+             OR mapContains(attrs_bool, 'fi.simulator.call_execution_id')
              OR JSONHas(span_attributes_raw, 'fi.simulator.call_execution_id')
           )
           AND JSONExtractRaw(span_attributes_raw,
