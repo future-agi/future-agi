@@ -2,9 +2,33 @@ from rest_framework import serializers
 
 from tfc.utils.api_serializers import ApiErrorResponseSerializer, EmptyRequestSerializer
 
+ACCOUNTS_ERROR_RESULT_SCHEMA = {
+    "type": "object",
+    "description": ("String error message or structured account/login error metadata."),
+    "x-string-or-object": True,
+    "properties": {
+        "error": {"type": "string"},
+        "error_code": {"type": "string"},
+        "message": {"type": "string"},
+        "blocked": {"type": "boolean"},
+        "remaining_attempts": {"type": "integer"},
+        "block_time": {"type": "integer"},
+        "block_time_remaining": {"type": "integer"},
+    },
+}
+
+
+class AccountsErrorResultField(serializers.JSONField):
+    """Account error result supports legacy strings and coded login objects."""
+
+    class Meta:
+        swagger_schema_fields = ACCOUNTS_ERROR_RESULT_SCHEMA
+
 
 class AccountsErrorResponseSerializer(ApiErrorResponseSerializer):
     """Accounts error envelope; kept named for generated API docs."""
+
+    result = AccountsErrorResultField(required=False, allow_null=True)
 
 
 class AccountsEmptyRequestSerializer(EmptyRequestSerializer):

@@ -288,7 +288,14 @@ export const useCreateLinearIssue = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ clusterId, teamId, traceId, title, description, priority }) =>
+    mutationFn: ({
+      clusterId,
+      teamId,
+      traceId,
+      title,
+      description,
+      priority,
+    }) =>
       axios.post(endpoints.errorFeed.createLinearIssue(clusterId), {
         team_id: teamId,
         ...(traceId && { trace_id: traceId }),

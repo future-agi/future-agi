@@ -13,7 +13,7 @@ import {
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import ActionForm from "./ActionForm";
 import { enqueueSnackbar } from "notistack";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -100,6 +100,7 @@ const AllActionForm = ({
   workspaceId,
 }) => {
   const theme = useTheme();
+  const queryClient = useQueryClient();
   const { user, orgLevel: actorOrgLevel } = useAuthContext();
   const { usersList } = useUserManagementStore();
   const existingEmails = usersList.map((u) => u.email);
@@ -209,6 +210,7 @@ const AllActionForm = ({
   }, [userData, openActionForm?.action, resendForm]);
 
   const refetchData = () => {
+    queryClient.invalidateQueries({ queryKey: ["user-detail"] });
     gridApi?.refreshServerSide?.({ purge: true });
   };
 

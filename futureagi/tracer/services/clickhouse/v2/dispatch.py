@@ -27,11 +27,11 @@ Why a registry table instead of magic naming:
   - A new query type without a v2 entry falls back cleanly to v1 with a
     warning log — no NameError at the call site.
 """
+
 from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass
-from typing import Type
 
 import structlog
 
@@ -44,12 +44,13 @@ logger = structlog.get_logger(__name__)
 # Keep this small and explicit. Adding a row here is the contract for "this
 # query type has a v2 builder and is eligible for the v1→v2 routing flip."
 
+
 @dataclass(frozen=True)
 class _BuilderEntry:
     v1_module: str
-    v1_class:  str
-    v2_module: str | None       # None = no v2 builder yet (falls back to v1)
-    v2_class:  str | None
+    v1_class: str
+    v2_module: str | None  # None = no v2 builder yet (falls back to v1)
+    v2_class: str | None
 
 
 _REGISTRY: dict[str, _BuilderEntry] = {
@@ -66,7 +67,7 @@ _REGISTRY: dict[str, _BuilderEntry] = {
         v2_class="TraceListQueryBuilderV2",
     ),
     "SESSION_LIST": _BuilderEntry(
-        v1_module="tracer.services.clickhouse.query_builders.session_list",
+        v1_module="tracer.services.clickhouse.query_builders",
         v1_class="SessionListQueryBuilder",
         v2_module="tracer.services.clickhouse.v2.query_builders.session_list",
         v2_class="SessionListQueryBuilderV2",
@@ -104,11 +105,11 @@ _REGISTRY: dict[str, _BuilderEntry] = {
 }
 
 
-def _load(module: str, klass: str) -> Type:
+def _load(module: str, klass: str) -> type:
     return getattr(importlib.import_module(module), klass)
 
 
-def get_query_builder_class(query_type: str) -> Type:
+def get_query_builder_class(query_type: str) -> type:
     """Resolve the right builder class for `query_type` based on routing settings.
 
     `query_type` is a string from `QueryType` (in tracer.services.clickhouse.query_service)
@@ -137,7 +138,8 @@ def get_query_builder_class(query_type: str) -> Type:
     if use_v2 and (entry.v2_module is None or entry.v2_class is None):
         logger.warning(
             "dispatch_v2_requested_but_unavailable_falling_back_to_v1",
-            query_type=key, routing_mode=mode.value,
+            query_type=key,
+            routing_mode=mode.value,
         )
         return _load(entry.v1_module, entry.v1_class)
 
@@ -146,7 +148,7 @@ def get_query_builder_class(query_type: str) -> Type:
     return _load(entry.v1_module, entry.v1_class)
 
 
-def get_v1_class(query_type: str) -> Type:
+def get_v1_class(query_type: str) -> type:
     """Always return the v1 class — used by the shadow harness to run v1
     in parallel regardless of routing mode."""
     key = query_type.upper() if isinstance(query_type, str) else str(query_type).upper()
@@ -154,7 +156,7 @@ def get_v1_class(query_type: str) -> Type:
     return _load(entry.v1_module, entry.v1_class)
 
 
-def get_v2_class(query_type: str) -> Type | None:
+def get_v2_class(query_type: str) -> type | None:
     """Always return the v2 class, or None if not registered. Used by the
     shadow harness in modes where v2 must run regardless of primary routing."""
     key = query_type.upper() if isinstance(query_type, str) else str(query_type).upper()

@@ -401,6 +401,23 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             "eval_config_ids": tuple(self.eval_config_ids),
         }
 
+        # Partition-prune `tracer_eval_logger` (PARTITION BY toYYYYMM(created_at))
+        # so the FINAL merge can skip months that cannot match this page.
+        # The page of trace_ids was selected by build() within the user's
+        # [start_date, end_date] window on `start_time`, so the matching eval
+        # rows' `created_at` falls inside that window plus ingestion skew. A
+        # lower-bound-only filter with a 1-day skew buffer (identical to the
+        # mitigation in build()/build_count_query()) prunes old partitions
+        # without dropping any legitimately-matching eval row. Guarded on
+        # self.start_date so callers that invoke build_eval_query() without a
+        # prior build() (e.g. unit tests) keep their current behavior.
+        created_at_fragment = ""
+        if self.start_date is not None:
+            params["start_date"] = self.start_date
+            created_at_fragment = (
+                "AND created_at >= %(start_date)s - INTERVAL 1 DAY"
+            )
+
         # Include errored rows but compute aggregates only over successful
         # rows (error = 0). ``success_count`` / ``error_count`` let the
         # pivot surface an explicit error state on the UI when every eval
@@ -446,6 +463,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
           AND (deleted = 0 OR deleted IS NULL)
           AND trace_id IN %(trace_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
+          {created_at_fragment}
         GROUP BY trace_id, custom_eval_config_id
         """
         return query, params

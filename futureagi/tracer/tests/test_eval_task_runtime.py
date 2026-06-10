@@ -344,23 +344,23 @@ class TestEvalTaskStatusTransitions:
         observe_eval_task,
         track_eval_dispatch,
         monkeypatch,
-        caplog,
     ):
         """Dispatch without execution -> next tick detects stall, logs warning, flips to COMPLETED.
 
-        Note on `failed_spans`: the dispatcher *intends* to surface the stall
-        summary on `EvalTask.failed_spans`, but the current code path
-        (`tracer/utils/eval_tasks.py:282-329`) saves the summary via a
-        `select_for_update`'d ref then immediately calls `eval_task.save()`
-        on the stale local reference WITHOUT `update_fields`, clobbering the
-        just-written list back to []. This is a pre-existing bug — test pins
-        the observable behaviour (status flip + warning log) so future fixes
-        that correctly persist `failed_spans` will surface as a deliberate
-        update to this test, not a silent regression.
+        The warning is emitted through structlog, whose pytest capture can be
+        affected by suite-wide logging configuration. Spy on the logger method
+        directly so this pins the user-visible stall behavior instead of the
+        current stdlib logging adapter state.
         """
-        import logging
-
         monkeypatch.setattr("tracer.utils.eval_tasks._DRAIN_STALL_SECONDS", 0)
+        warning_calls = []
+
+        def _record_warning(event, **kwargs):
+            warning_calls.append((event, kwargs))
+
+        monkeypatch.setattr(
+            "tracer.utils.eval_tasks.logger.warning", _record_warning
+        )
 
         task = observe_eval_task["task"]
         task.spans_limit = 12
@@ -370,17 +370,18 @@ class TestEvalTaskStatusTransitions:
         assert len(track_eval_dispatch) == 12
         assert EvalLogger.objects.filter(eval_task_id=str(task.id)).count() == 0
 
-        with caplog.at_level(logging.WARNING, logger="tracer.utils.eval_tasks"):
-            process_eval_task._original_func(str(task.id))  # tick 2: drain check trips stall
+        process_eval_task._original_func(str(task.id))  # tick 2: drain check trips stall
 
         task.refresh_from_db()
         assert task.status == EvalTaskStatus.COMPLETED
-        # The "eval_task_completed_with_drops" warning is the user-observable
-        # signal that a stall was detected (logged for SRE / Sentry).
         assert any(
-            "eval_task_completed_with_drops" in record.getMessage()
-            for record in caplog.records
+            event == "eval_task_completed_with_drops" and kwargs["dropped"] == 12
+            for event, kwargs in warning_calls
         ), "expected stall-detection warning in logs"
+        assert any(
+            "Drain stall: 12 of 12 dispatched evaluations" in entry.get("error", "")
+            for entry in (task.failed_spans or [])
+        )
 
 
 # ────────────────────────────────────────────────────────────────────────

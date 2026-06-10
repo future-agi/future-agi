@@ -9,6 +9,7 @@ import uuid
 import pytest
 from rest_framework import status
 
+from accounts.models.user import User
 from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from tracer.models.monitor import UserAlertMonitor, UserAlertMonitorLog
@@ -19,6 +20,14 @@ def get_result(response):
     """Extract result from API response wrapper."""
     data = response.json()
     return data.get("result", data)
+
+
+def get_result_rows(response):
+    """Extract rows from wrapped, paginated, or raw list responses."""
+    data = get_result(response)
+    if isinstance(data, dict) and "results" in data:
+        return data["results"]
+    return data
 
 
 def create_other_workspace_project_and_monitor(organization, user):
@@ -261,6 +270,26 @@ class TestUserAlertMonitorListAPI:
 class TestUserAlertMonitorDetailsAPI:
     """Tests for GET /tracer/user-alerts/{id}/details/ endpoint."""
 
+    def test_root_read_monitor_success(self, auth_client, user_alert_monitor):
+        """Generated root detail alias should read a scoped monitor."""
+        response = auth_client.get(f"/tracer/user-alerts/{user_alert_monitor.id}/")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = get_result(response)
+        assert data["id"] == str(user_alert_monitor.id)
+        assert data["name"] == "Test Alert"
+
+    def test_root_read_rejects_other_workspace_monitor(
+        self, auth_client, organization, user
+    ):
+        _, _, other_monitor = create_other_workspace_project_and_monitor(
+            organization, user
+        )
+
+        response = auth_client.get(f"/tracer/user-alerts/{other_monitor.id}/")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
     def test_get_details_unauthenticated(self, api_client, user_alert_monitor):
         """Unauthenticated requests should be rejected."""
         response = api_client.get(
@@ -324,6 +353,69 @@ class TestUserAlertMonitorUpdateAPI:
         user_alert_monitor.refresh_from_db()
         assert user_alert_monitor.name == "Updated Alert Name"
         assert user_alert_monitor.critical_threshold_value == 0.2
+
+    def test_partial_update_preserves_request_scoped_fields(
+        self, auth_client, organization, user, user_alert_monitor
+    ):
+        other_workspace, _, _ = create_other_workspace_project_and_monitor(
+            organization, user
+        )
+        other_user = User.objects.create_user(
+            email=f"alert-owner-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Other Alert Owner",
+            organization=organization,
+        )
+        user_alert_monitor.created_by = user
+        user_alert_monitor.save(update_fields=["created_by"])
+
+        response = auth_client.patch(
+            f"/tracer/user-alerts/{user_alert_monitor.id}/",
+            {
+                "name": "Scoped Alert Rename",
+                "workspace": str(other_workspace.id),
+                "created_by": str(other_user.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        user_alert_monitor.refresh_from_db()
+        assert user_alert_monitor.name == "Scoped Alert Rename"
+        assert user_alert_monitor.workspace_id != other_workspace.id
+        assert user_alert_monitor.created_by_id == user.id
+
+    def test_put_update_preserves_request_scoped_fields(
+        self, auth_client, organization, user, observe_project, user_alert_monitor
+    ):
+        other_workspace, _, _ = create_other_workspace_project_and_monitor(
+            organization, user
+        )
+        user_alert_monitor.created_by = user
+        user_alert_monitor.save(update_fields=["created_by"])
+
+        response = auth_client.put(
+            f"/tracer/user-alerts/{user_alert_monitor.id}/",
+            {
+                "project": str(observe_project.id),
+                "name": "Scoped Alert Replace",
+                "metric_type": "count_of_errors",
+                "threshold_operator": "greater_than",
+                "threshold_type": "static",
+                "critical_threshold_value": 0.25,
+                "alert_frequency": 60,
+                "workspace": str(other_workspace.id),
+                "created_by": None,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        user_alert_monitor.refresh_from_db()
+        assert user_alert_monitor.name == "Scoped Alert Replace"
+        assert user_alert_monitor.critical_threshold_value == 0.25
+        assert user_alert_monitor.workspace_id == observe_project.workspace_id
+        assert user_alert_monitor.created_by_id == user.id
 
     def test_update_monitor_ignores_legacy_filters_when_filters_unchanged(
         self, auth_client, user_alert_monitor
@@ -428,6 +520,27 @@ class TestUserAlertMonitorUpdateAPI:
 @pytest.mark.api
 class TestUserAlertMonitorDeleteAPI:
     """Tests for DELETE /tracer/user-alerts/ endpoint."""
+
+    def test_root_delete_monitor_success(self, auth_client, user_alert_monitor):
+        """Generated root detail delete should soft-delete one monitor."""
+        response = auth_client.delete(f"/tracer/user-alerts/{user_alert_monitor.id}/")
+
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+        user_alert_monitor.refresh_from_db()
+        assert user_alert_monitor.deleted is True
+
+    def test_root_delete_rejects_other_workspace_monitor(
+        self, auth_client, organization, user
+    ):
+        _, _, other_monitor = create_other_workspace_project_and_monitor(
+            organization, user
+        )
+
+        response = auth_client.delete(f"/tracer/user-alerts/{other_monitor.id}/")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        other_monitor.refresh_from_db()
+        assert other_monitor.deleted is False
 
     def test_delete_monitor_unauthenticated(self, api_client, user_alert_monitor):
         """Unauthenticated requests should be rejected."""
@@ -698,6 +811,126 @@ class TestUserAlertMonitorPreviewGraphAPI:
 # =====================
 # Alert Logs Tests
 # =====================
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestUserAlertMonitorLogRootAPI:
+    """Tests for generated /tracer/user-alert-logs/ root CRUD aliases."""
+
+    def test_root_list_logs_excludes_other_workspace_logs(
+        self, auth_client, organization, user, user_alert_log
+    ):
+        _, _, other_monitor = create_other_workspace_project_and_monitor(
+            organization, user
+        )
+        other_log = UserAlertMonitorLog.no_workspace_objects.create(
+            alert=other_monitor,
+            type="critical",
+            message="Other workspace alert",
+            resolved=False,
+        )
+
+        response = auth_client.get("/tracer/user-alert-logs/")
+
+        assert response.status_code == status.HTTP_200_OK
+        ids = {row["id"] for row in get_result_rows(response)}
+        assert str(user_alert_log.id) in ids
+        assert str(other_log.id) not in ids
+
+    def test_root_create_log_success(self, auth_client, user_alert_monitor):
+        response = auth_client.post(
+            "/tracer/user-alert-logs/",
+            {
+                "alert": str(user_alert_monitor.id),
+                "type": "critical",
+                "message": "Generated root log",
+                "resolved": False,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        log = UserAlertMonitorLog.objects.get(message="Generated root log")
+        assert log.alert_id == user_alert_monitor.id
+
+    def test_root_create_rejects_other_workspace_alert(
+        self, auth_client, organization, user
+    ):
+        _, _, other_monitor = create_other_workspace_project_and_monitor(
+            organization, user
+        )
+
+        response = auth_client.post(
+            "/tracer/user-alert-logs/",
+            {
+                "alert": str(other_monitor.id),
+                "type": "critical",
+                "message": "Cross workspace log",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not UserAlertMonitorLog.no_workspace_objects.filter(
+            message="Cross workspace log"
+        ).exists()
+
+    def test_root_read_update_patch_delete_log_success(
+        self, auth_client, user_alert_monitor, user_alert_log
+    ):
+        read_response = auth_client.get(f"/tracer/user-alert-logs/{user_alert_log.id}/")
+        assert read_response.status_code == status.HTTP_200_OK
+        assert get_result(read_response)["id"] == str(user_alert_log.id)
+
+        put_response = auth_client.put(
+            f"/tracer/user-alert-logs/{user_alert_log.id}/",
+            {
+                "alert": str(user_alert_monitor.id),
+                "type": "warning",
+                "message": "Updated generated root log",
+                "resolved": True,
+            },
+            format="json",
+        )
+        assert put_response.status_code == status.HTTP_200_OK
+        user_alert_log.refresh_from_db()
+        assert user_alert_log.type == "warning"
+        assert user_alert_log.message == "Updated generated root log"
+        assert user_alert_log.resolved is True
+
+        patch_response = auth_client.patch(
+            f"/tracer/user-alert-logs/{user_alert_log.id}/",
+            {"message": "Patched generated root log"},
+            format="json",
+        )
+        assert patch_response.status_code == status.HTTP_200_OK
+        user_alert_log.refresh_from_db()
+        assert user_alert_log.message == "Patched generated root log"
+
+        delete_response = auth_client.delete(
+            f"/tracer/user-alert-logs/{user_alert_log.id}/"
+        )
+        assert delete_response.status_code == status.HTTP_204_NO_CONTENT
+        user_alert_log.refresh_from_db()
+        assert user_alert_log.deleted is True
+
+    def test_root_read_rejects_other_workspace_log(
+        self, auth_client, organization, user
+    ):
+        _, _, other_monitor = create_other_workspace_project_and_monitor(
+            organization, user
+        )
+        other_log = UserAlertMonitorLog.no_workspace_objects.create(
+            alert=other_monitor,
+            type="critical",
+            message="Other workspace alert",
+            resolved=False,
+        )
+
+        response = auth_client.get(f"/tracer/user-alert-logs/{other_log.id}/")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 @pytest.mark.integration

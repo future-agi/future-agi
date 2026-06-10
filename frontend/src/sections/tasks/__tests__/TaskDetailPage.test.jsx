@@ -54,7 +54,10 @@ vi.mock("../components/TaskHeader", () => ({
   default: ({ actions, onNameChange }) => (
     <div>
       <div>task header</div>
-      <button type="button" onClick={() => onNameChange?.("Renamed Inline Task")}>
+      <button
+        type="button"
+        onClick={() => onNameChange?.("Renamed Inline Task")}
+      >
         mock rename
       </button>
       <div>{actions}</div>

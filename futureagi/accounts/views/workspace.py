@@ -49,7 +49,7 @@ class WorkspaceManagementView(APIView):
             **ACCOUNTS_ERROR_RESPONSES,
         }
     )
-    def get(self, request, *args, **kwargs):
+    def get(self, request, workspace_id=None, *args, **kwargs):
         """Get workspaces for the current organization"""
         user = request.user
         organization = resolve_org(request)
@@ -80,6 +80,11 @@ class WorkspaceManagementView(APIView):
             workspaces = Workspace.objects.filter(
                 organization=organization, is_active=True
             )
+
+        if workspace_id:
+            workspaces = workspaces.filter(id=workspace_id)
+            if not workspaces.exists():
+                return self._gm.not_found("Workspace not found")
 
         # Apply ordering
         workspaces = workspaces.order_by("-created_at")
@@ -120,6 +125,11 @@ class WorkspaceManagementView(APIView):
     @transaction.atomic
     def post(self, request, *args, **kwargs):
         """Create a new workspace"""
+        if kwargs.get("workspace_id"):
+            return self._gm.bad_request(
+                "Workspace detail POST is not supported; use /accounts/workspaces/ to create a workspace"
+            )
+
         user = request.user
         organization = resolve_org(request)
         if not organization:
@@ -194,9 +204,7 @@ class WorkspaceManagementView(APIView):
             # Create new workspace
             workspace = Workspace.objects.create(
                 name=workspace_name,
-                display_name=request.validated_data.get(
-                    "display_name", workspace_name
-                ),
+                display_name=request.validated_data.get("display_name", workspace_name),
                 description=request.validated_data.get("description", ""),
                 organization=organization,
                 created_by=user,
@@ -443,8 +451,11 @@ class WorkspaceManagementView(APIView):
         responses={200: WorkspaceUpdateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
         reject_unknown_fields=True,
     )
-    def put(self, request, workspace_id, *args, **kwargs):
+    def put(self, request, workspace_id=None, *args, **kwargs):
         """Update workspace details"""
+        if not workspace_id:
+            return self._gm.bad_request("workspace_id is required")
+
         user = request.user
         organization = resolve_org(request)
         if not organization:
@@ -504,8 +515,11 @@ class WorkspaceManagementView(APIView):
     @validated_request(
         responses={200: WorkspaceDeleteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
     )
-    def delete(self, request, workspace_id, *args, **kwargs):
+    def delete(self, request, workspace_id=None, *args, **kwargs):
         """Delete a workspace"""
+        if not workspace_id:
+            return self._gm.bad_request("workspace_id is required")
+
         user = request.user
         organization = resolve_org(request)
         org_role = resolve_org_role(user, organization) if organization else None
@@ -552,7 +566,7 @@ class WorkspaceMembershipView(APIView):
             **ACCOUNTS_ERROR_RESPONSES,
         }
     )
-    def get(self, request, workspace_id, *args, **kwargs):
+    def get(self, request, workspace_id, member_id=None, *args, **kwargs):
         """Get members of a specific workspace"""
         user = request.user
         organization = resolve_org(request)
@@ -594,6 +608,10 @@ class WorkspaceMembershipView(APIView):
         memberships = WorkspaceMembership.no_workspace_objects.filter(
             workspace=workspace, is_active=True
         ).select_related("user")
+        if member_id:
+            memberships = memberships.filter(user_id=member_id)
+            if not memberships.exists():
+                return self._gm.not_found("User not found in workspace")
 
         members_data = []
         for membership in memberships:
@@ -633,6 +651,11 @@ class WorkspaceMembershipView(APIView):
     @transaction.atomic
     def post(self, request, workspace_id, *args, **kwargs):
         """Add users to workspace"""
+        if kwargs.get("member_id"):
+            return self._gm.bad_request(
+                "Workspace member detail POST is not supported; use /members/ to add users"
+            )
+
         user = request.user
         organization = resolve_org(request)
         if not organization:
@@ -913,8 +936,11 @@ class WorkspaceMembershipView(APIView):
             **ACCOUNTS_ERROR_RESPONSES,
         }
     )
-    def delete(self, request, workspace_id, member_id, *args, **kwargs):
+    def delete(self, request, workspace_id, member_id=None, *args, **kwargs):
         """Remove user from workspace"""
+        if not member_id:
+            return self._gm.bad_request("member_id is required")
+
         user = request.user
         organization = resolve_org(request)
         if not organization:

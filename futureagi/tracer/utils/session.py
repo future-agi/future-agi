@@ -56,7 +56,7 @@ def _try_session_navigation_ch(
         nav_result = service.execute_ch_query(nav_query, nav_params)
 
         if not nav_result.data:
-            return None, None
+            return None
 
         session_ids = [str(row["trace_session_id"]) for row in nav_result.data]
 

@@ -12,7 +12,7 @@ from cryptography.fernet import Fernet
 from django.conf import settings
 from django.core.cache import cache
 from django.db import IntegrityError
-from django.http import HttpResponseForbidden, JsonResponse
+from django.http import JsonResponse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.authentication import BaseAuthentication
@@ -202,6 +202,11 @@ class APIKeyAuthentication(BaseAuthentication):
             "organizations/switch/",
             "get-eval-templates",
             "update-user-full-name",  # Users can always update their own profile
+            "onboarding/",  # Users can always update their own onboarding profile
+            "logout/",  # Users can always invalidate their own access token
+            "2fa/",  # Users can always manage their own second factor state
+            "passkey/",  # Users can always manage their own passkey challenges
+            "passkeys/",  # Users can always manage their own passkey records
         ]
 
         should_skip_write_check = any(

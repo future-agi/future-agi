@@ -467,7 +467,7 @@ def process_eval_task(eval_task_id: str):
                 eval_task.status = EvalTaskStatus.COMPLETED
                 eval_task_logger.status = EvalTaskStatus.COMPLETED
                 eval_task_logger.save()
-                eval_task.save()
+                eval_task.save(update_fields=["status", "updated_at"])
                 properties = get_mixpanel_properties(
                     org=eval_task.project.organization,
                     project=eval_task.project,

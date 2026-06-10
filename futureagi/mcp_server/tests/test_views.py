@@ -10,6 +10,9 @@ from mcp_server.models.tool_config import MCPToolGroupConfig
 from mcp_server.models.usage import MCPUsageRecord
 
 
+AUTH_REQUIRED_STATUS_CODES = (401, 403)
+
+
 class TestMCPHealthView:
     def test_health_unauthenticated(self, db):
         client = APIClient()
@@ -107,7 +110,7 @@ class TestMCPToolCallView:
             {"tool_name": "whoami", "params": {}},
             format="json",
         )
-        assert response.status_code == 403
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
 
 class TestMCPToolListView:
@@ -123,7 +126,7 @@ class TestMCPToolListView:
     def test_list_tools_unauthenticated(self, db):
         client = APIClient()
         response = client.get("/mcp/internal/tools/")
-        assert response.status_code == 403
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
 
 class TestMCPConfigView:

@@ -139,12 +139,12 @@ from simulate.services.test_executor import (
     run_new_evals_on_call_executions_task,
 )
 from simulate.tasks.eval_summary_tasks import run_eval_summary_task
-from simulate.utils.baseline import resolve_baseline_id
 from simulate.utils.agent_optimiser import (
     create_optimiser_run_for_test_execution,
     get_latest_optimiser_result,
     get_or_create_optimiser_for_test_execution,
 )
+from simulate.utils.baseline import resolve_baseline_id
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,
@@ -313,10 +313,24 @@ class RunTestListView(APIView):
                 queryset=AgentVersion.objects.order_by("-version_number"),
                 to_attr="_prefetched_versions",
             )
+            # Prefetch scenarios with their FK relations so the nested
+            # ScenarioResponseSerializer's get_dataset_* / get_agent / get_agent_type
+            # do not issue per-scenario FK lookups (model_hub_dataset, simulator_agents,
+            # simulate_agent_definition). Fixes CORE-BACKEND-Z49.
+            scenarios_prefetch = Prefetch(
+                "scenarios",
+                queryset=Scenarios.objects.select_related(
+                    "dataset",
+                    "simulator_agent",
+                    "agent_definition",
+                    "prompt_template",
+                    "prompt_version",
+                ),
+            )
             run_tests = (
                 RunTest.objects.filter(organization=user_organization, deleted=False)
                 .prefetch_related(
-                    "scenarios", "simulate_eval_configs", latest_version_prefetch
+                    scenarios_prefetch, "simulate_eval_configs", latest_version_prefetch
                 )
                 .select_related(
                     "agent_definition",
@@ -1987,8 +2001,11 @@ class TestExecutionDetailView(APIView):
             group_keys = query_data.get("group_keys", [])
 
             # Get the test execution
+            # select_related("run_test") loads the already-JOINed run_test row in the
+            # same query so later test_execution.run_test access does not fire a
+            # separate simulate_run_test SELECT. Fixes CORE-BACKEND-10G3.
             test_execution = get_object_or_404(
-                TestExecution,
+                TestExecution.objects.select_related("run_test"),
                 run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
@@ -2003,6 +2020,8 @@ class TestExecutionDetailView(APIView):
                     "test_execution",
                     "test_execution__simulator_agent",
                     "test_execution__agent_definition",
+                    "test_execution__run_test",
+                    "test_execution__run_test__agent_definition",
                 )
                 .prefetch_related("transcripts", "snapshots", "chat_messages")
             ).order_by("created_at")
@@ -3198,11 +3217,14 @@ class CallExecutionDetailView(APIView):
                     .first()
                 )
                 scenario_ids = call_execution.test_execution.scenario_ids
-                is_replay = bool(scenario_ids) and Scenarios.objects.filter(
-                    id__in=scenario_ids,
-                    deleted=False,
-                    metadata__created_from="replay_session",
-                ).exists()
+                is_replay = (
+                    bool(scenario_ids)
+                    and Scenarios.objects.filter(
+                        id__in=scenario_ids,
+                        deleted=False,
+                        metadata__created_from="replay_session",
+                    ).exists()
+                )
                 baseline_id = resolve_baseline_id(metadata, is_replay=is_replay)
                 if baseline_id:
                     row_session_id_map[str(row_id)] = baseline_id
@@ -4964,6 +4986,7 @@ class RunTestExecutionsView(APIView):
                     "agent_definition",
                     "agent_version",
                 )
+                .prefetch_related("calls")
                 .annotate(
                     _total_calls=Count("calls"),
                     _completed_calls=Count(
@@ -5673,11 +5696,18 @@ class RunTestEvalExplanationSummaryView(APIView):
             )
 
             if test_execution.eval_explanation_summary is None:
-                run_eval_summary_task.apply_async(args=(str(test_execution.id),))
                 test_execution.eval_explanation_summary_status = (
                     EvalExplanationSummaryStatus.PENDING
                 )
                 test_execution.save(update_fields=["eval_explanation_summary_status"])
+                try:
+                    run_eval_summary_task.apply_async(args=(str(test_execution.id),))
+                except Exception as dispatch_error:
+                    logger.exception(
+                        "eval_summary_fetch_dispatch_failed",
+                        test_execution_id=str(test_execution.id),
+                        error=str(dispatch_error),
+                    )
 
             return self._gm.success_response(
                 {
@@ -5735,11 +5765,21 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
                 EvalExplanationSummaryStatus.PENDING
             )
             test_execution.save(update_fields=["eval_explanation_summary_status"])
-            run_eval_summary_task.apply_async(args=(str(test_execution.id),))
+            try:
+                run_eval_summary_task.apply_async(args=(str(test_execution.id),))
+                message = "Summary refresh initiated successfully"
+            except Exception as dispatch_error:
+                logger.exception(
+                    "eval_summary_refresh_dispatch_failed",
+                    test_execution_id=str(test_execution.id),
+                    error=str(dispatch_error),
+                )
+                message = (
+                    "Summary refresh marked pending; async dispatch failed "
+                    "and can be retried"
+                )
 
-            return self._gm.success_response(
-                {"message": "Summary refresh initiated successfully"}
-            )
+            return self._gm.success_response({"message": message})
 
         except (TestExecution.DoesNotExist, Http404):
             return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
@@ -5980,6 +6020,39 @@ def _save_eval_snapshot(call_execution):
     )
 
 
+def _restore_eval_only_rerun_state(call_execution_ids, dispatch_error_message):
+    """Restore eval outputs after eval-only rerun dispatch fails before work starts."""
+    for call_execution in CallExecution.objects.filter(id__in=call_execution_ids):
+        snapshot = (
+            CallExecutionSnapshot.objects.filter(
+                call_execution=call_execution,
+                rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+        if snapshot:
+            call_execution.eval_outputs = snapshot.eval_outputs or {}
+            call_execution.provider_call_data = snapshot.provider_call_data
+            call_execution.overall_score = snapshot.overall_score
+            call_execution.tool_outputs = snapshot.tool_outputs
+
+        call_execution.call_metadata = call_execution.call_metadata or {}
+        has_eval_outputs = bool(call_execution.eval_outputs)
+        call_execution.call_metadata["eval_started"] = has_eval_outputs
+        call_execution.call_metadata["eval_completed"] = has_eval_outputs
+        call_execution.call_metadata["rerun_dispatch_failed"] = dispatch_error_message
+        call_execution.save(
+            update_fields=[
+                "eval_outputs",
+                "provider_call_data",
+                "overall_score",
+                "tool_outputs",
+                "call_metadata",
+            ]
+        )
+
+
 def _create_rerun_call_execution(call_execution):
     """Create new CreateCallExecution for rerun"""
 
@@ -6183,6 +6256,7 @@ class CallExecutionRerunView(APIView):
             failed_reruns = []
             has_pending_calls = False
             has_pending_evals = False
+            pre_rerun_status = test_execution.status
 
             for call_execution in call_executions:
                 try:
@@ -6234,6 +6308,8 @@ class CallExecutionRerunView(APIView):
                         {"call_execution_id": str(call_execution.id), "error": str(e)}
                     )
 
+            dispatch_error_message = None
+
             # Update test execution status based on what we're rerunning
             if successful_reruns:
                 from simulate.temporal.client import rerun_call_executions
@@ -6248,28 +6324,51 @@ class CallExecutionRerunView(APIView):
                 # Handle nullable workspace_id (workspace is optional on RunTest)
                 workspace_id = test_execution.run_test.workspace_id
                 workspace_id_str = str(workspace_id) if workspace_id else ""
-
                 if rerun_type == "eval_only" and has_pending_evals:
                     # Launch or merge into RerunCoordinatorWorkflow for eval-only reruns
-                    rerun_result = rerun_call_executions(
-                        test_execution_id=str(test_execution.id),
-                        call_execution_ids=successful_reruns,
-                        org_id=str(user_organization.id),
-                        workspace_id=workspace_id_str,
-                        eval_only=True,
-                        active_workflow_id=active_workflow_id,
-                    )
-
-                    # Update status to EVALUATING since Temporal is executing evals
-                    test_execution.status = TestExecution.ExecutionStatus.EVALUATING
-                    test_execution.picked_up_by_executor = True
+                    try:
+                        rerun_result = rerun_call_executions(
+                            test_execution_id=str(test_execution.id),
+                            call_execution_ids=successful_reruns,
+                            org_id=str(user_organization.id),
+                            workspace_id=workspace_id_str,
+                            eval_only=True,
+                            active_workflow_id=active_workflow_id,
+                        )
+                    except Exception as dispatch_error:
+                        dispatch_error_message = str(dispatch_error)
+                        rerun_result = {"merged": False, "workflow_id": None}
+                        logger.exception(
+                            "call_execution_rerun_dispatch_failed",
+                            test_execution_id=str(test_execution.id),
+                            call_execution_count=len(successful_reruns),
+                            rerun_type=rerun_type,
+                            error=dispatch_error_message,
+                        )
 
                     # Store workflow info in execution_metadata
                     if not test_execution.execution_metadata:
                         test_execution.execution_metadata = {}
 
+                    if dispatch_error_message:
+                        _restore_eval_only_rerun_state(
+                            successful_reruns, dispatch_error_message
+                        )
+                        test_execution.status = pre_rerun_status
+                        test_execution.picked_up_by_executor = False
+                        test_execution.execution_metadata["rerun_dispatch_failed"] = (
+                            dispatch_error_message
+                        )
+                    else:
+                        # Update status to EVALUATING since Temporal is executing evals
+                        test_execution.status = TestExecution.ExecutionStatus.EVALUATING
+                        test_execution.picked_up_by_executor = True
+                        test_execution.execution_metadata.pop(
+                            "rerun_dispatch_failed", None
+                        )
+
                     # Store active workflow ID for merge strategy (only if new workflow started)
-                    if not rerun_result.get("merged"):
+                    if not dispatch_error_message and not rerun_result.get("merged"):
                         test_execution.execution_metadata[
                             "active_rerun_workflow_id"
                         ] = rerun_result.get("workflow_id")
@@ -6284,25 +6383,60 @@ class CallExecutionRerunView(APIView):
 
                 elif rerun_type == "call_and_eval" and has_pending_calls:
                     # Launch or merge into RerunCoordinatorWorkflow for call reruns
-                    rerun_result = rerun_call_executions(
-                        test_execution_id=str(test_execution.id),
-                        call_execution_ids=successful_reruns,
-                        org_id=str(user_organization.id),
-                        workspace_id=workspace_id_str,
-                        eval_only=False,
-                        active_workflow_id=active_workflow_id,
-                    )
-
-                    # Update status to RUNNING since Temporal is executing
-                    test_execution.status = TestExecution.ExecutionStatus.RUNNING
-                    test_execution.picked_up_by_executor = True
+                    try:
+                        rerun_result = rerun_call_executions(
+                            test_execution_id=str(test_execution.id),
+                            call_execution_ids=successful_reruns,
+                            org_id=str(user_organization.id),
+                            workspace_id=workspace_id_str,
+                            eval_only=False,
+                            active_workflow_id=active_workflow_id,
+                        )
+                    except Exception as dispatch_error:
+                        dispatch_error_message = str(dispatch_error)
+                        rerun_result = {"merged": False, "workflow_id": None}
+                        logger.exception(
+                            "call_execution_rerun_dispatch_failed",
+                            test_execution_id=str(test_execution.id),
+                            call_execution_count=len(successful_reruns),
+                            rerun_type=rerun_type,
+                            error=dispatch_error_message,
+                        )
 
                     # Store workflow info in execution_metadata
                     if not test_execution.execution_metadata:
                         test_execution.execution_metadata = {}
 
+                    if dispatch_error_message:
+                        now = timezone.now()
+                        CreateCallExecution.objects.filter(
+                            call_execution_id__in=successful_reruns
+                        ).delete()
+                        CallExecution.objects.filter(id__in=successful_reruns).update(
+                            status=CallExecution.CallStatus.FAILED,
+                            completed_at=now,
+                            ended_at=now,
+                            ended_reason=(
+                                "Rerun dispatch failed: "
+                                f"{dispatch_error_message[:1000]}"
+                            ),
+                            updated_at=now,
+                        )
+                        test_execution.status = TestExecution.ExecutionStatus.FAILED
+                        test_execution.picked_up_by_executor = False
+                        test_execution.execution_metadata["rerun_dispatch_failed"] = (
+                            dispatch_error_message
+                        )
+                    else:
+                        # Update status to RUNNING since Temporal is executing
+                        test_execution.status = TestExecution.ExecutionStatus.RUNNING
+                        test_execution.picked_up_by_executor = True
+                        test_execution.execution_metadata.pop(
+                            "rerun_dispatch_failed", None
+                        )
+
                     # Store active workflow ID for merge strategy (only if new workflow started)
-                    if not rerun_result.get("merged"):
+                    if not dispatch_error_message and not rerun_result.get("merged"):
                         test_execution.execution_metadata[
                             "active_rerun_workflow_id"
                         ] = rerun_result.get("workflow_id")
@@ -6315,15 +6449,35 @@ class CallExecutionRerunView(APIView):
                         f"for test execution {test_execution.id}"
                     )
 
+            response_successful_reruns = successful_reruns
+            response_failed_reruns = failed_reruns
+            if dispatch_error_message:
+                response_successful_reruns = []
+                response_failed_reruns = [
+                    *failed_reruns,
+                    *[
+                        {
+                            "call_execution_id": call_execution_id,
+                            "error": f"Async dispatch failed: {dispatch_error_message}",
+                        }
+                        for call_execution_id in successful_reruns
+                    ],
+                ]
+
             response_data = {
-                "message": f"Bulk call execution rerun initiated successfully ({rerun_type})",
+                "message": (
+                    f"Bulk call execution rerun prepared; async dispatch failed and can be retried ({rerun_type})"
+                    if dispatch_error_message
+                    else f"Bulk call execution rerun prepared and initiated successfully ({rerun_type})"
+                ),
                 "test_execution_id": str(test_execution_id),
                 "rerun_type": rerun_type,
                 "total_processed": len(successful_reruns) + len(failed_reruns),
-                "successful_reruns": successful_reruns,
-                "failed_reruns": failed_reruns,
-                "success_count": len(successful_reruns),
-                "failure_count": len(failed_reruns),
+                "successful_reruns": response_successful_reruns,
+                "failed_reruns": response_failed_reruns,
+                "success_count": len(response_successful_reruns),
+                "failure_count": len(response_failed_reruns),
+                "dispatch_error": dispatch_error_message,
             }
             return Response(
                 RerunCallsResponseSerializer(response_data).data,
@@ -6663,8 +6817,10 @@ class TestExecutionRerunView(APIView):
             results = []
             overall_success_count = 0
             overall_failure_count = 0
+            dispatch_error_count = 0
 
             for test_execution in test_executions:
+                pre_rerun_status = test_execution.status
                 call_executions = CallExecution.objects.filter(
                     test_execution=test_execution
                 )
@@ -6689,6 +6845,7 @@ class TestExecutionRerunView(APIView):
                         call_executions, rerun_type
                     )
                 )
+                dispatch_error_message = None
 
                 # Start Temporal RerunCoordinatorWorkflow for this test execution
                 if successful_reruns:
@@ -6702,29 +6859,79 @@ class TestExecutionRerunView(APIView):
                     workspace_id_str = str(workspace_id) if workspace_id else ""
                     eval_only = rerun_type == "eval_only"
 
-                    rerun_result = rerun_call_executions(
-                        test_execution_id=str(test_execution.id),
-                        call_execution_ids=successful_reruns,
-                        org_id=str(user_organization.id),
-                        workspace_id=workspace_id_str,
-                        eval_only=eval_only,
-                        active_workflow_id=active_workflow_id,
-                    )
+                    dispatch_error_message = None
+                    try:
+                        rerun_result = rerun_call_executions(
+                            test_execution_id=str(test_execution.id),
+                            call_execution_ids=successful_reruns,
+                            org_id=str(user_organization.id),
+                            workspace_id=workspace_id_str,
+                            eval_only=eval_only,
+                            active_workflow_id=active_workflow_id,
+                        )
+                    except Exception as dispatch_error:
+                        dispatch_error_message = str(dispatch_error)
+                        dispatch_error_count += 1
+                        rerun_result = {"merged": False, "workflow_id": None}
+                        logger.exception(
+                            "test_execution_rerun_dispatch_failed",
+                            test_execution_id=str(test_execution.id),
+                            call_execution_count=len(successful_reruns),
+                            rerun_type=rerun_type,
+                            error=dispatch_error_message,
+                        )
 
-                    # Update test execution status
-                    if eval_only:
-                        test_execution.status = TestExecution.ExecutionStatus.EVALUATING
+                    if dispatch_error_message:
+                        if eval_only:
+                            _restore_eval_only_rerun_state(
+                                successful_reruns, dispatch_error_message
+                            )
+                            test_execution.status = pre_rerun_status
+                        else:
+                            now = timezone.now()
+                            CreateCallExecution.objects.filter(
+                                call_execution_id__in=successful_reruns
+                            ).delete()
+                            CallExecution.objects.filter(
+                                id__in=successful_reruns
+                            ).update(
+                                status=CallExecution.CallStatus.FAILED,
+                                completed_at=now,
+                                ended_at=now,
+                                ended_reason=(
+                                    "Rerun dispatch failed: "
+                                    f"{dispatch_error_message[:1000]}"
+                                ),
+                                updated_at=now,
+                            )
+                            test_execution.status = TestExecution.ExecutionStatus.FAILED
+                        test_execution.picked_up_by_executor = False
                     else:
-                        test_execution.status = TestExecution.ExecutionStatus.RUNNING
-
-                    test_execution.picked_up_by_executor = True
+                        # Update status only after workflow dispatch starts.
+                        if eval_only:
+                            test_execution.status = (
+                                TestExecution.ExecutionStatus.EVALUATING
+                            )
+                        else:
+                            test_execution.status = (
+                                TestExecution.ExecutionStatus.RUNNING
+                            )
+                        test_execution.picked_up_by_executor = True
 
                     if not test_execution.execution_metadata:
                         test_execution.execution_metadata = {}
-                    if not rerun_result.get("merged"):
+                    if not dispatch_error_message:
+                        test_execution.execution_metadata.pop(
+                            "rerun_dispatch_failed", None
+                        )
+                    if not dispatch_error_message and not rerun_result.get("merged"):
                         test_execution.execution_metadata[
                             "active_rerun_workflow_id"
                         ] = rerun_result.get("workflow_id")
+                    if dispatch_error_message:
+                        test_execution.execution_metadata["rerun_dispatch_failed"] = (
+                            dispatch_error_message
+                        )
 
                     test_execution.save()
 
@@ -6735,22 +6942,44 @@ class TestExecutionRerunView(APIView):
                         f"{test_execution.id} ({len(successful_reruns)} calls)"
                     )
 
-                overall_success_count += len(successful_reruns)
-                overall_failure_count += len(failed_reruns)
+                response_successful_reruns = successful_reruns
+                response_failed_reruns = failed_reruns
+                if dispatch_error_message:
+                    response_successful_reruns = []
+                    response_failed_reruns = [
+                        *failed_reruns,
+                        *[
+                            {
+                                "call_execution_id": call_execution_id,
+                                "error": (
+                                    f"Async dispatch failed: {dispatch_error_message}"
+                                ),
+                            }
+                            for call_execution_id in successful_reruns
+                        ],
+                    ]
+
+                overall_success_count += len(response_successful_reruns)
+                overall_failure_count += len(response_failed_reruns)
 
                 results.append(
                     {
                         "test_execution_id": str(test_execution.id),
-                        "success_count": len(successful_reruns),
-                        "failure_count": len(failed_reruns),
-                        "successful_reruns": successful_reruns,
-                        "failed_reruns": failed_reruns,
+                        "success_count": len(response_successful_reruns),
+                        "failure_count": len(response_failed_reruns),
+                        "successful_reruns": response_successful_reruns,
+                        "failed_reruns": response_failed_reruns,
+                        "dispatch_error": dispatch_error_message,
                     }
                 )
 
             return Response(
                 {
-                    "message": f"Bulk test execution rerun initiated successfully ({rerun_type})",
+                    "message": (
+                        f"Bulk test execution rerun prepared; {dispatch_error_count} async dispatches failed and can be retried ({rerun_type})"
+                        if dispatch_error_count
+                        else f"Bulk test execution rerun prepared and initiated successfully ({rerun_type})"
+                    ),
                     "run_test_id": str(run_test_id),
                     "rerun_type": rerun_type,
                     "total_test_executions": len(results),
@@ -6887,6 +7116,7 @@ class RunNewEvalsOnTestExecutionView(APIView):
             call_execution_ids = []
             test_execution_count = 0
             updated_test_executions = []
+            previous_test_execution_statuses = {}
             test_executions_to_update = []
 
             # Precompute the eval-config columns once; they are identical
@@ -6927,6 +7157,9 @@ class RunNewEvalsOnTestExecutionView(APIView):
 
             for test_execution in test_executions.iterator(chunk_size=BATCH_SIZE):
                 test_execution_count += 1
+                previous_test_execution_statuses[str(test_execution.id)] = (
+                    test_execution.status
+                )
 
                 # Update test execution status to EVALUATING
                 test_execution.status = TestExecution.ExecutionStatus.EVALUATING
@@ -6934,6 +7167,7 @@ class RunNewEvalsOnTestExecutionView(APIView):
                 # Update column_order to include new eval configs
                 if not test_execution.execution_metadata:
                     test_execution.execution_metadata = {}
+                test_execution.execution_metadata.pop("eval_dispatch_failed", None)
 
                 column_order = test_execution.execution_metadata.get("column_order", [])
                 if not column_order:
@@ -7014,23 +7248,71 @@ class RunNewEvalsOnTestExecutionView(APIView):
                     f"{len(call_executions_list)} call executions with {len(eval_configs)} eval configs"
                 )
 
-            # Trigger the Celery task to run evaluations asynchronously
-            task = run_new_evals_on_call_executions_task.apply_async(
-                args=(call_execution_ids, eval_config_ids_str),
-            )
-            task_id = task.id
+            # Trigger the async task to run evaluations. If the local async
+            # backend is unavailable, keep the persisted pending state and let
+            # the caller retry instead of failing the API request after mutation.
+            try:
+                task = run_new_evals_on_call_executions_task.apply_async(
+                    args=(call_execution_ids, eval_config_ids_str),
+                )
+                task_id = task.id
+                message = (
+                    "New evaluations dispatched successfully. "
+                    "Individual tasks will run in parallel."
+                )
 
-            logger.info(
-                f"Triggered new evaluations task {task_id} for {len(call_execution_ids)} call executions "
-                f"across {test_execution_count} test executions with {len(eval_config_ids)} eval configs. "
-                f"Updated {len(updated_test_executions)} test executions to EVALUATING status. "
-                f"Individual tasks will be spawned for parallel processing."
-            )
+                logger.info(
+                    f"Triggered new evaluations task {task_id} for {len(call_execution_ids)} call executions "
+                    f"across {test_execution_count} test executions with {len(eval_config_ids)} eval configs. "
+                    f"Updated {len(updated_test_executions)} test executions to EVALUATING status. "
+                    f"Individual tasks will be spawned for parallel processing."
+                )
+            except Exception as dispatch_error:
+                for call_execution in call_executions_list:
+                    call_execution.call_metadata = call_execution.call_metadata or {}
+                    call_execution.call_metadata["eval_started"] = False
+                    call_execution.call_metadata["eval_dispatch_failed"] = str(
+                        dispatch_error
+                    )
+                if call_executions_list:
+                    CallExecution.objects.bulk_update(
+                        call_executions_list, ["call_metadata"]
+                    )
+                failed_test_executions = list(
+                    TestExecution.objects.filter(id__in=updated_test_executions)
+                )
+                for test_execution in failed_test_executions:
+                    test_execution.status = previous_test_execution_statuses.get(
+                        str(test_execution.id), test_execution.status
+                    )
+                    test_execution.picked_up_by_executor = False
+                    test_execution.execution_metadata = (
+                        test_execution.execution_metadata or {}
+                    )
+                    test_execution.execution_metadata["eval_dispatch_failed"] = str(
+                        dispatch_error
+                    )
+                if failed_test_executions:
+                    TestExecution.objects.bulk_update(
+                        failed_test_executions,
+                        ["status", "picked_up_by_executor", "execution_metadata"],
+                    )
+                message = (
+                    "New evaluations marked pending; async dispatch failed "
+                    "and can be retried."
+                )
+                logger.exception(
+                    "run_new_evals_dispatch_failed",
+                    run_test_id=str(run_test_id),
+                    call_execution_count=len(call_execution_ids),
+                    eval_config_count=len(eval_config_ids),
+                    error=str(dispatch_error),
+                )
 
             return Response(
                 RunNewEvalsResponseSerializer(
                     {
-                        "message": "New evaluations dispatched successfully. Individual tasks will run in parallel.",
+                        "message": message,
                         "run_test_id": str(run_test_id),
                         "call_execution_count": len(call_execution_ids),
                     }
