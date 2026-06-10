@@ -1,0 +1,59 @@
+# Phase 2A Packet D — tracer remainder + dashboard query engine.
+# NET-NEW tools only (same-name conversions stay in baseline.txt:
+# pause_eval_task, get_eval_task_logs).
+#
+# Deferred (do NOT register here):
+#   EvalTaskView.mark_eval_tasks_deleted — destructive bulk delete -> Phase 3A.
+# Skips (adjudicated, see bridge/_tracing.py module docstring):
+#   TraceView/ObservationSpanView bulk_create + create_otel_span (ingestion),
+#   retrieve_loading / list_spans_observe / get_trace_id_by_index_observe
+#   (UI-internal variants), TraceAnnotationView CRUD (handlers return 405).
+#
+# --- DashboardViewSet / DashboardWidgetViewSet (bridge/_dashboards.py) ---
+execute_dashboard_query
+list_dashboard_metrics
+get_dashboard_filter_values
+list_dashboard_simulation_agents
+execute_widget_query
+preview_widget_query
+reorder_dashboard_widgets
+duplicate_dashboard_widget
+# --- TraceView @actions (bridge/_tracing.py) ---
+update_trace_tags
+get_trace_properties
+get_trace_eval_names
+get_trace_graph_methods
+compare_traces
+get_trace_id_by_index
+list_session_traces
+list_voice_calls
+get_voice_call_detail
+get_agent_graph
+# --- ObservationSpanView @actions ---
+list_root_spans
+submit_span_feedback
+update_span_tags
+list_span_graph_methods
+get_span_attributes_list
+get_span_eval_attributes
+get_observation_span_fields
+get_span_evaluation_details
+get_spans_export_data
+add_span_annotations
+delete_span_annotation_label
+# --- EvalTaskView @actions (net-new only) ---
+unpause_eval_task
+list_eval_tasks_with_project_name
+get_eval_details
+# --- Span attribute APIViews ---
+list_span_attribute_keys
+list_span_attribute_values
+get_span_attribute_detail
+# --- Annotations (TraceAnnotationView action / BulkAnnotationView / labels) ---
+get_annotation_values
+submit_bulk_annotations
+get_annotation_labels
+# --- ProjectView @actions (inline decorator, tracer/views/project.py) ---
+get_project_user_metrics
+get_project_graph_data
+get_project_system_metrics

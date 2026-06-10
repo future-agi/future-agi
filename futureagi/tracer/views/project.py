@@ -102,6 +102,57 @@ logger = structlog.get_logger(__name__)
             "serializer": "ProjectNameUpdateSerializer",
             "method": "POST",
         },
+        # --- Phase 2A Packet D additions -------------------------------
+        "get_graph_data": {
+            "name": "get_project_graph_data",
+            "description": (
+                "Fetch ALL system-metric time series for a project in one "
+                "call (latency, cost, tokens, ... bucketed by interval) — "
+                "the project overview graph. For a single chosen metric "
+                "use `get_trace_graph_methods` instead."
+            ),
+            "query_params": {
+                "project_id": {
+                    "type": str,
+                    "required": True,
+                    "description": (
+                        "UUID of the project. **How to get it:** call "
+                        "`list_trace_projects`."
+                    ),
+                },
+                "interval": {
+                    "type": str,
+                    "required": False,
+                    "description": (
+                        "Bucket size: hour (default), day, week, or month."
+                    ),
+                },
+                "filters": {
+                    "type": str,
+                    "required": False,
+                    "description": (
+                        "Optional JSON-encoded filter list (the same shape "
+                        "the Observe UI sends); omit for no filtering."
+                    ),
+                },
+            },
+        },
+        "get_user_metrics": {
+            "name": "get_project_user_metrics",
+            "description": (
+                "Get per-end-user usage metrics for one end user of an "
+                "observe project: active days, cost, tokens, LLM calls, "
+                "session/latency averages, errors and guardrail triggers."
+            ),
+        },
+        "fetch_system_metrics": {
+            "name": "get_project_system_metrics",
+            "description": (
+                "List the system metric names available for project "
+                "graphing (latency, cost, tokens). Takes no required "
+                "arguments."
+            ),
+        },
     },
 )
 class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):

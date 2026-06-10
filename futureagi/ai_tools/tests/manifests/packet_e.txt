@@ -1,0 +1,61 @@
+# Phase 2A Packet E — evaluations (cluster 5) + annotation-queue annotator loop
+# (cluster 8 part) + model_hub-side optimization (cluster 6 part).
+# NET-NEW tools only. Same-name HW conversions stay in baseline.txt:
+#   evaluations (13): list/create/get/update/delete/duplicate/test_eval_template,
+#     create/execute_composite_eval, get_eval_logs, get_eval_log_detail,
+#     get_eval_playground, get_eval_code_snippet
+#   annotation queues (3): add_queue_items, get_queue_progress,
+#     submit_queue_annotations
+#   optimization (7): get_optimization_steps/graph/trial,
+#     get_trial_prompt/scenarios/evaluations, stop_optimization_run
+# Deferred (NOT registered): GroundTruthUploadView (multipart gap),
+#   EvalTemplateBulkDeleteView + hard_delete + bulk_remove (3A destructives),
+#   §6.3 ORM-direct eval tools (compare_evaluations/get_evaluation/
+#   list_evaluations/delete_eval_logs/evaluate_with_agent — endpoint-first),
+#   discussion-thread actions (skip), eval_group family (keepers).
+add_queue_label
+bulk_review_queue_items
+compare_eval_template_versions
+complete_queue_item
+create_eval_template_version
+delete_ground_truth
+evaluate_automation_rule
+execute_composite_eval_adhoc
+export_queue_annotations
+export_queue_to_dataset
+get_composite_eval
+get_error_localization_results
+get_eval_metrics
+get_eval_template_charts
+get_eval_template_name
+get_eval_templates_catalog
+get_eval_usage_stats
+get_ground_truth_config
+get_ground_truth_data
+get_ground_truth_status
+get_next_queue_item
+get_or_create_default_queue
+get_queue_agreement
+get_queue_analytics
+get_queue_export_fields
+get_queue_for_source
+get_queue_item_annotate_detail
+get_trace_evals
+import_queue_annotations
+list_eval_feedback
+list_eval_template_versions
+list_ground_truths
+list_queue_item_annotations
+preview_automation_rule
+release_queue_item_reservation
+remove_queue_label
+restore_annotation_queue
+restore_eval_template_version
+review_queue_item
+set_default_eval_template_version
+skip_queue_item
+submit_eval_playground_feedback
+trigger_ground_truth_embedding
+update_annotation_queue_status
+update_ground_truth_mapping
+update_ground_truth_role_mapping

@@ -35,18 +35,24 @@ results.append(
     )
 )
 
-# ---- TH-5399: run_test_id surfaced in outputs ----
-import inspect
-
-from ai_tools.tools.agents.get_test_execution import GetTestExecutionTool
-from ai_tools.tools.agents.list_test_executions import ListTestExecutionsTool
-from ai_tools.tools.simulation.get_test_execution_analytics import (
-    GetTestExecutionAnalyticsTool,
+# ---- TH-5399: run_test_id reachable in the simulate chain ----
+# (Phase 2A Packet C converted the HW tools to DRF bridges: the legacy
+# source-inspection checks are replaced by schema checks — the chain is
+# list_run_tests -> list_test_executions(run_test_id) -> get_test_execution.)
+results.append(
+    check("TH-5399 list_run_tests registered", registry.get("list_run_tests") is not None)
 )
-
-for cls in (GetTestExecutionTool, ListTestExecutionsTool, GetTestExecutionAnalyticsTool):
-    src = inspect.getsource(cls)
-    results.append(check(f"TH-5399 run_test_id in {cls.__name__}", "run_test_id" in src))
+for tname in ("list_test_executions",):
+    t = registry.get(tname)
+    props = t.input_schema["properties"] if t else {}
+    results.append(check(f"TH-5399 run_test_id input on {tname}", "run_test_id" in props))
+results.append(
+    check(
+        "TH-5399 get_test_execution keyed by test_execution_id",
+        "test_execution_id"
+        in (registry.get("get_test_execution").input_schema["properties"]),
+    )
+)
 
 # ---- TH-5403: session_id resolves gen_ai.conversation.id ----
 from tracer.utils.semantic_conventions import get_attribute

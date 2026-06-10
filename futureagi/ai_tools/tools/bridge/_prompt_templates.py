@@ -208,12 +208,11 @@ expose_to_mcp(
             ),
             "query_params": {
                 "versions": {
-                    "type": str,
+                    "type": list,
                     "required": True,
                     "description": (
-                        "JSON array string of version labels, e.g. '[\"v1\"]' "
-                        "or '[\"v1\", \"v2\"]' (set compare=true for more "
-                        "than one)."
+                        "Version labels to fetch, e.g. ['v1'] or "
+                        "['v1', 'v2'] (set compare=true for more than one)."
                     ),
                 },
                 "compare": {

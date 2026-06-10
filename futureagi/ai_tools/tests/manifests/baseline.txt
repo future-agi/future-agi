@@ -3,19 +3,27 @@
 # activate_agent_version, which landed after that dump; live count 395).
 # The registry must equal the union of manifests/*.txt — see
 # test_registry_manifest.py::test_registry_equals_manifest_union.
+# Packet D retirements (2026-06-10): 16 hand-written tracing tools were
+# REMOVED from this baseline because their replacement bridges register
+# under different names (see ai_tools/tools/__init__.py comment block):
+# add/remove/list_trace_tags, get_span_tree, read_trace_span,
+# get_trace_span_children, get_trace_spans_by_type, search_trace_spans,
+# search_traces, explore_trace_legacy, get_trace_timeline,
+# get_trace_analytics, check_eval_config_exists,
+# get_project_eval_attributes, get_eval_template_by_name,
+# list_trace_scores. Same-name conversions (pause_eval_task,
+# get_eval_task_logs) stay here, now served by bridge/_tracing.py.
 activate_agent_version
 add_columns
 add_dataset_rows
 add_queue_items
 add_rows_from_existing
-add_trace_tags
 add_workspace_member
 analyze_error_cluster
 apply_eval_group_to_dataset
 ask_docs
 assign_queue_items
 cancel_test_execution
-check_eval_config_exists
 clone_dataset
 commit_prompt_version
 compare_agent_versions
@@ -79,7 +87,7 @@ create_trace_project
 create_tts_voice
 deactivate_user
 delete_agent
-delete_agent_definition
+# delete_agent_definition — RETIRED in Packet C (duplicate of bridged delete_agent)
 delete_agent_prompt_optimiser_run
 delete_agentcc_api_key
 delete_agentcc_blocklist
@@ -145,7 +153,6 @@ execute_composite_eval
 execute_prompt_simulation
 execute_run_test
 explore_trace
-explore_trace_legacy
 export_test_execution_csv
 export_traces_csv
 get_agent
@@ -195,7 +202,6 @@ get_eval_task
 get_eval_task_logs
 get_eval_task_results
 get_eval_template
-get_eval_template_by_name
 get_evaluation
 get_experiment_comparison
 get_experiment_results
@@ -208,7 +214,6 @@ get_optimization_graph
 get_optimization_steps
 get_optimization_trial
 get_organization
-get_project_eval_attributes
 get_project_version
 get_prompt_eval_configs
 get_prompt_execution_results
@@ -227,18 +232,13 @@ get_secret
 get_session
 get_shared_link
 get_span
-get_span_tree
 get_test_execution
 get_test_execution_analytics
 get_test_execution_status
 get_tools
 get_trace
-get_trace_analytics
 get_trace_error_analysis
 get_trace_project
-get_trace_span_children
-get_trace_spans_by_type
-get_trace_timeline
 get_trial_evaluations
 get_trial_prompt
 get_trial_scenarios
@@ -310,8 +310,6 @@ list_spans
 list_test_executions
 list_tools
 list_trace_projects
-list_trace_scores
-list_trace_tags
 list_traces
 list_tts_voices
 list_users
@@ -321,8 +319,6 @@ merge_datasets
 pause_eval_task
 read_schema
 read_taxonomy
-read_trace_span
-remove_trace_tags
 rename_trace_project
 render_widget
 rerun_call_execution
@@ -336,8 +332,6 @@ search_docs
 search_ground_truth
 search_knowledge_base
 search_tools
-search_trace_spans
-search_traces
 stop_optimization_run
 submit_annotation
 submit_queue_annotations

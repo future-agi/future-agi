@@ -309,17 +309,35 @@ def _build_drf_request(
 
     factory = APIRequestFactory()
 
+    import json as _json
+
     # Params routed with "in": "query" on a write method land on the query
     # string (APIRequestFactory honors query strings embedded in the path),
     # so handlers that read request.query_params on POST/PUT still work.
+    # Non-scalar values are JSON-encoded — urlencode would otherwise emit
+    # Python reprs / iterate dict keys, which no handler can parse.
     path = "/bridge/"
     if extra_query:
         from urllib.parse import urlencode
 
-        path = "/bridge/?" + urlencode(extra_query)
+        path = "/bridge/?" + urlencode(
+            {
+                k: _json.dumps(v) if isinstance(v, (dict, list)) else v
+                for k, v in extra_query.items()
+            }
+        )
 
     if method.upper() in ("GET", "HEAD", "OPTIONS"):
         merged_query = {**query_params, **(extra_query or {})}
+        # dict values become JSON strings (handlers json.loads them, e.g.
+        # the observe `filters={"project_id": ...}` query params). LISTS are
+        # deliberately left alone: Django's test factory urlencodes them
+        # doseq-style (?k=a&k=b), which `request.query_params.getlist`-style
+        # handlers (e.g. root_spans' trace_ids) depend on.
+        merged_query = {
+            k: _json.dumps(v) if isinstance(v, dict) else v
+            for k, v in merged_query.items()
+        }
         django_request = factory.get("/bridge/", data=merged_query)
     elif method.upper() == "DELETE":
         django_request = factory.delete(path, data=data, format="json")

@@ -50,3 +50,105 @@ expose_to_mcp(
         }
     },
 )(PersonaViewSet)
+
+# ===========================================================================
+# Phase 2A Packet C — persona CRUD writes + @actions (cluster 8 part).
+# PersonaViewSet has NO `serializer_class` attribute (only
+# get_serializer_class), so create/update declare their request serializers
+# explicitly; @action method/detail auto-derive from the DRF decorator (A1).
+# All eight tools are NET-NEW (only list_personas existed before).
+# ===========================================================================
+
+expose_to_mcp(
+    category="simulation",
+    tools={
+        "retrieve": {
+            "name": "get_persona",
+            "id_source": "list_personas",
+            "entity": "persona",
+            "description": (
+                "Get one persona's full profile by id — demographics, "
+                "personality, communication style, scenario keywords. Get "
+                "the id from list_personas."
+            ),
+        },
+        "create": {
+            "name": "create_persona",
+            "serializer": "PersonaCreateSerializer",
+            "entity": "persona",
+            "description": (
+                "Create a custom workspace-level persona (the simulated "
+                "'customer' profile used to drive simulation calls). name "
+                "and description are required; attribute fields (gender, "
+                "age_group, location, profession, personality, ...) accept "
+                "lists of values. Use get_persona_field_options to discover "
+                "the valid choices."
+            ),
+        },
+        "update": {
+            "name": "update_persona",
+            "serializer": "PersonaCreateSerializer",
+            "id_source": "list_personas",
+            "entity": "persona",
+            "description": (
+                "Update a workspace-level persona (system/prebuilt personas "
+                "cannot be modified). Provide the persona id (from "
+                "list_personas with type='custom') and the fields to change."
+            ),
+        },
+        "destroy": {
+            "name": "delete_persona",
+            "id_source": "list_personas",
+            "entity": "persona",
+            "description": (
+                "Delete a workspace-level persona by id (system/prebuilt "
+                "personas cannot be deleted). Get the id from list_personas "
+                "with type='custom'."
+            ),
+        },
+    },
+)(PersonaViewSet)
+
+# Persona @actions — method/detail derived from the @action decorators.
+expose_to_mcp(
+    category="simulation",
+    tools={
+        "system_personas": {
+            "name": "list_system_personas",
+            "entity": "persona",
+            "description": (
+                "List only the system-level (Future AGI prebuilt) personas. "
+                "No pagination — returns the full set."
+            ),
+        },
+        "workspace_personas": {
+            "name": "list_workspace_personas",
+            "entity": "persona",
+            "description": (
+                "List only the custom personas created in your workspace. "
+                "No pagination — returns the full set."
+            ),
+        },
+        "field_options": {
+            "name": "get_persona_field_options",
+            "entity": "persona",
+            "description": (
+                "Get the valid choices for persona attribute fields (gender, "
+                "age_group, profession, personality, communication_style, "
+                "accent, ...) — call before create_persona / update_persona."
+            ),
+        },
+        "duplicate": {
+            "name": "duplicate_persona",
+            "pk_field": "persona_id",
+            "pk_kwarg": "id",
+            "id_source": "list_personas",
+            "entity": "persona",
+            "description": (
+                "Duplicate an existing persona (system or workspace) into a "
+                "new workspace-level persona. Provide persona_id (from "
+                "list_personas) and the new unique name."
+            ),
+        },
+    },
+)(PersonaViewSet)

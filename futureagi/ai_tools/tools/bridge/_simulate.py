@@ -65,6 +65,7 @@ from simulate.views.run_test import (
     TestExecutionOptimiserAnalysisView,
     TestExecutionRerunView,
     TestExecutionStatusView,
+    UpdateEvalConfigView,
 )
 from simulate.views.scenarios import (
     AddScenarioColumnsView,

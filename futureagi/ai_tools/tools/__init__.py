@@ -8,21 +8,11 @@
 # WorkspaceListAPIView / UserListAPIView in accounts/views/workspace_management.py
 import accounts.views.workspace_management  # noqa: F401
 import tracer.views.project  # noqa: F401  — registers tracing_* bridge tools
-from ai_tools.tools.agents import (
-    get_test_execution,  # noqa: F401
-    list_scenarios,  # noqa: F401
-    list_test_executions,  # noqa: F401
-)
 
 # get_call_execution -> DRF bridge on CallExecutionDetailView (see _simulate.py)
 
 # list_agents, list_agent_versions -> DRF bridge (see _agents.py)
 # Annotation Queue tools (8)
-from ai_tools.tools.annotation_queues import (
-    add_queue_items,  # noqa: F401
-    get_queue_progress,  # noqa: F401
-    submit_queue_annotations,  # noqa: F401
-)
 
 # list/get/create/update/delete_annotation_queue -> DRF bridge (see _annotation_queues.py)
 # Annotation tools — all migrated to DRF bridge (see _annotations.py)
@@ -91,54 +81,30 @@ from ai_tools.tools.docs import (
 from ai_tools.tools.evaluations import (
     apply_eval_group_to_dataset,  # noqa: F401
     compare_evaluations,  # noqa: F401
-    create_composite_eval,  # noqa: F401
     create_eval_group,  # noqa: F401  — hand-written (EvalGroupView not clean CRUD)
-    create_eval_template,  # noqa: F401  — eval creation from Falcon (restored)
     delete_eval_group,  # noqa: F401
     delete_eval_logs,  # noqa: F401
-    delete_eval_template,  # noqa: F401  — eval creation from Falcon (restored)
-    duplicate_eval_template,  # noqa: F401
     edit_eval_group_templates,  # noqa: F401
     evaluate_with_agent,  # noqa: F401
-    execute_composite_eval,  # noqa: F401
-    get_eval_code_snippet,  # noqa: F401
     get_eval_group,  # noqa: F401
-    get_eval_log_detail,  # noqa: F401
-    get_eval_logs,  # noqa: F401
-    get_eval_playground,  # noqa: F401
-    get_eval_template,  # noqa: F401
     get_evaluation,  # noqa: F401
     list_eval_groups,  # noqa: F401
-    list_eval_templates,  # noqa: F401
     list_evaluations,  # noqa: F401
-    test_eval_template,  # noqa: F401
     update_eval_group,  # noqa: F401
-    update_eval_template,  # noqa: F401  — eval creation from Falcon (restored)
 )
 
-# Experiment tools (11)
-from ai_tools.tools.experiments import (
-    compare_experiments,  # noqa: F401
-    create_experiment,  # noqa: F401
-    delete_experiment,  # noqa: F401
-    get_experiment_comparison,  # noqa: F401
-    get_experiment_results,  # noqa: F401
-    get_experiment_stats,  # noqa: F401
-    list_experiments,  # noqa: F401
-    rerun_experiment,  # noqa: F401
-)
+# Experiment tools — all migrated to DRF bridge (see bridge/_experiments.py):
+# list/create/delete/rerun_experiment, get_experiment_stats/results/comparison,
+# compare_experiments + the net-new V2 lifecycle/feedback tools.
 
-# Optimization tools (10)
+# Optimization tools (2) — get_optimization_steps/graph/trial,
+# get_trial_prompt/scenarios/evaluations, stop_optimization_run -> DRF bridge
+# on DatasetOptimizationViewSet @actions (see bridge/_optimization.py).
+# create/list stay hand-written: the ViewSet's create/list are already bridged
+# under create_dataset_optimization / list_dataset_optimizations.
 from ai_tools.tools.optimization import (
     create_optimization_run,  # noqa: F401
-    get_optimization_graph,  # noqa: F401
-    get_optimization_steps,  # noqa: F401
-    get_optimization_trial,  # noqa: F401
-    get_trial_evaluations,  # noqa: F401
-    get_trial_prompt,  # noqa: F401
-    get_trial_scenarios,  # noqa: F401
     list_optimization_runs,  # noqa: F401
-    stop_optimization_run,  # noqa: F401
 )
 
 # Prompt Workbench tools (26)
@@ -146,48 +112,20 @@ from ai_tools.tools.optimization import (
 # delete_prompt_template — replaced by DRF bridge on PromptTemplateViewSet
 # get_prompt_template — replaced by DRF bridge on PromptTemplateViewSet
 from ai_tools.tools.prompts import (
-    commit_prompt_version,  # noqa: F401
-    compare_prompt_versions,  # noqa: F401
-    create_prompt_version,  # noqa: F401
-    delete_prompt_simulation,  # noqa: F401
-    execute_prompt_simulation,  # noqa: F401
-    get_prompt_eval_configs,  # noqa: F401
-    get_prompt_execution_results,  # noqa: F401
     get_prompt_version,  # noqa: F401
     # list_prompt_folders -> DRF bridge (see _prompt_folders.py)
     # list_prompt_labels -> DRF bridge (see _prompt_labels.py)
-    list_prompt_scenarios,  # noqa: F401
-    list_prompt_versions,  # noqa: F401
-    run_prompt,  # noqa: F401
-    run_prompt_evals,  # noqa: F401
-    update_prompt_simulation,  # noqa: F401
 )
 
 # update_prompt_template — replaced by DRF bridge on PromptTemplateViewSet
 # Simulation tools (38)
 from ai_tools.tools.simulation import (
-    activate_agent_version,  # noqa: F401
-    cancel_test_execution,  # noqa: F401
-    compare_agent_versions,  # noqa: F401
-    create_simulator_agent,  # noqa: F401
-    delete_agent_definition,  # noqa: F401
-    delete_run_test,  # noqa: F401
-    delete_scenario,  # noqa: F401
-    delete_simulate_eval_config,  # noqa: F401
-    delete_test_execution,  # noqa: F401
-    duplicate_agent_definition,  # noqa: F401
-    get_agent_version,  # noqa: F401
-    get_call_logs,  # noqa: F401
-    get_call_transcript,  # noqa: F401
+    compare_agent_versions,  # noqa: F401  — kept HW (no DRF endpoint)
+    # delete_agent_definition — RETIRED (duplicate of bridged delete_agent)
+    duplicate_agent_definition,  # noqa: F401  — kept HW (no DRF endpoint)
     # get_scenario -> DRF bridge on ScenarioDetailView (see _simulate.py)
-    get_test_execution_analytics,  # noqa: F401
-    list_eval_mapping_options,  # noqa: F401
-    list_simulate_eval_configs,  # noqa: F401
-    list_simulator_agents,  # noqa: F401
-    rerun_call_execution,  # noqa: F401
-    update_scenario,  # noqa: F401
-    update_simulate_eval_config,  # noqa: F401
-    update_simulator_agent,  # noqa: F401
+    list_eval_mapping_options,  # noqa: F401  — kept HW (no DRF endpoint)
+    list_simulate_eval_configs,  # noqa: F401  — kept HW (no DRF endpoint)
 )
 
 # Visualization tools (1)
@@ -201,36 +139,30 @@ from ai_tools.tools.simulation import (
 # readers would expose. Use ``create_score`` / ``submit_trace_scores`` /
 # ``list_trace_scores`` instead. Tool files remain on disk pending Phase 4
 # deletion of the model itself.
-# tracing/explore_trace.py now registers as ``explore_trace_legacy`` (the
-# Chauffeur read-all-spans + Haiku summary). The short name ``explore_trace``
-# belongs to the eval-context navigator in web/trace_explorer.py.
+# Phase 2A Packet D: the remaining hand-written tracing tools were RETIRED in
+# favor of the DRF bridges in bridge/_tracing.py (modules deleted):
+#   add/remove/list_trace_tags         -> update_trace_tags (+ get_trace reads)
+#   get_span_tree / read_trace_span / get_trace_span_children /
+#   get_trace_spans_by_type / search_trace_spans -> list_spans / get_span
+#   search_traces                      -> list_traces / list_session_traces
+#   explore_trace_legacy               -> retired (web/trace_explorer.py keeps
+#                                         the short name ``explore_trace``)
+#   get_trace_timeline / get_trace_analytics -> get_trace_graph_methods /
+#                                         get_agent_graph / dashboard queries
+#   check_eval_config_exists           -> get_trace_eval_names
+#   get_project_eval_attributes        -> get_span_eval_attributes
+#   get_eval_template_by_name          -> eval template bridges (_evaluations)
+#   list_trace_scores                  -> ScoreViewSet bridge (_misc_viewsets)
+#   get_eval_task_logs / pause_eval_task -> same-name bridges (_tracing.py)
 # get_project — replaced by DRF bridge on ProjectView (registers same name)
 # list_projects — replaced by DRF bridge on ProjectView (registers same name)
 from ai_tools.tools.tracing import (
-    add_trace_tags,  # noqa: F401
     analyze_error_cluster,  # noqa: F401
-    check_eval_config_exists,  # noqa: F401
-    explore_trace,  # noqa: F401
     get_error_cluster_detail,  # noqa: F401
-    get_eval_task_logs,  # noqa: F401
-    get_eval_template_by_name,  # noqa: F401
-    get_project_eval_attributes,  # noqa: F401
-    get_span_tree,  # noqa: F401
-    get_trace_analytics,  # noqa: F401
     get_trace_error_analysis,  # noqa: F401
-    get_trace_span_children,  # noqa: F401
-    get_trace_spans_by_type,  # noqa: F401
-    get_trace_timeline,  # noqa: F401
     # list_custom_eval_configs -> DRF bridge (see _misc_viewsets.py)
     list_error_clusters,  # noqa: F401
-    list_trace_scores,  # noqa: F401
-    list_trace_tags,  # noqa: F401
-    pause_eval_task,  # noqa: F401
-    read_trace_span,  # noqa: F401
-    remove_trace_tags,  # noqa: F401
     render_widget,  # noqa: F401
-    search_trace_spans,  # noqa: F401
-    search_traces,  # noqa: F401
     submit_trace_finding,  # noqa: F401
 )
 

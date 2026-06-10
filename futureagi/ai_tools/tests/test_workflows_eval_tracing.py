@@ -87,32 +87,27 @@ class TestTracingWorkflow:
         project_obj = Project.objects.get(id=proj_id)
         trace = make_trace(tool_context, project=project_obj, name="wf-trace")
 
-        # 4. Search for it
-        search = run_tool("search_traces", {"name": "wf-trace"}, tool_context)
-        assert not search.is_error
-        assert search.data["total"] >= 1
-
-        # 5. Get trace details
+        # 4. Get trace details
+        # (search_traces was retired in Phase 2A Packet D — trace listing
+        # goes through the CH-backed list_traces/list_session_traces bridges,
+        # covered by the live sweeps.)
         get = run_tool("get_trace", {"trace_id": str(trace.id)}, tool_context)
         assert not get.is_error
         assert "wf-trace" in get.content
 
-        # 6. Tag the trace
+        # 5. Tag the trace (update_trace_tags replaces the full tag list —
+        # Packet D bridge replacing the retired add/remove/list_trace_tags)
         tag = run_tool(
-            "add_trace_tags",
+            "update_trace_tags",
             {"trace_id": str(trace.id), "tags": ["workflow", "automated"]},
             tool_context,
         )
         assert not tag.is_error
-        assert "workflow" in tag.data["added"]
-        assert "automated" in tag.data["added"]
+        trace.refresh_from_db()
+        assert "workflow" in trace.tags
+        assert "automated" in trace.tags
 
-        # 7. Search by tag
-        tag_search = run_tool("search_traces", {"tags": ["workflow"]}, tool_context)
-        assert not tag_search.is_error
-        assert tag_search.data["total"] >= 1
-
-        # 8. Delete project
+        # 6. Delete project
         delete = run_tool("delete_project", {"project_id": proj_id}, tool_context)
         assert not delete.is_error
 

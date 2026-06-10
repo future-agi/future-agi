@@ -1,0 +1,53 @@
+# Phase 2A Packet B — prompt templates (cluster 1) + experiments (cluster 2).
+# NET-NEW tools only. Same-name conversions are count-neutral and stay in
+# baseline.txt: compare_prompt_versions, create_prompt_version, run_prompt,
+# get_prompt_eval_configs, run_prompt_evals, list_prompt_versions,
+# commit_prompt_version, get_prompt_execution_results, list_experiments,
+# create_experiment, delete_experiment, rerun_experiment,
+# get_experiment_stats, get_experiment_results, get_experiment_comparison,
+# compare_experiments.
+#
+# Deferred (do NOT register):
+# - PromptTemplateViewSet.bulk_delete — destructive bulk @action -> Phase 3A.
+# - PromptTemplateViewSet.stop_streaming — UI websocket streaming control (skip).
+# - V1 experiment views (ExperimentsTableView, ExperimentStatsView,
+#   ExperimentDeleteView, ExperimentRerunView, GetRowDiffView,
+#   ExperimentDatasetComparisonView, ExperimentListAPIView) — V2-only policy.
+#
+# --- cluster 1: prompt templates ---
+analyze_prompt
+create_prompt_draft
+delete_prompt_eval_config
+generate_prompt
+generate_prompt_variables
+get_prompt_column_values
+get_prompt_evaluations
+get_prompt_execution_details
+get_prompt_next_version
+get_prompt_run_status
+get_prompt_sdk_code
+get_prompt_template_by_name
+get_prompt_template_variables
+improve_prompt
+move_prompt_to_folder
+save_prompt_name
+set_default_prompt_version
+update_prompt_eval_configs
+# --- cluster 2: experiments (V2) ---
+add_experiment_evaluation
+create_experiment_feedback
+export_experiments_csv
+get_experiment_derived_variables
+get_experiment_evaluation_stats
+get_experiment_feedback_details
+get_experiment_feedback_template
+get_experiment_json_schema
+get_experiment_row_diff
+list_dataset_experiments
+rerun_experiment_cells
+run_experiment_evaluations
+stop_experiment
+submit_experiment_feedback
+suggest_experiment_name
+update_experiment
+validate_experiment_name

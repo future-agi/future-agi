@@ -124,7 +124,9 @@ class TestGetEvalTemplate:
             tool_context,
         )
         assert not result.is_error
-        assert "Test Eval" in result.content
+        # Bridged tool (EvalTemplateDetailView): the template payload lives in
+        # result.data; the markdown content rendering is generic.
+        assert "Test Eval" in str(result.data)
 
     def test_get_nonexistent(self, tool_context):
         result = run_tool(
@@ -134,22 +136,12 @@ class TestGetEvalTemplate:
 
 
 class TestTestEvalTemplateTool:
-    def test_uses_target_template_without_deterministic_base(self, tool_context):
-        template = make_eval_template(
-            tool_context,
-            name="dry-run-eval",
-            owner="user",
-            eval_type="llm",
-            config={
-                "eval_type_id": "CustomPromptEvaluator",
-                "required_keys": ["input"],
-                "output": "Pass/Fail",
-                "rule_prompt": "Judge {{input}}",
-            },
-            criteria="Judge {{input}}",
-            model="turing_large",
-        )
-
+    # Phase 2A conversion note: test_eval_template is now the DRF bridge onto
+    # TestEvaluationTemplateAPIView, which DRY-RUNS an eval template
+    # DEFINITION (name/config/template_type) without saving it. The old
+    # hand-written tool's {eval_template_id, mapping} shape (and its target-
+    # template passthrough) was deleted with the HW module.
+    def test_dry_run_llm_definition(self, tool_context):
         with patch(
             "model_hub.views.separate_evals.run_eval_func",
             return_value={"data": "Passed", "reason": "ok"},
@@ -157,15 +149,37 @@ class TestTestEvalTemplateTool:
             result = run_tool(
                 "test_eval_template",
                 {
-                    "eval_template_id": str(template.id),
-                    "mapping": {"input": "hello"},
+                    "name": "dry-run-eval",
+                    "template_type": "Llm",
+                    "model": "gpt-4o-mini",
+                    "criteria": "Judge {{input}}",
+                    "required_keys": ["input"],
+                    "output": "Pass/Fail",
+                    "output_type": "Pass/Fail",
+                    "config": {
+                        "mapping": {"input": "hello"},
+                        "rule_prompt": "Judge {{input}}",
+                        "required_keys": ["input"],
+                        "output": "Pass/Fail",
+                        "model": "gpt-4o-mini",
+                    },
                 },
                 tool_context,
             )
 
-        assert not result.is_error
-        assert result.data["template_id"] == str(template.id)
-        assert mock_run.call_args.args[2].id == template.id
+        assert not result.is_error, result.content
+        assert mock_run.called
+
+    def test_dry_run_requires_template_type(self, tool_context):
+        result = run_tool(
+            "test_eval_template",
+            {
+                "name": "dry-run-eval",
+                "config": {"mapping": {"input": "hello"}},
+            },
+            tool_context,
+        )
+        assert result.is_error
 
 
 # ===================================================================
@@ -173,165 +187,101 @@ class TestTestEvalTemplateTool:
 # ===================================================================
 
 
+# Phase 2A conversion note: create_eval_template is now the DRF bridge onto
+# EvalTemplateCreateV2View. The hand-written tool's criteria->instructions
+# mapping, template-variable validation, and TH-5254 output_type inference
+# heuristics were deleted with the HW module — the V2 view takes explicit
+# `instructions` and an explicit `output_type` (default pass_fail).
 class TestCreateEvalTemplateTool:
+    def _get_template(self, name):
+        from model_hub.models.evals_metric import EvalTemplate
+
+        return EvalTemplate.objects.filter(name=name, deleted=False).first()
+
     def test_create_basic(self, tool_context):
         result = run_tool(
             "create_eval_template",
             {
                 "name": "new-eval",
                 "description": "Test eval",
-                "criteria": "Evaluate {{response}}",
-                "required_keys": ["response"],
+                "instructions": "Evaluate {{response}}",
             },
             tool_context,
         )
 
-        assert not result.is_error
-        assert "Eval Template Created" in result.content
-        assert result.data["name"] == "new-eval"
-        assert result.data["id"]
+        assert not result.is_error, result.content
+        row = self._get_template("new-eval")
+        assert row is not None
+        assert "new-eval" in str(result.data)
 
-    def test_create_with_criteria(self, tool_context):
+    def test_create_with_model(self, tool_context):
         result = run_tool(
             "create_eval_template",
             {
                 "name": "criteria-eval",
-                "criteria": "Check if {{response}} is helpful",
+                "instructions": "Check if {{response}} is helpful",
                 "model": "gpt-4o",
-                "required_keys": ["response"],
             },
             tool_context,
         )
 
-        assert not result.is_error
-        assert "criteria-eval" in result.content
+        assert not result.is_error, result.content
+        assert self._get_template("criteria-eval") is not None
 
-    def test_create_without_variable_in_criteria(self, tool_context):
-        """Creating eval template without template variable in criteria should fail."""
+    def test_create_without_instructions_fails(self, tool_context):
+        """The V2 view rejects llm-type templates with no instructions."""
         result = run_tool(
             "create_eval_template",
-            {
-                "name": "no-var-eval",
-                "criteria": "Check if the response is helpful",
-                "required_keys": ["response"],
-            },
+            {"name": "no-instructions-eval"},
             tool_context,
         )
 
         assert result.is_error
-        assert "template variable" in result.content.lower()
-
-    def test_create_without_criteria(self, tool_context):
-        """Creating eval template without criteria should fail for non-Function types."""
-        result = run_tool(
-            "create_eval_template",
-            {
-                "name": "no-criteria-eval",
-                "required_keys": ["response"],
-            },
-            tool_context,
-        )
-
-        assert result.is_error
-        assert "template variable" in result.content.lower()
+        assert "instructions" in result.content.lower()
 
     def test_create_duplicate_user_name(self, tool_context):
-        run_tool(
+        first = run_tool(
             "create_eval_template",
-            {
-                "name": "dup-eval",
-                "criteria": "Evaluate {{response}}",
-                "required_keys": ["response"],
-            },
+            {"name": "dup-eval", "instructions": "Evaluate {{response}}"},
             tool_context,
         )
+        assert not first.is_error, first.content
         result = run_tool(
             "create_eval_template",
-            {
-                "name": "dup-eval",
-                "criteria": "Evaluate {{response}}",
-                "required_keys": ["response"],
-            },
+            {"name": "dup-eval", "instructions": "Evaluate {{response}}"},
             tool_context,
         )
 
         assert result.is_error
-        assert "already exists" in result.content
 
-    def test_create_duplicate_system_name(self, tool_context):
-        """Cannot create user template with same name as system template."""
-        eval_template = make_eval_template(tool_context, name="system-eval")
+    def test_explicit_output_type_is_respected(self, tool_context):
         result = run_tool(
             "create_eval_template",
             {
-                "name": eval_template.name,
-                "criteria": "Evaluate {{response}}",
-                "required_keys": ["response"],
-            },
-            tool_context,
-        )
-
-        assert result.is_error
-        assert "already exists" in result.content
-
-    # ── TH-5254: scored evals must not be created as pass_fail ──
-
-    def test_scored_eval_infers_percentage(self, tool_context):
-        """A scored/0-1 eval with no explicit output_type should become 'percentage',
-        not pass_fail — otherwise the UI shows Pass/Fail for a score eval (TH-5254)."""
-        result = run_tool(
-            "create_eval_template",
-            {
-                "name": "relevance-score-5254",
-                "criteria": "Rate how relevant {{output}} is to {{input}} on a scale of 0 to 1.",
-                "required_keys": ["input", "output"],
+                "name": "relevance-score-v2",
+                "instructions": "Rate how relevant {{output}} is on a scale of 0 to 1.",
+                "output_type": "percentage",
             },
             tool_context,
         )
         assert not result.is_error, result.content
-        assert result.data["output_type"] == "percentage"
+        row = self._get_template("relevance-score-v2")
+        assert row is not None
+        assert row.output_type_normalized == "percentage"
 
-    def test_rating_language_infers_percentage(self, tool_context):
+    def test_default_output_type_pass_fail(self, tool_context):
         result = run_tool(
             "create_eval_template",
             {
-                "name": "helpfulness-rating-5254",
-                "criteria": "Give a score from 0-100 for how helpful {{output}} is.",
-                "required_keys": ["output"],
+                "name": "valid-json-check-v2",
+                "instructions": "Determine whether {{output}} is valid JSON.",
             },
             tool_context,
         )
         assert not result.is_error, result.content
-        assert result.data["output_type"] == "percentage"
-
-    def test_explicit_pass_fail_is_respected(self, tool_context):
-        """If the caller explicitly sets pass_fail, score-language must NOT override it."""
-        result = run_tool(
-            "create_eval_template",
-            {
-                "name": "explicit-passfail-5254",
-                "criteria": "Rate on a scale of 0 to 1 whether {{output}} is toxic.",
-                "required_keys": ["output"],
-                "output_type": "pass_fail",
-            },
-            tool_context,
-        )
-        assert not result.is_error, result.content
-        assert result.data["output_type"] == "pass_fail"
-
-    def test_binary_eval_stays_pass_fail(self, tool_context):
-        """A genuinely binary check with no score language stays pass_fail."""
-        result = run_tool(
-            "create_eval_template",
-            {
-                "name": "valid-json-check-5254",
-                "criteria": "Determine whether {{output}} is valid JSON. Answer Pass or Fail.",
-                "required_keys": ["output"],
-            },
-            tool_context,
-        )
-        assert not result.is_error, result.content
-        assert result.data["output_type"] == "pass_fail"
+        row = self._get_template("valid-json-check-v2")
+        assert row is not None
+        assert row.output_type_normalized == "pass_fail"
 
 
 class TestUpdateEvalTemplateTool:
@@ -392,7 +342,9 @@ class TestDeleteEvalTemplateTool:
         )
 
         assert not result.is_error
-        assert result.data["name"] == "my-custom-eval"
+        # Bridged tool (DeleteEvalTemplateView): assert the ORM side effect.
+        user_eval_template.refresh_from_db()
+        assert user_eval_template.deleted is True
 
     def test_delete_system_template_fails(self, tool_context, eval_template):
         """Cannot delete system-owned templates."""

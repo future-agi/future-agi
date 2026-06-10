@@ -63,60 +63,10 @@ def trace_with_spans(trace):
 # ===================================================================
 
 
-class TestSearchTracesTool:
-    def test_search_empty(self, tool_context):
-        result = run_tool("search_traces", {}, tool_context)
-
-        assert not result.is_error
-        assert "Traces (0)" in result.content
-        assert result.data["total"] == 0
-
-    def test_search_with_data(self, tool_context, trace):
-        result = run_tool("search_traces", {}, tool_context)
-
-        assert not result.is_error
-        assert "Traces (1)" in result.content
-        assert "test-trace" in result.content
-        assert "Test Project" in result.content
-        assert result.data["total"] == 1
-
-    def test_search_filter_by_name(self, tool_context, trace):
-        result = run_tool("search_traces", {"name": "test"}, tool_context)
-        assert result.data["total"] == 1
-
-        result = run_tool("search_traces", {"name": "nonexistent"}, tool_context)
-        assert result.data["total"] == 0
-
-    def test_search_filter_by_project(self, tool_context, trace, project):
-        result = run_tool(
-            "search_traces", {"project_id": str(project.id)}, tool_context
-        )
-        assert result.data["total"] == 1
-
-        result = run_tool(
-            "search_traces", {"project_id": str(uuid.uuid4())}, tool_context
-        )
-        assert result.data["total"] == 0
-
-    def test_search_filter_by_error(self, tool_context, trace):
-        result = run_tool("search_traces", {"has_error": False}, tool_context)
-        assert result.data["total"] == 1
-
-        result = run_tool("search_traces", {"has_error": True}, tool_context)
-        assert result.data["total"] == 0
-
-    def test_search_filter_by_tags(self, tool_context, trace):
-        result = run_tool("search_traces", {"tags": ["test"]}, tool_context)
-        assert result.data["total"] == 1
-
-        result = run_tool("search_traces", {"tags": ["nonexistent"]}, tool_context)
-        assert result.data["total"] == 0
-
-    def test_search_pagination(self, tool_context, trace):
-        result = run_tool("search_traces", {"limit": 1, "offset": 0}, tool_context)
-
-        assert not result.is_error
-        assert len(result.data["traces"]) <= 1
+# NOTE (Phase 2A Packet D): the hand-written ``search_traces`` tool was
+# retired — trace listing now goes through the ``list_traces`` /
+# ``list_session_traces`` DRF bridges (ClickHouse-backed list path, covered
+# by the live sweeps, not by these PG-fixture unit tests).
 
 
 class TestGetTraceTool:
@@ -256,49 +206,42 @@ class TestCreateProjectTool:
         assert not result.is_error
 
 
-class TestAddTraceTagsTool:
-    def test_add_tags(self, tool_context, trace):
+class TestUpdateTraceTagsTool:
+    """Phase 2A Packet D: ``update_trace_tags`` (DRF bridge onto
+    TraceView.update_tags, PATCH /traces/<pk>/tags/) replaced the retired
+    hand-written add/remove/list_trace_tags trio. The tool REPLACES the
+    full tag list (read current tags via ``get_trace``, edit, resubmit)."""
+
+    def test_replace_tags(self, tool_context, trace):
         result = run_tool(
-            "add_trace_tags",
+            "update_trace_tags",
             {"trace_id": str(trace.id), "tags": ["new-tag", "another-tag"]},
             tool_context,
         )
 
         assert not result.is_error
-        assert "new-tag" in result.data["added"]
-        assert "another-tag" in result.data["added"]
+        trace.refresh_from_db()
+        assert sorted(trace.tags) == ["another-tag", "new-tag"]
 
-    def test_add_duplicate_tags(self, tool_context, trace):
-        """Tags already on the trace should be reported as already present."""
+    def test_clear_tags_with_empty_list(self, tool_context, trace):
         result = run_tool(
-            "add_trace_tags",
-            {"trace_id": str(trace.id), "tags": ["test"]},  # 'test' is already on trace
+            "update_trace_tags",
+            {"trace_id": str(trace.id), "tags": []},
             tool_context,
         )
 
         assert not result.is_error
-        assert "test" in result.data["already_present"]
-        assert len(result.data["added"]) == 0
+        trace.refresh_from_db()
+        assert trace.tags == []
 
-    def test_add_tags_nonexistent_trace(self, tool_context):
+    def test_update_tags_nonexistent_trace(self, tool_context):
         result = run_tool(
-            "add_trace_tags",
+            "update_trace_tags",
             {"trace_id": str(uuid.uuid4()), "tags": ["tag1"]},
             tool_context,
         )
 
         assert result.is_error
-
-    def test_add_mixed_new_and_existing(self, tool_context, trace):
-        result = run_tool(
-            "add_trace_tags",
-            {"trace_id": str(trace.id), "tags": ["test", "brand-new"]},
-            tool_context,
-        )
-
-        assert not result.is_error
-        assert "brand-new" in result.data["added"]
-        assert "test" in result.data["already_present"]
 
 
 class TestDeleteProjectTool:

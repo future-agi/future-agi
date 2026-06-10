@@ -26,7 +26,13 @@ logger = structlog.get_logger(__name__)
 
 
 class VersionDefaultSerializer(serializers.Serializer):
-    version_name = serializers.CharField(required=True)
+    version_name = serializers.CharField(
+        required=True,
+        help_text=(
+            "Version label to make the template's default, e.g. 'v2' "
+            "(format v<number>; see list_prompt_versions)."
+        ),
+    )
 
     def validate(self, data):
         version = data.get("version_name")
@@ -147,10 +153,28 @@ class UserResponseSchemaSerializer(serializers.ModelSerializer):
 
 
 class CommitSerializer(serializers.Serializer):
-    message = serializers.CharField(required=True, allow_blank=True)
-    is_draft = serializers.BooleanField(required=False, default=False)
-    set_default = serializers.BooleanField(required=False, default=False)
-    version_name = serializers.CharField(required=True)
+    message = serializers.CharField(
+        required=True,
+        allow_blank=True,
+        help_text="Commit message describing what changed in this version.",
+    )
+    is_draft = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Keep the version a draft after saving (default false = commit).",
+    )
+    set_default = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Also make this version the template's default.",
+    )
+    version_name = serializers.CharField(
+        required=True,
+        help_text=(
+            "Version label to commit, e.g. 'v2' (format v<number>; see "
+            "list_prompt_versions)."
+        ),
+    )
 
     def validate(self, data):
         set_default = data.get("set_default", False)
@@ -174,14 +198,41 @@ class CommitSerializer(serializers.Serializer):
 
 
 class DraftSerializer(serializers.Serializer):
-    prompt_config = serializers.ListField()
-    variable_names = serializers.DictField()
-    evaluation_configs = serializers.ListField()
-    metadata = serializers.JSONField(required=False, default=dict)
+    prompt_config = serializers.ListField(
+        help_text=(
+            "Prompt configuration array (first item used): [{'messages': "
+            "[{'role': 'system'|'user'|'assistant', 'content': [{'text': "
+            "'...', 'type': 'text'}]}], 'configuration': {'model': ..., "
+            "'temperature': ..., 'max_tokens': ..., 'response_format': "
+            "'text'}, 'placeholders': []}]."
+        )
+    )
+    variable_names = serializers.DictField(
+        help_text=(
+            "Sample values for {{variable}} placeholders: "
+            "{'var': ['value1', ...]}. Pass {} when the prompt has none."
+        )
+    )
+    evaluation_configs = serializers.ListField(
+        help_text="Evaluation configs to store on the draft (often [])."
+    )
+    metadata = serializers.JSONField(
+        required=False,
+        default=dict,
+        help_text="Optional metadata object stored on the version.",
+    )
 
 
 class MultipleDraftSerializer(serializers.Serializer):
-    new_prompts = serializers.ListField(child=DraftSerializer(), required=True)
+    new_prompts = serializers.ListField(
+        child=DraftSerializer(),
+        required=True,
+        help_text=(
+            "Draft versions to create (auto-numbered v2, v3, ...). Each "
+            "item: {'prompt_config': [...], 'variable_names': {...}, "
+            "'evaluation_configs': []}."
+        ),
+    )
 
 
 class UploadFileSerializer(serializers.Serializer):
@@ -207,8 +258,18 @@ class UploadFileSerializer(serializers.Serializer):
 
 
 class CompareVersionsSerializer(serializers.Serializer):
-    versions = serializers.ListField(child=serializers.CharField(), required=True)
-    is_run = serializers.CharField(required=False)
+    versions = serializers.ListField(
+        child=serializers.CharField(),
+        required=True,
+        help_text=(
+            "Version labels to compare side by side, e.g. ['v1', 'v2'] "
+            "(max 3; see list_prompt_versions)."
+        ),
+    )
+    is_run = serializers.CharField(
+        required=False,
+        help_text="Set 'true' to also run the compared versions' prompts.",
+    )
 
     def validate(self, data):
         versions = data.get("versions")

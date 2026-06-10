@@ -442,12 +442,16 @@ expose_to_mcp(
                 "and graphing."
             ),
             "query_params": {
+                # dict, not str: the bridge JSON-encodes dict query params,
+                # and the LLM-side _clean_params parses stringified JSON
+                # back to a dict — a str type here could never validate.
                 "filters": {
-                    "type": str,
+                    "type": dict,
                     "required": True,
                     "description": (
-                        "JSON-encoded project scope: "
-                        "'{\"project_id\": \"<uuid>\"}'."
+                        "Project scope object: "
+                        "{\"project_id\": \"<uuid>\"} "
+                        "(`list_trace_projects` for the uuid)."
                     ),
                 },
             },
@@ -461,12 +465,14 @@ expose_to_mcp(
                 "sessions. Use when configuring eval mappings."
             ),
             "query_params": {
+                # dict, not str — see get_span_attributes_list above.
                 "filters": {
-                    "type": str,
+                    "type": dict,
                     "required": True,
                     "description": (
-                        "JSON-encoded project scope: "
-                        "'{\"project_id\": \"<uuid>\"}'."
+                        "Project scope object: "
+                        "{\"project_id\": \"<uuid>\"} "
+                        "(`list_trace_projects` for the uuid)."
                     ),
                 },
                 "row_type": {
