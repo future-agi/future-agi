@@ -1,6 +1,14 @@
-import { Box, Button, InputAdornment, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  FormControlLabel,
+  InputAdornment,
+  Stack,
+  Switch,
+  Typography,
+} from "@mui/material";
 import React, { useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { FieldWrapper } from "./ShareComponents";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
@@ -120,6 +128,12 @@ const CreateEditOptimizationForm = ({ onClose, defaultValues, onSuccess }) => {
         }),
         ...(configuration.maxMetricCalls !== undefined && {
           max_metric_calls: configuration.maxMetricCalls,
+        }),
+        ...(configuration.searchSpace?.trim() && {
+          search_space: JSON.parse(configuration.searchSpace),
+        }),
+        ...(configuration.dryRun !== undefined && {
+          dry_run: configuration.dryRun,
         }),
       },
       test_execution_id: executionId,
@@ -404,6 +418,41 @@ const CreateEditOptimizationForm = ({ onClose, defaultValues, onSuccess }) => {
                 }}
                 fullWidth
               />
+            </ShowComponent>
+            <ShowComponent
+              condition={optimizerValue === OPTIMIZER_TYPE.AGENT_LEARNING_KIT}
+            >
+              <FieldWrapper helperText='Optional. JSON mapping agent config paths to candidate values to search beyond instructions, e.g. {"model": ["gpt-4o", "gpt-4o-mini"], "voice_id": ["..."]}'>
+                <FormTextFieldV2
+                  placeholder='{"model": ["gpt-4o", "gpt-4o-mini"]}'
+                  control={control}
+                  fieldName="configuration.searchSpace"
+                  label="Search space (whole-agent, JSON)"
+                  multiline
+                  minRows={3}
+                  maxRows={8}
+                  fullWidth
+                  size="small"
+                />
+              </FieldWrapper>
+              <FieldWrapper helperText="Score candidates without calling the live provider agent">
+                <Controller
+                  name="configuration.dryRun"
+                  control={control}
+                  render={({ field }) => (
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={!!field.value}
+                          onChange={(e) => field.onChange(e.target.checked)}
+                          size="small"
+                        />
+                      }
+                      label="Dry run"
+                    />
+                  )}
+                />
+              </FieldWrapper>
             </ShowComponent>
             <ShowComponent
               condition={optimizerValue === OPTIMIZER_TYPE.PROMPTWIZARD}

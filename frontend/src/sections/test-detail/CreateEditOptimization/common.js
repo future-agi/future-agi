@@ -129,11 +129,35 @@ const GEPAOptimizerSchema = z.object({
     .min(1, "Max metric calls must be at least 1"),
 });
 
-// Backend builds candidates from the agent's base prompt and applies its own
-// defaults (simulate/utils/agent_prompt_optimiser.py), so only the optional
-// task description is collected here.
+// Whole-agent optimization: the backend derives base_agent from the run's
+// agent definition; searchSpace (dot-path -> candidate values, JSON) widens
+// the search beyond instructions (e.g. {"model": [...], "voice_id": [...]}).
 const AgentLearningKitOptimizerSchema = z.object({
   taskDescription: z.string().optional(),
+  searchSpace: z
+    .string()
+    .optional()
+    .refine(
+      (value) => {
+        if (!value || !value.trim()) return true;
+        try {
+          const parsed = JSON.parse(value);
+          return (
+            parsed &&
+            typeof parsed === "object" &&
+            !Array.isArray(parsed) &&
+            Object.values(parsed).every((v) => Array.isArray(v))
+          );
+        } catch {
+          return false;
+        }
+      },
+      {
+        message:
+          'Must be a JSON object mapping config paths to value lists, e.g. {"model": ["gpt-4o", "gpt-4o-mini"]}',
+      },
+    ),
+  dryRun: z.boolean().optional(),
 });
 
 export const createEditOptimizerSchema = z.discriminatedUnion("optimiserType", [
@@ -226,5 +250,7 @@ export const OptimizerConfigurationMapping = {
   },
   agent_learning_kit: {
     taskDescription: "",
+    searchSpace: "",
+    dryRun: false,
   },
 };

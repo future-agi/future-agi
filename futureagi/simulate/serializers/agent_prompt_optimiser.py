@@ -117,7 +117,7 @@ class AgentPromptOptimiserRunCreateSerializer(serializers.ModelSerializer):
                 workspace_id=workspace_id,
             )
         except ValueError as e:
-            raise serializers.ValidationError(str(e))
+            raise serializers.ValidationError(str(e)) from e
 
         validated_data["test_execution"] = test_execution
         validated_data["agent_optimiser"] = agent_optimiser
@@ -402,6 +402,56 @@ class AgentPromptOptimiserTrialPromptResultSerializer(
 class AgentPromptOptimiserTrialPromptResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = AgentPromptOptimiserTrialPromptResultSerializer()
+
+
+class AgentPromptOptimiserApplyTrialRequestSerializer(serializers.Serializer):
+    make_default = serializers.BooleanField(
+        required=False,
+        default=True,
+        help_text="Prompt-template runs only: make the new PromptVersion the default.",
+    )
+
+
+class AgentPromptOptimiserApplyTrialResultSerializer(serializers.Serializer):
+    """Union of the three apply targets (prompt_version | provider_agent | agent_version).
+
+    The view picks the edge per run; ``target`` discriminates which optional
+    fields are present (prompt-template runs omit ``target`` and return the
+    ``new_prompt_version_id`` group instead).
+    """
+
+    applied = serializers.BooleanField(read_only=True)
+    source_trial_id = serializers.UUIDField(read_only=True)
+    target = serializers.ChoiceField(
+        choices=["provider_agent", "agent_version"], read_only=True, required=False
+    )
+    provider = serializers.CharField(read_only=True, required=False)
+    # target=provider_agent
+    assistant_id = serializers.CharField(read_only=True, required=False)
+    applied_fields = serializers.ListField(
+        child=serializers.CharField(), read_only=True, required=False
+    )
+    skipped_fields = serializers.ListField(
+        child=serializers.CharField(), read_only=True, required=False
+    )
+    previous_prompt = serializers.CharField(
+        read_only=True, required=False, allow_null=True
+    )
+    previous_config = serializers.DictField(read_only=True, required=False)
+    # target=agent_version
+    reason = serializers.CharField(read_only=True, required=False)
+    new_agent_version_id = serializers.UUIDField(read_only=True, required=False)
+    version_number = serializers.IntegerField(read_only=True, required=False)
+    # prompt-template runs
+    new_prompt_version_id = serializers.UUIDField(read_only=True, required=False)
+    template_version = serializers.CharField(read_only=True, required=False)
+    original_template_id = serializers.UUIDField(read_only=True, required=False)
+    is_default = serializers.BooleanField(read_only=True, required=False)
+
+
+class AgentPromptOptimiserApplyTrialResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AgentPromptOptimiserApplyTrialResultSerializer()
 
 
 class AgentPromptOptimiserTrialEvaluationRowSerializer(serializers.Serializer):

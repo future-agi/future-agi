@@ -1681,6 +1681,11 @@ export const endpoints = {
         { id: id, trial_id: trialId },
       ),
     getOptimizationRuns: () => apiPath("/simulate/api/agent-prompt-optimiser/"),
+    applyTrial: (id, trialId) =>
+      apiPath(
+        "/simulate/api/agent-prompt-optimiser/{id}/trial/{trial_id}/apply/",
+        { id: id, trial_id: trialId },
+      ),
   },
   workspaces: {
     list: apiPath("/accounts/workspace/list/"),

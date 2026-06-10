@@ -23,6 +23,8 @@ from simulate.models import (
 )
 from simulate.serializers.agent_prompt_optimiser import (
     OPTIMISER_REQUIRED_CONFIG_KEYS,
+    AgentPromptOptimiserApplyTrialRequestSerializer,
+    AgentPromptOptimiserApplyTrialResponseSerializer,
     AgentPromptOptimiserGraphResponseSerializer,
     AgentPromptOptimiserRunCreateSerializer,
     AgentPromptOptimiserRunDetailResponseSerializer,
@@ -428,6 +430,15 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error retrieving trial prompt: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        request_body=AgentPromptOptimiserApplyTrialRequestSerializer,
+        responses={
+            200: AgentPromptOptimiserApplyTrialResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+    )
     @action(
         detail=True,
         methods=["post"],
