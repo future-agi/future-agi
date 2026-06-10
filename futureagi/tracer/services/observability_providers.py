@@ -823,6 +823,12 @@ class ObservabilityService:
             processed = ObservabilityService._process_vapi_logs(raw_log)
         elif provider == ProviderChoices.RETELL:
             processed = ObservabilityService._process_retell_logs(raw_log)
+        elif provider == ProviderChoices.ELEVEN_LABS:
+            processed = ObservabilityService._process_eleven_labs_raw(raw_log)
+        elif provider == ProviderChoices.BLAND:
+            processed = ObservabilityService._process_bland_raw(raw_log)
+        elif provider == ProviderChoices.TWILIO:
+            processed = ObservabilityService._process_twilio_raw(raw_log)
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
 
@@ -835,3 +841,112 @@ class ObservabilityService:
                 processed["stereo_recording_url"] = stereo
 
         return processed
+
+    @staticmethod
+    def _process_eleven_labs_raw(raw_log: dict) -> dict:
+        """ElevenLabs ConvAI conversation raw_log -> VoiceCallLogs dump (TH-5642).
+
+        Pulled raw shape: ``conversation_id``, ``status``, ``metadata``
+        (``start_time_unix_secs``, ``call_duration_secs``, ``cost``),
+        ``transcript``: [{"role", "message", "time_in_call_secs"}].
+        """
+        metadata = raw_log.get("metadata") or {}
+        started_at = None
+        if start_unix := metadata.get("start_time_unix_secs"):
+            started_at = datetime.fromtimestamp(start_unix).isoformat()
+
+        transcripts = [
+            {
+                "id": str(uuid.uuid4()),
+                "role": msg.get("role"),
+                "content": msg.get("message"),
+                "time": (
+                    str(msg["time_in_call_secs"])
+                    if msg.get("time_in_call_secs") is not None
+                    else None
+                ),
+                "duration": None,
+            }
+            for msg in (raw_log.get("transcript") or [])
+            if isinstance(msg, dict) and msg.get("message")
+        ]
+        cost = metadata.get("cost")
+        processed_log = {
+            "id": None,
+            "call_id": raw_log.get("conversation_id"),
+            "phone_number": None,
+            "status": raw_log.get("status"),
+            "started_at": started_at,
+            "duration_seconds": metadata.get("call_duration_secs"),
+            "recording_url": None,
+            "cost_cents": cost if cost is not None else None,
+            "transcript": transcripts,
+            "call_metadata": {"agent_id": raw_log.get("agent_id")},
+        }
+        return VoiceCallLogs(**processed_log).model_dump()
+
+    @staticmethod
+    def _process_bland_raw(raw_log: dict) -> dict:
+        """Bland.ai call raw_log -> VoiceCallLogs dump (TH-5642).
+
+        Pulled raw shape: ``call_id``, ``started_at``/``created_at``,
+        ``call_length`` (MINUTES), ``price`` (USD), ``to``/``from``,
+        ``transcripts``: [{"user", "text"}], ``recording_url``, ``status``.
+        """
+        call_length = raw_log.get("call_length")
+        duration_seconds = (
+            int(round(float(call_length) * 60)) if call_length not in (None, "") else None
+        )
+        transcripts = [
+            {
+                "id": str(uuid.uuid4()),
+                "role": row.get("user"),
+                "content": row.get("text"),
+                "time": None,
+                "duration": None,
+            }
+            for row in (raw_log.get("transcripts") or [])
+            if isinstance(row, dict) and row.get("text")
+        ]
+        price = raw_log.get("price")
+        processed_log = {
+            "id": None,
+            "call_id": raw_log.get("call_id"),
+            "phone_number": raw_log.get("to"),
+            "status": raw_log.get("status"),
+            "started_at": raw_log.get("started_at") or raw_log.get("created_at"),
+            "duration_seconds": duration_seconds,
+            "recording_url": raw_log.get("recording_url"),
+            "cost_cents": float(price) * 100 if price not in (None, "") else None,
+            "transcript": transcripts,
+            "error_message": raw_log.get("error_message"),
+            "call_metadata": {"from": raw_log.get("from"), "summary": raw_log.get("summary")},
+        }
+        return VoiceCallLogs(**processed_log).model_dump()
+
+    @staticmethod
+    def _process_twilio_raw(raw_log: dict) -> dict:
+        """Twilio Call resource raw_log -> VoiceCallLogs dump (TH-5642).
+
+        Telephony metadata only — Twilio stores no transcript on the Call
+        resource (transcript-level data comes from sims or the fronting
+        agent platform).
+        """
+        duration = raw_log.get("duration")
+        price = raw_log.get("price")
+        processed_log = {
+            "id": None,
+            "call_id": raw_log.get("sid"),
+            "phone_number": raw_log.get("to"),
+            "status": raw_log.get("status"),
+            "started_at": raw_log.get("start_time"),
+            "duration_seconds": int(duration) if duration not in (None, "") else None,
+            "recording_url": None,
+            "cost_cents": abs(float(price)) * 100 if price not in (None, "") else None,
+            "transcript": [],
+            "call_metadata": {
+                "from": raw_log.get("from"),
+                "direction": raw_log.get("direction"),
+            },
+        }
+        return VoiceCallLogs(**processed_log).model_dump()
