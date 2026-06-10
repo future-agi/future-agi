@@ -36,10 +36,13 @@ export default function AlertsSheetView() {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const {
+    openCreateAlerts,
     openSheetView,
     handleCloseSheetView,
-    handleStartCreatingAlerts,
     handleProjectChange,
+    handleStartCreatingAlerts,
+    setCurrentTab,
+    setOpenCreateAlerts,
     mainPage,
     refreshGrid: refreshMainGrid,
   } = useAlertStore();
@@ -59,6 +62,7 @@ export default function AlertsSheetView() {
       },
     });
   const alertIsMuted = isAlertMuted(alertRuleDetails);
+  const hasLoadedAlertDetails = Boolean(alertRuleDetails?.id);
 
   const handleDuplicateAlert = () => {
     setDuplicateModal(false);
@@ -208,11 +212,17 @@ export default function AlertsSheetView() {
   }, [alertRuleDetails?.id]);
 
   const handleEditClick = () => {
-    if (!alertRuleDetails?.id) return;
+    if (!alertRuleDetails?.id) {
+      return;
+    }
+    if (mainPage && alertRuleDetails?.project) {
+      handleProjectChange(alertRuleDetails.project);
+    }
     trackEvent(Events.alertEditClicked, {
       [PropertyName.id]: alertRuleDetails.id,
     });
-    handleStartCreatingAlerts();
+    setCurrentTab(1);
+    setOpenCreateAlerts(true);
   };
 
   const handleViewTraceClick = () => {
@@ -242,7 +252,7 @@ export default function AlertsSheetView() {
     <>
       <Drawer
         anchor={"bottom"}
-        open={!!openSheetView}
+        open={!!openSheetView && !openCreateAlerts}
         onClose={() => {
           if (mainPage) {
             handleProjectChange(null);
@@ -301,6 +311,7 @@ export default function AlertsSheetView() {
                 </Typography>
               </Stack>
               <IconButton
+                data-alert-sheet-action="close"
                 onClick={() => {
                   if (mainPage) {
                     handleProjectChange(null);
@@ -343,6 +354,7 @@ export default function AlertsSheetView() {
                 <Button
                   variant="outlined"
                   size="small"
+                  data-alert-sheet-action={alertIsMuted ? "unmute" : "mute"}
                   startIcon={
                     alertIsMuted ? (
                       <SvgColor src="/assets/icons/ic_mute.svg" />
@@ -358,6 +370,7 @@ export default function AlertsSheetView() {
                 <Button
                   variant="outlined"
                   size="small"
+                  data-alert-sheet-action="duplicate"
                   startIcon={<SvgColor src="/assets/icons/ic_duplicate.svg" />}
                   onClick={() => setDuplicateModal(true)}
                 >
@@ -366,6 +379,7 @@ export default function AlertsSheetView() {
                 <Button
                   variant="outlined"
                   size="small"
+                  data-alert-sheet-action="view-trace"
                   startIcon={<SvgColor src="/assets/icons/custom/eye.svg" />}
                   onClick={handleViewTraceClick}
                 >
@@ -374,7 +388,9 @@ export default function AlertsSheetView() {
                 <Button
                   variant="outlined"
                   size="small"
+                  data-alert-sheet-action="edit"
                   startIcon={<SvgColor src="/assets/icons/ic_edit.svg" />}
+                  disabled={!hasLoadedAlertDetails}
                   onClick={handleEditClick}
                 >
                   Edit Rule

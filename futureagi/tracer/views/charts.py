@@ -9,6 +9,7 @@ from rest_framework.viewsets import GenericViewSet
 
 logger = structlog.get_logger(__name__)
 from accounts.utils import get_request_organization
+from tfc.utils.api_contracts import hide_swagger_schema_for_actions
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
@@ -22,6 +23,14 @@ from tracer.utils.graphs_optimized import (
 )
 
 
+@hide_swagger_schema_for_actions(
+    "list",
+    "create",
+    "retrieve",
+    "update",
+    "partial_update",
+    "destroy",
+)
 class ChartsView(GenericViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]

@@ -21,6 +21,8 @@ from tfc.settings.settings import (
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.storage import upload_audio_to_s3_duration, upload_image_to_s3
 
+_HUGGINGFACE_DATASET_INFO_TIMEOUT_SECONDS = 30
+
 
 def get_huggingface_dataset_info(dataset_path, organization_id):
     if not organization_id:
@@ -36,7 +38,11 @@ def get_huggingface_dataset_info(dataset_path, organization_id):
     )
     headers = {"Authorization": f"Bearer {auth_token}"}
     API_URL = f"https://datasets-server.huggingface.co/info?dataset={dataset_path}"
-    response = requests.get(API_URL, headers=headers)
+    response = requests.get(
+        API_URL,
+        headers=headers,
+        timeout=_HUGGINGFACE_DATASET_INFO_TIMEOUT_SECONDS,
+    )
     if response.status_code != 200:
         raise Exception(f"{response.status_code}")
     response = response.json()

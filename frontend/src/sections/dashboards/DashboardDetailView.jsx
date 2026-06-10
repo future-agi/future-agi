@@ -607,7 +607,11 @@ function DraggableWidgetCard({
 
           {/* Chart */}
           <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-            <WidgetChart widget={widget} globalDateRange={globalDateRange} />
+            <WidgetChart
+              key={`${widget.id}:${datePreset || "default"}`}
+              widget={widget}
+              globalDateRange={globalDateRange}
+            />
           </Box>
         </CardContent>
       </Card>

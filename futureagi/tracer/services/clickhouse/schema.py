@@ -780,6 +780,8 @@ CREATE TABLE IF NOT EXISTS spans (
     INDEX idx_span_attr_str_keys mapKeys(span_attr_str) TYPE bloom_filter GRANULARITY 1,
     INDEX idx_span_attr_num_keys mapKeys(span_attr_num) TYPE bloom_filter GRANULARITY 1,
     INDEX idx_span_attr_bool_keys mapKeys(span_attr_bool) TYPE bloom_filter GRANULARITY 1,
+    INDEX idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1,
+    INDEX idx_end_user_id end_user_id TYPE bloom_filter GRANULARITY 1,
 
     -- Projection for fast root-span pagination: allows CH to skip non-root
     -- spans via the index instead of scanning all rows.
@@ -789,7 +791,8 @@ CREATE TABLE IF NOT EXISTS spans (
             start_time, end_time, latency_ms, cost,
             total_tokens, prompt_tokens, completion_tokens,
             model, provider, trace_session_id, trace_tags,
-            project_id, parent_span_id, _peerdb_is_deleted, created_at
+            project_id, parent_span_id, _peerdb_is_deleted, created_at,
+            end_user_id
         ORDER BY (project_id, _peerdb_is_deleted, parent_span_id, start_time)
     )
 )

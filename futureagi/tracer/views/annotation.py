@@ -20,18 +20,22 @@ from model_hub.views.scores import (
     _auto_complete_queue_items,
     _auto_create_queue_items_for_default_queues,
 )
-from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_contracts import (
+    hide_swagger_schema_for_actions,
+    validated_request,
+)
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.observation_span import ObservationSpan
+from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
 from tracer.serializers.annotation import (
     BulkAnnotationRequestSerializer,
     BulkAnnotationResponseSerializer,
     GetAnnotationLabelsQuerySerializer,
     GetAnnotationLabelsResponseSerializer,
-    GetTraceAnnotationValuesResponseSerializer,
     GetTraceAnnotationSerializer,
+    GetTraceAnnotationValuesResponseSerializer,
 )
 from tracer.services.clickhouse.query_service import (
     AnalyticsQueryService,
@@ -93,6 +97,14 @@ def _annotation_label_workspace_scope_q(request):
     return scope
 
 
+@hide_swagger_schema_for_actions(
+    "list",
+    "create",
+    "retrieve",
+    "update",
+    "partial_update",
+    "destroy",
+)
 class TraceAnnotationView(ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -313,6 +325,64 @@ class TraceAnnotationView(ModelViewSet):
 
         return annotations
 
+    def _get_annotations_from_postgres(
+        self,
+        request,
+        observation_span_id,
+        trace_id,
+        annotators_list,
+        exclude_annotators_list,
+    ):
+        query_params = {
+            "deleted": False,
+            "organization": _get_request_organization(request),
+        }
+        if observation_span_id:
+            query_params["observation_span_id"] = observation_span_id
+        elif trace_id:
+            query_params["observation_span__trace_id"] = trace_id
+            query_params["observation_span__parent_span_id__isnull"] = True
+        else:
+            return []
+
+        queryset = Score.objects.filter(
+            _project_workspace_scope_q(request, "observation_span__project__"),
+            **query_params,
+        )
+
+        if annotators_list:
+            queryset = queryset.filter(annotator__in=annotators_list)
+
+        if exclude_annotators_list:
+            queryset = queryset.exclude(annotator__in=exclude_annotators_list)
+
+        queryset = queryset.select_related("annotator", "label").order_by(
+            "-created_at"
+        )[:500]
+        result = []
+
+        for score in queryset:
+            final_annotation_value = self._extract_display_value(score)
+
+            result.append(
+                {
+                    "id": str(score.id),
+                    "annotation_label_name": score.label.name,
+                    "annotation_value": final_annotation_value,
+                    "annotation_label_id": str(score.label.id),
+                    "annotator": score.annotator.email if score.annotator else None,
+                    "annotator_id": str(score.annotator.id)
+                    if score.annotator
+                    else None,
+                    "updated_by": str(score.annotator.id) if score.annotator else None,
+                    "updated_at": score.updated_at,
+                    "annotation_type": score.label.type,
+                    "settings": score.label.settings,
+                }
+            )
+
+        return result
+
     # ------------------------------------------------------------------
     # Main endpoint
     # ------------------------------------------------------------------
@@ -339,11 +409,6 @@ class TraceAnnotationView(ModelViewSet):
             )
             trace_id = str(trace_id) if trace_id else None
 
-            # ClickHouse-only path for annotations. Legacy PG fallback removed
-            # post-migration — annotations live in CH (model_hub_score etc.
-            # mirrored via dual-write). Notes still come from PG because they
-            # weren't replicated; that's the only PG read this path makes.
-            analytics = AnalyticsQueryService()
             ch_annotations = self._get_annotations_from_clickhouse(
                 request,
                 observation_span_id,
@@ -351,64 +416,17 @@ class TraceAnnotationView(ModelViewSet):
                 annotators_list,
                 exclude_annotators_list,
             )
-            notes_details = self._get_notes_from_pg(
-                request, observation_span_id
-            )
-            return self._gm.success_response(
-                {"annotations": ch_annotations, "notes": notes_details}
-            )
-
-            query_params = {
-                "deleted": False,
-                "organization": _get_request_organization(request),
-            }
-            if observation_span_id:
-                query_params["observation_span_id"] = observation_span_id
-            elif trace_id:
-                query_params["observation_span__trace_id"] = trace_id
-                query_params["observation_span__parent_span_id__isnull"] = True
-
-            queryset = Score.objects.filter(
-                _project_workspace_scope_q(request, "observation_span__project__"),
-                **query_params,
-            )
-
-            if annotators_list:  # Include only these annotators
-                queryset = queryset.filter(annotator__in=annotators_list)
-
-            if exclude_annotators_list:  # Exclude these annotators
-                queryset = queryset.exclude(annotator__in=exclude_annotators_list)
-
-            queryset = queryset.select_related("annotator", "label").order_by(
-                "-created_at"
-            )[:500]
-            result = []
-
-            for score in queryset:
-                final_annotation_value = self._extract_display_value(score)
-
-                result.append(
-                    {
-                        "id": str(score.id),
-                        "annotation_label_name": score.label.name,
-                        "annotation_value": final_annotation_value,
-                        "annotation_label_id": str(score.label.id),
-                        "annotator": score.annotator.email if score.annotator else None,
-                        "annotator_id": (
-                            str(score.annotator.id) if score.annotator else None
-                        ),
-                        "updated_by": (
-                            str(score.annotator.id) if score.annotator else None
-                        ),
-                        "updated_at": score.updated_at,
-                        "annotation_type": score.label.type,
-                        "settings": score.label.settings,
-                    }
+            if not ch_annotations:
+                ch_annotations = self._get_annotations_from_postgres(
+                    request,
+                    observation_span_id,
+                    trace_id,
+                    annotators_list,
+                    exclude_annotators_list,
                 )
-
             notes_details = self._get_notes_from_pg(request, observation_span_id)
             return self._gm.success_response(
-                {"annotations": result, "notes": notes_details}
+                {"annotations": ch_annotations, "notes": notes_details}
             )
         except Exception as e:
             logger.exception(f"Error in getting annotation values: {str(e)}")
@@ -1309,20 +1327,30 @@ class GetAnnotationLabelsView(APIView):
 
     @validated_request(
         query_serializer=GetAnnotationLabelsQuerySerializer,
-        responses={200: GetAnnotationLabelsResponseSerializer, **ERROR_RESPONSES},
+        responses={
+            200: GetAnnotationLabelsResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            **ERROR_RESPONSES,
+        },
     )
     def get(self, request):
         try:
             query_params = request.validated_query_data
 
-            queryset = AnnotationsLabels.objects.filter(
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+            queryset = AnnotationsLabels.no_workspace_objects.filter(
+                _annotation_label_workspace_scope_q(request),
                 deleted=False,
             )
 
             project_id = query_params.get("project_id")
             if project_id:
+                project_exists = Project.no_workspace_objects.filter(
+                    _project_workspace_scope_q(request, project_prefix=""),
+                    id=project_id,
+                    deleted=False,
+                ).exists()
+                if not project_exists:
+                    return self._gm.not_found("Project not found")
                 queryset = queryset.filter(project_id=project_id)
 
             labels_list = list(

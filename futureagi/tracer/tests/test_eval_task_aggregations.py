@@ -9,7 +9,10 @@ rows (``observation_span_id IS NULL``) and picks the latest run when the
 same ``(span, eval_config)`` repeats.
 """
 
+from datetime import timedelta
+
 import pytest  # noqa: E402
+from django.utils import timezone
 
 # Break the import cycle (see test_eval_logger_schema.py for the
 # canonical comment).
@@ -24,6 +27,7 @@ from tracer.models.eval_task import (  # noqa: E402
 from tracer.models.observation_span import (  # noqa: E402
     EvalLogger,
     EvalTargetType,
+    ObservationSpan,
 )
 
 USAGE_URL = "/tracer/eval-task/get_usage/"
@@ -272,6 +276,42 @@ class TestEvalAggregation:
         ]
         assert list(agg.keys()) == ["A"]
 
+    def test_session_target_rows_are_excluded(
+        self,
+        auth_client,
+        project,
+        observe_project,
+        trace_session,
+        organization,
+        workspace,
+        observation_span,
+    ):
+        # Session-target rows (no observation_span) must be dropped from
+        # eval_aggregation. A False session row would tank pass-rate from
+        # 100% to 50% if counted — assertion below pins it at 100%.
+        tpl = _template(
+            organization=organization,
+            workspace=workspace,
+            output_type_normalized="pass_fail",
+        )
+        cfg_session = _config(project=observe_project, template=tpl, name="SessionEval")
+        cfg_span = _config(project=project, template=tpl, name="SpanEval")
+        task = _task(project=project)
+        EvalLogger.objects.create(
+            target_type=EvalTargetType.SESSION,
+            observation_span=None,
+            trace=None,
+            trace_session=trace_session,
+            custom_eval_config=cfg_session,
+            eval_task_id=str(task.id),
+            output_bool=False,
+        )
+        _row(span=observation_span, cfg=cfg_span, task=task, output_bool=True)
+
+        agg = self._get(auth_client, task).json()["result"]["eval_aggregation"]
+        assert set(agg.keys()) == {"SpanEval"}
+        assert agg["SpanEval"]["aggregated_score"] == 100.0
+
 
 # ── span_aggregation ───────────────────────────────────────────────────
 
@@ -467,3 +507,170 @@ class TestAggregationFlagsCombined:
         assert "stats" in body and "chart" in body and "logs" in body
         assert "eval_aggregation" not in body
         assert "span_aggregation" not in body
+
+
+# ── start_date / end_date date range filter ────────────────────────────
+
+
+def _set_span_created_at(span, when):
+    """Override ``created_at`` (auto_now_add) for a span via ``.update()``."""
+    ObservationSpan.objects.filter(id=span.id).update(created_at=when)
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestAggregationDateRange:
+    """``start_date`` / ``end_date`` filter both aggregations by the span's
+    own ``created_at`` (not the EvalLogger's). When neither is given, every
+    span linked to the task is included; otherwise the range bounds the
+    set of qualifying spans inclusively."""
+
+    def _get(self, auth_client, task, **extra):
+        return auth_client.get(
+            USAGE_URL,
+            {"eval_task_id": str(task.id), "eval_aggregation": "true", **extra},
+        )
+
+    def _setup_two_spans(
+        self, project, organization, workspace, observation_span, child_span
+    ):
+        # observation_span = 10 days ago, child_span = 1 day ago.
+        now = timezone.now()
+        _set_span_created_at(observation_span, now - timedelta(days=10))
+        _set_span_created_at(child_span, now - timedelta(days=1))
+
+        tpl = _template(
+            organization=organization,
+            workspace=workspace,
+            output_type_normalized="pass_fail",
+        )
+        cfg = _config(project=project, template=tpl, name="Toxicity")
+        task = _task(project=project)
+        # old span passes, recent span fails — pass rate diverges per range.
+        _row(span=observation_span, cfg=cfg, task=task, output_bool=True)
+        _row(span=child_span, cfg=cfg, task=task, output_bool=False)
+        return task, cfg
+
+    def test_no_date_range_includes_all_spans(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+        observation_span,
+        child_span,
+    ):
+        task, _ = self._setup_two_spans(
+            project, organization, workspace, observation_span, child_span
+        )
+        agg = self._get(auth_client, task).json()["result"]["eval_aggregation"][
+            "Toxicity"
+        ]
+        # 1 pass + 1 fail = 50%.
+        assert agg["aggregated_score"] == 50.0
+
+    def test_start_date_excludes_older_spans(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+        observation_span,
+        child_span,
+    ):
+        task, _ = self._setup_two_spans(
+            project, organization, workspace, observation_span, child_span
+        )
+        # 5 days ago: keeps child_span (1d), drops observation_span (10d).
+        start = (timezone.now() - timedelta(days=5)).isoformat()
+        agg = self._get(auth_client, task, start_date=start).json()["result"][
+            "eval_aggregation"
+        ]["Toxicity"]
+        # Only the failing recent span survives → 0%.
+        assert agg["aggregated_score"] == 0.0
+
+    def test_end_date_excludes_newer_spans(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+        observation_span,
+        child_span,
+    ):
+        task, _ = self._setup_two_spans(
+            project, organization, workspace, observation_span, child_span
+        )
+        # 5 days ago: keeps observation_span (10d), drops child_span (1d).
+        end = (timezone.now() - timedelta(days=5)).isoformat()
+        agg = self._get(auth_client, task, end_date=end).json()["result"][
+            "eval_aggregation"
+        ]["Toxicity"]
+        # Only the passing older span survives → 100%.
+        assert agg["aggregated_score"] == 100.0
+
+    def test_both_bounds_keep_only_in_range_spans(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+        observation_span,
+        child_span,
+    ):
+        task, _ = self._setup_two_spans(
+            project, organization, workspace, observation_span, child_span
+        )
+        # Window 15..7 days ago → only observation_span (10d) qualifies.
+        start = (timezone.now() - timedelta(days=15)).isoformat()
+        end = (timezone.now() - timedelta(days=7)).isoformat()
+        agg = self._get(auth_client, task, start_date=start, end_date=end).json()[
+            "result"
+        ]["eval_aggregation"]["Toxicity"]
+        assert agg["aggregated_score"] == 100.0
+
+    def test_range_excluding_all_returns_empty_rollup(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+        observation_span,
+        child_span,
+    ):
+        task, _ = self._setup_two_spans(
+            project, organization, workspace, observation_span, child_span
+        )
+        # 100 years ago → no span qualifies; rollup omits the config.
+        start = (timezone.now() - timedelta(days=36500)).isoformat()
+        end = (timezone.now() - timedelta(days=36000)).isoformat()
+        agg = self._get(auth_client, task, start_date=start, end_date=end).json()[
+            "result"
+        ]["eval_aggregation"]
+        assert agg == {}
+
+    def test_range_filters_span_aggregation_too(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+        observation_span,
+        child_span,
+    ):
+        # Same range mechanic must apply when only span_aggregation is set.
+        task, _ = self._setup_two_spans(
+            project, organization, workspace, observation_span, child_span
+        )
+        start = (timezone.now() - timedelta(days=5)).isoformat()
+        sa = auth_client.get(
+            USAGE_URL,
+            {
+                "eval_task_id": str(task.id),
+                "span_aggregation": "true",
+                "start_date": start,
+            },
+        ).json()["result"]["span_aggregation"]
+        # Only the recent (child) span survives the window.
+        assert list(sa.keys()) == [str(child_span.id)]

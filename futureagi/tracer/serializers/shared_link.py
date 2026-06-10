@@ -8,6 +8,12 @@ from tracer.models.shared_link import (
     SharedLinkAccess,
 )
 
+SUPPORTED_SHARED_RESOURCE_TYPE_CHOICES = [
+    (ResourceType.TRACE.value, ResourceType.TRACE.label),
+    (ResourceType.DASHBOARD.value, ResourceType.DASHBOARD.label),
+    (ResourceType.PROJECT.value, ResourceType.PROJECT.label),
+]
+
 
 class SharedLinkAccessSerializer(serializers.ModelSerializer):
     class Meta:
@@ -48,7 +54,9 @@ class SharedLinkListSerializer(serializers.ModelSerializer):
 
 
 class SharedLinkCreateSerializer(serializers.Serializer):
-    resource_type = serializers.ChoiceField(choices=ResourceType.choices)
+    resource_type = serializers.ChoiceField(
+        choices=SUPPORTED_SHARED_RESOURCE_TYPE_CHOICES
+    )
     resource_id = serializers.CharField(max_length=255)
     access_type = serializers.ChoiceField(
         choices=AccessType.choices, default=AccessType.RESTRICTED
@@ -125,7 +133,22 @@ class SharedLinkResolvedDataSerializer(serializers.Serializer):
     summary = SharedLinkResolvedSummarySerializer(required=False)
     id = serializers.CharField(required=False)
     name = serializers.CharField(required=False)
-    config = serializers.JSONField(required=False)
+    trace_type = serializers.CharField(required=False)
+    model_type = serializers.CharField(required=False)
+    metadata = serializers.JSONField(required=False, allow_null=True)
+    config = serializers.JSONField(required=False, allow_null=True)
+    session_config = serializers.JSONField(required=False, allow_null=True)
+    tags = serializers.JSONField(required=False, allow_null=True)
+    organization = serializers.CharField(required=False)
+    url_path = serializers.CharField(required=False)
+    description = serializers.CharField(required=False, allow_blank=True)
+    workspace = serializers.CharField(required=False)
+    created_by = serializers.JSONField(required=False, allow_null=True)
+    updated_by = serializers.JSONField(required=False, allow_null=True)
+    created_at = serializers.CharField(required=False, allow_null=True)
+    updated_at = serializers.CharField(required=False, allow_null=True)
+    widgets = serializers.ListField(child=serializers.JSONField(), required=False)
+    widget_count = serializers.IntegerField(required=False)
 
 
 class SharedLinkResolveResponseSerializer(serializers.Serializer):

@@ -2,6 +2,7 @@
 
 from django.conf import settings
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -24,6 +25,8 @@ from tfc.utils.api_errors import build_error_envelope
 
 class MCPConfigView(APIView):
     """Get or update MCP connection configuration."""
+
+    permission_classes = [IsAuthenticated]
 
     def _get_mcp_url(self):
         """Build the public MCP endpoint URL."""
@@ -115,6 +118,8 @@ class MCPConfigView(APIView):
 
 class MCPToolGroupsView(APIView):
     """Get or update tool group configuration."""
+
+    permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         responses={

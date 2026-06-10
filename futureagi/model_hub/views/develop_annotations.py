@@ -16,7 +16,7 @@ from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import MethodNotAllowed, NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -58,7 +58,10 @@ from model_hub.utils.utils import corpus_builder
 from tfc.constants.levels import Level
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_serializers import ApiTextErrorResponseSerializer, EmptyRequestSerializer
+from tfc.utils.api_serializers import (
+    ApiTextErrorResponseSerializer,
+    EmptyRequestSerializer,
+)
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -91,9 +94,7 @@ class AnnotationTaskViewSet(viewsets.ReadOnlyModelViewSet):
         ]
     )
     def list(self, request, *args, **kwargs):
-        query_serializer = AnnotationTaskListQuerySerializer(
-            data=request.query_params
-        )
+        query_serializer = AnnotationTaskListQuerySerializer(data=request.query_params)
         if not query_serializer.is_valid():
             return GeneralMethods().bad_request(query_serializer.errors)
         return super().list(request, *args, **kwargs)
@@ -461,7 +462,10 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
     _gm = GeneralMethods()
 
     def _request_organization(self):
-        return getattr(self.request, "organization", None) or self.request.user.organization
+        return (
+            getattr(self.request, "organization", None)
+            or self.request.user.organization
+        )
 
     def _workspace_filter(self, field_name="workspace"):
         workspace = getattr(self.request, "workspace", None)
@@ -665,7 +669,9 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 )
                 check_ee_feature(EEFeature.REQUIRED_LABELS, org_id=str(org.id))
 
-            serializer = self.get_serializer(instance, data=modified_data, partial=partial)
+            serializer = self.get_serializer(
+                instance, data=modified_data, partial=partial
+            )
             serializer.is_valid(raise_exception=True)
 
             # Get the old labels before saving
@@ -1678,19 +1684,92 @@ class UserViewSet(viewsets.ModelViewSet):
     pagination_class = UserPagination
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter(
+                "search",
+                openapi.IN_QUERY,
+                description="Filter organization users by name or email.",
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+            openapi.Parameter(
+                "is_active",
+                openapi.IN_QUERY,
+                description="Filter users by active status.",
+                type=openapi.TYPE_BOOLEAN,
+                required=False,
+            ),
+        ]
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @swagger_auto_schema(auto_schema=None)
+    def create(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            "POST",
+            detail="Organization user mutations are not supported on this route.",
+        )
+
+    @swagger_auto_schema(auto_schema=None)
+    def update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            "PUT",
+            detail="Organization user mutations are not supported on this route.",
+        )
+
+    @swagger_auto_schema(auto_schema=None)
+    def partial_update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            "PATCH",
+            detail="Organization user mutations are not supported on this route.",
+        )
+
+    @swagger_auto_schema(auto_schema=None)
+    def destroy(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            "DELETE",
+            detail="Organization user mutations are not supported on this route.",
+        )
+
+    def _validate_requested_organization(self, organization_id):
+        request_organization = getattr(self.request, "organization", None)
+        if request_organization and str(request_organization.id) != str(
+            organization_id
+        ):
+            raise NotFound(detail="No users found for the specified organization.")
+
+        workspace = getattr(self.request, "workspace", None)
+        if workspace and str(workspace.organization_id) != str(organization_id):
+            raise NotFound(detail="No users found for the specified organization.")
+
+        from accounts.models.organization_membership import OrganizationMembership
+
+        has_membership = OrganizationMembership.no_workspace_objects.filter(
+            user=self.request.user,
+            organization_id=organization_id,
+            is_active=True,
+        ).exists()
+        if not has_membership:
+            raise NotFound(detail="No users found for the specified organization.")
+
     def get_queryset(self):
         try:
             from accounts.models.organization_membership import OrganizationMembership
             from accounts.models.workspace import WorkspaceMembership
 
             organization_id = self.kwargs["organization_id"]
+            self._validate_requested_organization(organization_id)
             is_active_param = self.request.query_params.get("is_active")
 
             # Prefer workspace-level filtering when workspace context is available
             workspace = getattr(self.request, "workspace", None)
             if workspace:
                 explicit_workspace_user_ids = WorkspaceMembership.objects.filter(
-                    workspace=workspace, is_active=True
+                    workspace=workspace,
+                    workspace__organization_id=organization_id,
+                    is_active=True,
                 ).values_list("user_id", flat=True)
                 auto_access_user_ids = (
                     OrganizationMembership.no_workspace_objects.filter(
@@ -1712,15 +1791,15 @@ class UserViewSet(viewsets.ModelViewSet):
                     organization_id=organization_id, is_active=True
                 ).values_list("user_id", flat=True)
 
-            if is_active_param is not None:
-                is_active = str(is_active_param).lower() in ["true", "1", "t", "yes"]
-                queryset = User.objects.filter(id__in=user_ids, is_active=is_active)
-            else:
-                queryset = User.objects.filter(id__in=user_ids)
-
-            if not queryset.exists():
+            user_ids = list(dict.fromkeys(user_ids))
+            if not user_ids:
                 self._gm.not_found(get_error_message("USER_NOT_FOUND_IN_ORG"))
                 raise NotFound(detail="No users found for the specified organization.")
+
+            queryset = User.objects.filter(id__in=user_ids)
+            if is_active_param is not None:
+                is_active = str(is_active_param).lower() in ["true", "1", "t", "yes"]
+                queryset = queryset.filter(is_active=is_active)
 
             # Search by name or email (applied after existence check so empty
             # search results don't trigger 404 for the entire org)
@@ -1730,10 +1809,12 @@ class UserViewSet(viewsets.ModelViewSet):
                     Q(name__icontains=search) | Q(email__icontains=search)
                 )
 
-            return queryset
+            return queryset.distinct().order_by("email")
         except KeyError:
             self._gm.bad_request(get_error_message("ORGANIZATION_ID_MISSING"))
             raise NotFound(detail="Organization ID is required.")  # noqa: B904
+        except NotFound:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching the user of an organization: {str(e)}")
             self._gm.internal_server_error_response(
@@ -1741,15 +1822,6 @@ class UserViewSet(viewsets.ModelViewSet):
             )
             raise Exception(  # noqa: B904
                 f"An error occurred while processing your request: {str(e)}"
-            )
-
-    def list(self, request, *args, **kwargs):
-        try:
-            return super().list(request, *args, **kwargs)
-        except Exception as e:
-            logger.exception(f"Error in fetching the user of an organization: {str(e)}")
-            return self._gm.internal_server_error_response(
-                get_error_message("FAILED_TO_LOAD_USER_OF_ORG")
             )
 
 

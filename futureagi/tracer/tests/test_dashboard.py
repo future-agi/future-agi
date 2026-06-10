@@ -1590,6 +1590,39 @@ class TestDashboardQueryExecution:
         assert "c.duration_seconds != ''" not in sql
 
     @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    def test_filter_values_session_uses_remap_survivor_values(
+        self, _mock_enabled, mock_analytics_cls, auth_client, observe_project
+    ):
+        survivor_id = str(uuid.uuid4())
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = [{"val": survivor_id}]
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/",
+            {
+                "source": "traces",
+                "metric_name": "session",
+                "metric_type": "system_metric",
+                "project_ids": str(observe_project.id),
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["result"]["values"] == [
+            {"value": survivor_id, "label": survivor_id}
+        ]
+        sql = mock_service.execute_ch_query.call_args.args[0]
+        assert "FROM spans AS sp" in sql
+        assert "trace_session_id_remap" in sql
+        assert "ts_remap.survivor_id" in sql
+        assert "sp.trace_session_id" in sql
+
+    @pytest.mark.django_db
     def test_filter_values_annotation_annotator_returns_project_annotators(
         self, auth_client, project, observation_span, user, organization, workspace
     ):

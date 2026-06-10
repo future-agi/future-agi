@@ -500,7 +500,7 @@ function ExperimentDataView() {
         }
         // Process column data
       } catch (error) {
-        logger.error(`Error refreshing page ${p}:`, error);
+        logger.warn(`Error refreshing page ${p}:`, error);
       }
     }
   }, [experimentId, diffMode, refetchExperimentColumns]);

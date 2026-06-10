@@ -27,13 +27,13 @@ from accounts.utils import get_request_organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.fi_evals.grounded.similarity import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
-from common.utils.data_injection import normalize as _di_normalize
 from analytics.utils import (
     MixpanelEvents,
     MixpanelSources,
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from common.utils.data_injection import normalize as _di_normalize
 from evaluations.constants import FUTUREAGI_EVAL_TYPES  # noqa: E402
 from model_hub.models.choices import (
     CellStatus,
@@ -57,9 +57,9 @@ from model_hub.models.evals_metric import (
 )
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
     CustomEvalTemplateCreateResponseSerializer,
     DatasetEvalStatsResponseSerializer,
-    MODEL_HUB_ERROR_RESPONSES,
     ModelHubStringResultResponseSerializer,
 )
 from model_hub.serializers.develop_optimisation import UserEvalMetricSerializer
@@ -75,19 +75,24 @@ from model_hub.utils.json_path_resolver import (  # noqa: E402
     resolve_json_path,
 )
 from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.middleware.workspace_context import get_current_workspace
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import (
     get_error_for_api_status,
     get_error_message,
     get_specific_error_message,
 )
-from tfc.utils.api_contracts import validated_request
 from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
-    from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request, refund_cost_for_api_call
+    from ee.usage.utils.usage_entries import (
+        count_tiktoken_tokens,
+        log_and_deduct_cost_for_api_request,
+        refund_cost_for_api_call,
+    )
 except ImportError:
     count_tiktoken_tokens = None
     log_and_deduct_cost_for_api_request = None
@@ -1102,10 +1107,9 @@ class EvaluationRunner:
             # Reason column is always-on for experiments (matches dataset
             # behavior in develop_dataset.py:7102-7128). For datasets we
             # still respect the legacy config.reason_column flag.
-            wants_reason = (
-                bool(self.experiment_dataset)
-                or self.user_eval_metric.config.get("reason_column")
-            )
+            wants_reason = bool(
+                self.experiment_dataset
+            ) or self.user_eval_metric.config.get("reason_column")
             if wants_reason and not self.optimize:
                 reason_column_name = f"{self.user_eval_metric.name}-reason"
                 reason_column = self._create_reason_column(
@@ -1142,7 +1146,9 @@ class EvaluationRunner:
                     )
                     data_type = col_map.get(str(base_col_id)) if base_col_id else None
                     input_types[key] = (
-                        data_type if data_type in ["image", "images", "audio"] else "text"
+                        data_type
+                        if data_type in ["image", "images", "audio"]
+                        else "text"
                     )
                 config_dict.update({"input_data_types": input_types})
                 api_call_log_row.config = json.dumps(config_dict)
@@ -1164,14 +1170,21 @@ class EvaluationRunner:
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
                 billing_config = None
                 if BillingConfig is not None:
                     billing_config = BillingConfig.get()
                 eval_cost = getattr(eval_instance, "cost", {})
                 llm_cost = eval_cost.get("total_cost", 0)
-                per_run_fee = billing_config.get_eval_per_run_fee() if billing_config else 0
+                per_run_fee = (
+                    billing_config.get_eval_per_run_fee() if billing_config else 0
+                )
                 actual_cost = llm_cost + per_run_fee
+                _token_usage = getattr(eval_instance, "token_usage", {})
 
                 # Also compute fallback cost for comparison logging
                 _fallback_cost = 0
@@ -1180,7 +1193,6 @@ class EvaluationRunner:
                         calculate_total_cost,
                     )
 
-                    _token_usage = getattr(eval_instance, "token_usage", {})
                     _model = self.user_eval_metric.model or "unknown"
                     _fallback = calculate_total_cost(_model, _token_usage)
                     _fallback_cost = _fallback.get("total_cost", 0)
@@ -1198,7 +1210,11 @@ class EvaluationRunner:
                     token_usage=getattr(eval_instance, "token_usage", {}),
                 )
 
-                credits = billing_config.calculate_ai_credits(actual_cost) if billing_config else 0
+                credits = (
+                    billing_config.calculate_ai_credits(actual_cost)
+                    if billing_config
+                    else 0
+                )
                 emit_org_id = str(
                     self.organization_id
                     or (
@@ -1219,27 +1235,32 @@ class EvaluationRunner:
                     if _is_code_eval and BillingEventType is not None
                     else _get_api_call_type(self.user_eval_metric.model)
                 )
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
 
                     emit(
-                    UsageEvent(
-                        org_id=emit_org_id,
-                        event_type=eval_event_type,
-                        amount=credits,
-                        properties={
-                            "source": self.source,
-                            "source_id": str(
-                                self.source_id
-                                or (
-                                    str(self.user_eval_metric.template.id)
-                                    if self.user_eval_metric
-                                    else ""
-                                )
-                            ),
-                            "raw_cost_usd": str(actual_cost),
-                        },
+                        UsageEvent(
+                            org_id=emit_org_id,
+                            event_type=eval_event_type,
+                            amount=credits,
+                            properties={
+                                "source": self.source,
+                                "source_id": str(
+                                    self.source_id
+                                    or (
+                                        str(self.user_eval_metric.template.id)
+                                        if self.user_eval_metric
+                                        else ""
+                                    )
+                                ),
+                                "raw_cost_usd": str(actual_cost),
+                                **token_usage_properties(_token_usage),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass
 
@@ -1247,7 +1268,9 @@ class EvaluationRunner:
             # (UserEvalMetric) or directly on the eval template.
             should_run_error_localizer = bool(
                 self.user_eval_metric.error_localizer
-                or getattr(self.user_eval_metric.template, "error_localizer_enabled", False)
+                or getattr(
+                    self.user_eval_metric.template, "error_localizer_enabled", False
+                )
             )
             if should_run_error_localizer:
                 from model_hub.tasks.user_evaluation import (
@@ -1268,12 +1291,24 @@ class EvaluationRunner:
                         eval_result=value,
                         response=response,
                         cell=cell,
-                        log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
+                        log_id=(
+                            str(api_call_log_row.log_id) if api_call_log_row else None
+                        ),
                     )
 
         except Exception as e:
-            logger.exception(f"Error in evaluation of row: {str(e)}")
-            traceback.print_exc()
+            # Expected, handled validation failures (a required input was not
+            # mapped/provided, or the eval targets a cell that already errored)
+            # are user-driven, not bugs; the row is persisted as a failed result
+            # below. Downgrade only those to warning so genuine errors keep
+            # creating Sentry issues.
+            if str(e).startswith("No input received") or str(e) == get_error_message(
+                "EVALUATION_NOT_FOR_ERROR_CELL"
+            ):
+                logger.warning(f"Error in evaluation of row: {str(e)}")
+            else:
+                logger.exception(f"Error in evaluation of row: {str(e)}")
+                traceback.print_exc()
 
             # Use the centralized error handling function
             error_message = get_specific_error_message(e)
@@ -1283,10 +1318,9 @@ class EvaluationRunner:
 
             # Create reason column and cell with error status. Always-on for
             # experiments; respect legacy flag for datasets.
-            wants_reason = (
-                bool(self.experiment_dataset)
-                or self.user_eval_metric.config.get("reason_column")
-            )
+            wants_reason = bool(
+                self.experiment_dataset
+            ) or self.user_eval_metric.config.get("reason_column")
             if wants_reason and not self.optimize:
                 reason_column_name = f"{self.user_eval_metric.name}-reason"
                 reason_column = self._create_reason_column(
@@ -1297,7 +1331,9 @@ class EvaluationRunner:
                         self.dataset,
                         reason_column,
                         row,
-                        {"reason": "No reasoning available. Please rerun the evaluation."},
+                        {
+                            "reason": "No reasoning available. Please rerun the evaluation."
+                        },
                         "No reasoning available. Please rerun the evaluation.",
                         CellStatus.ERROR.value,
                     )
@@ -1989,9 +2025,7 @@ class EvaluationRunner:
         if getattr(self.eval_template, "config", None):
             required_keys = self.eval_template.config.get("required_keys", [])
             optional_keys = self.eval_template.config.get("optional_keys", [])
-            is_user_custom_eval = self.eval_template.config.get(
-                "custom_eval", False
-            )
+            is_user_custom_eval = self.eval_template.config.get("custom_eval", False)
 
         # Emptiness rules live in the shared validator so dataset,
         # playground, tracing, and SDK paths apply the same logic.
@@ -2040,9 +2074,7 @@ class EvaluationRunner:
         # Mapped-but-unresolved keys count as empty so the all-empty
         # safety net can still fire for custom evals.
         for key in keys_to_check:
-            mapping_config = (
-                mappings.get(key) if isinstance(mappings, dict) else None
-            )
+            mapping_config = mappings.get(key) if isinstance(mappings, dict) else None
             if _is_mapped(mapping_config):
                 mapped_keys_for_validation.add(key)
                 if key not in values_for_validation:
@@ -2180,10 +2212,9 @@ class EvaluationRunner:
         _di_raw = {}
         if self.user_eval_metric and self.user_eval_metric.config:
             _uem_cfg = self.user_eval_metric.config
-            _di_raw = (
-                _uem_cfg.get("run_config", {}).get("data_injection", {})
-                or _uem_cfg.get("data_injection", {})
-            )
+            _di_raw = _uem_cfg.get("run_config", {}).get(
+                "data_injection", {}
+            ) or _uem_cfg.get("data_injection", {})
         if not _di_raw and self.eval_template:
             _di_raw = self.eval_template.config.get("data_injection", {})
         _di = _di_normalize(_di_raw)
@@ -2191,9 +2222,9 @@ class EvaluationRunner:
         if _di["full_row"] and "row_context" not in _mapped:
             try:
                 row_dict = {}
-                cells = Cell.objects.filter(
-                    row=row, deleted=False
-                ).select_related("column")
+                cells = Cell.objects.filter(row=row, deleted=False).select_related(
+                    "column"
+                )
                 for cell in cells:
                     col_name = cell.column.name if cell.column else None
                     if not col_name:
@@ -2356,9 +2387,11 @@ class EvaluationRunner:
         except Exception:
             logger.error(f"unable to retrieve rule prompt for column id : {column_id}")
 
-        input_token_count = (count_tiktoken_tokens(
-            input_words_string, cell_values_image_urls
-        ) if count_tiktoken_tokens else 0)
+        input_token_count = (
+            count_tiktoken_tokens(input_words_string, cell_values_image_urls)
+            if count_tiktoken_tokens
+            else 0
+        )
         return input_token_count
 
     def _resolve_version(self):
@@ -2543,10 +2576,9 @@ class EvaluationRunner:
             # snake_case flags so downstream code never has to re-handle aliases.
             _uem_di = {}
             if self.user_eval_metric and self.user_eval_metric.config:
-                _uem_di = (
-                    self.user_eval_metric.config.get("run_config", {}).get("data_injection", {})
-                    or self.user_eval_metric.config.get("data_injection", {})
-                )
+                _uem_di = self.user_eval_metric.config.get("run_config", {}).get(
+                    "data_injection", {}
+                ) or self.user_eval_metric.config.get("data_injection", {})
             config["data_injection"] = _di_normalize(
                 _uem_di or self.eval_template.config.get("data_injection", {})
             )
@@ -3155,6 +3187,7 @@ class EvaluationRunner:
             self.load_user_eval_metric()
 
             from sdk.utils.helpers import _get_api_call_type
+
             try:
                 from ee.usage.services.metering import check_usage
             except ImportError:

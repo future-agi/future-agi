@@ -257,6 +257,14 @@ def _update_observation_span(existing_span, normalized_data):
     """
     attributes = normalized_data.get("span_attributes", {})
 
+    # Preserve recording URLs we've already rehosted to S3 — the provider
+    # response only contains its own (expiring) URLs, so a wholesale
+    # overwrite would otherwise drop the durable S3 links the rehost task
+    # wrote on a previous poll.
+    for k, v in (existing_span.span_attributes or {}).items():
+        if isinstance(v, str) and ("amazonaws.com" in v or "minio" in v):
+            attributes[k] = v
+
     existing_span.start_time = normalized_data.get("start_time")
     existing_span.end_time = normalized_data.get("end_time")
     existing_span.input = normalized_data.get("input", {})
@@ -426,9 +434,7 @@ def _maybe_enqueue_recording_rehost(
         return
 
     span_id = str(span.id)
-    transaction.on_commit(
-        lambda: rehost_external_recordings.delay(span_id=span_id)
-    )
+    transaction.on_commit(lambda: rehost_external_recordings.delay(span_id=span_id))
 
 
 def create_observability_provider(

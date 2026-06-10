@@ -1,6 +1,5 @@
-import asyncio
 from functools import wraps
-from inspect import Parameter, signature
+from inspect import Parameter, iscoroutinefunction, signature
 
 import structlog
 from django.conf import settings
@@ -18,6 +17,23 @@ logger = structlog.get_logger(__name__)
 DEFAULT_ERROR_STATUS_CODE = "default"
 RUNTIME_REQUEST_VALIDATION_EXTENSION = "x-runtime-request-validation"
 RUNTIME_RESPONSE_VALIDATION_EXTENSION = "x-runtime-response-validation"
+
+
+def hide_swagger_schema_for_actions(*action_names):
+    """Hide explicitly unsupported ViewSet actions from generated OpenAPI output."""
+
+    def decorator(viewset_class):
+        for action_name in action_names:
+            action = getattr(viewset_class, action_name, None)
+            if action is None:
+                continue
+
+            overrides = dict(getattr(action, "_swagger_auto_schema", {}))
+            overrides["auto_schema"] = None
+            action._swagger_auto_schema = overrides
+        return viewset_class
+
+    return decorator
 
 
 def _documented_response_has_schema(response):
@@ -291,12 +307,7 @@ def validated_request(
             # strict_response_validation=True.
             swagger_options["runtime_response_validation"] = True
 
-        def _run_request_validation(args, kwargs):
-            """Validate query/body per the declared serializers.
-
-            Mutates the request (validated_* attributes) and returns an early
-            error Response, or None when the handler should run.
-            """
+        def prepare_request(*args, **kwargs):
             request = _request_from_call(args)
             request.validated_data = {}
             request.validated_query_data = {}
@@ -357,8 +368,7 @@ def validated_request(
 
             return None
 
-        def _run_response_validation(response):
-            """Check the response against the declared response contract."""
+        def finalize_response(response):
             if not responses or not isinstance(response, Response):
                 return response
 
@@ -388,34 +398,29 @@ def validated_request(
 
             return response
 
-        if asyncio.iscoroutinefunction(view_func):
-            # Async handlers (e.g. the internal LiveKit API views) need a
-            # coroutine-function wrapper: a sync wrapper erases the handler's
-            # async-ness, Django then treats the whole view as sync, never
-            # awaits AsyncAPIView.dispatch, and every request 500s with
-            # "returned an unawaited coroutine" (found by the first local
-            # voice-sim E2E run — the agent worker's transcript/lifecycle
-            # pushes all failed). Awaiting here also makes the response
-            # contract actually checked for async views.
+        if iscoroutinefunction(view_func):
+
             @swagger_auto_schema(**swagger_options)
             @wraps(view_func)
             async def wrapper(*args, **kwargs):
-                early = _run_request_validation(args, kwargs)
-                if early is not None:
-                    return early
+                early_response = prepare_request(*args, **kwargs)
+                if early_response is not None:
+                    return early_response
+
                 response = await view_func(*args, **kwargs)
-                return _run_response_validation(response)
+                return finalize_response(response)
 
-        else:
+            return wrapper
 
-            @swagger_auto_schema(**swagger_options)
-            @wraps(view_func)
-            def wrapper(*args, **kwargs):
-                early = _run_request_validation(args, kwargs)
-                if early is not None:
-                    return early
-                response = view_func(*args, **kwargs)
-                return _run_response_validation(response)
+        @swagger_auto_schema(**swagger_options)
+        @wraps(view_func)
+        def wrapper(*args, **kwargs):
+            early_response = prepare_request(*args, **kwargs)
+            if early_response is not None:
+                return early_response
+
+            response = view_func(*args, **kwargs)
+            return finalize_response(response)
 
         return wrapper
 

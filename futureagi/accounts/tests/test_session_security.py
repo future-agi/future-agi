@@ -57,7 +57,6 @@ class TestLogoutInvalidatesTokens:
         assert login_resp.status_code == status.HTTP_200_OK
         tokens = login_resp.json()
         access = tokens["access"]
-        refresh = tokens["refresh"]
 
         # Verify that access token works before logout
         resp = api_client.get("/accounts/user-info/", **_auth_header(access))
@@ -69,6 +68,63 @@ class TestLogoutInvalidatesTokens:
 
         # Old access token should now fail
         resp = api_client.get("/accounts/user-info/", **_auth_header(access))
+        assert resp.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
+    def test_workspace_viewer_can_logout_with_workspace_header(
+        self, api_client, organization, workspace
+    ):
+        """Workspace write restrictions must not block session invalidation."""
+        viewer = User.objects.create_user(
+            email="logout-viewer@futureagi.com",
+            password="testpassword123",
+            name="Logout Viewer",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER_VIEW_ONLY,
+            is_active=True,
+        )
+        org_membership = OrganizationMembership.no_workspace_objects.create(
+            user=viewer,
+            organization=organization,
+            role=OrganizationRoles.MEMBER_VIEW_ONLY,
+            level=Level.VIEWER,
+            is_active=True,
+        )
+        WorkspaceMembership.no_workspace_objects.create(
+            user=viewer,
+            workspace=workspace,
+            role=OrganizationRoles.WORKSPACE_VIEWER,
+            level=Level.WORKSPACE_VIEWER,
+            organization_membership=org_membership,
+            is_active=True,
+        )
+
+        login_resp = _login(api_client, viewer.email)
+        assert login_resp.status_code == status.HTTP_200_OK
+        access = login_resp.json()["access"]
+
+        logout_resp = api_client.post(
+            "/accounts/logout/",
+            **_auth_header(access),
+            HTTP_X_ORGANIZATION_ID=str(organization.id),
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+        assert logout_resp.status_code == status.HTTP_200_OK
+        assert AuthToken.objects.filter(
+            user=viewer,
+            auth_type=AuthTokenType.ACCESS.value,
+            is_active=False,
+        ).exists()
+
+        resp = api_client.get(
+            "/accounts/user-info/",
+            **_auth_header(access),
+            HTTP_X_ORGANIZATION_ID=str(organization.id),
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
         assert resp.status_code in [
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
@@ -381,7 +437,7 @@ class TestConcurrentSessions:
         access2 = resp2.json()["access"]
 
         # Both access tokens should work for reading
-        r1 = client1.get("/accounts/user-info/", **_auth_header(access1))
+        client1.get("/accounts/user-info/", **_auth_header(access1))
         r2 = client2.get("/accounts/user-info/", **_auth_header(access2))
 
         # First session access token may be invalidated by second login
@@ -395,7 +451,7 @@ class TestConcurrentSessions:
         client_b = APIClient()
 
         # Login twice
-        resp_a = _login(client_a, user.email)
+        _login(client_a, user.email)
         # Second login invalidates first refresh, but first access stays
         resp_b = _login(client_b, user.email)
         access_b = resp_b.json()["access"]
@@ -677,7 +733,7 @@ class TestLoginRateLimiting:
 
     def test_failed_logins_tracked(self, api_client, user):
         """Multiple failed logins should be tracked, report remaining attempts, and include error_code."""
-        for i in range(3):
+        for _ in range(3):
             resp = _login(api_client, user.email, "wrong-password")
             assert resp.status_code == status.HTTP_400_BAD_REQUEST
             data = resp.json()

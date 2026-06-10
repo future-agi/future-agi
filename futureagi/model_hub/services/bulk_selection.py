@@ -299,6 +299,21 @@ def _validate_user_scoped_filters(filters, user):
             )
 
 
+def _project_matches_workspace(project, workspace):
+    if workspace is None:
+        return True
+    project_workspace_id = getattr(project, "workspace_id", None)
+    if project_workspace_id == getattr(workspace, "id", None):
+        return True
+    return project_workspace_id is None and getattr(workspace, "is_default", False)
+
+
+def _trace_project_workspace_filter(workspace):
+    if getattr(workspace, "is_default", False):
+        return Q(project__workspace=workspace) | Q(project__workspace__isnull=True)
+    return Q(project__workspace=workspace)
+
+
 def _build_trace_base_queryset(project_id, organization, workspace=None):
     """Return org/workspace/project-scoped base Trace queryset.
 
@@ -400,7 +415,7 @@ def _build_trace_base_queryset(project_id, organization, workspace=None):
     )
 
     if workspace is not None:
-        qs = qs.filter(project__workspace=workspace)
+        qs = qs.filter(_trace_project_workspace_filter(workspace))
 
     return qs
 
@@ -792,9 +807,7 @@ def resolve_filtered_trace_ids(
     # Verify project exists + is in org before we try either backend. Keeps
     # the 404 contract consistent with the enumerated path.
     project = Project.objects.get(id=project_id, organization=organization)
-    if workspace is not None and getattr(project, "workspace_id", None) != getattr(
-        workspace, "id", None
-    ):
+    if not _project_matches_workspace(project, workspace):
         return ResolveResult(ids=[], total_matching=0, truncated=False)
 
     # Dispatch to ClickHouse when available so filter semantics
@@ -824,8 +837,13 @@ def resolve_filtered_trace_ids(
                 cap=cap,
                 annotation_label_ids=annotation_label_ids,
             )
-    if ch_result is not None:
+    if ch_result is not None and ch_result.total_matching > 0:
         return ch_result
+    if ch_result is not None:
+        logger.info(
+            "bulk_selection_resolve_trace_ch_empty_pg_fallback",
+            project_id=str(project_id),
+        )
 
     base = _build_trace_base_queryset(project_id, organization, workspace)
     if _needs_eval_metric_annotations(filters or []):
@@ -939,7 +957,7 @@ def _build_span_base_queryset(project_id, organization, workspace=None):
     )
 
     if workspace is not None:
-        qs = qs.filter(project__workspace=workspace)
+        qs = qs.filter(_trace_project_workspace_filter(workspace))
 
     return qs
 
@@ -1170,7 +1188,7 @@ def _build_session_base_queryset(project_id, organization, workspace=None):
 
     qs = TraceSession.objects.filter(project_id=project.id)
     if workspace is not None:
-        qs = qs.filter(project__workspace=workspace)
+        qs = qs.filter(_trace_project_workspace_filter(workspace))
     return qs
 
 
@@ -1708,14 +1726,21 @@ def resolve_filtered_session_ids(
         organization=organization,
         cap=cap,
     )
-    if ch_result is not None:
+    if ch_result is not None and ch_result.total_matching > 0:
         return ch_result
 
-    logger.warning(
-        "bulk_selection_resolve_session_ch_unavailable_pg_fallback",
-        project_id=str(project_id),
-    )
-    return _resolve_filtered_session_ids_pg(
+    if ch_result is None:
+        logger.warning(
+            "bulk_selection_resolve_session_ch_unavailable_pg_fallback",
+            project_id=str(project_id),
+        )
+    else:
+        logger.info(
+            "bulk_selection_resolve_session_ch_empty_pg_fallback",
+            project_id=str(project_id),
+        )
+
+    pg_result = _resolve_filtered_session_ids_pg(
         project_id=project_id,
         filters=filters or [],
         exclude_ids=exclude_ids,
@@ -1723,6 +1748,9 @@ def resolve_filtered_session_ids(
         workspace=workspace,
         cap=cap,
     )
+    if pg_result.total_matching > 0 or ch_result is None:
+        return pg_result
+    return ch_result
 
 
 # --------------------------------------------------------------------------

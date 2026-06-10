@@ -28,7 +28,9 @@ import {
   normalizeAlertListRow,
 } from "../../common";
 
-const AlertsSheetView = lazy(() => import("../AlertsSheetView/AlertsSheetView"));
+const AlertsSheetView = lazy(
+  () => import("../AlertsSheetView/AlertsSheetView"),
+);
 
 export default function AlertsListView() {
   const queryClient = useQueryClient();
@@ -209,7 +211,13 @@ export default function AlertsListView() {
           const isMuted = isAlertMuted(row.original);
           return (
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-              <Typography variant="body2" noWrap sx={{ fontWeight: 500 }}>
+              <Typography
+                variant="body2"
+                noWrap
+                sx={{ fontWeight: 500 }}
+                data-alert-row-name={row.original?.name}
+                data-alert-row-id={row.original?.id}
+              >
                 {getValue()}
               </Typography>
               {isMuted && (

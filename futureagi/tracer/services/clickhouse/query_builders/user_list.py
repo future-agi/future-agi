@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.v2.id_remap_sql import (
@@ -174,6 +175,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         )
         resolved_eu = resolved_id_expr("rs.end_user_id", "eu_remap")
         resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
+        eval_table, eval_nd_e = eval_logger_source("e")
 
         query = f"""
         WITH
@@ -297,10 +299,9 @@ class UserListQueryBuilder(BaseQueryBuilder):
                     2
                 ) AS bool_eval_pass_rate,
                 round(avg(e.output_float), 2) AS avg_output_float
-            FROM tracer_eval_logger AS e FINAL
+            FROM {eval_table} AS e FINAL
             INNER JOIN user_traces AS ut ON toString(e.trace_id) = ut.trace_id
-            WHERE e._peerdb_is_deleted = 0
-              AND e.deleted = 0
+            WHERE {eval_nd_e}
             GROUP BY ut.end_user_id
         ),
         final_rows AS (

@@ -1980,7 +1980,7 @@ class TestAutomationRules:
         payload = {
             "name": "TeamA Rule",
             "source_type": "trace",
-            "conditions": {"filter": []},
+            "conditions": {},
             "trigger_frequency": AutomationRuleTriggerFrequency.MANUAL.value,
         }
         resp = auth_client.post(_rules_url(queue), payload, format="json")
@@ -2048,7 +2048,7 @@ class TestAutomationRules:
             name="pick all",
             queue_id=queue,
             source_type="trace",
-            conditions={"project_id": str(project.id), "all": []},
+            conditions={"scope": {"project_id": str(project.id)}},
             organization=organization,
         )
         # Pre-state: no items.
@@ -2111,7 +2111,15 @@ class TestGetAnnotationLabelsLegacy:
         numeric_label,
         text_label,
         categorical_label,
+        monkeypatch,
     ):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "should_use_clickhouse",
+            lambda self, query_type: False,
+        )
         api_client.force_authenticate(user=user)
         resp = api_client.get(
             "/tracer/trace/list_traces_of_session/",
@@ -2178,8 +2186,6 @@ class TestGetAnnotationValues:
     def test_returns_annotations_for_span_with_annotator_filter(
         self, auth_client, user, observation_span, star_label
     ):
-        from tracer.tests._ch_seed import seed_ch_score
-
         auth_client.post(
             SCORE_URL,
             {
@@ -2190,14 +2196,6 @@ class TestGetAnnotationValues:
             },
             format="json",
         )
-
-        score = Score.objects.get(
-            observation_span=observation_span,
-            label=star_label,
-            annotator=user,
-            deleted=False,
-        )
-        seed_ch_score(score)
 
         resp = auth_client.get(
             TRACER_ANN_VALUES,

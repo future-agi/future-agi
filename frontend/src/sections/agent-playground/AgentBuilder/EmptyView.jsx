@@ -1,4 +1,4 @@
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Link, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState, useRef } from "react";
 import SvgColor from "src/components/svg-color";
@@ -67,10 +67,10 @@ export default function EmptyView() {
     setOpen(false);
   };
 
-  // const handleOpenTemplateDrawer = (e) => {
-  //   e.stopPropagation();
-  //   setTemplateDrawerOpen(true);
-  // };
+  const handleOpenTemplateDrawer = (e) => {
+    e.stopPropagation();
+    setTemplateDrawerOpen(true);
+  };
 
   const handleCloseTemplateDrawer = () => {
     setTemplateDrawerOpen(false);
@@ -114,14 +114,14 @@ export default function EmptyView() {
               >
                 Add first node
               </Typography>
-              {/* <Link
+              <Link
                 typography={"s2_1"}
                 fontWeight={"fontWeightMedium"}
                 onClick={handleOpenTemplateDrawer}
                 sx={{ cursor: "pointer" }}
               >
-                or start from the template
-              </Link> */}
+                or start from a template
+              </Link>
             </Stack>
           }
         />

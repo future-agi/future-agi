@@ -105,7 +105,7 @@ class TestListDatasetsTool:
         result = tool.run({"source": "build"}, tool_context)
         assert result.data["total"] == 1
 
-        result = tool.run({"source": "demo"}, tool_context)
+        result = tool.run({"source": "observe"}, tool_context)
         assert result.data["total"] == 0
 
     def test_list_pagination(self, tool_context, dataset):
@@ -136,7 +136,7 @@ class TestGetDatasetTool:
         result = tool.run({"dataset_id": fake_id}, tool_context)
 
         assert result.is_error
-        assert "not found" in result.content.lower()
+        assert result.error_code == "NOT_FOUND"
 
     def test_get_shows_schema(self, tool_context, dataset_with_columns):
         ds, cols = dataset_with_columns
@@ -196,7 +196,7 @@ class TestCreateDatasetTool:
         )
 
         assert result.is_error
-        assert "already exists" in result.content
+        assert result.error_code == "DUPLICATE_NAME"
 
     def test_create_mismatched_types_length(self, tool_context, mock_resource_limit):
         result = run_tool(
@@ -449,7 +449,7 @@ class TestAddColumnsTool:
         )
 
         assert result.is_error
-        assert "already exist" in result.content
+        assert result.error_code == "DUPLICATE_NAME"
 
     def test_add_invalid_type(
         self, tool_context, writable_dataset, mock_resource_limit
@@ -556,9 +556,8 @@ class TestDeleteRowsTool:
             tool_context,
         )
 
-        # Service returns NOT_FOUND error when no matching rows exist
         assert result.is_error
-        assert "no matching rows" in result.content.lower()
+        assert result.error_code == "NOT_FOUND"
 
 
 class TestUpdateDatasetTool:

@@ -217,16 +217,12 @@ def store_chat_messages(
 
             # run evals for this call exec
             call_metadata = call_execution.call_metadata or {}
+            should_start_evals = False
 
             if not call_metadata.get("eval_started"):
                 call_metadata["eval_started"] = True
                 call_execution.call_metadata = call_metadata
-                _run_simulate_evaluations_task.apply_async(
-                    args=(str(call_execution.id),)
-                )
-                logger.info(
-                    f"Started evaluations for call after completion {call_execution.id}"
-                )
+                should_start_evals = True
 
             call_execution.save(
                 update_fields=[
@@ -238,6 +234,26 @@ def store_chat_messages(
                     "overall_score",
                 ]
             )
+
+            if should_start_evals:
+                try:
+                    _run_simulate_evaluations_task.apply_async(
+                        args=(str(call_execution.id),)
+                    )
+                    logger.info(
+                        f"Started evaluations for call after completion {call_execution.id}"
+                    )
+                except Exception as dispatch_error:
+                    call_metadata = call_execution.call_metadata or {}
+                    call_metadata["eval_started"] = False
+                    call_metadata["eval_dispatch_failed"] = str(dispatch_error)
+                    call_execution.call_metadata = call_metadata
+                    call_execution.save(update_fields=["call_metadata"])
+                    logger.exception(
+                        "chat_eval_dispatch_failed",
+                        call_execution_id=str(call_execution.id),
+                        error=str(dispatch_error),
+                    )
 
             logger.info(f"CallExecution {call_execution.id} marked as COMPLETED")
 
@@ -255,9 +271,54 @@ def store_chat_messages(
                 )
 
             # Trigger test execution monitoring to update TestExecution status
-            monitor_test_execution_for_chat.apply_async(
-                args=(str(call_execution.test_execution_id),)
-            )
+            try:
+                monitor_test_execution_for_chat.apply_async(
+                    args=(str(call_execution.test_execution_id),)
+                )
+            except Exception as dispatch_error:
+                monitor_original = getattr(
+                    monitor_test_execution_for_chat, "_original_func", None
+                )
+                if callable(monitor_original):
+                    try:
+                        monitor_original(str(call_execution.test_execution_id))
+                    except Exception as monitor_error:
+                        test_execution = call_execution.test_execution
+                        test_execution.execution_metadata = (
+                            test_execution.execution_metadata or {}
+                        )
+                        test_execution.execution_metadata[
+                            "chat_monitor_dispatch_failed"
+                        ] = str(monitor_error)
+                        test_execution.picked_up_by_executor = False
+                        test_execution.save(
+                            update_fields=[
+                                "execution_metadata",
+                                "picked_up_by_executor",
+                            ]
+                        )
+                        logger.exception(
+                            "chat_monitor_sync_fallback_failed",
+                            test_execution_id=str(call_execution.test_execution_id),
+                            error=str(monitor_error),
+                        )
+                else:
+                    test_execution = call_execution.test_execution
+                    test_execution.execution_metadata = (
+                        test_execution.execution_metadata or {}
+                    )
+                    test_execution.execution_metadata[
+                        "chat_monitor_dispatch_failed"
+                    ] = str(dispatch_error)
+                    test_execution.picked_up_by_executor = False
+                    test_execution.save(
+                        update_fields=["execution_metadata", "picked_up_by_executor"]
+                    )
+                logger.exception(
+                    "chat_monitor_dispatch_failed_falling_back_sync",
+                    test_execution_id=str(call_execution.test_execution_id),
+                    error=str(dispatch_error),
+                )
 
         return True
     except Exception as e:

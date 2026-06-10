@@ -21,9 +21,15 @@ from model_hub.models.evals_metric import EvalTemplate
 from sdk.utils.helpers import _get_api_call_type
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.temporal import temporal_activity
+from tfc.utils.case import to_camel_case, to_snake_case
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.eval_task import EvalTask
-from tracer.models.observation_span import EvalLogger, EvalTargetType, ObservationSpan
+from tracer.models.observation_span import (
+    EvalLogger,
+    EvalTargetType,
+    ObservationSpan,
+    ObservationType,
+)
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.utils.helper import (
@@ -74,6 +80,43 @@ def _walk_dotted_path(root, path):
                 return None
         else:
             return None
+    return current
+
+
+def _walk_raw_log(raw_log: dict, path: str):
+    """Walk raw_log with snake_case ↔ camelCase coercion per segment.
+
+    Voice-only fallback in ``_process_mapping``. Bridges FE picker
+    snake_case paths (``messages.0.end_time``) to vapi/retell camelCase
+    keys (``endTime``). Returns ``_MISSING`` on miss — distinguishing
+    that from a legitimate ``None`` matters because voice transcripts
+    store real ``null`` for fields like ``duration``/``metadata``.
+    """
+    if not isinstance(path, str) or not path:
+        return _MISSING
+
+    current = raw_log
+    for part in path.split("."):
+        if isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError):
+                return _MISSING
+            continue
+        if not isinstance(current, dict):
+            return _MISSING
+        if part in current:
+            current = current[part]
+            continue
+        camel = to_camel_case(part)
+        if camel != part and camel in current:
+            current = current[camel]
+            continue
+        snake = to_snake_case(part)
+        if snake != part and snake in current:
+            current = current[snake]
+            continue
+        return _MISSING
     return current
 
 
@@ -398,9 +441,9 @@ def build_session_context(session) -> dict | None:
                     "name": s.name,
                     "observation_type": s.observation_type,
                     "status": s.status,
-                    "parent_span_id": str(s.parent_span_id)
-                    if s.parent_span_id
-                    else None,
+                    "parent_span_id": (
+                        str(s.parent_span_id) if s.parent_span_id else None
+                    ),
                 }
             )
 
@@ -544,6 +587,20 @@ def _process_mapping(
             if model_val is not _MISSING:
                 resolved_value = model_val
 
+        # Voice raw_log fallback: paths the BE response builder normalizes
+        # from raw_log at API time (messages.<n>.*, started_at, …) but
+        # never persists as flat span_attributes. Gated on observation_type
+        # so non-voice spans are unaffected. See _walk_raw_log.
+        if (
+            resolved_value is _MISSING
+            and span.observation_type == ObservationType.CONVERSATION
+        ):
+            raw_log = span_attrs.get("raw_log")
+            if isinstance(raw_log, dict):
+                walked = _walk_raw_log(raw_log, attribute)
+                if walked is not _MISSING:
+                    resolved_value = walked
+
         if resolved_value is not _MISSING:
             if isinstance(resolved_value, str):
                 parsed_mapping[key] = resolved_value
@@ -556,7 +613,10 @@ def _process_mapping(
             # what dataset/playground do when a column cell is empty.
             parsed_mapping[key] = ""
         else:
-            logger.error(
+            # Expected: the user's eval references an attribute absent on this
+            # span. Raw emitter before the ValueError that the outer
+            # evaluate_*_observe handler catches and persists as failed. Warning.
+            logger.warning(
                 f"Required attribute '{attribute}' for key '{key}' not found for span {span.id}"
             )
             raise ValueError(
@@ -701,6 +761,68 @@ def _eval_config_output(custom_eval_config):
         return "score"
 
 
+def _emit_eval_billing(
+    org_id: str,
+    api_call_type,
+    source_id: str,
+    target_type: str,
+    result,
+    custom_eval_config,
+    ws_id: str | None,
+    api_call_log_row,
+    feedback_id=None,
+):
+    """Emit a UsageEvent for the new billing pipeline after a successful eval.
+
+    Centralizes the dual-write block used by span/trace/session eval paths.
+    Silently no-ops when ee billing modules are unavailable or on any error.
+    """
+    try:
+        from ee.usage.schemas.events import UsageEvent
+    except ImportError:
+        return
+    try:
+        from ee.usage.services.config import BillingConfig
+    except ImportError:
+        return
+    try:
+        from ee.usage.services.emitter import emit
+    except ImportError:
+        return
+    try:
+        from ee.usage.utils.event_properties import token_usage_properties
+    except ImportError:
+        token_usage_properties = lambda token_usage: {}
+
+    try:
+        billing_config = BillingConfig.get()
+        _llm_cost = (result.cost or {}).get("total_cost", 0)
+        _per_run_fee = billing_config.get_eval_per_run_fee()
+        _actual_cost = _llm_cost + _per_run_fee
+        _token_usage = result.token_usage or {}
+        credits = billing_config.calculate_ai_credits(_actual_cost)
+
+        emit(
+            UsageEvent(
+                org_id=org_id,
+                event_type=api_call_type,
+                amount=credits,
+                properties={
+                    "source": "tracer" if not feedback_id else "feedback",
+                    "source_id": source_id,
+                    "model": custom_eval_config.model or "",
+                    "workspace_id": ws_id or "",
+                    "log_id": str(api_call_log_row.log_id) if api_call_log_row else "",
+                    "raw_cost_usd": str(_actual_cost),
+                    "target_type": target_type,
+                    **token_usage_properties(_token_usage),
+                },
+            )
+        )
+    except Exception:
+        pass  # Metering failure must not break eval
+
+
 def _run_evaluation(
     run_params,
     eval_model,
@@ -833,7 +955,12 @@ def _run_evaluation(
                 from ee.usage.services.emitter import emit
             except ImportError:
                 emit = None
+            try:
+                from ee.usage.utils.event_properties import token_usage_properties
+            except ImportError:
+                token_usage_properties = lambda token_usage: {}
 
+            _token_usage = getattr(eval_instance, "token_usage", {})
             actual_cost = getattr(eval_instance, "cost", {}).get("total_cost", 0)
             credits = 0
             if BillingConfig is not None:
@@ -848,14 +975,17 @@ def _run_evaluation(
                         properties={
                             "source": "tracer" if not feedback_id else "feedback",
                             "source_id": str(eval_model.id),
-                            "model": custom_eval_config.model
-                            if custom_eval_config
-                            else "",
+                            "model": (
+                                custom_eval_config.model if custom_eval_config else ""
+                            ),
                             "workspace_id": str(workspace.id) if workspace else "",
-                            "log_id": str(api_call_log_row.log_id)
-                            if api_call_log_row
-                            else None,
+                            "log_id": (
+                                str(api_call_log_row.log_id)
+                                if api_call_log_row
+                                else None
+                            ),
                             "raw_cost_usd": str(actual_cost),
+                            **token_usage_properties(_token_usage),
                         },
                     )
                 )
@@ -1481,6 +1611,19 @@ def _execute_evaluation(
             api_call_log_row.status = APICallStatusChoices.SUCCESS.value
             api_call_log_row.save()
 
+        # Dual-write: emit usage event for new billing system (cost-based)
+        _emit_eval_billing(
+            org_id=org_id,
+            api_call_type=api_call_type,
+            source_id=str(eval_model.id),
+            target_type=EvalTargetType.SPAN.value,
+            result=result,
+            custom_eval_config=custom_eval_config,
+            ws_id=ws_id,
+            api_call_log_row=api_call_log_row,
+            feedback_id=feedback_id,
+        )
+
         # Parse metadata
         metadata = result.metadata
         if isinstance(metadata, str):
@@ -1756,7 +1899,10 @@ def evaluate_observation_span(
         )
         return True
     except ValueError as e:
-        logger.error(f"Error during evaluation in evaluate_observation_span: {e}")
+        # Expected validation failure (e.g. missing required input for the eval).
+        # Recorded as a failed-eval result below; logged at WARNING so it does
+        # not page Sentry as a code bug.
+        logger.warning(f"Error during evaluation in evaluate_observation_span: {e}")
         _create_error_eval_logger(observation_span, custom_eval_config, None, str(e))
         return False
 
@@ -1893,7 +2039,9 @@ def evaluate_observation_span_observe(
 
         return True
     except ValueError as e:
-        logger.error(
+        # Expected validation failure (missing/invalid eval input). Persisted as
+        # a failed span below; WARNING keeps it out of the Sentry issue stream.
+        logger.warning(
             f"Error during evaluation in evaluate_observation_span_observe: {e}"
         )
         if eval_task_id:
@@ -1917,7 +2065,9 @@ def evaluate_observation_span_observe(
                     eval_task.failed_spans = failed_spans
                     eval_task.save(update_fields=["failed_spans", "updated_at"])
             except EvalTask.DoesNotExist:
-                logger.error(f"EvalTask with id {eval_task_id} does not exist.")
+                # Expected race: the EvalTask was deleted before this async task
+                # ran. Nothing to update; downgrade to warning.
+                logger.warning(f"EvalTask with id {eval_task_id} does not exist.")
             except Exception as e:
                 logger.error(
                     f"Error during updating failed spans in exception handling evaluate_observation_span_observe: {e}"
@@ -2545,7 +2695,10 @@ def _process_trace_mapping(
                 # (partial). Mirrors the span / dataset behaviour.
                 parsed[key] = ""
                 continue
-            logger.error(
+            # Expected: the user's eval references an attribute absent on this
+            # trace. Raw emitter before the ValueError that the outer
+            # evaluate_trace_observe handler catches and persists as failed. Warning.
+            logger.warning(
                 f"Required attribute '{attribute}' for key '{key}' not found "
                 f"on trace {trace.id}"
             )
@@ -2596,7 +2749,10 @@ def _process_session_mapping(
                 # (partial), matching dataset/span behaviour.
                 parsed[key] = ""
                 continue
-            logger.error(
+            # Expected: the user's eval references an attribute absent on this
+            # session. Raw emitter before the ValueError that the outer
+            # evaluate_trace_session_observe handler catches and persists as failed. Warning.
+            logger.warning(
                 f"Required attribute '{attribute}' for key '{key}' not found "
                 f"on session {trace_session.id}"
             )
@@ -2762,6 +2918,19 @@ def _execute_evaluation_for_trace(
             api_call_log_row.config = json.dumps(config_dict)
             api_call_log_row.status = APICallStatusChoices.SUCCESS.value
             api_call_log_row.save()
+
+        # Dual-write: emit usage event for new billing system (cost-based)
+        _emit_eval_billing(
+            org_id=org_id,
+            api_call_type=api_call_type,
+            source_id=str(eval_template.id),
+            target_type=EvalTargetType.TRACE.value,
+            result=result,
+            custom_eval_config=custom_eval_config,
+            ws_id=ws_id,
+            api_call_log_row=api_call_log_row,
+            feedback_id=feedback_id,
+        )
 
         metadata = result.metadata
         if isinstance(metadata, str):
@@ -2983,6 +3152,19 @@ def _execute_evaluation_for_session(
             api_call_log_row.config = json.dumps(config_dict)
             api_call_log_row.status = APICallStatusChoices.SUCCESS.value
             api_call_log_row.save()
+
+        # Dual-write: emit usage event for new billing system (cost-based)
+        _emit_eval_billing(
+            org_id=org_id,
+            api_call_type=api_call_type,
+            source_id=str(eval_template.id),
+            target_type=EvalTargetType.SESSION.value,
+            result=result,
+            custom_eval_config=custom_eval_config,
+            ws_id=ws_id,
+            api_call_log_row=api_call_log_row,
+            feedback_id=feedback_id,
+        )
 
         metadata = result.metadata
         if isinstance(metadata, str):
@@ -3222,7 +3404,8 @@ def evaluate_trace_observe(
         )
         return True
     except ValueError as e:
-        logger.error(f"Error during evaluation in evaluate_trace_observe: {e}")
+        # Expected validation failure; persisted as a failed eval below.
+        logger.warning(f"Error during evaluation in evaluate_trace_observe: {e}")
         if eval_task_id:
             try:
                 with transaction.atomic():
@@ -3240,7 +3423,9 @@ def evaluate_trace_observe(
                     eval_task.failed_spans = failed
                     eval_task.save(update_fields=["failed_spans", "updated_at"])
             except EvalTask.DoesNotExist:
-                logger.error(f"EvalTask with id {eval_task_id} does not exist.")
+                # Expected race: the EvalTask was deleted before this async task
+                # ran. Nothing to update; downgrade to warning.
+                logger.warning(f"EvalTask with id {eval_task_id} does not exist.")
             except Exception as save_err:
                 logger.error(
                     f"Error updating failed_spans during trace eval error: {save_err}"
@@ -3359,7 +3544,10 @@ def evaluate_trace_session_observe(
         )
         return True
     except ValueError as e:
-        logger.error(f"Error during evaluation in evaluate_trace_session_observe: {e}")
+        # Expected validation failure; persisted as a failed eval below.
+        logger.warning(
+            f"Error during evaluation in evaluate_trace_session_observe: {e}"
+        )
         if eval_task_id:
             try:
                 with transaction.atomic():
@@ -3377,7 +3565,9 @@ def evaluate_trace_session_observe(
                     eval_task.failed_spans = failed
                     eval_task.save(update_fields=["failed_spans", "updated_at"])
             except EvalTask.DoesNotExist:
-                logger.error(f"EvalTask with id {eval_task_id} does not exist.")
+                # Expected race: the EvalTask was deleted before this async task
+                # ran. Nothing to update; downgrade to warning.
+                logger.warning(f"EvalTask with id {eval_task_id} does not exist.")
             except Exception as save_err:
                 logger.error(
                     f"Error updating failed_spans during session eval error: {save_err}"

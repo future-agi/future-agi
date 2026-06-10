@@ -48,6 +48,10 @@ from tracer.services.clickhouse.query_builders.simulation_dashboard import (
     SimulationQueryBuilder,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2.id_remap_sql import (
+    remap_left_join,
+    resolved_id_expr,
+)
 from tracer.utils.sql_queries import SQL_query_handler
 
 logger = structlog.get_logger(__name__)
@@ -1055,6 +1059,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             "FROM tracer_eval_logger "
                             "WHERE _peerdb_is_deleted = 0 AND deleted = 0 "
                             "AND custom_eval_config_id != toUUID('00000000-0000-0000-0000-000000000000') "
+                            "AND created_at >= now() - INTERVAL 90 DAY "
                             "AND dictGet('trace_dict', 'project_id', trace_id) IN %(project_ids)s",
                             {"project_ids": project_ids},
                             timeout_ms=5000,
@@ -1226,17 +1231,17 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         """
                         SELECT key, argMax(type, cnt) AS type FROM (
                             SELECT key, 'text' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_str) AS key
+                            FROM spans ARRAY JOIN mapKeys(attrs_string) AS key
                             WHERE project_id IN %(project_ids)s AND is_deleted = 0
                             GROUP BY key
                             UNION ALL
                             SELECT key, 'number' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_num) AS key
+                            FROM spans ARRAY JOIN mapKeys(attrs_number) AS key
                             WHERE project_id IN %(project_ids)s AND is_deleted = 0
                             GROUP BY key
                             UNION ALL
                             SELECT key, 'boolean' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_bool) AS key
+                            FROM spans ARRAY JOIN mapKeys(attrs_bool) AS key
                             WHERE project_id IN %(project_ids)s AND is_deleted = 0
                             GROUP BY key
                         )
@@ -2187,15 +2192,36 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     # type is non-nullable by default — the Nullable
                     # wrapper isn't always preserved through the MV chain.
                     null_uuid = "00000000-0000-0000-0000-000000000000"
-                    sql = (
-                        f"SELECT DISTINCT {col_expr} AS val "
-                        f"FROM spans "
-                        f"WHERE project_id IN %(project_ids)s "
-                        f"AND is_deleted = 0 "
-                        f"AND {col_expr} NOT IN ('', '{null_uuid}') "
-                        f"ORDER BY val "
-                        f"LIMIT 500"
-                    )
+                    if metric_name == "session":
+                        ts_remap_join = remap_left_join(
+                            "sp.trace_session_id",
+                            "trace_session_id_remap",
+                            "ts_remap",
+                        )
+                        ts_resolved = resolved_id_expr(
+                            "sp.trace_session_id", "ts_remap"
+                        )
+                        col_expr = f"toString({ts_resolved})"
+                        sql = (
+                            f"SELECT DISTINCT {col_expr} AS val "
+                            f"FROM spans AS sp "
+                            f"{ts_remap_join} "
+                            f"WHERE sp.project_id IN %(project_ids)s "
+                            f"AND sp.is_deleted = 0 "
+                            f"AND {col_expr} NOT IN ('', '{null_uuid}') "
+                            f"ORDER BY val "
+                            f"LIMIT 500"
+                        )
+                    else:
+                        sql = (
+                            f"SELECT DISTINCT {col_expr} AS val "
+                            f"FROM spans "
+                            f"WHERE project_id IN %(project_ids)s "
+                            f"AND is_deleted = 0 "
+                            f"AND {col_expr} NOT IN ('', '{null_uuid}') "
+                            f"ORDER BY val "
+                            f"LIMIT 500"
+                        )
                     result = analytics.execute_ch_query(
                         sql, {"project_ids": project_ids}, timeout_ms=5000
                     )
@@ -2325,7 +2351,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     values = []
 
             elif metric_type == "custom_attribute":
-                # Use mapContains() so the `idx_span_attr_str_keys` bloom
+                # Use mapContains() so the `idx_attrs_string_keys` bloom
                 # filter index prunes granules that don't have the key.
                 # Without this, wide-attribute projects can blow past
                 # ClickHouse's `max_bytes_to_read` limit (code 307) and
@@ -2333,19 +2359,19 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 # conversation.recording.mono.assistant / ended_reason for
                 # heavy voice projects.
                 sql = (
-                    "SELECT DISTINCT span_attr_str[%(attr_key)s] AS val "
+                    "SELECT DISTINCT attrs_string[%(attr_key)s] AS val "
                     "FROM spans "
                     "WHERE project_id IN %(project_ids)s "
                     "AND is_deleted = 0 "
-                    "AND mapContains(span_attr_str, %(attr_key)s) "
-                    "AND span_attr_str[%(attr_key)s] != '' "
+                    "AND mapContains(attrs_string, %(attr_key)s) "
+                    "AND attrs_string[%(attr_key)s] != '' "
                     "ORDER BY val "
                     "LIMIT 500"
                 )
                 result = analytics.execute_ch_query(
                     sql,
                     {"project_ids": project_ids, "attr_key": metric_name},
-                    timeout_ms=5000,
+                    timeout_ms=15000,
                 )
                 values = [
                     {"value": row["val"], "label": row["val"]} for row in result.data

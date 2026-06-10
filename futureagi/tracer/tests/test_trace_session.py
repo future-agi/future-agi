@@ -163,8 +163,13 @@ class TestTraceSessionRetrieveAPI:
         assert metadata["previous_session_id"] is None
         assert metadata["next_session_id"] is None
 
+    # The test env routes CH_ROUTE_SESSION_ANALYTICS to postgres and does
+    # not seed ClickHouse, so the navigation tests below monkeypatch
+    # _try_session_navigation_ch to simulate CH returning known
+    # neighbours.
+
     def test_retrieve_session_navigation_middle_session(
-        self, auth_client, observe_project
+        self, auth_client, observe_project, monkeypatch
     ):
         """Middle session should have both prev and next."""
         base = timezone.now()
@@ -176,6 +181,14 @@ class TestTraceSessionRetrieveAPI:
         )
         s3 = _create_session_with_span(observe_project, "Last", base)
 
+        from tracer.utils import session as session_utils
+
+        monkeypatch.setattr(
+            session_utils,
+            "_try_session_navigation_ch",
+            lambda req, pid, sid: (str(s1.id), str(s3.id)),
+        )
+
         response = auth_client.get(f"/tracer/trace-session/{s2.id}/")
         assert response.status_code == status.HTTP_200_OK
         metadata = get_result(response)["session_metadata"]
@@ -183,7 +196,7 @@ class TestTraceSessionRetrieveAPI:
         assert metadata["next_session_id"] == str(s1.id)
 
     def test_retrieve_session_navigation_first_session(
-        self, auth_client, observe_project
+        self, auth_client, observe_project, monkeypatch
     ):
         """First session (newest) should have next but no previous."""
         base = timezone.now()
@@ -192,6 +205,14 @@ class TestTraceSessionRetrieveAPI:
         )
         s2 = _create_session_with_span(observe_project, "Newest", base)
 
+        from tracer.utils import session as session_utils
+
+        monkeypatch.setattr(
+            session_utils,
+            "_try_session_navigation_ch",
+            lambda req, pid, sid: (str(s1.id), None),
+        )
+
         response = auth_client.get(f"/tracer/trace-session/{s2.id}/")
         assert response.status_code == status.HTTP_200_OK
         metadata = get_result(response)["session_metadata"]
@@ -199,7 +220,7 @@ class TestTraceSessionRetrieveAPI:
         assert metadata["next_session_id"] == str(s1.id)
 
     def test_retrieve_session_navigation_last_session(
-        self, auth_client, observe_project
+        self, auth_client, observe_project, monkeypatch
     ):
         """Last session (oldest) should have previous but no next."""
         base = timezone.now()
@@ -207,6 +228,14 @@ class TestTraceSessionRetrieveAPI:
             observe_project, "Oldest", base - timedelta(minutes=1)
         )
         s2 = _create_session_with_span(observe_project, "Newer", base)
+
+        from tracer.utils import session as session_utils
+
+        monkeypatch.setattr(
+            session_utils,
+            "_try_session_navigation_ch",
+            lambda req, pid, sid: (None, str(s2.id)),
+        )
 
         response = auth_client.get(f"/tracer/trace-session/{s1.id}/")
         assert response.status_code == status.HTTP_200_OK
@@ -586,6 +615,80 @@ class TestTraceSessionOverlayWritePath:
         after = TraceSessionView._build_bookmark_filter(True, proj_ids)
         assert after["filter_config"]["filter_op"] == "in"
         assert sid in after["filter_config"]["filter_value"]
+
+    def test_bookmark_filter_canonicalizes_overlay_ids_for_clickhouse(
+        self, observe_project
+    ):
+        raw_id = str(uuid.uuid4())
+        survivor_id = str(uuid.uuid4())
+        TraceSessionOverlay.objects.create(
+            trace_session_id=raw_id,
+            project_id=observe_project.id,
+            bookmarked=True,
+        )
+        analytics = mock.Mock()
+        analytics.execute_ch_query.return_value = mock.Mock(
+            data=[{"any_id": raw_id, "survivor_id": survivor_id}]
+        )
+
+        bookmark_filter = TraceSessionView._build_bookmark_filter(
+            True, [str(observe_project.id)], analytics=analytics
+        )
+
+        assert bookmark_filter["filter_config"]["filter_op"] == "in"
+        assert bookmark_filter["filter_config"]["filter_value"] == [survivor_id]
+        sql = analytics.execute_ch_query.call_args.args[0]
+        assert "trace_session_id_remap" in sql
+        assert "WHERE any_id IN %(ids)s" in sql
+
+    def test_retrieve_clickhouse_binds_canonical_requested_session_id(
+        self, observe_project
+    ):
+        requested_id = str(uuid.uuid4())
+        survivor_id = str(uuid.uuid4())
+        bound_session_ids = []
+        analytics = mock.Mock()
+
+        def execute_ch_query(query, params, timeout_ms):
+            if "WHERE any_id IN %(ids)s" in query:
+                return mock.Mock(
+                    data=[{"any_id": requested_id, "survivor_id": survivor_id}]
+                )
+            if "count(DISTINCT trace_id)" in query:
+                bound_session_ids.append(params["session_id"])
+                return mock.Mock(
+                    data=[
+                        {
+                            "start_time": None,
+                            "end_time": None,
+                            "total_cost": 0,
+                            "total_tokens": 0,
+                            "total_traces": 0,
+                        }
+                    ]
+                )
+            if "GROUP BY trace_id" in query:
+                bound_session_ids.append(params["session_id"])
+                return mock.Mock(data=[])
+            raise AssertionError(f"unexpected ClickHouse query: {query}")
+
+        analytics.execute_ch_query.side_effect = execute_ch_query
+
+        with mock.patch(
+            "tracer.views.trace_session.get_session_navigation",
+            return_value=(None, None),
+        ):
+            response = TraceSessionView()._retrieve_clickhouse(
+                mock.Mock(),
+                requested_id,
+                mock.Mock(id=requested_id),
+                observe_project.id,
+                analytics,
+                {"page_number": 0, "page_size": 10},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert bound_session_ids == [survivor_id, survivor_id]
 
     def test_overlay_write_composes_with_slice_2a_name_read(
         self, auth_client, observe_project, trace_session

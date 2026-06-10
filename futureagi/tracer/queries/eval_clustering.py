@@ -15,6 +15,7 @@ from typing import List, Optional, Tuple
 
 import structlog
 from django.conf import settings
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -354,26 +355,42 @@ def create_cluster(
     # returns "medium" when severity is None (the fallback default).
     from tracer.queries.feed import severity_to_priority
 
-    cluster = TraceErrorGroup.objects.create(
-        project_id=project_id,
-        cluster_id=cluster_id,
-        source=ClusterSource.EVAL,
-        issue_group=result.eval_name,
-        issue_category=None,
-        fix_layer=meta.fix_layer,
-        title=meta.title,
-        combined_description=result.explanation,
-        combined_impact=_score_to_impact(result.score),
-        status=FeedIssueStatus.ESCALATING,
-        priority=severity_to_priority(meta.severity),
-        error_type=result.eval_name,
-        eval_config_id=result.eval_config_id,
-        total_events=1,
-        unique_traces=1,
-        error_count=1,
-        first_seen=timezone.now(),
-        last_seen=timezone.now(),
-    )
+    try:
+        # Savepoint so a unique-constraint violation here doesn't poison the
+        # surrounding transaction/connection.
+        with transaction.atomic():
+            cluster = TraceErrorGroup.objects.create(
+                project_id=project_id,
+                cluster_id=cluster_id,
+                source=ClusterSource.EVAL,
+                issue_group=result.eval_name,
+                issue_category=None,
+                fix_layer=meta.fix_layer,
+                title=meta.title,
+                combined_description=result.explanation,
+                combined_impact=_score_to_impact(result.score),
+                status=FeedIssueStatus.ESCALATING,
+                priority=severity_to_priority(meta.severity),
+                error_type=result.eval_name,
+                eval_config_id=result.eval_config_id,
+                total_events=1,
+                unique_traces=1,
+                error_count=1,
+                first_seen=timezone.now(),
+                last_seen=timezone.now(),
+            )
+    except IntegrityError:
+        # Another concurrent run created this cluster between our .exists()
+        # check and the insert (unique_project_cluster_if_not_deleted). Treat
+        # this as an assignment so the trace is still linked and the centroid
+        # still updated.
+        logger.info(
+            "eval_cluster_create_race_assigning",
+            cluster_id=cluster_id,
+            eval_logger_id=result.eval_logger_id,
+        )
+        assign_to_cluster(cluster_id, project_id, result, embedding)
+        return cluster_id
 
     # Create junction entry
     ErrorClusterTraces.objects.create(
@@ -437,12 +454,18 @@ def assign_to_cluster(
         update_fields=["error_count", "total_events", "last_seen", "updated_at"]
     )
 
-    # Create junction entry (ignore if trace already linked for this cluster)
-    ErrorClusterTraces.objects.get_or_create(
-        cluster=cluster,
-        trace_id=result.trace_id,
-        defaults={"eval_logger_id": result.eval_logger_id},
-    )
+    # Create junction entry (ignore if trace already linked for this cluster).
+    # Cannot use get_or_create: the unique key is (cluster, trace, span) and
+    # span is left NULL here, so duplicate (cluster, trace) rows accumulate
+    # and get_or_create's internal .get() raises MultipleObjectsReturned.
+    if not ErrorClusterTraces.objects.filter(
+        cluster=cluster, trace_id=result.trace_id
+    ).exists():
+        ErrorClusterTraces.objects.create(
+            cluster=cluster,
+            trace_id=result.trace_id,
+            eval_logger_id=result.eval_logger_id,
+        )
 
     # Refresh unique traces count + recompute impact from avg score
     unique = cluster.clusters.values("trace").distinct().count()

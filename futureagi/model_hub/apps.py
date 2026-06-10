@@ -52,6 +52,11 @@ class ModelHubConfig(AppConfig):
         )
 
         ch = get_clickhouse_client()
+        # Server profiles may set data_type_default_nullable=1, which would
+        # auto-wrap bare LowCardinality(String)/Array(String)/key columns into
+        # Nullable and break these CREATE statements (ClickHouse Code 43/44).
+        # Force it off for schema DDL so the canonical types are honored.
+        ddl_settings = {"data_type_default_nullable": 0}
 
         # CH25 cutover (dev/local default): drop the legacy CDC chain
         # before re-applying schema. `CREATE IF NOT EXISTS` would leave
@@ -74,7 +79,7 @@ class ModelHubConfig(AppConfig):
 
         for name, ddl in get_all_schema_ddl():
             try:
-                ch.execute(ddl)
+                ch.execute(ddl, settings=ddl_settings)
             except Exception as e:
                 if "already exists" not in str(e).lower():
                     logger.warning(f"CH schema {name}: {e}")
@@ -82,7 +87,7 @@ class ModelHubConfig(AppConfig):
         # Ensure materialized columns on CDC tables that PeerDB may recreate
         for alter in POST_DDL_ALTERS:
             try:
-                ch.execute(alter)
+                ch.execute(alter, settings=ddl_settings)
             except Exception as e:
                 if "already exists" not in str(e).lower():
                     logger.warning(f"CH post-DDL alter: {e}")

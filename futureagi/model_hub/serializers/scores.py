@@ -79,6 +79,24 @@ class CreateScoreSerializer(StrictInputSerializer):
     queue_item_id = serializers.UUIDField(required=False, allow_null=True, default=None)
 
 
+class UpdateScoreSerializer(StrictInputSerializer):
+    """Strict write serializer for generated score PUT/PATCH routes."""
+
+    value = serializers.JSONField(required=False)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    score_source = serializers.ChoiceField(
+        choices=ScoreSource.get_choices(),
+        required=False,
+    )
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError(
+                "At least one of value, notes, or score_source is required."
+            )
+        return attrs
+
+
 class ScoreListQuerySerializer(StrictInputSerializer):
     source_type = serializers.ChoiceField(
         choices=list(SCORE_SOURCE_FK_MAP.keys()),

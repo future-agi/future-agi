@@ -63,6 +63,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         "traces_count": "traces_count",
     }
 
+    # Columns that require a session-scoped subquery because they are
+    # set on child spans, not root spans. The main query restricts to
+    # root spans only, so filtering these directly would miss matches.
+    SUBQUERY_FILTER_COLS = {"end_user_id"}
+
     def __init__(
         self,
         project_id: str | None = None,
@@ -82,6 +87,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.user_id = user_id
         self.start_date: datetime | None = None
         self.end_date: datetime | None = None
+        # Populated by _extract_end_user_ids() during build
+        self._end_user_ids: list[str] | None = None
 
     def build(self) -> tuple[str, dict[str, Any]]:
         """Build the session list query.
@@ -93,7 +100,12 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
 
-        # Translate span-level filters (exclude session-level aggregate filters)
+        # Extract end_user_id filters — these need a subquery because
+        # end_user_id is set on child spans, not root spans.
+        self._end_user_ids = self._extract_end_user_ids()
+
+        # Translate span-level filters (exclude session-level aggregate
+        # filters AND end_user_id filters handled via subquery)
         span_filters = self._extract_span_filters()
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
@@ -117,6 +129,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         offset = self.page_number * self.page_size
         self.params["limit"] = self.page_size + 1  # +1 for has_more
         self.params["offset"] = offset
+
+        # Optional user filter (legacy path via self.user_id kwarg)
+        if self.user_id:
+            self.params["user_id"] = self.user_id
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
         having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
@@ -430,6 +446,33 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     # `_build_resolved_user_clause` / P3b step1.5), so a cross-cutover straddler
     # unifies. `user` is the FilterBuilder alias for `end_user_id`.
     _ENDUSER_ID_FILTER_COLS = frozenset({"end_user_id", "user"})
+
+    def _extract_end_user_ids(self) -> list[str]:
+        """Return synthetic end-user UUID filters for legacy callers.
+
+        The active predicate is built by ``_build_resolved_user_clause`` so that
+        end-user IDs are resolved through the remap join. This method keeps the
+        older build/count hooks harmless after the P3b rewrite.
+        """
+        ids: list[str] = []
+        for f in self.filters:
+            col_id = f.get("column_id") or f.get("columnId")
+            if col_id not in self._ENDUSER_ID_FILTER_COLS:
+                continue
+            config = f.get("filter_config") or f.get("filterConfig") or {}
+            raw_val = config.get("filter_value", config.get("filterValue"))
+            values = raw_val if isinstance(raw_val, list) else [raw_val]
+            ids.extend(str(v) for v in values if v)
+        return ids
+
+    def _build_end_user_subquery(self) -> str:
+        """Compatibility shim for pre-remap session-list code paths.
+
+        End-user filtering now happens in ``_build_resolved_user_clause`` after
+        the span row's ``end_user_id`` has been resolved new->old. Returning an
+        empty fragment here prevents duplicate raw predicates.
+        """
+        return ""
 
     def _extract_span_filters(self) -> list[dict]:
         """Extract filters that apply at the span level (pre-GROUP BY).

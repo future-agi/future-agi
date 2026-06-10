@@ -83,9 +83,12 @@
         <input type="date" id="contract-end-date">
       </div>
       <div class="cp-field">
-        <label>Subscription Start Date</label>
+        <label>Subscription Start Date <span style="font-weight:400;color:var(--body-quiet-color,#666)">(only for backdated contracts)</span></label>
         <input type="date" id="start-date">
       </div>
+    </div>
+    <div style="margin-top:8px; font-size:0.8em; color:var(--body-quiet-color,#666); line-height:1.5">
+      <strong>Note:</strong> Metered usage is always anchored to the 1st of next month. Set <em>Subscription Start Date</em> only if the customer has already paid out-of-band for a past period — Stripe will anchor the platform-fee renewal to the next anniversary instead of charging immediately.
     </div>
     <div id="per-charge-preview" style="margin-top:8px; font-size:0.85em; color:var(--body-quiet-color,#666);">
       Per-charge amount: $0.00
@@ -95,6 +98,9 @@
   <!-- Entitlements -->
   <div class="cp-section" id="ent-section" style="display:none">
     <h3>Entitlement Overrides</h3>
+    <div style="font-size:0.8em; color:var(--body-quiet-color,#666); margin-bottom:8px; line-height:1.5">
+      <strong>Skip <code>free_*</code> entries.</strong> Free allowances are auto-derived from the leading <code>$0</code> band of each pricing tier below — any <code>free_*</code> entitlement you add here will be overwritten on save.
+    </div>
     <table class="cp-table" id="ent-table">
       <thead><tr><th>Feature</th><th>Value</th><th></th></tr></thead>
       <tbody id="ent-body"></tbody>
@@ -117,6 +123,10 @@
   <!-- Pricing Tiers -->
   <div class="cp-section" id="pricing-section" style="display:none">
     <h3>Custom Pricing Tiers</h3>
+    <div style="font-size:0.8em; color:var(--body-quiet-color,#666); margin-bottom:8px; line-height:1.5">
+      <strong>Leading <code>$0</code> tier sets the free allowance.</strong> Per dimension, the first tier must be <code>tier_start=0, price_per_unit=0</code> with <code>tier_end</code> = quantity included free. Subsequent tiers stack on top with their own prices.<br>
+      Display unit is fixed by the dimension (e.g. <em>ai_credits</em> = credits) and not editable here.
+    </div>
     <table class="cp-table" id="pricing-table">
       <thead><tr><th>Dimension</th><th>Range</th><th>$/Unit</th><th></th></tr></thead>
       <tbody id="pricing-body"></tbody>
@@ -194,7 +204,8 @@ let localTiers = [];
     sel.appendChild(opt);
   });
   const fSel = document.getElementById("new-ent-feature");
-  FEATURE_KEYS.forEach(f => {
+  // Hide free_* keys — they're auto-derived from leading $0 pricing tier.
+  FEATURE_KEYS.filter(f => !f.startsWith("free_")).forEach(f => {
     const opt = document.createElement("option");
     opt.value = f;
     opt.textContent = f;
@@ -269,7 +280,10 @@ async function loadOrg() {
     }
     renderEntitlements();
 
-    // Load existing tiers into local state
+    // Load existing tiers into local state. display_unit comes back from
+    // the server (sourced from billing.yaml) so we keep it for UI display
+    // only; we never include it in POST/PUT payloads since the server
+    // re-derives it on save.
     localTiers = [];
     if (r.pricing) {
       r.pricing.forEach(p => {
@@ -316,6 +330,9 @@ function addEntitlementLocal() {
   const feature = document.getElementById("new-ent-feature").value;
   const raw = document.getElementById("new-ent-value").value.trim();
   if (!feature || !raw) return showMsg("Feature and value required", "error");
+  if (feature.startsWith("free_")) {
+    return showMsg("free_* entitlements are auto-derived from pricing tiers — set the leading $0 tier instead", "error");
+  }
 
   if (raw === "true") localEntitlements[feature] = true;
   else if (raw === "false") localEntitlements[feature] = false;
@@ -362,7 +379,8 @@ async function createCustomPlan() {
   const contractEnd = document.getElementById("contract-end-date").value || null;
   const startDate = document.getElementById("start-date").value || null;
 
-  // Group tiers by dimension
+  // Group tiers by dimension. display_unit is intentionally omitted —
+  // the server re-derives it from billing.yaml on save.
   const pricing = {};
   localTiers.forEach(t => {
     if (!pricing[t.dimension]) pricing[t.dimension] = [];
@@ -371,6 +389,13 @@ async function createCustomPlan() {
       tier_end: t.tier_end,
       price_per_unit: t.price_per_unit
     });
+  });
+
+  // Strip free_* entitlements client-side too — server auto-derives them,
+  // but stripping here keeps the network payload honest.
+  const cleanedEntitlements = {};
+  Object.entries(localEntitlements).forEach(([k, v]) => {
+    if (!k.startsWith("free_")) cleanedEntitlements[k] = v;
   });
 
   try {
@@ -382,7 +407,7 @@ async function createCustomPlan() {
         platform_fee_billing_cycle: billingCycle,
         contract_end_date: contractEnd,
         start_date: startDate,
-        entitlements: localEntitlements,
+        entitlements: cleanedEntitlements,
         pricing: pricing
       })
     });
