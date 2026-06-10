@@ -204,16 +204,13 @@ class TestCreateScenarioSerializer:
         assert not serializer.is_valid()
         assert "dataset_id" in serializer.errors
 
-    def test_create_scenario_serializer_script_valid(
-        self, mock_request, agent_definition
-    ):
+    def test_create_scenario_serializer_script_valid(self, mock_request):
         """Valid script scenario input should pass validation."""
         data = {
             "name": "Test Script Scenario",
             "description": "A test scenario from script",
             "kind": "script",
             "script_url": "https://example.com/script.py",
-            "agent_definition_id": str(agent_definition.id),
         }
 
         serializer = CreateScenarioSerializer(
@@ -328,9 +325,8 @@ class TestCreateScenarioSerializer:
             data=data, context={"request": mock_request}
         )
         assert not serializer.is_valid()
-        assert "dataset_id" in serializer.errors or "non_field_errors" in serializer.errors
-        all_errors = str(serializer.errors).lower()
-        assert "dataset_id" in all_errors
+        assert "dataset_id" in serializer.errors
+        assert "dataset_id" in str(serializer.errors["dataset_id"][0]).lower()
 
     def test_create_scenario_serializer_script_missing_url(self, mock_request):
         """Script kind without script_url should fail validation."""
@@ -343,9 +339,8 @@ class TestCreateScenarioSerializer:
             data=data, context={"request": mock_request}
         )
         assert not serializer.is_valid()
-        assert "script_url" in serializer.errors or "non_field_errors" in serializer.errors
-        all_errors = str(serializer.errors).lower()
-        assert "script_url" in all_errors
+        assert "script_url" in serializer.errors
+        assert "script_url" in str(serializer.errors["script_url"][0]).lower()
 
     def test_create_scenario_serializer_graph_missing_requirements(
         self, mock_request, agent_definition
@@ -381,8 +376,11 @@ class TestCreateScenarioSerializer:
             data=data, context={"request": mock_request}
         )
         assert not serializer.is_valid()
-        all_errors = str(serializer.errors).lower()
-        assert "agent_definition_id" in all_errors
+        assert "non_field_errors" in serializer.errors
+        assert (
+            "agent_definition_id"
+            in str(serializer.errors["non_field_errors"][0]).lower()
+        )
 
     def test_create_scenario_serializer_custom_columns_valid(
         self, mock_request, agent_definition
