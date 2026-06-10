@@ -470,6 +470,7 @@ const CustomJsonInput = ({
           language="json"
           height="220px"
           placeholder={`{\n  "${variables[0] || "variable"}": "value"\n}`}
+          ariaLabel="Test data JSON"
         />
 
         {/* ── Falcon button overlay (bottom-right) ── */}
@@ -674,7 +675,7 @@ const TestPlayground = React.forwardRef(
       if (!list.length) return;
       if (urlVersionParam) {
         const match = list.find(
-      ver =>
+          (ver) =>
             String(ver.version_number ?? ver.versionNumber) ===
             String(urlVersionParam),
         );
@@ -860,7 +861,6 @@ const TestPlayground = React.forwardRef(
       Simulation: false,
     });
 
-
     const handleDatasetReady = useCallback(
       (isReady, mapping) => {
         setTabReady((prev) =>
@@ -890,7 +890,7 @@ const TestPlayground = React.forwardRef(
       },
       [onReadyChange],
     );
-  useEffect(() => {
+    useEffect(() => {
       if (!onReadyChange) return;
       onReadyChange(!!tabReady[activeTab]);
     }, [activeTab, tabReady, onReadyChange]);

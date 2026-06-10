@@ -89,6 +89,7 @@ const CodeEditor = ({
   height = "300px",
   disabled = false,
   placeholder = "",
+  ariaLabel = "Code editor",
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
@@ -196,6 +197,8 @@ const CodeEditor = ({
     const syntaxLang = language === "javascript" ? "javascript" : "python";
     return (
       <Box
+        role="group"
+        aria-label={ariaLabel}
         sx={{
           border: "1px solid",
           borderColor: isDark ? "rgba(255,255,255,0.12)" : "divider",
@@ -236,6 +239,8 @@ const CodeEditor = ({
 
   return (
     <Box
+      role="group"
+      aria-label={ariaLabel}
       sx={{
         border: "1px solid",
         borderColor: isDark ? "rgba(255,255,255,0.12)" : "divider",
@@ -255,6 +260,7 @@ const CodeEditor = ({
         value={value}
         onChange={onChange}
         options={{
+          ariaLabel,
           minimap: { enabled: false },
           fontSize: 13,
           fontFamily:
@@ -316,6 +322,7 @@ CodeEditor.propTypes = {
   height: PropTypes.string,
   disabled: PropTypes.bool,
   placeholder: PropTypes.string,
+  ariaLabel: PropTypes.string,
 };
 
 export default CodeEditor;

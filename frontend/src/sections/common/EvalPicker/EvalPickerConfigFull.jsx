@@ -713,7 +713,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     }
     try {
       const payload = {
-        instructions: evalType === "code" ? "" : instructions,
+        instructions: evalType === "code" ? null : instructions,
         code: evalType === "code" ? code : undefined,
         code_language: evalType === "code" ? codeLanguage : undefined,
         model,

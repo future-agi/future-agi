@@ -128,7 +128,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const sourceRef = useRef(null);
-  const {testId,executionId} = useParams();
+  const { testId, executionId } = useParams();
   // Form state (same as EvalCreatePage)
   const [name, setName] = useState("");
   const [mode, setMode] = useState("single");
@@ -279,7 +279,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const buildPayload = useCallback(
     () => ({
       eval_type: evalType,
-      instructions: evalType === "code" ? "" : instructions,
+      instructions: evalType === "code" ? null : instructions,
       code: evalType === "code" ? code : undefined,
       code_language: evalType === "code" ? codeLanguage : undefined,
       model,
