@@ -17,9 +17,13 @@ vi.mock("../../../hooks/useWorkflowExecution", () => ({
   default: () => ({ runWorkflow: mockRunWorkflow }),
 }));
 
-vi.mock("notistack", () => ({
-  enqueueSnackbar: vi.fn(),
-}));
+vi.mock("notistack", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    enqueueSnackbar: vi.fn(),
+  };
+});
 
 vi.mock("src/components/VariableDrawer/EmptyVariable", () => ({
   default: () => <div data-testid="empty-variable" />,
@@ -194,6 +198,42 @@ describe("ManualVariablesForm", () => {
           { variant: "error" },
         );
       });
+    });
+  });
+
+  describe("image variable rendering", () => {
+    it("renders a text field for plain text variables", () => {
+      renderForm({
+        variables: { city: "Tokyo" },
+        formValues: { city: "Tokyo" },
+        cellMap: { city: { id: "cell-1", columnId: "col-1", value: "Tokyo" } },
+      });
+      // Plain text variable should render a TextField input
+      const inputs = screen.getAllByRole("textbox");
+      expect(inputs.length).toBeGreaterThan(0);
+    });
+
+    it("renders an image picker for image URL variables", () => {
+      renderForm({
+        variables: { avatar: "https://example.com/photo.png" },
+        formValues: { avatar: "https://example.com/photo.png" },
+        cellMap: {
+          avatar: {
+            id: "cell-3",
+            columnId: "col-3",
+            value: "https://example.com/photo.png",
+          },
+        },
+      });
+      // Variable label renders
+      expect(screen.getByText("{{avatar}}")).toBeInTheDocument();
+      // PlaygroundInput is rendered (has bordered container), not a bare TextField
+      // Verified by absence of a TextField with the image URL as its value
+      const textboxes = screen.queryAllByRole("textbox");
+      const hasUrlAsTextboxValue = textboxes.some(
+        (tb) => tb.value === "https://example.com/photo.png",
+      );
+      expect(hasUrlAsTextboxValue).toBe(false);
     });
   });
 });

@@ -10,6 +10,7 @@ import ViewReplaceImage from "src/components/PromptCards/ViewReplaceImage";
 import { ShowComponent } from "src/components/show";
 import SvgColor from "src/components/svg-color";
 import axios, { endpoints } from "src/utils/axios";
+import { IMAGE_ACCEPTED_TYPES, MAX_IMAGE_SIZE_BYTES } from "src/sections/agent-playground/utils/constants";
 
 const FieldInputImage = ({ data, onChange, type, internalState }) => {
   const [selectedImage, setSelectedImage] = useState(null);
@@ -22,9 +23,9 @@ const FieldInputImage = ({ data, onChange, type, internalState }) => {
       },
       accept:
         type === "image"
-          ? { "image/*": [".png", ".jpg", ".jpeg", ".gif"] }
+          ? IMAGE_ACCEPTED_TYPES
           : { "audio/*": [".mp3"] }, // Restrict to common audio formats
-      maxSize: type === "audio" ? 20 * 1024 * 1024 : 10 * 1024 * 1024, // 50MB for audio, 10MB for images
+      maxSize: type === "audio" ? 20 * 1024 * 1024 : MAX_IMAGE_SIZE_BYTES,
     });
 
   const {
