@@ -1470,8 +1470,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             filters = update_fields.get("filters") or eval_task.filters
 
             # Validate filters and get total spans count
-            parsed_filters = parsing_evaltask_filters(filters)
-            total_spans = ObservationSpan.objects.filter(parsed_filters).count()
+            parsed_filters, parsed_filter_anns = parsing_evaltask_filters(filters)
+            total_spans = (
+                ObservationSpan.objects.annotate(**parsed_filter_anns)
+                .filter(parsed_filters)
+                .count()
+            )
 
             if total_spans == 0:
                 logger.warning(

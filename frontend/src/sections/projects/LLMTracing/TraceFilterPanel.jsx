@@ -398,6 +398,13 @@ function metricToTraceFilterProperty(m) {
   // thumbs labels have two fixed choices — surface them so the value picker
   // renders a multi-select without needing a dashboard lookup.
   const choices = type === "thumbs" ? ["Thumbs Up", "Thumbs Down"] : m.choices;
+  const apiColType = isEval
+    ? "EVAL_METRIC"
+    : isAnnotation
+      ? "ANNOTATION"
+      : m.category === "system_metric" || m.category === "systemMetric"
+        ? "SYSTEM_METRIC"
+        : "SPAN_ATTRIBUTE";
   return {
     id: m.name,
     name: m.displayName || m.display_name || m.name,
@@ -406,6 +413,7 @@ function metricToTraceFilterProperty(m) {
     type,
     outputType,
     choices,
+    apiColType,
   };
 }
 
@@ -461,7 +469,7 @@ export function buildTraceFilterProperties(
   return properties;
 }
 
-function useTraceFilterProperties(
+export function useTraceFilterProperties(
   projectId,
   { enabled = true, isSimulator = false } = {},
 ) {
@@ -1654,12 +1662,18 @@ const TraceFilterPanel = ({
           name: "Span Name",
           category: "system",
           type: "string",
+          apiColType: "SYSTEM_METRIC",
         };
       }
       return {
         id: f.value,
         name: f.label,
         category: "system",
+        // Pinned so the eval-task wire encoding doesn't have to guess
+        // from `category` alone — without this every static field would
+        // round-trip through the chain with apiColType=undefined and
+        // get coerced to SPAN_ATTRIBUTE downstream.
+        apiColType: "SYSTEM_METRIC",
         type: f.type === "enum" ? "string" : f.type,
         ...(f.choices ? { choices: f.choices } : {}),
       };

@@ -38,13 +38,16 @@ def emit_span_ingestion_usage(
                 )
             )
 
-        if num_spans:
+        if payload_bytes:
+            props = {"source": source}
+            if num_spans:
+                props["spans"] = num_spans
             emit(
                 UsageEvent(
                     org_id=org_id_str,
                     event_type=BillingEventType.OBSERVE_ADD,
-                    amount=payload_bytes or 0,
-                    properties={"source": source, "spans": num_spans},
+                    amount=payload_bytes,
+                    properties=props,
                 )
             )
     except Exception:

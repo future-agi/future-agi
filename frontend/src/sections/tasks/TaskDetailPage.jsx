@@ -131,12 +131,13 @@ const TaskDetailPage = () => {
   const handleConfirm = useCallback(
     (editType) => {
       const data = formValues;
+      // Flat chip list with col_type for the BE dispatcher; observation_type
+      // (incl. node_type alias) still rides as a sibling key.
       const attributeFilters = extractAttributeFilters(data?.filters);
-      // observation_type rows may now carry an array `filterValue` (canonical
-      // `in`/`not_in`) or a scalar (legacy `equals`). Flatten + drop empties
-      // so the BE always sees a flat list of selected values.
       const observationTypes = (data.filters || [])
-        .filter((f) => f.property === "observation_type")
+        .filter(
+          (f) => f.property === "observation_type" || f.property === "node_type",
+        )
         .flatMap((f) => {
           const v = f?.filterConfig?.filterValue;
           if (Array.isArray(v)) return v;
@@ -155,7 +156,7 @@ const TaskDetailPage = () => {
             ? { observation_type: observationTypes }
             : {}),
           ...(attributeFilters?.length > 0
-            ? { span_attributes_filters: attributeFilters }
+            ? { filters: attributeFilters }
             : {}),
         },
         project_id: data.project,

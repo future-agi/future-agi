@@ -542,7 +542,7 @@ const EvalUsageTab = ({
                 sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
               />
               <StatPill
-                label="Pass Rate"
+                label="Task Completion Rate"
                 value={`${stats.pass_rate ?? 0}%`}
                 color="info.main"
               />
@@ -580,7 +580,7 @@ const EvalUsageTab = ({
               }}
             >
               <Typography variant="caption" color="text.disabled">
-                No data for this period
+              No data to show for selected period, update filters to view graph/data when no data is available.
               </Typography>
             </Box>
           )}

@@ -249,24 +249,18 @@ const DetailsEdit = ({
   });
 
   const onUpdateSubmit = (data, editType) => {
+    // Flat chip list with col_type for the BE dispatcher; observation_type
+    // (incl. node_type alias) still rides as a sibling key.
     const attributeFilters = extractAttributeFilters(data?.filters);
-
-    // Generic system filter aggregation — every non-attribute filter
-    // row contributes its value to a BE key named after `f.property`.
-    // Mirrors the create-side getNewTaskFilters (validation.js) so
-    // span_kind, latency_ms, total_tokens, etc. all round-trip without
-    // each one being hard-coded.
-    const systemFilters = {};
-    (data.filters || []).forEach((f) => {
-      if (!f?.property || f.property === "attributes") return;
-      const v = f?.filterConfig?.filterValue;
-      if (v === undefined || v === null || v === "") return;
-      if (systemFilters[f.property]) {
-        systemFilters[f.property].push(v);
-      } else {
-        systemFilters[f.property] = [v];
-      }
-    });
+    const observationTypes = (data.filters || [])
+      .filter(
+        (f) => f.property === "observation_type" || f.property === "node_type",
+      )
+      .flatMap((f) => {
+        const v = f?.filterConfig?.filterValue;
+        if (Array.isArray(v)) return v;
+        return v !== undefined && v !== null && v !== "" ? [v] : [];
+      });
 
     const transformedData = {
       evals: data.evalsDetails?.map((item) => item.id) || [],
@@ -276,9 +270,11 @@ const DetailsEdit = ({
           new Date(startDateField.value).toISOString(),
           new Date(endDateField.value).toISOString(),
         ],
-        ...systemFilters,
+        ...(observationTypes?.length > 0
+          ? { observation_type: observationTypes }
+          : {}),
         ...(attributeFilters && attributeFilters?.length > 0
-          ? { span_attributes_filters: attributeFilters }
+          ? { filters: attributeFilters }
           : {}),
       },
       project_id: data.project,

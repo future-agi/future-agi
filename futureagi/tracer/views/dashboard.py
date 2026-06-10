@@ -7,7 +7,7 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.dashboard import Dashboard, DashboardWidget
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
 from tracer.serializers.dashboard import (
     DashboardCreateUpdateSerializer,
     DashboardDetailSerializer,
@@ -869,6 +869,22 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 project_ids = list(workspace_project_ids)
 
             filter_by_project = bool(req_project_ids and project_ids)
+
+            if filter_by_project and not Project.objects.filter(
+                id__in=project_ids,
+            ).exclude(
+                source=ProjectSourceChoices.SIMULATOR.value,
+            ).exists():
+                metrics.append(
+                    {
+                        "name": "agent_talk_percentage",
+                        "display_name": "Agent Talk %",
+                        "category": "system_metric",
+                        "source": "traces",
+                        "type": "number",
+                        "unit": "%",
+                    }
+                )
 
             # 3. Eval metrics — scoped to project(s) when project_ids provided
             try:

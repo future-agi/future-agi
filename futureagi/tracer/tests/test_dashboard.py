@@ -371,13 +371,115 @@ class TestMetricsEndpoint:
         assert "call.user_wpm" not in metric_names
         assert "freeform.attr" in metric_names
 
-    # ------------------------------------------------------------------
-    # Regression: TH-4914 — annotation labels via observation_span FK
-    # ------------------------------------------------------------------
-    # The project-scoped Score lookup previously only joined back via
-    # ``trace__project_id``; span-attached scores (``Score.trace=NULL``,
-    # ``Score.observation_span=<span>``) were missed, so the picker's
-    # Annotations category was empty.
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=False)
+    @patch("tracer.views.dashboard.SQL_query_handler.get_span_attributes_for_project")
+    def test_metrics_exposes_agent_talk_percentage_for_simulator_project(
+        self,
+        mock_get_span_attrs,
+        _mock_clickhouse_enabled,
+        auth_client,
+        organization,
+        workspace,
+    ):
+        from model_hub.models.ai_model import AIModel
+        from tracer.models.project import Project, ProjectSourceChoices
+
+        simulator_project = Project.objects.create(
+            name="Voice Project",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+            source=ProjectSourceChoices.SIMULATOR.value,
+        )
+        mock_get_span_attrs.return_value = ["call.talk_ratio", "freeform.attr"]
+
+        response = auth_client.get(
+            f"/tracer/dashboard/metrics/?project_ids={simulator_project.id}"
+        )
+
+        assert response.status_code == 200
+        metrics = response.json()["result"]["metrics"]
+        metric_names = [m["name"] for m in metrics]
+        assert "agent_talk_percentage" in metric_names
+        # Raw call.talk_ratio collapsed by _suppress_customer_attribute_metric_aliases
+        # once the canonical agent_talk_percentage is published.
+        assert "call.talk_ratio" not in metric_names
+        assert "freeform.attr" in metric_names
+
+        entry = next(m for m in metrics if m["name"] == "agent_talk_percentage")
+        assert entry["category"] == "system_metric"
+        assert entry["source"] == "traces"
+        assert entry["type"] == "number"
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=False)
+    @patch("tracer.views.dashboard.SQL_query_handler.get_span_attributes_for_project")
+    def test_metrics_hides_agent_talk_percentage_for_non_simulator_project(
+        self,
+        mock_get_span_attrs,
+        _mock_clickhouse_enabled,
+        auth_client,
+        observe_project,
+    ):
+        # observe_project defaults to ProjectSourceChoices.PROTOTYPE.
+        mock_get_span_attrs.return_value = ["call.talk_ratio"]
+
+        response = auth_client.get(
+            f"/tracer/dashboard/metrics/?project_ids={observe_project.id}"
+        )
+
+        assert response.status_code == 200
+        metric_names = [m["name"] for m in response.json()["result"]["metrics"]]
+        assert "agent_talk_percentage" not in metric_names
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=False)
+    @patch("tracer.views.dashboard.SQL_query_handler.get_span_attributes_for_project")
+    def test_metrics_hides_agent_talk_percentage_when_mixed_sources(
+        self,
+        mock_get_span_attrs,
+        _mock_clickhouse_enabled,
+        auth_client,
+        organization,
+        workspace,
+        observe_project,
+    ):
+        from model_hub.models.ai_model import AIModel
+        from tracer.models.project import Project, ProjectSourceChoices
+
+        simulator_project = Project.objects.create(
+            name="Voice Project",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+            source=ProjectSourceChoices.SIMULATOR.value,
+        )
+        mock_get_span_attrs.return_value = []
+
+        response = auth_client.get(
+            "/tracer/dashboard/metrics/"
+            f"?project_ids={simulator_project.id},{observe_project.id}"
+        )
+
+        assert response.status_code == 200
+        metric_names = [m["name"] for m in response.json()["result"]["metrics"]]
+        # Gate requires *every* queried project to be SIMULATOR — mixed scope
+        # must hide the option so a non-voice project can't filter on it.
+        assert "agent_talk_percentage" not in metric_names
+
+    @pytest.mark.django_db
+    def test_metrics_hides_agent_talk_percentage_without_explicit_project_ids(
+        self, auth_client
+    ):
+        # Workspace-wide call (used by dashboard widget pickers) must not
+        # expose the voice-only metric.
+        response = auth_client.get("/tracer/dashboard/metrics/")
+        assert response.status_code == 200
+        metric_names = [m["name"] for m in response.json()["result"]["metrics"]]
+        assert "agent_talk_percentage" not in metric_names
 
     @pytest.fixture
     def _annotation_label_factory(self, db, organization, workspace):
