@@ -58,7 +58,7 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
 
   const copyToClipboard = (text, type) => {
     navigator.clipboard
-      .writeText(text)
+      .writeText(String(text ?? ""))
       .then(() => {
         enqueueSnackbar(`${type} copied to clipboard!`, { variant: "success" });
       })
@@ -108,6 +108,13 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
     },
     enabled: open, // Trigger query only when modal is open
   });
+
+  const result = data?.result || {};
+  const apiKeys = result?.api_keys || result?.apiKeys || {};
+  const datasetName = result?.dataset?.name || "N/A";
+  const datasetIdValue = result?.dataset?.id || "N/A";
+  const apiKeyValue = apiKeys?.api_key || apiKeys?.apiKey || "N/A";
+  const secretKeyValue = apiKeys?.secret_key || apiKeys?.secretKey || "N/A";
 
   const handleSubmit = () => {
     trackEvent(Events.rowFromSDKCreated, {
@@ -214,13 +221,12 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                   p="5px 12px"
                   color="text.primary"
                 >
-                  {data?.result?.dataset?.name || "N/A"}
+                  {datasetName}
                 </Typography>
                 <IconButton
+                  aria-label="Copy Dataset Name"
                   size="small"
-                  onClick={() =>
-                    copyToClipboard(data?.result?.dataset?.name, "Dataset Name")
-                  }
+                  onClick={() => copyToClipboard(datasetName, "Dataset Name")}
                   sx={{ color: "text.secondary" }}
                 >
                   <Iconify icon="eva:copy-outline" width={16} height={16} />
@@ -250,13 +256,12 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                     fontSize: "0.875rem",
                   }}
                 >
-                  {data?.result?.dataset?.id || "N/A"}
+                  {datasetIdValue}
                 </Typography>
                 <IconButton
+                  aria-label="Copy Dataset ID"
                   size="small"
-                  onClick={() =>
-                    copyToClipboard(data?.result?.dataset?.id, "Dataset ID")
-                  }
+                  onClick={() => copyToClipboard(datasetIdValue, "Dataset ID")}
                   sx={{ color: "text.secondary" }}
                 >
                   <Iconify icon="eva:copy-outline" width={16} height={16} />
@@ -282,13 +287,12 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                   p="5px 12px"
                   color="text.primary"
                 >
-                  {data?.result?.apiKeys?.apiKey || "N/A"}
+                  {apiKeyValue}
                 </Typography>
                 <IconButton
+                  aria-label="Copy API Key"
                   size="small"
-                  onClick={() =>
-                    copyToClipboard(data?.result?.apiKeys?.apiKey, "API Key")
-                  }
+                  onClick={() => copyToClipboard(apiKeyValue, "API Key")}
                   sx={{ color: "text.secondary" }}
                 >
                   <Iconify icon="eva:copy-outline" width={16} height={16} />
@@ -314,16 +318,12 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                   p="5px 12px"
                   color="text.primary"
                 >
-                  {data?.result?.apiKeys?.secretKey || "N/A"}
+                  {secretKeyValue}
                 </Typography>
                 <IconButton
+                  aria-label="Copy Secret Key"
                   size="small"
-                  onClick={() =>
-                    copyToClipboard(
-                      data?.result?.apiKeys?.secretKey,
-                      "Secret Key",
-                    )
-                  }
+                  onClick={() => copyToClipboard(secretKeyValue, "Secret Key")}
                   sx={{ color: "text.secondary" }}
                 >
                   <Iconify icon="eva:copy-outline" width={16} height={16} />
