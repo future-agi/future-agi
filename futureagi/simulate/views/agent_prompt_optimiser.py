@@ -8,7 +8,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
-logger = structlog.get_logger(__name__)
 from model_hub.utils.dataset_optimization import calculate_percentage_point_change
 from model_hub.utils.llm_providers import get_provider_logo_url
 from simulate.constants.agent_prompt_optimiser import (
@@ -49,6 +48,8 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.errors import format_validation_error
 from tfc.utils.general_methods import GeneralMethods
+
+logger = structlog.get_logger(__name__)
 
 # Human-readable labels and descriptions for optimizer configuration parameters
 OPTIMISER_PARAM_META = {
@@ -451,13 +452,38 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             if not (trial.prompt or "").strip():
                 return self._gm.bad_request("Trial has no prompt to apply.")
 
-            base_version = getattr(
-                getattr(getattr(instance, "test_execution", None), "run_test", None),
-                "prompt_version", None,
+            run_test = getattr(
+                getattr(instance, "test_execution", None), "run_test", None
             )
+            base_version = getattr(run_test, "prompt_version", None)
             if base_version is None:
-                return self._gm.bad_request(
-                    "This optimiser run is not linked to a prompt version to apply to."
+                # Agent-definition runs: the prompt lives on the PROVIDER, so
+                # applying writes through the provider's management API
+                # (read -> write -> read-back verify).
+                agent_def = getattr(run_test, "agent_definition", None)
+                if agent_def is None:
+                    return self._gm.bad_request(
+                        "This optimiser run is not linked to a prompt version or "
+                        "agent definition to apply to."
+                    )
+                from simulate.services.provider_prompt_apply import (
+                    PromptApplyError,
+                    apply_prompt_to_provider_agent,
+                )
+
+                try:
+                    applied = apply_prompt_to_provider_agent(agent_def, trial.prompt)
+                except PromptApplyError as e:
+                    return self._gm.bad_request(str(e))
+                return self._gm.success_response(
+                    {
+                        "applied": True,
+                        "target": "provider_agent",
+                        "provider": applied["provider"],
+                        "assistant_id": applied["assistant_id"],
+                        "previous_prompt": applied["previous_prompt"],
+                        "source_trial_id": str(trial.id),
+                    }
                 )
 
             from simulate.services.optimizer_apply import (
