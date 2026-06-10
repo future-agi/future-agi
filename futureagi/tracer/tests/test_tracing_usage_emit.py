@@ -93,7 +93,7 @@ def test_storage_mode_fills_storage_only(captured_emit, set_mode):
     storage = _of_type(captured_emit, BillingEventType.OBSERVE_ADD)
     assert len(storage) == 1
     assert storage[0].amount == 500
-    assert storage[0].properties["spans"] == 10
+    assert storage[0].properties["units"] == 13
     # tracing_events must NOT be filled in storage mode
     assert _of_type(captured_emit, BillingEventType.TRACING_EVENT) == []
 
@@ -204,5 +204,5 @@ def test_case_4_storage_voice_emits_storage_for_spans_and_rehost(
     assert len(storage) == 2
     by_source = {e.properties["source"]: e for e in storage}
     assert by_source["voice_observability"].amount == 1200
-    assert by_source["voice_observability"].properties["spans"] == 4
+    assert by_source["voice_observability"].properties["units"] == 4
     assert by_source["voice_recording_rehost"].amount == 750_000

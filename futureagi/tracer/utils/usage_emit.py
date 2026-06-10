@@ -85,12 +85,13 @@ def emit_span_ingestion_usage(
             return
 
         mode = _tracing_billing_mode(org_id_str)
+        tracing_units = (num_traces or 0) + (num_spans or 0)
 
         if mode == "storage":
             if payload_bytes:
                 props = {"source": source}
-                if num_spans:
-                    props["spans"] = num_spans
+                if tracing_units:
+                    props["units"] = tracing_units
                 emit(
                     UsageEvent(
                         org_id=org_id_str,
@@ -104,7 +105,6 @@ def emit_span_ingestion_usage(
         # events mode: payload_bytes is intentionally ignored; span storage
         # is not billed in events mode, and the only OBSERVE_ADD line in
         # events mode comes from the voice_recording_rehost branch above.
-        tracing_units = (num_traces or 0) + (num_spans or 0)
         if tracing_units:
             emit(
                 UsageEvent(
