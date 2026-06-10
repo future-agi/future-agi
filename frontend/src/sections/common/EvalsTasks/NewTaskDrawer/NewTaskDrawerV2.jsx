@@ -531,7 +531,7 @@ const NewTaskDrawerV2 = ({
                       {!isProjectSelected && (
                         <Typography
                           variant="caption"
-                          color="text.disabled"
+                          color="text.secondary"
                           sx={{ fontSize: "12px" }}
                         >
                           Select a project first to add evaluations.

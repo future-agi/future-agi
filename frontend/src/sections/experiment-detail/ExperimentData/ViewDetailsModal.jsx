@@ -41,7 +41,6 @@ const ViewDetailsModal = ({
         metadata: data.metadata,
       }
     : null;
-
   // Detect composite eval results from value_infos
   const compositeResult = useMemo(() => {
     const vi = data?.value_infos ?? data?.valueInfos;
@@ -271,6 +270,7 @@ const ViewDetailsModal = ({
               </Box>
             </Box>
           )}
+          {!compositeResult && (
           <Box>
             <Typography
               fontWeight={500}
@@ -384,6 +384,7 @@ const ViewDetailsModal = ({
               </Typography>
             )}
           </Box>
+          )}
         </Box>
         <Box
           sx={{

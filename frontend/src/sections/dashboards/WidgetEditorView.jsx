@@ -3327,7 +3327,7 @@ export default function WidgetEditorView() {
                     alignItems: "center",
                   }}
                 >
-                  <Typography variant="body2" color="text.disabled">
+                  <Typography variant="body2" color="text.secondary">
                     Fill in the required fields to see preview
                   </Typography>
                 </Box>
@@ -4018,7 +4018,7 @@ export default function WidgetEditorView() {
                     )}
                   </Box>
                 ) : (
-                  <Typography variant="body2" color="text.disabled">
+                  <Typography variant="body2" color="text.secondary">
                     Fill in the required fields to see preview
                   </Typography>
                 )}
@@ -5882,7 +5882,7 @@ export default function WidgetEditorView() {
               {isPie || isTable || isMetricCard ? (
                 <Typography
                   variant="body2"
-                  color="text.disabled"
+                  color="text.secondary"
                   sx={{ fontStyle: "italic", textAlign: "center", mt: 4 }}
                 >
                   {isPie
@@ -6081,7 +6081,7 @@ export default function WidgetEditorView() {
                     {previewSeries.length === 0 && (
                       <Typography
                         variant="body2"
-                        color="text.disabled"
+                        color="text.secondary"
                         sx={{ fontStyle: "italic" }}
                       >
                         Add metrics to see axis assignments

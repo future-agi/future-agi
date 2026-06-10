@@ -244,10 +244,20 @@ class EmbeddingManager:
     def get_feedback_count(self, eval_id: str, organization_id: str = None, workspace_id: str = None) -> int:
         """Return the number of non-deleted feedback rows for a given eval_id."""
         try:
-            result = self.db_client.client.execute(
-                "SELECT COUNT(*) FROM feedbacks WHERE eval_id = %(eval_id)s AND deleted = 0",
-                {"eval_id": eval_id},
-            )
+            where = ["eval_id = %(eval_id)s", "deleted = 0"]
+            params = {"eval_id": eval_id}
+            if organization_id:
+                where.append(
+                    "arrayElement(metadata.value, indexOf(metadata.key, 'organization_id')) = %(organization_id)s"
+                )
+                params["organization_id"] = organization_id
+            if workspace_id:
+                where.append(
+                    "arrayElement(metadata.value, indexOf(metadata.key, 'workspace_id')) = %(workspace_id)s"
+                )
+                params["workspace_id"] = workspace_id
+            sql = f"SELECT COUNT(*) FROM feedbacks WHERE {' AND '.join(where)}"
+            result = self.db_client.client.execute(sql, params)
             return result[0][0] if result else 0
         except Exception as e:
             logger.warning("get_feedback_count failed", eval_id=eval_id, error=str(e))
@@ -913,6 +923,20 @@ class EmbeddingManager:
         # row_dict
         if filter_by is None:
             filter_by = {}
+
+        # Skip the embed loop when there are no rows to match against.
+        if table_name == FEEDBACK_TABLE_NAME and eval_id:
+            if self.get_feedback_count(
+                eval_id=str(eval_id),
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            ) == 0:
+                logger.info(
+                    "retrieve_avg_rag_based_examples skipped: no feedback rows",
+                    eval_id=str(eval_id),
+                )
+                return []
+
         self.input_types = self.inputs_type_list(inputs)
 
         results = {}

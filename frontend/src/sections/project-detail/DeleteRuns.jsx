@@ -104,7 +104,7 @@ const DeleteRuns = ({ open, onClose, selectedRows, refreshGrid }) => {
         <Typography
           mb={theme.spacing(1)}
           fontWeight={400}
-          color="text.disabled"
+          color="text.secondary"
           fontSize={14}
         >
           Are you sure you want to delete the following run

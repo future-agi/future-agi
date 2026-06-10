@@ -176,7 +176,7 @@ const AddColumnScenario = ({ open, onClose, datasetId, scenarioId }) => {
             <Typography
               variant="s1"
               fontWeight={"fontWeightRegular"}
-              color={"text.disabled"}
+              color={"text.secondary"}
             >
               Define the column name, type, and description (max 10 columns)
             </Typography>

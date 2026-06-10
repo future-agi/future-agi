@@ -171,17 +171,26 @@ const TaskDetailPage = () => {
   const handleConfirm = useCallback(
     (editType) => {
       const data = formValues;
-      const { filters, attributeFilters } = getNewTaskFilters(
-        data,
-        data.project,
-      );
+      // Flat chip list with col_type for the BE dispatcher; observation_type
+      // (incl. node_type alias) still rides as a sibling key.
+      const attributeFilters = extractAttributeFilters(data?.filters);
+      const observationTypes = (data.filters || [])
+        .filter(
+          (f) =>
+            f.property === "observation_type" || f.property === "node_type",
+        )
+        .flatMap((f) => {
+          const v = f?.filterConfig?.filterValue;
+          if (Array.isArray(v)) return v;
+          return v !== undefined && v !== null && v !== "" ? [v] : [];
+        });
 
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id || item) || [],
         filters: {
           ...filters,
           ...(attributeFilters?.length > 0
-            ? { span_attributes_filters: attributeFilters }
+            ? { filters: attributeFilters }
             : {}),
         },
         project_id: data.project,

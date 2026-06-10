@@ -249,6 +249,8 @@ const DetailsEdit = ({
   });
 
   const onUpdateSubmit = (data, editType) => {
+    // Flat chip list with col_type for the BE dispatcher; observation_type
+    // (incl. node_type alias) still rides as a sibling key.
     const attributeFilters = extractAttributeFilters(data?.filters);
 
     // Task system filter aggregation. The task filter UI only exposes
@@ -280,9 +282,11 @@ const DetailsEdit = ({
           new Date(startDateField.value).toISOString(),
           new Date(endDateField.value).toISOString(),
         ],
-        ...systemFilters,
+        ...(observationTypes?.length > 0
+          ? { observation_type: observationTypes }
+          : {}),
         ...(attributeFilters && attributeFilters?.length > 0
-          ? { span_attributes_filters: attributeFilters }
+          ? { filters: attributeFilters }
           : {}),
       },
       project_id: data.project,

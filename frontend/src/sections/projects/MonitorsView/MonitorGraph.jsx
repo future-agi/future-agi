@@ -94,7 +94,7 @@ const MonitorGraph = ({ selectedMetric, control, metricList }) => {
           <Typography
             variant="s1"
             fontWeight={"fontWeightRegular"}
-            color="text.disabled"
+            color="text.secondary"
             sx={{
               width: "207px",
               textAlign: "center",

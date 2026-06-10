@@ -295,18 +295,25 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
   const imageData = useMemo(() => getImageUrlFromData(datapoint), [datapoint]);
   const isImage = imageData?.format === "image";
   const isText = imageData?.format === "text";
-  const showMoreCondition =
-    !datapoint?.data?.imageUrl &&
-    imageData?.dataFile?.length > 150 &&
-    !expanded;
+  const selectedInputKey =
+    datapoint?.selected_input_key ??
+    datapoint?.cell_metadata?.selected_input_key;
+  const renderedText =
+    datapoint?.input_data?.[selectedInputKey] ??
+    datapoint?.cell_metadata?.input_data?.[selectedInputKey] ??
+    imageData?.dataFile ??
+    "";
+  const isLongText = renderedText.length > 150;
 
-  const showLessCondition =
-    !datapoint?.data?.imageUrl && imageData?.dataFile?.length > 150 && expanded;
+  const showMoreCondition = isLongText && !expanded && !isImage;
+
+  const showLessCondition = isLongText && expanded;
 
   useEffect(() => {
     setExpanded(false);
     setHoveredData(null);
-  }, [value, datapoint, column]);
+  }, [column, selectedInputKey, value?.length]);
+
 
   const renderLocalizerDetails = (item) => {
     const reason = item?.reason;
@@ -444,70 +451,6 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
     );
   };
 
-  const renderTextWithAllHighlights = (text, highlights) => {
-    if (!text || !highlights || highlights.length === 0) {
-      return text;
-    }
-
-    const getStartIdx = (highlight) =>
-      highlight?.orgSen?.startIdx ?? highlight?.orgSen?.start_idx ?? 0;
-    const getEndIdx = (highlight) =>
-      highlight?.orgSen?.endIdx ??
-      highlight?.orgSen?.end_idx ??
-      getStartIdx(highlight);
-
-    const sortedHighlights = [...highlights].sort(
-      (a, b) => getStartIdx(a) - getStartIdx(b),
-    );
-
-    const result = [];
-    let lastIndex = 0;
-
-    sortedHighlights.forEach((highlight, index) => {
-      const startIdx = getStartIdx(highlight);
-      const endIdx = getEndIdx(highlight);
-
-      if (startIdx > lastIndex) {
-        result.push(text.slice(lastIndex, startIdx));
-      }
-
-      const highlightedText = text.slice(startIdx, endIdx);
-      result.push(
-        <CustomTooltip
-          key={`highlight-${index}`}
-          show={Boolean(hoveredData)}
-          title={
-            <Box sx={{ maxHeight: "100px", overflow: "auto" }}>
-              {highlight?.reason}
-            </Box>
-          }
-          enterDelay={500}
-        >
-          <span
-            onMouseEnter={() => setHoveredData(highlight.reason)}
-            onMouseLeave={() => setHoveredData(null)}
-            style={{
-              backgroundColor: getMarkColor(highlight.weight),
-              fontWeight: "",
-              display: "inline",
-            }}
-          >
-            {highlightedText}
-          </span>
-        </CustomTooltip>,
-      );
-
-      lastIndex = endIdx;
-    });
-
-    // Add remaining text after the last highlight
-    if (lastIndex < text.length) {
-      result.push(text.slice(lastIndex));
-    }
-
-    return result;
-  };
-
   return (
     <Accordion
       defaultExpanded
@@ -572,43 +515,48 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
                               )}
                             </Box>
                           </Typography>
-                          {renderLocalizerDetails(i)}
                           {value.length > 1 && index < value.length - 1 && (
                             <Divider />
                           )}
                         </React.Fragment>
                       ))
                     ) : (
-                      <>
-                        <Typography
-                          sx={{
-                            marginY: theme.spacing(1.5),
-                            overflowY: "auto",
-                            ...sx,
-                          }}
-                          variant="s2"
-                        >
-                          {renderTextWithAllHighlights(
-                            datapoint?.input_data[datapoint.selected_input_key],
-                            value,
-                          )}
-                        </Typography>
-                        <Box
-                          sx={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 1,
-                          }}
-                        >
-                          {value.map((item, index) => (
-                            <React.Fragment
-                              key={item.unitKey || item.unit_key || index}
+                      value.map((item, index) => {
+                        const fullText =
+                          datapoint?.input_data[datapoint.selected_input_key];
+                        const startIdx =
+                          item?.orgSen?.startIdx ?? item?.orgSen?.start_idx;
+                        const endIdx =
+                          item?.orgSen?.endIdx ?? item?.orgSen?.end_idx;
+                        const segment =
+                          fullText?.slice(startIdx, endIdx) ||
+                          item?.orgSen?.text ||
+                          "";
+
+                        return (
+                          <React.Fragment
+                            key={item.unitKey || item.unit_key || index}
+                          >
+                            <Typography
+                              sx={{ marginY: theme.spacing(1.5), ...sx }}
+                              variant="s2"
                             >
-                              {renderLocalizerDetails(item)}
-                            </React.Fragment>
-                          ))}
-                        </Box>
-                      </>
+                              <span
+                                style={{
+                                  backgroundColor: getMarkColor(item.weight),
+                                  display: "inline",
+                                }}
+                              >
+                                {segment}
+                              </span>
+                            </Typography>
+                            {renderLocalizerDetails(item)}
+                            {value.length > 1 && index < value.length - 1 && (
+                              <Divider sx={{ my: 1.5 }} />
+                            )}
+                          </React.Fragment>
+                        );
+                      })
                     )}
                     <ShowComponent condition={showMoreCondition}>
                       <Box
@@ -707,7 +655,7 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
                             textDecoration: "underline",
                             cursor: "pointer",
                           }}
-                          onClick={handleShowMore}
+                          onClick={() => handleShowMore(true)}
                         >
                           Show More
                         </Typography>

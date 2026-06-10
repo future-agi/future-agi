@@ -282,7 +282,7 @@ const EditImageZoom = ({
                       >
                         No image added
                       </Typography>
-                      <Typography variant="body2" color="text.disabled">
+                      <Typography variant="body2" color="text.secondary">
                         Click to upload an image
                       </Typography>
                     </Box>

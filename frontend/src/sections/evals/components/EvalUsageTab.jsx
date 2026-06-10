@@ -542,7 +542,7 @@ const EvalUsageTab = ({
                 sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
               />
               <StatPill
-                label="Pass Rate"
+                label="Task Completion Rate"
                 value={`${stats.pass_rate ?? 0}%`}
                 color="info.main"
               />
@@ -580,7 +580,7 @@ const EvalUsageTab = ({
               }}
             >
               <Typography variant="caption" color="text.disabled">
-                No data for this period
+              No data to show for selected period, update filters to view graph/data when no data is available.
               </Typography>
             </Box>
           )}
@@ -1378,13 +1378,29 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
       borderColor: "divider",
     }}
   >
-    <Typography
-      variant="caption"
-      color="text.secondary"
-      sx={{ width: 90, flexShrink: 0, pt: 0.25 }}
+    <CustomTooltip
+      show
+      title={label}
+      placement="top-start"
+      enterDelay={300}
+      size="small"
     >
-      {label}
-    </Typography>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{
+          width: 90,
+          flexShrink: 0,
+          pt: 0.25,
+          pr: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+      </Typography>
+    </CustomTooltip>
     <Box sx={{ flex: 1, minWidth: 0 }}>
       {chip ? (
         <Chip

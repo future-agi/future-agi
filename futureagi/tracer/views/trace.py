@@ -2451,7 +2451,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             ):
                                 total_eval_configs[
                                     str(metric["custom_eval_config_id"]) + "**" + choice
-                                ] = metric["custom_eval_config__name"] + " - " + choice
+                                ] = (
+                                    metric["custom_eval_config__name"] + " - " + choice
+                                )
                 else:
                     score = (
                         metric["avg_float_score"]
@@ -3896,6 +3898,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Phase 1: Paginated traces (light columns only — no input/output)
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+        result.data = result.data[:page_size]
 
         # Count
         count_query, count_params = builder.build_count_query()
@@ -3934,18 +3937,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 row["metadata"] = raw_meta or {}
             row["trace_tags"] = content.get("trace_tags", [])
 
-        # Resolve user_id for this page of traces via PG
-        user_id_map = {}
-        if trace_ids:
-            _eu_rows = (
-                ObservationSpan.objects.filter(
-                    trace_id__in=trace_ids, end_user__isnull=False
-                )
-                .order_by("trace_id", "start_time")
-                .distinct("trace_id")
-                .values_list("trace_id", "end_user__user_id")
-            )
-            user_id_map = {str(tid): uid for tid, uid in _eu_rows}
+        user_id_map = builder.resolve_user_ids(trace_ids, analytics)
 
         # Phase 2: Eval scores
         eval_map = {}
@@ -4198,6 +4190,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Phase 1: Paginated root conversation spans (light columns only)
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+        result.data = result.data[:page_size]
 
         # Phase 1b: Fetch span_attributes + provider for the paginated spans
         # from the v2 `spans` table (CH25 close-out: was `tracer_observation_span`
@@ -4510,6 +4503,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Phase 1: Get paginated traces
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+        result.data = result.data[:page_size]
 
         # Get count
         count_query, count_params = builder.build_count_query()
@@ -4537,18 +4531,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             trace_ids, annotation_label_ids, label_types
         )
 
-        # Resolve user_id for this page of traces via PG
-        user_id_map = {}
-        if trace_ids:
-            _eu_rows = (
-                ObservationSpan.objects.filter(
-                    trace_id__in=trace_ids, end_user__isnull=False
-                )
-                .order_by("trace_id", "start_time")
-                .distinct("trace_id")
-                .values_list("trace_id", "end_user__user_id")
-            )
-            user_id_map = {str(tid): uid for tid, uid in _eu_rows}
+        user_id_map = builder.resolve_user_ids(trace_ids, analytics)
 
         # Build column config
         column_config = get_default_trace_config()
