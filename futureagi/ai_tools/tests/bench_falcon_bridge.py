@@ -93,7 +93,10 @@ TASKS = [
     },
     {
         "id": 8,
-        "msg": "Make a new experiment project called 'bench-test-03'",
+        # {nonce}: project names are unique per (name, type, org, ws) —
+        # stale bench-test-* rows from earlier runs made this correctly
+        # answerable with "already exists" (run-1 adjudication).
+        "msg": "Make a new experiment project called 'bench-test-{nonce}'",
         "expected_tools": ["create_trace_project"],
     },
     {
@@ -239,6 +242,13 @@ TASKS = [
         "id": 36,
         "msg": "Show me everyone on my team",
         "expected_tools": ["list_users"],
+        "accept_tools": ["list_workspace_members"],
+        "adjudication": (
+            "'my team' maps to the current workspace's member roster; "
+            "list_workspace_members returns exactly that (names, emails, "
+            "roles) — a semantically correct alternate to org-wide "
+            "list_users (run-1 transcript: full 11-member roster table)."
+        ),
     },
     {
         "id": 37,
@@ -256,7 +266,10 @@ TASKS = [
     },
     {
         "id": 39,
-        "msg": "Rerun the failed cells of experiment 999999",
+        # realistic-but-nonexistent uuid4: 999999 reads as a placeholder and
+        # provoked validate-first list_experiments (run-1 adjudication); a
+        # uuid4 404s with zero side effects.
+        "msg": "Rerun the failed cells of experiment {missing_exp_a}",
         "expected_tools": ["rerun_experiment_cells"],
         "cluster": "experiments_v2",
     },
@@ -264,17 +277,34 @@ TASKS = [
         "id": 40,
         "msg": "Export my experiments to CSV",
         "expected_tools": ["export_experiments_csv"],
+        "accept_tools": ["list_experiments"],
+        "adjudication": (
+            "export_experiments_csv is per-experiment (required "
+            "experiment_id pk); with no id in the task, listing experiments "
+            "and asking which to export is the only correct first step "
+            "(run-1 transcript did exactly this)."
+        ),
         "cluster": "experiments_v2",
     },
     {
         "id": 41,
         "msg": "Suggest a good name for a new experiment",
         "expected_tools": ["suggest_experiment_name"],
+        "accept_tools": ["list_datasets"],
+        "adjudication": (
+            "suggest_experiment_name requires a dataset_id pk (names are "
+            "DS_<dataset>_exp_...); with no dataset in the task, fetching "
+            "datasets and asking which one is the only correct first step "
+            "(run-1 transcript did exactly this)."
+        ),
         "cluster": "experiments_v2",
     },
     {
         "id": 42,
-        "msg": "Compare experiments 999998 and 999999 for me",
+        # real COMPLETED experiment ids (read-only comparison): integer
+        # placeholders made the model correctly answer "those aren't real
+        # ids — experiments use UUIDs" (run-1 adjudication).
+        "msg": "Compare experiments {exp_a_id} and {exp_b_id} for me",
         "expected_tools": ["compare_experiments", "get_experiment_comparison"],
         "cluster": "experiments_v2",
     },
@@ -286,26 +316,39 @@ TASKS = [
         "cluster": "annotator_loop",
     },
     {
+        # Queue-item actions require BOTH queue_id (path kwarg) and item_id:
+        # the old zero-UUID item with no queue forced a clarify/list turn
+        # (run-1 adjudication). Real queue + realistic-missing item: the
+        # action tool is callable and 404s with zero side effects.
         "id": 44,
-        "msg": "Mark queue item 00000000-0000-0000-0000-000000000000 as complete",
+        "msg": (
+            "Mark queue item {missing_item_id} in annotation queue "
+            "{queue_id} as complete"
+        ),
         "expected_tools": ["complete_queue_item"],
         "cluster": "annotator_loop",
     },
     {
         "id": 45,
-        "msg": "Skip annotation queue item 00000000-0000-0000-0000-000000000000",
+        "msg": (
+            "Skip item {missing_item_id} in annotation queue {queue_id}"
+        ),
         "expected_tools": ["skip_queue_item"],
         "cluster": "annotator_loop",
     },
     {
         "id": 46,
-        "msg": "Review annotation queue item 00000000-0000-0000-0000-000000000000 and approve it",
+        "msg": (
+            "Review item {missing_item_id} in annotation queue {queue_id} "
+            "and approve it"
+        ),
         "expected_tools": ["review_queue_item", "bulk_review_queue_items"],
         "cluster": "annotator_loop",
     },
     {
         "id": 47,
-        "msg": "How far along is annotation queue 00000000-0000-0000-0000-000000000000? Show its progress",
+        # real queue id — get_queue_progress is read-only.
+        "msg": "How far along is annotation queue {queue_id}? Show its progress",
         "expected_tools": ["get_queue_progress"],
         "cluster": "annotator_loop",
     },
@@ -330,7 +373,13 @@ TASKS = [
     },
     {
         "id": 51,
-        "msg": "Duplicate widget 00000000-0000-0000-0000-000000000000 on my dashboard",
+        # duplicate needs widget_id + dashboard_id (path kwarg); zero-UUID
+        # with no dashboard provoked a lookup spiral (run-1 adjudication).
+        # Real dashboard + realistic-missing widget: callable, 404s.
+        "msg": (
+            "Duplicate widget {missing_widget_id} on dashboard "
+            "{dashboard_id}"
+        ),
         "expected_tools": ["duplicate_dashboard_widget"],
         "cluster": "dashboards",
     },
@@ -351,7 +400,13 @@ TASKS = [
     },
     {
         "id": 54,
-        "msg": "Permanently delete annotation queue 00000000-0000-0000-0000-000000000000 — hard delete it",
+        # realistic-but-nonexistent uuid4: the zero-UUID made the model
+        # (correctly) call it out as a placeholder and look the queue up
+        # first (run-1 adjudication). uuid4 404s before any confirm flow.
+        "msg": (
+            "Permanently delete annotation queue {missing_queue_id} — "
+            "hard delete it"
+        ),
         "expected_tools": ["hard_delete_annotation_queue"],
         "cluster": "destructives_confirm",
     },
@@ -600,6 +655,8 @@ class TaskResult:
     id: int
     msg: str
     expected_tools: list
+    accept_tools: list = field(default_factory=list)
+    adjudication: str | None = None
     actual_tools: list = field(default_factory=list)
     tool_latencies_ms: list = field(default_factory=list)
     total_latency_ms: float = 0.0
@@ -607,19 +664,47 @@ class TaskResult:
     error: str | None = None
     iterations: int = 0
     iteration_tokens: int = 0
+    # Adjudication evidence: condensed event transcript + final answer text.
+    transcript: list = field(default_factory=list)
+    assistant_text: str = ""
+
+    @property
+    def expected_hit(self) -> bool:
+        return any(t in self.actual_tools for t in self.expected_tools)
+
+    @property
+    def accepted_alternate(self) -> bool:
+        """Explicitly adjudicated semantically-valid alternate was used."""
+        return not self.expected_hit and any(
+            t in self.actual_tools for t in self.accept_tools
+        )
 
     @property
     def tools_match(self) -> bool:
-        return any(t in self.actual_tools for t in self.expected_tools)
+        # accept_tools count as a hit ONLY because each carries a written
+        # adjudication in the task data — never a silent pass.
+        return self.expected_hit or self.accepted_alternate
 
     @property
     def all_expected_called(self) -> bool:
         return all(t in self.actual_tools for t in self.expected_tools)
 
+    @property
+    def verdict(self) -> str:
+        if self.expected_hit:
+            return "expected"
+        if self.accepted_alternate:
+            return "accepted_alternate"
+        return "miss"
+
 
 async def run_task(task: dict, tool_context: ToolContext) -> TaskResult:
     result = TaskResult(
-        id=task["id"], msg=task["msg"], expected_tools=task["expected_tools"]
+        id=task["id"],
+        msg=task["msg"],
+        expected_tools=task["expected_tools"],
+        accept_tools=task.get("accept_tools", []),
+        adjudication=task.get("adjudication"),
     )
 
     conv = Conversation(
@@ -634,6 +719,7 @@ async def run_task(task: dict, tool_context: ToolContext) -> TaskResult:
 
     events = []
     tool_starts = {}
+    text_parts = []
 
     async def send_callback(event):
         events.append(event)
@@ -644,12 +730,29 @@ async def run_task(task: dict, tool_context: ToolContext) -> TaskResult:
             tool_name = data.get("tool_name")
             result.actual_tools.append(tool_name)
             tool_starts[call_id] = (tool_name, time.time())
+            result.transcript.append(
+                {
+                    "ev": "tool_call_start",
+                    "tool": tool_name,
+                    "params": data.get("params"),
+                }
+            )
         elif ev_type == "tool_call_result":
             call_id = data.get("call_id")
             if call_id in tool_starts:
                 tool_name, start = tool_starts[call_id]
                 latency_ms = (time.time() - start) * 1000
                 result.tool_latencies_ms.append(latency_ms)
+            result.transcript.append(
+                {
+                    "ev": "tool_call_result",
+                    "tool": data.get("tool_name"),
+                    "status": data.get("status"),
+                    "result": (data.get("result_full") or "")[:600],
+                }
+            )
+        elif ev_type == "text_delta":
+            text_parts.append(data.get("text") or data.get("delta") or "")
 
     start = time.time()
     try:
@@ -669,12 +772,106 @@ async def run_task(task: dict, tool_context: ToolContext) -> TaskResult:
         result.error = f"{type(e).__name__}: {e}"
 
     result.total_latency_ms = (time.time() - start) * 1000
+    result.assistant_text = "".join(text_parts)
     result.iterations = (
         getattr(agent, "_iterations", 0)
         if hasattr(agent, "_iterations")
         else len([e for e in events if e.get("type") == "tool_call_start"])
     )
     return result
+
+
+_ZERO_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+def _resolve_seed_ids(user) -> dict:
+    """Resolve REAL entity ids for the Phase-2A task templates.
+
+    Bench-adjudication finding (2026-06-11 wave): fake ids (999999 /
+    zero-UUIDs) tempt the model into validate-first behavior — it lists or
+    searches to check the id instead of calling the action tool, so the task
+    measured id-validation, not selection. Destructive/action tasks are still
+    side-effect-free with real ids: the 3A confirmation layer makes the first
+    call preview-only, and stop/rerun on a non-running experiment is a no-op
+    404-class response.
+
+    Falls back to the old fake ids when the dev DB has no rows, so the bench
+    degrades rather than crashes on an empty database.
+    """
+    import secrets
+
+    from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
+    from model_hub.models.experiments import ExperimentsTable
+    from tracer.models.dashboard import Dashboard, DashboardWidget
+
+    org = user.organization
+    # Unique-per-run suffix for create-project tasks: project names are
+    # unique per (name, trace_type, org, workspace) — stale bench-test-*
+    # rows from earlier runs made 'create X' correctly answerable with
+    # "X already exists" (another task-design artifact, run 1 tasks 8/10).
+    seeds = {"nonce": secrets.token_hex(3)}
+
+    exps = list(
+        ExperimentsTable.objects.filter(dataset__workspace__organization=org)
+        .order_by("-created_at")
+        .values_list("id", "status")[:25]
+    )
+    running = [str(i) for i, s in exps if s == "Running"]
+    completed = [str(i) for i, s in exps if s == "Completed"]
+    any_ids = [str(i) for i, _ in exps]
+    seeds["exp_running_id"] = (running + any_ids + ["999999"])[0]
+    comp = completed + [i for i in any_ids if i not in completed]
+    seeds["exp_a_id"] = (comp + ["999998"])[0]
+    seeds["exp_b_id"] = (comp[1:] + ["999999"])[0]
+
+    queue = None
+    for q in AnnotationQueue.objects.filter(organization=org).order_by(
+        "-created_at"
+    )[:25]:
+        if QueueItem.objects.filter(queue=q).exists():
+            queue = q
+            break
+    if queue is None:
+        queue = AnnotationQueue.objects.filter(organization=org).first()
+    seeds["queue_id"] = str(queue.id) if queue else _ZERO_UUID
+    item = None
+    if queue is not None:
+        item = (
+            QueueItem.objects.filter(queue=queue, status="pending").first()
+            or QueueItem.objects.filter(queue=queue).first()
+        )
+    seeds["queue_item_id"] = str(item.id) if item else _ZERO_UUID
+
+    dash = None
+    for d in Dashboard.objects.filter(workspace__organization=org).order_by(
+        "-created_at"
+    )[:25]:
+        if DashboardWidget.objects.filter(dashboard=d).exists():
+            dash = d
+            break
+    if dash is None:
+        dash = Dashboard.objects.filter(workspace__organization=org).first()
+    seeds["dashboard_id"] = str(dash.id) if dash else _ZERO_UUID
+    widget = (
+        DashboardWidget.objects.filter(dashboard=dash).first() if dash else None
+    )
+    seeds["widget_id"] = str(widget.id) if widget else _ZERO_UUID
+
+    # Realistic-but-nonexistent ids for MUTATE-class action tasks
+    # (stop/rerun/complete/skip/review/duplicate): a real id would actually
+    # execute the mutation against dev data (only `destructive` tools are
+    # confirm-gated, `mutate` tools run immediately). A random uuid4 looks
+    # exactly like a real id — no placeholder smell tempting validate-first
+    # behavior — and the call 404s with zero side effects.
+    for key in (
+        "missing_exp_a",
+        "missing_exp_b",
+        "missing_item_id",
+        "missing_widget_id",
+        "missing_queue_id",
+    ):
+        seeds[key] = str(uuid.uuid4())
+    return seeds
 
 
 async def main():
@@ -690,6 +887,7 @@ async def main():
         return u, ws_obj
 
     user, workspace = await sync_to_async(_load)()
+    seeds = await sync_to_async(_resolve_seed_ids)(user)
 
     print(f"\n{'=' * 80}")
     print(f"Falcon Bridge Tool Benchmark — {len(TASKS)} tasks")
@@ -700,11 +898,22 @@ async def main():
     ctx = ToolContext(user=user, organization=user.organization, workspace=workspace)
     results = []
 
+    only_ids = None
+    if "--only" in sys.argv:
+        only_ids = {
+            int(x) for x in sys.argv[sys.argv.index("--only") + 1].split(",")
+        }
+
     for task in TASKS:
+        if only_ids is not None and task["id"] not in only_ids:
+            continue
+        task = {**task, "msg": task["msg"].format(**seeds)}
         print(f"Task {task['id']:2d}: {task['msg'][:70]}...")
         r = await run_task(task, ctx)
         results.append(r)
         status = "OK" if r.success and r.tools_match else "FAIL"
+        if status == "OK" and r.accepted_alternate:
+            status = "OK*"  # adjudicated alternate, see accept_tools
         tools_str = ",".join(r.actual_tools[:5]) if r.actual_tools else "(none)"
         print(f"  [{status}] {r.total_latency_ms:6.0f}ms | tools called: {tools_str}")
         if r.error:
@@ -797,6 +1006,15 @@ async def main():
         )
         print(f"  {tool}: {count}{marker}")
 
+    accepted = [r for r in results if r.accepted_alternate]
+    if accepted:
+        print("\nAccepted alternates (explicitly adjudicated in task data):")
+        for r in accepted:
+            print(
+                f"  Task {r.id}: got {r.actual_tools[:5]} "
+                f"(accept: {r.accept_tools}) — {r.adjudication or 'no note'}"
+            )
+
     print("\nFailed tasks:")
     failures = [r for r in results if not r.success or not r.tools_match]
     if not failures:
@@ -811,6 +1029,46 @@ async def main():
         )
         print(f"  Task {r.id}: {why}")
         print(f"    expected: {r.expected_tools}, got: {r.actual_tools[:5]}")
+
+    # Adjudication artifact: condensed transcripts for every task so misses
+    # are classified from evidence (task-design artifact vs valid alternate
+    # vs genuine selection failure), never from vibes.
+    out_path = None
+    if "--out" in sys.argv:
+        out_path = sys.argv[sys.argv.index("--out") + 1]
+    if out_path:
+        import json as _json
+
+        payload = [
+            {
+                "id": r.id,
+                "msg": r.msg,
+                "cluster": task_clusters.get(r.id, "other"),
+                "expected": r.expected_tools,
+                "accept": r.accept_tools,
+                "adjudication": r.adjudication,
+                "actual_tools": r.actual_tools,
+                "verdict": r.verdict,
+                "success": r.success,
+                "error": r.error,
+                "latency_ms": round(r.total_latency_ms),
+                "assistant_text": r.assistant_text[:3000],
+                "transcript": r.transcript,
+            }
+            for r in results
+        ]
+        with open(out_path, "w") as f:
+            _json.dump(
+                {
+                    "total": total,
+                    "tools_match": tools_match,
+                    "tasks": payload,
+                },
+                f,
+                indent=1,
+                default=str,
+            )
+        print(f"\nTranscript artifact: {out_path}")
 
     return 0 if (succeeded == total and tools_match >= total * 0.8) else 1
 

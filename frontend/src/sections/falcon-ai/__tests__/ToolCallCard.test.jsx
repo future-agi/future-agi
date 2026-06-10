@@ -88,7 +88,9 @@ describe("ToolCallCard execution-policy badge (unit, UX_UI 7.1)", () => {
 
   it("shows no badge for read tools (or when policy is absent)", () => {
     render(
-      <ToolCallCard toolCall={{ ...completedCall, execution_policy: "read" }} />,
+      <ToolCallCard
+        toolCall={{ ...completedCall, execution_policy: "read" }}
+      />,
     );
     expect(screen.queryByText("write")).not.toBeInTheDocument();
     expect(screen.queryByText("destructive")).not.toBeInTheDocument();
@@ -118,7 +120,9 @@ describe("ToolCallCard confirmation card (unit, destructive phase-1)", () => {
   });
 
   it("renders the inline confirm card with preview and irreversibility note", () => {
-    render(<ToolCallCard toolCall={confirmationCall} onConfirmAction={vi.fn()} />);
+    render(
+      <ToolCallCard toolCall={confirmationCall} onConfirmAction={vi.fn()} />,
+    );
     expect(screen.getByText("Confirm destructive action")).toBeInTheDocument();
     expect(screen.getByText(/Falcon wants to run:/)).toBeInTheDocument();
     expect(
@@ -129,7 +133,9 @@ describe("ToolCallCard confirmation card (unit, destructive phase-1)", () => {
   });
 
   it("derives the confirm button label from the tool verb", () => {
-    render(<ToolCallCard toolCall={confirmationCall} onConfirmAction={vi.fn()} />);
+    render(
+      <ToolCallCard toolCall={confirmationCall} onConfirmAction={vi.fn()} />,
+    );
     expect(
       screen.getByRole("button", { name: "Confirm delete" }),
     ).toBeInTheDocument();
@@ -192,8 +198,12 @@ describe("ToolCallCard confirmation card (unit, destructive phase-1)", () => {
 
   it("disables the buttons while a stream is in flight (server would reject)", () => {
     useFalconStore.getState().setStreaming(true, "assistant-x");
-    render(<ToolCallCard toolCall={confirmationCall} onConfirmAction={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "Confirm delete" })).toBeDisabled();
+    render(
+      <ToolCallCard toolCall={confirmationCall} onConfirmAction={vi.fn()} />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Confirm delete" }),
+    ).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   });
 
@@ -201,16 +211,19 @@ describe("ToolCallCard confirmation card (unit, destructive phase-1)", () => {
     ["confirmed", /Approved — Falcon is proceeding/],
     ["cancelled", /Cancelled — no action was taken/],
     ["expired", /Confirmation expired/],
-  ])("resolution '%s' replaces the buttons with the outcome", (resolution, text) => {
-    render(
-      <ToolCallCard
-        toolCall={{ ...confirmationCall, confirmation_status: resolution }}
-        onConfirmAction={vi.fn()}
-      />,
-    );
-    expect(screen.getByText(text)).toBeInTheDocument();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
-  });
+  ])(
+    "resolution '%s' replaces the buttons with the outcome",
+    (resolution, text) => {
+      render(
+        <ToolCallCard
+          toolCall={{ ...confirmationCall, confirmation_status: resolution }}
+          onConfirmAction={vi.fn()}
+        />,
+      );
+      expect(screen.getByText(text)).toBeInTheDocument();
+      expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    },
+  );
 });
 
 describe("ToolCallCard undo hint (unit, executed destructive leg)", () => {
@@ -242,6 +255,30 @@ describe("ToolCallCard undo hint (unit, executed destructive leg)", () => {
 
   it("shows no undo affordance without an undo payload", () => {
     render(<ToolCallCard toolCall={completedCall} />);
-    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Undo" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("ToolCallCard result-preview truncation honesty", () => {
+  // agent.py caps result_full at result_text[:2000] — the card must say so
+  // instead of presenting a cut-off payload as if it were the whole result.
+  it("notes the 2,000-character cap when result_full hits it", () => {
+    render(
+      <ToolCallCard
+        toolCall={{ ...completedCall, result_full: "x".repeat(2000) }}
+      />,
+    );
+    fireEvent.click(screen.getByText("search traces"));
+    expect(
+      screen.getByText(/Preview capped at 2,000 characters/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no truncation note for results under the cap", () => {
+    render(<ToolCallCard toolCall={completedCall} />);
+    fireEvent.click(screen.getByText("search traces"));
+    expect(screen.queryByText(/Preview capped/)).not.toBeInTheDocument();
   });
 });

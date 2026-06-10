@@ -546,6 +546,23 @@ export default function ToolCallCard({ toolCall, onConfirmAction }) {
                   </Typography>
                 )}
               </Box>
+              {/* Truncation honesty — the agent caps result_full at 2,000
+                  chars (agent.py result_text[:2000]); say so instead of
+                  presenting a cut-off payload as if it were complete */}
+              {result_full && result_full.length >= 2000 && (
+                <Typography
+                  sx={{
+                    fontSize: 10.5,
+                    color: "text.disabled",
+                    fontStyle: "italic",
+                    mt: 0.5,
+                    display: "block",
+                  }}
+                >
+                  Preview capped at 2,000 characters — the full result may be
+                  longer. Falcon saw the complete output.
+                </Typography>
+              )}
             </Box>
           )}
         </Box>
@@ -628,11 +645,7 @@ ToolCallCard.propTypes = {
       policy: PropTypes.string,
       undo_note: PropTypes.string,
     }),
-    confirmation_status: PropTypes.oneOf([
-      "confirmed",
-      "cancelled",
-      "expired",
-    ]),
+    confirmation_status: PropTypes.oneOf(["confirmed", "cancelled", "expired"]),
     undo: PropTypes.object,
     result_summary: PropTypes.string,
     result_full: PropTypes.string,
