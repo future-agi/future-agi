@@ -229,7 +229,20 @@ export const useGraphStore = create((set, get) => ({
       activeEdgeId: null,
     });
   },
+
+  reset: () => {
+    set({
+      nodes: getInitialNodes(),
+      edges: initialEdges,
+      activeNodeId: null,
+      activeEdgeId: null,
+    });
+  },
 }));
+
+export const resetGraphStore = () => {
+  useGraphStore.getState().reset();
+};
 
 export function getNodeLabel(nodeType) {
   switch (nodeType) {
