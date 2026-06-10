@@ -13,6 +13,9 @@ x-livekit-env: &livekit-env
   # monitor-based pickup is commented out in tfc/temporal/schedules/simulate.py,
   # so without this flag voice runs are created PENDING and never picked up.
   TEMPORAL_TEST_EXECUTION_ENABLED: "true"
+  # Post dev-merge: the canonical resolver (ee.voice.utils.system_provider)
+  # defaults the simulator-side engine to vapi; this stack runs LiveKit.
+  SYSTEM_VOICE_PROVIDER: livekit
   # The lksip agent worker pushes transcripts/metrics/call-end to the backend's
   # internal livekit API (Authorization: Bearer <INTERNAL_API_SECRET>); must match
   # the worker's INTERNAL_API_SECRET.
