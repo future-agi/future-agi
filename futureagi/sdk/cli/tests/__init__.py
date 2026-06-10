@@ -1,0 +1,1 @@
+# fi-simulate CLI tests
