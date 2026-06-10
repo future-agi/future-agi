@@ -25,6 +25,7 @@ x-livekit-env: &livekit-env
   # Agora RTC connector (web_agora): RTC tokens + ConvAI agent llm/tts defaults.
   AGORA_APP_ID: aa038cecadcc47e7b3e493cef42e7d49
   AGORA_APP_CERT: 1466bc6a58bf48759a7b2f3641b1758a
+  CARTESIA_API_KEY: sk_car_K7SEemFZgJwBhWwW2N9W78
   ELEVENLABS_API_KEY: sk_594e200cd46087427a7bc27e3852e78ba5e5c0f2eaf16ce5
 
 services:
