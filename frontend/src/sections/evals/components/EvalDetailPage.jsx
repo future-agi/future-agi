@@ -53,6 +53,7 @@ import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
 import EvalFeedbackTab from "./EvalFeedbackTab";
 import EvalGroundTruthTab from "./EvalGroundTruthTab";
 import EvalUsageTab from "./EvalUsageTab";
+import EvalSdkCodeTab from "./EvalSdkCodeTab";
 import VersionBadge from "./VersionBadge";
 import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
@@ -384,9 +385,7 @@ const EvalDetailPage = () => {
           const next = new URLSearchParams(prev);
           next.set(
             "v",
-            String(
-              versionToLoad.version_number ?? versionToLoad.versionNumber,
-            ),
+            String(versionToLoad.version_number ?? versionToLoad.versionNumber),
           );
           return next;
         },
@@ -515,7 +514,6 @@ const EvalDetailPage = () => {
   const initialLoadDone = useRef(false);
   useEffect(() => {
     if (evalData && !viewingVersion) {
-
       const isCustom = evalData.owner !== "system";
       const urlVersion = searchParams.get("v");
       if (urlVersion && !initialLoadDone.current) {
@@ -647,6 +645,13 @@ const EvalDetailPage = () => {
 
   const evalType = evalData?.eval_type || "llm";
   const isSystemEval = evalData?.owner === "system";
+  const detailTabs = useMemo(
+    () =>
+      evalType === "code" || isComposite
+        ? ["details", "sdk_code", "usage"]
+        : ["details", "sdk_code", "usage", "feedback", "ground_truth"],
+    [evalType, isComposite],
+  );
 
   // Fetch composite detail (children, weights) when viewing a composite
   const { data: compositeDetail } = useCompositeDetail(evalId, isComposite);
@@ -1286,12 +1291,10 @@ const EvalDetailPage = () => {
               : "#f4f4f5",
         }}
       >
-        {(evalType === "code" || isComposite
-          ? ["details", "usage"]
-          : ["details", "usage", "feedback", "ground_truth"]
-        ).map((tab) => {
+        {detailTabs.map((tab) => {
           const labels = {
             details: "Eval Details",
+            sdk_code: "SDK Code",
             usage: "Usage",
             feedback: "Feedback",
             ground_truth: "Ground Truth",
@@ -2008,6 +2011,19 @@ const EvalDetailPage = () => {
                 </Box>
               </Box>
             }
+          />
+        </Box>
+      )}
+
+      {/* ═══ SDK Code Tab ═══ */}
+      {activeTab === "sdk_code" && (
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          <EvalSdkCodeTab
+            templateId={evalId}
+            templateName={evalData?.name}
+            model={model}
+            mapping={playgroundMapping}
+            errorLocalizerEnabled={errorLocalizerEnabled}
           />
         </Box>
       )}

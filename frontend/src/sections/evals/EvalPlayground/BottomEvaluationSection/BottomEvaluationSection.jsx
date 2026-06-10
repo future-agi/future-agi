@@ -1,12 +1,13 @@
-import { Box, IconButton, Typography } from "@mui/material";
+import { Box, IconButton, Tooltip, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import LogsTabGrid from "../../EvalDetails/EvalsLog/LogsTabGrid";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { Editor } from "@monaco-editor/react";
+import { useSnackbar } from "notistack";
+import { copyToClipboard } from "src/utils/utils";
 
 const editorOptions = {
   selectOnLineNumbers: true,
@@ -48,6 +49,7 @@ const BottomEvaluationSection = ({
 }) => {
   const [activeTab, setActiveTab] = React.useState("");
   const editorRef = React.useRef(null);
+  const { enqueueSnackbar } = useSnackbar();
 
   const { data, isPending, isLoading, isRefetching } = useQuery({
     queryFn: ({ signal }) => {
@@ -55,7 +57,14 @@ const BottomEvaluationSection = ({
         template_id: evaluation?.id,
         ...selectedData,
       };
-      delete params["mapping"]["model"];
+      if (params.mapping && typeof params.mapping === "object") {
+        const mapping = { ...params.mapping };
+        delete mapping.model;
+        params.mapping = JSON.stringify(mapping);
+      } else if (!params.mapping) {
+        params.mapping = JSON.stringify({});
+      }
+      if (!params.model) delete params.model;
       return axios.get(endpoints.develop.eval.evalsSDKCode, {
         params,
         signal,
@@ -94,6 +103,15 @@ const BottomEvaluationSection = ({
       readOnly: true,
       domReadOnly: true,
     });
+  };
+
+  const activeSnippet = data?.[activeTab] || "";
+  const handleCopy = async () => {
+    const copied = await copyToClipboard(activeSnippet);
+    enqueueSnackbar(
+      copied ? `${activeTab} SDK code copied` : "Failed to copy SDK code",
+      { variant: copied ? "success" : "error" },
+    );
   };
 
   return (
@@ -159,27 +177,35 @@ const BottomEvaluationSection = ({
               position: "relative",
             }}
           >
-            <SvgColor
-              // @ts-ignore
-              src="/assets/icons/ic_copy.svg"
-              alt="Copy"
-              sx={{
-                width: "16px",
-                height: "16px",
-                position: "absolute",
-                top: "10px",
-                right: "10px",
-                cursor: "pointer",
-                zIndex: 1,
-              }}
-            />
+            <Tooltip title={`Copy ${activeTab} SDK Code`} arrow>
+              <span>
+                <IconButton
+                  aria-label={`Copy ${activeTab} Eval SDK Code`}
+                  size="small"
+                  onClick={handleCopy}
+                  disabled={!activeSnippet}
+                  sx={{
+                    position: "absolute",
+                    top: "6px",
+                    right: "6px",
+                    zIndex: 1,
+                    bgcolor: "background.paper",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    "&:hover": { bgcolor: "action.hover" },
+                  }}
+                >
+                  <Iconify icon="basil:copy-outline" width={16} />
+                </IconButton>
+              </span>
+            </Tooltip>
             <Box>
               <Editor
                 ref={editorRef}
                 defaultLanguage={activeTab.toLowerCase()}
                 height="300px"
                 options={editorOptions}
-                value={data[activeTab]}
+                value={activeSnippet}
                 onMount={handleEditorMount}
               />
             </Box>
