@@ -19,6 +19,7 @@ const SCREENSHOT_PATH = "/tmp/settings-api-keys-smoke.png";
 const ACTION_MENU_SCREENSHOT_PATH =
   "/tmp/settings-api-keys-smoke-action-menu.png";
 const DISABLED_SCREENSHOT_PATH = "/tmp/settings-api-keys-smoke-disabled.png";
+const TEST_KEY_SCREENSHOT_PATH = "/tmp/settings-api-keys-smoke-test-key.png";
 const FAILURE_SCREENSHOT_PATH = "/tmp/settings-api-keys-smoke-failure.png";
 
 async function main() {
@@ -28,6 +29,7 @@ async function main() {
   const apiFailures = [];
   const pageErrors = [];
   let createdKey = null;
+  let testKeyStatus = null;
   let uiDeleted = false;
   let hardCleanup = null;
   let caughtError = null;
@@ -90,8 +92,38 @@ async function main() {
     assertMaskedKey(createdKey.masked_secret_key, "created masked_secret_key");
 
     await waitForVisibleText(page, "Generated");
+    await waitForVisibleText(page, "Organization scoped", { exact: true });
     await waitForInputValue(page, createdKey.masked_api_key);
     await waitForInputValue(page, createdKey.masked_secret_key);
+    await assertRawKeysNotRendered(page, createdKey);
+    const testKeyResponse = await waitForResponseDuring(
+      page,
+      "API key credential test",
+      (response) => {
+        const request = response.request();
+        const headers = request.headers();
+        return (
+          response.url().includes("/accounts/user-info/") &&
+          request.method() === "GET" &&
+          headers["x-api-key"] === createdKey.api_key &&
+          headers["x-secret-key"] === createdKey.secret_key &&
+          !headers.authorization &&
+          response.status() < 400
+        );
+      },
+      () => clickVisibleText(page, "Test key", { exact: true }),
+    );
+    testKeyStatus = testKeyResponse.status();
+    const testKeyBody = await testKeyResponse.json().catch(() => ({}));
+    assert(
+      testKeyBody?.email || testKeyBody?.user?.email || testKeyBody?.id,
+      "API key credential test did not return user identity.",
+    );
+    await waitForVisibleText(page, "Test passed");
+    await page.screenshot({
+      path: TEST_KEY_SCREENSHOT_PATH,
+      fullPage: true,
+    });
     await assertRawKeysNotRendered(page, createdKey);
 
     await clickVisibleText(page, "Done", { exact: true });
@@ -235,6 +267,10 @@ async function main() {
           key_id: createdKey.key_id,
           list_api_key_masked: true,
           list_secret_key_masked: true,
+          scope_label_visible: true,
+          test_key_user_info_status: testKeyStatus,
+          test_key_success_visible: true,
+          test_key_screenshot: TEST_KEY_SCREENSHOT_PATH,
           ui_disable_chip_visible: true,
           ui_reenable_removed_disabled_chip: true,
           ui_delete_removed_row: true,
