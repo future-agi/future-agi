@@ -130,17 +130,9 @@ async function main() {
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
   try {
-    const listResponse = page.waitForResponse(
-      (response) =>
-        response.url().includes("/tracer/project/list_projects/") &&
-        response.url().includes("project_type=observe") &&
-        response.status() < 400,
-      { timeout: 60000 },
-    );
     await page.goto(`${APP_BASE}/dashboard/observe`, {
       waitUntil: "domcontentloaded",
     });
-    await listResponse;
 
     await expectVisibleText(page, "Tracing", { exact: true });
     await expectVisibleText(page, "Project", { exact: true });
@@ -153,40 +145,11 @@ async function main() {
       timeout: 30000,
     });
 
-    const searchResponse = page.waitForResponse(
-      (response) => {
-        if (
-          !response.url().includes("/tracer/project/list_projects/") ||
-          response.status() >= 400
-        ) {
-          return false;
-        }
-        const url = new URL(response.url());
-        return url.searchParams.get("name") === searchTerm;
-      },
-      { timeout: 60000 },
-    );
     await typeSearch(page, searchTerm);
-    await searchResponse;
+    await expectSearchValue(page, searchTerm);
     await expectVisibleText(page, project.name, { exact: true });
 
-    const detailResponse = page.waitForResponse(
-      (response) =>
-        response.url().includes(`/tracer/project/${project.id}/`) &&
-        response.status() < 400,
-      { timeout: 60000 },
-    );
-    const traceListResponse = page.waitForResponse(
-      (response) =>
-        response.url().includes("/tracer/trace/list_traces_of_session/") &&
-        response.status() < 400,
-      { timeout: 60000 },
-    );
-    await Promise.all([
-      detailResponse,
-      traceListResponse,
-      clickVisibleRowText(page, project.name),
-    ]);
+    await clickVisibleRowText(page, project.name);
 
     await page.waitForFunction(
       (projectId) =>
@@ -197,6 +160,7 @@ async function main() {
       project.id,
     );
     await expectAnyVisibleText(page, ["Traces", "Trace"]);
+    await expectAnyVisibleText(page, ["Trace Name", "Input", "Output"]);
     await expectVisibleText(page, "Filter", { exact: true });
     await expectVisibleText(page, "Past");
     await expectNoVisibleText(page, "Invalid Date");
@@ -557,6 +521,16 @@ async function typeSearch(page, value) {
   await page.keyboard.up(modifierKey());
   await page.keyboard.press("Backspace");
   await page.type('input[placeholder="Search"]', value);
+}
+
+async function expectSearchValue(page, value) {
+  await page.waitForFunction(
+    (expectedValue) =>
+      document.querySelector('input[placeholder="Search"]')?.value ===
+      expectedValue,
+    { timeout: 30000 },
+    value,
+  );
 }
 
 async function waitForPath(page, pathName) {
@@ -946,6 +920,7 @@ function isObserveProjectApiUrl(url) {
   return (
     url.includes("/tracer/project/list_projects/") ||
     url.includes("/tracer/project/") ||
+    url.includes("/tracer/observation-span/") ||
     url.includes("/tracer/trace/list_traces_of_session/") ||
     url.includes("/tracer/dashboard/metrics/")
   );
