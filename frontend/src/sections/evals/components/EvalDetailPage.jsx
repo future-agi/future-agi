@@ -27,6 +27,7 @@ import React, {
 import { useNavigate, useParams } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import { useSnackbar } from "notistack";
+import { format } from "date-fns";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
@@ -1076,18 +1077,27 @@ const EvalDetailPage = () => {
   // Duplicate
   const handleDuplicate = useCallback(async () => {
     try {
+      // Strip any prior "_copy_<timestamp>" so duplicating a copy stays flat
+      // (<original>_copy_<timestamp>) instead of stacking the suffix.
+      const baseName = (evalData?.name || "eval").replace(
+        /(_copy_\d{2}-\d{2}-\d{4}_\d{2}-\d{2}-\d{2})+$/,
+        "",
+      );
       const { data } = await axios.post(
         endpoints.develop.eval.duplicateEvalsTemplate,
-        { eval_template_id: evalId },
+        {
+          eval_template_id: evalId,
+          name: `${baseName}_copy_${format(new Date(), "dd-MM-yyyy_HH-mm-ss")}`,
+        },
       );
       enqueueSnackbar("Evaluation duplicated", { variant: "success" });
-      if (data?.result?.id)
-        navigate(`/dashboard/evaluations/${data.result.id}`);
+      if (data?.result?.eval_template_id)
+        navigate(`/dashboard/evaluations/${data.result.eval_template_id}`);
     } catch {
       enqueueSnackbar("Failed to duplicate evaluation", { variant: "error" });
     }
     setMenuAnchor(null);
-  }, [evalId, enqueueSnackbar, navigate]);
+  }, [evalId, evalData?.name, enqueueSnackbar, navigate]);
 
   if (isLoading) {
     return (
@@ -1226,40 +1236,41 @@ const EvalDetailPage = () => {
           </Box>
         </Box>
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
-          {isSystemEval && (
+          {isSystemEval ? (
             <Typography variant="caption" color="text.disabled">
               Read-only (system eval)
             </Typography>
-          )}
-          <IconButton
-            size="small"
-            onClick={(e) => setMenuAnchor(e.currentTarget)}
-          >
-            <Iconify icon="solar:menu-dots-bold" width={18} />
-          </IconButton>
-          <Menu
-            anchorEl={menuAnchor}
-            open={Boolean(menuAnchor)}
-            onClose={() => setMenuAnchor(null)}
-          >
-            <MenuItem onClick={handleDuplicate}>
-              <Iconify icon="solar:copy-bold" width={16} sx={{ mr: 1 }} />{" "}
-              Duplicate
-            </MenuItem>
-            {!isSystemEval && (
-              <MenuItem
-                onClick={handleDeleteClick}
-                sx={{ color: "error.main" }}
+          ) : (
+            <>
+              <IconButton
+                size="small"
+                onClick={(e) => setMenuAnchor(e.currentTarget)}
               >
-                <Iconify
-                  icon="solar:trash-bin-trash-bold"
-                  width={16}
-                  sx={{ mr: 1 }}
-                />{" "}
-                Delete
-              </MenuItem>
-            )}
-          </Menu>
+                <Iconify icon="solar:menu-dots-bold" width={18} />
+              </IconButton>
+              <Menu
+                anchorEl={menuAnchor}
+                open={Boolean(menuAnchor)}
+                onClose={() => setMenuAnchor(null)}
+              >
+                <MenuItem onClick={handleDuplicate}>
+                  <Iconify icon="solar:copy-bold" width={16} sx={{ mr: 1 }} />{" "}
+                  Duplicate
+                </MenuItem>
+                <MenuItem
+                  onClick={handleDeleteClick}
+                  sx={{ color: "error.main" }}
+                >
+                  <Iconify
+                    icon="solar:trash-bin-trash-bold"
+                    width={16}
+                    sx={{ mr: 1 }}
+                  />{" "}
+                  Delete
+                </MenuItem>
+              </Menu>
+            </>
+          )}
         </Box>
       </Box>
 
