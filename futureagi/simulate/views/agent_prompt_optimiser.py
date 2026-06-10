@@ -468,6 +468,7 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                     )
                 from simulate.services.provider_prompt_apply import (
                     PromptApplyError,
+                    PromptApplyUnsupported,
                     apply_config_to_provider_agent,
                     apply_prompt_to_provider_agent,
                 )
@@ -475,6 +476,11 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                 # Kit trials carry the WHOLE candidate config (model, voice,
                 # first message, ... — not just the prompt); apply all of it.
                 candidate_config = (trial.metadata or {}).get("candidate_config")
+                config_for_apply = (
+                    dict(candidate_config)
+                    if candidate_config
+                    else {"instructions": trial.prompt}
+                )
                 try:
                     if candidate_config:
                         applied = apply_config_to_provider_agent(
@@ -484,21 +490,46 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                         applied = apply_prompt_to_provider_agent(
                             agent_def, trial.prompt
                         )
+                    return self._gm.success_response(
+                        {
+                            "applied": True,
+                            "target": "provider_agent",
+                            "provider": applied["provider"],
+                            "assistant_id": applied["assistant_id"],
+                            "applied_fields": applied.get("applied_fields"),
+                            "skipped_fields": applied.get("skipped_fields"),
+                            "previous_prompt": applied.get("previous_prompt"),
+                            "previous_config": applied.get("previous_config"),
+                            "source_trial_id": str(trial.id),
+                        }
+                    )
+                except PromptApplyUnsupported as e:
+                    # No writable provider-hosted prompt (self-hosted LiveKit/
+                    # Pipecat/Deepgram, Twilio TwiML, Bland pathway, Agora-gated):
+                    # apply the fix platform-side as a new, non-destructive
+                    # AgentVersion instead of refusing. The fix is recorded and
+                    # becomes the active version the customer's deployment adopts.
+                    from simulate.services.agent_definition_apply import (
+                        apply_config_as_new_agent_version,
+                    )
+
+                    new_version, applied_fields = apply_config_as_new_agent_version(
+                        agent_def, config_for_apply
+                    )
+                    return self._gm.success_response(
+                        {
+                            "applied": True,
+                            "target": "agent_version",
+                            "provider": (agent_def.provider or "").lower(),
+                            "reason": str(e),
+                            "new_agent_version_id": str(new_version.id),
+                            "version_number": new_version.version_number,
+                            "applied_fields": applied_fields,
+                            "source_trial_id": str(trial.id),
+                        }
+                    )
                 except PromptApplyError as e:
                     return self._gm.bad_request(str(e))
-                return self._gm.success_response(
-                    {
-                        "applied": True,
-                        "target": "provider_agent",
-                        "provider": applied["provider"],
-                        "assistant_id": applied["assistant_id"],
-                        "applied_fields": applied.get("applied_fields"),
-                        "skipped_fields": applied.get("skipped_fields"),
-                        "previous_prompt": applied.get("previous_prompt"),
-                        "previous_config": applied.get("previous_config"),
-                        "source_trial_id": str(trial.id),
-                    }
-                )
 
             from simulate.services.optimizer_apply import (
                 apply_optimized_prompt_as_new_version,
