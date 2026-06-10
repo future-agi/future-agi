@@ -1080,6 +1080,7 @@ def trigger_error_localization_for_simulate(
             eval_explanation=eval_explanation,
             rule_prompt=rule_prompt,
             organization=call_execution.test_execution.run_test.organization,
+            workspace=workspace,
             metadata={
                 "log_id": log_id,
                 "call_execution_id": str(call_execution.id),

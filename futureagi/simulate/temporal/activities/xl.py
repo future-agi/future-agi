@@ -800,7 +800,10 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             }
             call_execution.save(update_fields=["eval_outputs"])
 
-            if eval_config.error_localizer and eval_output is not None:
+            el_enabled = bool(eval_config.error_localizer) or bool(
+                (eval_config.config or {}).get("error_localizer_enabled")
+            )
+            if el_enabled and eval_output is not None:
                 try:
                     trigger_error_localization_for_simulate(
                         eval_template=eval_template,

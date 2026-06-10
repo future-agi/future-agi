@@ -688,8 +688,14 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
-                    "error_localizer": (
-                        eval_config.error_localizer if eval_config else False
+                    "error_localizer": bool(
+                        eval_config
+                        and (
+                            eval_config.error_localizer
+                            or (eval_config.config or {}).get(
+                                "error_localizer_enabled"
+                            )
+                        )
                     ),
                 }
 
