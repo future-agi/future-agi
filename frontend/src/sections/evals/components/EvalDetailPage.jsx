@@ -188,7 +188,7 @@ const EvalDetailPage = () => {
   }, [testError]);
 
   const handleTestResult = useCallback((success, result) => {
-    setTestPassed(true);
+    setTestPassed(!!success);
     setTestError(
       success
         ? null
@@ -758,7 +758,7 @@ const EvalDetailPage = () => {
       const tools = build_tools_payload(connectorIds);
       // Update the template first
       const payload = {
-        instructions: evalType === "code" ? "" : instructions,
+        instructions: evalType === "code" ? null : instructions,
         code: evalType === "code" ? code : undefined,
         code_language: evalType === "code" ? codeLanguage : undefined,
         model,
@@ -951,7 +951,7 @@ const EvalDetailPage = () => {
             : { type: summaryType };
         const tools = build_tools_payload(connectorIds);
         await updateEval.mutateAsync({
-          instructions: evalType === "code" ? "" : instructions,
+          instructions: evalType === "code" ? null : instructions,
           code: evalType === "code" ? code : undefined,
           code_language: evalType === "code" ? codeLanguage : undefined,
           model,
@@ -1897,6 +1897,7 @@ const EvalDetailPage = () => {
                 >
                   {testError && (
                     <Typography
+                      data-testid="eval-test-error"
                       variant="caption"
                       color="error.main"
                       sx={{ mr: "auto", fontSize: "12px", maxWidth: 300 }}
@@ -1952,6 +1953,11 @@ const EvalDetailPage = () => {
                         size="small"
                         onClick={handleTestEvaluation}
                         disabled={isTesting || !isPlaygroundReady}
+                        aria-label={
+                          isComposite
+                            ? "Run composite test evaluation"
+                            : "Run test evaluation"
+                        }
                         startIcon={
                           isTesting ? (
                             <CircularProgress size={14} />
