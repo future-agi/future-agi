@@ -9,6 +9,14 @@ class Comparator(ABC):
         pass
 
 class CosineSimilarity(Comparator):
+    """Token-vector cosine similarity.
+
+    Tokenization is case-insensitive (see ``_tokenize``). Empty / whitespace-only
+    inputs are handled consistently with the other grounded comparators:
+    two empty inputs are treated as fully similar (1.0); one empty and one
+    non-empty are treated as fully dissimilar (0.0).
+    """
+
     def compare(self, string1, string2):
         # Tokenize and create a combined set of unique words
         combined_set = self._create_combined_set(string1, string2)
@@ -18,9 +26,13 @@ class CosineSimilarity(Comparator):
         dot_product = sum(p*q for p, q in zip(vector1, vector2, strict=False))
         magnitude_vec1 = math.sqrt(sum([val**2 for val in vector1]))
         magnitude_vec2 = math.sqrt(sum([val**2 for val in vector2]))
+        if magnitude_vec1 == 0 and magnitude_vec2 == 0:
+            # Both inputs produced no tokens (e.g. empty / whitespace-only).
+            # Treat as fully similar, matching Jaccard / Sorensen-Dice.
+            return 1.0
         if magnitude_vec1 * magnitude_vec2 == 0:
-            # Avoid division by zero
-            return 0
+            # Exactly one side is empty: fully dissimilar.
+            return 0.0
         return dot_product / (magnitude_vec1 * magnitude_vec2)
 
     def _tokenize(self, string):
@@ -104,19 +116,41 @@ class JaroWincklerSimilarity(Comparator):
         return (match / len1 + match / len2 + (match - t) / match) / 3.0
 
 class JaccardSimilarity(Comparator):
+    """Token-set Jaccard similarity.
+
+    Comparison is case-insensitive, matching the behavior of ``CosineSimilarity``
+    so callers get consistent results across grounded similarity comparators.
+    """
+
     def compare(self, string1, string2):
         return self._jaccard_similarity(string1, string2)
 
     def _jaccard_similarity(self, str1, str2):
-        str1_tokens = set(str1.split())
-        str2_tokens = set(str2.split())
-        return len(str1_tokens.intersection(str2_tokens)) / len(str1_tokens.union(str2_tokens))
+        str1_tokens = set(str1.lower().split())
+        str2_tokens = set(str2.lower().split())
+        union = str1_tokens.union(str2_tokens)
+        if not union:
+            # Both strings produced no tokens (e.g. empty / whitespace-only).
+            # Treat as fully similar to avoid ZeroDivisionError.
+            return 1.0
+        return len(str1_tokens.intersection(str2_tokens)) / len(union)
 
 class SorensenDiceSimilarity(Comparator):
+    """Token-set Sorensen-Dice similarity.
+
+    Comparison is case-insensitive, matching the behavior of ``CosineSimilarity``
+    so callers get consistent results across grounded similarity comparators.
+    """
+
     def compare(self, string1, string2):
         return self._sorensen_dice_similarity(string1, string2)
 
     def _sorensen_dice_similarity(self, str1, str2):
-        str1_tokens = set(str1.split())
-        str2_tokens = set(str2.split())
-        return 2 * len(str1_tokens.intersection(str2_tokens)) / (len(str1_tokens) + len(str2_tokens))
+        str1_tokens = set(str1.lower().split())
+        str2_tokens = set(str2.lower().split())
+        total = len(str1_tokens) + len(str2_tokens)
+        if total == 0:
+            # Both strings produced no tokens (e.g. empty / whitespace-only).
+            # Treat as fully similar to avoid ZeroDivisionError.
+            return 1.0
+        return 2 * len(str1_tokens.intersection(str2_tokens)) / total
