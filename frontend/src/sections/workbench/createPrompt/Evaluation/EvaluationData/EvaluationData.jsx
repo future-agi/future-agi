@@ -678,7 +678,10 @@ const EvaluationData = () => {
           },
         }}
       >
-        <Box className="ag-theme-quartz prompt-variable-gird">
+        <Box
+          className="ag-theme-quartz prompt-variable-gird"
+          data-testid="workbench-evaluation-grid"
+        >
           <AgGridReact
             ref={gridApiRef}
             stopEditingWhenCellsLoseFocus

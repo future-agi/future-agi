@@ -1129,6 +1129,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           Name<span style={{ color: "#d32f2f" }}>*</span>
         </Typography>
         <TextField
+          data-testid="eval-picker-name-input"
           fullWidth
           size="small"
           placeholder="e.g. toxicity-check, my-custom-eval"
@@ -2057,6 +2058,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             >
               <span>
                 <LoadingButton
+                  data-testid="eval-picker-save-evaluation"
                   variant="contained"
                   color="primary"
                   size="small"

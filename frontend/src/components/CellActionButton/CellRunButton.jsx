@@ -3,10 +3,11 @@ import CellActionToolTip from "../CellActionToolTip/CellActionToolTip";
 import PropTypes from "prop-types";
 import { Box } from "@mui/material";
 
-const RunButtonContent = ({ onClick, component }) => {
+const RunButtonContent = ({ onClick, component, runButtonTestId }) => {
   return (
     <Box
       onClick={onClick}
+      data-testid={runButtonTestId}
       sx={{
         padding: "8px",
       }}
@@ -19,14 +20,27 @@ const RunButtonContent = ({ onClick, component }) => {
 RunButtonContent.propTypes = {
   onClick: PropTypes.func,
   component: PropTypes.node,
+  runButtonTestId: PropTypes.string,
 };
 
-const CellRunButton = ({ onClick, component, children, show = true }) => {
+const CellRunButton = ({
+  onClick,
+  component,
+  children,
+  show = true,
+  runButtonTestId,
+}) => {
   if (!show) return <>{children}</>;
 
   return (
     <CellActionToolTip
-      title={<RunButtonContent onClick={onClick} component={component} />}
+      title={
+        <RunButtonContent
+          onClick={onClick}
+          component={component}
+          runButtonTestId={runButtonTestId}
+        />
+      }
       placement="right"
     >
       {children}
@@ -41,4 +55,5 @@ CellRunButton.propTypes = {
   component: PropTypes.node,
   children: PropTypes.node,
   show: PropTypes.bool,
+  runButtonTestId: PropTypes.string,
 };

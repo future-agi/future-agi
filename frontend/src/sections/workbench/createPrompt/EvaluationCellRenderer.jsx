@@ -152,6 +152,14 @@ const EvaluationCellRenderer = (params) => {
   const templateVersion = headerParams?.col?.template_version;
   const evalTemplateId = cellParams?.col?.evalTemplateId;
   const choicesMap = colDef?.headerComponentParams?.col?.choices_map ?? {};
+  const evalCellTestId =
+    originType === OriginTypes.EVALUATION && evalTemplateId && templateVersion
+      ? `workbench-eval-cell-${evalTemplateId}-${templateVersion}-${rowIndex}`
+      : undefined;
+  const evalRunButtonTestId =
+    originType === OriginTypes.EVALUATION && evalTemplateId && templateVersion
+      ? `workbench-eval-run-${evalTemplateId}-${templateVersion}-${rowIndex}`
+      : undefined;
 
   if (status === "Running") {
     return <RunningSkeletonRenderer originType={originType} />;
@@ -179,6 +187,7 @@ const EvaluationCellRenderer = (params) => {
             <img src={"/assets/icons/ic_run.svg"} />
           </IconButton>
         }
+        runButtonTestId={evalRunButtonTestId}
         onClick={() => handleCellClick(originType)}
       >
         <Box display={"flex"} flex={1}>
@@ -203,9 +212,10 @@ const EvaluationCellRenderer = (params) => {
               <img src={"/assets/icons/ic_run.svg"} />
             </IconButton>
           }
+          runButtonTestId={evalRunButtonTestId}
           onClick={() => handleCellClick(originType)}
         >
-          <Box height={"100%"}>
+          <Box height={"100%"} data-testid={evalCellTestId}>
             {!isCellValueNA ? (
               <EvaluateCellRendererWrapper
                 formattedValueReason={() => (
