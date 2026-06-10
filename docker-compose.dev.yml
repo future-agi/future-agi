@@ -31,11 +31,8 @@ x-dev-backend-env: &dev-backend-env
   FAST_STARTUP: ${FAST_STARTUP:-false}
   INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
 
-  # Gateway listens on 8090 (its config.yaml server.port); these URLs had
-  # drifted to 8080 and silently broke once the long-lived backend container
-  # was recreated. Keep in sync with agentcc-gateway config + prod configmap.
-  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8090
-  AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8090
+  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8080
+  AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8080
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
   RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
@@ -140,22 +137,11 @@ services:
       - ./futureagi:/app/backend
     environment:
       FAST_STARTUP: "true"
-      # Dev: read tracing/feed telemetry from ClickHouse (cluster RCA agent +
-      # SSE Analyze tab need it at runtime; the web process isn't a per-exec).
-      CH_ENABLED: "true"
-      # Service-level override (anchors don't merge across compose files): the
-      # gateway listens on 8090, base compose still says 8080. Align here.
-      AGENTCC_INTERNAL_URL: "http://agentcc-gateway:8090"
-      AGENTCC_GATEWAY_INTERNAL_URL: "http://agentcc-gateway:8090"
 
   agentcc-gateway:
     build:
       context: ./agentcc-gateway
     image: futureagi/agentcc-gateway:dev
-    volumes:
-      # Vertex AI service-account creds (relative path in config.yaml).
-      # The scratch-based image has no WORKDIR so the binary's cwd is `/`.
-      - ./Vertex_AI_Creds.json:/Vertex_AI_Creds.json:ro
 
   serving:
     build:
