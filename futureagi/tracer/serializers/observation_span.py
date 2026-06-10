@@ -307,12 +307,33 @@ class SubmitFeedbackActionTypeSerializer(serializers.Serializer):
 
 
 class SubmitFeedbackSerializer(serializers.Serializer):
-    observation_span_id = serializers.CharField(required=True)
-    custom_eval_config_id = serializers.UUIDField(required=True)
-    feedback_value = serializers.CharField(required=True)
+    observation_span_id = serializers.CharField(
+        required=True,
+        help_text=(
+            "ID of the observation span the eval result belongs to "
+            "(from list_spans)."
+        ),
+    )
+    custom_eval_config_id = serializers.UUIDField(
+        required=True,
+        help_text=(
+            "UUID of the eval config whose result is being rated "
+            "(from get_trace_eval_names / list_custom_eval_configs)."
+        ),
+    )
+    feedback_value = serializers.CharField(
+        required=True,
+        help_text="The agree/disagree feedback value for the eval result.",
+    )
     feedback_explanation = serializers.CharField(
-        required=False, max_length=5000, allow_blank=True
+        required=False,
+        max_length=5000,
+        allow_blank=True,
+        help_text="Optional free-text explanation of the feedback.",
     )
     feedback_improvement = serializers.CharField(
-        required=False, max_length=5000, allow_blank=True
+        required=False,
+        max_length=5000,
+        allow_blank=True,
+        help_text="Optional note on how the eval output should improve.",
     )

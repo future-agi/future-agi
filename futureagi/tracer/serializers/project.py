@@ -243,9 +243,21 @@ class ProjectGraphDataQuerySerializer(StrictInputSerializer):
 
 
 class ProjectUserMetricsRequestSerializer(StrictInputSerializer):
-    end_user_id = serializers.UUIDField()
-    project_id = serializers.UUIDField()
-    interval = serializers.CharField(required=False, default="day", allow_blank=False)
+    end_user_id = serializers.UUIDField(
+        help_text=(
+            "UUID of the end user to fetch metrics for (the user_id hash "
+            "from the project's Users table)."
+        )
+    )
+    project_id = serializers.UUIDField(
+        help_text="UUID of the observe project (from list_trace_projects)."
+    )
+    interval = serializers.CharField(
+        required=False,
+        default="day",
+        allow_blank=False,
+        help_text="Bucket size: hour, day (default), week, or month.",
+    )
     filters = filter_list_field(required=False, default=list)
 
 
