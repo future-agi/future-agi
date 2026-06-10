@@ -20170,9 +20170,6 @@ export const ModelHubExperimentsUpdateResponse = zod.object({
 
 
 export const ModelHubExperimentsDataListQueryParams = zod.object({
-  "created_at": zod.string().optional(),
-  "status": zod.string().optional(),
-  "dataset_id": zod.string().optional(),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "search": zod.string().optional().describe('A search term.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -20281,9 +20278,6 @@ export const ModelHubExperimentsV2CreateResponse = zod.object({
  * V2 experiment list with filtering, search, and pagination.
  */
 export const ModelHubExperimentsV2ListListQueryParams = zod.object({
-  "created_at": zod.string().optional(),
-  "status": zod.string().optional(),
-  "dataset_id": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -22528,8 +22522,6 @@ export const ModelHubMetricsByColumnListResponse = zod.object({
 
 
 export const ModelHubOptimisationListQueryParams = zod.object({
-  "optimize_type": zod.string().optional(),
-  "status": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -23738,7 +23730,6 @@ export const ModelHubPromptBaseTemplatesDeleteParams = zod.object({
 
 
 export const ModelHubPromptExecutionsListQueryParams = zod.object({
-  "name": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -23932,9 +23923,6 @@ export const ModelHubPromptFoldersDeleteParams = zod.object({
 
 
 export const ModelHubPromptHistoryExecutionsListQueryParams = zod.object({
-  "template_name": zod.string().optional(),
-  "template_version": zod.string().optional(),
-  "created_at": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -23990,9 +23978,6 @@ export const ModelHubPromptHistoryExecutionsGetExecutionDetailsParams = zod.obje
 })
 
 export const ModelHubPromptHistoryExecutionsGetExecutionDetailsQueryParams = zod.object({
-  "template_name": zod.string().optional(),
-  "template_version": zod.string().optional(),
-  "created_at": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -24359,9 +24344,6 @@ export const ModelHubPromptLabelsAssignLabelByIdBody = zod.object({
 
 
 export const ModelHubPromptTemplatesListQueryParams = zod.object({
-  "name": zod.string().optional(),
-  "version": zod.string().optional(),
-  "created_at": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -24557,9 +24539,6 @@ If no version is specified, returns the default version (is_default=True).
 If a version is specified, returns that specific version.
  */
 export const ModelHubPromptTemplatesGetTemplateByNameQueryParams = zod.object({
-  "name": zod.string().optional(),
-  "version": zod.string().optional(),
-  "created_at": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -28299,7 +28278,7 @@ export const SimulateApiAgentPromptOptimiserListResponse = zod.object({
   "optimisation_name": zod.string().min(1),
   "started_at": zod.string().datetime({"offset":true}),
   "no_of_trials": zod.string().optional(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']),
+  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard', 'agent_learning_kit']),
   "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
   "error_message": zod.string().optional(),
   "configuration": zod.object({
@@ -28322,7 +28301,7 @@ export const simulateApiAgentPromptOptimiserCreateBodyModelMax = 255;
 export const SimulateApiAgentPromptOptimiserCreateBody = zod.object({
   "name": zod.string().min(1).max(simulateApiAgentPromptOptimiserCreateBodyNameMax),
   "test_execution_id": zod.string().uuid(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']),
+  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard', 'agent_learning_kit']),
   "model": zod.string().min(1).max(simulateApiAgentPromptOptimiserCreateBodyModelMax).describe('LLM model used for the optimiser run'),
   "configuration": zod.object({
 
@@ -28419,7 +28398,7 @@ export const SimulateApiAgentPromptOptimiserUpdateBody = zod.object({
   "agent_optimiser": zod.string().uuid(),
   "agent_optimiser_run": zod.string().uuid(),
   "test_execution": zod.string().uuid(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']),
+  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard', 'agent_learning_kit']),
   "model": zod.string().min(1).max(simulateApiAgentPromptOptimiserUpdateBodyModelMax).describe('LLM model used for the optimiser run'),
   "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
   "result": zod.object({
@@ -28438,7 +28417,7 @@ export const SimulateApiAgentPromptOptimiserUpdateResponse = zod.object({
   "agent_optimiser": zod.string().uuid().optional(),
   "agent_optimiser_run": zod.string().uuid().optional(),
   "test_execution": zod.string().uuid().optional(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']).optional(),
+  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard', 'agent_learning_kit']).optional(),
   "model": zod.string().min(1).optional(),
   "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
   "result": zod.object({
@@ -28498,7 +28477,7 @@ export const SimulateApiAgentPromptOptimiserPartialUpdateBody = zod.object({
   "agent_optimiser": zod.string().uuid(),
   "agent_optimiser_run": zod.string().uuid(),
   "test_execution": zod.string().uuid(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']),
+  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard', 'agent_learning_kit']),
   "model": zod.string().min(1).max(simulateApiAgentPromptOptimiserPartialUpdateBodyModelMax).describe('LLM model used for the optimiser run'),
   "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
   "result": zod.object({
@@ -28517,7 +28496,7 @@ export const SimulateApiAgentPromptOptimiserPartialUpdateResponse = zod.object({
   "agent_optimiser": zod.string().uuid().optional(),
   "agent_optimiser_run": zod.string().uuid().optional(),
   "test_execution": zod.string().uuid().optional(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']).optional(),
+  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard', 'agent_learning_kit']).optional(),
   "model": zod.string().min(1).optional(),
   "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
   "result": zod.object({
@@ -28624,6 +28603,55 @@ export const SimulateApiAgentPromptOptimiserStepsResponse = zod.object({
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional()
 }))
+})
+
+
+/**
+ * "Directly apply the fix" = create a new, non-destructive version carrying
+the trial's optimised prompt; the POST is the user's confirmation, so the
+new version goes live as the template's default. The baseline is untouched.
+ * @summary Apply an optimised trial as a NEW PromptVersion (TH-5642).
+ */
+export const SimulateApiAgentPromptOptimiserTrialApplyTrialParams = zod.object({
+  "id": zod.string().uuid().describe('A UUID string identifying this agent prompt optimiser run.'),
+  "trial_id": zod.string()
+})
+
+export const simulateApiAgentPromptOptimiserTrialApplyTrialBodyMakeDefaultDefault = true;
+
+export const SimulateApiAgentPromptOptimiserTrialApplyTrialBody = zod.object({
+  "make_default": zod.boolean().default(simulateApiAgentPromptOptimiserTrialApplyTrialBodyMakeDefaultDefault).describe('Prompt-template runs only: make the new PromptVersion the default.')
+})
+
+export const simulateApiAgentPromptOptimiserTrialApplyTrialResponseStatusDefault = true;
+
+
+
+
+
+
+
+
+export const SimulateApiAgentPromptOptimiserTrialApplyTrialResponse = zod.object({
+  "status": zod.boolean().default(simulateApiAgentPromptOptimiserTrialApplyTrialResponseStatusDefault),
+  "result": zod.object({
+  "applied": zod.boolean().optional(),
+  "source_trial_id": zod.string().uuid().optional(),
+  "target": zod.enum(['provider_agent', 'agent_version']).optional(),
+  "provider": zod.string().min(1).optional(),
+  "assistant_id": zod.string().min(1).optional(),
+  "applied_fields": zod.array(zod.string().min(1)).optional(),
+  "skipped_fields": zod.array(zod.string().min(1)).optional(),
+  "previous_prompt": zod.string().min(1).optional(),
+  "previous_config": zod.record(zod.string(), zod.string()).optional(),
+  "reason": zod.string().min(1).optional(),
+  "new_agent_version_id": zod.string().uuid().optional(),
+  "version_number": zod.number().optional(),
+  "new_prompt_version_id": zod.string().uuid().optional(),
+  "template_version": zod.string().min(1).optional(),
+  "original_template_id": zod.string().uuid().optional(),
+  "is_default": zod.boolean().optional()
+})
 })
 
 
@@ -36577,7 +36605,7 @@ export const TracerObservabilityProviderListResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "project": zod.string().uuid().optional(),
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'deepgram', 'agora', 'pipecat', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "organization": zod.string().uuid().optional(),
   "workspace": zod.string().uuid().optional(),
@@ -36598,7 +36626,7 @@ export const TracerObservabilityProviderListResponse = zod.object({
 
 export const TracerObservabilityProviderCreateBody = zod.object({
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'deepgram', 'agora', 'pipecat', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "metadata": zod.object({
 
@@ -36614,7 +36642,7 @@ export const TracerObservabilityProviderCreateBody = zod.object({
 
 export const TracerObservabilityProviderVerifyApiKeyBody = zod.object({
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'deepgram', 'agora', 'pipecat', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "metadata": zod.object({
 
@@ -36630,7 +36658,7 @@ export const TracerObservabilityProviderVerifyApiKeyBody = zod.object({
 
 export const TracerObservabilityProviderVerifyAssistantIdBody = zod.object({
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'deepgram', 'agora', 'pipecat', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "metadata": zod.object({
 
@@ -36652,7 +36680,7 @@ export const TracerObservabilityProviderReadResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "project": zod.string().uuid().optional(),
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'deepgram', 'agora', 'pipecat', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "organization": zod.string().uuid().optional(),
   "workspace": zod.string().uuid().optional(),
@@ -36676,7 +36704,7 @@ export const TracerObservabilityProviderUpdateParams = zod.object({
 
 export const TracerObservabilityProviderUpdateBody = zod.object({
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'deepgram', 'agora', 'pipecat', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "metadata": zod.object({
 
@@ -36690,7 +36718,7 @@ export const TracerObservabilityProviderUpdateResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "project": zod.string().uuid().optional(),
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'deepgram', 'agora', 'pipecat', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "organization": zod.string().uuid().optional(),
   "workspace": zod.string().uuid().optional(),
@@ -36714,7 +36742,7 @@ export const TracerObservabilityProviderPartialUpdateParams = zod.object({
 
 export const TracerObservabilityProviderPartialUpdateBody = zod.object({
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'deepgram', 'agora', 'pipecat', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "metadata": zod.object({
 
@@ -36728,7 +36756,7 @@ export const TracerObservabilityProviderPartialUpdateResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "project": zod.string().uuid().optional(),
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'deepgram', 'agora', 'pipecat', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "organization": zod.string().uuid().optional(),
   "workspace": zod.string().uuid().optional(),
@@ -42322,7 +42350,7 @@ export const TracerUserAlertsListResponse = zod.object({
   "updated_at": zod.string().datetime({"offset":true}).optional(),
   "deleted": zod.boolean().optional(),
   "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
+  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics', 'sim_eval_score', 'sim_failure_rate']),
   "metric": zod.string().max(tracerUserAlertsListResponseResultsItemMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
   "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
@@ -42375,7 +42403,7 @@ export const TracerUserAlertsCreateBody = zod.object({
   "name": zod.string().min(1),
   "deleted": zod.boolean().optional(),
   "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
+  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics', 'sim_eval_score', 'sim_failure_rate']),
   "metric": zod.string().max(tracerUserAlertsCreateBodyMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
   "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
@@ -42474,7 +42502,7 @@ export const TracerUserAlertsListMonitorsResponse = zod.object({
   "updated_at": zod.string().datetime({"offset":true}).optional(),
   "deleted": zod.boolean().optional(),
   "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
+  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics', 'sim_eval_score', 'sim_failure_rate']),
   "metric": zod.string().max(tracerUserAlertsListMonitorsResponseResultsItemMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
   "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
@@ -42551,7 +42579,7 @@ export const TracerUserAlertsPreviewGraphBody = zod.object({
   "name": zod.string().optional(),
   "deleted": zod.boolean().optional(),
   "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
+  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics', 'sim_eval_score', 'sim_failure_rate']),
   "metric": zod.string().max(tracerUserAlertsPreviewGraphBodyMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
   "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
@@ -42611,7 +42639,7 @@ export const TracerUserAlertsReadResponse = zod.object({
   "updated_at": zod.string().datetime({"offset":true}).optional(),
   "deleted": zod.boolean().optional(),
   "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
+  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics', 'sim_eval_score', 'sim_failure_rate']),
   "metric": zod.string().max(tracerUserAlertsReadResponseMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
   "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
@@ -42667,7 +42695,7 @@ export const TracerUserAlertsUpdateBody = zod.object({
   "name": zod.string().min(1),
   "deleted": zod.boolean().optional(),
   "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
+  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics', 'sim_eval_score', 'sim_failure_rate']),
   "metric": zod.string().max(tracerUserAlertsUpdateBodyMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
   "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
@@ -42722,7 +42750,7 @@ export const TracerUserAlertsUpdateResponse = zod.object({
   "updated_at": zod.string().datetime({"offset":true}).optional(),
   "deleted": zod.boolean().optional(),
   "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
+  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics', 'sim_eval_score', 'sim_failure_rate']),
   "metric": zod.string().max(tracerUserAlertsUpdateResponseMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
   "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
@@ -42778,7 +42806,7 @@ export const TracerUserAlertsPartialUpdateBody = zod.object({
   "name": zod.string().min(1),
   "deleted": zod.boolean().optional(),
   "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
+  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics', 'sim_eval_score', 'sim_failure_rate']),
   "metric": zod.string().max(tracerUserAlertsPartialUpdateBodyMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
   "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
@@ -42833,7 +42861,7 @@ export const TracerUserAlertsPartialUpdateResponse = zod.object({
   "updated_at": zod.string().datetime({"offset":true}).optional(),
   "deleted": zod.boolean().optional(),
   "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
+  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics', 'sim_eval_score', 'sim_failure_rate']),
   "metric": zod.string().max(tracerUserAlertsPartialUpdateResponseMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
   "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
@@ -42898,7 +42926,7 @@ export const TracerUserAlertsMonitorDetailsResponse = zod.object({
   "updated_at": zod.string().datetime({"offset":true}).optional(),
   "deleted": zod.boolean().optional(),
   "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
+  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics', 'sim_eval_score', 'sim_failure_rate']),
   "metric": zod.string().max(tracerUserAlertsMonitorDetailsResponseMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
   "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
@@ -42963,7 +42991,7 @@ export const TracerUserAlertsGraphDataResponse = zod.object({
   "updated_at": zod.string().datetime({"offset":true}).optional(),
   "deleted": zod.boolean().optional(),
   "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
+  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics', 'sim_eval_score', 'sim_failure_rate']),
   "metric": zod.string().max(tracerUserAlertsGraphDataResponseMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
   "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
@@ -43650,16 +43678,6 @@ export const UsageGetBillingDetailsListResponse = zod.object({
 })
 })
 
-
-
-export const usageGetCustomerInvoicesListQueryPageSizeMax = 100;
-
-
-
-export const UsageGetCustomerInvoicesListQueryParams = zod.object({
-  "page": zod.number().min(1).optional(),
-  "page_size": zod.number().min(1).max(usageGetCustomerInvoicesListQueryPageSizeMax).optional()
-})
 
 
 
@@ -44735,7 +44753,7 @@ export const UsageUsageSummaryListResponse = zod.object({
  * Add or remove an add-on subscription.
  */
 export const UsageV2AddAddonCreateBody = zod.object({
-  "plan": zod.enum(['payg', 'boost', 'scale', 'enterprise']).optional()
+  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
 })
 
 
@@ -44772,10 +44790,6 @@ export const UsageV2AddAddonUpdateResponse = zod.object({
 /**
  * Add or remove an add-on subscription.
  */
-export const UsageV2AddAddonDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -44791,7 +44805,7 @@ export const UsageV2AddAddonDeleteResponse = zod.object({
  * Add or remove an add-on subscription.
  */
 export const UsageV2AddonCreateBody = zod.object({
-  "plan": zod.enum(['payg', 'boost', 'scale', 'enterprise']).optional()
+  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
 })
 
 
@@ -44828,10 +44842,6 @@ export const UsageV2AddonUpdateResponse = zod.object({
 /**
  * Add or remove an add-on subscription.
  */
-export const UsageV2AddonDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -45277,10 +45287,6 @@ export const UsageV2PaymentMethodsDeleteParams = zod.object({
   "pm_id": zod.string()
 })
 
-export const UsageV2PaymentMethodsDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -45320,10 +45326,6 @@ export const UsageV2PaymentMethodsDefaultCreateResponse = zod.object({
 export const UsageV2PaymentMethodsDefaultDeleteParams = zod.object({
   "pm_id": zod.string()
 })
-
-export const UsageV2PaymentMethodsDefaultDeleteBody = zod.object({
-
-}).passthrough()
 
 
 
@@ -45406,7 +45408,7 @@ export const UsageV2PlansAndAddonsListResponse = zod.object({
  * Add or remove an add-on subscription.
  */
 export const UsageV2ReinstateAddonCreateBody = zod.object({
-  "plan": zod.enum(['payg', 'boost', 'scale', 'enterprise']).optional()
+  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
 })
 
 
@@ -45443,10 +45445,6 @@ export const UsageV2ReinstateAddonUpdateResponse = zod.object({
 /**
  * Add or remove an add-on subscription.
  */
-export const UsageV2ReinstateAddonDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -45462,7 +45460,7 @@ export const UsageV2ReinstateAddonDeleteResponse = zod.object({
  * Add or remove an add-on subscription.
  */
 export const UsageV2RemoveAddonCreateBody = zod.object({
-  "plan": zod.enum(['payg', 'boost', 'scale', 'enterprise']).optional()
+  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
 })
 
 
@@ -45499,10 +45497,6 @@ export const UsageV2RemoveAddonUpdateResponse = zod.object({
 /**
  * Add or remove an add-on subscription.
  */
-export const UsageV2RemoveAddonDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -45588,7 +45582,7 @@ and projected month-end usage.
 
 Query params:
     period: YYYY-MM (default: current month)
-    period_end: YYYY-MM (optional; defaults to period for a single month)
+    workspace_id: optional (filter by workspace)
  * @summary Get usage overview for the current billing period.
  */
 
@@ -45601,7 +45595,8 @@ export const usageV2UsageOverviewListQueryPeriodEndRegExp = new RegExp('^\\d{4}-
 
 export const UsageV2UsageOverviewListQueryParams = zod.object({
   "period": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodRegExp).optional(),
-  "period_end": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodEndRegExp).optional()
+  "period_end": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodEndRegExp).optional(),
+  "workspace_id": zod.string().uuid().optional()
 })
 
 

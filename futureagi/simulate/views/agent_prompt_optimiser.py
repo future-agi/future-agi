@@ -50,6 +50,7 @@ from simulate.utils.agent_prompt_optimiser import (
 from tfc.temporal.agent_prompt_optimiser.client import (
     start_agent_prompt_optimiser_workflow,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -449,8 +450,8 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error retrieving trial prompt: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
-    @swagger_auto_schema(
-        request_body=AgentPromptOptimiserApplyTrialRequestSerializer,
+    @validated_request(
+        request_serializer=AgentPromptOptimiserApplyTrialRequestSerializer,
         responses={
             200: AgentPromptOptimiserApplyTrialResponseSerializer,
             400: ApiTextErrorResponseSerializer,
