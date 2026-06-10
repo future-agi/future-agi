@@ -346,7 +346,6 @@ AnalyzingState.propTypes = { activeStepIdx: PropTypes.number };
 function AnalyzedState({
   data,
   linkedIssue,
-  onApplyFix,
   onCreateLinear,
   onOpenAnalyze,
   onRerun,
@@ -403,34 +402,6 @@ function AnalyzedState({
         gap={0.75}
         sx={{ mt: 0.25, flexWrap: "wrap" }}
       >
-        <Tooltip title="Code-aware fix application — coming soon" arrow>
-          <span>
-            <Button
-              size="small"
-              variant="contained"
-              disabled
-              startIcon={<Iconify icon="mdi:auto-fix" width={13} />}
-              onClick={onApplyFix}
-              sx={{
-                height: 28,
-                fontSize: "12px",
-                fontWeight: 600,
-                borderRadius: "6px",
-                textTransform: "none",
-                bgcolor: ACCENT,
-                "&:hover": { bgcolor: "#6845E8" },
-                "&.Mui-disabled": {
-                  bgcolor: "action.disabledBackground",
-                  color: "action.disabled",
-                },
-                boxShadow: "none",
-              }}
-            >
-              Apply fix
-            </Button>
-          </span>
-        </Tooltip>
-
         {/* One Linear issue per cluster — once linked, this is a link-out,
             never a silent redirect dressed up as "create". */}
         <Button
@@ -500,7 +471,6 @@ AnalyzedState.propTypes = {
     id: PropTypes.string,
     url: PropTypes.string,
   }),
-  onApplyFix: PropTypes.func,
   onCreateLinear: PropTypes.func,
   onOpenAnalyze: PropTypes.func,
   onRerun: PropTypes.func,
@@ -791,7 +761,6 @@ export default function ClusterHeadlineCard({
                     }
                   : null
               }
-              onApplyFix={noop}
               onCreateLinear={onCreateLinear ?? noop}
               onOpenAnalyze={onOpenAnalyze ?? noop}
               onRerun={runAnalysis}

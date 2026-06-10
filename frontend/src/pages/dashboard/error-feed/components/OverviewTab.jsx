@@ -2584,6 +2584,12 @@ export default function OverviewTab({ _error: currentError }) {
     () => overview?.representativeTraces ?? [],
     [overview],
   );
+  // BE caps the card list (rep_limit, default 20); full membership lives in
+  // the Traces tab. Wire form is snake_case; camelCase is the axios alias.
+  const repTotal =
+    overview?.representative_total ??
+    overview?.representativeTotal ??
+    traces.length;
 
   // Selected trace is kept in the Zustand store (per-cluster) so the
   // sidebar's AI Metadata / Evaluations / Deep Analysis sections stay in
@@ -2730,7 +2736,7 @@ export default function OverviewTab({ _error: currentError }) {
                   borderRadius: "4px",
                 }}
               >
-                {traces.length.toLocaleString()}
+                {repTotal.toLocaleString()}
               </Typography>
             )}
           </Stack>
@@ -2743,6 +2749,16 @@ export default function OverviewTab({ _error: currentError }) {
               onSelect={selectTrace}
               loading={isOverviewLoading && !overview}
             />
+            {repTotal > traces.length && (
+              <Typography
+                fontSize="11px"
+                color="text.disabled"
+                sx={{ px: 1.5, py: 1, textAlign: "center" }}
+              >
+                Showing the {traces.length} most recent — all{" "}
+                {repTotal.toLocaleString()} are in the Traces tab
+              </Typography>
+            )}
           </Box>
         </Stack>
 
