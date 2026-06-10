@@ -24,20 +24,20 @@ class Role(StrEnum):
     """A role a provider plays. Enum/component presence != tested-platform support."""
 
     AGENT_PLATFORM = "agent_platform"  # a customer agent we TEST (agent-under-test)
-    SYSTEM_ENGINE = "system_engine"    # infra that runs OUR simulated caller
-    TRANSPORT = "transport"            # how we reach the agent (SIP / WebRTC / PSTN)
-    STT = "stt"                        # simulator-side speech-to-text component
-    TTS = "tts"                        # simulator-side text-to-speech component
-    CHAT_ENGINE = "chat_engine"        # text-simulation engine
+    SYSTEM_ENGINE = "system_engine"  # infra that runs OUR simulated caller
+    TRANSPORT = "transport"  # how we reach the agent (SIP / WebRTC / PSTN)
+    STT = "stt"  # simulator-side speech-to-text component
+    TTS = "tts"  # simulator-side text-to-speech component
+    CHAT_ENGINE = "chat_engine"  # text-simulation engine
 
 
 class Transport(StrEnum):
     """How the simulator reaches the agent-under-test."""
 
     WEBRTC_BRIDGE = "webrtc_bridge"  # join via our LiveKit bridge connector (web_*)
-    SIP = "sip"                      # dial via our LiveKit SIP trunk (provider-neutral)
-    DIRECT_WS = "direct_ws"          # raw provider WebSocket, Vapi-style
-    AGORA_RTC = "agora_rtc"          # Agora's proprietary RTC (NOT LiveKit-compatible)
+    SIP = "sip"  # dial via our LiveKit SIP trunk (provider-neutral)
+    DIRECT_WS = "direct_ws"  # raw provider WebSocket, Vapi-style
+    AGORA_RTC = "agora_rtc"  # Agora's proprietary RTC (NOT LiveKit-compatible)
     NONE = "none"
 
 
@@ -45,18 +45,18 @@ class CredentialShape(StrEnum):
     """The credential field-group a provider needs (drives the agent-def form)."""
 
     API_KEY_ASSISTANT = "api_key_assistant"  # api_key + assistant/agent_id
-    LIVEKIT_SERVER = "livekit_server"        # url + api_key + api_secret + agent_name
-    AGENT_ID = "agent_id"                    # api_key + agent_id (ElevenLabs/Deepgram)
-    SIP_ONLY = "sip_only"                    # just a phone number
-    WEBSOCKET_URL = "websocket_url"          # custom ws endpoint
+    LIVEKIT_SERVER = "livekit_server"  # url + api_key + api_secret + agent_name
+    AGENT_ID = "agent_id"  # api_key + agent_id (ElevenLabs/Deepgram)
+    SIP_ONLY = "sip_only"  # just a phone number
+    WEBSOCKET_URL = "websocket_url"  # custom ws endpoint
     NONE = "none"
 
 
 class Status(StrEnum):
-    GA = "ga"                          # wired & working as a tested platform today
-    PLANNED = "planned"                # designed (DESIGN.md §5), not yet built
+    GA = "ga"  # wired & working as a tested platform today
+    PLANNED = "planned"  # designed (DESIGN.md §5), not yet built
     TRANSPORT_ONLY = "transport_only"  # never an agent platform (e.g. Twilio)
-    INTERNAL = "internal"              # our own engine, not a tested platform
+    INTERNAL = "internal"  # our own engine, not a tested platform
 
 
 class Direction(StrEnum):
@@ -67,7 +67,7 @@ class Direction(StrEnum):
     so we mirror rather than import; ``test_provider_registry`` pins the equality.
     """
 
-    INBOUND = "inbound"    # FutureAGI's simulator CALLS the agent (agent receives)
+    INBOUND = "inbound"  # FutureAGI's simulator CALLS the agent (agent receives)
     OUTBOUND = "outbound"  # the agent CALLS FutureAGI (our simulator answers)
 
 
@@ -79,13 +79,13 @@ _NONE: frozenset[Direction] = frozenset()
 
 @dataclass(frozen=True)
 class ProviderSpec:
-    key: str                              # canonical client-provider string
+    key: str  # canonical client-provider string
     label: str
     roles: frozenset[Role]
     transport: Transport = Transport.NONE
-    connector_key: str | None = None      # WebRTC bridge registry key (web_*), if any
+    connector_key: str | None = None  # WebRTC bridge registry key (web_*), if any
     credential_shape: CredentialShape = CredentialShape.NONE
-    chat: bool = False                    # has / will have a named chat engine
+    chat: bool = False  # has / will have a named chat engine
     observability_key: str | None = None  # maps to ProviderChoices value, if any
     status: Status = Status.PLANNED
     # Call directions the provider's API can do AND we can drive (capability).
@@ -114,65 +114,92 @@ class ProviderSpec:
 # Declarative registry — the ONLY place a provider is declared. See DESIGN.md §1/§5.
 _SPECS: tuple[ProviderSpec, ...] = (
     ProviderSpec(
-        "vapi", "Vapi",
+        "vapi",
+        "Vapi",
         roles=frozenset({Role.AGENT_PLATFORM, Role.SYSTEM_ENGINE, Role.CHAT_ENGINE}),
-        transport=Transport.WEBRTC_BRIDGE, connector_key="web_vapi",
-        credential_shape=CredentialShape.API_KEY_ASSISTANT, chat=True,
-        observability_key="vapi", status=Status.GA,
+        transport=Transport.WEBRTC_BRIDGE,
+        connector_key="web_vapi",
+        credential_shape=CredentialShape.API_KEY_ASSISTANT,
+        chat=True,
+        observability_key="vapi",
+        status=Status.GA,
         # The only provider whose outbound (agent-dials-us) path is wired today.
-        supported_directions=_BOTH, implemented_directions=_BOTH,
+        supported_directions=_BOTH,
+        implemented_directions=_BOTH,
     ),
     ProviderSpec(
-        "retell", "Retell",
+        "retell",
+        "Retell",
         roles=frozenset({Role.AGENT_PLATFORM, Role.CHAT_ENGINE}),
-        transport=Transport.WEBRTC_BRIDGE, connector_key="web_retell",
-        credential_shape=CredentialShape.API_KEY_ASSISTANT, chat=True,
-        observability_key="retell", status=Status.GA,
+        transport=Transport.WEBRTC_BRIDGE,
+        connector_key="web_retell",
+        credential_shape=CredentialShape.API_KEY_ASSISTANT,
+        chat=True,
+        observability_key="retell",
+        status=Status.GA,
         # Inbound via the web_retell bridge; outbound now wired via the
         # RetellOutboundDialer (/v2/create-phone-call). "implemented" = wired, not
         # yet live-verified e2e (a real outbound call needs a Retell number + stack).
-        supported_directions=_BOTH, implemented_directions=_BOTH,
+        supported_directions=_BOTH,
+        implemented_directions=_BOTH,
     ),
     # The customer's own LiveKit agent (distinct from the SYSTEM 'livekit' engine).
     ProviderSpec(
-        "livekit_bridge", "LiveKit (agent)",
+        "livekit_bridge",
+        "LiveKit (agent)",
         roles=frozenset({Role.AGENT_PLATFORM}),
-        transport=Transport.WEBRTC_BRIDGE, connector_key="web_livekit_bridge",
+        transport=Transport.WEBRTC_BRIDGE,
+        connector_key="web_livekit_bridge",
         credential_shape=CredentialShape.LIVEKIT_SERVER,
-        observability_key="livekit", status=Status.GA,
+        observability_key="livekit",
+        status=Status.GA,
         # WebRTC bridge has NO PSTN leg: we connect to the agent the same way in
         # both directions; the only difference is who speaks first, now handled by
         # first_message_mode for all transports. So outbound = inbound bridge +
         # agent-speaks-first → both wired.
-        supported_directions=_BOTH, implemented_directions=_BOTH,
+        supported_directions=_BOTH,
+        implemented_directions=_BOTH,
     ),
     # Provider-neutral catch-all: custom agents reached by phone (SIP) or websocket.
     ProviderSpec(
-        "others", "Others (custom / SIP)",
+        "others",
+        "Others (custom / SIP)",
         roles=frozenset({Role.AGENT_PLATFORM}),
-        transport=Transport.SIP, credential_shape=CredentialShape.WEBSOCKET_URL,
-        observability_key="others", status=Status.GA,
+        transport=Transport.SIP,
+        credential_shape=CredentialShape.WEBSOCKET_URL,
+        observability_key="others",
+        status=Status.GA,
         # Plain-E.164 SIP works in both directions today.
-        supported_directions=_BOTH, implemented_directions=_BOTH,
+        supported_directions=_BOTH,
+        implemented_directions=_BOTH,
     ),
     # --- Planned tested platforms (DESIGN.md §5) ---
     ProviderSpec(
-        "elevenlabs", "ElevenLabs Conversational AI",
+        "elevenlabs",
+        "ElevenLabs Conversational AI",
         roles=frozenset({Role.AGENT_PLATFORM, Role.TTS}),
-        transport=Transport.DIRECT_WS, connector_key="web_elevenlabs",
-        credential_shape=CredentialShape.AGENT_ID, chat=True,
-        observability_key="eleven_labs", status=Status.PLANNED,
+        transport=Transport.DIRECT_WS,
+        connector_key="web_elevenlabs",
+        credential_shape=CredentialShape.AGENT_ID,
+        chat=True,
+        observability_key="eleven_labs",
+        status=Status.PLANNED,
         # Inbound via the connect()-only WS connector; outbound now wired via
         # ElevenLabsOutboundDialer (POST /v1/convai/twilio/outbound-call).
-        supported_directions=_BOTH, implemented_directions=_BOTH,
+        supported_directions=_BOTH,
+        implemented_directions=_BOTH,
     ),
     ProviderSpec(
-        "deepgram", "Deepgram Voice Agent",
+        "deepgram",
+        "Deepgram Voice Agent",
         roles=frozenset({Role.AGENT_PLATFORM, Role.STT}),
-        transport=Transport.DIRECT_WS, connector_key="web_deepgram",
+        transport=Transport.DIRECT_WS,
+        connector_key="web_deepgram",
         observability_key="deepgram",
-        credential_shape=CredentialShape.AGENT_ID, status=Status.PLANNED,
-        supported_directions=_BOTH, implemented_directions=_IN,
+        credential_shape=CredentialShape.AGENT_ID,
+        status=Status.PLANNED,
+        supported_directions=_BOTH,
+        implemented_directions=_IN,
     ),
     # Agora Conversational AI Engine exposes its agents over SIP/PSTN via an
     # Elastic SIP Trunk (import a number, assign to the agent for inbound/outbound)
@@ -182,66 +209,90 @@ _SPECS: tuple[ProviderSpec, ...] = (
     # SDK-gated (DESIGN.md §5.4). Modeling SIP as the primary transport matches the
     # only path achievable on our infra today.
     ProviderSpec(
-        "agora", "Agora Conversational AI",
+        "agora",
+        "Agora Conversational AI",
         roles=frozenset({Role.AGENT_PLATFORM}),
-        transport=Transport.SIP, observability_key="agora",
-        credential_shape=CredentialShape.API_KEY_ASSISTANT, status=Status.PLANNED,
-        # SIP/PSTN both directions per Agora's Elastic SIP Trunk. Outbound now wired via
-        # AgoraOutboundDialer (ConvAI telephony API; agent SIP-dials our pool number);
-        # inbound (we SIP-call an Agora number) is not wired yet — same shape as Bland.
-        supported_directions=_BOTH, implemented_directions=_OUT,
+        transport=Transport.SIP,
+        connector_key="web_agora",
+        observability_key="agora",
+        credential_shape=CredentialShape.API_KEY_ASSISTANT,
+        status=Status.PLANNED,
+        # Outbound wired via AgoraOutboundDialer (ConvAI telephony API). Inbound is
+        # now implemented PHONE-FREE via the native web_agora RTC connector
+        # (AgoraRTCConnector spawns the ConvAI agent into an RTC channel and the
+        # simulator joins the same channel — TH-5682).
+        supported_directions=_BOTH,
+        implemented_directions=_BOTH,
     ),
     # Pipecat-on-LiveKit reuses the existing LiveKit bridge connector (DESIGN.md §5.5).
     ProviderSpec(
-        "pipecat", "Pipecat (LiveKit transport)",
+        "pipecat",
+        "Pipecat (LiveKit transport)",
         roles=frozenset({Role.AGENT_PLATFORM}),
-        transport=Transport.WEBRTC_BRIDGE, connector_key="web_livekit_bridge",
+        transport=Transport.WEBRTC_BRIDGE,
+        connector_key="web_livekit_bridge",
         observability_key="pipecat",
-        credential_shape=CredentialShape.LIVEKIT_SERVER, status=Status.PLANNED,
+        credential_shape=CredentialShape.LIVEKIT_SERVER,
+        status=Status.PLANNED,
         # Reuses the LiveKit bridge → same as livekit_bridge: outbound is just the
         # agent-speaks-first opener over the same bridge connection. Both wired.
-        supported_directions=_BOTH, implemented_directions=_BOTH,
+        supported_directions=_BOTH,
+        implemented_directions=_BOTH,
     ),
     # Bland.ai agents are reached via the provider-neutral SIP/phone path (no
     # WebRTC connector needed) — DESIGN.md §3/§6.
     ProviderSpec(
-        "bland", "Bland.ai",
+        "bland",
+        "Bland.ai",
         roles=frozenset({Role.AGENT_PLATFORM}),
-        transport=Transport.SIP, credential_shape=CredentialShape.API_KEY_ASSISTANT,
-        observability_key="bland", status=Status.PLANNED,
+        transport=Transport.SIP,
+        credential_shape=CredentialShape.API_KEY_ASSISTANT,
+        observability_key="bland",
+        status=Status.PLANNED,
         # Outbound wired via BlandOutboundDialer (/v1/calls). INBOUND: a Bland
         # agent with an inbound number ($15/mo purchase or BYO-Twilio/SIP)
         # answers any PSTN caller, so the provider-neutral SIP path (dial the
         # agent's contact_number) reaches it with NO new code — capability
         # research 2026-06-10 (TH-5683). Live verification still needs an
         # account with a configured pathway + inbound number.
-        supported_directions=_BOTH, implemented_directions=_BOTH,
+        supported_directions=_BOTH,
+        implemented_directions=_BOTH,
     ),
     # --- Non-agent-platform roles ---
     ProviderSpec(
-        "twilio", "Twilio",
+        "twilio",
+        "Twilio",
         # Twilio is BOTH a carrier substrate AND a platform customers build agents on
         # (ConversationRelay / Media Streams / TwiML routed to their logic).
         roles=frozenset({Role.AGENT_PLATFORM, Role.TRANSPORT}),
-        transport=Transport.SIP, credential_shape=CredentialShape.API_KEY_ASSISTANT,
-        observability_key="twilio", status=Status.PLANNED,
+        transport=Transport.SIP,
+        credential_shape=CredentialShape.API_KEY_ASSISTANT,
+        observability_key="twilio",
+        status=Status.PLANNED,
         # Inbound = dial the Twilio number over our SIP path; outbound = the
         # TwilioOutboundDialer (Calls.json). Both wired.
-        supported_directions=_BOTH, implemented_directions=_BOTH,
+        supported_directions=_BOTH,
+        implemented_directions=_BOTH,
     ),
     ProviderSpec(
-        "livekit", "LiveKit (system engine)",
+        "livekit",
+        "LiveKit (system engine)",
         roles=frozenset({Role.SYSTEM_ENGINE, Role.TRANSPORT}),
-        transport=Transport.SIP, observability_key="livekit", status=Status.INTERNAL,
+        transport=Transport.SIP,
+        observability_key="livekit",
+        status=Status.INTERNAL,
         # The system engine drives both directions of the simulated call.
-        supported_directions=_BOTH, implemented_directions=_BOTH,
+        supported_directions=_BOTH,
+        implemented_directions=_BOTH,
     ),
     ProviderSpec(
-        "futureagi", "FutureAGI (internal simulator)",
+        "futureagi",
+        "FutureAGI (internal simulator)",
         roles=frozenset({Role.SYSTEM_ENGINE, Role.CHAT_ENGINE}),
         status=Status.INTERNAL,
         # Internal chat engine — telephony direction not applicable.
-        supported_directions=_NONE, implemented_directions=_NONE,
+        supported_directions=_NONE,
+        implemented_directions=_NONE,
     ),
 )
 

@@ -13,7 +13,7 @@ def test_registry_matrix_covers_every_provider():
     assert providers == set(reg.agent_platform_keys())
     # chat-capable providers get a chat cell; voice providers get per-direction cells.
     by = {(c.provider, c.modality, c.direction) for c in report.cells}
-    assert ("vapi", "chat", None) in by          # vapi.chat = True
+    assert ("vapi", "chat", None) in by  # vapi.chat = True
     assert ("vapi", "voice", "inbound") in by
     assert ("vapi", "voice", "outbound") in by
     assert ("deepgram", "voice", "inbound") in by
@@ -24,13 +24,14 @@ def test_registry_matrix_covers_every_provider():
 
 
 @pytest.mark.unit
-def test_agora_outbound_wired_inbound_not():
-    # Agora outbound is now wired (AgoraOutboundDialer); inbound is not.
+def test_agora_both_directions_wired():
+    # Agora outbound via AgoraOutboundDialer (ConvAI telephony); inbound now
+    # implemented phone-free via the native web_agora RTC connector (TH-5682).
     report = pv.declared_matrix()
     agora = [c for c in report.cells if c.provider == "agora"]
     cells = {(c.modality, c.direction): c.status for c in agora}
     assert ("voice", "outbound") in cells and cells[("voice", "outbound")] == pv.OK
-    assert ("voice", "inbound") not in cells
+    assert ("voice", "inbound") in cells and cells[("voice", "inbound")] == pv.OK
     assert ("chat", None) not in cells  # no chat product
 
 
@@ -49,7 +50,8 @@ def test_credential_status_sip_only_needs_stack():
     # 'others' = websocket_url, not sip_only; sip_only providers report SKIPPED.
     # Verify the SIP-stack messaging path via a known sip_only shape if present.
     sip_providers = [
-        p for p in reg.agent_platform_keys()
+        p
+        for p in reg.agent_platform_keys()
         if str(getattr(reg.get_spec(p), "credential_shape", "")) == "sip_only"
     ]
     for p in sip_providers:

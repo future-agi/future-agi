@@ -43,9 +43,18 @@ class TestRegistryShape:
     @pytest.mark.unit
     def test_expected_providers_present(self):
         for key in [
-            "vapi", "retell", "livekit_bridge", "others",
-            "elevenlabs", "deepgram", "agora", "pipecat", "bland",
-            "twilio", "livekit", "futureagi",
+            "vapi",
+            "retell",
+            "livekit_bridge",
+            "others",
+            "elevenlabs",
+            "deepgram",
+            "agora",
+            "pipecat",
+            "bland",
+            "twilio",
+            "livekit",
+            "futureagi",
         ]:
             assert get_spec(key) is not None, key
 
@@ -79,13 +88,14 @@ class TestTaxonomy:
         assert get_spec("deepgram").status is Status.PLANNED
 
     @pytest.mark.unit
-    def test_agora_rides_sip_path_like_bland_no_rtc_sdk(self):
-        # Agora Conversational AI exposes agents over SIP/PSTN (Elastic SIP Trunk),
-        # so it is reachable via the provider-neutral SIP path with NO Agora RTC SDK
-        # — modeled like Bland/Twilio, not via a (SDK-gated) web_agora connector.
+    def test_agora_sip_primary_with_rtc_connector(self):
+        # Agora keeps SIP as primary transport (Elastic SIP Trunk parity with
+        # Bland/Twilio) but ALSO carries the native web_agora RTC connector
+        # (AgoraRTCConnector, TH-5682) for phone-free sims — same dual-path
+        # idea as the other web_* providers.
         agora = get_spec("agora")
         assert agora.transport is Transport.SIP
-        assert agora.connector_key is None  # no WebRTC bridge connector needed
+        assert agora.connector_key == "web_agora"
         assert agora.is_agent_platform
         # Parity with the other SIP-reachable agent platform.
         assert get_spec("bland").transport is Transport.SIP
@@ -184,7 +194,9 @@ class TestDerivations:
         valid = set(ProviderChoices.values)
         for key in agent_platform_keys():
             obs = get_spec(key).observability_key
-            assert obs in valid, f"{key} observability_key {obs!r} not a ProviderChoices value"
+            assert obs in valid, (
+                f"{key} observability_key {obs!r} not a ProviderChoices value"
+            )
 
 
 class TestCallDirection:
@@ -209,18 +221,30 @@ class TestCallDirection:
         # (key, supported, implemented) — from the direction audit (TH-5642).
         expected = {
             "vapi": ({IN, OUT}, {IN, OUT}),
-            "retell": ({IN, OUT}, {IN, OUT}),     # outbound wired via RetellOutboundDialer
-            "livekit_bridge": ({IN, OUT}, {IN, OUT}),  # bridge: outbound = speaking-order
+            "retell": ({IN, OUT}, {IN, OUT}),  # outbound wired via RetellOutboundDialer
+            "livekit_bridge": (
+                {IN, OUT},
+                {IN, OUT},
+            ),  # bridge: outbound = speaking-order
             "others": ({IN, OUT}, {IN, OUT}),
-            "elevenlabs": ({IN, OUT}, {IN, OUT}),  # outbound via ElevenLabsOutboundDialer
-            "deepgram": ({IN, OUT}, {IN}),         # no native outbound (BYO-SIP only)
-            "agora": ({IN, OUT}, {OUT}),          # outbound wired via AgoraOutboundDialer (ConvAI telephony)
-            "pipecat": ({IN, OUT}, {IN, OUT}),     # reuses bridge → outbound = speaking-order
+            "elevenlabs": (
+                {IN, OUT},
+                {IN, OUT},
+            ),  # outbound via ElevenLabsOutboundDialer
+            "deepgram": ({IN, OUT}, {IN}),  # no native outbound (BYO-SIP only)
+            "agora": (
+                {IN, OUT},
+                {IN, OUT},
+            ),  # outbound: AgoraOutboundDialer; inbound: web_agora RTC connector (TH-5682)
+            "pipecat": (
+                {IN, OUT},
+                {IN, OUT},
+            ),  # reuses bridge → outbound = speaking-order
             # Inbound flipped 2026-06-10: a Bland inbound number answers any
             # PSTN caller, so the neutral SIP path reaches it (TH-5683).
             "bland": ({IN, OUT}, {IN, OUT}),
-            "twilio": ({IN, OUT}, {IN, OUT}),     # SIP inbound + TwilioOutboundDialer
-            "futureagi": (set(), set()),          # internal chat
+            "twilio": ({IN, OUT}, {IN, OUT}),  # SIP inbound + TwilioOutboundDialer
+            "futureagi": (set(), set()),  # internal chat
         }
         for key, (sup, impl) in expected.items():
             spec = get_spec(key)
@@ -257,9 +281,7 @@ class TestBridgeRegistryParity:
     def test_cross_check_against_real_connector_registry_if_importable(self):
         # Best-effort: the real bridge registry pulls livekit SDK deps that may be
         # absent in the backend venv — skip if it can't import.
-        connector = pytest.importorskip(
-            "ee.voice.services.livekit.bridge.connector"
-        )
+        connector = pytest.importorskip("ee.voice.services.livekit.bridge.connector")
         real_keys = set(connector.get_connector_registry().keys())
         ga_webrtc = {
             s.connector_key
