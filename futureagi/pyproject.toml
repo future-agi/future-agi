@@ -161,7 +161,11 @@ dependencies = [
     "presidio-anonymizer>=2.2.0",
     "spacy>=3.7.0",
     "mcp>=1.26.0",  # Model Context Protocol SDK (Anthropic)
+    "httpx>=0.27.0",  # HTTP client for fi-simulate CLI
 ]
+
+[project.scripts]
+fi-simulate = "sdk.cli.main:main"
 
 [project.optional-dependencies]
 dev = [
