@@ -244,14 +244,24 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
+from tracer.models.eval_task import (
+    EvalTask,
+    EvalTaskLogger,
+    EvalTaskStatus,
+    RunType,
+)
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.serializers.eval_task import (
     EditEvalTaskSerializer,
     EvalTaskSerializer,
     PaginationQuerySerializer,
 )
-from tracer.utils.eval_tasks import parsing_evaltask_filters, run_for_processed_spans
+from tracer.utils.eval_tasks import (
+    _entity_fk_for_row_type,
+    entity_count_for_filters,
+    parsing_evaltask_filters,
+    run_for_processed_spans,
+)
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import get_default_eval_task_config
 
@@ -1300,7 +1310,6 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     defaults={
                         "offset": 0,
                         "status": EvalTaskStatus.PENDING,
-                        "spanids_processed": [],
                     },
                 )
 
@@ -1314,7 +1323,14 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     "run_type": eval_task.run_type,
                 }
 
-                spanids_processed = eval_task_logger.spanids_processed or []
+                entity_fk = _entity_fk_for_row_type(eval_task.row_type)
+                processed_entity_ids = list(
+                    EvalLogger.objects.filter(
+                        eval_task_id=str(eval_task.id), deleted=False
+                    )
+                    .values_list(entity_fk, flat=True)
+                    .distinct()
+                )
 
                 # Extract and validate update fields
                 update_fields = self._extract_update_fields(validated_data)
@@ -1336,7 +1352,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         update_fields,
                         original_state,
                         new_evals,
-                        spanids_processed,
+                        processed_entity_ids,
                     )
                     logger.info(
                         f"Edit & re-run completed for eval task {eval_task_id}, changes: {changes_made}"
@@ -1432,10 +1448,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         ).update(deleted=True, deleted_at=timezone.now())
 
         # Reset logger state
-        eval_task_logger.spanids_processed = []
         eval_task_logger.offset = 0
         eval_task_logger.status = EvalTaskStatus.PENDING
-        eval_task_logger.save(update_fields=["spanids_processed", "offset", "status"])
+        eval_task_logger.save(update_fields=["offset", "status"])
 
         logger.info(
             f"Fresh run: Deleted {deleted_count} evaluation results for task {eval_task.id}"
@@ -1448,16 +1463,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         update_fields,
         original_state,
         new_evals,
-        spanids_processed,
+        processed_entity_ids,
     ):
         """Handle edit and rerun logic with intelligent evaluation scheduling"""
 
         changes_made = []
 
-        # Only process historical runs with existing processed spans
+        # Only process historical runs with existing processed entities
         if (
             update_fields.get("run_type", eval_task.run_type) != RunType.HISTORICAL
-            or not spanids_processed
+            or not processed_entity_ids
         ):
             return changes_made
 
@@ -1469,25 +1484,25 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             )
             filters = update_fields.get("filters") or eval_task.filters
 
-            # Validate filters and get total spans count
             parsed_filters = parsing_evaltask_filters(filters)
-            total_spans = ObservationSpan.objects.filter(parsed_filters).count()
+            total_entities = entity_count_for_filters(
+                eval_task.row_type, parsed_filters,
+            )
 
-            if total_spans == 0:
+            if total_entities == 0:
                 logger.warning(
-                    f"No spans found for eval task {eval_task.id} with current filters"
+                    f"No entities found for eval task {eval_task.id} with current filters"
                 )
                 return changes_made
 
-            # Calculate target sample parameters
-            target_sample_size = int((new_sampling_rate / 100) * total_spans)
+            target_sample_size = int((new_sampling_rate / 100) * total_entities)
             max_spans = min(new_span_limit or float("inf"), target_sample_size)
 
             # Determine final span set to work with
-            if max_spans >= len(spanids_processed):
-                final_spans = spanids_processed
+            if max_spans >= len(processed_entity_ids):
+                final_spans = processed_entity_ids
             else:
-                final_spans = sample(spanids_processed, int(max_spans))
+                final_spans = sample(processed_entity_ids, int(max_spans))
                 changes_made.append(f"Resampled to {len(final_spans)} spans")
 
             if not final_spans:
@@ -1498,7 +1513,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             existing_eval_ids = list(original_state["evals"].intersection(new_evals))
             if existing_eval_ids:
                 missing_count = self._schedule_missing_evaluations(
-                    eval_task.id, existing_eval_ids, final_spans
+                    eval_task, existing_eval_ids, final_spans
                 )
                 if missing_count > 0:
                     changes_made.append(
@@ -1508,7 +1523,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # Handle completely new evaluations
             new_eval_ids = list(new_evals - original_state["evals"])
             if new_eval_ids:
-                self._schedule_new_evaluations(final_spans, new_eval_ids, eval_task.id)
+                self._schedule_new_evaluations(final_spans, new_eval_ids, str(eval_task.id))
                 changes_made.append(
                     f"Scheduled {len(new_eval_ids)} new evaluation types"
                 )
@@ -1519,37 +1534,36 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
         return changes_made
 
-    def _schedule_missing_evaluations(self, eval_task_id, eval_ids, target_spans):
-        """Schedule evaluations only for spans that haven't been evaluated yet"""
+    def _schedule_missing_evaluations(self, eval_task, eval_ids, target_entities):
+        """Schedule evaluations only for entities that haven't been evaluated yet."""
 
         total_missing = 0
+        eval_task_id = str(eval_task.id)
+        entity_fk = _entity_fk_for_row_type(eval_task.row_type)
 
         for eval_id in eval_ids:
             try:
-                # Get spans already evaluated for this eval (not deleted)
-                evaluated_spans = set(
+                evaluated_entities = set(
                     EvalLogger.objects.filter(
                         eval_task_id=eval_task_id,
                         custom_eval_config_id=eval_id,
                         deleted=False,
-                    ).values_list("observation_span_id", flat=True)
+                    ).values_list(entity_fk, flat=True)
                 )
 
-                # Find spans that need evaluation
-                missing_spans = [
-                    span_id
-                    for span_id in target_spans
-                    if span_id not in evaluated_spans
+                missing_entities = [
+                    eid
+                    for eid in target_entities
+                    if eid not in evaluated_entities
                 ]
 
-                if missing_spans:
-                    # Schedule evaluation for missing spans
+                if missing_entities:
                     run_for_processed_spans.delay(
-                        missing_spans, [eval_id], eval_task_id
+                        missing_entities, [eval_id], eval_task_id
                     )
-                    total_missing += len(missing_spans)
+                    total_missing += len(missing_entities)
                     logger.info(
-                        f"Scheduled {len(missing_spans)} missing evaluations for eval {eval_id}"
+                        f"Scheduled {len(missing_entities)} missing evaluations for eval {eval_id}"
                     )
 
             except Exception as e:

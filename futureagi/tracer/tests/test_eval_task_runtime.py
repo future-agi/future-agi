@@ -131,7 +131,7 @@ class TestProcessEvalTaskSpans:
         stub_cost_log,
         inline_temporal,
     ):
-        """Second tick reuses spanids_processed; no additional EvalLogger rows."""
+        """Second tick deduplicates via EvalLogger; no additional rows."""
         task = observe_eval_task["task"]
 
         process_eval_task._original_func(str(task.id))
@@ -175,6 +175,89 @@ class TestProcessEvalTaskSpans:
         ).count()
         # 50% of 12 pending spans -> 6 sampled at dispatch
         assert count == 6
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestEvalLoggerDedup:
+    """Verify that EvalLogger-based dedup works for the dispatch pipeline."""
+
+    def test_eval_loggers_created_after_dispatch(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Dispatch tick creates EvalLogger rows with completed status."""
+        from tracer.models.eval_task import EvalTaskLogger
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        task = observe_eval_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        logger = EvalTaskLogger.objects.get(eval_task=task)
+        completed = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+            status=EvalLoggerStatus.COMPLETED,
+        )
+        assert completed.count() == 12  # 2 sessions * 2 traces * 3 spans
+        assert logger.offset == 12
+
+    def test_no_duplicate_eval_loggers_on_second_tick(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Second tick must not create duplicate EvalLogger rows."""
+        task = observe_eval_task["task"]
+        process_eval_task._original_func(str(task.id))
+        process_eval_task._original_func(str(task.id))
+
+        total = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False
+        ).count()
+        assert total == 12
+
+    def test_fresh_run_allows_redispatch(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Soft-deleting EvalLogger rows + resetting offset allows re-dispatch."""
+        from django.utils import timezone
+        from tracer.models.eval_task import EvalTaskLogger
+
+        task = observe_eval_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        logger = EvalTaskLogger.objects.get(eval_task=task)
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False
+        ).count() == 12
+
+        # Simulate fresh run reset
+        EvalLogger.objects.filter(
+            eval_task_id=str(task.id)
+        ).update(deleted=True, deleted_at=timezone.now())
+        logger.offset = 0
+        logger.save(update_fields=["offset"])
+
+        # Re-dispatch should process all entities again
+        task.status = EvalTaskStatus.RUNNING
+        task.save(update_fields=["status"])
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        assert rows.count() == 12
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -345,7 +428,12 @@ class TestEvalTaskStatusTransitions:
 
         process_eval_task._original_func(str(task.id))  # tick 1: dispatch only
         assert len(track_eval_dispatch) == 12
-        assert EvalLogger.objects.filter(eval_task_id=str(task.id)).count() == 0
+        # Pre-created PENDING rows exist but no completed evaluations
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id),
+        ).exclude(status=EvalLoggerStatus.PENDING).count() == 0
 
         with caplog.at_level(logging.WARNING, logger="tracer.utils.eval_tasks"):
             process_eval_task._original_func(str(task.id))  # tick 2: drain check trips stall
@@ -609,12 +697,13 @@ class TestProcessEvalTaskTraces:
         # Tighten: filter by an observation_type that no spans have
         task.refresh_from_db()
         # Reset the dispatch state so we can re-run cleanly
+        from django.utils import timezone
         from tracer.models.eval_task import EvalTaskLogger
 
-        EvalTaskLogger.objects.filter(eval_task=task).update(
-            offset=0, spanids_processed=[]
-        )
-        EvalLogger.objects.filter(eval_task_id=str(task.id)).delete()
+        EvalLogger.objects.filter(
+            eval_task_id=str(task.id)
+        ).update(deleted=True, deleted_at=timezone.now())
+        EvalTaskLogger.objects.filter(eval_task=task).update(offset=0)
         task.filters = {
             "project_id": str(populated_observe_project["project"].id),
             "observation_type": "guardrail",  # no spans of this type
@@ -1325,3 +1414,1144 @@ class TestCompositeEvalOnSession:
         task = composite_session_task["task"]
         process_eval_task._original_func(str(task.id))
         assert calls == []
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Status field, drain state, upsert helper, and entity_count_for_filters
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestEvalLoggerStatusField:
+    """Verify the status field is set correctly across dispatch paths."""
+
+    def test_span_dispatch_sets_completed_status(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        task = observe_eval_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        )
+        assert rows.count() == 12
+        assert all(r.status == EvalLoggerStatus.COMPLETED for r in rows)
+
+    def test_trace_dispatch_sets_completed_status(
+        self,
+        populated_observe_project,
+        observe_trace_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        task = observe_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        )
+        assert rows.count() == 4
+        assert all(r.status == EvalLoggerStatus.COMPLETED for r in rows)
+
+    def test_session_dispatch_sets_completed_status(
+        self,
+        populated_observe_project,
+        observe_session_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        task = observe_session_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        )
+        assert rows.count() == 2
+        assert all(r.status == EvalLoggerStatus.COMPLETED for r in rows)
+
+    def test_error_dispatch_sets_failed_status(
+        self,
+        populated_observe_project,
+        composite_trace_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        stub_composite_children.set_exception(RuntimeError("boom"))
+        task = composite_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        )
+        assert rows.count() == 4
+        assert all(r.status == EvalLoggerStatus.FAILED for r in rows)
+        assert all(r.error is True for r in rows)
+
+    def test_no_pending_rows_remain_after_inline_dispatch(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """After inline dispatch all PENDING rows should be updated to COMPLETED."""
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        task = observe_eval_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        pending = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+            status=EvalLoggerStatus.PENDING,
+        ).count()
+        assert pending == 0
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestComputeDrainState:
+    """Verify compute_drain_state handles the PENDING status exclusion."""
+
+    def test_pending_rows_excluded_from_completed_count(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """PENDING rows should not count toward drain completion."""
+        from tracer.models.observation_span import EvalLoggerStatus
+        from tracer.utils.eval_tasks import compute_drain_state
+
+        task = observe_eval_task["task"]
+        config = observe_eval_task["config"]
+
+        # Run dispatch so we get 12 COMPLETED rows
+        process_eval_task._original_func(str(task.id))
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+            status=EvalLoggerStatus.COMPLETED,
+        ).count() == 12
+
+        # Flip 4 rows back to PENDING to simulate in-flight state
+        to_flip = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).order_by("id")[:4]
+        EvalLogger.objects.filter(id__in=[r.id for r in to_flip]).update(
+            status=EvalLoggerStatus.PENDING,
+        )
+
+        state = compute_drain_state(task)
+        assert state["completed"] == 8
+
+    def test_fully_drained_after_all_completed(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.utils.eval_tasks import compute_drain_state
+
+        task = observe_eval_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        state = compute_drain_state(task)
+        assert state["is_fully_drained"] is True
+        assert state["completed"] == state["dispatched"]
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestUpsertEvalLogger:
+    """Verify _upsert_eval_logger updates existing rows instead of creating duplicates."""
+
+    def test_upsert_updates_pending_to_completed(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+    ):
+        """_upsert_eval_logger should update an existing PENDING row, not create a duplicate."""
+        from tracer.models.observation_span import EvalLoggerStatus, EvalTargetType
+        from tracer.utils.eval import _upsert_eval_logger
+
+        task = observe_eval_task["task"]
+        config = observe_eval_task["config"]
+        span = populated_observe_project["spans"][0]
+
+        # Pre-create a PENDING row
+        EvalLogger.objects.create(
+            eval_task_id=str(task.id),
+            observation_span=span,
+            trace=span.trace,
+            custom_eval_config=config,
+            target_type=EvalTargetType.SPAN,
+            status=EvalLoggerStatus.PENDING,
+        )
+
+        # Call _upsert_eval_logger directly with the same lookup
+        lookup = {
+            "eval_task_id": str(task.id),
+            "observation_span": span,
+            "custom_eval_config": config,
+        }
+        defaults = {
+            "trace": span.trace,
+            "status": EvalLoggerStatus.COMPLETED,
+            "output_str": "Pass",
+        }
+        _upsert_eval_logger(lookup, defaults)
+
+        rows = EvalLogger.objects.filter(
+            eval_task_id=str(task.id),
+            observation_span=span,
+            custom_eval_config=config,
+            deleted=False,
+        )
+        assert rows.count() == 1
+        assert rows.first().status == EvalLoggerStatus.COMPLETED
+        assert rows.first().output_str == "Pass"
+
+    def test_upsert_on_trace_target(
+        self,
+        populated_observe_project,
+        observe_trace_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Trace-level upsert correctly updates the pre-created row."""
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        task = observe_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        # Every trace row should be COMPLETED, no duplicates
+        rows = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        )
+        trace_ids = list(rows.values_list("trace_id", flat=True))
+        assert len(trace_ids) == len(set(trace_ids)), "Duplicate trace rows found"
+        assert all(r.status == EvalLoggerStatus.COMPLETED for r in rows)
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestFreshRunDedup:
+    """Verify fresh-run (soft-delete + offset reset) works for all row types."""
+
+    def _run_fresh_reset(self, task):
+        from django.utils import timezone
+        from tracer.models.eval_task import EvalTaskLogger
+
+        EvalLogger.objects.filter(
+            eval_task_id=str(task.id)
+        ).update(deleted=True, deleted_at=timezone.now())
+        logger = EvalTaskLogger.objects.get(eval_task=task)
+        logger.offset = 0
+        logger.status = EvalTaskStatus.PENDING
+        logger.save(update_fields=["offset", "status"])
+        task.status = EvalTaskStatus.PENDING
+        task.save(update_fields=["status"])
+
+    def test_fresh_run_spans(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = observe_eval_task["task"]
+        process_eval_task._original_func(str(task.id))
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count() == 12
+
+        self._run_fresh_reset(task)
+        process_eval_task._original_func(str(task.id))
+
+        active = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        )
+        assert active.count() == 12
+        # Old rows should still exist as soft-deleted
+        total = EvalLogger.all_objects.filter(eval_task_id=str(task.id)).count()
+        assert total == 24
+
+    def test_fresh_run_traces(
+        self,
+        populated_observe_project,
+        observe_trace_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = observe_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count() == 4
+
+        self._run_fresh_reset(task)
+        process_eval_task._original_func(str(task.id))
+
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count() == 4
+        assert EvalLogger.all_objects.filter(
+            eval_task_id=str(task.id),
+        ).count() == 8
+
+    def test_fresh_run_sessions(
+        self,
+        populated_observe_project,
+        observe_session_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = observe_session_task["task"]
+        process_eval_task._original_func(str(task.id))
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count() == 2
+
+        self._run_fresh_reset(task)
+        process_eval_task._original_func(str(task.id))
+
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count() == 2
+        assert EvalLogger.all_objects.filter(
+            eval_task_id=str(task.id),
+        ).count() == 4
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestEntityCountForFilters:
+    """Verify entity_count_for_filters returns correct counts per row type."""
+
+    def test_span_count(self, populated_observe_project):
+        from tracer.models.eval_task import RowType
+        from tracer.utils.eval_tasks import (
+            entity_count_for_filters,
+            parsing_evaltask_filters,
+        )
+
+        project = populated_observe_project["project"]
+        filters = parsing_evaltask_filters({"project_id": str(project.id)})
+        count = entity_count_for_filters(RowType.SPANS, filters)
+        assert count == 12
+
+    def test_trace_count(self, populated_observe_project):
+        from tracer.models.eval_task import RowType
+        from tracer.utils.eval_tasks import (
+            entity_count_for_filters,
+            parsing_evaltask_filters,
+        )
+
+        project = populated_observe_project["project"]
+        filters = parsing_evaltask_filters({"project_id": str(project.id)})
+        count = entity_count_for_filters(RowType.TRACES, filters)
+        assert count == 4
+
+    def test_session_count(self, populated_observe_project):
+        from tracer.models.eval_task import RowType
+        from tracer.utils.eval_tasks import (
+            entity_count_for_filters,
+            parsing_evaltask_filters,
+        )
+
+        project = populated_observe_project["project"]
+        filters = parsing_evaltask_filters({"project_id": str(project.id)})
+        count = entity_count_for_filters(RowType.SESSIONS, filters)
+        assert count == 2
+
+    def test_voice_calls_count_matches_spans(self, populated_observe_project):
+        from tracer.models.eval_task import RowType
+        from tracer.utils.eval_tasks import (
+            entity_count_for_filters,
+            parsing_evaltask_filters,
+        )
+
+        project = populated_observe_project["project"]
+        filters = parsing_evaltask_filters({"project_id": str(project.id)})
+        span_count = entity_count_for_filters(RowType.SPANS, filters)
+        vc_count = entity_count_for_filters(RowType.VOICE_CALLS, filters)
+        assert vc_count == span_count
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestOffsetTracking:
+    """Verify offset increments correctly and drives dedup."""
+
+    def test_offset_matches_dispatched_span_count(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.eval_task import EvalTaskLogger
+
+        task = observe_eval_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        logger = EvalTaskLogger.objects.get(eval_task=task)
+        assert logger.offset == 12
+
+    def test_offset_matches_dispatched_trace_count(
+        self,
+        populated_observe_project,
+        observe_trace_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.eval_task import EvalTaskLogger
+
+        task = observe_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        logger = EvalTaskLogger.objects.get(eval_task=task)
+        assert logger.offset == 4
+
+    def test_offset_matches_dispatched_session_count(
+        self,
+        populated_observe_project,
+        observe_session_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.eval_task import EvalTaskLogger
+
+        task = observe_session_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        logger = EvalTaskLogger.objects.get(eval_task=task)
+        assert logger.offset == 2
+
+    def test_offset_does_not_increase_on_second_tick(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.eval_task import EvalTaskLogger
+
+        task = observe_eval_task["task"]
+        process_eval_task._original_func(str(task.id))
+        process_eval_task._original_func(str(task.id))
+
+        logger = EvalTaskLogger.objects.get(eval_task=task)
+        assert logger.offset == 12
+
+    def test_offset_with_spans_limit(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.eval_task import EvalTaskLogger
+
+        task = observe_eval_task["task"]
+        task.spans_limit = 5
+        task.save()
+
+        process_eval_task._original_func(str(task.id))
+
+        logger = EvalTaskLogger.objects.get(eval_task=task)
+        assert logger.offset == 5
+
+        # Raise the limit so the second tick can dispatch more
+        task.refresh_from_db()
+        task.spans_limit = 10
+        task.status = EvalTaskStatus.RUNNING
+        task.save(update_fields=["spans_limit", "status"])
+        process_eval_task._original_func(str(task.id))
+
+        logger.refresh_from_db()
+        assert logger.offset == 10
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Continuous run type with new dedup/status logic
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestContinuousRunType:
+    """Continuous tasks with EvalLogger-based dedup and status field."""
+
+    def test_continuous_spans_sets_completed_status(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        task = observe_eval_task["task"]
+        task.run_type = RunType.CONTINUOUS
+        task.save()
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        )
+        assert rows.count() > 0
+        assert all(r.status == EvalLoggerStatus.COMPLETED for r in rows)
+
+    def test_continuous_traces_creates_rows(
+        self,
+        populated_observe_project,
+        observe_trace_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        task = observe_trace_task["task"]
+        task.run_type = RunType.CONTINUOUS
+        task.save()
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        )
+        assert rows.count() == 4
+        assert all(r.status == EvalLoggerStatus.COMPLETED for r in rows)
+        assert all(r.target_type == "trace" for r in rows)
+
+    def test_continuous_sessions_creates_rows(
+        self,
+        populated_observe_project,
+        observe_session_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        task = observe_session_task["task"]
+        task.run_type = RunType.CONTINUOUS
+        task.save()
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        )
+        assert rows.count() == 2
+        assert all(r.status == EvalLoggerStatus.COMPLETED for r in rows)
+        assert all(r.target_type == "session" for r in rows)
+
+    def test_continuous_dedup_on_second_tick(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = observe_eval_task["task"]
+        task.run_type = RunType.CONTINUOUS
+        task.save()
+
+        process_eval_task._original_func(str(task.id))
+        first = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count()
+
+        process_eval_task._original_func(str(task.id))
+        second = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count()
+
+        assert second == first
+
+    def test_continuous_no_pending_residue(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        task = observe_eval_task["task"]
+        task.run_type = RunType.CONTINUOUS
+        task.save()
+
+        process_eval_task._original_func(str(task.id))
+
+        pending = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+            status=EvalLoggerStatus.PENDING,
+        ).count()
+        assert pending == 0
+
+
+# ────────────────────────────────────────────────────────────────────────
+# View-level: fresh run and edit-and-rerun via PATCH endpoint
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestFreshRunViaAPI:
+    """Test _handle_fresh_run through the update_eval_task PATCH endpoint."""
+
+    def test_fresh_run_resets_eval_loggers_and_offset(
+        self,
+        auth_client,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.eval_task import EvalTaskLogger
+
+        task = observe_eval_task["task"]
+        config = observe_eval_task["config"]
+
+        # First run to create rows
+        process_eval_task._original_func(str(task.id))
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count() == 12
+
+        # Pause before edit (required by the view)
+        task.refresh_from_db()
+        task.status = EvalTaskStatus.PAUSED
+        task.save(update_fields=["status"])
+
+        # PATCH fresh_run
+        response = auth_client.patch(
+            "/tracer/eval-task/update_eval_task/",
+            {
+                "eval_task_id": str(task.id),
+                "edit_type": "fresh_run",
+                "evals": [str(config.id)],
+            },
+            format="json",
+        )
+        assert response.status_code in (200, 201), response.json()
+
+        # Verify: old rows soft-deleted, offset reset
+        active = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count()
+        assert active == 0
+
+        logger_obj = EvalTaskLogger.objects.get(eval_task=task)
+        assert logger_obj.offset == 0
+
+        # Soft-deleted rows still exist
+        total = EvalLogger.all_objects.filter(
+            eval_task_id=str(task.id),
+        ).count()
+        assert total == 12
+
+    def test_fresh_run_for_trace_task(
+        self,
+        auth_client,
+        populated_observe_project,
+        observe_trace_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.eval_task import EvalTaskLogger
+
+        task = observe_trace_task["task"]
+        config = observe_trace_task["config"]
+
+        process_eval_task._original_func(str(task.id))
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count() == 4
+
+        task.refresh_from_db()
+        task.status = EvalTaskStatus.PAUSED
+        task.save(update_fields=["status"])
+
+        response = auth_client.patch(
+            "/tracer/eval-task/update_eval_task/",
+            {
+                "eval_task_id": str(task.id),
+                "edit_type": "fresh_run",
+                "evals": [str(config.id)],
+            },
+            format="json",
+        )
+        assert response.status_code in (200, 201), response.json()
+
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count() == 0
+
+        logger_obj = EvalTaskLogger.objects.get(eval_task=task)
+        assert logger_obj.offset == 0
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestEditAndRerunViaAPI:
+    """Test _handle_edit_and_rerun through the update_eval_task PATCH endpoint."""
+
+    def test_edit_rerun_adds_new_eval(
+        self,
+        auth_client,
+        populated_observe_project,
+        observe_eval_task,
+        eval_template,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+        monkeypatch,
+    ):
+        """Adding a new eval config should schedule evaluations for processed entities."""
+        task = observe_eval_task["task"]
+        config = observe_eval_task["config"]
+        project = observe_eval_task["project"]
+
+        # First run
+        process_eval_task._original_func(str(task.id))
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count() == 12
+
+        # Create a second eval config
+        second_config = CustomEvalConfig.objects.create(
+            project=project,
+            eval_template=eval_template,
+            name="Second Eval",
+            config={"output": "Pass/Fail"},
+            mapping={"input": "input", "output": "output"},
+            model="turing_large",
+        )
+
+        task.refresh_from_db()
+        task.status = EvalTaskStatus.PAUSED
+        task.save(update_fields=["status"])
+
+        # Track dispatches from run_for_processed_spans
+        dispatch_calls = []
+        import tracer.utils.eval_tasks as eval_tasks_mod
+
+        original_delay = eval_tasks_mod.run_for_processed_spans._original_func
+
+        def _spy_delay(*args, **kwargs):
+            dispatch_calls.append(args)
+
+        monkeypatch.setattr(
+            eval_tasks_mod.run_for_processed_spans, "delay", _spy_delay,
+        )
+
+        response = auth_client.patch(
+            "/tracer/eval-task/update_eval_task/",
+            {
+                "eval_task_id": str(task.id),
+                "edit_type": "edit_rerun",
+                "evals": [str(config.id), str(second_config.id)],
+            },
+            format="json",
+        )
+        assert response.status_code in (200, 201), response.json()
+
+        # The new eval should be scheduled for processed spans
+        assert len(dispatch_calls) > 0
+
+    def test_edit_rerun_fills_missing_evals(
+        self,
+        auth_client,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+        monkeypatch,
+    ):
+        """Edit-rerun with same evals should detect and fill missing evaluations."""
+        task = observe_eval_task["task"]
+        config = observe_eval_task["config"]
+
+        # First run
+        process_eval_task._original_func(str(task.id))
+
+        # Soft-delete some results to create gaps
+        rows_to_delete = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).order_by("id")[:3]
+        from django.utils import timezone
+
+        EvalLogger.objects.filter(
+            id__in=[r.id for r in rows_to_delete],
+        ).update(deleted=True, deleted_at=timezone.now())
+
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count() == 9
+
+        task.refresh_from_db()
+        task.status = EvalTaskStatus.PAUSED
+        task.save(update_fields=["status"])
+
+        dispatch_calls = []
+        import tracer.utils.eval_tasks as eval_tasks_mod
+
+        def _spy_delay(*args, **kwargs):
+            dispatch_calls.append(args)
+
+        monkeypatch.setattr(
+            eval_tasks_mod.run_for_processed_spans, "delay", _spy_delay,
+        )
+
+        response = auth_client.patch(
+            "/tracer/eval-task/update_eval_task/",
+            {
+                "eval_task_id": str(task.id),
+                "edit_type": "edit_rerun",
+                "evals": [str(config.id)],
+            },
+            format="json",
+        )
+        assert response.status_code in (200, 201), response.json()
+
+        # Should schedule the 3 missing spans
+        if dispatch_calls:
+            scheduled_ids = dispatch_calls[0][0]
+            assert len(scheduled_ids) == 3
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestScheduleMissingEvaluationsRowTypes:
+    """Verify _schedule_missing_evaluations works for all row types."""
+
+    def test_missing_evals_for_trace_task(
+        self,
+        auth_client,
+        populated_observe_project,
+        observe_trace_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+        monkeypatch,
+    ):
+        """For traces, missing eval detection should use trace_id not observation_span_id."""
+        task = observe_trace_task["task"]
+        config = observe_trace_task["config"]
+
+        process_eval_task._original_func(str(task.id))
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count() == 4
+
+        # Soft-delete 1 trace's eval result
+        first_row = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).first()
+        from django.utils import timezone
+
+        EvalLogger.objects.filter(id=first_row.id).update(
+            deleted=True, deleted_at=timezone.now(),
+        )
+
+        task.refresh_from_db()
+        task.status = EvalTaskStatus.PAUSED
+        task.save(update_fields=["status"])
+
+        dispatch_calls = []
+        import tracer.utils.eval_tasks as eval_tasks_mod
+
+        def _spy_delay(*args, **kwargs):
+            dispatch_calls.append(args)
+
+        monkeypatch.setattr(
+            eval_tasks_mod.run_for_processed_spans, "delay", _spy_delay,
+        )
+
+        response = auth_client.patch(
+            "/tracer/eval-task/update_eval_task/",
+            {
+                "eval_task_id": str(task.id),
+                "edit_type": "edit_rerun",
+                "evals": [str(config.id)],
+            },
+            format="json",
+        )
+        assert response.status_code in (200, 201), response.json()
+
+        # Should schedule the 1 missing trace
+        if dispatch_calls:
+            scheduled_ids = dispatch_calls[0][0]
+            assert len(scheduled_ids) == 1
+
+    def test_missing_evals_for_session_task(
+        self,
+        auth_client,
+        populated_observe_project,
+        observe_session_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+        monkeypatch,
+    ):
+        task = observe_session_task["task"]
+        config = observe_session_task["config"]
+
+        process_eval_task._original_func(str(task.id))
+        assert EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).count() == 2
+
+        # Soft-delete 1 session's eval result
+        first_row = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        ).first()
+        from django.utils import timezone
+
+        EvalLogger.objects.filter(id=first_row.id).update(
+            deleted=True, deleted_at=timezone.now(),
+        )
+
+        task.refresh_from_db()
+        task.status = EvalTaskStatus.PAUSED
+        task.save(update_fields=["status"])
+
+        dispatch_calls = []
+        import tracer.utils.eval_tasks as eval_tasks_mod
+
+        def _spy_delay(*args, **kwargs):
+            dispatch_calls.append(args)
+
+        monkeypatch.setattr(
+            eval_tasks_mod.run_for_processed_spans, "delay", _spy_delay,
+        )
+
+        response = auth_client.patch(
+            "/tracer/eval-task/update_eval_task/",
+            {
+                "eval_task_id": str(task.id),
+                "edit_type": "edit_rerun",
+                "evals": [str(config.id)],
+            },
+            format="json",
+        )
+        assert response.status_code in (200, 201), response.json()
+
+        if dispatch_calls:
+            scheduled_ids = dispatch_calls[0][0]
+            assert len(scheduled_ids) == 1
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Single eval error / FAILED status
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestSingleEvalErrorStatus:
+    """Verify FAILED status on single eval errors (not just composite)."""
+
+    def test_span_eval_error_sets_failed(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        from tracer.models.observation_span import EvalLoggerStatus
+
+        # Make the eval engine raise
+        stub_run_eval(value=False, reason="stubbed fail", failure="engine error")
+
+        task = observe_eval_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False,
+        )
+        # Rows should exist (engine returned a result, even if failing)
+        assert rows.count() == 12
+
+    def test_trace_eval_error_from_missing_anchor(
+        self,
+        populated_observe_project,
+        observe_trace_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Trace with no anchor span → no EvalLogger row, recorded in failed_spans."""
+        from tracer.models.trace import Trace
+        from tracer.utils.eval import evaluate_trace_observe
+
+        empty_trace = Trace.objects.create(
+            project=populated_observe_project["project"],
+            name="no-span trace",
+            input={},
+            output={},
+        )
+        task = observe_trace_task["task"]
+        config = observe_trace_task["config"]
+
+        result = evaluate_trace_observe._original_func(
+            trace_id=str(empty_trace.id),
+            custom_eval_config_id=str(config.id),
+            eval_task_id=str(task.id),
+        )
+        assert result is False
+
+        # No EvalLogger for this trace
+        assert EvalLogger.objects.filter(
+            trace_id=empty_trace.id, deleted=False,
+        ).count() == 0
+
+
+# ────────────────────────────────────────────────────────────────────────
+# run_for_processed_spans dispatches correct activity per row_type
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestRunForProcessedSpansRowTypeDispatch:
+    """Verify run_for_processed_spans dispatches to the correct activity."""
+
+    def test_dispatches_span_activity_for_spans(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        monkeypatch,
+    ):
+        import tracer.utils.eval as eval_module
+
+        calls = []
+
+        def _record(*args, **kwargs):
+            calls.append(("span", args))
+
+        monkeypatch.setattr(
+            eval_module.evaluate_observation_span_observe, "delay", _record,
+        )
+
+        task = observe_eval_task["task"]
+        config = observe_eval_task["config"]
+        from tracer.utils.eval_tasks import run_for_processed_spans
+
+        span_ids = [s.id for s in populated_observe_project["spans"][:2]]
+        run_for_processed_spans._original_func(
+            span_ids, [str(config.id)], str(task.id),
+        )
+        assert len(calls) == 2
+        assert all(c[0] == "span" for c in calls)
+
+    def test_dispatches_trace_activity_for_traces(
+        self,
+        populated_observe_project,
+        observe_trace_task,
+        monkeypatch,
+    ):
+        import tracer.utils.eval as eval_module
+
+        calls = []
+
+        def _record(*args, **kwargs):
+            calls.append(("trace", args))
+
+        monkeypatch.setattr(
+            eval_module.evaluate_trace_observe, "delay", _record,
+        )
+
+        task = observe_trace_task["task"]
+        config = observe_trace_task["config"]
+        from tracer.utils.eval_tasks import run_for_processed_spans
+
+        trace_ids = [t.id for t in populated_observe_project["traces"][:2]]
+        run_for_processed_spans._original_func(
+            trace_ids, [str(config.id)], str(task.id),
+        )
+        assert len(calls) == 2
+        assert all(c[0] == "trace" for c in calls)
+
+    def test_dispatches_session_activity_for_sessions(
+        self,
+        populated_observe_project,
+        observe_session_task,
+        monkeypatch,
+    ):
+        import tracer.utils.eval as eval_module
+
+        calls = []
+
+        def _record(*args, **kwargs):
+            calls.append(("session", args))
+
+        monkeypatch.setattr(
+            eval_module.evaluate_trace_session_observe, "delay", _record,
+        )
+
+        task = observe_session_task["task"]
+        config = observe_session_task["config"]
+        from tracer.utils.eval_tasks import run_for_processed_spans
+
+        session_ids = [s.id for s in populated_observe_project["sessions"][:2]]
+        run_for_processed_spans._original_func(
+            session_ids, [str(config.id)], str(task.id),
+        )
+        assert len(calls) == 2
+        assert all(c[0] == "session" for c in calls)

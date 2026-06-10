@@ -3,7 +3,6 @@ from rest_framework import serializers
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import (
     EvalTask,
-    EvalTaskLogger,
     EvalTaskStatus,
     RowType,
     RunType,
@@ -110,16 +109,6 @@ class EvalTaskSerializer(serializers.ModelSerializer):
         if run_type == RunType.CONTINUOUS:
             attrs.pop("spans_limit", None)
         return attrs
-
-
-class EvalTaskLoggerSerializer(serializers.ModelSerializer):
-    eval_task = serializers.PrimaryKeyRelatedField(
-        queryset=EvalTask.objects.all(), many=False
-    )
-
-    class Meta:
-        model = EvalTaskLogger
-        fields = ["id", "eval_task", "offset", "status", "errors", "spanids_processed"]
 
 
 class EditEvalTaskSerializer(serializers.Serializer):

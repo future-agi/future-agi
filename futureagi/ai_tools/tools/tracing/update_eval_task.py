@@ -187,14 +187,12 @@ class UpdateEvalTaskTool(BaseTool):
                     defaults={
                         "offset": 0,
                         "status": EvalTaskStatus.PENDING,
-                        "spanids_processed": [],
                     },
                 )
-                eval_task_logger.spanids_processed = []
                 eval_task_logger.offset = 0
                 eval_task_logger.status = EvalTaskStatus.PENDING
                 eval_task_logger.save(
-                    update_fields=["spanids_processed", "offset", "status"]
+                    update_fields=["offset", "status"]
                 )
 
             # Apply field updates

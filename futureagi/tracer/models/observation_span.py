@@ -278,6 +278,12 @@ class EvalTargetType(models.TextChoices):
     SESSION = "session", "Session"
 
 
+class EvalLoggerStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    COMPLETED = "completed", "Completed"
+    FAILED = "failed", "Failed"
+
+
 class EvalLogger(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     # Nullable for ``target_type='session'`` rows; populated otherwise.
@@ -336,6 +342,11 @@ class EvalLogger(BaseModel):
     # attribute was absent. Distinct from `error` so read paths render
     # "Skipped" and drop these rows from failure-rate metrics.
     skipped_reason = models.TextField(null=True, blank=True)
+    status = models.CharField(
+        max_length=16,
+        choices=EvalLoggerStatus.choices,
+        default=EvalLoggerStatus.COMPLETED,
+    )
 
     def __str__(self):
         return f"Eval Log {self.id}"
@@ -399,6 +410,10 @@ class EvalLogger(BaseModel):
             models.Index(
                 fields=["eval_task_id", "target_type", "custom_eval_config"],
                 name="eval_logger_task_target_idx",
+            ),
+            models.Index(
+                fields=["eval_task_id", "status"],
+                name="eval_logger_task_status_idx",
             ),
         ]
         constraints = [

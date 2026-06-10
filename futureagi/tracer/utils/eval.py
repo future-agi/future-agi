@@ -22,6 +22,7 @@ from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.eval_task import EvalTask
 from tracer.models.observation_span import (
     EvalLogger,
+    EvalLoggerStatus,
     EvalTargetType,
     ObservationSpan,
     ObservationType,
@@ -42,6 +43,28 @@ OBSERVE = "observe"
 
 # Re-export for backward compat
 from tracer.utils.eval_helpers import resolve_eval_config_id  # noqa: F401, E402
+
+
+def _upsert_eval_logger(
+    lookup: dict,
+    defaults: dict,
+    select_related: tuple[str, ...] | None = None,
+) -> EvalLogger:
+    """Get-or-create an EvalLogger, updating fields if it already exists."""
+    qs = EvalLogger.objects
+    if select_related:
+        qs = qs.select_related(*select_related)
+    try:
+        obj = qs.get(**lookup)
+        for k, v in defaults.items():
+            setattr(obj, k, v)
+        obj.save()
+        return obj
+    except EvalLogger.DoesNotExist:
+        obj = EvalLogger.objects.create(**{**lookup, **defaults})
+        if select_related:
+            obj = EvalLogger.objects.select_related(*select_related).get(pk=obj.pk)
+        return obj
 
 
 # Friendly eval-mapping shorthands used in saved configs. The user-
@@ -1552,6 +1575,7 @@ def _execute_evaluation(
             "custom_eval_config": custom_eval_config,
             "eval_type_id": eval_type_id,
             "log_id": api_call_log_row.log_id if api_call_log_row else None,
+            "status": EvalLoggerStatus.COMPLETED,
         }
 
     except Exception as e:
@@ -1577,11 +1601,12 @@ def _execute_evaluation(
             "eval_explanation": f"Error during evaluation: {error_message}",
             "results_explanation": {"reason": error_message},
             "output_str": "ERROR",
-            "error": True,
+            "error": True,  # TODO: remove once status field is fully adopted
             "error_message": f"Error during evaluation: {error_message}",
             "custom_eval_config": custom_eval_config,
             "eval_type_id": eval_type_id,
             "eval_task_id": eval_task_id,
+            "status": EvalLoggerStatus.FAILED,
         }
         value = "ERROR"
 
@@ -1596,31 +1621,18 @@ def _execute_evaluation(
     if logger_kwargs:
         value = logger_kwargs.pop("value") if "value" in logger_kwargs else ""
         log_id = logger_kwargs.pop("log_id") if "log_id" in logger_kwargs else None
-        try:
-            eval_log = EvalLogger.objects.select_related(
-                "observation_span",
-                "observation_span__project",
-                "observation_span__project__organization",
-                "observation_span__project__workspace",
-            ).get(
-                eval_task_id=eval_task_id,
-                observation_span=observation_span,
-                custom_eval_config=custom_eval_config,
-            )
-            # Set each attribute from logger_kwargs
-            for key, value in logger_kwargs.items():
-                setattr(eval_log, key, value)
-            # Save the changes
-            eval_log.save()
-
-        except EvalLogger.DoesNotExist:
-            eval_log = EvalLogger.objects.create(**logger_kwargs)
-            eval_log = EvalLogger.objects.select_related(
-                "observation_span",
-                "observation_span__project",
-                "observation_span__project__organization",
-                "observation_span__project__workspace",
-            ).get(pk=eval_log.pk)
+        _sr = (
+            "observation_span",
+            "observation_span__project",
+            "observation_span__project__organization",
+            "observation_span__project__workspace",
+        )
+        lookup = {
+            "eval_task_id": eval_task_id,
+            "observation_span": observation_span,
+            "custom_eval_config": custom_eval_config,
+        }
+        eval_log = _upsert_eval_logger(lookup, logger_kwargs, select_related=_sr)
 
         if custom_eval_config.error_localizer:
             from model_hub.tasks.user_evaluation import (
@@ -1724,18 +1736,27 @@ def _create_error_eval_logger(
     """
     skipped_reason = getattr(error, "skipped_reason", None)
     message = str(error)
-    EvalLogger.objects.create(
-        trace=observation_span.trace,
-        observation_span=observation_span,
-        output_metadata=None if skipped_reason else {"error": message},
-        eval_explanation=None if skipped_reason else f"Error during evaluation: {message}",
-        results_explanation={} if skipped_reason else {"reason": message},
-        eval_task_id=eval_task_id,
-        custom_eval_config=custom_eval_config,
-        error=skipped_reason is None,
-        error_message=None if skipped_reason else f"Error during evaluation: {message}",
-        output_str=None if skipped_reason else "ERROR",
-        skipped_reason=skipped_reason,
+    logger_kwargs = {
+        "trace": observation_span.trace,
+        "observation_span": observation_span,
+        "output_metadata": None if skipped_reason else {"error": message},
+        "eval_explanation": None if skipped_reason else f"Error during evaluation: {message}",
+        "results_explanation": {} if skipped_reason else {"reason": message},
+        "eval_task_id": eval_task_id,
+        "custom_eval_config": custom_eval_config,
+        "error": skipped_reason is None,  # TODO: remove once status field is fully adopted
+        "error_message": None if skipped_reason else f"Error during evaluation: {message}",
+        "output_str": None if skipped_reason else "ERROR",
+        "skipped_reason": skipped_reason,
+        "status": EvalLoggerStatus.FAILED if skipped_reason is None else EvalLoggerStatus.COMPLETED,
+    }
+    _upsert_eval_logger(
+        lookup={
+            "eval_task_id": eval_task_id,
+            "observation_span": observation_span,
+            "custom_eval_config": custom_eval_config,
+        },
+        defaults=logger_kwargs,
     )
 
 
@@ -1821,8 +1842,18 @@ def _write_eval_logger(
     logger_kwargs.setdefault("observation_span", observation_span)
     logger_kwargs.setdefault("custom_eval_config", custom_eval_config)
     logger_kwargs.setdefault("eval_task_id", eval_task_id)
+    logger_kwargs.setdefault("status", EvalLoggerStatus.COMPLETED)
+    if logger_kwargs.get("error"):
+        logger_kwargs["status"] = EvalLoggerStatus.FAILED
     try:
-        EvalLogger.objects.create(**logger_kwargs)
+        _upsert_eval_logger(
+            lookup={
+                "eval_task_id": eval_task_id,
+                "observation_span": observation_span,
+                "custom_eval_config": custom_eval_config,
+            },
+            defaults=logger_kwargs,
+        )
     except Exception as e:
         logger.error(f"Failed to write composite eval logger: {e}")
 
@@ -1863,21 +1894,11 @@ def evaluate_observation_span_observe(
         observation_span_id=observation_span_id,
         custom_eval_config_id=custom_eval_config_id,
         eval_task_id=eval_task_id,
-    ).exists():
-        # ``EvalLogger.objects`` is BaseModelManager — soft-deleted rows are
-        # already excluded, so an explicit ``deleted=False`` would be a
-        # tautology.
+    ).exclude(status=EvalLoggerStatus.PENDING).exists():
         logger.info(
             f"EvalLogger with observation_span_id {observation_span_id} and custom_eval_config_id {custom_eval_config_id} already exists for eval task {eval_task_id}."
         )
         return
-
-    # mark all previous eval_logger as deleted
-    EvalLogger.objects.filter(
-        observation_span=observation_span,
-        custom_eval_config=custom_eval_config,
-        eval_task_id=eval_task_id,
-    ).update(deleted=True, deleted_at=timezone.now())
 
     try:
         run_params = _process_mapping(
@@ -2022,9 +2043,10 @@ def eval_observation_span_runner(observation_span_id, eval_tags):
                         eval_explanation=f"Error during evaluation: {str(e)}",
                         results_explanation={"reason": str(e)},
                         output_str="ERROR",
-                        error=True,
+                        error=True,  # TODO: remove once status field is fully adopted
                         error_message=f"Error during evaluation: {str(e)}",
                         custom_eval_config=custom_eval_config,
+                        status=EvalLoggerStatus.FAILED,
                     )
 
         # TODO(tech-debt): Setting eval_status on the span is lossy — it collapses
@@ -2302,6 +2324,7 @@ def score_categorical(evals: list, value):
 # and skips the EvalLogger write.
 
 
+# TODO : Use the root span as the anchor for trace-level eval, if the root span is missing then skip it .
 def _find_anchor_span(trace: Trace):
     # Single query: root spans (parent_span_id IS NULL) get rank 0 so they
     # sort first; non-root spans fall back to rank 1. Ties within a rank
@@ -2647,7 +2670,13 @@ def _execute_evaluation_for_trace(
             run_params=run_params,
             feedback_id=feedback_id,
         )
-        EvalLogger.objects.create(**logger_kwargs)
+        logger_kwargs.setdefault("status", EvalLoggerStatus.COMPLETED)
+        if logger_kwargs.get("error"):
+            logger_kwargs["status"] = EvalLoggerStatus.FAILED
+        _upsert_eval_logger(
+            lookup={"eval_task_id": eval_task_id, "trace": trace, "custom_eval_config": custom_eval_config},
+            defaults=logger_kwargs,
+        )
         return
     eval_type_id = eval_template.config.get("eval_type_id")
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
@@ -2817,6 +2846,7 @@ def _execute_evaluation_for_trace(
             "eval_task_id": eval_task_id,
             "custom_eval_config": custom_eval_config,
             "eval_type_id": eval_type_id,
+            "status": EvalLoggerStatus.COMPLETED,
         }
     except Exception as e:
         traceback.print_exc()
@@ -2845,11 +2875,12 @@ def _execute_evaluation_for_trace(
             "eval_explanation": f"Error during evaluation: {error_message}",
             "results_explanation": {"reason": error_message},
             "output_str": "ERROR",
-            "error": True,
+            "error": True,  # TODO: remove once status field is fully adopted
             "error_message": f"Error during evaluation: {error_message}",
             "custom_eval_config": custom_eval_config,
             "eval_type_id": eval_type_id,
             "eval_task_id": eval_task_id,
+            "status": EvalLoggerStatus.FAILED,
         }
         value = "ERROR"
 
@@ -2858,7 +2889,10 @@ def _execute_evaluation_for_trace(
             value, _eval_config_output(custom_eval_config), logger_kwargs
         )
 
-    EvalLogger.objects.create(**logger_kwargs)
+    _upsert_eval_logger(
+        lookup={"eval_task_id": eval_task_id, "trace": trace, "custom_eval_config": custom_eval_config},
+        defaults=logger_kwargs,
+    )
 
 
 def _execute_evaluation_for_session(
@@ -2886,7 +2920,13 @@ def _execute_evaluation_for_session(
             run_params=run_params,
             feedback_id=feedback_id,
         )
-        EvalLogger.objects.create(**logger_kwargs)
+        logger_kwargs.setdefault("status", EvalLoggerStatus.COMPLETED)
+        if logger_kwargs.get("error"):
+            logger_kwargs["status"] = EvalLoggerStatus.FAILED
+        _upsert_eval_logger(
+            lookup={"eval_task_id": eval_task_id, "trace_session": trace_session, "custom_eval_config": custom_eval_config},
+            defaults=logger_kwargs,
+        )
         return
     eval_type_id = eval_template.config.get("eval_type_id")
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
@@ -3053,6 +3093,7 @@ def _execute_evaluation_for_session(
             "eval_task_id": eval_task_id,
             "custom_eval_config": custom_eval_config,
             "eval_type_id": eval_type_id,
+            "status": EvalLoggerStatus.COMPLETED,
         }
     except Exception as e:
         traceback.print_exc()
@@ -3081,11 +3122,12 @@ def _execute_evaluation_for_session(
             "eval_explanation": f"Error during evaluation: {error_message}",
             "results_explanation": {"reason": error_message},
             "output_str": "ERROR",
-            "error": True,
+            "error": True,  # TODO: remove once status field is fully adopted
             "error_message": f"Error during evaluation: {error_message}",
             "custom_eval_config": custom_eval_config,
             "eval_type_id": eval_type_id,
             "eval_task_id": eval_task_id,
+            "status": EvalLoggerStatus.FAILED,
         }
         value = "ERROR"
 
@@ -3094,7 +3136,10 @@ def _execute_evaluation_for_session(
             value, _eval_config_output(custom_eval_config), logger_kwargs
         )
 
-    EvalLogger.objects.create(**logger_kwargs)
+    _upsert_eval_logger(
+        lookup={"eval_task_id": eval_task_id, "trace_session": trace_session, "custom_eval_config": custom_eval_config},
+        defaults=logger_kwargs,
+    )
 
 
 # ── Error helpers ──
@@ -3108,19 +3153,24 @@ def _create_error_eval_logger_for_trace(
     error_message: str,
 ):
     """Persist a target_type='trace' EvalLogger row with error=True."""
-    EvalLogger.objects.create(
-        target_type=EvalTargetType.TRACE.value,
-        trace=trace,
-        observation_span=anchor_span,
-        trace_session=None,
-        output_metadata={"error": error_message},
-        eval_explanation=f"Error during evaluation: {error_message}",
-        results_explanation={"reason": error_message},
-        eval_task_id=eval_task_id,
-        custom_eval_config=custom_eval_config,
-        error=True,
-        error_message=f"Error during evaluation: {error_message}",
-        output_str="ERROR",
+    logger_kwargs = {
+        "target_type": EvalTargetType.TRACE.value,
+        "trace": trace,
+        "observation_span": anchor_span,
+        "trace_session": None,
+        "output_metadata": {"error": error_message},
+        "eval_explanation": f"Error during evaluation: {error_message}",
+        "results_explanation": {"reason": error_message},
+        "eval_task_id": eval_task_id,
+        "custom_eval_config": custom_eval_config,
+        "error": True,  # TODO: remove once status field is fully adopted
+        "error_message": f"Error during evaluation: {error_message}",
+        "output_str": "ERROR",
+        "status": EvalLoggerStatus.FAILED,
+    }
+    _upsert_eval_logger(
+        lookup={"eval_task_id": eval_task_id, "trace": trace, "custom_eval_config": custom_eval_config},
+        defaults=logger_kwargs,
     )
 
 
@@ -3131,19 +3181,24 @@ def _create_error_eval_logger_for_session(
     error_message: str,
 ):
     """Persist a target_type='session' EvalLogger row with error=True."""
-    EvalLogger.objects.create(
-        target_type=EvalTargetType.SESSION.value,
-        trace=None,
-        observation_span=None,
-        trace_session=trace_session,
-        output_metadata={"error": error_message},
-        eval_explanation=f"Error during evaluation: {error_message}",
-        results_explanation={"reason": error_message},
-        eval_task_id=eval_task_id,
-        custom_eval_config=custom_eval_config,
-        error=True,
-        error_message=f"Error during evaluation: {error_message}",
-        output_str="ERROR",
+    logger_kwargs = {
+        "target_type": EvalTargetType.SESSION.value,
+        "trace": None,
+        "observation_span": None,
+        "trace_session": trace_session,
+        "output_metadata": {"error": error_message},
+        "eval_explanation": f"Error during evaluation: {error_message}",
+        "results_explanation": {"reason": error_message},
+        "eval_task_id": eval_task_id,
+        "custom_eval_config": custom_eval_config,
+        "error": True,  # TODO: remove once status field is fully adopted
+        "error_message": f"Error during evaluation: {error_message}",
+        "output_str": "ERROR",
+        "status": EvalLoggerStatus.FAILED,
+    }
+    _upsert_eval_logger(
+        lookup={"eval_task_id": eval_task_id, "trace_session": trace_session, "custom_eval_config": custom_eval_config},
+        defaults=logger_kwargs,
     )
 
 
@@ -3194,7 +3249,7 @@ def evaluate_trace_observe(
         trace_id=trace_id,
         custom_eval_config_id=custom_eval_config_id,
         eval_task_id=eval_task_id,
-    ).exists():
+    ).exclude(status=EvalLoggerStatus.PENDING).exists():
         logger.info(
             f"EvalLogger (target_type=trace) for trace_id {trace_id} and "
             f"custom_eval_config_id {custom_eval_config_id} already exists "
@@ -3320,7 +3375,7 @@ def evaluate_trace_session_observe(
         trace_session_id=session_id,
         custom_eval_config_id=custom_eval_config_id,
         eval_task_id=eval_task_id,
-    ).exists():
+    ).exclude(status=EvalLoggerStatus.PENDING).exists():
         logger.info(
             f"EvalLogger (target_type=session) for session_id {session_id} "
             f"and custom_eval_config_id {custom_eval_config_id} already "

@@ -296,6 +296,9 @@ CREATE TABLE IF NOT EXISTS tracer_eval_logger (
     eval_id Nullable(String),
     eval_task_id Nullable(String),
 
+    -- Status (pending / completed / failed)
+    status LowCardinality(String) DEFAULT 'completed',
+
     -- Soft-delete
     deleted UInt8 DEFAULT 0,
     deleted_at Nullable(DateTime64(3)),
@@ -1880,6 +1883,8 @@ POST_DDL_ALTERS: List[str] = [
     "idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1",
     "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
     "idx_target_type target_type TYPE bloom_filter GRANULARITY 1",
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "status LowCardinality(String) DEFAULT 'completed'",
 ]
 
 

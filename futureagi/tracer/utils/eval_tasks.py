@@ -24,7 +24,12 @@ from tracer.models.eval_task import (
     RowType,
     RunType,
 )
-from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.models.observation_span import (
+    EvalLogger,
+    EvalLoggerStatus,
+    EvalTargetType,
+    ObservationSpan,
+)
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.utils.eval import (
@@ -90,7 +95,9 @@ def compute_drain_state(eval_task, eval_task_logger=None):
     eval_count = eval_task.evals.count() or 1
     expected = dispatched * eval_count
 
-    logger_q = EvalLogger.objects.filter(eval_task_id=eval_task.id, deleted=False)
+    logger_q = EvalLogger.objects.filter(
+        eval_task_id=eval_task.id, deleted=False,
+    ).exclude(status=EvalLoggerStatus.PENDING)
     completed = logger_q.count()
     latest_row_at = (
         logger_q.order_by("-created_at").values_list("created_at", flat=True).first()
@@ -207,6 +214,139 @@ def eval_task_cron():
     logger.info("EVAL TASK CRON COMPLETED")
 
 
+def entity_count_for_filters(row_type: str, parsed_filters) -> int:
+    """Count entities matching *parsed_filters* for the given row_type."""
+    if row_type == RowType.TRACES:
+        return Trace.objects.filter(
+            id__in=ObservationSpan.objects.filter(parsed_filters)
+            .values("trace_id")
+            .distinct()
+        ).count()
+    elif row_type == RowType.SESSIONS:
+        matching_session_ids = (
+            Trace.objects.filter(
+                id__in=ObservationSpan.objects.filter(parsed_filters)
+                .values("trace_id")
+                .distinct()
+            )
+            .exclude(session__isnull=True)
+            .values("session_id")
+            .distinct()
+        )
+        return TraceSession.objects.filter(id__in=matching_session_ids).count()
+    return ObservationSpan.objects.filter(parsed_filters).count()
+
+
+def _entity_fk_for_row_type(row_type: str) -> str:
+    if row_type == RowType.TRACES:
+        return "trace_id"
+    elif row_type == RowType.SESSIONS:
+        return "trace_session_id"
+    return "observation_span_id"
+
+
+def _build_pending_rows_for_spans(
+    entity_ids: list, eval_task_id: str, evals,
+) -> list[EvalLogger]:
+    spans = ObservationSpan.objects.filter(
+        id__in=[str(eid) for eid in entity_ids]
+    ).select_related("trace")
+    return [
+        EvalLogger(
+            observation_span=span,
+            trace=span.trace,
+            target_type=EvalTargetType.SPAN,
+            eval_task_id=eval_task_id,
+            custom_eval_config=eval_config,
+            status=EvalLoggerStatus.PENDING,
+        )
+        for span in spans
+        for eval_config in evals
+    ]
+
+# TODO : Use the root span as the anchor for trace-level eval, if the root span is missing then skip it .
+def _get_anchor_spans_for_traces(traces) -> dict[str, ObservationSpan]:
+    """Batch-fetch one anchor span per trace (root preferred, then earliest)."""
+    from django.db.models import Case, IntegerField, When
+
+    return {
+        str(a.trace_id): a
+        for a in ObservationSpan.objects.filter(trace__in=traces)
+        .annotate(
+            _root_rank=Case(
+                When(parent_span_id__isnull=True, then=0),
+                default=1,
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("trace_id", "_root_rank", "start_time", "id")
+        .distinct("trace_id")
+    }
+
+
+def _build_pending_rows_for_traces(
+    entity_ids: list, eval_task_id: str, evals,
+) -> list[EvalLogger]:
+    traces = Trace.objects.filter(id__in=[str(eid) for eid in entity_ids])
+    anchor_map = _get_anchor_spans_for_traces(traces)
+    return [
+        EvalLogger(
+            trace=trace,
+            observation_span=anchor,
+            target_type=EvalTargetType.TRACE,
+            eval_task_id=eval_task_id,
+            custom_eval_config=eval_config,
+            status=EvalLoggerStatus.PENDING,
+        )
+        for trace in traces
+        for eval_config in evals
+        if (anchor := anchor_map.get(str(trace.id)))
+    ]
+
+
+def _build_pending_rows_for_sessions(
+    entity_ids: list, eval_task_id: str, evals,
+) -> list[EvalLogger]:
+    sessions = TraceSession.objects.filter(
+        id__in=[str(eid) for eid in entity_ids]
+    )
+    return [
+        EvalLogger(
+            trace_session=session,
+            target_type=EvalTargetType.SESSION,
+            eval_task_id=eval_task_id,
+            custom_eval_config=eval_config,
+            status=EvalLoggerStatus.PENDING,
+        )
+        for session in sessions
+        for eval_config in evals
+    ]
+
+
+def _precreate_pending_eval_loggers(
+    eval_task: EvalTask,
+    entity_ids: list,
+    evals,
+) -> None:
+    """Pre-create PENDING EvalLogger rows so the UI can show loading state
+    and the next dispatcher tick deduplicates correctly."""
+    eval_task_id = str(eval_task.id)
+
+    if eval_task.row_type in (RowType.SPANS, RowType.VOICE_CALLS):
+        rows = _build_pending_rows_for_spans(entity_ids, eval_task_id, evals)
+    elif eval_task.row_type == RowType.TRACES:
+        rows = _build_pending_rows_for_traces(entity_ids, eval_task_id, evals)
+    elif eval_task.row_type == RowType.SESSIONS:
+        rows = _build_pending_rows_for_sessions(entity_ids, eval_task_id, evals)
+    else:
+        raise ValueError(
+            f"Unhandled row_type {eval_task.row_type!r} on EvalTask {eval_task.id}"
+        )
+
+    if rows:
+        EvalLogger.objects.bulk_create(rows, ignore_conflicts=True, batch_size=500)
+
+
 @temporal_activity(max_retries=0, time_limit=3600, queue="tasks_s")
 def process_eval_task(eval_task_id: str):
     try:
@@ -233,7 +373,7 @@ def process_eval_task(eval_task_id: str):
         eval_task_logger = EvalTaskLogger.objects.filter(eval_task=eval_task).first()
         if not eval_task_logger:
             eval_task_logger = EvalTaskLogger.objects.create(
-                eval_task=eval_task, status=EvalTaskStatus.RUNNING, spanids_processed=[]
+                eval_task=eval_task, status=EvalTaskStatus.RUNNING
             )
 
         filters = Q()
@@ -244,11 +384,7 @@ def process_eval_task(eval_task_id: str):
         # row_type. The rest of the function operates on ``entity_qs``
         # (a Django queryset of the entities we'll evaluate) and
         # ``dispatch`` (the activity to fan out to). The span path stays
-        # the original behaviour. The ``spanids_processed`` JSONField
-        # stores the processed entity ids generically — its name is
-        # historical (it once held only span ids); a future rename to
-        # ``processed_target_ids`` is intentionally deferred so this PR
-        # stays focused on dispatcher behaviour.
+        # the original behaviour.
         if eval_task.row_type == RowType.TRACES:
             # A trace is in scope iff at least one of its spans matches
             # the existing span-level filters.
@@ -300,10 +436,8 @@ def process_eval_task(eval_task_id: str):
         total_spans_count = entity_qs.count()
 
         if eval_task.run_type == RunType.HISTORICAL and span_limit is not None:
-            # Use ``offset`` (dedup-set size recorded below, before the
-            # ``MAX_STORED_IDS`` truncation) instead of
-            # ``len(spanids_processed)``. The stored list is capped, so its
-            # length would under-report progress once the cap is hit.
+            # Use ``offset`` to track progress instead of counting
+            # processed entities directly.
             runned_spans_count = eval_task_logger.offset or 0
             sample_size = int((sampling_rate / 100) * total_spans_count)
 
@@ -409,26 +543,20 @@ def process_eval_task(eval_task_id: str):
             eval_task_logger = EvalTaskLogger.objects.select_for_update().get(
                 id=eval_task_logger.id
             )
-            spanids_processed = (
-                eval_task_logger.spanids_processed
-                if eval_task_logger.spanids_processed
-                else []
-            )
-
             if eval_task.run_type == RunType.CONTINUOUS:
                 filters = filters & Q(created_at__gte=eval_task_logger.updated_at)
 
-            if len(spanids_processed) > 0:
-                # ``spanids_processed`` is stored as strings; trace/session
-                # ids are UUIDs and Django coerces on ``id__in`` lookup.
-                # The field name is historical (it once held only span ids);
-                # for row_type=traces/sessions it now holds trace/session ids.
-                pending_entities = entity_qs.only("id").exclude(
-                    id__in=spanids_processed
+            entity_fk = _entity_fk_for_row_type(eval_task.row_type)
+            already_dispatched = (
+                EvalLogger.objects.filter(
+                    eval_task_id=str(eval_task.id), deleted=False,
                 )
-            else:
-                pending_entities = entity_qs.only("id")
-
+                .values(entity_fk)
+                .distinct()
+            )
+            pending_entities = entity_qs.only("id").exclude(
+                id__in=already_dispatched
+            )
 
             filtered_spans = pending_entities.values_list("id", flat=True)
 
@@ -468,32 +596,16 @@ def process_eval_task(eval_task_id: str):
             if cnt is not None:
                 filtered_spans = list(filtered_spans[:cnt])
 
-            # Cap ``spanids_processed`` so the JSONField doesn't grow unbounded
-            # for long-running tasks. Record the dedup-set size in ``offset``
-            # BEFORE truncation so completion checks reflect actual progress
-            # (the in-DB list only retains the most recent ids for future
-            # dedup).
-            #
-            # Stringify the entity ids before storing. ObservationSpan.id is
-            # already a CharField (str), but Trace.id and TraceSession.id are
-            # UUIDField — psycopg's JSONField adapter can't serialize raw
-            # UUID objects, so we coerce here. Existing entries from
-            # span-only tasks are already strings, so the coercion is
-            # idempotent.
-            MAX_STORED_IDS = 10000
             new_ids = [str(eid) for eid in filtered_spans]
-            updated_spanids_processed = list(set(spanids_processed + new_ids))
-            eval_task_logger.offset = len(updated_spanids_processed)
-            if len(updated_spanids_processed) > MAX_STORED_IDS:
-                updated_spanids_processed = updated_spanids_processed[-MAX_STORED_IDS:]
-            eval_task_logger.spanids_processed = (
-                updated_spanids_processed  # todo: add many to many in this
-            )
-            eval_task_logger.save(
-                update_fields=["spanids_processed", "offset", "updated_at"]
-            )
+            eval_task_logger.offset = (eval_task_logger.offset or 0) + len(new_ids)
+            eval_task_logger.save(update_fields=["offset", "updated_at"])
 
         evals = eval_task.evals.all()
+
+        if new_ids:
+            _precreate_pending_eval_loggers(
+                eval_task, filtered_spans, evals,
+            )
 
         for entity_id in filtered_spans:
             for eval_config in evals:
@@ -509,16 +621,22 @@ def process_eval_task(eval_task_id: str):
 
 
 @temporal_activity(max_retries=0, time_limit=3600, queue="tasks_s")
-def run_for_processed_spans(span_ids: list, eval_ids: list, eval_task_id: str):
+def run_for_processed_spans(entity_ids: list, eval_ids: list, eval_task_id: str):
     try:
         eval_task = EvalTask.objects.get(id=eval_task_id)
         evals = eval_task.evals.filter(id__in=eval_ids)
-        spans = ObservationSpan.objects.filter(id__in=span_ids)
 
-        for span in spans:
+        if eval_task.row_type == RowType.TRACES:
+            dispatch = evaluate_trace_observe
+        elif eval_task.row_type == RowType.SESSIONS:
+            dispatch = evaluate_trace_session_observe
+        else:
+            dispatch = evaluate_observation_span_observe
+
+        for entity_id in entity_ids:
             for eval_config in evals:
-                evaluate_observation_span_observe.delay(
-                    str(span.id),
+                dispatch.delay(
+                    str(entity_id),
                     str(eval_config.id),
                     str(eval_task.id),
                 )
