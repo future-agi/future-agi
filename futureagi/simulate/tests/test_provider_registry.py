@@ -216,7 +216,9 @@ class TestCallDirection:
             "deepgram": ({IN, OUT}, {IN}),         # no native outbound (BYO-SIP only)
             "agora": ({IN, OUT}, {OUT}),          # outbound wired via AgoraOutboundDialer (ConvAI telephony)
             "pipecat": ({IN, OUT}, {IN, OUT}),     # reuses bridge → outbound = speaking-order
-            "bland": ({IN, OUT}, {OUT}),          # outbound-first; BlandOutboundDialer
+            # Inbound flipped 2026-06-10: a Bland inbound number answers any
+            # PSTN caller, so the neutral SIP path reaches it (TH-5683).
+            "bland": ({IN, OUT}, {IN, OUT}),
             "twilio": ({IN, OUT}, {IN, OUT}),     # SIP inbound + TwilioOutboundDialer
             "futureagi": (set(), set()),          # internal chat
         }

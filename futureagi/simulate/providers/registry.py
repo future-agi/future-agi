@@ -209,9 +209,13 @@ _SPECS: tuple[ProviderSpec, ...] = (
         roles=frozenset({Role.AGENT_PLATFORM}),
         transport=Transport.SIP, credential_shape=CredentialShape.API_KEY_ASSISTANT,
         observability_key="bland", status=Status.PLANNED,
-        # Bland is outbound-first: outbound now wired via BlandOutboundDialer
-        # (/v1/calls). Inbound (receiving on a Bland number) is not wired yet.
-        supported_directions=_BOTH, implemented_directions=_OUT,
+        # Outbound wired via BlandOutboundDialer (/v1/calls). INBOUND: a Bland
+        # agent with an inbound number ($15/mo purchase or BYO-Twilio/SIP)
+        # answers any PSTN caller, so the provider-neutral SIP path (dial the
+        # agent's contact_number) reaches it with NO new code — capability
+        # research 2026-06-10 (TH-5683). Live verification still needs an
+        # account with a configured pathway + inbound number.
+        supported_directions=_BOTH, implemented_directions=_BOTH,
     ),
     # --- Non-agent-platform roles ---
     ProviderSpec(

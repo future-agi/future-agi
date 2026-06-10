@@ -242,25 +242,29 @@ class AgoraOutboundDialer(OutboundDialer):
             raise OutboundDialError(
                 "AGORA_APP_ID env var is required for Agora outbound calls"
             )
+        # Endpoint + body per the official agora-agents-python SDK (TH-5642
+        # capability research; the docs restructure 404s, the SDK pins the
+        # contract): POST .../projects/{appid}/call with `pipeline_id` (the
+        # ConvAI pipeline = the agent under test) and a `sip` object
+        # {to_number, from_number[, rtc_uid, rtc_token]}.
         url = os.getenv(
             "AGORA_OUTBOUND_CALL_URL",
-            f"{self.BASE_URL}/projects/{app_id}/sip/outbound",
+            f"{self.BASE_URL}/projects/{app_id}/call",
         )
-        # The agent + SIP gateway share a per-call RTC channel.
-        channel = (metadata or {}).get("channel") or f"sim-{to_phone_number}"
+        meta = metadata or {}
+        sip: dict = {
+            "to_number": to_phone_number,
+            "from_number": from_phone_number,
+        }
+        if meta.get("rtc_uid"):
+            sip["rtc_uid"] = meta["rtc_uid"]
+        if meta.get("rtc_token"):
+            sip["rtc_token"] = meta["rtc_token"]
         resp = requests.post(
             url,
             headers={"Content-Type": "application/json"},
             auth=(key, secret),
-            json={
-                "name": channel,
-                "sip": {
-                    "called_number": to_phone_number,
-                    "caller_id": from_phone_number,
-                },
-                "properties": {"channel": channel, "agent_id": assistant_id},
-                "metadata": metadata or {},
-            },
+            json={"pipeline_id": assistant_id, "sip": sip},
             timeout=REQUEST_TIMEOUT,
         )
         if resp.status_code >= 400:

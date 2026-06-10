@@ -18,8 +18,9 @@ def test_registry_matrix_covers_every_provider():
     assert ("vapi", "voice", "outbound") in by
     assert ("deepgram", "voice", "inbound") in by
     assert ("deepgram", "voice", "outbound") not in by  # deepgram inbound-only
-    assert ("bland", "voice", "outbound") in by         # bland outbound-only
-    assert ("bland", "voice", "inbound") not in by
+    assert ("bland", "voice", "outbound") in by
+    # Inbound implemented via the neutral SIP path (registry flip, TH-5683).
+    assert ("bland", "voice", "inbound") in by
 
 
 @pytest.mark.unit

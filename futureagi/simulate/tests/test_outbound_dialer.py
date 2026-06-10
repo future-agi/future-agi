@@ -77,11 +77,14 @@ def test_agora_outbound_shape_basic_auth_and_agent_id(monkeypatch):
     )
     assert out == {"id": "agt_9"}
     call = fake.calls[0]
-    assert "app-123" in call["url"]               # app id in path
+    # Endpoint + body per the official agora-agents-python SDK (TH-5642
+    # capability research): POST .../projects/{appid}/call with pipeline_id +
+    # sip.{to_number, from_number}.
+    assert call["url"].endswith("/projects/app-123/call")
     assert call["auth"] == ("cust_key", "cust_secret")  # Basic auth, not header key
-    assert call["json"]["sip"]["called_number"] == "+15550000099"
-    assert call["json"]["sip"]["caller_id"] == "+15550000001"
-    assert call["json"]["properties"]["agent_id"] == "studio-agent-1"
+    assert call["json"]["pipeline_id"] == "studio-agent-1"
+    assert call["json"]["sip"]["to_number"] == "+15550000099"
+    assert call["json"]["sip"]["from_number"] == "+15550000001"
 
 
 @pytest.mark.unit
