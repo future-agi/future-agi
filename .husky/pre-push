@@ -32,3 +32,33 @@ if [[ ! $branch_name =~ $branch_regex ]]; then
 fi
 
 echo "✅ Branch name '$branch_name' is valid"
+
+# TLA+ model checking — runs on any TLA spec that has a .cfg file.
+# Skips gracefully if tla2tools.jar is not installed.
+TLC_JAR="${TLC_JAR:-$HOME/.local/share/tla2tools.jar}"
+if [ ! -f "$TLC_JAR" ]; then
+  TLC_JAR="$(find /usr/local /opt/homebrew ~/.local -name 'tla2tools.jar' 2>/dev/null | head -1)"
+fi
+
+if [ -z "$TLC_JAR" ] || [ ! -f "$TLC_JAR" ]; then
+  echo "⚠️  tla2tools.jar not found — skipping TLA+ check (install to ~/.local/share/tla2tools.jar)"
+else
+  echo "🔍 Running TLA+ model checking..."
+  TLA_DIR="$(git rev-parse --show-toplevel)/docs/tla"
+  FAILED=0
+  for cfg in "$TLA_DIR"/*.cfg; do
+    spec_name="$(basename "${cfg%.cfg}")"
+    if [ ! -f "$TLA_DIR/${spec_name}.tla" ]; then continue; fi
+    output=$(cd "$TLA_DIR" && java -XX:+UseParallelGC -jar "$TLC_JAR" \
+        -config "${spec_name}.cfg" -deadlock -nowarning "$spec_name" 2>&1)
+    if echo "$output" | grep -q "No error"; then
+      echo "  ✅ ${spec_name}: no errors"
+    else
+      echo "  ❌ ${spec_name}: TLC found errors — run manually:"
+      echo "     cd docs/tla && java -jar $TLC_JAR -config ${spec_name}.cfg -deadlock $spec_name"
+      FAILED=1
+    fi
+    rm -rf "$TLA_DIR/states/" "$TLA_DIR/${spec_name}_TTrace_"*.tla "$TLA_DIR/${spec_name}_TTrace_"*.bin 2>/dev/null
+  done
+  [ $FAILED -eq 0 ] && echo "✅ TLA+ model checking passed" || exit 1
+fi
