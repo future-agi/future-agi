@@ -1,5 +1,6 @@
 import json
 import uuid
+from typing import Any
 
 import structlog
 from django.db import close_old_connections
@@ -28,7 +29,7 @@ from model_hub.models.error_localizer_model import (
     ErrorLocalizerStatus,
     ErrorLocalizerTask,
 )
-from model_hub.models.evals_metric import UserEvalMetric
+from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.models.evaluation import Evaluation
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.views.develop_optimiser import DevelopOptimizer
@@ -651,28 +652,6 @@ def _get_input_type(input):
     return input_type
 
 
-def _eval_passed(value) -> bool:
-    """
-    Determine if an eval result represents a passing evaluation.
-    Returns True if the eval passed (error localizer should be skipped).
-    """
-    if value is None:
-        return False
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value >= 0.8
-    if isinstance(value, str):
-        return value.lower() in ("passed", "pass", "true", "1")
-    if isinstance(value, list):
-        return all(_eval_passed(v) for v in value) if value else False
-    if isinstance(value, dict):
-        inner = value.get("result") or value.get("output")
-        if inner is not None:
-            return _eval_passed(inner)
-    return False
-
-
 def _validate_error_localizer_fields(rule_prompt, input_data, eval_result):
     """
     Validate required fields for error localization.
@@ -684,7 +663,7 @@ def _validate_error_localizer_fields(rule_prompt, input_data, eval_result):
         missing_fields.append("rule_prompt")
     if not input_data:
         missing_fields.append("input_data")
-    if not eval_result:
+    if eval_result is None:
         missing_fields.append("eval_result")
 
     if missing_fields:
@@ -693,6 +672,59 @@ def _validate_error_localizer_fields(rule_prompt, input_data, eval_result):
         return ErrorLocalizerStatus.FAILED, error_msg
 
     return ErrorLocalizerStatus.PENDING, ""
+
+
+def _has_localized_segments(error_analysis: dict | list | None) -> bool:
+    if not error_analysis:
+        return False
+    if isinstance(error_analysis, dict):
+        return any(isinstance(v, list) and v for v in error_analysis.values())
+    if isinstance(error_analysis, list):
+        return bool(error_analysis)
+    return True
+
+
+def _extract_eval_value(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    if isinstance(value.get("failure"), bool):
+        return not value["failure"]
+    for key in ("score", "result", "output", "choice"):
+        if value.get(key) is not None:
+            return value[key]
+    return value
+
+
+def should_run_error_localizer(value: Any, eval_template: EvalTemplate | None) -> tuple[bool, str]:
+    if eval_template is None:
+        return False, "Error localization skipped — no eval template is attached to this evaluation."
+    if getattr(eval_template, "eval_type", "") == "code":
+        return False, "Error localization skipped — not applicable to code-type evals."
+    if getattr(eval_template, "template_type", "single") == "composite":
+        return False, "Error localization skipped — composite evals are not yet supported."
+
+    from model_hub.utils.scoring import determine_pass_fail, normalize_score
+
+    output_type = getattr(eval_template, "output_type_normalized", None) or "percentage"
+    choice_scores = getattr(eval_template, "choice_scores", None) or {}
+    score = normalize_score(_extract_eval_value(value), output_type, choice_scores)
+
+    threshold = getattr(eval_template, "pass_threshold", None)
+    threshold = float(threshold) if threshold is not None else 0.5
+
+    decision = determine_pass_fail(score, threshold)
+    if output_type == "pass_fail":
+        if decision:
+            return False, "Error localization skipped — the evaluation passed."
+        return True, "The evaluation failed."
+    if decision:
+        return False, (
+            f"Error localization skipped — the evaluation passed "
+            f"(score {score:.2f}, threshold {threshold:.2f})."
+        )
+    return True, (
+        f"The evaluation failed (score {score:.2f}, threshold {threshold:.2f})."
+    )
 
 
 def trigger_error_localization_for_column(
@@ -871,12 +903,6 @@ def _get_input_keys(input_data):
 
 def trigger_error_localization_for_standalone(evaluation: Evaluation):
     try:
-        if _eval_passed(evaluation.data):
-            logger.info(
-                f"Skipping error localization for passing eval {evaluation.id}"
-            )
-            return None
-
         input_keys = _get_input_keys(evaluation.input_data)
         input_types = _get_input_type(evaluation.input_data)
 
@@ -1039,10 +1065,14 @@ def trigger_error_localization_for_simulate(
             rule_prompt, input_data_dict, value
         )
 
+        source_id = uuid.uuid5(
+            uuid.NAMESPACE_OID,
+            f"simulate:{call_execution.id}:{eval_config.id}",
+        )
         task = ErrorLocalizerTask(
             eval_template=eval_template,
             source=ErrorLocalizerSource.SIMULATE,
-            source_id=call_execution.id,
+            source_id=source_id,
             input_data=input_data_dict,
             input_keys=input_keys,
             input_types=input_type_dict,
@@ -1050,9 +1080,10 @@ def trigger_error_localization_for_simulate(
             eval_explanation=eval_explanation,
             rule_prompt=rule_prompt,
             organization=call_execution.test_execution.run_test.organization,
+            workspace=workspace,
             metadata={
                 "log_id": log_id,
-                # "call_execution_id": str(call_execution.id),
+                "call_execution_id": str(call_execution.id),
                 "eval_config_id": str(eval_config.id),
             },
             status=initial_status,
@@ -1075,6 +1106,24 @@ def process_single_error_localization(task_id):
     try:
         close_old_connections()
         task = ErrorLocalizerTask.objects.get(id=task_id)
+
+        should_run, reason = should_run_error_localizer(
+            task.eval_result,
+            task.eval_template,
+        )
+        if not should_run:
+            logger.info(
+                "error_localizer_skipped",
+                task_id=str(task.id),
+                source=str(task.source),
+                source_id=str(task.source_id),
+                eval_template_id=(
+                    str(task.eval_template_id) if task.eval_template_id else None
+                ),
+                reason=reason,
+            )
+            task.mark_as_skipped(reason)
+            return
 
         # Make sure the task is marked as running
         if task.status != ErrorLocalizerStatus.RUNNING:
@@ -1126,12 +1175,9 @@ def process_single_error_localization(task_id):
         try:
             localizer = ErrorLocalizer(
                 eval_name=task.eval_template.name,
-                choices=(
-                    task.eval_template.choices if task.eval_template.choices else []
-                ),
+                choices=task.eval_template.choices or [],
                 rule_prompt=task.rule_prompt,
                 input=task.input_data,
-                input_keys=task.input_keys,
                 input_type=task.input_types,
                 evaluation_result=task.eval_result,
                 evaluation_explanation=task.eval_explanation,
@@ -1149,18 +1195,28 @@ def process_single_error_localization(task_id):
                 refund_cost_for_api_call(api_call_log_row)
             return
 
-        # Check if we got valid results
         if not error_analysis:
-            logger.warning(
-                f"Error localization returned empty results for cell {task.source_id}"
+            skip_reason = (
+                getattr(localizer, "skip_reason", None)
+                or "Error localization did not produce any results."
             )
-            task.mark_as_skipped("Error localization returned empty results")
+            logger.warning(
+                "error_localizer_empty_results",
+                source_id=str(task.source_id),
+                reason=skip_reason,
+            )
+            task.mark_as_skipped(skip_reason)
             if refund_cost_for_api_call is not None:
                 refund_cost_for_api_call(api_call_log_row)
             return
 
         # Update the task with the results
         task.mark_as_completed(error_analysis, selected_input_key)
+        if not _has_localized_segments(error_analysis):
+            task.error_message = (
+                "No part of the input could be pinned as the cause of this failure."
+            )
+            task.save(update_fields=["error_message"])
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
         api_call_log_row.save(update_fields=["status"])
 

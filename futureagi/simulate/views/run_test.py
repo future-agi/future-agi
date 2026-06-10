@@ -136,6 +136,7 @@ from simulate.serializers.test_execution import (
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
+    build_eval_configs_map,
     run_new_evals_on_call_executions_task,
 )
 from simulate.tasks.eval_summary_tasks import run_eval_summary_task
@@ -3212,7 +3213,7 @@ class CallExecutionDetailView(APIView):
                 call_execution,
                 context={
                     "request": request,
-                    "eval_configs": {},
+                    "eval_configs": build_eval_configs_map(call_execution),
                     "scenarios": {},
                     "row_session_id_map": row_session_id_map,
                     "rows_map": {},
@@ -4176,14 +4177,11 @@ class CallExecutionErrorLocalizerTasksView(APIView):
                 test_execution__run_test__deleted=False,
             )
 
-            # Find error localizer tasks for this call execution
-            # Filter by source_id (call_execution_id) and eval_config_id if provided
             query_filter = {
                 "source": ErrorLocalizerSource.SIMULATE,
-                "source_id": call_execution.id,
+                "metadata__call_execution_id": str(call_execution.id),
             }
 
-            # If eval_config_id is provided, filter by it in metadata
             if eval_config_id:
                 query_filter["metadata__eval_config_id"] = str(eval_config_id)
 

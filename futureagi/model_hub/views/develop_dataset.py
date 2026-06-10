@@ -7532,8 +7532,11 @@ class StartEvalsProcess(APIView):
                         deleted=False,
                     ).first()
                     if reason_col and str(reason_col.id) not in column_order:
-                        eval_idx = column_order.index(str(column.id))
-                        column_order.insert(eval_idx + 1, str(reason_col.id))
+                        if str(column.id) in column_order:
+                            eval_idx = column_order.index(str(column.id))
+                            column_order.insert(eval_idx + 1, str(reason_col.id))
+                        else:
+                            column_order.extend([str(column.id), str(reason_col.id)])
                         column_order_changed = True
 
                 Cell.objects.filter(

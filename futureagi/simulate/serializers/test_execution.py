@@ -676,6 +676,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "reason": eval_data.get("reason", ""),
                     "type": eval_data.get("output_type", ""),
+                    "template_type": (
+                        getattr(eval_config.eval_template, "template_type", None)
+                        if eval_config and getattr(eval_config, "eval_template", None)
+                        else None
+                    ),
                     "visible": True,  # Default to visible
                     "error": is_error,
                     "status": eval_data.get(
@@ -683,10 +688,52 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
-                    "error_localizer": (
-                        eval_config.error_localizer if eval_config else False
+                    "error_localizer": bool(
+                        eval_config
+                        and (
+                            eval_config.error_localizer
+                            or (eval_config.config or {}).get(
+                                "error_localizer_enabled"
+                            )
+                        )
                     ),
                 }
+
+        ce_id = getattr(obj, "id", None)
+        enabled_ids = [k for k, m in metrics.items() if m.get("error_localizer")]
+        if ce_id and enabled_ids:
+            from model_hub.models.error_localizer_model import (
+                ErrorLocalizerSource,
+                ErrorLocalizerTask,
+            )
+
+            request = (self.context or {}).get("request")
+            workspace = getattr(request, "workspace", None) if request else None
+            el_qs = ErrorLocalizerTask.objects.filter(
+                source=ErrorLocalizerSource.SIMULATE,
+                metadata__call_execution_id=str(ce_id),
+                metadata__eval_config_id__in=enabled_ids,
+            )
+            if workspace is not None:
+                el_qs = el_qs.filter(workspace=workspace)
+            el_tasks = el_qs.only(
+                "metadata",
+                "status",
+                "error_analysis",
+                "selected_input_key",
+                "input_data",
+                "input_types",
+            )
+            for task in el_tasks:
+                cfg_id = (task.metadata or {}).get("eval_config_id")
+                metric = metrics.get(cfg_id)
+                if not metric:
+                    continue
+                metric["error_analysis"] = task.error_analysis or None
+                metric["error_localizer_status"] = task.status
+                metric["selected_input_key"] = task.selected_input_key
+                metric["input_data"] = task.input_data
+                metric["input_types"] = task.input_types
 
         return metrics
 
@@ -1290,11 +1337,14 @@ class CallExecutionSerializer(serializers.ModelSerializer):
             if not obj_id:
                 return []
 
-            # Find error localizer tasks for this call execution
-            # The source_id format is "call_execution_id_eval_config_id"
+            request = (self.context or {}).get("request")
+            workspace = getattr(request, "workspace", None) if request else None
             call_execution_tasks = ErrorLocalizerTask.objects.filter(
-                source=ErrorLocalizerSource.SIMULATE.value, source_id=str(obj_id)
+                source=ErrorLocalizerSource.SIMULATE.value,
+                metadata__call_execution_id=str(obj_id),
             )
+            if workspace is not None:
+                call_execution_tasks = call_execution_tasks.filter(workspace=workspace)
 
             error_localizer_data = []
             for task in call_execution_tasks:
