@@ -8,11 +8,16 @@ Validates:
   5. Bridge tools are discoverable in the global registry.
 """
 
+import os
+import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
+from django.test import override_settings
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 from rest_framework import serializers as drf_serializers
+from rest_framework.decorators import action
 
 from ai_tools.drf_bridge import (
     DRFBridgeTool,
@@ -20,7 +25,9 @@ from ai_tools.drf_bridge import (
     _build_drf_request,
     _format_result_for_llm,
     _serializer_to_pydantic,
+    _strict_registration,
     _unwrap_response,
+    expose_to_mcp,
     viewset_tool,
 )
 from ai_tools.registry import ToolRegistry, registry
@@ -412,6 +419,498 @@ class TestExposeToMCPDecorator:
         """Old bridge_ prefix tools should be gone."""
         old = [t for t in registry.list_all() if t.name.startswith("bridge_")]
         assert len(old) == 0, f"Found old bridge tools: {[t.name for t in old]}"
+
+
+# --- Phase 2A @action bridge machinery tests (A1-A8) ---
+
+
+class _NoteSerializer(drf_serializers.Serializer):
+    """Create-shaped model serializer used as serializer_class bait."""
+
+    name = drf_serializers.CharField(required=True, help_text="Name")
+    body = drf_serializers.CharField(required=False, help_text="Body")
+
+
+class _CustomActionViewSet:
+    """Plain class with real DRF @action metadata for derivation tests."""
+
+    serializer_class = _NoteSerializer
+
+    @action(detail=True, methods=["post"])
+    def do_submit(self, request, pk=None):
+        """Submit the item for processing.
+
+        Longer detail paragraph that must NOT end up in the description.
+        """
+
+    @action(detail=True, methods=["get"])
+    def get_variables(self, request, pk=None):
+        """Return the variables of one item."""
+
+    @action(detail=False, methods=["get"])
+    def next_item(self, request, queue_id=None):
+        """Get the next pending item in the queue."""
+
+
+class TestActionMetadataDerivation:
+    """A1: method/detail derived from DRF @action; config overrides win."""
+
+    def _register(self, tools):
+        fresh = ToolRegistry()
+        with patch("ai_tools.registry.registry", fresh):
+            expose_to_mcp(category="test", tools=tools)(_CustomActionViewSet)
+        return fresh
+
+    def test_derives_method_and_detail_from_drf_action(self):
+        fresh = self._register(
+            {"do_submit": {"name": "submit_item_x", "query_params": {"note": "Note."}}}
+        )
+        tool = fresh.get("submit_item_x")
+        assert tool is not None
+        assert tool.binding.method == "POST"  # derived from methods=["post"]
+        assert tool.binding.detail is True  # derived from detail=True
+
+    def test_config_overrides_derived_metadata(self):
+        fresh = self._register(
+            {
+                "do_submit": {
+                    "name": "submit_item_x",
+                    "method": "GET",
+                    "detail": False,
+                    "query_params": {"note": "Note."},
+                }
+            }
+        )
+        tool = fresh.get("submit_item_x")
+        assert tool.binding.method == "GET"
+        assert tool.binding.detail is False
+
+    def test_crud_actions_keep_static_map_defaults(self):
+        class PlainViewSet:
+            serializer_class = _NoteSerializer
+
+            def list(self, request):
+                pass
+
+        fresh = ToolRegistry()
+        with patch("ai_tools.registry.registry", fresh):
+            expose_to_mcp(category="test", tools=["list"])(PlainViewSet)
+        tool = fresh.list_all()[0]
+        assert tool.binding.method == "GET"
+        assert tool.binding.detail is False
+
+
+class TestRegistrationValidation:
+    """A2: the three registration-time ValueError rules (raise under pytest)."""
+
+    def test_unknown_tools_key_raises(self):
+        with pytest.raises(ValueError, match="probably a typo"):
+            with patch("ai_tools.registry.registry", ToolRegistry()):
+                expose_to_mcp(
+                    category="test",
+                    tools={"definitely_not_an_action": {"name": "get_thing_x"}},
+                )(_CustomActionViewSet)
+
+    def test_custom_action_without_name_raises(self):
+        with pytest.raises(ValueError, match="explicit 'name'"):
+            with patch("ai_tools.registry.registry", ToolRegistry()):
+                expose_to_mcp(category="test", tools={"get_variables": {}})(
+                    _CustomActionViewSet
+                )
+
+    def test_write_action_without_schema_raises(self):
+        # do_submit has no @validated_request/yasg serializer and no
+        # query_params; serializer_class must NOT count (A3) — so it raises.
+        with pytest.raises(ValueError, match="no resolvable serializer"):
+            with patch("ai_tools.registry.registry", ToolRegistry()):
+                expose_to_mcp(
+                    category="test", tools={"do_submit": {"name": "submit_item_x"}}
+                )(_CustomActionViewSet)
+
+    def test_http_verb_keys_still_allowed_without_name(self):
+        class VerbAPIView:
+            def get(self, request):
+                """List things via APIView verb handler."""
+
+        fresh = ToolRegistry()
+        with patch("ai_tools.registry.registry", fresh):
+            expose_to_mcp(category="test", tools=["get"])(VerbAPIView)
+        assert fresh.count() == 1
+
+
+class TestSerializerFallbackKilled:
+    """A3: serializer_class never leaks into custom action schemas."""
+
+    def test_custom_write_with_query_params_excludes_class_serializer(self):
+        fresh = ToolRegistry()
+        with patch("ai_tools.registry.registry", fresh):
+            expose_to_mcp(
+                category="test",
+                tools={
+                    "do_submit": {
+                        "name": "submit_item_x",
+                        "query_params": {"note": "Optional note."},
+                    }
+                },
+            )(_CustomActionViewSet)
+        props = fresh.get("submit_item_x").input_schema.get("properties", {})
+        # serializer_class fields must NOT leak in
+        assert "name" not in props
+        assert "body" not in props
+        assert "note" in props
+        assert "id" in props  # detail pk injection
+
+    def test_custom_detail_get_defaults_to_pk_only_input(self):
+        fresh = ToolRegistry()
+        with patch("ai_tools.registry.registry", fresh):
+            expose_to_mcp(
+                category="test",
+                tools={
+                    "get_variables": {
+                        "name": "get_item_variables_x",
+                        "pk_field": "item_id",
+                    }
+                },
+            )(_CustomActionViewSet)
+        tool = fresh.get("get_item_variables_x")
+        assert tool.binding.method == "GET"
+        assert tool.binding.detail is True
+        schema = tool.input_schema
+        assert set(schema.get("properties", {})) == {"item_id"}
+        assert schema.get("required", []) == ["item_id"]
+
+
+class TestDescriptionDerivation:
+    """A4: custom action docstring first paragraph; config overrides."""
+
+    def test_action_docstring_first_paragraph_used(self):
+        fresh = ToolRegistry()
+        with patch("ai_tools.registry.registry", fresh):
+            expose_to_mcp(
+                category="test",
+                tools={
+                    "do_submit": {
+                        "name": "submit_item_x",
+                        "query_params": {"note": "Note."},
+                    }
+                },
+            )(_CustomActionViewSet)
+        desc = fresh.get("submit_item_x").description
+        assert desc == "Submit the item for processing."
+        assert "must NOT end up" not in desc
+
+    def test_config_description_overrides_docstring(self):
+        fresh = ToolRegistry()
+        with patch("ai_tools.registry.registry", fresh):
+            expose_to_mcp(
+                category="test",
+                tools={
+                    "do_submit": {
+                        "name": "submit_item_x",
+                        "description": "Explicit description wins.",
+                        "query_params": {"note": "Note."},
+                    }
+                },
+            )(_CustomActionViewSet)
+        assert fresh.get("submit_item_x").description == "Explicit description wins."
+
+
+class TestPathKwargs:
+    """A5: extra URL path kwargs — schema injection + execute() routing."""
+
+    def test_path_kwargs_become_required_fields(self):
+        fresh = ToolRegistry()
+        with patch("ai_tools.registry.registry", fresh):
+            expose_to_mcp(
+                category="test",
+                tools={
+                    "next_item": {
+                        "name": "get_next_item_x",
+                        "path_kwargs": {
+                            "queue_id": {
+                                "description": "Queue UUID.",
+                                "id_source": "list_annotation_queues",
+                            }
+                        },
+                    }
+                },
+            )(_CustomActionViewSet)
+        tool = fresh.get("get_next_item_x")
+        schema = tool.input_schema
+        assert "queue_id" in schema.get("properties", {})
+        assert "queue_id" in schema.get("required", [])
+        assert "list_annotation_queues" in schema["properties"]["queue_id"].get(
+            "description", ""
+        )
+        assert tool.binding.path_kwargs == {
+            "queue_id": {
+                "description": "Queue UUID.",
+                "id_source": "list_annotation_queues",
+            }
+        }
+
+    def test_path_kwargs_list_form_normalized(self):
+        fresh = ToolRegistry()
+        with patch("ai_tools.registry.registry", fresh):
+            expose_to_mcp(
+                category="test",
+                tools={
+                    "next_item": {
+                        "name": "get_next_item_x",
+                        "path_kwargs": ["queue_id"],
+                    }
+                },
+            )(_CustomActionViewSet)
+        tool = fresh.get("get_next_item_x")
+        assert tool.binding.path_kwargs == {"queue_id": {}}
+        assert "queue_id" in tool.input_schema.get("required", [])
+
+    def test_execute_routes_path_kwargs_alongside_pk(self, tool_context):
+        class DualInput(PydanticBaseModel):
+            item_id: str = Field(description="Item id")
+            queue_id: str = Field(description="Queue id")
+            status: str = Field(default="done", description="Status")
+
+        tool = type(
+            "DualKwargBridge",
+            (DRFBridgeTool,),
+            {
+                "name": "complete_item_x",
+                "description": "Complete item",
+                "category": "test",
+                "input_model": DualInput,
+                "binding": ViewSetBinding(
+                    viewset_class="test.ViewSet",
+                    action="complete_item",
+                    method="POST",
+                    detail=True,
+                    pk_field="item_id",
+                    path_kwargs={"queue_id": {}},
+                ),
+            },
+        )()
+
+        mock_viewset_cls = MagicMock()
+        mock_view = MagicMock()
+        mock_viewset_cls.return_value = mock_view
+        mock_view.default_response_headers = {}
+        mock_view.complete_item.return_value = MagicMock(
+            status_code=200, data={"status": True, "result": {"ok": 1}}
+        )
+
+        with patch(
+            "ai_tools.drf_bridge._resolve_class", return_value=mock_viewset_cls
+        ):
+            result = tool.execute(
+                tool.input_model(item_id="item-1", queue_id="q-9"), tool_context
+            )
+
+        assert not result.is_error
+        call_kwargs = mock_view.complete_item.call_args.kwargs
+        assert call_kwargs["queue_id"] == "q-9"  # path kwarg routed
+        assert call_kwargs["pk"] == "item-1"  # standard pk routing intact
+        # path kwarg must NOT leak into the request body
+        request = mock_view.complete_item.call_args.args[0]
+        assert "queue_id" not in request.data
+        assert request.data.get("status") == "done"
+
+    def test_execute_missing_path_kwarg_is_validation_error(self, tool_context):
+        class OnlyQueueInput(PydanticBaseModel):
+            queue_id: str | None = Field(default=None, description="Queue id")
+
+        tool = type(
+            "MissingKwargBridge",
+            (DRFBridgeTool,),
+            {
+                "name": "next_item_x",
+                "description": "Next item",
+                "category": "test",
+                "input_model": OnlyQueueInput,
+                "binding": ViewSetBinding(
+                    viewset_class="test.ViewSet",
+                    action="next_item",
+                    method="GET",
+                    detail=False,
+                    pk_field=None,
+                    path_kwargs={"queue_id": {}},
+                ),
+            },
+        )()
+        with patch(
+            "ai_tools.drf_bridge._resolve_class", return_value=MagicMock()
+        ):
+            result = tool.execute(tool.input_model(), tool_context)
+        assert result.is_error
+        assert "queue_id" in result.content
+
+
+class TestQueryRoutingOnWrites:
+    """A6: query_params entries with "in": "query" land on the query string."""
+
+    def test_in_query_param_lands_in_query_params_on_post(self, tool_context):
+        class ExportInput(PydanticBaseModel):
+            fmt: str = Field(description="Format")
+            note: str = Field(description="Note")
+
+        tool = type(
+            "QueryRoutedBridge",
+            (DRFBridgeTool,),
+            {
+                "name": "export_thing_x",
+                "description": "Export",
+                "category": "test",
+                "input_model": ExportInput,
+                "binding": ViewSetBinding(
+                    viewset_class="test.ViewSet",
+                    action="do_export",
+                    method="POST",
+                    detail=False,
+                    pk_field=None,
+                    query_params={
+                        "fmt": {"type": str, "description": "Format", "in": "query"},
+                        "note": {"type": str, "description": "Note"},
+                    },
+                ),
+            },
+        )()
+
+        mock_viewset_cls = MagicMock()
+        mock_view = MagicMock()
+        mock_viewset_cls.return_value = mock_view
+        mock_view.default_response_headers = {}
+        mock_view.do_export.return_value = MagicMock(
+            status_code=200, data={"status": True, "result": {"ok": 1}}
+        )
+
+        with patch(
+            "ai_tools.drf_bridge._resolve_class", return_value=mock_viewset_cls
+        ):
+            result = tool.execute(
+                tool.input_model(fmt="csv", note="hello"), tool_context
+            )
+
+        assert not result.is_error
+        request = mock_view.do_export.call_args.args[0]
+        assert request.query_params.get("fmt") == "csv"  # routed to query
+        assert "fmt" not in request.data
+        assert request.data.get("note") == "hello"  # default body routing
+
+    def test_default_post_routing_unchanged(self, tool_context):
+        request = _build_drf_request("POST", {"a": 1}, {}, tool_context)
+        assert request.data.get("a") == 1
+        assert dict(request.query_params) == {}
+
+    def test_build_request_extra_query_on_post(self, tool_context):
+        request = _build_drf_request(
+            "POST", {"a": 1}, {}, tool_context, extra_query={"fmt": "csv"}
+        )
+        assert request.query_params.get("fmt") == "csv"
+        assert request.data.get("a") == 1
+
+
+class TestIdSourceOnBinding:
+    """A7: id_source is stored on the binding for verify_bridges harvesting."""
+
+    def test_id_source_stored(self):
+        fresh = ToolRegistry()
+        with patch("ai_tools.registry.registry", fresh):
+            expose_to_mcp(
+                category="test",
+                tools={
+                    "get_variables": {
+                        "name": "get_item_variables_x",
+                        "id_source": "list_items_x",
+                    }
+                },
+            )(_CustomActionViewSet)
+        tool = fresh.get("get_item_variables_x")
+        assert tool.binding.id_source == "list_items_x"
+        # and the id hint flows into the pk field description
+        assert "list_items_x" in tool.input_schema["properties"]["id"].get(
+            "description", ""
+        )
+
+
+class TestStrictRegistration:
+    """A8: raise under pytest/DEBUG/AI_TOOLS_STRICT_BRIDGE=1; swallow in prod."""
+
+    def test_strict_under_pytest(self):
+        assert _strict_registration() is True
+
+    def test_env_var_forces_strict_without_pytest(self):
+        with patch.dict(os.environ, {"AI_TOOLS_STRICT_BRIDGE": "1"}):
+            with patch.dict(sys.modules):
+                del sys.modules["pytest"]
+                with override_settings(DEBUG=False):
+                    assert _strict_registration() is True
+
+    def test_prod_is_not_strict(self):
+        env = {k: v for k, v in os.environ.items() if k != "AI_TOOLS_STRICT_BRIDGE"}
+        with patch.dict(os.environ, env, clear=True):
+            with patch.dict(sys.modules):
+                del sys.modules["pytest"]
+                with override_settings(DEBUG=False):
+                    assert _strict_registration() is False
+                with override_settings(DEBUG=True):
+                    assert _strict_registration() is True
+
+    def test_prod_swallows_registration_failure(self):
+        env = {k: v for k, v in os.environ.items() if k != "AI_TOOLS_STRICT_BRIDGE"}
+        with patch.dict(os.environ, env, clear=True):
+            with patch.dict(sys.modules):
+                del sys.modules["pytest"]
+                with override_settings(DEBUG=False):
+                    fresh = ToolRegistry()
+                    with patch("ai_tools.registry.registry", fresh):
+                        # broken config (custom action without name) must NOT
+                        # raise in prod — swallow + log, tool just absent.
+                        expose_to_mcp(
+                            category="test", tools={"get_variables": {}}
+                        )(_CustomActionViewSet)
+                    assert fresh.count() == 0
+
+
+class TestRealViewSetRegistration:
+    """One real-viewset registration (QueueItemViewSet) to dent mock-blindness."""
+
+    def test_complete_item_registration_schema(self):
+        from model_hub.views.annotation_queues import QueueItemViewSet
+
+        fresh = ToolRegistry()
+        with patch("ai_tools.registry.registry", fresh):
+            expose_to_mcp(
+                category="annotation_queues",
+                tools={
+                    "complete_item": {
+                        "name": "complete_queue_item_test",
+                        "pk_field": "item_id",
+                        "id_source": "list_queue_items",
+                        "path_kwargs": {
+                            "queue_id": {
+                                "description": "UUID of the annotation queue.",
+                                "id_source": "list_annotation_queues",
+                            }
+                        },
+                    }
+                },
+            )(QueueItemViewSet)
+
+        tool = fresh.get("complete_queue_item_test")
+        assert tool is not None
+        # A1: derived from @action(detail=True, methods=["post"])
+        assert tool.binding.method == "POST"
+        assert tool.binding.detail is True
+        # A7
+        assert tool.binding.id_source == "list_queue_items"
+        # A5 + pk injection: both URL inputs present and required
+        schema = tool.input_schema
+        props = schema.get("properties", {})
+        required = set(schema.get("required", []))
+        assert "item_id" in props and "item_id" in required
+        assert "queue_id" in props and "queue_id" in required
+        # serializer resolved via @validated_request closure (rule 3 passes,
+        # and the create-shaped QueueItem serializer did not leak)
+        assert "queue" not in props
 
 
 # --- @viewset_tool decorator tests (backward compat) ---

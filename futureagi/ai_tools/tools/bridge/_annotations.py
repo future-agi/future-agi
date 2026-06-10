@@ -34,6 +34,21 @@ expose_to_mcp(
             "name": "submit_annotation",
             "detail": True,
             "method": "POST",
+            # Packet E (flagged by Packet A): pin the handler's REAL validator.
+            # The old serializer_class fallback exposed the create-shaped
+            # AnnotationsSerializer, whose fields the @validated_request
+            # wrapper (StrictInputSerializer) rejects — the tool could never
+            # actually deliver label values. The real request body is
+            # label_values / response_field_values (see description).
+            "serializer": "UpdateAnnotationCellsRequestSerializer",
+            "description": (
+                "Submit annotation values for a dataset-annotation task's "
+                "rows. label_values is a list of {row_id, label_id, value, "
+                "column_id, description?, time_taken?} objects; "
+                "response_field_values is a list of {row_id, column_id, "
+                "value} objects. Provide at least one of the two lists. Only "
+                "users assigned to the annotation task may submit."
+            ),
         },
     },
 )(AnnotationsViewSet)

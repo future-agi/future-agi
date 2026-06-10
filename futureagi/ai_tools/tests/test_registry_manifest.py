@@ -10,7 +10,12 @@ the deterministic merge gate that catches that:
   (b) a pinned sentinel set of critical tool names is present,
   (c) no tool name is registered twice,
   (d) a fresh interpreter import of the registry emits zero
-      bridge_registration_failed events.
+      bridge_registration_failed events,
+  (e) Phase 2A: the live registry equals the UNION of
+      ``manifests/*.txt`` — a missing tool (swallowed registration) and an
+      unexpected tool (unmanifested registration / name drift) both fail.
+      Each packet ships its own ``manifests/packet_<x>.txt``; the pre-2A
+      registry is pinned in ``manifests/baseline.txt``.
 
 Sentinel names were derived from the live registry on 2026-06-10
 (count=395). If a sentinel is renamed deliberately, update the pin in
@@ -86,8 +91,26 @@ EE_MEMORY_SENTINEL_TOOLS = frozenset(
 )
 
 
+MANIFEST_DIR = Path(__file__).resolve().parent / "manifests"
+
+
 def _registered_names():
     return [tool.name for tool in registry.list_all()]
+
+
+def _manifest_union() -> set[str]:
+    """Union of all tool names declared in manifests/*.txt.
+
+    Lines that are empty or start with '#' are comments. Every packet adds
+    its own file; baseline.txt pins the pre-Phase-2A registry.
+    """
+    names: set[str] = set()
+    for path in sorted(MANIFEST_DIR.glob("*.txt")):
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                names.add(line)
+    return names
 
 
 class TestRegistryManifest:
@@ -113,6 +136,31 @@ class TestRegistryManifest:
         names = set(_registered_names())
         missing = sorted(EE_MEMORY_SENTINEL_TOOLS - names)
         assert not missing, f"EE falcon memory tools missing: {missing}"
+
+    def test_registry_equals_manifest_union(self):
+        """Live registry == union of manifests/*.txt (Phase 2A gate).
+
+        MISSING names mean a registration was swallowed or a tool was
+        removed without updating its manifest; UNEXPECTED names mean a tool
+        was registered without a manifest entry (or renamed). Both fail —
+        every tool add/remove/rename must touch a manifest in the same PR.
+        """
+        manifest_names = _manifest_union()
+        assert manifest_names, f"no manifest files found in {MANIFEST_DIR}"
+        live = set(_registered_names())
+        if not apps.is_installed("ee.falcon_ai"):
+            # EE memory tools register via FalconAIConfig.ready(), not via
+            # `import ai_tools.tools` — exclude them on OSS-only installs.
+            manifest_names = manifest_names - EE_MEMORY_SENTINEL_TOOLS
+        missing = sorted(manifest_names - live)
+        unexpected = sorted(live - manifest_names)
+        assert not missing and not unexpected, (
+            "Registry does not match the manifest union.\n"
+            f"MISSING from registry (manifested but not registered): {missing}\n"
+            f"UNEXPECTED in registry (registered but not manifested): {unexpected}\n"
+            "If the change is intentional, update ai_tools/tests/manifests/ "
+            "in the same PR."
+        )
 
     def test_no_duplicate_tool_names(self):
         names = _registered_names()

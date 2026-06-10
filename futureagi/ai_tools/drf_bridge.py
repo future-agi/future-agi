@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
+import sys
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -47,6 +49,33 @@ except ImportError:
 
 # Registry of pending expose_to_mcp registrations (processed at app ready)
 _pending_registrations: list[tuple] = []
+
+# APIView verb-handler keys (`_resolve_apiview_handler` fallback).
+HTTP_VERB_KEYS = {"get", "post", "put", "patch", "delete"}
+
+# HTTP methods that carry a request body / mutate state.
+WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _strict_registration() -> bool:
+    """True when bridge registration failures should raise instead of being
+    swallowed: under pytest, with AI_TOOLS_STRICT_BRIDGE=1, or settings.DEBUG.
+
+    Prod (DEBUG=False, no env override) keeps the historical swallow+log
+    behavior so one broken bridge can't take the whole app down.
+    """
+    if os.environ.get("AI_TOOLS_STRICT_BRIDGE") == "1":
+        return True
+    if "pytest" in sys.modules:
+        return True
+    try:
+        from django.conf import settings
+
+        return bool(settings.DEBUG)
+    except Exception:
+        # Decorators fire at import time — settings may not be configured
+        # yet (ImproperlyConfigured). Default to prod behavior.
+        return False
 
 DRF_FIELD_TYPE_MAP = {
     "CharField": (str, "string"),
@@ -198,6 +227,19 @@ def _clean_docstring(text: str | None) -> str:
     return " ".join(out).strip()
 
 
+def _first_docstring_paragraph(text: str | None) -> str:
+    """First paragraph of a docstring, cleaned for use as a description.
+
+    Custom @action docstrings tend to open with a good one-line summary and
+    then go into query-param details — only the opening paragraph belongs in
+    the tool description.
+    """
+    if not text:
+        return ""
+    first = text.strip().split("\n\n", 1)[0]
+    return _clean_docstring(first)
+
+
 def _derive_description(
     viewset_cls,
     action_name: str,
@@ -237,6 +279,15 @@ class ViewSetBinding:
     pk_kwarg: str | None = (
         None  # APIView path-kwarg name for the id (e.g. call_execution_id)
     )
+    # Extra REQUIRED URL path kwargs beyond the pk routing, normalized to
+    # {kwarg_name: {"description": ..., "id_source": ...}}. Each becomes a
+    # required str input field and is routed into view.kwargs in execute()
+    # IN ADDITION to pk_field/pk_kwarg (e.g. complete_item(request,
+    # queue_id=None, pk=None) = pk_field "item_id" + path_kwargs ["queue_id"]).
+    path_kwargs: dict | None = None
+    # Tool name that yields valid ids for this tool's pk_field — consumed for
+    # input-description hints AND by verify_bridges.py id harvesting (A7).
+    id_source: str | None = None
 
 
 def _resolve_class(dotted_path: str):
@@ -246,7 +297,11 @@ def _resolve_class(dotted_path: str):
 
 
 def _build_drf_request(
-    method: str, data: dict, query_params: dict, context: ToolContext
+    method: str,
+    data: dict,
+    query_params: dict,
+    context: ToolContext,
+    extra_query: dict | None = None,
 ):
     from rest_framework.parsers import JSONParser
     from rest_framework.request import Request
@@ -254,15 +309,25 @@ def _build_drf_request(
 
     factory = APIRequestFactory()
 
+    # Params routed with "in": "query" on a write method land on the query
+    # string (APIRequestFactory honors query strings embedded in the path),
+    # so handlers that read request.query_params on POST/PUT still work.
+    path = "/bridge/"
+    if extra_query:
+        from urllib.parse import urlencode
+
+        path = "/bridge/?" + urlencode(extra_query)
+
     if method.upper() in ("GET", "HEAD", "OPTIONS"):
-        django_request = factory.get("/bridge/", data=query_params)
+        merged_query = {**query_params, **(extra_query or {})}
+        django_request = factory.get("/bridge/", data=merged_query)
     elif method.upper() == "DELETE":
-        django_request = factory.delete("/bridge/", data=data, format="json")
+        django_request = factory.delete(path, data=data, format="json")
     elif method.upper() in ("PUT", "PATCH"):
         fn = factory.put if method.upper() == "PUT" else factory.patch
-        django_request = fn("/bridge/", data=data, format="json")
+        django_request = fn(path, data=data, format="json")
     else:
-        django_request = factory.post("/bridge/", data=data, format="json")
+        django_request = factory.post(path, data=data, format="json")
 
     django_request.user = context.user
     django_request.workspace = context.workspace
@@ -539,6 +604,11 @@ def _extract_serializer_from_validated_request(action_method):
     closure that captures `X` (and optionally `query_serializer=Y`) as free variables.
     Inspecting `wrapper.__closure__` lets us recover those classes without the
     bridge config repeating them.
+
+    Some wrapper shapes (tfc.utils.api_contracts.validated_request) capture the
+    serializer one level down — the wrapper closes over a `prepare_request`
+    helper whose OWN closure holds the serializer. When the direct closure has
+    no serializer, descend exactly one level into closed-over functions.
     """
     from rest_framework.serializers import SerializerMetaclass
 
@@ -546,6 +616,7 @@ def _extract_serializer_from_validated_request(action_method):
         return None
 
     serializers_in_closure = []
+    nested_functions = []
     for cell in action_method.__closure__:
         try:
             val = cell.cell_contents
@@ -553,6 +624,20 @@ def _extract_serializer_from_validated_request(action_method):
             continue
         if isinstance(val, SerializerMetaclass):
             serializers_in_closure.append(val)
+        elif callable(val) and getattr(val, "__closure__", None):
+            nested_functions.append(val)
+
+    if not serializers_in_closure:
+        for fn in nested_functions:
+            for cell in fn.__closure__:
+                try:
+                    val = cell.cell_contents
+                except ValueError:
+                    continue
+                if isinstance(val, SerializerMetaclass):
+                    serializers_in_closure.append(val)
+            if serializers_in_closure:
+                break
 
     if not serializers_in_closure:
         return None
@@ -560,7 +645,11 @@ def _extract_serializer_from_validated_request(action_method):
 
 
 def _get_action_serializer(
-    viewset_cls, action_name: str, serializer_override: str = None, method: str = None
+    viewset_cls,
+    action_name: str,
+    serializer_override: str = None,
+    method: str = None,
+    allow_class_fallback: bool = True,
 ):
     """Find the serializer for an action.
 
@@ -570,7 +659,9 @@ def _get_action_serializer(
          (the dict form attached by @swagger_auto_schema directly).
       3. Closure inspection of @validated_request — pulls the
          SerializerMetaclass from the wrapper's free variables.
-      4. Fall back to viewset.serializer_class.
+      4. Fall back to viewset.serializer_class — UNLESS
+         `allow_class_fallback=False` (custom @actions must never inherit
+         the create-shaped model serializer as their input schema).
 
     For APIViews the handler is named by HTTP verb (`.post`/`.get`), not by
     action (`create`/`list`), so when no action-named attribute exists we fall
@@ -612,17 +703,29 @@ def _get_action_serializer(
     if action_method:
         swagger_data = getattr(action_method, "_swagger_auto_schema", None)
         if isinstance(swagger_data, dict):
-            request_body = swagger_data.get("request_body")
-            if isinstance(request_body, type):
-                return request_body
-            query_serializer = swagger_data.get("query_serializer")
-            if isinstance(query_serializer, type):
-                return query_serializer
+            # On @action methods drf-yasg stores the data METHOD-KEYED
+            # ({"post": {...}}) instead of flat — unwrap by HTTP method.
+            for candidate in (
+                swagger_data,
+                swagger_data.get((method or "").lower())
+                if isinstance(swagger_data.get((method or "").lower()), dict)
+                else None,
+            ):
+                if not isinstance(candidate, dict):
+                    continue
+                request_body = candidate.get("request_body")
+                if isinstance(request_body, type):
+                    return request_body
+                query_serializer = candidate.get("query_serializer")
+                if isinstance(query_serializer, type):
+                    return query_serializer
 
         from_closure = _extract_serializer_from_validated_request(action_method)
         if from_closure is not None:
             return from_closure
 
+    if not allow_class_fallback:
+        return None
     return getattr(viewset_cls, "serializer_class", None)
 
 
@@ -669,14 +772,38 @@ class DRFBridgeTool(BaseTool):
                 for key in keys:
                     kwargs[key] = pk_value
 
+        # Extra URL path kwargs (A5) — required, routed into view.kwargs in
+        # addition to the pk routing above (e.g. queue_id alongside pk).
+        for kw_name in self.binding.path_kwargs or {}:
+            kw_value = param_dict.pop(kw_name, None)
+            if not kw_value:
+                return ToolResult.validation_error(
+                    f"'{kw_name}' is required for this action."
+                )
+            kwargs[kw_name] = str(kw_value)
+
+        extra_query: dict = {}
         if method == "GET":
             query_params = param_dict
             body_data = {}
         else:
+            # Mixed query/body routing (A6): a query_params entry may declare
+            # "in": "query" to land on the query string even on writes (for
+            # handlers that read request.query_params on POST/PUT). Default
+            # routing (everything in the body) is unchanged.
+            qp_config = self.binding.query_params or {}
+            body_data = {}
+            for k, v in param_dict.items():
+                entry = qp_config.get(k)
+                if isinstance(entry, dict) and entry.get("in") == "query":
+                    extra_query[k] = v
+                else:
+                    body_data[k] = v
             query_params = {}
-            body_data = param_dict
 
-        request = _build_drf_request(method, body_data, query_params, context)
+        request = _build_drf_request(
+            method, body_data, query_params, context, extra_query=extra_query
+        )
         view = _instantiate_view(
             viewset_cls, self.binding.action, method, request, kwargs
         )
@@ -743,26 +870,122 @@ def _register_bridge_tool(
     """Build and register a single bridge tool from config."""
     from ai_tools.registry import registry
 
-    detail_early = tool_config.get("detail", action_name in DETAIL_ACTIONS)
-    entity_early = tool_config.get("entity") or _derive_entity_name(viewset_cls)
-    tool_name = tool_config.get("name") or _derive_tool_name(
-        action_name, entity_early, detail_early, verb_map=verb_map
+    # --- A1: derive method/detail from DRF @action metadata ----------------
+    # @action sets .mapping ({http_method: handler_name}) and .detail on the
+    # decorated function. Precedence: explicit config > derived > static maps.
+    action_fn = getattr(viewset_cls, action_name, None)
+    drf_mapping = getattr(action_fn, "mapping", None)
+    derived_method = None
+    derived_detail = None
+    if drf_mapping:
+        try:
+            derived_method = next(iter(drf_mapping)).upper()
+            derived_detail = bool(getattr(action_fn, "detail", False))
+        except (TypeError, StopIteration):
+            derived_method = None
+            derived_detail = None
+
+    # Custom action = not a CRUD action key and not an APIView verb key.
+    is_custom_action = (
+        action_name not in ACTION_METHOD_MAP and action_name not in HTTP_VERB_KEYS
     )
-    method = tool_config.get("method", ACTION_METHOD_MAP.get(action_name, "GET"))
-    detail = tool_config.get("detail", action_name in DETAIL_ACTIONS)
+
+    # --- A2: registration-time validation ----------------------------------
+    # On bare APIViews a non-attribute action key is a deliberate alias:
+    # _resolve_apiview_handler treats it as a hint and falls back to the verb
+    # handler (e.g. RunTestExecutionView 'execute' -> .post). Allow it when
+    # that verb handler actually exists for the configured/derived method.
+    _config_method = (
+        tool_config.get("method")
+        or derived_method
+        or ACTION_METHOD_MAP.get(action_name, "GET")
+    )
+    _apiview_verb_fallback_ok = _is_apiview_class(viewset_cls) and callable(
+        getattr(viewset_cls, _config_method.lower(), None)
+    )
+    if (
+        action_name not in STANDARD_CRUD
+        and action_name not in HTTP_VERB_KEYS
+        and not hasattr(viewset_cls, action_name)
+        and not _apiview_verb_fallback_ok
+    ):
+        raise ValueError(
+            f"@expose_to_mcp on {viewset_path}: tools key '{action_name}' is "
+            f"not standard CRUD ({'/'.join(STANDARD_CRUD)}), not an HTTP verb "
+            f"(get/post/put/patch/delete), not an attribute on the class, and "
+            f"the class has no '{_config_method.lower()}' verb handler to fall "
+            f"back to — probably a typo."
+        )
+    if is_custom_action and not tool_config.get("name"):
+        raise ValueError(
+            f"@expose_to_mcp on {viewset_path}: custom action '{action_name}' "
+            f"requires an explicit 'name'. Use the {{verb}}_{{noun_phrase}} "
+            f"convention with a search_tools verb (list/get/create/update/"
+            f"delete/run/execute/export/assign/save/compare/generate/analyze/"
+            f"stop/restore/duplicate/complete/skip/review/preview/import)."
+        )
+
+    detail_default = (
+        derived_detail
+        if derived_detail is not None
+        else action_name in DETAIL_ACTIONS
+    )
+    detail = tool_config.get("detail", detail_default)
+    entity_name = tool_config.get("entity") or _derive_entity_name(viewset_cls)
+    tool_name = tool_config.get("name") or _derive_tool_name(
+        action_name, entity_name, detail, verb_map=verb_map
+    )
+    method = (
+        tool_config.get("method")
+        or derived_method
+        or ACTION_METHOD_MAP.get(action_name, "GET")
+    )
     pk_field = tool_config.get("pk_field", "id" if detail else None)
     serializer_override = tool_config.get("serializer")
     query_params = tool_config.get("query_params")
+    path_kwargs = tool_config.get("path_kwargs")
+    if isinstance(path_kwargs, (list, tuple)):
+        path_kwargs = {kw: {} for kw in path_kwargs}
     include_fields = tool_config.get("include_fields")
     exclude_fields = tool_config.get("exclude_fields")
+    id_source = tool_config.get("id_source")
 
-    entity_name = tool_config.get("entity") or _derive_entity_name(viewset_cls)
-    serializer_for_doc = _get_action_serializer(
-        viewset_cls, action_name, tool_config.get("serializer")
+    # A3: resolve the serializer ONCE, strictly for custom actions (the
+    # viewset's create-shaped serializer_class must never leak into a custom
+    # action's input schema or description).
+    resolved_serializer = _get_action_serializer(
+        viewset_cls,
+        action_name,
+        serializer_override,
+        method=method,
+        allow_class_fallback=not is_custom_action,
     )
-    description = tool_config.get(
-        "description",
-    ) or _derive_description(viewset_cls, action_name, entity_name, serializer_for_doc)
+
+    # A2: a write-shaped custom action with no resolvable input schema would
+    # register a tool that sends an empty body — refuse it up front.
+    if (
+        is_custom_action
+        and method in WRITE_METHODS
+        and resolved_serializer is None
+        and query_params is None
+    ):
+        raise ValueError(
+            f"@expose_to_mcp on {viewset_path}: write action '{action_name}' "
+            f"({method}) has no resolvable serializer (no 'serializer' config, "
+            f"no @swagger_auto_schema request_body, no @validated_request) and "
+            f"no 'query_params'. Declare one of them (query_params={{}} for a "
+            f"deliberately body-less detail action)."
+        )
+
+    # A4: description precedence — config override, then the custom action
+    # function's docstring first paragraph, then serializer/ViewSet-derived.
+    description = tool_config.get("description")
+    if not description and is_custom_action:
+        description = _first_docstring_paragraph(getattr(action_fn, "__doc__", None))
+    if not description:
+        description = _derive_description(
+            viewset_cls, action_name, entity_name, resolved_serializer
+        )
 
     if query_params:
         annotations = {}
@@ -836,7 +1059,12 @@ def _register_bridge_tool(
                 ),
             },
         )
-    elif detail and action_name in ("retrieve", "destroy"):
+    elif detail and (
+        action_name in ("retrieve", "destroy")
+        # A3: custom detail GET @actions with no explicit schema get the same
+        # pk-only input (previously inexpressible — query_params={} is falsy).
+        or (is_custom_action and method == "GET" and resolved_serializer is None)
+    ):
         list_tool_hint = tool_config.get("id_source")
         if not list_tool_hint:
             list_tool_hint = _find_list_tool_for_viewset(viewset_path)
@@ -852,21 +1080,23 @@ def _register_bridge_tool(
                 f"Do NOT pass the {entity_name} name here — the API requires the UUID."
             )
 
+        # retrieve/destroy keep the historical literal "id" field; custom
+        # detail GETs honor their configured pk_field (e.g. item_id).
+        _pk_input_name = (
+            "id" if action_name in ("retrieve", "destroy") else (pk_field or "id")
+        )
         input_model = type(
             f"Input_{tool_name}",
             (PydanticBaseModel,),
             {
-                "__annotations__": {"id": str},
-                "id": PydanticField(description=id_description),
+                "__annotations__": {_pk_input_name: str},
+                _pk_input_name: PydanticField(description=id_description),
             },
         )
     else:
-        serializer_cls = _get_action_serializer(
-            viewset_cls, action_name, serializer_override, method=method
-        )
-        if serializer_cls:
+        if resolved_serializer:
             input_model = _serializer_to_pydantic(
-                serializer_cls,
+                resolved_serializer,
                 include_fields=include_fields,
                 exclude_fields=exclude_fields,
             )
@@ -900,6 +1130,32 @@ def _register_bridge_tool(
             },
         )
 
+    # A5: every declared path kwarg becomes a REQUIRED str input field (with
+    # the same id-hint mechanics as pk fields) and is routed into view.kwargs
+    # by execute() in addition to the pk routing.
+    if path_kwargs:
+        kw_annotations = {}
+        kw_fields = {}
+        existing_fields = getattr(input_model, "model_fields", {}) or {}
+        for kw_name, kw_info in path_kwargs.items():
+            if kw_name in existing_fields or kw_name in kw_annotations:
+                continue
+            kw_info = kw_info or {}
+            kw_desc = kw_info.get("description") or (
+                f"'{kw_name}' URL path parameter (UUID) this action requires."
+            )
+            kw_hint = kw_info.get("id_source")
+            if kw_hint:
+                kw_desc += f" **How to get it:** call `{kw_hint}` and copy the 'id'."
+            kw_annotations[kw_name] = str
+            kw_fields[kw_name] = PydanticField(description=kw_desc)
+        if kw_annotations:
+            input_model = type(
+                f"Input_{tool_name}",
+                (input_model,),
+                {"__annotations__": kw_annotations, **kw_fields},
+            )
+
     binding = ViewSetBinding(
         viewset_class=viewset_path,
         action=action_name,
@@ -909,6 +1165,8 @@ def _register_bridge_tool(
         serializer_override=serializer_override,
         query_params=query_params,
         pk_kwarg=tool_config.get("pk_kwarg"),
+        path_kwargs=path_kwargs,
+        id_source=id_source,
     )
 
     tool_cls = type(
@@ -956,7 +1214,16 @@ def expose_to_mcp(category: str, tools=None, verb_map: dict | None = None):
 
       3. Dict of action → config — full control. Each config can override
          name, description, query_params, serializer, include_fields,
-         exclude_fields, method, detail, pk_field, entity, id_source.
+         exclude_fields, method, detail, pk_field, pk_kwarg, entity,
+         id_source, path_kwargs.
+
+         Custom @actions: method/detail are auto-derived from the DRF
+         @action decorator (config still wins); an explicit "name" is
+         REQUIRED; write actions need a resolvable serializer or
+         query_params. `path_kwargs` (list or {name: {description,
+         id_source}}) adds extra required URL kwargs alongside pk routing.
+         A query_params entry may declare "in": "query" to land on the
+         query string even on POST/PUT/PATCH/DELETE.
 
          @expose_to_mcp(category="tracing", tools={
              "list": {"query_params": {...}},
@@ -1008,6 +1275,11 @@ def expose_to_mcp(category: str, tools=None, verb_map: dict | None = None):
                     action=action_name,
                     viewset=viewset_path,
                 )
+                # A8: fail LOUD under pytest / DEBUG / AI_TOOLS_STRICT_BRIDGE=1
+                # so a broken bridge can't ship silently; prod keeps the
+                # historical swallow+log behavior.
+                if _strict_registration():
+                    raise
         return viewset_cls
 
     return decorator

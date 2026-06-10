@@ -34,11 +34,15 @@ from ai_tools.tools.bridge import (
     _agents,  # noqa: F401  list/get/create/update/delete_agent
     _annotation_queues,  # noqa: F401  list/get/create/update/delete_annotation_queue
     _annotations,  # noqa: F401  list/get/create/update/delete_annotation_label + list/get_annotation
+    _dashboards,  # noqa: F401  dashboard query engine bridges (Packet D)
     _datasets,  # noqa: F401  list/get/create/update/delete_dataset
     # eval_group is NOT bridged — EvalGroupView.create/update read non-serializer
     # fields (eval_template_ids), so they use purpose-built hand-written tools.
+    _evaluations,  # noqa: F401  separate_evals bridges (Packet E)
+    _experiments,  # noqa: F401  experiment V2 view bridges (Packet B)
     _knowledge_bases,  # noqa: F401  list/get/create/update/delete_knowledge_base
     _misc_viewsets,  # noqa: F401  15 misc ViewSets (dashboards, scores, secrets, observability, etc.)
+    _optimization,  # noqa: F401  DatasetOptimizationViewSet @actions (Packet E)
     _personas,  # noqa: F401  list/get/create/update/delete_persona
     _prompt_folders,  # noqa: F401  list/get/create/update/delete_prompt_folder
     _prompt_labels,  # noqa: F401  list/get/create/update/delete_prompt_label
