@@ -155,3 +155,72 @@ expose_to_mcp(
 
 # Simulation
 expose_to_mcp(category="optimization")(AgentPromptOptimiserRunViewSet)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3A — destructive @actions (confirmation-gated; see PHASES.md 3A and
+# ai_tools/confirmations.py). execution_policy pinned explicitly for grep.
+# ---------------------------------------------------------------------------
+
+
+def _preview_remove_shared_link_access(params: dict, context) -> str:
+    from tracer.models.shared_link import SharedLink, SharedLinkAccess
+
+    link_id = params.get("link_id")
+    access_id = params.get("access_id")
+    link = (
+        SharedLink.objects.filter(pk=link_id)
+        .only("id", "resource_type", "resource_id")
+        .first()
+    )
+    entry = (
+        SharedLinkAccess.objects.filter(pk=access_id, shared_link_id=link_id)
+        .only("id", "email")
+        .first()
+    )
+    if link is None or entry is None:
+        return (
+            f"Shared link `{link_id}` / access entry `{access_id}` was not "
+            "found in this workspace — nothing will be removed."
+        )
+    return (
+        f"Will revoke **{entry.email}**'s access to the shared "
+        f"{link.resource_type} link (`{str(link.pk)[:8]}…`).\n\n"
+        "Undo: re-grant access by re-sharing the link with that email "
+        "(Share dialog or the shared-link create tool)."
+    )
+
+
+# remove_shared_link_access -> SharedLinkViewSet.remove_access (DELETE,
+# detail=True, extra `access_id` URL kwarg -> path_kwargs).
+expose_to_mcp(
+    category="tracing",
+    tools={
+        "remove_access": {
+            "name": "remove_shared_link_access",
+            "entity": "shared_link",
+            "pk_field": "link_id",
+            "id_source": "list_shared_links",
+            "path_kwargs": {
+                "access_id": {
+                    "description": (
+                        "UUID of the ACL entry to remove (from the shared "
+                        "link's access_list in `get_shared_link`)."
+                    ),
+                },
+            },
+            "query_params": {},
+            "execution_policy": "destructive",
+            "confirm_preview": _preview_remove_shared_link_access,
+            "undo_note": (
+                "Undo: re-grant access by re-sharing the link with the "
+                "affected email."
+            ),
+            "description": (
+                "Remove an email from a shared link's access list (ACL). "
+                "DESTRUCTIVE: requires user confirmation (preview first, "
+                "then re-call with confirm=true)."
+            ),
+        },
+    },
+)(SharedLinkViewSet)

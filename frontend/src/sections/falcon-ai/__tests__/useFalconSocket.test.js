@@ -665,4 +665,210 @@ describe("useFalconSocket (unit)", () => {
       expect(useFalconStore.getState().isStreaming).toBe(false);
     });
   });
+
+  describe("destructive confirmation flow (Phase 3A)", () => {
+    const CONFIRMATION = {
+      token: "tok-1",
+      tool_name: "delete_dataset",
+      args: { dataset_id: "ds-1" },
+      preview: "Will delete dataset ds-1",
+      expires_at: "2026-06-10T12:15:00Z",
+      policy: "destructive",
+      undo_note: null,
+    };
+
+    /** Stream a destructive phase-1 call up to its confirmation_required result. */
+    function streamConfirmationRequired(ws, id) {
+      ws.receive("tool_call_start", {
+        message_id: id,
+        call_id: "tc_1",
+        tool_name: "delete_dataset",
+        params: { dataset_id: "ds-1" },
+        step: 1,
+        execution_policy: "destructive",
+        conversation_id: "conv-1",
+      });
+      ws.receive("tool_call_result", {
+        message_id: id,
+        call_id: "tc_1",
+        status: "confirmation_required",
+        result_summary: "CONFIRMATION REQUIRED — no action was taken.",
+        result_full: null,
+        confirmation: CONFIRMATION,
+        conversation_id: "conv-1",
+      });
+      ws.receive("done", { message_id: id, conversation_id: "conv-1" });
+    }
+
+    it("tool_call_start carries execution_policy onto the tool call (write badge)", () => {
+      const { ws } = mountSocket();
+      ws.open();
+      const id = liveStream(ws);
+      streamConfirmationRequired(ws, id);
+      const tc = useFalconStore.getState().messages[0].tool_calls[0];
+      expect(tc.execution_policy).toBe("destructive");
+    });
+
+    it("a confirmation_required result stores the structured confirmation payload", () => {
+      const { ws } = mountSocket();
+      ws.open();
+      const id = liveStream(ws);
+      streamConfirmationRequired(ws, id);
+
+      const tc = useFalconStore.getState().messages[0].tool_calls[0];
+      expect(tc.status).toBe("confirmation_required");
+      expect(tc.confirmation).toEqual(CONFIRMATION);
+      // Block view stays in sync — the card renders from blocks
+      const block = useFalconStore
+        .getState()
+        .messages[0].blocks.find((b) => b.id === "tc_1");
+      expect(block.toolCall.confirmation).toEqual(CONFIRMATION);
+      // The phase-1 turn ended normally
+      expect(useFalconStore.getState().isStreaming).toBe(false);
+    });
+
+    it("sendConfirmAction sends the confirm_action frame (button is the only approver)", () => {
+      const { ws, result } = mountSocket();
+      ws.open();
+      result.current.sendConfirmAction("tok-1", "confirm");
+      expect(ws.framesOfType("confirm_action")).toEqual([
+        { type: "confirm_action", token: "tok-1", decision: "confirm" },
+      ]);
+    });
+
+    it("sendConfirmAction without a token is a no-op", () => {
+      const { ws, result } = mountSocket();
+      ws.open();
+      result.current.sendConfirmAction(null, "confirm");
+      expect(ws.sent).toHaveLength(0);
+    });
+
+    it("confirmation_resolved 'confirmed' flips the card and arms a placeholder for the follow-up turn", () => {
+      const { ws } = mountSocket();
+      ws.open();
+      const id = liveStream(ws);
+      streamConfirmationRequired(ws, id);
+
+      ws.receive("confirmation_resolved", {
+        token: "tok-1",
+        decision: "confirmed",
+        message_id: id,
+        call_id: "tc_1",
+        conversation_id: "conv-1",
+      });
+
+      const s = useFalconStore.getState();
+      // Card state flipped on the ORIGINAL message…
+      expect(s.messages[0].id).toBe(id); // no remap onto the old message
+      expect(s.messages[0].tool_calls[0].confirmation_status).toBe("confirmed");
+      // …and a fresh placeholder is armed so the new agent turn can stream
+      expect(s.messages).toHaveLength(2);
+      expect(s.messages[1].id).toMatch(/^assistant-/);
+      expect(s.isStreaming).toBe(true);
+      expect(s.streamingMessageId).toBe(s.messages[1].id);
+
+      // The follow-up turn (phase-2 re-call) remaps into that placeholder
+      ws.receive("text_delta", {
+        message_id: "uuid-2",
+        delta: "Deleting now.",
+        conversation_id: "conv-1",
+      });
+      expect(useFalconStore.getState().messages[1].id).toBe("uuid-2");
+      expect(useFalconStore.getState().messages[1].content).toBe(
+        "Deleting now.",
+      );
+    });
+
+    it("confirmation_resolved 'cancelled' flips the card and still starts a turn (agent proposes alternatives)", () => {
+      const { ws } = mountSocket();
+      ws.open();
+      const id = liveStream(ws);
+      streamConfirmationRequired(ws, id);
+
+      ws.receive("confirmation_resolved", {
+        token: "tok-1",
+        decision: "cancelled",
+        message_id: id,
+        call_id: "tc_1",
+        conversation_id: "conv-1",
+      });
+
+      const s = useFalconStore.getState();
+      expect(s.messages[0].tool_calls[0].confirmation_status).toBe("cancelled");
+      expect(s.isStreaming).toBe(true);
+      expect(s.messages).toHaveLength(2);
+    });
+
+    it("confirmation_resolved 'expired' flips the card but does NOT arm streaming (no turn follows)", () => {
+      const { ws } = mountSocket();
+      ws.open();
+      const id = liveStream(ws);
+      streamConfirmationRequired(ws, id);
+
+      ws.receive("confirmation_resolved", {
+        token: "tok-1",
+        decision: "expired",
+        message_id: id,
+        call_id: "tc_1",
+        conversation_id: "conv-1",
+      });
+
+      const s = useFalconStore.getState();
+      expect(s.messages[0].tool_calls[0].confirmation_status).toBe("expired");
+      expect(s.isStreaming).toBe(false);
+      expect(s.messages).toHaveLength(1);
+    });
+
+    it("ignores a confirmation_resolved tagged with a different conversation", () => {
+      const { ws } = mountSocket();
+      ws.open();
+      const id = liveStream(ws);
+      streamConfirmationRequired(ws, id);
+
+      ws.receive("confirmation_resolved", {
+        token: "tok-9",
+        decision: "confirmed",
+        message_id: id,
+        call_id: "tc_1",
+        conversation_id: "conv-OTHER",
+      });
+
+      const s = useFalconStore.getState();
+      expect(s.messages[0].tool_calls[0].confirmation_status).toBeUndefined();
+      expect(s.isStreaming).toBe(false);
+      expect(s.messages).toHaveLength(1);
+    });
+
+    it("an executed phase-2 result passes the undo payload through to the tool call", () => {
+      const { ws } = mountSocket();
+      ws.open();
+      const id = liveStream(ws);
+
+      ws.receive("tool_call_start", {
+        message_id: id,
+        call_id: "tc_2",
+        tool_name: "delete_dataset",
+        params: { dataset_id: "ds-1" },
+        step: 1,
+        execution_policy: "destructive",
+        conversation_id: "conv-1",
+      });
+      ws.receive("tool_call_result", {
+        message_id: id,
+        call_id: "tc_2",
+        status: "completed",
+        result_summary: "Dataset deleted",
+        result_full: null,
+        undo: { note: "Restorable from snapshot", prompt: "Undo the delete" },
+        conversation_id: "conv-1",
+      });
+
+      const tc = useFalconStore.getState().messages[0].tool_calls[0];
+      expect(tc.status).toBe("completed");
+      expect(tc.undo).toEqual({
+        note: "Restorable from snapshot",
+        prompt: "Undo the delete",
+      });
+    });
+  });
 });

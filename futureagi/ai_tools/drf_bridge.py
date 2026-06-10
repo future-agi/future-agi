@@ -38,6 +38,7 @@ from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field as PydanticField
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
+from ai_tools.confirmations import classify as classify_execution_policy
 from ai_tools.formatting import key_value_block, markdown_table, section
 
 try:
@@ -355,6 +356,14 @@ def _build_drf_request(
     drf_request.user = context.user
     drf_request.workspace = context.workspace
     drf_request.organization = context.organization
+    # Pin auth state (3B). The bridge Request has no authenticators, so the
+    # first access to `request.auth` / `request.successful_authenticator`
+    # would lazily run DRF's `_authenticate()` -> `_not_authenticated()`,
+    # which CLOBBERS the stamped user back to AnonymousUser. Setting `.auth`
+    # (and `_authenticator`) up front makes the stamped identity stable for
+    # permission classes and handlers alike.
+    drf_request.auth = None
+    drf_request._authenticator = None
 
     return drf_request
 
@@ -435,6 +444,42 @@ def _unwrap_response(response) -> tuple[Any, bool]:
             return result, True
 
     return data, is_error
+
+
+_NOT_FOUND_MESSAGE_RE = None
+
+
+def _status_to_error_code(status_code: int, message: str) -> str:
+    """Map a DRF response's HTTP status (and message) to a ToolResult
+    error_code so denial semantics stay legible on the bridge path (3B):
+    cross-tenant calls must surface as NOT_FOUND / PERMISSION_DENIED, not a
+    generic INTERNAL_ERROR.
+
+    Views commonly catch their own Http404/DoesNotExist and re-emit it as a
+    400 ("Failed to retrieve X: No X matches the given query"), so a
+    narrowly-scoped message heuristic upgrades those to NOT_FOUND.
+    """
+    import re
+
+    global _NOT_FOUND_MESSAGE_RE
+    if _NOT_FOUND_MESSAGE_RE is None:
+        _NOT_FOUND_MESSAGE_RE = re.compile(
+            r"(?i)(not found|does not exist|no \S[^.!]* matches the given query)"
+        )
+
+    if status_code in (401, 403):
+        return "PERMISSION_DENIED"
+    if status_code == 404:
+        return "NOT_FOUND"
+    if status_code == 429:
+        return "RATE_LIMITED"
+    # `status: false` envelopes ride on 200s; views re-emit 404s as 400s —
+    # the message heuristic covers both.
+    if _NOT_FOUND_MESSAGE_RE.search(message or ""):
+        return "NOT_FOUND"
+    if 400 <= status_code < 500:
+        return "VALIDATION_ERROR"
+    return "INTERNAL_ERROR"
 
 
 def _format_result_for_llm(data: Any, action: str) -> str:
@@ -826,6 +871,18 @@ class DRFBridgeTool(BaseTool):
             viewset_cls, self.binding.action, method, request, kwargs
         )
 
+        # Phase 3B: the bridge never calls dispatch(), so DRF's
+        # check_permissions would otherwise be skipped entirely — evaluate
+        # the view's real permission_classes (plus the authenticated-user
+        # floor) against the synthetic request BEFORE the action runs.
+        # Object-level perms still flow through get_object() ->
+        # check_object_permissions inside the handler.
+        from ai_tools.authz import enforce_view_permissions
+
+        denied = enforce_view_permissions(view, request, self.name)
+        if denied is not None:
+            return denied
+
         try:
             if is_apiview:
                 action_method = _resolve_apiview_handler(
@@ -840,14 +897,24 @@ class DRFBridgeTool(BaseTool):
                 action_method = getattr(view, self.binding.action)
             response = action_method(request, **kwargs)
         except Exception as e:
+            from ai_tools.error_codes import code_from_exception
+
             logger.exception("drf_bridge_call_failed", tool=self.name)
-            return ToolResult.error(f"ViewSet call failed: {e}")
+            return ToolResult.error(
+                f"ViewSet call failed: {e}",
+                error_code=code_from_exception(e),
+            )
 
         result_data, is_error = _unwrap_response(response)
 
         if is_error:
             msg = str(result_data) if result_data else "Request failed"
-            return ToolResult.error(msg)
+            return ToolResult.error(
+                msg,
+                error_code=_status_to_error_code(
+                    getattr(response, "status_code", 500), msg
+                ),
+            )
 
         content = _format_result_for_llm(result_data, self.binding.action)
         return ToolResult(
@@ -1187,6 +1254,17 @@ def _register_bridge_tool(
         id_source=id_source,
     )
 
+    # Phase 3A: classify the tool read|mutate|destructive. Config override
+    # ("execution_policy") wins; otherwise derived from action/method/name.
+    # Destructive tools are gated behind the server-held confirmation in
+    # BaseTool.run (ai_tools/confirmations.py).
+    execution_policy = classify_execution_policy(
+        tool_name,
+        action=action_name,
+        method=method,
+        override=tool_config.get("execution_policy"),
+    )
+
     tool_cls = type(
         f"DRFBridge_{tool_name}",
         (DRFBridgeTool,),
@@ -1196,8 +1274,19 @@ def _register_bridge_tool(
             "category": category,
             "input_model": input_model,
             "binding": binding,
+            "execution_policy": execution_policy,
+            "undo_note": tool_config.get("undo_note"),
+            "undo_prompt": tool_config.get("undo_prompt"),
         },
     )
+
+    # Phase 3A: per-tool confirmation-preview builder (design §1.9).
+    if tool_config.get("confirm_preview") is not None:
+        from ai_tools import confirmations as _confirmations
+
+        _confirmations.register_preview_builder(
+            tool_name, tool_config["confirm_preview"]
+        )
 
     instance = tool_cls()
     registry.register(instance)
@@ -1233,7 +1322,13 @@ def expose_to_mcp(category: str, tools=None, verb_map: dict | None = None):
       3. Dict of action → config — full control. Each config can override
          name, description, query_params, serializer, include_fields,
          exclude_fields, method, detail, pk_field, pk_kwarg, entity,
-         id_source, path_kwargs.
+         id_source, path_kwargs, execution_policy (read|mutate|destructive;
+         normally auto-classified — see ai_tools/confirmations.py),
+         undo_note (confirmation-preview note for cheap compensations),
+         undo_prompt (str.format template over the validated args, rendered
+         as data["undo"]["prompt"] on the executed destructive leg), and
+         confirm_preview (callable(params: dict, context) -> str preview
+         builder for the confirmation card; read-only, workspace-scoped).
 
          Custom @actions: method/detail are auto-derived from the DRF
          @action decorator (config still wins); an explicit "name" is
@@ -1333,6 +1428,10 @@ def viewset_tool(
                 "category": category,
                 "input_model": input_model_cls,
                 "binding": binding,
+                # Phase 3A: same classification as _register_bridge_tool.
+                "execution_policy": classify_execution_policy(
+                    name, action=action, method=method
+                ),
             },
         )
 

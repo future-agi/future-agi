@@ -9,7 +9,11 @@ import UserMessage from "./UserMessage";
 import AssistantMessage from "./AssistantMessage";
 import QuickActions from "./QuickActions";
 
-export default function MessageList({ onQuickAction, onFeedback }) {
+export default function MessageList({
+  onQuickAction,
+  onFeedback,
+  onConfirmAction,
+}) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const messages = useFalconStore((s) => s.messages);
@@ -142,6 +146,7 @@ export default function MessageList({ onQuickAction, onFeedback }) {
               key={msg.id}
               message={msg}
               onFeedback={onFeedback}
+              onConfirmAction={onConfirmAction}
               dimmed={dimmed}
             />
           );
@@ -154,4 +159,5 @@ export default function MessageList({ onQuickAction, onFeedback }) {
 MessageList.propTypes = {
   onQuickAction: PropTypes.func,
   onFeedback: PropTypes.func,
+  onConfirmAction: PropTypes.func,
 };

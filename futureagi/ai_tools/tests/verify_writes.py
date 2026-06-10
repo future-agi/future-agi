@@ -90,12 +90,23 @@ def _load_packet_roundtrips() -> list:
 
 
 def _safe_run(tool_name: str, args: dict, ctx: ToolContext):
-    """Run a registered tool, normalizing exceptions into an error result."""
+    """Run a registered tool, normalizing exceptions into an error result.
+
+    Phase 3A: destructive tools answer the first call with a
+    CONFIRMATION_REQUIRED preview (zero side effects). On the harness
+    transport the client is the approver, so auto re-call once with
+    confirm=True merged into identical args — exercising the exact
+    two-phase path Falcon/MCP use.
+    """
     t = registry.get(tool_name)
     if not t:
         return None
     try:
-        return t.run(args, ctx)
+        result = t.run(args, ctx)
+        if getattr(result, "error_code", None) == "CONFIRMATION_REQUIRED":
+            print(f"  (confirmation preview received for {tool_name}; re-calling with confirm=true)")
+            result = t.run({**args, "confirm": True}, ctx)
+        return result
     except Exception as e:
         return type("R", (), {"is_error": True, "content": f"EXC {e}", "data": None})()
 
@@ -202,7 +213,12 @@ def main():
         ).first()
         or Workspace.objects.filter(organization=u.organization).first()
     )
-    ctx = ToolContext(user=u, organization=u.organization, workspace=ws)
+    # transport="harness": the script operator is the human approver, so the
+    # confirmation gate honors confirm=True against an existing preview
+    # record (preview-first still enforced; see ai_tools/confirmations.py).
+    ctx = ToolContext(
+        user=u, organization=u.organization, workspace=ws, transport="harness"
+    )
 
     entries = list(ROUNDTRIPS) + _load_packet_roundtrips()
 

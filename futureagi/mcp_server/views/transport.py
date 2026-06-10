@@ -109,6 +109,9 @@ class MCPToolCallView(APIView):
             user=user,
             organization=organization,
             workspace=workspace,
+            # Phase 3A: the MCP client is the (human-operated) approver for
+            # destructive tools — preview-first still enforced by the gate.
+            transport="mcp",
         )
 
         start_time = time.time()

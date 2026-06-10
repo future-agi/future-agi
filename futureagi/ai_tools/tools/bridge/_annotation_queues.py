@@ -11,7 +11,7 @@ Same-name HW conversions (legacy modules deleted in the same change):
   get_queue_progress       -> AnnotationQueueViewSet.progress
   submit_queue_annotations -> QueueItemViewSet.submit_annotations
 
-Deferred to Phase 3A (destructive — do NOT register):
+Phase 3A (confirmation-gated, registered at the end of this module):
   AnnotationQueueViewSet.hard_delete, QueueItemViewSet.bulk_remove
 
 Skipped (UI discussion endpoints): QueueItemViewSet.discussion,
@@ -428,3 +428,129 @@ expose_to_mcp(
         },
     },
 )(AutomationRuleViewSet)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3A — destructive @actions (confirmation-gated; see PHASES.md 3A and
+# ai_tools/confirmations.py). execution_policy pinned explicitly for grep.
+# ---------------------------------------------------------------------------
+
+
+def _preview_hard_delete_annotation_queue(params: dict, context) -> str:
+    from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
+
+    queue_id = params.get("queue_id")
+    queue = (
+        AnnotationQueue.all_objects.filter(
+            pk=queue_id, organization=context.organization
+        )
+        .only("id", "name", "deleted")
+        .first()
+    )
+    if queue is None:
+        return (
+            f"Annotation queue `{queue_id}` was not found in this "
+            "organization — nothing will be deleted."
+        )
+    item_count = QueueItem.all_objects.filter(queue_id=queue.pk).count()
+    state = "archived" if queue.deleted else "ACTIVE (not archived)"
+    return (
+        f"Will PERMANENTLY hard-delete annotation queue **'{queue.name}'** "
+        f"(`{str(queue.pk)[:8]}…`, currently {state}) and everything attached "
+        f"— **{item_count} item(s)**, rules, assignments and scores cascade-"
+        "delete with it.\n\n"
+        "The API additionally requires force=true and confirm_name set to "
+        f"the queue's exact name ('{queue.name}').\n\n"
+        "This cannot be undone (unlike the soft `delete_annotation_queue`, "
+        "which can be reversed with `restore_annotation_queue`)."
+    )
+
+
+def _preview_bulk_remove_queue_items(params: dict, context) -> str:
+    from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
+
+    queue_id = params.get("queue_id")
+    item_ids = params.get("item_ids") or []
+    queue = (
+        AnnotationQueue.objects.filter(pk=queue_id, organization=context.organization)
+        .only("id", "name")
+        .first()
+    )
+    queue_label = f"'{queue.name}'" if queue else f"`{queue_id}` (not found)"
+    matching = QueueItem.objects.filter(
+        id__in=item_ids,
+        queue_id=queue_id,
+        organization=context.organization,
+        deleted=False,
+    ).count()
+    return (
+        f"Will remove **{matching} item(s)** (of {len(item_ids)} requested) "
+        f"from annotation queue {queue_label}. Removed items are soft-"
+        "deleted together with their annotations and review state.\n\n"
+        "Undo: re-add the removed sources with `add_queue_items` (existing "
+        "annotations on the removed items are not restored)."
+    )
+
+
+expose_to_mcp(
+    category="annotation_queues",
+    tools={
+        # hard_delete: serializer auto-resolves from @validated_request
+        # (QueueHardDeleteRequestSerializer: force + confirm_name) — the
+        # view ALSO enforces force=true + exact-name match server-side.
+        "hard_delete": {
+            "name": "hard_delete_annotation_queue",
+            "entity": "annotation_queue",
+            "pk_field": "queue_id",
+            "id_source": "list_annotation_queues",
+            "execution_policy": "destructive",
+            "confirm_preview": _preview_hard_delete_annotation_queue,
+            "description": (
+                "PERMANENTLY hard-delete an annotation queue and everything "
+                "attached (items, rules, assignments, scores). No recovery — "
+                "for reversible archiving use delete_annotation_queue + "
+                "restore_annotation_queue instead. Requires force=true and "
+                "confirm_name equal to the queue's exact name, plus user "
+                "confirmation (preview first, then re-call with "
+                "confirm=true)."
+            ),
+        },
+    },
+)(AnnotationQueueViewSet)
+
+expose_to_mcp(
+    category="annotation_queues",
+    tools={
+        # bulk_remove(request, queue_id=None) — detail=False with the queue
+        # id as a URL kwarg -> path_kwargs; item_ids from
+        # BulkRemoveItemsSerializer (auto-resolved).
+        "bulk_remove": {
+            "name": "bulk_remove_queue_items",
+            "entity": "queue_item",
+            "path_kwargs": {
+                "queue_id": {
+                    "description": "UUID of the annotation queue.",
+                    "id_source": "list_annotation_queues",
+                },
+            },
+            "execution_policy": "destructive",
+            "confirm_preview": _preview_bulk_remove_queue_items,
+            "undo_note": (
+                "Undo: re-add the removed sources to the queue with "
+                "`add_queue_items` (annotations on removed items are not "
+                "restored)."
+            ),
+            "undo_prompt": (
+                "Undo the bulk removal from annotation queue {queue_id}: "
+                "re-add the removed items (previous item ids {item_ids}) "
+                "using add_queue_items with their original sources."
+            ),
+            "description": (
+                "Bulk-remove items from an annotation queue (soft-delete of "
+                "the queue items and their annotations). DESTRUCTIVE: "
+                "requires user confirmation (preview first, then re-call "
+                "with confirm=true)."
+            ),
+        },
+    },
+)(QueueItemViewSet)

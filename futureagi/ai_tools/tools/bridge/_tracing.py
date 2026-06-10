@@ -14,8 +14,8 @@ Packet D adjudications (documented skips — do NOT register):
   use bulk-annotation"); only `get_annotation_values` is live — bridging
   dead handlers would ship six always-failing tools. The write path is
   `submit_bulk_annotations` (BulkAnnotationView), bridged below.
-- `EvalTaskView.mark_eval_tasks_deleted`: destructive bulk delete —
-  DEFERRED to Phase 3A per spec (see manifests/packet_d.txt).
+- `EvalTaskView.mark_eval_tasks_deleted`: bridged in Phase 3A as
+  `bulk_delete_eval_tasks` (confirmation-gated; see end of this module).
 """
 
 from ai_tools.drf_bridge import expose_to_mcp
@@ -735,7 +735,8 @@ expose_to_mcp(
                 },
             },
         },
-        # mark_eval_tasks_deleted (bulk destructive) — DEFERRED to Phase 3A.
+        # mark_eval_tasks_deleted — bridged in the Phase 3A block below
+        # as bulk_delete_eval_tasks (confirmation-gated).
     },
 )(EvalTaskView)
 
@@ -972,3 +973,111 @@ expose_to_mcp(
 
 # Project versions (experiments use these)
 expose_to_mcp(category="experiments")(ProjectVersionView)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3A — destructive @actions (confirmation-gated; see PHASES.md 3A and
+# ai_tools/confirmations.py). execution_policy pinned explicitly for grep.
+# ---------------------------------------------------------------------------
+
+
+def _preview_bulk_delete_eval_tasks(params: dict, context) -> str:
+    from tracer.models.eval_task import EvalTask, EvalTaskStatus
+
+    ids = params.get("eval_task_ids") or []
+    tasks = list(
+        EvalTask.objects.filter(id__in=ids).values_list("name", "id", "status")
+    )
+    lines = [
+        f"Will mark **{len(tasks)} eval task(s)** as deleted "
+        f"(of {len(ids)} requested), together with their task/eval logs:"
+    ]
+    for name, tid, task_status in tasks[:10]:
+        lines.append(f"- '{name}' (`{str(tid)[:8]}…`, status: {task_status})")
+    if len(tasks) > 10:
+        lines.append(f"- … and {len(tasks) - 10} more")
+    running = [n for n, _, s in tasks if s == EvalTaskStatus.RUNNING]
+    if running:
+        lines.append(
+            f"NOTE: {len(running)} task(s) are RUNNING and will be rejected "
+            "by the API — pause them first."
+        )
+    lines.append("")
+    lines.append("This cannot be undone.")
+    return "\n".join(lines)
+
+
+def _preview_delete_project_version_runs(params: dict, context) -> str:
+    from tracer.models.project_version import ProjectVersion
+
+    ids = params.get("ids") or []
+    versions = list(
+        ProjectVersion.objects.filter(id__in=ids).values_list(
+            "name", "id", "project__name"
+        )
+    )
+    lines = [
+        f"Will delete **{len(versions)} project version run(s)** "
+        f"(of {len(ids)} requested), including their traces/metrics tree:"
+    ]
+    for name, vid, project_name in versions[:10]:
+        lines.append(
+            f"- '{name}' (`{str(vid)[:8]}…`) in project '{project_name}'"
+        )
+    if len(versions) > 10:
+        lines.append(f"- … and {len(versions) - 10} more")
+    lines.append("")
+    lines.append("This cannot be undone.")
+    return "\n".join(lines)
+
+
+# bulk_delete_eval_tasks -> EvalTaskView.mark_eval_tasks_deleted (POST,
+# detail=False; EvalTaskDeleteRequestSerializer auto-resolves: eval_task_ids).
+expose_to_mcp(
+    category="tracing",
+    tools={
+        "mark_eval_tasks_deleted": {
+            "name": "bulk_delete_eval_tasks",
+            "entity": "eval task",
+            "execution_policy": "destructive",
+            "confirm_preview": _preview_bulk_delete_eval_tasks,
+            "description": (
+                "Bulk delete eval tasks by id (marks the tasks and their "
+                "logs as deleted; running tasks are rejected — pause them "
+                "first). DESTRUCTIVE: requires user confirmation (preview "
+                "first, then re-call with confirm=true)."
+            ),
+        },
+    },
+)(EvalTaskView)
+
+# delete_project_version_runs -> ProjectVersionView.delete_runs (POST,
+# detail=False, raw request.data {"ids": [...]} — no serializer, so the
+# input shape is declared via query_params (routed to the POST body).
+expose_to_mcp(
+    category="tracing",
+    tools={
+        "delete_runs": {
+            "name": "delete_project_version_runs",
+            "entity": "project version",
+            "execution_policy": "destructive",
+            "confirm_preview": _preview_delete_project_version_runs,
+            "query_params": {
+                "ids": {
+                    "type": list[str],
+                    "required": True,
+                    "description": (
+                        "List of project version (run) UUIDs to delete "
+                        "(from `list_project_versions`)."
+                    ),
+                },
+            },
+            "description": (
+                "Delete project version runs (prototype runs) by id, "
+                "soft-deleting each version's run tree. DESTRUCTIVE: "
+                "requires user confirmation (preview first, then re-call "
+                "with confirm=true)."
+            ),
+        },
+    },
+)(ProjectVersionView)

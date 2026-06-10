@@ -128,7 +128,10 @@ export const useFalconSocket = () => {
 
         // Map backend message_id to frontend's placeholder message
         // Frontend creates "assistant-<timestamp>", backend sends "<uuid>"
-        if (data?.message_id) {
+        // confirmation_resolved is exempt: its message_id points at the PAST
+        // message holding the confirm card, never the in-flight placeholder —
+        // remapping there would collide two messages onto one id.
+        if (data?.message_id && type !== "confirmation_resolved") {
           const store = useFalconStore.getState();
           if (
             store.streamingMessageId &&
@@ -153,18 +156,58 @@ export const useFalconSocket = () => {
               params: data.params,
               status: "running",
               step: data.step,
+              // read | mutate | destructive — drives the write badge (UX_UI 7.1)
+              execution_policy: data.execution_policy,
               result_summary: null,
               result_full: null,
             });
             break;
 
-          case "tool_call_result":
-            updateToolCall(data.message_id, data.call_id, {
+          case "tool_call_result": {
+            const updates = {
               status: data.status,
               result_summary: data.result_summary,
               result_full: data.result_full,
-            });
+            };
+            // Destructive phase-1: structured confirmation payload
+            // ({token, tool_name, args, preview, expires_at, policy, undo_note})
+            // renders the inline Confirm/Cancel card.
+            if (data.confirmation) {
+              updates.confirmation = data.confirmation;
+            }
+            // Executed phase-2 leg may carry a compensating-action hint.
+            if (data.undo) {
+              updates.undo = data.undo;
+            }
+            updateToolCall(data.message_id, data.call_id, updates);
             break;
+          }
+
+          case "confirmation_resolved": {
+            // Server-held approval resolved (Confirm/Cancel button, or the
+            // token expired). Flip the card state on the original message…
+            if (data.message_id && data.call_id) {
+              updateToolCall(data.message_id, data.call_id, {
+                confirmation_status: data.decision,
+              });
+            }
+            // …and for confirmed/cancelled the consumer persists a synthetic
+            // user message and starts a NEW agent turn — arm a placeholder so
+            // the follow-up stream has a message to land in (same idiom as
+            // handleSend; without this the new turn's events are dropped).
+            if (data.decision === "confirmed" || data.decision === "cancelled") {
+              const store = useFalconStore.getState();
+              const assistantMsgId = `assistant-${Date.now()}`;
+              store.addMessage({
+                id: assistantMsgId,
+                role: "assistant",
+                content: "",
+                created_at: new Date().toISOString(),
+              });
+              setStreaming(true, assistantMsgId);
+            }
+            break;
+          }
 
           case "iteration_start":
             updateMessage(data.message_id, {
@@ -456,7 +499,26 @@ export const useFalconSocket = () => {
     }
   }, []);
 
-  return { sendChat, sendStop, sendFeedback, sendActivateSkill, sendReconnect };
+  // Resolve a destructive-action confirmation. The button is the ONLY
+  // approver (typed "yes" never approves — server-enforced); decision is
+  // "confirm" or "cancel". The server replies with `confirmation_resolved`.
+  const sendConfirmAction = useCallback((token, decision) => {
+    if (!token) return;
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(
+        JSON.stringify({ type: "confirm_action", token, decision }),
+      );
+    }
+  }, []);
+
+  return {
+    sendChat,
+    sendStop,
+    sendFeedback,
+    sendActivateSkill,
+    sendReconnect,
+    sendConfirmAction,
+  };
 };
 
 export default useFalconSocket;

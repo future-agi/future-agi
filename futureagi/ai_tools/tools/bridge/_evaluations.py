@@ -28,7 +28,8 @@ Adjudications (documented per spec):
 Deferred / blocked (do NOT register here):
 - GroundTruthUploadView (:4374) — multipart file upload is unproven through
   _build_drf_request (JSON-only factory). Documented gap.
-- EvalTemplateBulkDeleteView (:1780) — destructive bulk delete, Phase 3A.
+- EvalTemplateBulkDeleteView (:1780) — bridged in Phase 3A as
+  bulk_delete_eval_templates (confirmation-gated; end of this module).
 - §6.3 ORM-direct HW tools with NO DRF endpoint behind them (endpoint must be
   built first; they stay hand-written): compare_evaluations, get_evaluation,
   list_evaluations, delete_eval_logs, evaluate_with_agent. Same for
@@ -50,6 +51,7 @@ from model_hub.views.separate_evals import (
     EvalMetricView,
     EvalPlayGroundAPIView,
     EvalPlayGroundFeedbackAPIView,
+    EvalTemplateBulkDeleteView,
     EvalTemplateCreateV2View,
     EvalTemplateDetailView,
     EvalTemplateListChartsView,
@@ -867,3 +869,63 @@ expose_to_mcp(
         }
     },
 )(TraceEvalView)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3A — destructive views (confirmation-gated; see PHASES.md 3A and
+# ai_tools/confirmations.py). execution_policy pinned explicitly for grep.
+# ---------------------------------------------------------------------------
+
+
+def _preview_bulk_delete_eval_templates(params: dict, context) -> str:
+    from model_hub.models.choices import OwnerChoices
+    from model_hub.models.evals_metric import EvalTemplate
+
+    ids = params.get("template_ids") or []
+    templates = list(
+        EvalTemplate.objects.filter(
+            id__in=ids,
+            organization=context.organization,
+            owner=OwnerChoices.USER.value,
+            deleted=False,
+        ).values_list("name", "id")
+    )
+    lines = [
+        f"Will delete **{len(templates)} user-owned eval template(s)** "
+        f"(of {len(ids)} requested; system templates are never deleted):"
+    ]
+    for name, tid in templates[:10]:
+        lines.append(f"- '{name}' (`{str(tid)[:8]}…`)")
+    if len(templates) > 10:
+        lines.append(f"- … and {len(templates) - 10} more")
+    skipped = len(ids) - len(templates)
+    if skipped > 0:
+        lines.append(
+            f"({skipped} requested id(s) are not deletable user templates "
+            "in this organization and will be ignored.)"
+        )
+    lines.append("")
+    lines.append("This cannot be undone.")
+    return "\n".join(lines)
+
+
+# bulk_delete_eval_templates -> EvalTemplateBulkDeleteView.post (APIView verb
+# handler; EvalTemplateBulkDeleteRequestSerializer auto-resolves: template_ids).
+expose_to_mcp(
+    category="evaluations",
+    tools={
+        "post": {
+            "name": "bulk_delete_eval_templates",
+            "method": "POST",
+            "entity": "eval template",
+            "execution_policy": "destructive",
+            "confirm_preview": _preview_bulk_delete_eval_templates,
+            "description": (
+                "Bulk delete user-owned eval templates by id (soft delete; "
+                "system templates are skipped). DESTRUCTIVE: requires user "
+                "confirmation (preview first, then re-call with "
+                "confirm=true)."
+            ),
+        },
+    },
+)(EvalTemplateBulkDeleteView)

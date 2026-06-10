@@ -25,8 +25,8 @@ deleted in the same change):
       version/output prefetched)
 
 Deliberately NOT bridged:
-  - PromptTemplateViewSet.bulk_delete — destructive bulk @action, deferred
-    to Phase 3A confirmation policy (see manifests/packet_b.txt).
+  - PromptTemplateViewSet.bulk_delete — bridged in Phase 3A as
+    bulk_delete_prompt_templates (confirmation-gated; end of this module).
   - PromptTemplateViewSet.stop_streaming — UI websocket streaming control.
 
 TODO: when PromptTemplateViewSet.list grows a @validated_request(
@@ -762,3 +762,65 @@ expose_to_mcp(
         },
     },
 )(ColumnValuesAPIView)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3A — destructive @actions (confirmation-gated; see PHASES.md 3A and
+# ai_tools/confirmations.py). execution_policy is auto-derived but pinned
+# explicitly for greppability.
+# ---------------------------------------------------------------------------
+
+
+def _preview_bulk_delete_prompt_templates(params: dict, context) -> str:
+    """Confirmation preview: resolve template names (workspace/org-scoped)."""
+    from model_hub.models.run_prompt import PromptTemplate
+
+    ids = params.get("ids") or []
+    templates = list(
+        PromptTemplate.objects.filter(id__in=ids).values_list("name", "id")
+    )
+    lines = [
+        f"Will permanently soft-delete **{len(templates)} prompt template(s)** "
+        f"(of {len(ids)} requested):"
+    ]
+    for name, tid in templates[:10]:
+        lines.append(f"- '{name}' (`{str(tid)[:8]}…`)")
+    if len(templates) > 10:
+        lines.append(f"- … and {len(templates) - 10} more")
+    missing = len(ids) - len(templates)
+    if missing > 0:
+        lines.append(
+            f"({missing} requested id(s) do not match any template in this "
+            "workspace and will be ignored.)"
+        )
+    lines.append("")
+    lines.append("This cannot be undone.")
+    return "\n".join(lines)
+
+
+expose_to_mcp(
+    category="prompts",
+    tools={
+        "bulk_delete": {
+            "name": "bulk_delete_prompt_templates",
+            "entity": "prompt template",
+            "execution_policy": "destructive",
+            "confirm_preview": _preview_bulk_delete_prompt_templates,
+            "query_params": {
+                "ids": {
+                    "type": list[str],
+                    "required": True,
+                    "description": (
+                        "List of prompt template UUIDs to delete (from "
+                        "`list_prompt_templates`)."
+                    ),
+                },
+            },
+            "description": (
+                "Bulk delete prompt templates by id. DESTRUCTIVE: requires "
+                "user confirmation (first call returns a preview; re-call "
+                "with confirm=true after the user approves)."
+            ),
+        },
+    },
+)(PromptTemplateViewSet)

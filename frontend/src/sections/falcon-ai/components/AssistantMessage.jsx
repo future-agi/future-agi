@@ -9,7 +9,12 @@ import TextBlock from "./TextBlock";
 import ToolCallCard from "./ToolCallCard";
 import CompletionCard from "./CompletionCard";
 
-export default function AssistantMessage({ message, onFeedback, dimmed }) {
+export default function AssistantMessage({
+  message,
+  onFeedback,
+  onConfirmAction,
+  dimmed,
+}) {
   const [hovered, setHovered] = useState(false);
   const [feedback, setFeedback] = useState(message.feedback || null);
   const toolCalls = message.tool_calls || [];
@@ -85,7 +90,13 @@ export default function AssistantMessage({ message, onFeedback, dimmed }) {
               return <TextBlock key={block.id} content={block.content} />;
             }
             if (block.type === "tool_call") {
-              return <ToolCallCard key={block.id} toolCall={block.toolCall} />;
+              return (
+                <ToolCallCard
+                  key={block.id}
+                  toolCall={block.toolCall}
+                  onConfirmAction={onConfirmAction}
+                />
+              );
             }
             if (block.type === "completion_card" && block.card) {
               return <CompletionCard key={block.id} card={block.card} />;
@@ -95,7 +106,11 @@ export default function AssistantMessage({ message, onFeedback, dimmed }) {
         ) : (
           <>
             {toolCalls.map((tc) => (
-              <ToolCallCard key={tc.call_id} toolCall={tc} />
+              <ToolCallCard
+                key={tc.call_id}
+                toolCall={tc}
+                onConfirmAction={onConfirmAction}
+              />
             ))}
             <TextBlock content={message.content} />
           </>
@@ -260,5 +275,6 @@ AssistantMessage.propTypes = {
     ),
   }).isRequired,
   onFeedback: PropTypes.func,
+  onConfirmAction: PropTypes.func,
   dimmed: PropTypes.bool,
 };

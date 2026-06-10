@@ -42,7 +42,8 @@ export default function FalconAIFullPage() {
   const messages = useFalconStore((s) => s.messages);
   const showCustomize = useFalconStore((s) => s.showCustomize);
 
-  const { sendChat, sendStop, sendFeedback, sendReconnect } = useFalconSocket();
+  const { sendChat, sendStop, sendFeedback, sendReconnect, sendConfirmAction } =
+    useFalconSocket();
   const context = useFalconContext();
 
   const loadSkillsAndConnectors = useCallback(async () => {
@@ -204,6 +205,7 @@ export default function FalconAIFullPage() {
             <MessageList
               onQuickAction={handleQuickAction}
               onFeedback={sendFeedback}
+              onConfirmAction={sendConfirmAction}
             />
             {messages.length === 0 && (
               <Box sx={{ maxWidth: 600, mx: "auto", width: "100%", pb: 2 }}>

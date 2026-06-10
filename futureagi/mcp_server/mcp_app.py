@@ -99,7 +99,9 @@ def _authenticate_and_set_context(api_key: str, secret_key: str) -> ToolContext 
 
     set_workspace_context(workspace=workspace, organization=organization, user=user)
 
-    return ToolContext(user=user, organization=organization, workspace=workspace)
+    return ToolContext(
+        user=user, organization=organization, workspace=workspace, transport="mcp"
+    )
 
 
 def _authenticate_via_oauth(token: str) -> ToolContext | None:
@@ -139,7 +141,9 @@ def _authenticate_via_oauth(token: str) -> ToolContext | None:
 
     set_workspace_context(workspace=workspace, organization=organization, user=user)
 
-    return ToolContext(user=user, organization=organization, workspace=workspace)
+    return ToolContext(
+        user=user, organization=organization, workspace=workspace, transport="mcp"
+    )
 
 
 def _register_ai_tools():
@@ -216,7 +220,9 @@ def _register_ai_tools():
                 except RateLimitExceededError as e:
                     return f"Error: {e} (retry after {e.retry_after}s)"
 
-                context = ToolContext(user=usr, organization=org, workspace=ws)
+                context = ToolContext(
+                    user=usr, organization=org, workspace=ws, transport="mcp"
+                )
 
                 start = time.time()
                 result = t.run(kwargs_dict, context)
@@ -279,6 +285,19 @@ def _register_ai_tools():
                         inspect.Parameter.KEYWORD_ONLY,
                         default=default,
                         annotation=field_info.annotation,
+                    )
+                )
+
+            # Phase 3A: destructive tools take an extra optional `confirm`
+            # bool (popped before validation in BaseTool.run). Without it in
+            # the signature, FastMCP would reject the phase-2 call.
+            if getattr(t, "execution_policy", "") == "destructive":
+                params.append(
+                    inspect.Parameter(
+                        "confirm",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=False,
+                        annotation=bool,
                     )
                 )
 

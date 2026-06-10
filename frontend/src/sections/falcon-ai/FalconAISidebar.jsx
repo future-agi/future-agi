@@ -35,7 +35,8 @@ export default function FalconAISidebar() {
   const messages = useFalconStore((s) => s.messages);
 
   const { pathname } = useLocation();
-  const { sendChat, sendStop, sendFeedback } = useFalconSocket();
+  const { sendChat, sendStop, sendFeedback, sendConfirmAction } =
+    useFalconSocket();
   const context = useFalconContext();
 
   // Auto-close sidebar when navigating to Falcon AI full page
@@ -164,6 +165,7 @@ export default function FalconAISidebar() {
         <MessageList
           onQuickAction={handleQuickAction}
           onFeedback={sendFeedback}
+          onConfirmAction={sendConfirmAction}
         />
         {messages.length === 0 && (
           <Box sx={{ px: 2, pb: 2 }}>

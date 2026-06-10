@@ -52,3 +52,94 @@ expose_to_mcp(
         },
     },
 )(AnnotationsViewSet)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3A — destructive @actions (confirmation-gated; see PHASES.md 3A and
+# ai_tools/confirmations.py). execution_policy pinned explicitly for grep.
+# ---------------------------------------------------------------------------
+
+
+def _preview_bulk_delete_annotations(params: dict, context) -> str:
+    from model_hub.models.develop_annotations import Annotations
+
+    ids = params.get("annotation_ids") or []
+    annotations = list(
+        Annotations.objects.filter(id__in=ids).values_list(
+            "name", "id", "dataset__name"
+        )
+    )
+    lines = [
+        f"Will delete **{len(annotations)} annotation task(s)** "
+        f"(of {len(ids)} requested), including their annotation columns and "
+        "submitted cell values:"
+    ]
+    for name, aid, dataset_name in annotations[:10]:
+        lines.append(
+            f"- '{name}' (`{str(aid)[:8]}…`) on dataset '{dataset_name}'"
+        )
+    if len(annotations) > 10:
+        lines.append(f"- … and {len(annotations) - 10} more")
+    lines.append("")
+    lines.append("This cannot be undone.")
+    return "\n".join(lines)
+
+
+def _preview_reset_annotations(params: dict, context) -> str:
+    from model_hub.models.develop_annotations import Annotations
+
+    annotation_id = params.get("id")
+    row_id = params.get("row_id")
+    annotation = (
+        Annotations.objects.filter(id=annotation_id)
+        .values_list("name", "dataset__name")
+        .first()
+    )
+    label = (
+        f"'{annotation[0]}' (dataset '{annotation[1]}')"
+        if annotation
+        else f"`{annotation_id}` (not found)"
+    )
+    return (
+        f"Will RESET your submitted annotation values for row `{row_id}` of "
+        f"annotation task {label} — the row's cell values you annotated are "
+        "cleared so it can be re-annotated.\n\n"
+        "This data loss cannot be undone; the values must be re-entered."
+    )
+
+
+expose_to_mcp(
+    category="annotations",
+    tools={
+        # bulk_destroy: BulkDestroyAnnotationsRequestSerializer auto-resolves
+        # (annotation_ids).
+        "bulk_destroy": {
+            "name": "bulk_delete_annotations",
+            "entity": "annotation",
+            "execution_policy": "destructive",
+            "confirm_preview": _preview_bulk_delete_annotations,
+            "description": (
+                "Bulk delete annotation tasks by id, including their "
+                "annotation columns and submitted values. DESTRUCTIVE: "
+                "requires user confirmation (preview first, then re-call "
+                "with confirm=true)."
+            ),
+        },
+        # reset_annotations: detail action (annotation id) +
+        # ResetAnnotationsRequestSerializer (row_id). Only assigned users
+        # may reset (enforced in-method by the view).
+        "reset_annotations": {
+            "name": "reset_annotations",
+            "entity": "annotation",
+            "execution_policy": "destructive",
+            "confirm_preview": _preview_reset_annotations,
+            "description": (
+                "Reset the calling user's submitted annotation values for "
+                "one row of an annotation task (clears the row's annotated "
+                "cell values so it can be re-annotated). DESTRUCTIVE data "
+                "loss: requires user confirmation (preview first, then "
+                "re-call with confirm=true)."
+            ),
+        },
+    },
+)(AnnotationsViewSet)

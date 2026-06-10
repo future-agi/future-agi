@@ -58,6 +58,7 @@ from simulate.views.run_test import (
     RunTestListView,
     RunTestScenariosView,
     TestExecutionAnalyticsView,
+    TestExecutionBulkDeleteView,
     TestExecutionCancelView,
     TestExecutionDeleteView,
     TestExecutionDetailView,
@@ -410,7 +411,8 @@ expose_to_mcp(
 # under the legacy tool name; the legacy module is deleted in the same
 # commit (see ai_tools/tools/__init__.py).
 #
-# Deferred to Phase 3A (destructive bulk): TestExecutionBulkDeleteView.
+# Phase 3A: TestExecutionBulkDeleteView bridged as bulk_delete_test_executions
+# (confirmation-gated; end of this module).
 # Kept as hand-written (NO DRF endpoint exists — §6.3-style endpoint work):
 #   compare_agent_versions, list_simulate_eval_configs,
 #   list_eval_mapping_options, duplicate_agent_definition.
@@ -765,7 +767,7 @@ expose_to_mcp(
 
 # delete_test_execution (conversion) -> TestExecutionDeleteView.delete.
 # The legacy HW tool's bulk mode (run_test_id + select_all) maps to
-# TestExecutionBulkDeleteView, which is DEFERRED to Phase 3A (destructive).
+# TestExecutionBulkDeleteView, bridged in Phase 3A (end of this module).
 expose_to_mcp(
     category="simulation",
     tools={
@@ -1827,3 +1829,66 @@ expose_to_mcp(
         },
     },
 )(AgentPromptOptimiserRunViewSet)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3A — destructive views (confirmation-gated; see PHASES.md 3A and
+# ai_tools/confirmations.py). execution_policy pinned explicitly for grep.
+# ---------------------------------------------------------------------------
+
+
+def _preview_bulk_delete_test_executions(params: dict, context) -> str:
+    from simulate.models.run_test import RunTest
+    from simulate.models.test_execution import TestExecution
+
+    run_test_id = params.get("run_test_id")
+    run_test = (
+        RunTest.objects.filter(id=run_test_id, organization=context.organization)
+        .only("id", "name")
+        .first()
+    )
+    rt_label = f"'{run_test.name}'" if run_test else f"`{run_test_id}` (not found)"
+    select_all = bool(params.get("select_all"))
+    ids = params.get("test_execution_ids") or []
+    qs = TestExecution.objects.filter(run_test_id=run_test_id)
+    if select_all:
+        if ids:
+            qs = qs.exclude(id__in=ids)
+        scope = "ALL test executions" + (f" except {len(ids)} excluded" if ids else "")
+    else:
+        qs = qs.filter(id__in=ids)
+        scope = f"{len(ids)} selected test execution(s)"
+    count = qs.count()
+    return (
+        f"Will delete **{count} test execution(s)** ({scope}) from run test "
+        f"{rt_label}. Active executions (running/pending/cancelling) are "
+        "rejected by the API.\n\nThis cannot be undone."
+    )
+
+
+# bulk_delete_test_executions -> TestExecutionBulkDeleteView.post(run_test_id)
+# (APIView verb handler; TestExecutionBulkDeleteSerializer auto-resolves:
+# select_all + test_execution_ids). run_test_id is a URL kwarg -> pk routing.
+expose_to_mcp(
+    category="simulation",
+    tools={
+        "post": {
+            "name": "bulk_delete_test_executions",
+            "method": "POST",
+            "detail": True,
+            "pk_field": "run_test_id",
+            "pk_kwarg": "run_test_id",
+            "id_source": "list_run_tests",
+            "entity": "run test",
+            "execution_policy": "destructive",
+            "confirm_preview": _preview_bulk_delete_test_executions,
+            "description": (
+                "Bulk delete test executions within a run test — target "
+                "specific ids via test_execution_ids, or everything via "
+                "select_all=true (test_execution_ids then acts as an "
+                "exclusion list). DESTRUCTIVE: requires user confirmation "
+                "(preview first, then re-call with confirm=true)."
+            ),
+        },
+    },
+)(TestExecutionBulkDeleteView)
