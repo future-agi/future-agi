@@ -346,11 +346,17 @@ def build_optimization_manifest_for_agent(
     threshold: float = 0.9,
     min_turns: int = 1,
     max_turns: int | None = None,
+    search_space: Mapping[str, Sequence[Any]] | None = None,
+    base_agent: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a kit optimization manifest. Pure (no I/O).
 
-    ``agent_candidates`` are the variants to search over; the kit scores each against
-    ``evaluation_config`` and surfaces the best.
+    ``agent_candidates`` are full agent configs to search over. ``search_space``
+    extends the search to ANY dot-path of the agent/manifest — model, voice
+    knobs, tools, memory — so the optimisation covers the WHOLE agent, not just
+    its prompt (e.g. ``{"agent.model": ["gpt-4o-mini", "gpt-4o"],
+    "agent.instructions": [...]}``). ``base_agent`` pins which config the
+    patches apply to (defaults to the first candidate).
     """
     if not name:
         raise ValueError("name is required")
@@ -365,6 +371,10 @@ def build_optimization_manifest_for_agent(
         threshold=threshold,
         min_turns=min_turns,
         max_turns=max_turns,
+        search_space={k: list(v) for k, v in search_space.items()}
+        if search_space
+        else None,
+        base_agent=dict(base_agent) if base_agent is not None else None,
     )
 
 
@@ -377,6 +387,8 @@ def optimize_and_apply_for_agent(
     threshold: float = 0.9,
     min_turns: int = 1,
     max_turns: int | None = None,
+    search_space: Mapping[str, Sequence[Any]] | None = None,
+    base_agent: Mapping[str, Any] | None = None,
     dry_run: bool = True,
 ) -> dict[str, Any]:
     """Run optimization over agent candidates via the kit and return the result.
@@ -394,6 +406,8 @@ def optimize_and_apply_for_agent(
         threshold=threshold,
         min_turns=min_turns,
         max_turns=max_turns,
+        search_space=search_space,
+        base_agent=base_agent,
     )
     opt = _optimize_module()
     return opt.optimize_manifest(manifest, dry_run=dry_run)

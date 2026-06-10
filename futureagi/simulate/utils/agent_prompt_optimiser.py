@@ -297,6 +297,32 @@ def _resolve_optimiser_base_prompt(prompt_optimiser_run) -> str:
     return "You are a helpful assistant."
 
 
+def _resolve_optimiser_base_agent(prompt_optimiser_run) -> dict:
+    """Build the WHOLE-agent base config from the run's agent definition (TH-5642).
+
+    The optimisation searches the full agent config (model, provider identity,
+    instructions, …), not just the prompt; this is the seed every search-space
+    patch applies to. Provider/assistant_id ride along so the winning config can
+    be applied back to the provider-side agent.
+    """
+    te = prompt_optimiser_run.test_execution
+    agent_def = getattr(te, "agent_definition", None) or getattr(
+        getattr(te, "run_test", None), "agent_definition", None
+    )
+    base: dict = {
+        "type": "llm",
+        "name": getattr(agent_def, "agent_name", None) or "agent-under-optimisation",
+        "model": (getattr(prompt_optimiser_run, "model", None) or "gpt-4o-mini"),
+        "instructions": _resolve_optimiser_base_prompt(prompt_optimiser_run),
+    }
+    if agent_def is not None:
+        if getattr(agent_def, "provider", None):
+            base["provider"] = str(agent_def.provider)
+        if getattr(agent_def, "assistant_id", None):
+            base["assistant_id"] = str(agent_def.assistant_id)
+    return base
+
+
 def _run_agent_learning_kit_optimisation(prompt_optimiser_run) -> None:
     """Drive a prompt-optimiser run through the agent-learning-kit bridge (TH-5642).
 
@@ -314,12 +340,14 @@ def _run_agent_learning_kit_optimisation(prompt_optimiser_run) -> None:
         return
 
     config = prompt_optimiser_run.configuration or {}
-    candidates = config.get("agent_candidates") or [
-        {
-            "type": "llm",
-            "instructions": _resolve_optimiser_base_prompt(prompt_optimiser_run),
-        }
-    ]
+    base_agent = config.get("base_agent") or _resolve_optimiser_base_agent(
+        prompt_optimiser_run
+    )
+    candidates = config.get("agent_candidates") or [base_agent]
+    # search_space extends the search over the WHOLE agent config via dot-paths
+    # (e.g. {"agent.model": [...], "agent.instructions": [...]}), so the kit
+    # optimises the agent, not just its prompt.
+    search_space = config.get("search_space") or None
     evaluation_config = config.get("evaluation_config") or {
         "metrics": [{"name": "task_completion"}]
     }
@@ -328,6 +356,8 @@ def _run_agent_learning_kit_optimisation(prompt_optimiser_run) -> None:
             name=str(prompt_optimiser_run.id),
             agent_candidates=candidates,
             evaluation_config=evaluation_config,
+            search_space=search_space,
+            base_agent=base_agent,
             dry_run=config.get("dry_run", True),
         )
     except Exception as e:  # surface on the run; don't crash the task
@@ -355,17 +385,21 @@ def _store_kit_candidates_as_trials(prompt_optimiser_run, result, candidates) ->
     history = (result or {}).get("optimization", {}).get("history") or []
     if not history:
         return
-    baseline_prompt = ""
+    baseline_agent: dict = {}
     for cand in candidates or []:
-        if isinstance(cand, Mapping) and cand.get("instructions"):
-            baseline_prompt = str(cand["instructions"])
+        if isinstance(cand, Mapping):
+            baseline_agent = dict(cand)
             break
+    baseline_prompt = str(baseline_agent.get("instructions") or "")
     best_id = (result.get("summary") or {}).get("best_candidate_id")
     try:
         for idx, entry in enumerate(history):
             patch_agent = (entry.get("candidate_patch") or {}).get("agent") or {}
             prompt = str(patch_agent.get("instructions") or "") or baseline_prompt
             is_baseline = not (entry.get("candidate_patch") or {})
+            # The WHOLE candidate config (baseline overlaid with this candidate's
+            # patch) — what apply pushes to the provider, beyond just the prompt.
+            candidate_config = {**baseline_agent, **patch_agent}
             PromptTrial.objects.create(
                 agent_prompt_optimiser_run=prompt_optimiser_run,
                 trial_number=idx,
@@ -376,6 +410,7 @@ def _store_kit_candidates_as_trials(prompt_optimiser_run, result, candidates) ->
                     "candidate_id": entry.get("candidate_id"),
                     "selected": entry.get("candidate_id") == best_id,
                     "evaluation_score": entry.get("evaluation_score"),
+                    "candidate_config": candidate_config,
                     "source": "agent_learning_kit",
                 },
             )

@@ -468,11 +468,22 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                     )
                 from simulate.services.provider_prompt_apply import (
                     PromptApplyError,
+                    apply_config_to_provider_agent,
                     apply_prompt_to_provider_agent,
                 )
 
+                # Kit trials carry the WHOLE candidate config (model, voice,
+                # first message, ... — not just the prompt); apply all of it.
+                candidate_config = (trial.metadata or {}).get("candidate_config")
                 try:
-                    applied = apply_prompt_to_provider_agent(agent_def, trial.prompt)
+                    if candidate_config:
+                        applied = apply_config_to_provider_agent(
+                            agent_def, dict(candidate_config)
+                        )
+                    else:
+                        applied = apply_prompt_to_provider_agent(
+                            agent_def, trial.prompt
+                        )
                 except PromptApplyError as e:
                     return self._gm.bad_request(str(e))
                 return self._gm.success_response(
@@ -481,7 +492,10 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "target": "provider_agent",
                         "provider": applied["provider"],
                         "assistant_id": applied["assistant_id"],
-                        "previous_prompt": applied["previous_prompt"],
+                        "applied_fields": applied.get("applied_fields"),
+                        "skipped_fields": applied.get("skipped_fields"),
+                        "previous_prompt": applied.get("previous_prompt"),
+                        "previous_config": applied.get("previous_config"),
                         "source_trial_id": str(trial.id),
                     }
                 )
