@@ -68,7 +68,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
 
   const copyToClipboard = (text, type) => {
     navigator.clipboard
-      .writeText(text)
+      .writeText(String(text ?? ""))
       .then(() => {
         enqueueSnackbar(`${type} copied to clipboard!`, { variant: "success" });
       })
@@ -109,7 +109,8 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
       onCloseClick();
       //@ts-ignore
       addRowSDK({
-        dataset_name: data?.data?.result?.datasetName,
+        dataset_name:
+          data?.data?.result?.dataset_name ?? data?.data?.result?.datasetName,
       });
       setIsNext(true);
     },
@@ -139,6 +140,13 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
     reset();
     refreshGrid();
   };
+
+  const result = data?.data?.result || {};
+  const apiKeys = result?.api_keys || result?.apiKeys || {};
+  const datasetName = result?.dataset?.name || "N/A";
+  const datasetIdValue = result?.dataset?.id || "N/A";
+  const apiKeyValue = apiKeys?.api_key || apiKeys?.apiKey || "N/A";
+  const secretKeyValue = apiKeys?.secret_key || apiKeys?.secretKey || "N/A";
 
   return (
     <>
@@ -301,16 +309,12 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     p="5px 12px"
                     color="black"
                   >
-                    {data?.data?.result?.dataset?.name}
+                    {datasetName}
                   </Typography>
                   <IconButton
+                    aria-label="Copy Dataset Name"
                     size="small"
-                    onClick={() =>
-                      copyToClipboard(
-                        data?.data?.result?.dataset?.name,
-                        "Dataset Name",
-                      )
-                    }
+                    onClick={() => copyToClipboard(datasetName, "Dataset Name")}
                     sx={{ color: "text.secondary" }}
                   >
                     <Iconify icon="eva:copy-outline" width={16} height={16} />
@@ -340,15 +344,13 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                       fontSize: "0.875rem",
                     }}
                   >
-                    {data?.data?.result?.dataset?.id}
+                    {datasetIdValue}
                   </Typography>
                   <IconButton
+                    aria-label="Copy Dataset ID"
                     size="small"
                     onClick={() =>
-                      copyToClipboard(
-                        data?.data?.result?.dataset?.id,
-                        "Dataset ID",
-                      )
+                      copyToClipboard(datasetIdValue, "Dataset ID")
                     }
                     sx={{ color: "text.secondary" }}
                   >
@@ -375,16 +377,12 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     p="5px 12px"
                     color="black"
                   >
-                    {data?.data?.result?.apiKeys?.apiKey}
+                    {apiKeyValue}
                   </Typography>
                   <IconButton
+                    aria-label="Copy API Key"
                     size="small"
-                    onClick={() =>
-                      copyToClipboard(
-                        data?.data?.result?.apiKeys?.apiKey,
-                        "API Key",
-                      )
-                    }
+                    onClick={() => copyToClipboard(apiKeyValue, "API Key")}
                     sx={{ color: "text.secondary" }}
                   >
                     <Iconify icon="eva:copy-outline" width={16} height={16} />
@@ -410,15 +408,13 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     p="5px 12px"
                     color="black"
                   >
-                    {data?.data?.result?.apiKeys?.secretKey}
+                    {secretKeyValue}
                   </Typography>
                   <IconButton
+                    aria-label="Copy Secret Key"
                     size="small"
                     onClick={() =>
-                      copyToClipboard(
-                        data?.data?.result?.apiKeys?.secretKey,
-                        "Secret Key",
-                      )
+                      copyToClipboard(secretKeyValue, "Secret Key")
                     }
                     sx={{ color: "text.secondary" }}
                   >
