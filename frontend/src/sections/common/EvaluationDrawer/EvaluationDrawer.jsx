@@ -284,6 +284,7 @@ const EvaluationDrawerChild = ({
                   All Evaluations
                 </Typography>
                 <IconButton
+                  data-testid="evaluation-drawer-close"
                   onClick={onClose}
                   sx={{ p: 0, color: "text.primary" }}
                 >
@@ -326,6 +327,7 @@ const EvaluationDrawerChild = ({
                     Select and configure the evals to run in your dataset
                   </Typography>
                   <Button
+                    data-testid="evaluation-drawer-empty-add-evaluations"
                     variant="contained"
                     color="primary"
                     size="small"

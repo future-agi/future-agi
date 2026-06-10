@@ -83,6 +83,7 @@ const EvaluationActions = () => {
           </Box>
         </Box>
         <Button
+          data-testid="workbench-add-evaluations-button"
           onClick={() => setIsEvaluationDrawerOpen(true)}
           variant="outlined"
           color="primary"

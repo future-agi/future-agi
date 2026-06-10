@@ -488,7 +488,8 @@ const SkeletonRows = (
 // ── Main Component ──
 
 const EvalPickerList = ({ onSelectEval }) => {
-  const { existingEvals, sourceId, lockedFilters } = useEvalPickerContext();
+  const { existingEvals, source, sourceId, lockedFilters } =
+    useEvalPickerContext();
   const {
     items,
     total,
@@ -504,7 +505,7 @@ const EvalPickerList = ({ onSelectEval }) => {
     setSorting,
     filters,
     setFilters,
-  } = useEvalPickerData({ sourceId, lockedFilters });
+  } = useEvalPickerData({ source, sourceId, lockedFilters });
 
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [expandedEvalId, setExpandedEvalId] = useState(null);
@@ -764,6 +765,7 @@ const EvalPickerList = ({ onSelectEval }) => {
                   /* Main row */
                   <TableRow
                     key={evalItem.id}
+                    data-testid={`eval-picker-row-${evalItem.id}`}
                     hover
                     onClick={() => toggleExpand(evalItem.id)}
                     sx={{
@@ -794,6 +796,7 @@ const EvalPickerList = ({ onSelectEval }) => {
                     {/* Add button */}
                     <TableCell sx={{ ...bodyCellSx, width: 72, px: 0.5 }}>
                       <Button
+                        data-testid={`eval-picker-add-${evalItem.id}`}
                         size="small"
                         variant={added ? "outlined" : "contained"}
                         disabled={added}

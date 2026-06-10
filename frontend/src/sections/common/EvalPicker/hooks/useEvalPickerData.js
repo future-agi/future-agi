@@ -12,6 +12,7 @@ import { paramsSerializer } from "src/utils/utils";
  * when a sourceId is available, falls back to listEvalTemplates otherwise.
  */
 export function useEvalPickerData({
+  source = "dataset",
   sourceId = "",
   enabled = true,
   lockedFilters = null,
@@ -36,6 +37,7 @@ export function useEvalPickerData({
     if (lf?.template_type) f.template_type = lf.template_type;
     return Object.keys(f).length > 0 ? f : null;
   }, [filters, lockedFilters]);
+  const useSourceScopedEvals = !!sourceId && source !== "workbench";
 
   // Use the old endpoint that returns ALL evals (system + user) when sourceId is available
   const oldEndpointQuery = useQuery({
@@ -49,7 +51,7 @@ export function useEvalPickerData({
       );
       return data?.result;
     },
-    enabled: enabled && !!sourceId,
+    enabled: enabled && useSourceScopedEvals,
     keepPreviousData: true,
   });
 
@@ -72,12 +74,12 @@ export function useEvalPickerData({
     filters: apiFilters,
     sortBy,
     sortOrder,
-    enabled: enabled && !sourceId,
+    enabled: enabled && !useSourceScopedEvals,
   });
 
   // Normalize response — the old endpoint returns { evals: [...], evalRecommendations: [...] }
   // The new endpoint returns { items: [...], total: N }
-  const isUsingOldEndpoint = !!sourceId;
+  const isUsingOldEndpoint = useSourceScopedEvals;
   const rawData = isUsingOldEndpoint
     ? oldEndpointQuery.data
     : newEndpointQuery.data;

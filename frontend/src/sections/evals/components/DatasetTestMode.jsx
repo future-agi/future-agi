@@ -370,6 +370,7 @@ function ColumnTreeSelect({
   isUnmapped,
   disabled = false,
   disabledTooltip = "",
+  variable,
 }) {
   const [open, setOpen] = useState(false);
   const [typing, setTyping] = useState(false);
@@ -413,6 +414,7 @@ function ColumnTreeSelect({
   const textField = (
     <TextField
       ref={anchorRef}
+      data-testid={variable ? `eval-mapping-input-${variable}` : undefined}
       size="small"
       fullWidth
       value={value}
@@ -1759,6 +1761,7 @@ const DatasetTestMode = React.forwardRef(
                   />
                   <ColumnTreeSelect
                     columnNames={columnNames}
+                    variable={variable}
                     value={mapping[variable] || ""}
                     onChange={(val) =>
                       setMapping((prev) => ({
