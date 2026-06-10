@@ -1,0 +1,107 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - "futureagi/**"
+      - ".github/workflows/backend-ci.yml"
+  push:
+    branches: [main, dev]
+    paths:
+      - "futureagi/**"
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: futureagi
+
+    services:
+      test-db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_tfc
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_tfc"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      test-redis:
+        image: redis:7-alpine
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      test-clickhouse:
+        image: clickhouse/clickhouse-server:24.10.2.80
+        ports:
+          - 18123:8123
+          - 19000:9000
+        options: >-
+          --health-cmd "wget --quiet --tries=1 --spider http://localhost:8123/ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+
+      test-minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports:
+          - 19005:9000
+          - 19006:9001
+        options: >-
+          --health-cmd "wget -q --spider http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+        command: server /data --console-address ":9001"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[test]" --quiet
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:15432/test_tfc
+          REDIS_URL: redis://localhost:16379/0
+          CLICKHOUSE_HOST: localhost
+          CLICKHOUSE_PORT: 18123
+          MINIO_ENDPOINT: localhost:19005
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+          DJANGO_SETTINGS_MODULE: tfc.settings.settings
+          SECRET_KEY: ci-secret-key-not-for-production
+        run: python manage.py migrate --no-input
+
+      - name: Run unit tests
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:15432/test_tfc
+          REDIS_URL: redis://localhost:16379/0
+          CLICKHOUSE_HOST: localhost
+          CLICKHOUSE_PORT: 18123
+          MINIO_ENDPOINT: localhost:19005
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+          DJANGO_SETTINGS_MODULE: tfc.settings.settings
+          SECRET_KEY: ci-secret-key-not-for-production
+        run: pytest -m unit --no-header -q
