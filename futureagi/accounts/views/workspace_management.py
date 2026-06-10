@@ -14,6 +14,7 @@ from django.db.models import (
     F,
     IntegerField,
     OuterRef,
+    Prefetch,
     Q,
     Subquery,
     Value,
@@ -219,6 +220,25 @@ class WorkspaceListAPIView(APIView):
             else:
                 # Default sorting
                 workspaces = workspaces.order_by("-created_at")
+
+            # Prefetch admin memberships (+ their users) so the serializer's
+            # get_admin_names does not issue one query per workspace (N+1).
+            # Use no_workspace_objects to match the serializer's manager
+            # semantics (deleted=False only, no workspace-context filter).
+            workspaces = workspaces.prefetch_related(
+                Prefetch(
+                    "memberships",
+                    queryset=WorkspaceMembership.no_workspace_objects.filter(
+                        role__in=[
+                            OrganizationRoles.WORKSPACE_ADMIN,
+                            OrganizationRoles.OWNER,
+                            OrganizationRoles.ADMIN,
+                        ],
+                        is_active=True,
+                    ).select_related("user"),
+                    to_attr="admin_memberships_cache",
+                )
+            )
 
             # Use default pagination
             paginator = self.pagination_class()

@@ -50,6 +50,7 @@ class TraceScanResult(BaseModel):
         Trace,
         on_delete=models.CASCADE,
         related_name="scan_results",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     project = models.ForeignKey(
         Project,

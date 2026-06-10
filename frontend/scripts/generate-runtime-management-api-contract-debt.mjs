@@ -23,7 +23,6 @@ const PRODUCT_VIEW_TARGETS = [
   path.join(repoRoot, "futureagi", "accounts", "views"),
   path.join(repoRoot, "futureagi", "agent_playground", "views"),
   path.join(repoRoot, "futureagi", "agentcc", "views"),
-  path.join(repoRoot, "futureagi", "ee", "usage", "views"),
   path.join(repoRoot, "futureagi", "integrations", "views"),
   path.join(repoRoot, "futureagi", "mcp_server", "views"),
   path.join(repoRoot, "futureagi", "model_hub", "views"),
@@ -32,7 +31,6 @@ const PRODUCT_VIEW_TARGETS = [
   path.join(repoRoot, "futureagi", "tfc", "views"),
   path.join(repoRoot, "futureagi", "tracer", "views"),
   path.join(repoRoot, "futureagi", "ai_tools", "views.py"),
-  path.join(repoRoot, "futureagi", "ee", "falcon_ai", "views.py"),
   path.join(repoRoot, "futureagi", "saml2_auth", "views.py"),
 ].filter((target) => fs.existsSync(target));
 const HTTP_DECORATOR_RE =
@@ -43,7 +41,10 @@ const BROAD_REQUEST_SERIALIZERS = new Set(["AccountsJSONRequestSerializer"]);
 
 function walkPythonFiles(dir) {
   const files = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+  const entries = fs
+    .readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (["__pycache__", "migrations"].includes(entry.name)) continue;
@@ -214,9 +215,9 @@ function analyzeFile(filePath) {
 }
 
 function analyzeTargets(targets) {
-  const decorators = targets.flatMap((target) =>
-    walkPythonTarget(target).flatMap(analyzeFile),
-  );
+  const decorators = targets
+    .flatMap((target) => walkPythonTarget(target).flatMap(analyzeFile))
+    .sort(compareDecoratorRecords);
   const validated = decorators.filter(decoratorUsesRuntimeValidation);
   const directSwagger = decorators.filter(
     (record) =>
@@ -259,6 +260,16 @@ function formatDecorators(records) {
     function: record.functionName,
     serializers: record.serializers,
   }));
+}
+
+function compareDecoratorRecords(a, b) {
+  return (
+    a.rel.localeCompare(b.rel) ||
+    a.startLine - b.startLine ||
+    (a.className || "").localeCompare(b.className || "") ||
+    (a.functionName || "").localeCompare(b.functionName || "") ||
+    a.decorator.localeCompare(b.decorator)
+  );
 }
 
 function formatSummary(result) {

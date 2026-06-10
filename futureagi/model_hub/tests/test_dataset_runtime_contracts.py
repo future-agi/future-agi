@@ -7,7 +7,7 @@ from django.http import QueryDict
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from accounts.models import OrgApiKey, Organization, User
+from accounts.models import Organization, OrgApiKey, User
 from model_hub.constants import (
     MAX_EMPTY_DATASET_ROWS,
     SDK_API_KEY_PLACEHOLDER,
@@ -188,8 +188,21 @@ def test_create_empty_dataset_request_validates_row_bounds():
     )
 
     assert at_limit.is_valid(), at_limit.errors
+    assert at_limit.validated_data["model_type"] == "GenerativeLLM"
     assert not over_limit.is_valid()
     assert "row" in over_limit.errors
+
+
+def test_create_empty_dataset_request_rejects_unknown_model_type():
+    serializer = CreateEmptyDatasetRequestSerializer(
+        data={
+            "new_dataset_name": "Unknown Model Type",
+            "model_type": "not-a-model-type",
+        }
+    )
+
+    assert not serializer.is_valid()
+    assert "model_type" in serializer.errors
 
 
 @pytest.mark.django_db
@@ -403,17 +416,18 @@ def test_add_rows_sdk_uses_placeholders_without_creating_user_key(
     }
     assert SDK_API_KEY_PLACEHOLDER in response_text
     assert SDK_SECRET_KEY_PLACEHOLDER in response_text
-    assert OrgApiKey.no_workspace_objects.filter(
-        organization=user.organization,
-        type="user",
-        user=user,
-    ).count() == 0
+    assert (
+        OrgApiKey.no_workspace_objects.filter(
+            organization=user.organization,
+            type="user",
+            user=user,
+        ).count()
+        == 0
+    )
 
 
 @pytest.mark.django_db
-def test_add_rows_sdk_does_not_expose_existing_user_key(
-    auth_client, user, workspace
-):
+def test_add_rows_sdk_does_not_expose_existing_user_key(auth_client, user, workspace):
     dataset = Dataset.objects.create(
         name="SDK Snippet Existing Key Dataset",
         organization=user.organization,
@@ -444,9 +458,7 @@ def test_add_rows_sdk_does_not_expose_existing_user_key(
 
 
 @pytest.mark.django_db
-def test_add_rows_sdk_rejects_dataset_from_another_organization(
-    auth_client, user
-):
+def test_add_rows_sdk_rejects_dataset_from_another_organization(auth_client, user):
     other_org = Organization.objects.create(name="Other SDK Snippet Org")
     dataset = Dataset.objects.create(
         name="Other Org SDK Snippet Dataset",
@@ -476,11 +488,14 @@ def test_knowledge_base_sdk_uses_placeholders_without_creating_user_key(
     code = response.json()["result"]["code"]
     assert SDK_API_KEY_PLACEHOLDER in code
     assert SDK_SECRET_KEY_PLACEHOLDER in code
-    assert OrgApiKey.no_workspace_objects.filter(
-        organization=user.organization,
-        type="user",
-        user=user,
-    ).count() == 0
+    assert (
+        OrgApiKey.no_workspace_objects.filter(
+            organization=user.organization,
+            type="user",
+            user=user,
+        ).count()
+        == 0
+    )
 
 
 @pytest.mark.django_db
@@ -643,3 +658,56 @@ def test_delete_row_api_sets_deleted_at_on_row_and_cells():
     assert row.deleted_at is not None
     assert cell.deleted is True
     assert cell.deleted_at is not None
+
+
+@pytest.mark.django_db
+def test_update_column_type_falls_back_to_sync_conversion_when_dispatch_fails():
+    organization = Organization.objects.create(name="Update Column Type API Org")
+    user = User.objects.create_user(
+        email="update-column-type-api@example.com",
+        password="testpassword123",
+        name="Update Column Type API User",
+        organization=organization,
+    )
+    dataset = Dataset.objects.create(
+        name="Update Column Type API Contract",
+        organization=organization,
+        user=user,
+        column_order=[],
+        column_config={},
+    )
+    column = Column.objects.create(
+        name="numeric text",
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+        dataset=dataset,
+    )
+    row = Row.objects.create(dataset=dataset, order=1)
+    cell = Cell.objects.create(dataset=dataset, column=column, row=row, value="42")
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    with patch(
+        "model_hub.views.develop_dataset.perform_conversion.apply_async",
+        side_effect=RuntimeError("Temporal unavailable"),
+    ):
+        response = client.put(
+            f"/model-hub/develops/{dataset.id}/update_column_type/{column.id}/",
+            {
+                "new_column_type": DataTypeChoices.INTEGER.value,
+                "preview": False,
+                "force_update": True,
+            },
+            format="json",
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    result = response.json()["result"]
+    assert result["status"] == "Completed"
+    assert result["new_data_type"] == DataTypeChoices.INTEGER.value
+    column.refresh_from_db()
+    cell.refresh_from_db()
+    assert column.data_type == DataTypeChoices.INTEGER.value
+    assert column.status == "Completed"
+    assert cell.status == "pass"
+    assert cell.value == "42"

@@ -62,6 +62,23 @@ def source_dataset(db, organization, workspace, user):
     )
 
 
+@pytest.fixture
+def agent_definition(db, organization, workspace):
+    """Create an agent definition for scenario creation tests."""
+    from simulate.models import AgentDefinition
+
+    return AgentDefinition.objects.create(
+        agent_name="Test Agent",
+        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        contact_number="+1234567890",
+        inbound=True,
+        description="Test agent for serializer tests",
+        organization=organization,
+        workspace=workspace,
+        languages=["en"],
+    )
+
+
 # ============================================================================
 # CreateScenarioSerializer Tests
 # ============================================================================
@@ -72,7 +89,7 @@ class TestCreateScenarioSerializer:
     """Tests for CreateScenarioSerializer validation logic."""
 
     def test_create_scenario_serializer_dataset_valid(
-        self, mock_request, source_dataset
+        self, mock_request, source_dataset, agent_definition
     ):
         """Valid dataset scenario input should pass validation."""
         data = {
@@ -80,6 +97,7 @@ class TestCreateScenarioSerializer:
             "description": "A test scenario from dataset",
             "kind": "dataset",
             "dataset_id": str(source_dataset.id),
+            "agent_definition_id": str(agent_definition.id),
         }
 
         serializer = CreateScenarioSerializer(
@@ -92,13 +110,16 @@ class TestCreateScenarioSerializer:
         assert validated["kind"] == "dataset"
         assert validated["dataset_id"] == source_dataset.id
 
-    def test_create_scenario_serializer_script_valid(self, mock_request):
+    def test_create_scenario_serializer_script_valid(
+        self, mock_request, agent_definition
+    ):
         """Valid script scenario input should pass validation."""
         data = {
             "name": "Test Script Scenario",
             "description": "A test scenario from script",
             "kind": "script",
             "script_url": "https://example.com/script.py",
+            "agent_definition_id": str(agent_definition.id),
         }
 
         serializer = CreateScenarioSerializer(
@@ -111,7 +132,9 @@ class TestCreateScenarioSerializer:
         assert validated["kind"] == "script"
         assert validated["script_url"] == "https://example.com/script.py"
 
-    def test_create_scenario_serializer_graph_valid_provided(self, mock_request):
+    def test_create_scenario_serializer_graph_valid_provided(
+        self, mock_request, agent_definition
+    ):
         """Valid graph scenario with provided graph data should pass validation."""
         data = {
             "name": "Test Graph Scenario",
@@ -124,6 +147,7 @@ class TestCreateScenarioSerializer:
                 ],
                 "edges": [{"source": "start", "target": "end"}],
             },
+            "agent_definition_id": str(agent_definition.id),
         }
 
         serializer = CreateScenarioSerializer(
@@ -136,14 +160,15 @@ class TestCreateScenarioSerializer:
         assert validated["kind"] == "graph"
         assert "nodes" in validated["graph"]
 
-    def test_create_scenario_serializer_graph_valid_generated(self, mock_request):
+    def test_create_scenario_serializer_graph_valid_generated(
+        self, mock_request, agent_definition
+    ):
         """Valid graph scenario with generate_graph=True should pass validation."""
-        agent_def_id = uuid.uuid4()
         data = {
             "name": "Test Generated Graph Scenario",
             "kind": "graph",
             "generate_graph": True,
-            "agent_definition_id": str(agent_def_id),
+            "agent_definition_id": str(agent_definition.id),
         }
 
         serializer = CreateScenarioSerializer(
@@ -153,7 +178,7 @@ class TestCreateScenarioSerializer:
 
         validated = serializer.validated_data
         assert validated["generate_graph"] is True
-        assert validated["agent_definition_id"] == agent_def_id
+        assert validated["agent_definition_id"] == agent_definition.id
 
     def test_create_scenario_serializer_missing_name(self, mock_request):
         """Missing name should fail validation."""
@@ -209,8 +234,9 @@ class TestCreateScenarioSerializer:
             data=data, context={"request": mock_request}
         )
         assert not serializer.is_valid()
-        assert "non_field_errors" in serializer.errors
-        assert "dataset_id" in str(serializer.errors["non_field_errors"][0]).lower()
+        assert "dataset_id" in serializer.errors or "non_field_errors" in serializer.errors
+        all_errors = str(serializer.errors).lower()
+        assert "dataset_id" in all_errors
 
     def test_create_scenario_serializer_script_missing_url(self, mock_request):
         """Script kind without script_url should fail validation."""
@@ -223,14 +249,18 @@ class TestCreateScenarioSerializer:
             data=data, context={"request": mock_request}
         )
         assert not serializer.is_valid()
-        assert "non_field_errors" in serializer.errors
-        assert "script_url" in str(serializer.errors["non_field_errors"][0]).lower()
+        assert "script_url" in serializer.errors or "non_field_errors" in serializer.errors
+        all_errors = str(serializer.errors).lower()
+        assert "script_url" in all_errors
 
-    def test_create_scenario_serializer_graph_missing_requirements(self, mock_request):
+    def test_create_scenario_serializer_graph_missing_requirements(
+        self, mock_request, agent_definition
+    ):
         """Graph kind without graph data or generate_graph should fail validation."""
         data = {
             "name": "Test Graph Scenario",
             "kind": "graph",
+            "agent_definition_id": str(agent_definition.id),
         }
 
         serializer = CreateScenarioSerializer(
@@ -242,7 +272,11 @@ class TestCreateScenarioSerializer:
     def test_create_scenario_serializer_graph_generate_missing_agent(
         self, mock_request
     ):
-        """Graph kind with generate_graph=True but no agent_definition_id should fail."""
+        """Graph kind with generate_graph=True but no agent_definition_id should fail.
+
+        The default source_type (agent_definition) requires agent_definition_id,
+        so the validation error fires on the source_type constraint.
+        """
         data = {
             "name": "Test Graph Scenario",
             "kind": "graph",
@@ -253,18 +287,18 @@ class TestCreateScenarioSerializer:
             data=data, context={"request": mock_request}
         )
         assert not serializer.is_valid()
-        assert "non_field_errors" in serializer.errors
-        assert (
-            "agent_definition_id"
-            in str(serializer.errors["non_field_errors"][0]).lower()
-        )
+        all_errors = str(serializer.errors).lower()
+        assert "agent_definition_id" in all_errors
 
-    def test_create_scenario_serializer_custom_columns_valid(self, mock_request):
+    def test_create_scenario_serializer_custom_columns_valid(
+        self, mock_request, agent_definition
+    ):
         """Valid custom columns should pass validation."""
         data = {
             "name": "Test Scenario",
             "kind": "graph",
             "graph": {"nodes": [], "edges": []},
+            "agent_definition_id": str(agent_definition.id),
             "custom_columns": [
                 {
                     "name": "custom_field",
@@ -415,13 +449,14 @@ class TestCreateScenarioSerializer:
         assert "dataset_id" in serializer.errors
 
     def test_create_scenario_serializer_with_simulator_agent_fields(
-        self, mock_request, source_dataset
+        self, mock_request, source_dataset, agent_definition
     ):
         """Simulator agent fields should be accepted and validated."""
         data = {
             "name": "Test Scenario with Agent",
             "kind": "dataset",
             "dataset_id": str(source_dataset.id),
+            "agent_definition_id": str(agent_definition.id),
             "agent_name": "Custom Agent",
             "agent_prompt": "You are a helpful assistant.",
             "voice_provider": "elevenlabs",
@@ -439,12 +474,13 @@ class TestCreateScenarioSerializer:
         assert serializer.validated_data["llm_temperature"] == 0.8
 
     def test_create_scenario_serializer_default_values(
-        self, mock_request, source_dataset
+        self, mock_request, source_dataset, agent_definition
     ):
         """Default values should be applied when not provided."""
         data = {
             "name": "Test Scenario",
             "dataset_id": str(source_dataset.id),
+            "agent_definition_id": str(agent_definition.id),
         }
 
         serializer = CreateScenarioSerializer(

@@ -707,7 +707,10 @@ class RunPrompt:
                         logger.info("[STT] Found audio URL in 'audio_url' part.")
                         return audio_url_payload["url"]
 
-        logger.error(
+        # Expected user misconfiguration: an STT/audio eval received text-only
+        # input. Raw emitter before the ValueError the caller catches and
+        # persists as a failed result. Warning.
+        logger.warning(
             f"[STT] No audio input found in messages. Sample: {str(self.messages)[:500]}"
         )
         raise ValueError("No audio input found in messages for STT.")
@@ -3183,7 +3186,20 @@ class RunPrompt:
             return handler_response.to_value_info()
 
         except Exception as e:
-            logger.error(f"[NEW] An error occurred: {str(e)}")
+            # Expected, handled validation failures (text-only input to an STT
+            # eval, or empty messages) are user misconfiguration, not bugs;
+            # the caller persists a failed result. Downgrade only those to
+            # warning so real errors keep creating Sentry issues.
+            if any(
+                s in str(e)
+                for s in (
+                    "No audio input found in messages for STT.",
+                    "Messages are required",
+                )
+            ):
+                logger.warning(f"[NEW] An error occurred: {str(e)}")
+            else:
+                logger.error(f"[NEW] An error occurred: {str(e)}")
             raise Exception(str(e))
 
     async def _litellm_response_async_new(
@@ -3268,7 +3284,20 @@ class RunPrompt:
             return handler_response.to_value_info()
 
         except Exception as e:
-            logger.error(f"[NEW] An error occurred: {str(e)}")
+            # Expected, handled validation failures (text-only input to an STT
+            # eval, or empty messages) are user misconfiguration, not bugs;
+            # the caller persists a failed result. Downgrade only those to
+            # warning so real errors keep creating Sentry issues.
+            if any(
+                s in str(e)
+                for s in (
+                    "No audio input found in messages for STT.",
+                    "Messages are required",
+                )
+            ):
+                logger.warning(f"[NEW] An error occurred: {str(e)}")
+            else:
+                logger.error(f"[NEW] An error occurred: {str(e)}")
             raise Exception(str(e))
 
     # =========================================================================

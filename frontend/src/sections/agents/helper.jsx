@@ -602,6 +602,7 @@ export const getCallLogsColumnDefs = (
       field: "status",
       flex: 0,
       minWidth: 100,
+      width: 140,
       cellRenderer: CallLogsCellRenderer,
     },
     {

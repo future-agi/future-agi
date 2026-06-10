@@ -37,12 +37,20 @@ class Score(BaseModel):
         max_length=30,
         choices=QueueItemSourceType.get_choices(),
     )
+    # CH scale migration (SCALE_ARCHITECTURE.md §5/§9a): Trace, ObservationSpan
+    # and TraceSession move to ClickHouse, so their DB FK constraints are
+    # dropped here via db_constraint=False — this is the reversible EXPAND step.
+    # The column + ORM accessor are kept (no code breaks; joins still resolve
+    # while the PG tables exist), but the constraint no longer pins the PG
+    # table or rejects a CH-resident / TTL'd reference. CONTRACT (later) swaps
+    # these to plain id fields once reads are migrated off the joins.
     trace = models.ForeignKey(
         "tracer.Trace",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="scores",
+        db_constraint=False,
     )
     observation_span = models.ForeignKey(
         "tracer.ObservationSpan",
@@ -50,6 +58,7 @@ class Score(BaseModel):
         null=True,
         blank=True,
         related_name="scores",
+        db_constraint=False,
     )
     trace_session = models.ForeignKey(
         "tracer.TraceSession",
@@ -57,6 +66,7 @@ class Score(BaseModel):
         null=True,
         blank=True,
         related_name="scores",
+        db_constraint=False,
     )
     call_execution = models.ForeignKey(
         "simulate.CallExecution",

@@ -383,6 +383,65 @@ class TestVoiceAnnotationRegressionE2E:
             deleted=False,
         ).exists()
 
+    def test_filter_add_default_workspace_accepts_null_workspace_trace(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+    ):
+        legacy_project = Project.objects.create(
+            name=f"Legacy null workspace observe {uuid.uuid4().hex[:8]}",
+            organization=organization,
+            workspace=None,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        legacy_trace = Trace.objects.create(
+            project=legacy_project,
+            name="Legacy null workspace trace",
+        )
+        ObservationSpan.objects.create(
+            id=f"legacy_null_ws_root_{uuid.uuid4().hex[:16]}",
+            project=legacy_project,
+            trace=legacy_trace,
+            name="Legacy null workspace root",
+            observation_type="conversation",
+            start_time=timezone.now(),
+            parent_span_id=None,
+            status="ok",
+        )
+        queue = _queue(
+            "Default workspace null-workspace trace",
+            organization,
+            workspace,
+            user,
+            project=legacy_project,
+        )
+
+        resp = auth_client.post(
+            _add_items_url(queue),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": QueueItemSourceType.TRACE.value,
+                    "project_id": str(legacy_project.id),
+                }
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert result["added"] == 1
+        assert result["total_matching"] == 1
+        assert result["errors"] == []
+        assert QueueItem.objects.filter(
+            queue=queue,
+            trace=legacy_trace,
+            deleted=False,
+        ).exists()
+
     def test_th4782_simulation_queue_submit_uses_call_execution_source(
         self,
         auth_client,
@@ -466,6 +525,11 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         thumbs_label,
     ):
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # _span_notes_target_for_queue_item reads root span from CH
+        seed_ch_span(root_conversation_span)
+
         queue = _queue(
             "TH-4055 trace call queue",
             organization,
@@ -570,6 +634,11 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         thumbs_label,
     ):
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # _span_notes_target_for_queue_item reads root span from CH
+        seed_ch_span(root_conversation_span)
+
         queue = _queue(
             "TH-4861 trace note separation queue",
             organization,
@@ -654,6 +723,11 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         star_label,
     ):
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # for-source span_notes reads span from CH to resolve org ownership
+        seed_ch_span(root_conversation_span)
+
         queue = _queue(
             "TH-4055 default observe queue",
             organization,
@@ -777,10 +851,8 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         simulation_call_execution,
     ):
-        monkeypatch.setattr(
-            "tracer.services.clickhouse.query_service.AnalyticsQueryService.should_use_clickhouse",
-            lambda self, query_type: False,
-        )
+        from tracer.tests._ch_seed import seed_ch_span
+
         ScenarioGraph.objects.create(
             name="Order flow",
             scenario=simulation_call_execution.scenario,
@@ -812,6 +884,9 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span.save(
             update_fields=["span_attributes", "eval_attributes"]
         )
+
+        # Seed AFTER .save() so CH has the updated span_attributes/eval_attributes
+        seed_ch_span(root_conversation_span)
 
         resp = auth_client.get(
             "/tracer/trace/voice_call_detail/",

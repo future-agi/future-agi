@@ -41,34 +41,95 @@ _CHILD_SPAN_FIELDS = [
 ]
 
 
+def _chspan_field_value(span, field_name):
+    """Look up a span field by name, returning the same value as
+    ``getattr(observation_span, field_name)`` would on the Django model
+    where possible. Handles the columns that don't live as flat CH fields:
+
+      • ``model_parameters`` / ``input_images`` / ``eval_input`` /
+        ``eval_attributes`` round-trip into ``attributes_extra`` (per
+        ``tracer/services/clickhouse/v2/adapter.py:330``) and are pulled
+        back out here.
+      • ``span_attributes`` is the merged typed-maps + non-roundtripped
+        overflow dict — same shape ``ObservationSpanSerializer`` emits.
+      • ``metadata`` / ``tags`` / ``span_events`` come back as JSON
+        strings on CHSpan; decode them so callers see Python dicts/lists
+        (matching the prior Django JSONField behavior).
+    """
+    if field_name in ("model_parameters", "input_images", "eval_input", "eval_attributes"):
+        from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+        extra = CHSpanReader.attributes_extra_as_dict(span)
+        if not isinstance(extra, dict):
+            return None
+        return extra.get(field_name)
+    if field_name == "span_attributes":
+        from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+        extra = CHSpanReader.attributes_extra_as_dict(span)
+        if not isinstance(extra, dict):
+            extra = {}
+        merged: dict = {}
+        merged.update(span.attrs_string or {})
+        merged.update(span.attrs_number or {})
+        merged.update(span.attrs_bool or {})
+        for k, v in extra.items():
+            if k not in ("model_parameters", "input_images", "eval_input", "eval_attributes"):
+                merged[k] = v
+        return merged
+    if field_name == "metadata":
+        try:
+            return json.loads(span.metadata) if span.metadata else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    if field_name == "tags":
+        try:
+            return json.loads(span.tags) if span.tags else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if field_name == "span_events":
+        try:
+            return json.loads(span.span_events) if span.span_events else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if field_name == "input":
+        try:
+            return json.loads(span.input) if span.input else None
+        except (json.JSONDecodeError, TypeError):
+            return span.input
+    if field_name == "output":
+        try:
+            return json.loads(span.output) if span.output else None
+        except (json.JSONDecodeError, TypeError):
+            return span.output
+    return getattr(span, field_name, None)
+
+
 def _serialize_span_tree(span_id):
     """
     Serialize all descendants of a span into a nested JSON-safe structure.
-    Uses a single query to fetch all spans in the same trace, then builds
-    the tree in memory to avoid N+1 queries.
+    Uses a single ClickHouse query to fetch all spans in the same trace,
+    then builds the tree in memory to avoid N+1 queries.
     """
-    from tracer.models.observation_span import ObservationSpan
+    from tracer.services.clickhouse.v2 import get_reader
 
-    # First, get the trace_id for this span
-    try:
-        root_span = ObservationSpan.objects.only("trace_id").get(id=span_id)
-    except ObservationSpan.DoesNotExist:
-        return []
+    with get_reader() as reader:
+        root_span = reader.get(str(span_id))
+        if root_span is None:
+            return []
+        all_spans = reader.list_by_trace(root_span.trace_id)
 
-    # Fetch ALL spans in the same trace in one query
-    all_spans = list(
-        ObservationSpan.objects.filter(trace_id=root_span.trace_id).only(
-            "id", "parent_span_id", *_CHILD_SPAN_FIELDS
-        )
-    )
+    # Preserve the legacy ObservationSpan model's default ordering
+    # (`Meta.ordering = ["-start_time"]`) so sibling child JSON order is
+    # unchanged. list_by_trace returns ascending start_time, so reverse.
+    all_spans = list(reversed(all_spans))
 
     # Build parent_id -> children lookup
-    children_map = {}
+    children_map: dict = {}
     for span in all_spans:
-        pid = span.parent_span_id
-        if pid not in children_map:
-            children_map[pid] = []
-        children_map[pid].append(span)
+        # CHSpan stores empty parent ids as "" (CH default), not None.
+        pid = span.parent_span_id or None
+        children_map.setdefault(pid, []).append(span)
 
     def _build_subtree(parent_id, depth=0):
         if depth > 20:  # Safety limit
@@ -78,7 +139,7 @@ def _serialize_span_tree(span_id):
         for child in children:
             child_data = {}
             for field_name in _CHILD_SPAN_FIELDS:
-                value = getattr(child, field_name, None)
+                value = _chspan_field_value(child, field_name)
                 if value is not None:
                     if hasattr(value, "isoformat"):
                         value = value.isoformat()
@@ -89,7 +150,7 @@ def _serialize_span_tree(span_id):
             result.append(child_data)
         return result
 
-    return _build_subtree(span_id)
+    return _build_subtree(str(span_id))
 
 
 def _serialize_cell_value(value):
@@ -125,14 +186,45 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
         Dict with rows_created and cells_created counts
     """
     from model_hub.models.develop_dataset import Cell, Row
-    from tracer.models.observation_span import ObservationSpan
+    from tracer.services.clickhouse.v2 import get_reader
 
     try:
         close_old_connections()
 
-        observation_spans = ObservationSpan.objects.filter(
-            id__in=span_ids
-        ).prefetch_related("project")
+        # Span data comes from ClickHouse. The legacy ORM call also did
+        # `.prefetch_related("project")` but no code below actually reads
+        # ``.project``, so the prefetch was dead weight — dropping it is
+        # safe. Result order from list_by_ids is by id (deterministic but
+        # not matching span_ids); we reorder below to preserve the input
+        # order so the resulting Row.order numbers are stable.
+        with get_reader() as reader:
+            fetched = reader.list_by_ids([str(s) for s in span_ids])
+        by_id = {s.id: s for s in fetched}
+        observation_spans = [by_id[str(s)] for s in span_ids if str(s) in by_id]
+
+        # Codex consolidated review P0 (2026-05-26): silently dropping
+        # missing-CH spans is data loss. Caller derived span_ids from a
+        # PG queryset — the legacy ORM path would have built dataset rows
+        # for ALL of them. We FAIL FAST so Celery retry can absorb
+        # transient CH lag; sustained misses surface as a real divergence
+        # the operator must triage (rebackfill or rerun once CH catches up).
+        if len(observation_spans) != len(span_ids):
+            missing = [str(s) for s in span_ids if str(s) not in by_id]
+            logger.error(
+                "dataset_chunk_ch_spans_missing",
+                requested=len(span_ids),
+                found=len(observation_spans),
+                missing_count=len(missing),
+                missing_sample=missing[:10],
+                dataset_id=str(dataset_id),
+            )
+            raise RuntimeError(
+                f"CH missing {len(missing)} of {len(span_ids)} requested spans "
+                f"for dataset {dataset_id}; refusing to silently drop rows. "
+                f"Sample missing ids: {missing[:5]}. "
+                f"Action: let Celery retry, OR re-run after rebackfill if "
+                f"misses are sustained beyond the dual-write window."
+            )
 
         rows_to_create = []
         cells_to_create = []
@@ -237,10 +329,7 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
                             annotation_metrics_cache.get(observation_span.id, {})
                         )
                     else:
-                        try:
-                            value = getattr(observation_span, field_name, None)
-                        except AttributeError:
-                            value = None
+                        value = _chspan_field_value(observation_span, field_name)
 
                     # Use ForeignKey _id fields directly - no need to fetch objects!
                     cell = Cell(

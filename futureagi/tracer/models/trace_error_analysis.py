@@ -28,6 +28,7 @@ class TraceErrorAnalysis(BaseModel):
         related_name="error_analyses",
         null=False,
         blank=False,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     project = models.ForeignKey(
         Project,
@@ -224,6 +225,7 @@ class TraceErrorGroup(BaseModel):
         blank=True,
         related_name="success_for_groups",
         help_text="Precomputed nearest success trace",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
 
     # --- Existing fields (backwards compat) ---
@@ -447,6 +449,7 @@ class ErrorClusterTraces(BaseModel):
         related_name="error_cluster_traces",
         null=True,
         blank=True,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
 
     span = models.ForeignKey(
@@ -455,6 +458,7 @@ class ErrorClusterTraces(BaseModel):
         related_name="error_cluster_spans",
         null=True,
         blank=True,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     cluster = models.ForeignKey(
         TraceErrorGroup,

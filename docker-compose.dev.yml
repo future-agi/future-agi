@@ -57,6 +57,8 @@ x-dev-backend-env: &dev-backend-env
   CH_USER: default
   CH_PASSWORD: ""
   CH_DATABASE: default
+  # CH25 schema/read path. Must match fi-collector's FI_CH_DATABASE.
+  CH25_DATABASE: ${CH25_DATABASE:-${CH_DATABASE:-default}}
   CH_USE_REPLICATED_ENGINES: ${CH_USE_REPLICATED_ENGINES:-false}
 
   REDIS_HOST: redis
@@ -103,7 +105,6 @@ x-dev-worker-base: &dev-worker-base
     redis:
       condition: service_healthy
   restart: unless-stopped
-
 
 services:
   # --------------------------------------------------------------------------

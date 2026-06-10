@@ -181,7 +181,7 @@ const CallDetailLogGrid = forwardRef(
               rowCount: lastRow,
             });
           } catch (error) {
-            logger.error("Error fetching call detail logs:", error);
+            logger.warn("Error fetching call detail logs:", error);
             // Show the error overlay
             params.success({
               rowData: [],

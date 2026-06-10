@@ -1,6 +1,7 @@
 import ast
 import io
 import json
+import statistics
 
 import pandas as pd
 import structlog
@@ -16,7 +17,6 @@ from django.db.models import (
     JSONField,
     OuterRef,
     Q,
-    StdDev,
     Subquery,
     Value,
     When,
@@ -52,6 +52,7 @@ from tracer.serializers.project_version import (
     ProjectVersionRunsQuerySerializer,
     ProjectVersionSerializer,
 )
+from tracer.services.clickhouse.v2 import get_reader
 from tracer.utils.filters import ColType, FilterEngine
 from tracer.utils.helper import (
     get_default_project_version_config,
@@ -207,6 +208,26 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             )
             result = {}
 
+            # CH25-TODO(wave-3): ``per_project_version_metric_aggregate``
+            # now exists on CHSpanReader (wave-3 commit 93c5c415f) and
+            # returns dict[pv_id, {avg_latency_root, avg_cost, ...}]. The
+            # CH span aggregate IS now unblocked. What still gates the
+            # migration is the inner EvalLogger Subquery+OuterRef chain
+            # (``metric_<config.id>`` annotations) which is fused into the
+            # outer queryset's annotate() — replacing it requires:
+            #   (1) CH per-pv aggregate via per_project_version_metric_aggregate(pv_ids)
+            #   (2) PG batched EvalLogger aggregate keyed on
+            #       (project_version_id, custom_eval_config_id), reproducing the
+            #       float/bool/str_list discrimination in Python
+            #   (3) reassembling each ``obj`` to the exact JSON shape the
+            #       consumer loop at lines ~369-395 reads: dict with
+            #       ``avg_latency_ms``, ``avg_cost``, and ``metric_<config.id>``
+            #       keys where the metric value is ``{"score": <float>}`` for
+            #       numeric/bool and ``{"<choice>": {"score": <float>}}`` for
+            #       str_list. Producing the WRONG shape silently mis-computes
+            #       project_version winner scores — a P1 regression risk.
+            # Deferred: shape-preservation refactor is out of scope for the
+            # bulk migration chunk. Tracked as a follow-up.
             # Build the base query with all necessary annotations
             base_query = (
                 ObservationSpan.objects.filter(project=project)
@@ -476,6 +497,16 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             except Project.DoesNotExist:
                 return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
 
+            # CH25-TODO(wave-3): ``per_project_version_metric_aggregate``
+            # (wave-3 commit 93c5c415f) covers the CH span aggregate part
+            # of this export. Migration is still deferred for the same
+            # reason as the winner rollup above (see CH25-TODO at ~208):
+            # the EvalLogger Subquery+OuterRef metric_<config.id> shape
+            # has to be reproduced exactly in Python or the exported CSV
+            # cells carry wrong scores. The ``project_version__*`` joins
+            # (name, version, avg_eval_score) would become a separate PG
+            # ``ProjectVersion.objects.filter(id__in=).values(...)`` step
+            # and zip-by-pv_id in Python.
             # Build the base query with all necessary annotations
             base_query = ObservationSpan.objects.filter(project=project)
 
@@ -1214,74 +1245,99 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                     }
                 )
 
-            # System Metrics - Optimize with aggregation
-            spans_metrics = ObservationSpan.objects.filter(
-                trace_id__in=trace_ids,
-                project=project_version.project,
-            ).aggregate(
-                avg_latency=Avg("latency_ms", filter=Q(parent_span_id__isnull=True)),
-                avg_cost=Round(
-                    Avg(
-                        "cost", filter=Q(cost__isnull=False), output_field=FloatField()
-                    ),
-                    6,
-                ),
-                latency_stddev=StdDev(
-                    "latency_ms", filter=Q(parent_span_id__isnull=True)
-                ),
-                cost_stddev=StdDev(
-                    "cost", filter=Q(cost__isnull=False), output_field=FloatField()
-                ),
-                count=Count(
-                    "id",
-                    filter=Q(prompt_tokens__isnull=False)
-                    & Q(completion_tokens__isnull=False),
-                ),
-                avg_tokens=Round(
-                    Avg(F("total_tokens"), filter=Q(total_tokens__isnull=False)), 2
-                ),
+            # Single CH fetch covers both the window-wide aggregate
+            # (avg_latency/avg_cost/stddev/avg_tokens) and the per-span
+            # outlier scan that used to issue two ORM queries. Python
+            # ``statistics.pstdev`` matches Django's default ``StdDev``
+            # (population, ``STDDEV_POP``) — see the per-variable comments
+            # below. All metrics here are project-scoped via the
+            # trace_ids pre-fetch above, which itself was filtered by
+            # ``project=project_version.project``, so the org/workspace
+            # gate is preserved through the trace_ids pre-step.
+            trace_ids_str = [str(tid) for tid in trace_ids]
+            with get_reader() as reader:
+                ch_spans = reader.list_by_trace_ids(trace_ids_str)
+
+            # CH stores parent_span_id as non-nullable String (schema 001);
+            # root spans have an empty string. Mirror the original
+            # ``parent_span_id__isnull=True`` filter via ``== ""``.
+            # Legacy ORM ``Avg(..., filter=Q(<col>__isnull=False))`` excludes
+            # null rows from the mean denominator AND the variance, so we
+            # filter null entries OUT of the input lists here. ``latency_ms``
+            # is stored as non-nullable Int in CH (schema 001), so the
+            # original PG ``filter=Q(parent_span_id__isnull=True)`` restricts
+            # to root spans. The list comprehension below uses
+            # ``latency_ms is not None`` — codex wave-3 P3 noted this
+            # accepts zero values (matching Django's Avg semantic; nulls
+            # are excluded by IS NOT NULL, zero is a valid sample).
+            root_latencies = [
+                int(s.latency_ms)
+                for s in ch_spans
+                if s.parent_span_id == "" and s.latency_ms is not None
+            ]
+            costs_with_value = [
+                float(s.cost) for s in ch_spans if s.cost is not None
+            ]
+            tokens_with_value = [
+                int(s.total_tokens)
+                for s in ch_spans
+                if s.total_tokens is not None
+            ]
+
+            latency_mean = (
+                statistics.fmean(root_latencies) if root_latencies else 0
+            )
+            # ``statistics.pstdev`` matches Django's default ``StdDev``,
+            # which is **population** stddev (``STDDEV_POP``) — see
+            # django/db/models/aggregates.py::StdDev.__init__ where
+            # ``function = "STDDEV_SAMP" if sample else "STDDEV_POP"`` and
+            # the call sites here used the bare ``StdDev(...)`` form
+            # (sample=False default). ``statistics.pstdev`` returns 0 for
+            # n<2 without raising, so the explicit ``if root_latencies else
+            # 0`` guard stays only to preserve the downstream divide-by-
+            # zero protection at the z-score sites.
+            latency_std = (
+                statistics.pstdev(root_latencies) if root_latencies else 0
+            )
+            cost_mean = (
+                round(statistics.fmean(costs_with_value), 6)
+                if costs_with_value
+                else 0
+            )
+            cost_std = (
+                statistics.pstdev(costs_with_value)
+                if costs_with_value
+                else 0
+            )
+            avg_tokens = (
+                round(statistics.fmean(tokens_with_value), 2)
+                if tokens_with_value
+                else 0
             )
 
-            # Get spans for outlier detection with fewer fields
-            spans = ObservationSpan.objects.filter(
-                trace_id__in=trace_ids,
-                project=project_version.project,
-            ).values(
-                "trace_id",
-                "latency_ms",
-                "total_tokens",
-                "prompt_tokens",
-                "completion_tokens",
-                "cost",
-                "parent_span_id",
-            )
-
-            latency_mean = spans_metrics["avg_latency"] or 0
-            latency_std = spans_metrics["latency_stddev"] or 0
-            cost_mean = spans_metrics["avg_cost"] or 0
-            cost_std = spans_metrics["cost_stddev"] or 0
-
-            # Identify outliers
+            # Identify outliers across all spans (root + non-root for cost,
+            # root-only for latency — matches the legacy
+            # ``parent_span_id__isnull=True`` latency predicate).
             latency_failed_trace_ids = set()
             cost_failed_trace_ids = set()
 
-            for span in spans:
-                if span["latency_ms"] and span["parent_span_id"] is None:
+            for span in ch_spans:
+                if span.latency_ms and span.parent_span_id == "":
                     z_score_latency = (
-                        (span["latency_ms"] - latency_mean) / latency_std
+                        (span.latency_ms - latency_mean) / latency_std
                         if latency_std
                         else 0
                     )
 
                     if abs(z_score_latency) > 1.96:
-                        latency_failed_trace_ids.add(span["trace_id"])
+                        latency_failed_trace_ids.add(span.trace_id)
 
-                if span.get("cost"):
+                if span.cost:
                     z_score_cost = (
-                        (float(span["cost"]) - cost_mean) / cost_std if cost_std else 0
+                        (float(span.cost) - cost_mean) / cost_std if cost_std else 0
                     )
                     if abs(z_score_cost) > 1.96:
-                        cost_failed_trace_ids.add(span["trace_id"])
+                        cost_failed_trace_ids.add(span.trace_id)
 
             # Eval Metrics - Optimize with aggregation
 
@@ -1400,9 +1456,9 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 {
                     "trace_ids": list(trace_ids),
                     "system_metrics": {
-                        "avg_latency_ms": spans_metrics["avg_latency"] or 0,
-                        "avg_cost": spans_metrics["avg_cost"] or 0,
-                        "avg_tokens": spans_metrics["avg_tokens"] or 0,
+                        "avg_latency_ms": latency_mean or 0,
+                        "avg_cost": cost_mean or 0,
+                        "avg_tokens": avg_tokens or 0,
                     },
                     "eval_metrics": eval_metrics,
                 }
@@ -1468,6 +1524,19 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 project_config, annotation_labels
             )
 
+            # CH25-TODO(wave-3): ``per_project_version_metric_aggregate``
+            # (wave-3 commit 93c5c415f) now exists. Deferral rationale
+            # matches the winner rollup above (see CH25-TODO at ~208):
+            # reproducing the metric_<config.id> JSON shape with the same
+            # float/bool/str_list discrimination in Python is the cross-
+            # cutting refactor. The ``project_version__deleted`` PG gate
+            # would become a pre-step:
+            #   pv_ids = list(ProjectVersion.objects.filter(
+            #       Q(deleted=False) | Q(deleted=None),
+            #       project=project,
+            #   ).values_list("id", flat=True))
+            # …then per_project_version_metric_aggregate(pv_ids). Deferred
+            # together with the other 2 sites.
             # Build the base query with system metrics
             base_query = (
                 ObservationSpan.objects.filter(

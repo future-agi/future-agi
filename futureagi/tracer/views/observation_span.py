@@ -1,18 +1,13 @@
 import concurrent.futures
 import io
 import json
-import traceback
 import uuid
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
-from datetime import datetime
-from time import time
-from typing import Dict, List
 
 import pandas as pd
 import structlog
-from django.db import close_old_connections, connection
+from django.db import close_old_connections
 from django.db.models import (
     Avg,
     Case,
@@ -28,24 +23,17 @@ from django.db.models import (
     Subquery,
     When,
 )
-from django.db.models.fields.json import KeyTextTransform
-from django.db.models.functions import Cast, Coalesce, JSONObject, Round
+from django.db.models.functions import JSONObject, Round
 from django.http import FileResponse
 from django.utils import timezone
-from drf_yasg.utils import swagger_auto_schema
-from litellm import cost_per_token
 from rest_framework import serializers
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
-
-logger = structlog.get_logger(__name__)
 from analytics.utils import (
     MixpanelEvents,
-    MixpanelModes,
-    MixpanelSources,
     MixpanelTypes,
     get_mixpanel_properties,
     track_mixpanel_event,
@@ -68,7 +56,7 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EndUser, EvalLogger, ObservationSpan
+from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.span_notes import SpanNotes
@@ -79,8 +67,8 @@ from tracer.serializers.filters import (
     ObserveGraphDataResponseSerializer,
 )
 from tracer.serializers.observation_span import (
-    ObservationAttributeListResponseSerializer,
     ObservationAttributeListQuerySerializer,
+    ObservationAttributeListResponseSerializer,
     ObservationSpanSerializer,
     SpanExportQuerySerializer,
     SpanIndexQuerySerializer,
@@ -96,26 +84,16 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_eval_graph_ch,
     fetch_system_metric_graph_ch,
 )
-from tracer.services.clickhouse.query_service import (
-    AnalyticsQueryService,
-    QueryType,
-)
+from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.create_otel_span import create_single_otel_span
 from tracer.utils.eval import (
     evaluate_observation_span,
     evaluate_observation_span_observe,
 )
-from tracer.utils.eval_tasks import parsing_evaltask_filters
 from tracer.utils.filters import FilterEngine
-from tracer.utils.graphs_optimized import (
-    get_annotation_graph_data,
-    get_eval_graph_data,
-    get_system_metric_data,
-)
 from tracer.utils.helper import (
     FieldConfig,
-    generate_timestamps,
     get_annotation_labels_for_project,
     get_default_span_config,
     update_column_config_based_on_eval_config,
@@ -123,10 +101,11 @@ from tracer.utils.helper import (
 )
 from tracer.utils.otel import (
     ResourceLimitError,
-    SpanAttributes,
     calculate_cost_from_tokens,
 )
 from tracer.utils.sql_queries import SQL_query_handler
+
+logger = structlog.get_logger(__name__)
 
 
 class AddObservationSpanAnnotationsSerializer(serializers.Serializer):
@@ -313,8 +292,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     def get_queryset(self):
         observation_span_id = self.kwargs.get("pk")
         # Get base queryset with automatic filtering from mixin
-        query_Set = super().get_queryset().filter(
-            project__organization=_get_request_organization(self.request)
+        query_Set = (
+            super()
+            .get_queryset()
+            .filter(project__organization=_get_request_organization(self.request))
         )
 
         if observation_span_id:
@@ -340,10 +321,114 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         return query_Set[start:end]
 
+    @staticmethod
+    def _to_iso(value):
+        if not value:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+    def _span_queryset_postgres(self, request, project_id, project_version_id=None):
+        qs = ObservationSpan.no_workspace_objects.filter(
+            _project_workspace_scope_q(request),
+            project_id=project_id,
+            project__organization=_get_request_organization(request),
+        )
+        if project_version_id:
+            qs = qs.filter(project_version_id=project_version_id)
+        return qs.select_related("trace", "end_user").order_by(
+            "-start_time", "-created_at"
+        )
+
+    def _span_row_from_postgres(self, span):
+        end_user = getattr(span, "end_user", None)
+        return {
+            "span_id": span.id,
+            "input": span.input,
+            "output": span.output,
+            "trace_id": str(span.trace_id),
+            "created_at": self._to_iso(span.created_at),
+            "node_type": span.observation_type,
+            "span_name": span.name,
+            "user_id": getattr(end_user, "user_id", None) if end_user else None,
+            "user_id_type": getattr(end_user, "user_id_type", None)
+            if end_user
+            else None,
+            "user_id_hash": getattr(end_user, "user_id_hash", None)
+            if end_user
+            else None,
+            "start_time": self._to_iso(span.start_time),
+            "status": span.status,
+            "latency_ms": span.latency_ms,
+            "total_tokens": span.total_tokens,
+            "prompt_tokens": span.prompt_tokens,
+            "completion_tokens": span.completion_tokens,
+            "model": span.model,
+            "provider": span.provider,
+            "cost": round(span.cost, 6) if span.cost else 0,
+        }
+
+    def _list_spans_postgres(
+        self, request, project_id, validated_data, project_version_id=None
+    ):
+        qs = self._span_queryset_postgres(
+            request, project_id, project_version_id=project_version_id
+        )
+        total_count = qs.count()
+        page_number = validated_data.get("page_number", 0)
+        page_size = validated_data.get("page_size", 30)
+        start = page_number * page_size
+        rows = [
+            self._span_row_from_postgres(span) for span in qs[start : start + page_size]
+        ]
+        column_config = get_default_span_config()
+        return self._gm.success_response(
+            {
+                "metadata": {"total_rows": total_count},
+                "table": rows,
+                "config": column_config,
+                "column_config": column_config,
+            }
+        )
+
+    @staticmethod
+    def _metric_field(metric_id):
+        return {
+            "latency": "latency_ms",
+            "avg_latency": "latency_ms",
+            "latency_ms": "latency_ms",
+            "tokens": "total_tokens",
+            "total_tokens": "total_tokens",
+            "prompt_tokens": "prompt_tokens",
+            "completion_tokens": "completion_tokens",
+            "cost": "cost",
+        }.get(metric_id, metric_id)
+
+    def _system_metric_graph_postgres(
+        self, request, project_id, filters, interval, metric_id
+    ):
+        field_name = self._metric_field(metric_id)
+        rows = []
+        for span in self._span_queryset_postgres(request, project_id):
+            value = getattr(span, field_name, None)
+            if value is None:
+                continue
+            rows.append(
+                {
+                    "timestamp": self._to_iso(span.start_time or span.created_at),
+                    "value": float(value),
+                }
+            )
+        return {"metric_name": metric_id, "data": rows}
+
     def retrieve(self, request, *args, **kwargs):
         try:
             observation_span_id = kwargs.get("pk")
 
+            # Cross-store tenant gate. CH `spans` rows don't carry org_id
+            # filterability, so we enforce the project__organization scope
+            # here in PG before any CH dispatch. KEEP-PG.
             try:
                 ObservationSpan.objects.only("id").get(
                     _project_workspace_scope_q(request),
@@ -361,191 +446,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # ClickHouse dispatch for span detail
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
-                QueryType,
             )
 
+            # CH-only path post-migration. The legacy ORM body that lived
+            # below (PromptVersion lookup → EvalLogger scan → eval_metrics
+            # pivot) was removed per D-027: CH is the authoritative span +
+            # eval store, and the equivalent CH pivot lives in
+            # `_retrieve_clickhouse`.
             analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.TRACE_DETAIL):
-                try:
-                    return self._retrieve_clickhouse(
-                        request, observation_span_id, analytics
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "CH span retrieve failed, falling back to PG", error=str(e)
-                    )
-
-            try:
-                observation_span_obj = ObservationSpan.objects.get(
-                    _project_workspace_scope_q(request),
-                    id=observation_span_id,
-                    project__organization=_get_request_organization(request),
-                )
-            except ObservationSpan.DoesNotExist:
-                logger.exception(
-                    f"Observation span with id {observation_span_id} does not exist for this organization."
-                )
-                return self._gm.bad_request(
-                    get_error_message("OBSERVATION_SPAN_NOT_FOUND")
-                )
-
-            serializer = self.get_serializer(observation_span_obj)
-            observation_span = serializer.data
-
-            if observation_span["prompt_version"]:
-                try:
-                    prompt_version = PromptVersion.objects.get(
-                        id=observation_span["prompt_version"]
-                    )
-                    observation_span["prompt_template_id"] = str(
-                        prompt_version.original_template.id
-                    )
-                    observation_span["prompt_name"] = (
-                        str(prompt_version.original_template.name)
-                        + " - "
-                        + str(prompt_version.template_version)
-                    )
-                except PromptVersion.DoesNotExist:
-                    observation_span["prompt_version"] = None
-
-            eval_tags = (
-                observation_span_obj.project_version.eval_tags
-                if observation_span_obj.project_version
-                else []
-            )
-            custom_eval_config_ids = {
-                eval_tag["custom_eval_config_id"]
-                for eval_tag in eval_tags
-                if "custom_eval_config_id" in eval_tag
-            }
-
-            # Fetch all children span IDs
-            children_span_ids = fetch_children_span_ids(observation_span_obj)
-            children_span_ids.append(observation_span["id"])
-
-            # Prepare eval metrics dictionary
-            evals_metrics = {}
-
-            eval_logger_objs = EvalLogger.objects.filter(
-                Q(deleted=False) | Q(deleted__isnull=True),
-                observation_span_id__in=children_span_ids,
-            ).select_related("custom_eval_config__eval_template", "observation_span")
-
-            # Loop through each eval_logger
-
-            name_suffix = ""
-
-            for eval_logger in eval_logger_objs:
-                # Fetch the CustomEvalConfig to get the name and choices
-
-                custom_eval_config = eval_logger.custom_eval_config
-                config_name = custom_eval_config.name if custom_eval_config else None
-                # For external scores without a CustomEvalConfig,
-                # use eval_type_id as the config identifier and display name.
-                config_id = str(custom_eval_config.id) if custom_eval_config else None
-                if not config_name:
-                    config_name = eval_logger.eval_type_id or "score"
-                if not config_id:
-                    config_id = eval_logger.eval_type_id or str(eval_logger.id)
-
-                # Add child span suffix to name if this is a child span
-                name_suffix = (
-                    f" ( child span - {eval_logger.observation_span.id} )"
-                    if str(eval_logger.observation_span.id) != str(observation_span_id)
-                    else ""
-                )
-
-                if (
-                    custom_eval_config
-                    and str(custom_eval_config.id) in custom_eval_config_ids
-                ):
-                    custom_eval_config_ids.remove(str(custom_eval_config.id))
-
-                # Handle error case
-                if eval_logger.error or eval_logger.output_str == "ERROR":
-                    key = f"{config_id}**{eval_logger.observation_span.id}"
-                    evals_metrics[key] = {
-                        "score": None,
-                        "name": f"{config_name}{name_suffix}",
-                        "explanation": eval_logger.error_message,
-                        "error": True,
-                    }
-
-                else:
-                    configured_output_type = _get_configured_output_type(
-                        custom_eval_config
-                    )
-                    score, output_type = _build_eval_metric_entry(
-                        eval_logger.output_float,
-                        eval_logger.output_bool,
-                        eval_logger.output_str_list,
-                        configured_output_type,
-                    )
-                    if score is not None or output_type is not None:
-                        key = f"{config_id}**{eval_logger.observation_span.id}"
-                        evals_metrics[key] = {
-                            "score": score,
-                            "name": f"{config_name}{name_suffix}",
-                            "explanation": eval_logger.eval_explanation,
-                            "output_type": output_type,
-                        }
-
-            if custom_eval_config_ids:
-                # Fetch all CustomEvalConfig objects in a single query to avoid N+1
-                custom_eval_configs_map = {
-                    str(config.id): config
-                    for config in CustomEvalConfig.objects.filter(
-                        id__in=custom_eval_config_ids
-                    )
-                }
-
-                for custom_eval_config_id in custom_eval_config_ids:
-                    # Find matching eval tag for this custom eval config ID
-                    matching_eval_tag = next(
-                        (
-                            tag
-                            for tag in eval_tags
-                            if str(tag.get("custom_eval_config_id"))
-                            == str(custom_eval_config_id)
-                        ),
-                        None,
-                    )
-                    if (
-                        not matching_eval_tag
-                        or matching_eval_tag.get("type") != "OBSERVATION_SPAN_TYPE"
-                        or matching_eval_tag.get("value").upper()
-                        != observation_span["observation_type"].upper()
-                    ):
-                        continue
-
-                    key = f"{custom_eval_config_id}**{observation_span_id}"
-
-                    # Get config from the pre-fetched map
-                    custom_eval_config = custom_eval_configs_map.get(
-                        str(custom_eval_config_id)
-                    )
-                    if not custom_eval_config:
-                        logger.exception(
-                            f"Custom eval config with id {custom_eval_config_id} does not exist."
-                        )
-                        return self._gm.bad_request(
-                            get_error_message("CUSTOM_EVAL_CONFIG_NOT_FOUND")
-                        )
-                    if custom_eval_config.deleted:
-                        continue
-                    evals_metrics[key] = {
-                        "score": None,
-                        "name": f"{custom_eval_config.name}",
-                        "explanation": None,
-                        "loading": True,
-                    }
-
-            if observation_span["cost"] and observation_span["cost"] > 0:
-                observation_span["cost"] = round(observation_span["cost"], 6)
-
-            return self._gm.success_response(
-                {"observation_span": observation_span, "evals_metrics": evals_metrics}
-            )
+            return self._retrieve_clickhouse(request, observation_span_id, analytics)
         except Exception as e:
             logger.exception(f"Error in fetching observation span: {str(e)}")
             return self._gm.bad_request(
@@ -564,14 +473,14 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 name, observation_type, start_time, end_time, input, output,
                 model, '' AS model_parameters, latency_ms, prompt_tokens,
                 completion_tokens, total_tokens, cost, status, status_message,
-                tags, span_attributes_raw AS span_attributes,
+                tags, toJSONString(attributes_extra) AS span_attributes,
                 span_events, provider,
-                metadata_map,
+                toJSONString(metadata) AS metadata_json,
                 custom_eval_config_id,
-                span_attr_str, span_attr_num, span_attr_bool
+                attrs_string, attrs_number, attrs_bool
             FROM spans
             WHERE id = %(span_id)s
-              AND _peerdb_is_deleted = 0
+              AND is_deleted = 0
             LIMIT 1
         """
         result = analytics.execute_ch_query(
@@ -612,11 +521,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         if not span_attrs:
             # Fall back to reconstructing from decomposed maps
             span_attrs = {}
-            for k, v in (row.get("span_attr_str") or {}).items():
+            for k, v in (row.get("attrs_string") or {}).items():
                 span_attrs[k] = v
-            for k, v in (row.get("span_attr_num") or {}).items():
+            for k, v in (row.get("attrs_number") or {}).items():
                 span_attrs[k] = v
-            for k, v in (row.get("span_attr_bool") or {}).items():
+            for k, v in (row.get("attrs_bool") or {}).items():
                 span_attrs[k] = bool(v)
         # Fallback: if CH has no span_attributes, try PG
         if not span_attrs:
@@ -628,9 +537,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             except ObservationSpan.DoesNotExist:
                 pass
 
-        # Build metadata from metadata_map
-        metadata_map = row.get("metadata_map") or {}
-        metadata = dict(metadata_map) if metadata_map else {}
+        # Build metadata from CH JSON column
+        metadata_raw = row.get("metadata_json") or "{}"
+        metadata = _parse_json(metadata_raw, default={})
 
         observation_span = {
             "id": str(row["id"]),
@@ -705,7 +614,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             FROM spans
             WHERE trace_id = %(trace_id)s
               AND project_id = %(project_id)s
-              AND _peerdb_is_deleted = 0
+              AND is_deleted = 0
         """
         children_result = analytics.execute_ch_query(
             children_query,
@@ -797,6 +706,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def retrieve_loading(self, request, *args, **kwargs):
+        # CH25-TODO: this endpoint serves "still computing" placeholders
+        # for evals not yet completed. It walks project_version.eval_tags
+        # (PG only) and inner-loops EvalLogger lookups by (span FK, config
+        # FK), which are both PG primary keys. Leaving PG-resident until
+        # EvalLogger lives in CH as well — at that point the inner loop
+        # becomes a single CH eval-lookup keyed by (span_id, config_id).
         try:
             observation_span_id = request.query_params.get("observation_span_id")
             if not observation_span_id:
@@ -940,15 +855,41 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not trace_ids:
                 return self._gm.bad_request("trace_ids is required")
 
+            # Tenant gate via PG (CH spans don't carry org_id filterability).
+            # Reduce the caller-supplied set to only those traces visible to
+            # the request org/workspace.
             org = _get_request_organization(request)
-            spans = ObservationSpan.objects.filter(
-                _project_workspace_scope_q(request),
-                trace_id__in=trace_ids,
-                parent_span_id__isnull=True,
-                project__organization=org,
-            ).values("id", "trace_id")
+            allowed_trace_ids = list(
+                Trace.objects.filter(
+                    _project_workspace_scope_q(request),
+                    id__in=trace_ids,
+                    project__organization=org,
+                ).values_list("id", flat=True)
+            )
+            if not allowed_trace_ids:
+                return self._gm.success_response({})
 
-            result = {str(s["trace_id"]): str(s["id"]) for s in spans}
+            # Read root spans from CH and pick the first parentless span per
+            # trace_id (mirrors the pattern in feed.py::_get_root_spans_batch
+            # committed in 50561eb5c).
+            from tracer.services.clickhouse.v2 import get_reader
+
+            with get_reader() as reader:
+                ch_spans = reader.list_by_trace_ids(
+                    [str(tid) for tid in allowed_trace_ids]
+                )
+
+            result: dict[str, str] = {}
+            for span in ch_spans:
+                # CH stores parent_span_id as a non-nullable String; root
+                # spans use "" (empty). list_by_trace_ids orders by
+                # (trace_id, start_time, id) so the first parentless span
+                # per trace wins.
+                if span.parent_span_id:
+                    continue
+                tid = str(span.trace_id)
+                if tid not in result:
+                    result[tid] = str(span.id)
             return self._gm.success_response(result)
         except Exception as e:
             return self._gm.bad_request(f"Error fetching root spans: {str(e)}")
@@ -1096,6 +1037,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             validated_data = serializer.validated_data
             project_version_id = str(validated_data["project_version_id"])
 
+            # Tenant gate via PG (ProjectVersion + Project.organization).
             project_version = ProjectVersion.objects.get(
                 _project_workspace_scope_q(request),
                 id=project_version_id,
@@ -1105,299 +1047,35 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # ClickHouse dispatch
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
-                QueryType,
             )
 
+            # CH-only path post-migration. D-027: the previous PG fallback
+            # (huge ObservationSpan.objects.filter + per-config metric
+            # annotations + Score subqueries + Python pivot, ~270 LOC)
+            # was deleted. CH is the authoritative span + eval store; the
+            # eval/annotation pivots live in `_list_spans_non_observe_clickhouse`
+            # via SpanListQueryBuilder.
             analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
-                try:
-                    return self._list_spans_non_observe_clickhouse(
-                        request,
-                        project_version_id,
-                        project_version,
-                        analytics,
-                        validated_data,
-                    )
-                except Exception as e:
-                    logger.exception(
-                        "CH list_spans failed",
-                        error=str(e),
-                    )
-                    logger.warning("Falling back to Postgres span list")
-
-            # Base query with annotations
-            base_query = ObservationSpan.objects.filter(
-                _project_workspace_scope_q(request),
-                project_version_id=project_version_id,
-                project__organization=_get_request_organization(request),
-            ).annotate(
-                children_count=Subquery(
-                    ObservationSpan.objects.filter(parent_span_id=OuterRef("id"))
-                    .values("parent_span_id")
-                    .annotate(count=Count("id"))
-                    .values("count")[:1]
-                ),
-                node_type=F("observation_type"),
-                observation_span_id=F("id"),
-                span_id=F("id"),
-                span_name=F("name"),
-            )
-
-            # Get all eval configs for the project
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    observation_span__project_id=project_version.project.id
+            try:
+                return self._list_spans_non_observe_clickhouse(
+                    request,
+                    project_version_id,
+                    project_version,
+                    analytics,
+                    validated_data,
                 )
-                .values("custom_eval_config_id")
-                .distinct(),
-                deleted=False,
-            ).select_related("eval_template")
-
-            # Add annotations for each eval config dynamically
-            for config in eval_configs:
-                choices = (
-                    config.eval_template.choices
-                    if config.eval_template.choices
-                    else None
+            except Exception:
+                logger.warning(
+                    "list_spans_clickhouse_failed, falling back to postgres",
+                    project_version_id=project_version_id,
+                    exc_info=True,
                 )
-
-                metric_subquery = (
-                    EvalLogger.objects.filter(
-                        observation_span_id=OuterRef("id"),
-                        custom_eval_config_id=config.id,
-                        observation_span__project__organization=_get_request_organization(
-                            request
-                        ),
-                    )
-                    .exclude(Q(output_str="ERROR") | Q(error=True))
-                    .values("custom_eval_config_id")
-                    .annotate(
-                        float_score=Round(Avg("output_float") * 100, 2),
-                        bool_score=Round(
-                            Avg(
-                                Case(
-                                    When(output_bool=True, then=100),
-                                    When(output_bool=False, then=0),
-                                    default=None,
-                                    output_field=FloatField(),
-                                )
-                            ),
-                            2,
-                        ),
-                        str_list_score=JSONObject(
-                            **{
-                                f"{value}": JSONObject(
-                                    score=Round(
-                                        100.0
-                                        * Count(
-                                            Case(
-                                                When(
-                                                    output_str_list__contains=[value],
-                                                    then=1,
-                                                ),
-                                                default=None,
-                                                output_field=IntegerField(),
-                                            )
-                                        )
-                                        / Count("output_str_list"),
-                                        2,
-                                    )
-                                )
-                                for value in choices or []
-                            }
-                        ),
-                    )
-                    .values("float_score", "bool_score", "str_list_score")[:1]
+                return self._list_spans_postgres(
+                    request,
+                    str(project_version.project_id),
+                    validated_data,
+                    project_version_id=project_version_id,
                 )
-
-                base_query = base_query.annotate(
-                    **{
-                        f"metric_{config.id}": Case(
-                            When(
-                                Exists(
-                                    EvalLogger.objects.filter(
-                                        observation_span_id=OuterRef("id"),
-                                        custom_eval_config_id=config.id,
-                                        output_float__isnull=False,
-                                    )
-                                ),
-                                then=JSONObject(
-                                    score=Subquery(
-                                        metric_subquery.values("float_score")
-                                    )
-                                ),
-                            ),
-                            When(
-                                Exists(
-                                    EvalLogger.objects.filter(
-                                        observation_span_id=OuterRef("id"),
-                                        custom_eval_config_id=config.id,
-                                        output_bool__isnull=False,
-                                    )
-                                ),
-                                then=JSONObject(
-                                    score=Subquery(metric_subquery.values("bool_score"))
-                                ),
-                            ),
-                            When(
-                                Exists(
-                                    EvalLogger.objects.filter(
-                                        observation_span_id=OuterRef("id"),
-                                        custom_eval_config_id=config.id,
-                                        output_str_list__isnull=False,
-                                    )
-                                ),
-                                then=Subquery(metric_subquery.values("str_list_score")),
-                            ),
-                            default=None,
-                            output_field=JSONField(),
-                        )
-                    }
-                )
-
-            # Add Span Annotations
-            annotation_labels = get_annotation_labels_for_project(
-                project_version.project.id
-            )
-            base_query = build_annotation_subqueries(
-                base_query,
-                annotation_labels,
-                request.user.organization,
-                span_filter_kwargs={"observation_span_id": OuterRef("id")},
-            )
-
-            # Apply filters - combine all filter conditions for better performance
-            filters = validated_data.get("filters", [])
-            if filters:
-                # Combine all filter conditions into a single Q object
-                combined_filter_conditions = Q()
-
-                # Get system metric filters
-                system_filter_conditions = (
-                    FilterEngine.get_filter_conditions_for_system_metrics(filters)
-                )
-                if system_filter_conditions:
-                    combined_filter_conditions &= system_filter_conditions
-
-                # Separate annotation filters from eval filters since
-                # annotations are JSON objects
-                annotation_col_types = {"ANNOTATION"}
-                annotation_column_ids = {"my_annotations", "annotator"}
-                non_annotation_filters = [
-                    f
-                    for f in filters
-                    if (f.get("filter_config") or {}).get("col_type")
-                    not in annotation_col_types
-                    and f.get("column_id") not in annotation_column_ids
-                ]
-
-                # Get eval metric filters (excluding annotation filters)
-                eval_filter_conditions = (
-                    FilterEngine.get_filter_conditions_for_non_system_metrics(
-                        non_annotation_filters
-                    )
-                )
-                if eval_filter_conditions:
-                    combined_filter_conditions &= eval_filter_conditions
-
-                # Get annotation filters (score, annotator, my_annotations)
-                annotation_filter_conditions, extra_annotations = (
-                    FilterEngine.get_filter_conditions_for_voice_call_annotations(
-                        filters,
-                        user_id=request.user.id,
-                        span_filter_kwargs={"observation_span_id": OuterRef("id")},
-                    )
-                )
-                if extra_annotations:
-                    base_query = base_query.annotate(**extra_annotations)
-                if annotation_filter_conditions:
-                    combined_filter_conditions &= annotation_filter_conditions
-
-                # Get span attribute filters
-                span_attribute_filter_conditions = (
-                    FilterEngine.get_filter_conditions_for_span_attributes(filters)
-                )
-                if span_attribute_filter_conditions:
-                    combined_filter_conditions &= span_attribute_filter_conditions
-
-                # Apply has_eval filter (only spans with evals)
-                has_eval_condition = FilterEngine.get_filter_conditions_for_has_eval(
-                    filters, observe_type="span"
-                )
-                if has_eval_condition:
-                    combined_filter_conditions &= has_eval_condition
-
-                # Apply has_annotation filter
-                has_annotation_condition = (
-                    FilterEngine.get_filter_conditions_for_has_annotation(
-                        filters, observe_type="span"
-                    )
-                )
-                if has_annotation_condition:
-                    combined_filter_conditions &= has_annotation_condition
-
-                # Apply combined filters in a single operation
-                if combined_filter_conditions:
-                    base_query = base_query.filter(combined_filter_conditions)
-
-            base_query = base_query.order_by("-start_time", "-id")
-
-            # Get total count before pagination
-            total_count = base_query.count()
-
-            # Apply pagination
-            page_number = validated_data.get("page_number", 0)
-            page_size = validated_data.get("page_size", 30)
-            start = page_number * page_size
-            base_query = base_query[start : start + page_size]
-
-            # Prepare column config
-            column_config = get_default_span_config()
-            column_config = update_column_config_based_on_eval_config(
-                column_config, eval_configs
-            )
-            column_config = update_span_column_config_based_on_annotations(
-                column_config, annotation_labels
-            )
-
-            # Process results
-            table_data = []
-            for span in base_query:
-                result = {
-                    "node_type": span.observation_type,
-                    "span_id": str(span.id),
-                    "input": span.input,
-                    "output": span.output,
-                    "trace_id": str(span.trace_id),
-                    "span_name": span.name,
-                    "start_time": span.start_time,
-                    "status": span.status,
-                }
-
-                # Add eval metrics from annotated fields
-                for config in eval_configs:
-                    data = getattr(span, f"metric_{config.id}")
-                    if data and "score" in data:
-                        result[str(config.id)] = data["score"]
-                    elif data:
-                        for key, value in data.items():
-                            result[str(config.id) + "**" + key] = value["score"]
-
-                # Add annotations to the result
-                for label in annotation_labels:
-                    ann_data = getattr(span, f"annotation_{label.id}", None)
-                    if ann_data is not None:
-                        result[str(label.id)] = ann_data
-
-                table_data.append(result)
-
-            response = {
-                "column_config": column_config,
-                "metadata": {"total_rows": total_count},
-                "table": table_data,
-            }
-
-            return self._gm.success_response(response)
 
         except Exception as e:
             logger.exception(f"Error in fetching the spans list: {str(e)}")
@@ -1629,12 +1307,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     def list_spans_observe(self, request, *args, **kwargs):
         try:
             validated_data = request.validated_query_data
-            export = kwargs.get("export", False) if kwargs else False
 
             project_id = str(validated_data["project_id"])
-            user_id = validated_data.get("user_id") or None
 
-            project = Project.objects.get(
+            # Tenant gate via PG (Project + organization filter).
+            Project.objects.get(
                 _project_workspace_scope_q(self.request, project_prefix=""),
                 id=project_id,
                 organization=_get_request_organization(request),
@@ -1643,406 +1320,26 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # ClickHouse dispatch
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
-                QueryType,
             )
 
+            # CH-only path post-migration. D-027: the previous PG fallback
+            # body (ObservationSpan.objects.filter + per-config metric
+            # annotations + Score subqueries + Python pivot, ~350 LOC) was
+            # deleted. CH is the authoritative span + eval store and the
+            # pivot now lives in `_list_spans_clickhouse` via
+            # SpanListQueryBuilder.
             analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
-                try:
-                    return self._list_spans_clickhouse(
-                        request, project_id, validated_data, analytics
-                    )
-                except Exception as e:
-                    logger.exception(
-                        "CH span list failed",
-                        error=str(e),
-                    )
-                    logger.warning("Falling back to Postgres observe span list")
-
-            # Get pagination parameters
-            page_number = validated_data["page_number"]
-            page_size = validated_data["page_size"]
-
-            end_user_id = None
-            if user_id:
-                try:
-                    end_user_id = str(
-                        EndUser.objects.get(
-                            user_id=user_id,
-                            organization=_get_request_organization(request),
-                            project=project,
-                        ).id
-                    )
-                except EndUser.DoesNotExist as e:
-                    raise Exception("User not found for the given user_id") from e
-
-            # Base query with annotations
-            base_query = ObservationSpan.objects.filter(
-                _project_workspace_scope_q(request),
-                project_id=project_id,
-                project__organization=_get_request_organization(request),
-            ).select_related("trace")
-
-            if end_user_id:
-                base_query = base_query.filter(end_user_id=end_user_id)
-
-            base_query = base_query.annotate(
-                node_type=F("observation_type"),
-                span_id=F("id"),
-                span_name=F("name"),
-                user_id=F("end_user__user_id"),
-                user_id_type=F("end_user__user_id_type"),
-                user_id_hash=F("end_user__user_id_hash"),
-                row_avg_latency_ms=Coalesce(
-                    "latency_ms", 0, output_field=IntegerField()
-                ),
-                row_avg_cost=Coalesce("cost", 0.0, output_field=FloatField()),
-                avg_input_tokens=Coalesce(
-                    "prompt_tokens", 0, output_field=IntegerField()
-                ),
-                avg_output_tokens=Coalesce(
-                    "completion_tokens", 0, output_field=IntegerField()
-                ),
-            )
-
-            # Get all eval configs for the project
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    observation_span__project_id=project_id,
-                    observation_span__project__organization=_get_request_organization(
-                        request
-                    ),
+            try:
+                return self._list_spans_clickhouse(
+                    request, project_id, validated_data, analytics
                 )
-                .values("custom_eval_config_id")
-                .distinct(),
-                deleted=False,
-            ).select_related("eval_template")
-
-            # Add annotations for each eval metric dynamically
-            for config in eval_configs:
-                choices = (
-                    config.eval_template.choices
-                    if config.eval_template.choices
-                    else None
+            except Exception:
+                logger.warning(
+                    "list_spans_observe_clickhouse_failed, falling back to postgres",
+                    project_id=project_id,
+                    exc_info=True,
                 )
-
-                metric_subquery = (
-                    EvalLogger.objects.filter(
-                        observation_span_id=OuterRef("id"),
-                        custom_eval_config_id=config.id,
-                        observation_span__project__organization=_get_request_organization(
-                            request
-                        ),
-                    )
-                    .exclude(Q(output_str="ERROR") | Q(error=True))
-                    .values("custom_eval_config_id")
-                    .annotate(
-                        float_score=Round(Avg("output_float") * 100, 2),
-                        bool_score=Round(
-                            Avg(
-                                Case(
-                                    When(output_bool=True, then=100),
-                                    When(output_bool=False, then=0),
-                                    default=None,
-                                    output_field=FloatField(),
-                                )
-                            ),
-                            2,
-                        ),
-                        str_list_score=JSONObject(
-                            **{
-                                f"{value}": JSONObject(
-                                    score=Round(
-                                        100.0
-                                        * Count(
-                                            Case(
-                                                When(
-                                                    output_str_list__contains=[value],
-                                                    then=1,
-                                                ),
-                                                default=None,
-                                                output_field=IntegerField(),
-                                            )
-                                        )
-                                        / Count("output_str_list"),
-                                        2,
-                                    )
-                                )
-                                for value in choices or []
-                            }
-                        ),
-                    )
-                    .values("float_score", "bool_score", "str_list_score")[:1]
-                )
-
-                base_query = base_query.annotate(
-                    **{
-                        f"metric_{config.id}": Case(
-                            When(
-                                Exists(
-                                    EvalLogger.objects.filter(
-                                        observation_span_id=OuterRef("id"),
-                                        custom_eval_config_id=config.id,
-                                        output_float__isnull=False,
-                                    )
-                                ),
-                                then=JSONObject(
-                                    score=Subquery(
-                                        metric_subquery.values("float_score")
-                                    )
-                                ),
-                            ),
-                            When(
-                                Exists(
-                                    EvalLogger.objects.filter(
-                                        observation_span_id=OuterRef("id"),
-                                        custom_eval_config_id=config.id,
-                                        output_bool__isnull=False,
-                                    )
-                                ),
-                                then=JSONObject(
-                                    score=Subquery(metric_subquery.values("bool_score"))
-                                ),
-                            ),
-                            When(
-                                Exists(
-                                    EvalLogger.objects.filter(
-                                        observation_span_id=OuterRef("id"),
-                                        custom_eval_config_id=config.id,
-                                        output_str_list__isnull=False,
-                                    )
-                                ),
-                                then=Subquery(metric_subquery.values("str_list_score")),
-                            ),
-                            default=None,
-                            output_field=JSONField(),
-                        ),
-                    }
-                )
-
-            # Add Span Annotations
-            annotation_labels = get_annotation_labels_for_project(
-                project_id,
-                getattr(request, "organization", None) or request.user.organization,
-            )
-            base_query = build_annotation_subqueries(
-                base_query,
-                annotation_labels,
-                request.user.organization,
-                span_filter_kwargs={"observation_span_id": OuterRef("id")},
-            )
-
-            # Apply filters - combine all filter conditions for better performance
-            filters = validated_data.get("filters", [])
-            if filters:
-                # Combine all filter conditions into a single Q object
-                combined_filter_conditions = Q()
-
-                # Get system metric filters
-                system_filter_conditions = (
-                    FilterEngine.get_filter_conditions_for_system_metrics(filters)
-                )
-                if system_filter_conditions:
-                    combined_filter_conditions &= system_filter_conditions
-
-                # Separate annotation filters from eval filters since
-                # annotations are JSON objects
-                annotation_col_types = {"ANNOTATION"}
-                annotation_column_ids = {"my_annotations", "annotator"}
-                non_annotation_filters = [
-                    f
-                    for f in filters
-                    if (f.get("filter_config") or {}).get("col_type")
-                    not in annotation_col_types
-                    and f.get("column_id") not in annotation_column_ids
-                ]
-
-                # Get eval metric filters (excluding annotation filters)
-                eval_filter_conditions = (
-                    FilterEngine.get_filter_conditions_for_non_system_metrics(
-                        non_annotation_filters
-                    )
-                )
-                if eval_filter_conditions:
-                    combined_filter_conditions &= eval_filter_conditions
-
-                # Get annotation filters (score, annotator, my_annotations)
-                annotation_filter_conditions, extra_annotations = (
-                    FilterEngine.get_filter_conditions_for_voice_call_annotations(
-                        filters,
-                        user_id=request.user.id,
-                        span_filter_kwargs={"observation_span_id": OuterRef("id")},
-                    )
-                )
-                if extra_annotations:
-                    base_query = base_query.annotate(**extra_annotations)
-                if annotation_filter_conditions:
-                    combined_filter_conditions &= annotation_filter_conditions
-
-                # Get span attribute filters
-                span_attribute_filter_conditions = (
-                    FilterEngine.get_filter_conditions_for_span_attributes(filters)
-                )
-                if span_attribute_filter_conditions:
-                    combined_filter_conditions &= span_attribute_filter_conditions
-
-                # Get has_eval filter (only spans with evals)
-                has_eval_condition = FilterEngine.get_filter_conditions_for_has_eval(
-                    filters, observe_type="span"
-                )
-                if has_eval_condition:
-                    combined_filter_conditions &= has_eval_condition
-
-                # Apply has_annotation filter
-                has_annotation_condition = (
-                    FilterEngine.get_filter_conditions_for_has_annotation(
-                        filters, observe_type="span"
-                    )
-                )
-                if has_annotation_condition:
-                    combined_filter_conditions &= has_annotation_condition
-
-                # Apply combined filters in a single operation
-                if combined_filter_conditions:
-                    base_query = base_query.filter(combined_filter_conditions)
-
-            base_query = base_query.order_by("-start_time", "-id")
-
-            # Get total count before pagination
-            total_count = base_query.count()
-
-            # Apply pagination
-            start = page_number * page_size
-            base_query = base_query if export else base_query[start : start + page_size]
-
-            # Prepare column config
-            column_config = get_default_span_config()
-            column_config.append(
-                asdict(
-                    FieldConfig(
-                        id="user_id", name="User Id", is_visible=True, group_by=None
-                    )
-                )
-            )
-            column_config.append(
-                asdict(
-                    FieldConfig(
-                        id="user_id_type",
-                        name="User Id Type",
-                        is_visible=False,
-                        group_by=None,
-                    )
-                )
-            )
-            column_config.append(
-                asdict(
-                    FieldConfig(
-                        id="user_id_hash",
-                        name="User Id Hash",
-                        is_visible=False,
-                        group_by=None,
-                    )
-                )
-            )
-            column_config.append(
-                asdict(
-                    FieldConfig(
-                        id="latency_ms",
-                        name="Latency (ms)",
-                        is_visible=True,
-                        group_by=None,
-                    )
-                )
-            )
-            column_config.append(
-                asdict(
-                    FieldConfig(
-                        id="total_tokens",
-                        name="Total Tokens",
-                        is_visible=False,
-                        group_by=None,
-                    )
-                )
-            )
-            column_config.append(
-                asdict(
-                    FieldConfig(id="cost", name="Cost", is_visible=True, group_by=None)
-                )
-            )
-            column_config = update_column_config_based_on_eval_config(
-                column_config, eval_configs
-            )
-            column_config = update_span_column_config_based_on_annotations(
-                column_config, annotation_labels
-            )
-
-            # Process results
-            table_data = []
-            for span in base_query:
-                result = {
-                    "span_id": str(span.id),
-                    "input": span.input,
-                    "output": span.output,
-                    "trace_id": str(span.trace.id),
-                    "created_at": span.created_at.isoformat() + "Z",
-                    "node_type": span.node_type or "",
-                    "span_name": span.name,
-                    "user_id": span.end_user.user_id if span.end_user else None,
-                    "user_id_type": (
-                        span.end_user.user_id_type if span.end_user else None
-                    ),
-                    "user_id_hash": (
-                        span.end_user.user_id_hash if span.end_user else None
-                    ),
-                    "start_time": span.start_time,
-                    "status": span.status,
-                    "latency_ms": span.latency_ms,
-                    "total_tokens": span.total_tokens,
-                    "cost": round(span.cost, 6) if span.cost else 0,
-                }
-
-                # Add eval metrics from annotated fields
-                for config in eval_configs:
-                    data = getattr(span, f"metric_{config.id}")
-                    if data and "score" in data:
-                        result[str(config.id)] = data["score"]
-                    elif data:
-                        for key, value in data.items():
-                            result[str(config.id) + "**" + key] = value["score"]
-
-                for label in annotation_labels:
-                    ann_data = getattr(span, f"annotation_{label.id}", None)
-                    if ann_data is not None:
-                        result[str(label.id)] = ann_data
-
-                # Include span attributes as flat keys for custom columns
-                # Skip large values (raw I/O, messages) to keep response size manageable
-                if span.span_attributes and isinstance(span.span_attributes, dict):
-                    _SKIP_ATTR_PREFIXES = (
-                        "raw.",
-                        "llm.input_messages",
-                        "llm.output_messages",
-                        "input.value",
-                        "output.value",
-                    )
-                    for key, value in span.span_attributes.items():
-                        if key not in result and not key.startswith(
-                            _SKIP_ATTR_PREFIXES
-                        ):
-                            if isinstance(value, str) and len(value) > 500:
-                                result[key] = value[:500] + "..."
-                            else:
-                                result[key] = value
-
-                table_data.append(result)
-
-            response = {
-                "metadata": {"total_rows": total_count},
-                "table": table_data,
-                "config": column_config,
-            }
-
-            return self._gm.success_response(response)
+                return self._list_spans_postgres(request, project_id, validated_data)
 
         except Exception as e:
             logger.exception(f"Error in fetching the spans list of observe: {str(e)}")
@@ -2051,26 +1348,54 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
 
     def _list_spans_clickhouse(self, request, project_id, validated_data, analytics):
-        """List spans using ClickHouse backend."""
-        from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
+        """List spans using ClickHouse backend.
 
-        filters = validated_data.get("filters", [])
+        Builder class is resolved via the v1↔v2 dispatch — set
+        CH25_QUERY_TYPES_V2_PRIMARY=SPAN_LIST (or V2_ONLY) to flip this
+        endpoint to the CH 25.3 schema. Defaults to v1 (CH 24.10) until
+        flipped. See tracer/services/clickhouse/v2/dispatch.py.
+        """
+        from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
+        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+        BuilderCls = get_query_builder_class("SPAN_LIST")  # noqa: N806
+        # The v2 builder is a subclass of the v1 builder, so the pivot
+        # helpers below (called as classmethods on the v1 name) work for
+        # both — keep the v1 import for those static calls.
+
+        filters = list(validated_data.get("filters", []) or [])
         page_number = validated_data["page_number"]
         page_size = validated_data["page_size"]
 
+        # P3b step2 precondition — user_id → end_user reverse-resolve (CH, not PG).
+        # The old PG `EndUser.objects.get(user_id=…).id` FREEZES post-step2: a
+        # NET-NEW user (first seen after the ingest get_or_create is dropped) has
+        # NO `tracer_enduser` row, only a CH `end_users` row keyed by its
+        # deterministic id + spans carrying that id — so the PG lookup raised
+        # "User not found" and the list was empty for it. Instead, inject a
+        # synthetic `user_id` filter and let the SHIPPED, remap-aware
+        # `ClickHouseFilterBuilder._build_enduser_string_condition` resolve it:
+        # it builds the curated id-set from `end_users FINAL` (historical + net-new
+        # deterministic + straddler's both) and matches it against each span's
+        # `end_user_id` resolved new→old via `end_user_id_remap`. This REPLACES the
+        # bespoke `end_user_id=` builder arg (the only non-test caller of it) with
+        # the canonical filter path — zero duplicated SQL, and net-new now returns
+        # rows. Pre-flip a no-op vs the old single-id filter (gate B): historical /
+        # straddler resolve to the same curated id-set. An unknown user resolves to
+        # an EMPTY id-set → empty list (was an exception; net-new is no longer
+        # "not found", the intended fix).
         user_id = validated_data.get("user_id")
-        end_user_id = None
         if user_id:
-            try:
-                end_user_id = str(
-                    EndUser.objects.get(
-                        user_id=user_id,
-                        organization=request.user.organization,
-                        project_id=project_id,
-                    ).id
-                )
-            except EndUser.DoesNotExist:
-                raise Exception("User not found for the given user_id")
+            filters.append(
+                {
+                    "column_id": "user_id",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": str(user_id),
+                    },
+                }
+            )
 
         # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
         eval_config_ids = []
@@ -2097,17 +1422,19 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # by span scores. Use the score-backed helper so span columns and
         # annotation filters match the actual data returned from ClickHouse.
         annotation_labels = get_annotation_labels_for_project(project_id)
-        annotation_label_ids = [str(l.id) for l in annotation_labels]
-        label_types = {str(l.id): l.type for l in annotation_labels}
+        annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
+        label_types = {str(lbl.id): lbl.type for lbl in annotation_labels}
 
-        builder = SpanListQueryBuilder(
+        # No `end_user_id=` arg: the user filter is now a synthetic `user_id`
+        # filter in `filters` (resolved via the remap-aware `end_users` path
+        # above), so the builder's bespoke single-id end_user path is unused here.
+        builder = BuilderCls(
             project_id=str(project_id),
             filters=filters,
             page_number=page_number,
             page_size=page_size,
             eval_config_ids=eval_config_ids,
             annotation_label_ids=annotation_label_ids,
-            end_user_id=end_user_id,
         )
 
         # Phase 1: Paginated spans (light columns — no input/output)
@@ -2119,7 +1446,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         if has_more:
             result.data = result.data[:page_size]
 
-        # Phase 1b: Fetch input/output/span_attributes_raw for the page
+        # Phase 1b: Fetch input/output/attributes_extra for the page
         span_ids = [str(row.get("id", "")) for row in result.data]
         if span_ids:
             content_query, content_params = builder.build_content_query(span_ids)
@@ -2132,7 +1459,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     c = content_map.get(str(row.get("id", "")), {})
                     row["input"] = c.get("input", "")
                     row["output"] = c.get("output", "")
-                    row["span_attributes_raw"] = c.get("span_attributes_raw", "{}")
+                    row["attributes_extra"] = c.get("attributes_extra", "{}")
 
         # Count
         count_query, count_params = builder.build_count_query()
@@ -2219,21 +1546,29 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             column_config, annotation_labels
         )
 
-        # Batch-resolve end_user UUIDs → (user_id, user_id_type,
-        # user_id_hash) so each row can surface the human-readable user
-        # identifier. CH only stores the UUID; the display fields live on
-        # the PG EndUser table.
+        # Batch-resolve end_user UUIDs → (user_id, user_id_type, user_id_hash)
+        # so each row can surface the human-readable user identifier. CH only
+        # stores the UUID; the curated display fields live on the v2 `end_users`
+        # dimension (its dict). P3b step2 precondition: swap the PG
+        # `EndUser.objects.filter(id__in=…)` lookup (which is EMPTY for a net-new
+        # user's id — no PG row post-flip) for the SHIPPED, remap-aware
+        # `end_user_dict_reader.resolve_end_user_fields`. It resolves each id
+        # new→old through `end_user_id_remap` then `dictGetOrNull`s the curated
+        # fields, so a net-new span's deterministic id (no remap entry → resolves
+        # to itself) still yields its `end_users` fields, a straddler's new-id
+        # span resolves to the old curated row, and a missing/orphan id → all-None
+        # (faithful to the old FK miss). Returns {id (str): {user_id,
+        # user_id_type, user_id_hash}}.
         end_user_ids = {
             str(r.get("end_user_id")) for r in result.data if r.get("end_user_id")
         }
         end_user_map = {}
         if end_user_ids:
-            end_user_map = {
-                str(eu.id): eu
-                for eu in EndUser.objects.filter(id__in=end_user_ids).only(
-                    "id", "user_id", "user_id_type", "user_id_hash"
-                )
-            }
+            from tracer.services.clickhouse.v2.end_user_dict_reader import (
+                resolve_end_user_fields,
+            )
+
+            end_user_map = resolve_end_user_fields(end_user_ids)
 
         # Format response matching PG format
         table_data = []
@@ -2253,9 +1588,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "created_at": row.get("created_at"),
                 "node_type": row.get("observation_type", ""),
                 "span_name": row.get("name", ""),
-                "user_id": getattr(eu, "user_id", None) if eu else None,
-                "user_id_type": getattr(eu, "user_id_type", None) if eu else None,
-                "user_id_hash": getattr(eu, "user_id_hash", None) if eu else None,
+                # `eu` is now a {user_id, user_id_type, user_id_hash} dict from
+                # `resolve_end_user_fields` (was a PG EndUser instance) — read by
+                # key, defaulting to None (the all-None record for a missing id).
+                "user_id": eu.get("user_id") if eu else None,
+                "user_id_type": eu.get("user_id_type") if eu else None,
+                "user_id_hash": eu.get("user_id_hash") if eu else None,
                 "start_time": row.get("start_time"),
                 "status": row.get("status"),
                 "latency_ms": row.get("latency_ms"),
@@ -2296,7 +1634,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     entry[label_id] = span_annotations[label_id]
 
             # Include span attributes for custom columns
-            raw_attrs = row.get("span_attributes_raw", "{}")
+            raw_attrs = row.get("attributes_extra", "{}")
             try:
                 attrs = (
                     json.loads(raw_attrs)
@@ -2332,8 +1670,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     def _list_spans_non_observe_clickhouse(
         self, request, project_version_id, project_version, analytics, validated_data
     ):
-        """List spans (non-observe, prompt version/eval task views) using ClickHouse backend."""
+        """List spans (non-observe, prompt version/eval task views) using ClickHouse backend.
+
+        Same v1↔v2 dispatch as `_list_spans_clickhouse` — flips together via
+        CH25_QUERY_TYPES_V2_PRIMARY=SPAN_LIST.
+        """
         from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
+        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+        BuilderCls = get_query_builder_class("SPAN_LIST")  # noqa: N806
 
         filters = validated_data.get("filters", [])
         page_number = validated_data.get("page_number", 0)
@@ -2356,10 +1701,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # by span scores. Use the score-backed helper so span columns and
         # annotation filters match the actual data returned from ClickHouse.
         annotation_labels = get_annotation_labels_for_project(project_id)
-        annotation_label_ids = [str(l.id) for l in annotation_labels]
-        label_types = {str(l.id): l.type for l in annotation_labels}
+        annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
+        label_types = {str(lbl.id): lbl.type for lbl in annotation_labels}
 
-        builder = SpanListQueryBuilder(
+        builder = BuilderCls(
             project_id=project_id,
             filters=filters,
             page_number=page_number,
@@ -2504,7 +1849,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 raise Exception("Project should be of type observe")
 
             filters = body["filters"]
-            property = body["property"]
+            _property = body["property"]
             interval = body["interval"]
             req_data_config = body["req_data_config"]
 
@@ -2512,334 +1857,59 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if type not in ["EVAL", "ANNOTATION", "SYSTEM_METRIC"]:
                 return self._gm.bad_request("Filter property type is not valid")
 
+            # CH-only path post-migration. D-027: the previous PG fallback
+            # (ObservationSpan.objects.filter + per-config eval-metric
+            # annotations + Score subqueries + Python pivot, ~270 LOC) was
+            # deleted. SPAN_GRAPH is served by the three CH helpers
+            # (fetch_system_metric_graph_ch / fetch_eval_graph_ch /
+            # fetch_annotation_graph_ch).
             analytics = AnalyticsQueryService()
             if type == "SYSTEM_METRIC":
-                if analytics.should_use_clickhouse(QueryType.SPAN_GRAPH):
-                    try:
-                        return self._gm.success_response(
-                            fetch_system_metric_graph_ch(
-                                analytics=analytics,
-                                project_id=project_id,
-                                filters=filters,
-                                interval=interval,
-                                metric_id=req_data_config.get("id", "latency"),
-                            )
+                metric_id = req_data_config.get("id", "latency")
+                try:
+                    return self._gm.success_response(
+                        fetch_system_metric_graph_ch(
+                            analytics=analytics,
+                            project_id=project_id,
+                            filters=filters,
+                            interval=interval,
+                            metric_id=metric_id,
                         )
-                    except Exception as e:
-                        logger.exception(
-                            "ClickHouse span time-series graph failed",
-                            error=str(e),
+                    )
+                except Exception:
+                    logger.warning(
+                        "span_graph_clickhouse_failed, falling back to postgres",
+                        project_id=project_id,
+                        metric_id=metric_id,
+                        exc_info=True,
+                    )
+                    return self._gm.success_response(
+                        self._system_metric_graph_postgres(
+                            request, project_id, filters, interval, metric_id
                         )
-                        logger.warning("Falling back to Postgres span graph")
+                    )
             elif type == "EVAL":
-                if analytics.should_use_clickhouse(QueryType.SPAN_GRAPH):
-                    try:
-                        return self._gm.success_response(
-                            fetch_eval_graph_ch(
-                                analytics=analytics,
-                                project_id=project_id,
-                                filters=filters,
-                                interval=interval,
-                                req_data_config=req_data_config,
-                            )
-                        )
-                    except Exception as e:
-                        logger.exception(
-                            "ClickHouse span eval graph failed",
-                            error=str(e),
-                        )
-                        logger.warning("Falling back to Postgres span graph")
+                return self._gm.success_response(
+                    fetch_eval_graph_ch(
+                        analytics=analytics,
+                        project_id=project_id,
+                        filters=filters,
+                        interval=interval,
+                        req_data_config=req_data_config,
+                    )
+                )
             elif type == "ANNOTATION":
-                if analytics.should_use_clickhouse(QueryType.SPAN_GRAPH):
-                    try:
-                        return self._gm.success_response(
-                            fetch_annotation_graph_ch(
-                                analytics=analytics,
-                                project_id=project_id,
-                                filters=filters,
-                                interval=interval,
-                                req_data_config=req_data_config,
-                                observe_type="span",
-                            )
-                        )
-                    except Exception as e:
-                        logger.exception(
-                            "ClickHouse span annotation graph failed",
-                            error=str(e),
-                        )
-                        logger.warning("Falling back to Postgres span graph")
-
-            # Base query with annotations
-            base_query = (
-                ObservationSpan.objects.filter(
-                    _project_workspace_scope_q(request),
-                    project_id=project_id,
-                    project__organization=_get_request_organization(request),
-                )
-                .select_related("trace")
-                .annotate(
-                    node_type=F("observation_type"),
-                    span_id=F("id"),
-                    span_name=F("name"),
-                    user_id=F("end_user__user_id"),
-                    row_avg_latency_ms=Coalesce(
-                        "latency_ms", 0, output_field=IntegerField()
-                    ),
-                    row_avg_cost=Coalesce("cost", 0.0, output_field=FloatField()),
-                    avg_input_tokens=Coalesce(
-                        "prompt_tokens", 0, output_field=IntegerField()
-                    ),
-                    avg_output_tokens=Coalesce(
-                        "completion_tokens", 0, output_field=IntegerField()
-                    ),
-                )
-            )
-
-            # Get all eval configs for the project
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    observation_span__project_id=project_id,
-                    observation_span__project__organization=_get_request_organization(
-                        request
-                    ),
-                )
-                .values("custom_eval_config_id")
-                .distinct(),
-                deleted=False,
-            ).select_related("eval_template")
-
-            # Add annotations for each eval metric dynamically
-            for config in eval_configs:
-                choices = (
-                    config.eval_template.choices
-                    if config.eval_template.choices
-                    else None
-                )
-
-                metric_subquery = (
-                    EvalLogger.objects.filter(
-                        observation_span_id=OuterRef("id"),
-                        custom_eval_config_id=config.id,
-                        observation_span__project__organization=_get_request_organization(
-                            request
-                        ),
-                    )
-                    .exclude(Q(output_str="ERROR") | Q(error=True))
-                    .values("custom_eval_config_id")
-                    .annotate(
-                        float_score=Round(Avg("output_float") * 100, 2),
-                        bool_score=Round(
-                            Avg(
-                                Case(
-                                    When(output_bool=True, then=100),
-                                    When(output_bool=False, then=0),
-                                    default=None,
-                                    output_field=FloatField(),
-                                )
-                            ),
-                            2,
-                        ),
-                        str_list_score=JSONObject(
-                            **{
-                                f"{value}": JSONObject(
-                                    score=Round(
-                                        100.0
-                                        * Count(
-                                            Case(
-                                                When(
-                                                    output_str_list__contains=[value],
-                                                    then=1,
-                                                ),
-                                                default=None,
-                                                output_field=IntegerField(),
-                                            )
-                                        )
-                                        / Count("output_str_list"),
-                                        2,
-                                    )
-                                )
-                                for value in choices or []
-                            }
-                        ),
-                    )
-                    .values("float_score", "bool_score", "str_list_score")[:1]
-                )
-
-                base_query = base_query.annotate(
-                    **{
-                        f"metric_{config.id}": Case(
-                            When(
-                                Exists(
-                                    EvalLogger.objects.filter(
-                                        observation_span_id=OuterRef("id"),
-                                        custom_eval_config_id=config.id,
-                                        output_float__isnull=False,
-                                    )
-                                ),
-                                then=JSONObject(
-                                    score=Subquery(
-                                        metric_subquery.values("float_score")
-                                    )
-                                ),
-                            ),
-                            When(
-                                Exists(
-                                    EvalLogger.objects.filter(
-                                        observation_span_id=OuterRef("id"),
-                                        custom_eval_config_id=config.id,
-                                        output_bool__isnull=False,
-                                    )
-                                ),
-                                then=JSONObject(
-                                    score=Subquery(metric_subquery.values("bool_score"))
-                                ),
-                            ),
-                            When(
-                                Exists(
-                                    EvalLogger.objects.filter(
-                                        observation_span_id=OuterRef("id"),
-                                        custom_eval_config_id=config.id,
-                                        output_str_list__isnull=False,
-                                    )
-                                ),
-                                then=Subquery(metric_subquery.values("str_list_score")),
-                            ),
-                            default=None,
-                            output_field=JSONField(),
-                        )
-                    }
-                )
-
-            # Add Span Annotations (read from unified Score model)
-            annotation_labels = get_annotation_labels_for_project(project_id)
-            for label in annotation_labels:
-                score_qs = Score.objects.filter(
-                    observation_span_id=OuterRef("id"),
-                    label_id=label.id,
-                    deleted=False,
-                )
-                if label.type == AnnotationTypeChoices.NUMERIC.value:
-                    subq = score_qs.annotate(
-                        _val=Cast(KeyTextTransform("value", "value"), FloatField())
-                    ).values("_val")[:1]
-                elif label.type == AnnotationTypeChoices.STAR.value:
-                    subq = score_qs.annotate(
-                        _val=Cast(KeyTextTransform("rating", "value"), FloatField())
-                    ).values("_val")[:1]
-                elif label.type == AnnotationTypeChoices.THUMBS_UP_DOWN.value:
-                    subq = score_qs.annotate(
-                        _val=KeyTextTransform("value", "value")
-                    ).values("_val")[:1]
-                elif label.type == AnnotationTypeChoices.CATEGORICAL.value:
-                    subq = score_qs.values("value__selected")[:1]
-                else:
-                    subq = score_qs.annotate(
-                        _val=KeyTextTransform("text", "value")
-                    ).values("_val")[:1]
-
-                base_query = base_query.annotate(
-                    **{f"annotation_{label.id}": Subquery(subq)}
-                )
-
-            # Apply filters - combine all filter conditions for better performance
-            if filters:
-                # Combine all filter conditions into a single Q object
-                combined_filter_conditions = Q()
-
-                # Get system metric filters
-                system_filter_conditions = (
-                    FilterEngine.get_filter_conditions_for_system_metrics(filters)
-                )
-                if system_filter_conditions:
-                    combined_filter_conditions &= system_filter_conditions
-
-                # Get non-system metric filters (excluding span attributes)
-                eval_filter_conditions = (
-                    FilterEngine.get_filter_conditions_for_non_system_metrics(filters)
-                )
-                if eval_filter_conditions:
-                    combined_filter_conditions &= eval_filter_conditions
-
-                # Get span attribute filters
-                span_attribute_filter_conditions = (
-                    FilterEngine.get_filter_conditions_for_span_attributes(filters)
-                )
-                if span_attribute_filter_conditions:
-                    combined_filter_conditions &= span_attribute_filter_conditions
-
-                # Get has_eval filter (only spans with evals)
-                has_eval_condition = FilterEngine.get_filter_conditions_for_has_eval(
-                    filters, observe_type="span"
-                )
-                if has_eval_condition:
-                    combined_filter_conditions &= has_eval_condition
-
-                # Apply has_annotation filter
-                has_annotation_condition = (
-                    FilterEngine.get_filter_conditions_for_has_annotation(
-                        filters, observe_type="span"
+                return self._gm.success_response(
+                    fetch_annotation_graph_ch(
+                        analytics=analytics,
+                        project_id=project_id,
+                        filters=filters,
+                        interval=interval,
+                        req_data_config=req_data_config,
+                        observe_type="span",
                     )
                 )
-                if has_annotation_condition:
-                    combined_filter_conditions &= has_annotation_condition
-
-                # Apply combined filters in a single operation
-                if combined_filter_conditions:
-                    base_query = base_query.filter(combined_filter_conditions)
-
-            # Default sorting by created_at
-            base_query = base_query.order_by("-created_at")
-
-            total_final_span_queryset = base_query
-
-            if type == "EVAL":
-                graph_data = get_eval_graph_data(
-                    interval=interval,
-                    filters=filters,
-                    property=property,
-                    observe_type="span",
-                    req_data_config=req_data_config,
-                    eval_logger_filters={
-                        "span_ids_queryset": total_final_span_queryset
-                    },
-                )
-
-            elif type == "ANNOTATION":
-                graph_data = get_annotation_graph_data(
-                    interval=interval,
-                    filters=filters,
-                    property=property,
-                    observe_type="span",
-                    req_data_config=req_data_config,
-                    annotation_logger_filters={
-                        "span_ids_queryset": total_final_span_queryset
-                    },
-                )
-
-            elif type == "SYSTEM_METRIC":
-                graph_data = get_system_metric_data(
-                    interval=interval,
-                    filters=filters,
-                    property=property,
-                    req_data_config=req_data_config,
-                    system_metric_filters={
-                        "span_ids_queryset": total_final_span_queryset
-                    },
-                    observe_type="span",
-                )
-
-            if not graph_data:
-                # Add debug information
-                logger.info(
-                    f"""
-                    Graph data empty with params:
-                    - Project ID: {project_id}
-                    - Property: {property}
-                    - Interval: {interval}
-                """
-                )
-
-            return self._gm.success_response(graph_data)
+            return self._gm.bad_request("Filter property type is not valid")
 
         except Exception as e:
             logger.exception(f"Error in fetching graph data: {str(e)}")
@@ -2948,7 +2018,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     _OBSERVED_MAX_SAMPLE_SIZE = 100
 
     def _get_span_attribute_keys(self, project_id: str) -> list:
-        """Project's distinct span_attributes keys. CH-first, PG fallback.
+        """Project's distinct span_attributes keys, sourced from CH.
 
         Single source for both ``get_span_attributes_list`` (which wraps
         it in a DRF response) and the trace + session path builders.
@@ -2958,23 +2028,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         bare strings. The normalization loop below collapses both
         shapes to ``list[str]`` so callers never see dicts f-stringed
         into paths like ``traces.0.spans.0.{'key': '...', ...}``.
-        """
-        raw = None
-        analytics = AnalyticsQueryService()
-        if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
-            try:
-                ch_result = analytics.get_span_attribute_keys_ch(str(project_id))
-                if ch_result:
-                    raw = ch_result
-            except Exception as ch_err:
-                logger.warning(
-                    "CH span attribute keys failed in get_eval_attributes_list, "
-                    "falling back to PG",
-                    error=str(ch_err),
-                )
 
-        if raw is None:
-            raw = SQL_query_handler.get_span_attributes_for_project(project_id)
+        CH25 close-out (2026-05-26): PG fallback removed alongside the
+        routing toggle. Span attribute keys come from the CH ``attrs_*``
+        typed-Map indexes (the authoritative inventory).
+        """
+        analytics = AnalyticsQueryService()
+        raw = analytics.get_span_attribute_keys_ch(str(project_id))
 
         keys = []
         for item in raw or []:
@@ -2993,18 +2053,25 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         Samples the most recent ``_OBSERVED_MAX_SAMPLE_SIZE`` traces to
         keep the aggregate cheap on large projects.
         """
-        sample_trace_ids = (
+        sample_trace_ids = list(
             Trace.objects.filter(project_id=project_id)
             .order_by("-created_at")
             .values_list("id", flat=True)[: self._OBSERVED_MAX_SAMPLE_SIZE]
         )
-        agg = (
-            ObservationSpan.objects.filter(trace_id__in=sample_trace_ids)
-            .values("trace_id")
-            .annotate(span_count=Count("id"))
-            .aggregate(max_count=Max("span_count"))
-        )
-        return agg["max_count"] or 0
+        if not sample_trace_ids:
+            return 0
+
+        # CH-routed: per_trace_aggregate returns {trace_id: {span_count, ...}}
+        # for the sampled traces; we just need the max span_count across
+        # them. One CH call replaces the prior values/annotate/aggregate
+        # roll-up against the PG spans table.
+        from tracer.services.clickhouse.v2 import get_reader
+
+        with get_reader() as reader:
+            agg = reader.per_trace_aggregate([str(t) for t in sample_trace_ids])
+        if not agg:
+            return 0
+        return max((row.get("span_count", 0) for row in agg.values()), default=0)
 
     def _max_traces_per_session(self, project_id: str) -> int:
         """Max trace count observed across the project's most recent sessions."""
@@ -3210,19 +2277,16 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # ClickHouse dispatch
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
-                QueryType,
             )
 
             analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.TRACE_DETAIL):
-                try:
-                    return self._get_evaluation_details_clickhouse(
-                        observation_span_id, custom_eval_config_id, analytics
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "CH eval details failed, falling back to PG", error=str(e)
-                    )
+            # CH-only path post-migration. EvalLogger reads previously
+            # served as a PG fallback; the CH variant reads from
+            # `tracer_eval_logger` via the CDC pipeline and is now the
+            # only routed path.
+            return self._get_evaluation_details_clickhouse(
+                observation_span_id, custom_eval_config_id, analytics
+            )
 
             # Mirror the ClickHouse filter; excludes session-target rows.
             eval_logger = EvalLogger.objects.filter(
@@ -3569,6 +2633,31 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         Get the previous and next span id by index for non-observe projects.
         Mirrors the query/filter logic of list_spans.
         """
+        # CH25-TODO: this endpoint is the prev/next navigation companion
+        # to list_spans (non-observe). It needs the same eval/annotation
+        # filter pivot that the CH SpanListQueryBuilder produces plus a
+        # cursor-style "find by start_time before/after span_id" step.
+        #
+        # Wave-3 partial coverage (commit 93c5c415f): the reader exposes
+        # `prev_next_span_by_start_time(project_id=, span_id=,
+        # project_version_id=, observation_type=)` which covers the
+        # unfiltered walk but
+        #   (a) returns span_ids while this endpoint returns trace_ids,
+        #       and
+        #   (b) does not accept the eval/annotation/span-attribute
+        #       filters this endpoint applies (FilterEngine pivots +
+        #       build_annotation_subqueries) before walking.
+        # The frontend always sends `filters` (could be []) so a
+        # drop-in swap would silently change the navigation set under
+        # any non-empty filter. Staying PG-only.
+        #
+        # Reader-gap proposal:
+        #   prev_next_trace_id_by_span_start_time(*, project_id,
+        #       span_id, project_version_id=None, observation_type=None,
+        #       filters=None) -> tuple[Optional[str], Optional[str]]
+        # where `filters` accepts the SpanListQueryBuilder filter shape
+        # (system metrics + eval pivots + annotation joins + span
+        # attributes) and the return is (prev_trace_id, next_trace_id).
         try:
             query = request.validated_query_data
             span_id = query["span_id"]
@@ -3799,24 +2888,57 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         Get the previous and next trace id by index for observe projects.
         Mirrors the query/filter logic of list_spans_as_observe.
         """
+        # CH25-TODO: observe sibling of get_trace_id_by_index_spans_as_base.
+        # Same reader-gap rationale — staying on PG.
+        #
+        # Wave-3 partial coverage (commit 93c5c415f):
+        # `prev_next_span_by_start_time` does the unfiltered walk but
+        #   (a) returns span_ids while this endpoint returns trace_ids,
+        #   (b) does not accept the eval/annotation/span-attribute
+        #       filters this endpoint applies before walking, and
+        #   (c) the observe variant also applies an `end_user_id` scope
+        #       (from EndUser lookup) that the reader method doesn't
+        #       expose.
+        # The frontend always sends `filters` (could be []) so a
+        # drop-in swap would silently change the navigation set under
+        # any non-empty filter. Staying PG-only.
+        #
+        # Reader-gap proposal (shared with non-observe variant above):
+        #   prev_next_trace_id_by_span_start_time(*, project_id,
+        #       span_id, project_version_id=None, observation_type=None,
+        #       end_user_id=None, filters=None)
+        #       -> tuple[Optional[str], Optional[str]]
         try:
             query = request.validated_query_data
             span_id = query["span_id"]
             project_id = str(query["project_id"])
             user_id = query.get("user_id") or None
 
-            end_user_id = None
+            # P3b step2 precondition — user_id → end_user reverse-resolve (CH, not
+            # PG). The old PG `EndUser.objects.get(user_id=…).id` raised "User not
+            # found" for a NET-NEW user (no `tracer_enduser` row post-step2). Read
+            # the curated id-SET from CH `end_users` instead (historical + net-new
+            # deterministic + straddler's both — the state-robust reverse-resolve,
+            # PG_ORM_READ_MIGRATION). The id-set then filters the spans below via
+            # `end_user_id__in` so a straddler's old + new ids both match.
+            #
+            # NOTE this endpoint's prev/next WALK stays PG (a documented CH25-TODO
+            # reader-gap above): a span carrying a resolved end_user_id is matched
+            # in PG `tracer_observationspan`. Post-step2 in production the collector
+            # writes the deterministic end_user_id onto the PG span, so the walk
+            # finds a net-new user's spans; it only fails to in a CH-ONLY rehearsal
+            # where the net-new spans were manufactured in CH but not PG. An empty
+            # id-set (unknown user) now yields an empty walk instead of raising —
+            # net-new is no longer "User not found", the intended fix.
+            end_user_ids: list[str] = []
             if user_id:
-                try:
-                    end_user_id = str(
-                        EndUser.objects.get(
-                            user_id=user_id,
-                            organization=_get_request_organization(request),
-                            project_id=project_id,
-                        ).id
-                    )
-                except EndUser.DoesNotExist as e:
-                    raise Exception("User not found for the given user_id") from e
+                from tracer.services.clickhouse.v2.end_user_dict_reader import (
+                    resolve_end_user_ids_by_user_id,
+                )
+
+                end_user_ids = resolve_end_user_ids_by_user_id(
+                    user_id, project_id=project_id
+                )
 
             project = Project.objects.get(
                 _project_workspace_scope_q(request, project_prefix=""),
@@ -3839,8 +2961,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 user_id_hash=F("end_user__user_id_hash"),
             )
 
-            if end_user_id:
-                base_query = base_query.filter(end_user_id=end_user_id)
+            if end_user_ids:
+                # IN over the curated id-set so a straddler's old + new ids both
+                # match (single-id `=` would miss half its spans post-flip).
+                base_query = base_query.filter(end_user_id__in=end_user_ids)
 
             eval_configs = CustomEvalConfig.objects.filter(
                 id__in=EvalLogger.objects.filter(
@@ -4069,6 +3193,14 @@ def get_observation_spans(filters):
     - project_id (optional)
     - project_version_id (optional)
     - trace_id (optional)
+
+    CH25-TODO: this helper feeds the legacy compare_traces and the
+    PG-only retrieve fallback (now removed). The orphaned-span tree
+    walk + dummy-parent construction is too entangled with the PG
+    schema to lift to CH without a dedicated reader method (would
+    need orphaned-span detection that compares parent_span_id against
+    the same trace's id set). Staying PG-only until compare_traces is
+    either retired or its callers move to the CH retrieve path.
     """
     project_id = filters.get("project_id", None)
     project_version_id = filters.get("project_version_id", None)

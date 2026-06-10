@@ -1,5 +1,9 @@
 import json
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+from django.db import DatabaseError
 
 
 def _repo_root():
@@ -134,3 +138,127 @@ def test_mcp_oauth_token_invalid_grant_type_uses_protocol_error(api_client):
 
     assert response.status_code == 400
     assert response.json()["error"] == "unsupported_grant_type"
+
+
+@pytest.mark.django_db
+def test_mcp_oauth_authorize_unknown_client_uses_json_error(api_client):
+    response = api_client.get(
+        "/mcp/oauth/authorize/",
+        {
+            "client_id": "missing-client",
+            "redirect_uri": "https://example.com/callback",
+            "response_type": "code",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"status": False, "error": "Unknown client_id"}
+
+
+@pytest.mark.django_db
+def test_mcp_oauth_token_unknown_client_uses_protocol_error(api_client):
+    response = api_client.post(
+        "/mcp/oauth/token/",
+        {
+            "grant_type": "authorization_code",
+            "code": "missing-code",
+            "client_id": "missing-client",
+            "client_secret": "secret",
+            "redirect_uri": "https://example.com/callback",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "invalid_client"}
+
+
+def test_mcp_oauth_refresh_token_missing_token_uses_protocol_error(api_client):
+    response = api_client.post(
+        "/mcp/oauth/token/",
+        {
+            "grant_type": "refresh_token",
+            "client_id": "client",
+            "client_secret": "secret",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid_request"}
+
+
+@pytest.mark.django_db
+def test_mcp_oauth_refresh_token_unknown_client_uses_protocol_error(api_client):
+    response = api_client.post(
+        "/mcp/oauth/token/",
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": "missing-refresh-token",
+            "client_id": "missing-client",
+            "client_secret": "secret",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "invalid_client"}
+
+
+def test_mcp_oauth_consent_requires_authentication(api_client):
+    response = api_client.post(
+        "/mcp/oauth/consent/",
+        {
+            "client_id": "missing-client",
+            "redirect_uri": "https://example.com/callback",
+            "approved": False,
+        },
+        format="json",
+    )
+
+    assert response.status_code in (401, 403)
+    assert response.json()["status"] is False
+
+
+def test_mcp_oauth_authorize_registry_failure_uses_json_503(api_client):
+    with patch(
+        "mcp_server.views.oauth.MCPOAuthClient.objects.get",
+        side_effect=DatabaseError("missing oauth registry"),
+    ):
+        response = api_client.get(
+            "/mcp/oauth/authorize/",
+            {
+                "client_id": "missing-client",
+                "redirect_uri": "https://example.com/callback",
+                "response_type": "code",
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": False,
+        "error": "OAuth client registry unavailable",
+    }
+
+
+def test_mcp_oauth_token_registry_failure_uses_protocol_503(api_client):
+    with patch(
+        "mcp_server.views.oauth.MCPOAuthClient.objects.get",
+        side_effect=DatabaseError("missing oauth registry"),
+    ):
+        response = api_client.post(
+            "/mcp/oauth/token/",
+            {
+                "grant_type": "authorization_code",
+                "code": "missing-code",
+                "client_id": "missing-client",
+                "client_secret": "secret",
+            },
+            format="json",
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "server_error",
+        "error_description": "OAuth client registry unavailable",
+    }

@@ -1,12 +1,14 @@
 /* global process */
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import {
   ApiJourneyError,
   apiPath,
   asArray,
   assert,
+  createApiClient,
   currentUserEmail,
   currentUserId,
   isUuid,
@@ -190,12 +192,35 @@ export const observeFilterJourneys = [
     id: "OBS-API-004",
     title:
       "Observe saved view create, update, duplicate, reorder, and delete lifecycle",
-    tags: ["observe", "saved-views", "mutating", "data-roundtrip"],
-    async run({ client, cleanup, runId, evidence }) {
+    tags: ["observe", "saved-views", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
       requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
       const project = await resolveObserveProject(client, evidence);
       const viewName = `api journey view ${runId}`;
       const renamedView = `api journey view updated ${runId}`;
+      const savedViewIds = [];
+      let hardCleanupDone = false;
+
+      cleanup.defer("hard delete OBS-API-004 saved views", () =>
+        savedViewIds.length && !hardCleanupDone
+          ? hardDeleteSavedViewArtifacts({ savedViewIds })
+          : null,
+      );
 
       const created = await client.post(apiPath("/tracer/saved-views/"), {
         project_id: project.id,
@@ -209,14 +234,19 @@ export const observeFilterJourneys = [
         },
       });
       assert(created?.id, "Saved view create did not return id.");
+      savedViewIds.push(created.id);
       cleanup.defer("delete saved view", () =>
-        client.delete(
-          apiPath("/tracer/saved-views/{id}/", { id: created.id }),
-          {
-            query: { project_id: project.id },
-            okStatuses: [200, 404],
-          },
-        ),
+        hardCleanupDone
+          ? null
+          : ignoreNotFound(() =>
+              client.delete(
+                apiPath("/tracer/saved-views/{id}/", { id: created.id }),
+                {
+                  query: { project_id: project.id },
+                  okStatuses: [200, 404],
+                },
+              ),
+            ),
       );
 
       const detail = await client.get(
@@ -255,20 +285,45 @@ export const observeFilterJourneys = [
         "Saved view update did not persist display config.",
       );
 
+      const patched = await client.patch(
+        apiPath("/tracer/saved-views/{id}/", { id: created.id }),
+        {
+          icon: "list",
+          config: {
+            filters: LATENCY_GTE_ZERO,
+            display: { viewMode: "table", density: "compact" },
+          },
+        },
+        { query: { project_id: project.id } },
+      );
+      assert(
+        patched?.icon === "list",
+        "Saved view PATCH did not persist icon.",
+      );
+      assert(
+        patched?.config?.display?.density === "compact",
+        "Saved view PATCH did not persist display density.",
+      );
+
       const duplicated = await client.post(
         apiPath("/tracer/saved-views/{id}/duplicate/", { id: created.id }),
         { name: `${renamedView} copy` },
         { query: { project_id: project.id } },
       );
       assert(duplicated?.id, "Saved view duplicate did not return id.");
+      savedViewIds.push(duplicated.id);
       cleanup.defer("delete duplicated saved view", () =>
-        client.delete(
-          apiPath("/tracer/saved-views/{id}/", { id: duplicated.id }),
-          {
-            query: { project_id: project.id },
-            okStatuses: [200, 404],
-          },
-        ),
+        hardCleanupDone
+          ? null
+          : ignoreNotFound(() =>
+              client.delete(
+                apiPath("/tracer/saved-views/{id}/", { id: duplicated.id }),
+                {
+                  query: { project_id: project.id },
+                  okStatuses: [200, 404],
+                },
+              ),
+            ),
       );
 
       await client.post(apiPath("/tracer/saved-views/reorder/"), {
@@ -298,18 +353,61 @@ export const observeFilterJourneys = [
         "Saved view reorder did not preserve requested ordering.",
       );
 
+      const audit = await loadSavedViewLifecycleDbAudit({
+        organizationId,
+        workspaceId,
+        projectId: project.id,
+        savedViewIds,
+      });
+      assertSavedViewLifecycleDbAudit(audit, {
+        projectId: project.id,
+        workspaceId,
+        savedViewIds,
+        viewNames: [renamedView, `${renamedView} copy`],
+      });
+
+      await ignoreNotFound(() =>
+        client.delete(
+          apiPath("/tracer/saved-views/{id}/", { id: duplicated.id }),
+          { query: { project_id: project.id }, okStatuses: [200, 404] },
+        ),
+      );
+      await ignoreNotFound(() =>
+        client.delete(
+          apiPath("/tracer/saved-views/{id}/", { id: created.id }),
+          { query: { project_id: project.id }, okStatuses: [200, 404] },
+        ),
+      );
+      const cleanupAudit = await hardDeleteSavedViewArtifacts({ savedViewIds });
+      hardCleanupDone = true;
+      assert(
+        Number(cleanupAudit.remaining_saved_view_count) === 0,
+        `Saved view hard cleanup left residue: ${JSON.stringify(cleanupAudit)}.`,
+      );
+
       evidence.push({
         project_id: project.id,
         saved_view_id: created.id,
         duplicated_view_id: duplicated.id,
+        saved_view_workspace_id: audit.views[0]?.workspace_id,
+        cleanup_remaining_saved_view_count: Number(
+          cleanupAudit.remaining_saved_view_count,
+        ),
       });
     },
   },
   {
     id: "OBS-API-005",
     title: "Observe project and trace tags update and revert cleanly",
-    tags: ["observe", "tags", "mutating", "data-roundtrip"],
-    async run({ client, cleanup, runId, evidence }) {
+    tags: ["observe", "tags", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
       requireMutations();
       const project = await resolveObserveProject(client, evidence);
       const tag = `api-journey-${runId}`;
@@ -332,6 +430,19 @@ export const observeFilterJourneys = [
         normalizeTags(updatedProject.tags).includes(tag),
         "Project tag update did not return the new tag.",
       );
+      const projectTagDb = await loadObserveTagDbAudit({
+        projectId: project.id,
+        traceId: null,
+      });
+      assert(
+        String(projectTagDb.project?.organization_id) ===
+          String(organizationId) &&
+          String(projectTagDb.project?.workspace_id) === String(workspaceId) &&
+          normalizeTags(projectTagDb.project?.tags).includes(tag),
+        `Project tag DB audit did not persist the new tag/scope: ${JSON.stringify(
+          projectTagDb,
+        )}.`,
+      );
 
       const traceList = await client.get(
         queryWithFilters(apiPath("/tracer/trace/list_traces_of_session/"), [], {
@@ -340,9 +451,61 @@ export const observeFilterJourneys = [
           page_size: 10,
         }),
       );
-      const trace = asArray(traceList).find((row) => row?.trace_id);
+      let trace = asArray(traceList).find((row) => row?.trace_id);
+      let seededTraceProjectVersionId = null;
       if (!trace?.trace_id) {
-        skip("No trace row is available for trace tag mutation coverage.");
+        const suffix = journeySafeId(runId);
+        const projectVersion = await client.post(
+          apiPath("/tracer/project-version/"),
+          {
+            project: project.id,
+            name: `api journey tag fallback ${suffix}`,
+            metadata: { source: "api-journey", run_id: runId },
+          },
+        );
+        seededTraceProjectVersionId =
+          projectVersion.project_version_id || projectVersion.id;
+        assert(
+          isUuid(seededTraceProjectVersionId),
+          "Trace tag fallback project-version create returned no id.",
+        );
+        const createdTrace = await client.post(
+          apiPath("/tracer/trace/"),
+          traceWritePayload({
+            projectId: project.id,
+            projectVersionId: seededTraceProjectVersionId,
+            name: `api journey tag fallback trace ${suffix}`,
+            runId,
+            marker: "tag-fallback",
+          }),
+        );
+        const traceId = createdTrace.id || createdTrace.trace_id;
+        assert(isUuid(traceId), "Trace tag fallback create returned no id.");
+        trace = { ...createdTrace, trace_id: traceId };
+
+        cleanup.defer("hard delete OBS-API-005 trace fixture", async () => {
+          await client.delete(apiPath("/tracer/trace/{id}/", { id: traceId }), {
+            okStatuses: [200, 204, 400, 404],
+          });
+          await client.delete(
+            apiPath("/tracer/project-version/{id}/", {
+              id: seededTraceProjectVersionId,
+            }),
+            { okStatuses: [200, 204, 400, 404] },
+          );
+          const cleanupAudit = await hardDeleteObserveTagTraceFixture({
+            projectVersionId: seededTraceProjectVersionId,
+            traceId,
+          });
+          assert(
+            Number(cleanupAudit.remaining_trace_count) === 0 &&
+              Number(cleanupAudit.remaining_span_count) === 0 &&
+              Number(cleanupAudit.remaining_project_version_count) === 0,
+            `Trace tag fallback cleanup left rows behind: ${JSON.stringify(
+              cleanupAudit,
+            )}.`,
+          );
+        });
       }
       const originalTraceTags = normalizeTags(trace.tags);
       cleanup.defer("restore observe trace tags", () =>
@@ -363,6 +526,20 @@ export const observeFilterJourneys = [
         normalizeTags(updatedTrace.tags).includes(tag),
         "Trace tag update did not return the new tag.",
       );
+      const traceTagDb = await loadObserveTagDbAudit({
+        projectId: project.id,
+        traceId: trace.trace_id,
+      });
+      assert(
+        normalizeTags(traceTagDb.trace?.tags).includes(tag) &&
+          String(traceTagDb.trace?.project_id) === String(project.id) &&
+          String(traceTagDb.trace?.organization_id) ===
+            String(organizationId) &&
+          String(traceTagDb.trace?.workspace_id) === String(workspaceId),
+        `Trace tag DB audit did not persist the new tag/scope: ${JSON.stringify(
+          traceTagDb,
+        )}.`,
+      );
 
       const restoredTrace = await client.patch(
         apiPath("/tracer/trace/{id}/tags/", { id: trace.trace_id }),
@@ -371,6 +548,19 @@ export const observeFilterJourneys = [
       assert(
         arraysEqual(normalizeTags(restoredTrace.tags), originalTraceTags),
         "Trace tag revert did not restore the original tags.",
+      );
+      const restoredTraceDb = await loadObserveTagDbAudit({
+        projectId: project.id,
+        traceId: trace.trace_id,
+      });
+      assert(
+        arraysEqual(
+          normalizeTags(restoredTraceDb.trace?.tags),
+          originalTraceTags,
+        ),
+        `Trace tag DB audit did not restore original tags: ${JSON.stringify(
+          restoredTraceDb,
+        )}.`,
       );
 
       const restoredProject = await client.patch(
@@ -381,11 +571,32 @@ export const observeFilterJourneys = [
         arraysEqual(normalizeTags(restoredProject.tags), originalProjectTags),
         "Project tag revert did not restore the original tags.",
       );
+      const restoredProjectDb = await loadObserveTagDbAudit({
+        projectId: project.id,
+        traceId: trace.trace_id,
+      });
+      assert(
+        arraysEqual(
+          normalizeTags(restoredProjectDb.project?.tags),
+          originalProjectTags,
+        ),
+        `Project tag DB audit did not restore original tags: ${JSON.stringify(
+          restoredProjectDb,
+        )}.`,
+      );
 
       evidence.push({
         project_id: project.id,
+        project_version_id: seededTraceProjectVersionId,
         trace_id: trace.trace_id,
+        seeded_trace_fixture: Boolean(seededTraceProjectVersionId),
         temporary_tag: tag,
+        project_tag_count_after_restore: normalizeTags(
+          restoredProjectDb.project?.tags,
+        ).length,
+        trace_tag_count_after_restore: normalizeTags(
+          restoredTraceDb.trace?.tags,
+        ).length,
       });
     },
   },
@@ -753,6 +964,23 @@ export const observeFilterJourneys = [
         "Cross-project user detail source query did not return the selected user.",
       );
 
+      const codeExample = await client.get(
+        apiPath("/tracer/users/get_code_example/"),
+        { query: { project_id: project.id } },
+      );
+      assert(
+        typeof codeExample === "string",
+        "User code example response must unwrap to a string.",
+      );
+      assert(
+        codeExample.includes(`project_name="${project.name}"`),
+        "User code example did not include the scoped observe project name.",
+      );
+      assert(
+        codeExample.includes("project_type=ProjectType.OBSERVE"),
+        "User code example did not include observe project type instrumentation.",
+      );
+
       evidence.push({
         project_id: project.id,
         project_name: project.name || null,
@@ -770,6 +998,7 @@ export const observeFilterJourneys = [
         user_detail_graph_keys: Object.keys(userDetailGraph),
         related_traces: responseCount(relatedTraces),
         related_sessions: responseCount(relatedSessions),
+        code_example_project_scoped: true,
       });
     },
   },
@@ -1545,7 +1774,9 @@ export const observeFilterJourneys = [
         },
       });
       const projects = asArray(list);
-      assert(projects.length > 0, "Observe project list returned no projects.");
+      if (!projects.length) {
+        skip("No observe project exists for this account/workspace.");
+      }
       assertObserveProjectListPayload(list, projects);
 
       const audit = await loadObserveProjectListDbAudit({
@@ -2172,6 +2403,1595 @@ export const observeFilterJourneys = [
     },
   },
   {
+    id: "OBS-API-021",
+    title: "Observe charts trace, session, span, and attribute filters",
+    tags: ["observe", "charts", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const suffix = journeySafeId(runId);
+      const projectName = `api journey charts filters ${suffix}`;
+      const createdProject = await client.post(apiPath("/tracer/project/"), {
+        name: projectName,
+        model_type: "GenerativeLLM",
+        trace_type: "observe",
+        metadata: { source: "api-journey", run_id: runId },
+      });
+      const project = { id: createdProject.project_id, name: projectName };
+      assert(
+        isUuid(project.id),
+        "Charts filter project create returned no id.",
+      );
+
+      const projectVersion = await client.post(
+        apiPath("/tracer/project-version/"),
+        {
+          project: project.id,
+          name: `api journey charts filters run ${suffix}`,
+          metadata: { source: "api-journey", run_id: runId },
+        },
+      );
+      const projectVersionId =
+        projectVersion.project_version_id || projectVersion.id;
+      assert(
+        isUuid(projectVersionId),
+        "Charts filter project-version create returned no id.",
+      );
+
+      const createdSession = await client.post(
+        apiPath("/tracer/trace-session/"),
+        traceSessionWritePayload({
+          projectId: project.id,
+          name: `api journey charts filters session ${suffix}`,
+          bookmarked: false,
+        }),
+      );
+      const sessionId = createdSession.id || createdSession.trace_session_id;
+      assert(isUuid(sessionId), "Charts filter session create returned no id.");
+
+      const traceA = await client.post(
+        apiPath("/tracer/trace/"),
+        traceWritePayload({
+          projectId: project.id,
+          projectVersionId,
+          sessionId,
+          name: `api journey charts filters trace A ${suffix}`,
+          runId,
+          marker: "chart-a",
+        }),
+      );
+      const traceAId = traceA.id || traceA.trace_id || traceA.trace?.id;
+      assert(isUuid(traceAId), "Charts filter trace A create returned no id.");
+
+      const traceB = await client.post(
+        apiPath("/tracer/trace/"),
+        traceWritePayload({
+          projectId: project.id,
+          projectVersionId,
+          name: `api journey charts filters trace B ${suffix}`,
+          runId,
+          marker: "chart-b",
+        }),
+      );
+      const traceBId = traceB.id || traceB.trace_id || traceB.trace?.id;
+      assert(isUuid(traceBId), "Charts filter trace B create returned no id.");
+
+      const spanAId = `api_journey_chart_a_${suffix}`;
+      const spanAChildId = `api_journey_chart_a_child_${suffix}`;
+      const spanBId = `api_journey_chart_b_${suffix}`;
+      const now = new Date();
+      const spanStarts = [
+        new Date(now.getTime() - 600).toISOString(),
+        new Date(now.getTime() - 500).toISOString(),
+        new Date(now.getTime() - 400).toISOString(),
+      ];
+      const spanEnd = now.toISOString();
+      const spanSeeds = [
+        {
+          id: spanAId,
+          traceId: traceAId,
+          parentSpanId: null,
+          name: `api journey chart target ${suffix}`,
+          marker: "target",
+          latencyMs: 100,
+          totalTokens: 5,
+          cost: 0.01,
+          startTime: spanStarts[0],
+        },
+        {
+          id: spanAChildId,
+          traceId: traceAId,
+          parentSpanId: spanAId,
+          name: `api journey chart peer ${suffix}`,
+          marker: "peer",
+          latencyMs: 200,
+          totalTokens: 10,
+          cost: 0.02,
+          startTime: spanStarts[1],
+        },
+        {
+          id: spanBId,
+          traceId: traceBId,
+          parentSpanId: null,
+          name: `api journey chart other ${suffix}`,
+          marker: "other",
+          latencyMs: 300,
+          totalTokens: 20,
+          cost: 0.03,
+          startTime: spanStarts[2],
+        },
+      ];
+
+      const observationSpanPayloads = spanSeeds.map((seed) => {
+        const payload = observationSpanWritePayload({
+          id: seed.id,
+          projectId: project.id,
+          projectVersionId,
+          traceId: seed.traceId,
+          parentSpanId: seed.parentSpanId,
+          name: seed.name,
+          runId,
+          startTime: seed.startTime,
+          endTime: spanEnd,
+          metadata: {
+            source: "api-journey",
+            run_id: runId,
+            chart_filter_marker: seed.marker,
+          },
+        });
+        payload.latency_ms = seed.latencyMs;
+        payload.prompt_tokens = Math.floor(seed.totalTokens / 2);
+        payload.completion_tokens =
+          seed.totalTokens - Math.floor(seed.totalTokens / 2);
+        payload.total_tokens = seed.totalTokens;
+        payload.cost = seed.cost;
+        payload.span_attributes = {
+          api_journey_marker: `${seed.marker}-${suffix}`,
+        };
+        return payload;
+      });
+      const bulkSpanResult = await client.post(
+        apiPath("/tracer/observation-span/bulk_create/"),
+        { observation_spans: observationSpanPayloads },
+      );
+      const createdSpanIds = Array.isArray(
+        bulkSpanResult?.["Observation Span IDs"],
+      )
+        ? bulkSpanResult["Observation Span IDs"]
+        : [];
+      for (const seed of spanSeeds) {
+        assert(
+          createdSpanIds.includes(seed.id),
+          `Charts filter span ${seed.marker} was not bulk-created.`,
+        );
+      }
+
+      let hardCleanupDone = false;
+      cleanup.defer("hard delete OBS-API-021 artifacts", async () => {
+        if (hardCleanupDone) return null;
+        return hardDeleteTraceSessionLifecycleArtifacts({
+          projectId: project.id,
+          projectVersionId,
+          sessionId,
+          traceIds: [traceAId, traceBId],
+          spanIds: [spanAId, spanAChildId, spanBId],
+          evalLogIds: [randomUUID()],
+        });
+      });
+
+      const seedAudit = await loadObserveChartsFilterDbAudit({
+        projectId: project.id,
+        projectVersionId,
+        sessionId,
+        traceIds: [traceAId, traceBId],
+        spanIds: [spanAId, spanAChildId, spanBId],
+      });
+      assertObserveChartsFilterDbAudit(seedAudit, {
+        organizationId,
+        workspaceId,
+        projectId: project.id,
+        projectVersionId,
+        sessionId,
+        expectedSpanCount: 3,
+        expectedTraceCount: 2,
+      });
+
+      const dateFilter = observeChartsDateFilter(1);
+      const baselineSummary = assertObserveChartsGraph(
+        await getObserveChartsGraph(client, project.id, [dateFilter]),
+        "chart filter baseline",
+      );
+      const traceSummary = assertObserveChartsGraph(
+        await getObserveChartsGraph(client, project.id, [
+          dateFilter,
+          observeChartsSystemFilter("trace_id", "text", "equals", traceAId),
+        ]),
+        "chart trace filter",
+      );
+      const sessionSummary = assertObserveChartsGraph(
+        await getObserveChartsGraph(client, project.id, [
+          dateFilter,
+          observeChartsSystemFilter("session_id", "text", "equals", sessionId),
+        ]),
+        "chart session filter",
+      );
+      const spanSummary = assertObserveChartsGraph(
+        await getObserveChartsGraph(client, project.id, [
+          dateFilter,
+          observeChartsSystemFilter("span_id", "text", "equals", spanBId),
+        ]),
+        "chart span filter",
+      );
+      const attributeSummary = assertObserveChartsGraph(
+        await getObserveChartsGraph(client, project.id, [
+          dateFilter,
+          observeChartsSpanAttributeFilter(
+            "api_journey_marker",
+            "text",
+            "equals",
+            `target-${suffix}`,
+          ),
+        ]),
+        "chart span attribute filter",
+      );
+
+      assert(
+        baselineSummary.traffic_sum === 3,
+        `Baseline chart traffic expected 3 seeded spans, got ${baselineSummary.traffic_sum}.`,
+      );
+      assert(
+        traceSummary.traffic_sum === 2,
+        `Trace chart filter expected 2 spans, got ${traceSummary.traffic_sum}.`,
+      );
+      assert(
+        sessionSummary.traffic_sum === 2,
+        `Session chart filter expected 2 spans, got ${sessionSummary.traffic_sum}.`,
+      );
+      assert(
+        spanSummary.traffic_sum === 1,
+        `Span chart filter expected 1 span, got ${spanSummary.traffic_sum}.`,
+      );
+      assert(
+        attributeSummary.traffic_sum === 1,
+        `Span-attribute chart filter expected 1 span, got ${attributeSummary.traffic_sum}.`,
+      );
+
+      const cleanupAudit = await hardDeleteTraceSessionLifecycleArtifacts({
+        projectId: project.id,
+        projectVersionId,
+        sessionId,
+        traceIds: [traceAId, traceBId],
+        spanIds: [spanAId, spanAChildId, spanBId],
+        evalLogIds: [randomUUID()],
+      });
+      hardCleanupDone = true;
+      assert(
+        cleanupAudit.remaining_project_count === 0 &&
+          cleanupAudit.remaining_project_version_count === 0 &&
+          cleanupAudit.remaining_session_count === 0 &&
+          cleanupAudit.remaining_trace_count === 0 &&
+          cleanupAudit.remaining_span_count === 0,
+        "Charts filter hard cleanup left disposable residue.",
+      );
+
+      evidence.push({
+        project_id: project.id,
+        project_version_id: projectVersionId,
+        session_id: sessionId,
+        trace_a_id: traceAId,
+        trace_b_id: traceBId,
+        span_ids: [spanAId, spanAChildId, spanBId],
+        baseline_traffic_sum: baselineSummary.traffic_sum,
+        trace_filter_traffic_sum: traceSummary.traffic_sum,
+        session_filter_traffic_sum: sessionSummary.traffic_sum,
+        span_filter_traffic_sum: spanSummary.traffic_sum,
+        attribute_filter_traffic_sum: attributeSummary.traffic_sum,
+        cleanup_remaining_project_count: cleanupAudit.remaining_project_count,
+        cleanup_remaining_span_count: cleanupAudit.remaining_span_count,
+      });
+    },
+  },
+  {
+    id: "OBS-API-022",
+    title:
+      "Shared links resolve trace and dashboard tokens with public and restricted access",
+    tags: ["observe", "shared-links", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      apiBase,
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const publicClient = createApiClient({ apiBase });
+      const suffix = journeySafeId(runId);
+      const projectName = `api journey shared links ${suffix}`;
+      const sharedLinkIds = [];
+      let dashboardId = null;
+      let widgetId = null;
+      let sharedLinkCleanupDone = false;
+      const createdProject = await client.post(apiPath("/tracer/project/"), {
+        name: projectName,
+        model_type: "GenerativeLLM",
+        trace_type: "observe",
+        metadata: { source: "api-journey", run_id: runId },
+      });
+      const project = { id: createdProject.project_id, name: projectName };
+      assert(isUuid(project.id), "Shared link project create returned no id.");
+
+      const projectVersion = await client.post(
+        apiPath("/tracer/project-version/"),
+        {
+          project: project.id,
+          name: `api journey shared links run ${suffix}`,
+          metadata: { source: "api-journey", run_id: runId },
+        },
+      );
+      const projectVersionId =
+        projectVersion.project_version_id || projectVersion.id;
+      assert(
+        isUuid(projectVersionId),
+        "Shared link project-version create returned no id.",
+      );
+
+      const trace = await client.post(
+        apiPath("/tracer/trace/"),
+        traceWritePayload({
+          projectId: project.id,
+          projectVersionId,
+          name: `api journey shared trace ${suffix}`,
+          runId,
+          marker: "shared-link",
+        }),
+      );
+      const traceId = trace.id || trace.trace_id || trace.trace?.id;
+      assert(isUuid(traceId), "Shared link trace create returned no id.");
+
+      const spanId = `api_journey_shared_span_${suffix}`;
+      const span = await client.post(
+        apiPath("/tracer/observation-span/"),
+        observationSpanWritePayload({
+          id: spanId,
+          projectId: project.id,
+          projectVersionId,
+          traceId,
+          name: `api journey shared span ${suffix}`,
+          runId,
+          startTime: new Date(Date.now() - 1000).toISOString(),
+          endTime: new Date().toISOString(),
+          metadata: {
+            source: "api-journey",
+            run_id: runId,
+            shared_link_marker: suffix,
+          },
+        }),
+      );
+      assert(span?.id === spanId, "Shared link span create returned wrong id.");
+
+      let traceCleanupDone = false;
+      cleanup.defer("hard delete OBS-API-022 trace artifacts", async () => {
+        if (traceCleanupDone) return null;
+        return hardDeleteTraceLifecycleArtifacts({
+          projectId: project.id,
+          projectVersionId,
+          traceIds: [traceId],
+          spanIds: [spanId],
+        });
+      });
+      cleanup.defer(
+        "hard delete OBS-API-022 shared-link artifacts",
+        async () => {
+          if (sharedLinkCleanupDone) return null;
+          return hardDeleteSharedLinkArtifacts({
+            sharedLinkIds,
+            dashboardId,
+            widgetId,
+          });
+        },
+      );
+
+      const publicTraceLink = await client.post(
+        apiPath("/tracer/shared-links/"),
+        {
+          resource_type: "trace",
+          resource_id: traceId,
+          access_type: "public",
+        },
+      );
+      assert(
+        isUuid(publicTraceLink?.id) && publicTraceLink?.token,
+        "Public trace shared-link create returned no id/token.",
+      );
+      sharedLinkIds.push(publicTraceLink.id);
+      cleanup.defer("revoke OBS-API-022 public trace shared link", () => {
+        if (sharedLinkCleanupDone) return null;
+        return ignoreNotFound(() =>
+          client.delete(
+            apiPath("/tracer/shared-links/{id}/", {
+              id: publicTraceLink.id,
+            }),
+          ),
+        );
+      });
+
+      const resolvedPublicTrace = await publicClient.get(
+        apiPath("/tracer/shared/{token}/", {
+          token: publicTraceLink.token,
+        }),
+      );
+      assert(
+        resolvedPublicTrace?.resource_type === "trace" &&
+          resolvedPublicTrace?.resource_id === traceId,
+        "Public trace shared-link resolved the wrong resource.",
+      );
+      assert(
+        resolvedPublicTrace?.data?.trace?.id === traceId &&
+          resolvedPublicTrace?.data?.summary?.total_spans === 1,
+        "Public trace shared-link did not include trace data and span summary.",
+      );
+      const resolvedSpan = asArray(
+        resolvedPublicTrace?.data?.observation_spans,
+      )[0]?.observation_span;
+      assert(
+        resolvedSpan?.id === spanId,
+        "Public trace shared-link did not include the seeded span.",
+      );
+
+      const restrictedTraceLink = await client.post(
+        apiPath("/tracer/shared-links/"),
+        {
+          resource_type: "trace",
+          resource_id: traceId,
+          access_type: "restricted",
+          emails: ["api-journey-shared-viewer@example.com"],
+        },
+      );
+      assert(
+        isUuid(restrictedTraceLink?.id) && restrictedTraceLink?.token,
+        "Restricted trace shared-link create returned no id/token.",
+      );
+      sharedLinkIds.push(restrictedTraceLink.id);
+      cleanup.defer("revoke OBS-API-022 restricted trace shared link", () => {
+        if (sharedLinkCleanupDone) return null;
+        return ignoreNotFound(() =>
+          client.delete(
+            apiPath("/tracer/shared-links/{id}/", {
+              id: restrictedTraceLink.id,
+            }),
+          ),
+        );
+      });
+
+      const patchedExpiry = new Date(
+        Date.now() + 2 * 24 * 60 * 60 * 1000,
+      ).toISOString();
+      const patchedRestrictedTraceLink = await client.patch(
+        apiPath("/tracer/shared-links/{id}/", {
+          id: restrictedTraceLink.id,
+        }),
+        {
+          access_type: "public",
+          expires_at: patchedExpiry,
+        },
+      );
+      assert(
+        patchedRestrictedTraceLink?.id === restrictedTraceLink.id &&
+          patchedRestrictedTraceLink?.access_type === "public" &&
+          patchedRestrictedTraceLink?.expires_at,
+        "Shared-link PATCH did not update access type and expiry.",
+      );
+
+      const putExpiry = new Date(
+        Date.now() + 3 * 24 * 60 * 60 * 1000,
+      ).toISOString();
+      const putRestrictedTraceLink = await client.put(
+        apiPath("/tracer/shared-links/{id}/", {
+          id: restrictedTraceLink.id,
+        }),
+        {
+          access_type: "restricted",
+          expires_at: putExpiry,
+        },
+      );
+      assert(
+        putRestrictedTraceLink?.id === restrictedTraceLink.id &&
+          putRestrictedTraceLink?.access_type === "restricted" &&
+          putRestrictedTraceLink?.expires_at,
+        "Shared-link PUT did not replace access settings.",
+      );
+
+      const restrictedUnauthError = await expectApiJourneyHttpStatus(
+        401,
+        () =>
+          publicClient.get(
+            apiPath("/tracer/shared/{token}/", {
+              token: restrictedTraceLink.token,
+            }),
+          ),
+        "Restricted shared-link unauthenticated resolve",
+      );
+      assert(
+        restrictedUnauthError.body?.code === "not_authenticated",
+        "Restricted shared-link unauthenticated resolve returned the wrong error code.",
+      );
+
+      const resolvedRestrictedTrace = await client.get(
+        apiPath("/tracer/shared/{token}/", {
+          token: restrictedTraceLink.token,
+        }),
+      );
+      assert(
+        resolvedRestrictedTrace?.data?.trace?.id === traceId,
+        "Restricted trace shared-link did not resolve for the creator.",
+      );
+
+      const addedAccess = asArray(
+        await client.post(
+          apiPath("/tracer/shared-links/{id}/access/", {
+            id: restrictedTraceLink.id,
+          }),
+          { emails: ["api-journey-shared-second-viewer@example.com"] },
+        ),
+      );
+      assert(
+        addedAccess.length === 1 &&
+          addedAccess[0].email ===
+            "api-journey-shared-second-viewer@example.com",
+        "Shared-link add_access did not create the requested ACL entry.",
+      );
+      await client.delete(
+        apiPath("/tracer/shared-links/{id}/access/{access_id}/", {
+          id: restrictedTraceLink.id,
+          access_id: addedAccess[0].id,
+        }),
+      );
+
+      const dashboard = await client.post(apiPath("/tracer/dashboard/"), {
+        name: `api journey shared dashboard ${suffix}`,
+        description: "Temporary dashboard for shared-link resolver coverage.",
+      });
+      dashboardId = dashboard?.id;
+      assert(
+        isUuid(dashboardId),
+        "Shared-link dashboard create returned no id.",
+      );
+      cleanup.defer("delete OBS-API-022 dashboard", () => {
+        if (sharedLinkCleanupDone) return null;
+        return ignoreNotFound(() =>
+          client.delete(
+            apiPath("/tracer/dashboard/{id}/", {
+              id: dashboardId,
+            }),
+          ),
+        );
+      });
+
+      const widget = await client.post(
+        apiPath("/tracer/dashboard/{dashboard_pk}/widgets/", {
+          dashboard_pk: dashboardId,
+        }),
+        {
+          name: `api journey shared widget ${suffix}`,
+          description: "Temporary widget for shared-link resolver coverage.",
+          position: 0,
+          width: 6,
+          height: 4,
+          query_config: dashboardQueryConfig(project.id),
+          chart_config: { chart_type: "line" },
+        },
+      );
+      widgetId = widget?.id;
+      assert(isUuid(widgetId), "Shared-link dashboard widget returned no id.");
+
+      const dashboardLink = await client.post(
+        apiPath("/tracer/shared-links/"),
+        {
+          resource_type: "dashboard",
+          resource_id: dashboardId,
+          access_type: "public",
+        },
+      );
+      assert(
+        isUuid(dashboardLink?.id) && dashboardLink?.token,
+        "Dashboard shared-link create returned no id/token.",
+      );
+      sharedLinkIds.push(dashboardLink.id);
+      cleanup.defer("revoke OBS-API-022 dashboard shared link", () => {
+        if (sharedLinkCleanupDone) return null;
+        return ignoreNotFound(() =>
+          client.delete(
+            apiPath("/tracer/shared-links/{id}/", {
+              id: dashboardLink.id,
+            }),
+          ),
+        );
+      });
+
+      const resolvedDashboard = await publicClient.get(
+        apiPath("/tracer/shared/{token}/", {
+          token: dashboardLink.token,
+        }),
+      );
+      assert(
+        resolvedDashboard?.resource_type === "dashboard" &&
+          resolvedDashboard?.data?.id === dashboardId,
+        "Dashboard shared-link resolved the wrong resource.",
+      );
+      assert(
+        resolvedDashboard?.data?.widget_count === 1 &&
+          asArray(resolvedDashboard?.data?.widgets).some(
+            (row) =>
+              row.id === widgetId && row.chart_config?.chart_type === "line",
+          ),
+        "Dashboard shared-link did not return dashboard widget detail.",
+      );
+
+      const projectLink = await client.post(apiPath("/tracer/shared-links/"), {
+        resource_type: "project",
+        resource_id: project.id,
+        access_type: "public",
+      });
+      assert(
+        isUuid(projectLink?.id) && projectLink?.token,
+        "Project shared-link create returned no id/token.",
+      );
+      sharedLinkIds.push(projectLink.id);
+      cleanup.defer("revoke OBS-API-022 project shared link", () => {
+        if (sharedLinkCleanupDone) return null;
+        return ignoreNotFound(() =>
+          client.delete(
+            apiPath("/tracer/shared-links/{id}/", {
+              id: projectLink.id,
+            }),
+          ),
+        );
+      });
+
+      const resolvedProject = await publicClient.get(
+        apiPath("/tracer/shared/{token}/", {
+          token: projectLink.token,
+        }),
+      );
+      assert(
+        resolvedProject?.resource_type === "project" &&
+          resolvedProject?.data?.id === project.id &&
+          resolvedProject?.data?.url_path ===
+            `/dashboard/observe/${project.id}/llm-tracing`,
+        "Project shared-link did not resolve the Observe project payload.",
+      );
+
+      const unsupportedDatasetLink = await expectApiJourneyHttpStatus(
+        400,
+        () =>
+          client.post(apiPath("/tracer/shared-links/"), {
+            resource_type: "dataset",
+            resource_id: project.id,
+            access_type: "public",
+          }),
+        "Unsupported dataset shared-link create",
+      );
+
+      await client.delete(
+        apiPath("/tracer/shared-links/{id}/", {
+          id: publicTraceLink.id,
+        }),
+      );
+      const revokedPublicTrace = await expectApiJourneyHttpStatus(
+        410,
+        () =>
+          publicClient.get(
+            apiPath("/tracer/shared/{token}/", {
+              token: publicTraceLink.token,
+            }),
+          ),
+        "Revoked public shared-link resolve",
+      );
+      assert(
+        revokedPublicTrace.body?.code === "gone",
+        "Revoked shared-link resolve returned the wrong error code.",
+      );
+
+      const audit = await loadSharedLinkDbAudit({
+        organizationId,
+        workspaceId,
+        sharedLinkIds: [
+          publicTraceLink.id,
+          restrictedTraceLink.id,
+          dashboardLink.id,
+          projectLink.id,
+        ],
+        traceId,
+        spanId,
+        projectId: project.id,
+        dashboardId,
+        widgetId,
+      });
+      assertSharedLinkDbAudit(audit, {
+        organizationId,
+        workspaceId,
+        traceId,
+        spanId,
+        projectId: project.id,
+        dashboardId,
+        widgetId,
+        publicTraceLinkId: publicTraceLink.id,
+        restrictedTraceLinkId: restrictedTraceLink.id,
+        dashboardLinkId: dashboardLink.id,
+        projectLinkId: projectLink.id,
+      });
+
+      const sharedLinkCleanupAudit = await hardDeleteSharedLinkArtifacts({
+        sharedLinkIds,
+        dashboardId,
+        widgetId,
+      });
+      sharedLinkCleanupDone = true;
+      assert(
+        Number(sharedLinkCleanupAudit.remaining_shared_link_count) === 0 &&
+          Number(sharedLinkCleanupAudit.remaining_access_count) === 0 &&
+          Number(sharedLinkCleanupAudit.remaining_dashboard_count) === 0 &&
+          Number(sharedLinkCleanupAudit.remaining_widget_count) === 0,
+        `Shared-link hard cleanup left disposable residue: ${JSON.stringify(
+          sharedLinkCleanupAudit,
+        )}.`,
+      );
+
+      const cleanupAudit = await hardDeleteTraceLifecycleArtifacts({
+        projectId: project.id,
+        projectVersionId,
+        traceIds: [traceId],
+        spanIds: [spanId],
+      });
+      traceCleanupDone = true;
+      assert(
+        cleanupAudit.remaining_project_count === 0 &&
+          cleanupAudit.remaining_trace_count === 0 &&
+          cleanupAudit.remaining_span_count === 0,
+        "Shared-link hard cleanup left disposable trace residue.",
+      );
+
+      evidence.push({
+        project_id: project.id,
+        project_version_id: projectVersionId,
+        trace_id: traceId,
+        span_id: spanId,
+        dashboard_id: dashboardId,
+        widget_id: widgetId,
+        public_trace_link_id: publicTraceLink.id,
+        restricted_trace_link_id: restrictedTraceLink.id,
+        dashboard_link_id: dashboardLink.id,
+        project_link_id: projectLink.id,
+        restricted_unauth_code: restrictedUnauthError.body?.code || null,
+        unsupported_dataset_status: unsupportedDatasetLink.status,
+        revoked_code: revokedPublicTrace.body?.code || null,
+        patched_shared_link_access_type:
+          patchedRestrictedTraceLink.access_type || null,
+        put_shared_link_access_type: putRestrictedTraceLink.access_type || null,
+        active_shared_link_count: audit.active_shared_link_count,
+        active_access_count: audit.active_access_count,
+        deleted_access_count: audit.deleted_access_count,
+        cleanup_remaining_shared_link_count:
+          sharedLinkCleanupAudit.remaining_shared_link_count,
+        cleanup_remaining_access_count:
+          sharedLinkCleanupAudit.remaining_access_count,
+        cleanup_remaining_dashboard_count:
+          sharedLinkCleanupAudit.remaining_dashboard_count,
+        cleanup_remaining_widget_count:
+          sharedLinkCleanupAudit.remaining_widget_count,
+        cleanup_remaining_trace_count: cleanupAudit.remaining_trace_count,
+      });
+    },
+  },
+  {
+    id: "OBS-API-023",
+    title:
+      "Observability provider setup CRUD keeps provider and project workspace scoped",
+    tags: [
+      "observe",
+      "observability-provider",
+      "mutating",
+      "data-roundtrip",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const suffix = journeySafeId(runId);
+      const projectName = `obs api provider ${suffix}`;
+      const providerPath = apiPath("/tracer/observability-provider/");
+      const createdProvider = await client.post(providerPath, {
+        project_name: projectName,
+        provider: "retell",
+        enabled: true,
+        metadata: {
+          assistant_id: `obs-api-023-${suffix}`,
+          source: "api-journey",
+          run_id: runId,
+        },
+      });
+      assert(
+        isUuid(createdProvider?.id) && isUuid(createdProvider?.project),
+        "Observability provider create returned no provider/project id.",
+      );
+      cleanup.defer("hard delete OBS-API-023 provider artifacts", () =>
+        hardDeleteObservabilityProviderArtifacts({
+          providerId: createdProvider.id,
+          projectId: createdProvider.project,
+        }),
+      );
+      assert(
+        createdProvider.provider === "retell" &&
+          createdProvider.enabled === true,
+        "Observability provider create returned the wrong provider state.",
+      );
+
+      const listedProviders = await client.get(providerPath, {
+        query: {
+          project_id: createdProvider.project,
+          page_number: 0,
+          page_size: 10,
+        },
+      });
+      assert(
+        asArray(listedProviders?.providers).some(
+          (row) => row.id === createdProvider.id,
+        ),
+        "Observability provider list did not include the created row.",
+      );
+
+      const detail = await client.get(
+        apiPath("/tracer/observability-provider/{id}/", {
+          id: createdProvider.id,
+        }),
+      );
+      assert(
+        detail?.id === createdProvider.id &&
+          detail?.project === createdProvider.project,
+        "Observability provider detail returned the wrong row.",
+      );
+
+      const patchedProvider = await client.patch(
+        apiPath("/tracer/observability-provider/{id}/", {
+          id: createdProvider.id,
+        }),
+        {
+          enabled: false,
+          metadata: {
+            assistant_id: `obs-api-023-updated-${suffix}`,
+            source: "api-journey",
+            run_id: runId,
+          },
+        },
+      );
+      assert(
+        patchedProvider?.enabled === false &&
+          patchedProvider?.metadata?.assistant_id ===
+            `obs-api-023-updated-${suffix}`,
+        "Observability provider PATCH did not persist enabled/metadata updates.",
+      );
+
+      const invalidProviderError = await expectApiJourneyHttpStatus(
+        400,
+        () =>
+          client.post(
+            apiPath("/tracer/observability-provider/verify_api_key/"),
+            { provider: "not-a-provider", api_key: "unused-local-key" },
+          ),
+        "Invalid observability provider API-key verification",
+      );
+
+      const activeAudit = await loadObservabilityProviderDbAudit({
+        organizationId,
+        workspaceId,
+        providerId: createdProvider.id,
+        projectId: createdProvider.project,
+      });
+      assertObservabilityProviderDbAudit(activeAudit, {
+        organizationId,
+        workspaceId,
+        providerId: createdProvider.id,
+        projectId: createdProvider.project,
+        projectName,
+        expectedDeleted: false,
+      });
+
+      await client.delete(
+        apiPath("/tracer/observability-provider/{id}/", {
+          id: createdProvider.id,
+        }),
+      );
+
+      const deletedAudit = await loadObservabilityProviderDbAudit({
+        organizationId,
+        workspaceId,
+        providerId: createdProvider.id,
+        projectId: createdProvider.project,
+      });
+      assertObservabilityProviderDbAudit(deletedAudit, {
+        organizationId,
+        workspaceId,
+        providerId: createdProvider.id,
+        projectId: createdProvider.project,
+        projectName,
+        expectedDeleted: true,
+      });
+
+      const cleanupAudit = await hardDeleteObservabilityProviderArtifacts({
+        providerId: createdProvider.id,
+        projectId: createdProvider.project,
+      });
+      assert(
+        cleanupAudit.remaining_provider_count === 0 &&
+          cleanupAudit.remaining_project_count === 0,
+        "Observability provider cleanup left disposable residue.",
+      );
+
+      evidence.push({
+        provider_id: createdProvider.id,
+        project_id: createdProvider.project,
+        provider_workspace_id: activeAudit.provider.workspace_id,
+        project_workspace_id: activeAudit.project.workspace_id,
+        invalid_verify_status: invalidProviderError.status,
+        deleted_at_set: deletedAudit.provider.deleted_at_set,
+        cleanup_remaining_provider_count: cleanupAudit.remaining_provider_count,
+        cleanup_remaining_project_count: cleanupAudit.remaining_project_count,
+      });
+    },
+  },
+  {
+    id: "OBS-API-024",
+    title: "Imagine analysis trigger and poll stay saved-view scoped",
+    tags: ["observe", "imagine", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const project = await resolveObserveProject(client, evidence);
+      const suffix = journeySafeId(runId);
+      const traceId = randomUUID();
+      const widgetId = `obs-api-024-${suffix}`;
+      const savedViewName = `api journey imagine ${suffix}`;
+      const savedView = await client.post(apiPath("/tracer/saved-views/"), {
+        project_id: project.id,
+        name: savedViewName,
+        tab_type: "imagine",
+        visibility: "personal",
+        icon: "sparkles",
+        config: {
+          widgets: [
+            {
+              id: widgetId,
+              type: "dynamic_analysis",
+              prompt: "Summarize the important trace behavior.",
+            },
+          ],
+        },
+      });
+      assert(
+        isUuid(savedView?.id),
+        "Imagine saved-view create returned no id.",
+      );
+
+      let hardCleanupDone = false;
+      cleanup.defer("hard delete OBS-API-024 artifacts", async () => {
+        if (hardCleanupDone) return null;
+        return hardDeleteImagineAnalysisArtifacts({
+          savedViewId: savedView.id,
+          traceId,
+          widgetId,
+        });
+      });
+      cleanup.defer("delete OBS-API-024 saved view", () =>
+        hardCleanupDone
+          ? null
+          : hardDeleteImagineAnalysisArtifacts({
+              savedViewId: savedView.id,
+              traceId,
+              widgetId,
+            }),
+      );
+
+      const prompt = `Summarize trace ${suffix}`;
+      const triggered = await client.post(
+        apiPath("/tracer/imagine-analysis/"),
+        {
+          saved_view_id: savedView.id,
+          trace_id: traceId,
+          project_id: project.id,
+          widgets: [{ widget_id: widgetId, prompt }],
+        },
+      );
+      const triggeredAnalysis = asArray(triggered?.analyses)[0];
+      assert(
+        isUuid(triggeredAnalysis?.id),
+        "Imagine analysis trigger returned no analysis id.",
+      );
+      assert(
+        ["running", "failed"].includes(triggeredAnalysis.status),
+        `Imagine analysis trigger returned unexpected status ${triggeredAnalysis.status}.`,
+      );
+
+      const polled = await client.get(apiPath("/tracer/imagine-analysis/"), {
+        query: { saved_view_id: savedView.id, trace_id: traceId },
+      });
+      const polledAnalysis = asArray(polled?.analyses).find(
+        (row) => row.id === triggeredAnalysis.id,
+      );
+      assert(
+        polledAnalysis?.widget_id === widgetId,
+        "Imagine analysis poll did not return the triggered widget row.",
+      );
+      assert(
+        ["running", "failed", "completed", "pending"].includes(
+          polledAnalysis.status,
+        ),
+        `Imagine analysis poll returned unexpected status ${polledAnalysis.status}.`,
+      );
+
+      const unknownSavedViewError = await expectApiJourneyHttpStatus(
+        404,
+        () =>
+          client.get(apiPath("/tracer/imagine-analysis/"), {
+            query: { saved_view_id: randomUUID(), trace_id: traceId },
+          }),
+        "Imagine analysis poll with an inaccessible saved view",
+      );
+
+      const activeAudit = await loadImagineAnalysisDbAudit({
+        organizationId,
+        workspaceId,
+        savedViewId: savedView.id,
+        projectId: project.id,
+        analysisId: triggeredAnalysis.id,
+        traceId,
+        widgetId,
+      });
+      assertImagineAnalysisDbAudit(activeAudit, {
+        organizationId,
+        workspaceId,
+        savedViewId: savedView.id,
+        projectId: project.id,
+        analysisId: triggeredAnalysis.id,
+        traceId,
+        widgetId,
+        savedViewName,
+      });
+
+      await client.delete(
+        apiPath("/tracer/saved-views/{id}/", { id: savedView.id }),
+        {
+          query: { project_id: project.id },
+          okStatuses: [200, 204, 404],
+        },
+      );
+      const cleanupAudit = await hardDeleteImagineAnalysisArtifacts({
+        savedViewId: savedView.id,
+        traceId,
+        widgetId,
+      });
+      hardCleanupDone = true;
+      assert(
+        cleanupAudit.remaining_analysis_count === 0 &&
+          cleanupAudit.remaining_saved_view_count === 0,
+        "Imagine analysis cleanup left disposable residue.",
+      );
+
+      evidence.push({
+        project_id: project.id,
+        saved_view_id: savedView.id,
+        analysis_id: triggeredAnalysis.id,
+        trace_id: traceId,
+        widget_id: widgetId,
+        trigger_status: triggeredAnalysis.status,
+        poll_status: polledAnalysis.status,
+        unknown_saved_view_status: unknownSavedViewError.status,
+        analysis_workspace_id: activeAudit.saved_view.workspace_id,
+        cleanup_remaining_analysis_count: cleanupAudit.remaining_analysis_count,
+      });
+    },
+  },
+  {
+    id: "OBS-API-025",
+    title: "Legacy tracer annotation-label list stays workspace/project scoped",
+    tags: [
+      "observe",
+      "annotations",
+      "legacy",
+      "mutating",
+      "data-roundtrip",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const project = await resolveObserveProject(client, evidence);
+      const suffix = journeySafeId(runId);
+      const labelName = `OBS-API-025 tracer label ${suffix}`;
+      const created = await client.post(
+        apiPath("/model-hub/annotations-labels/"),
+        {
+          name: labelName,
+          type: "star",
+          description:
+            "Temporary label for legacy tracer annotation-label API coverage.",
+          project: project.id,
+          settings: { no_of_stars: 5 },
+          allow_notes: true,
+        },
+      );
+      const label = created?.id
+        ? created
+        : await findAnnotationLabelByName(client, labelName);
+      const labelId = label?.id;
+      assert(
+        isUuid(labelId),
+        "Temporary annotation label create returned no id.",
+      );
+
+      let hardCleanupDone = false;
+      cleanup.defer("hard delete OBS-API-025 annotation label", async () => {
+        if (hardCleanupDone) return null;
+        return hardDeleteTracerAnnotationLabelArtifact({ labelId });
+      });
+      cleanup.defer("delete OBS-API-025 annotation label", () =>
+        ignoreNotFound(() =>
+          client.delete(
+            apiPath("/model-hub/annotations-labels/{id}/", { id: labelId }),
+          ),
+        ),
+      );
+
+      const allLabels = asArray(
+        await client.get(apiPath("/tracer/get-annotation-labels/")),
+      );
+      assert(
+        allLabels.some((row) => row.id === labelId && row.name === labelName),
+        "Legacy tracer annotation-label list did not include the scoped temporary label.",
+      );
+
+      const projectLabels = asArray(
+        await client.get(apiPath("/tracer/get-annotation-labels/"), {
+          query: { project_id: project.id },
+        }),
+      );
+      assert(
+        projectLabels.some((row) => row.id === labelId),
+        "Legacy tracer annotation-label project filter did not include the scoped temporary label.",
+      );
+
+      const missingProjectError = await expectApiJourneyHttpStatus(
+        404,
+        () =>
+          client.get(apiPath("/tracer/get-annotation-labels/"), {
+            query: { project_id: randomUUID() },
+          }),
+        "Legacy tracer annotation-label list with an inaccessible project",
+      );
+      const aliasError = await expectApiJourneyHttpStatus(
+        400,
+        () =>
+          client.get(apiPath("/tracer/get-annotation-labels/"), {
+            query: { projectId: project.id },
+          }),
+        "Legacy tracer annotation-label list with camelCase project alias",
+      );
+
+      const activeAudit = await loadTracerAnnotationLabelDbAudit({
+        organizationId,
+        workspaceId,
+        projectId: project.id,
+        labelId,
+      });
+      assert(
+        activeAudit.label.id === labelId &&
+          activeAudit.label.organization_id === organizationId &&
+          activeAudit.label.workspace_id === workspaceId &&
+          activeAudit.label.project_id === project.id &&
+          activeAudit.label.deleted === false,
+        `Annotation-label DB audit did not match scoped label: ${JSON.stringify(
+          activeAudit,
+        )}`,
+      );
+
+      await client.delete(
+        apiPath("/model-hub/annotations-labels/{id}/", { id: labelId }),
+        { okStatuses: [200, 204, 404] },
+      );
+      const cleanupAudit = await hardDeleteTracerAnnotationLabelArtifact({
+        labelId,
+      });
+      hardCleanupDone = true;
+      assert(
+        cleanupAudit.remaining_label_count === 0,
+        "Annotation-label hard cleanup left disposable residue.",
+      );
+
+      evidence.push({
+        project_id: project.id,
+        label_id: labelId,
+        label_workspace_id: activeAudit.label.workspace_id,
+        list_count: allLabels.length,
+        project_filtered_count: projectLabels.length,
+        missing_project_status: missingProjectError.status,
+        legacy_alias_status: aliasError.status,
+        cleanup_remaining_label_count: cleanupAudit.remaining_label_count,
+      });
+    },
+  },
+  {
+    id: "OBS-API-026",
+    title: "Observe add-to-dataset creates scoped dataset columns",
+    tags: ["observe", "datasets", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const { project, span } = await resolveObserveSpanForLifecycle(
+        client,
+        cleanup,
+        runId,
+        evidence,
+        { organizationId, workspaceId, requireProjectWorkspace: true },
+      );
+      const spanId = span.span_id;
+      const traceId = span.trace_id;
+      assert(
+        String(spanId || "").trim(),
+        "Observe dataset seed omitted span id.",
+      );
+      assert(isUuid(traceId), "Observe dataset seed omitted trace id.");
+
+      const suffix = journeySafeId(runId);
+      const datasetName = `OBS-API-026 observe dataset ${suffix}`;
+      const addNew = await client.post(
+        apiPath("/tracer/dataset/add_to_new_dataset/"),
+        {
+          new_dataset_name: datasetName,
+          project: project.id,
+          span_ids: [spanId],
+          mapping_config: [
+            { col_name: "obs_input", span_field: "input", data_type: "text" },
+            { col_name: "obs_output", span_field: "output", data_type: "text" },
+            { col_name: "obs_model", span_field: "model", data_type: "text" },
+          ],
+        },
+      );
+      const datasetId = addNew?.dataset_id;
+      assert(isUuid(datasetId), "Observe add-to-new dataset returned no id.");
+      assert(
+        addNew.dataset_name === datasetName && addNew.status === "processing",
+        "Observe add-to-new dataset returned unexpected metadata.",
+      );
+
+      let hardCleanupDone = false;
+      cleanup.defer("hard delete OBS-API-026 dataset artifacts", async () => {
+        if (hardCleanupDone) return null;
+        return hardDeleteObserveDatasetArtifacts({ datasetId });
+      });
+      cleanup.defer("delete OBS-API-026 dataset", () =>
+        ignoreNotFound(() =>
+          client.delete(apiPath("/tracer/dataset/{id}/", { id: datasetId }), {
+            okStatuses: [200, 204, 404],
+          }),
+        ),
+      );
+
+      const addExisting = await client.post(
+        apiPath("/tracer/dataset/add_to_existing_dataset/"),
+        {
+          dataset_id: datasetId,
+          project: project.id,
+          span_ids: [spanId],
+          mapping_config: [
+            { col_name: "obs_input", span_field: "input" },
+            { col_name: "obs_model", span_field: "model" },
+          ],
+          new_mapping_config: [
+            {
+              col_name: "obs_latency_ms",
+              span_field: "latency_ms",
+              data_type: "integer",
+            },
+          ],
+        },
+      );
+      assert(
+        addExisting?.dataset_id === datasetId &&
+          addExisting.status === "processing",
+        "Observe add-to-existing dataset returned unexpected metadata.",
+      );
+
+      const audit = await loadObserveDatasetAddToDatasetAudit({
+        organizationId,
+        workspaceId,
+        projectId: project.id,
+        datasetId,
+        spanId,
+        traceId,
+      });
+      assertObserveDatasetAddToDatasetAudit(audit, {
+        organizationId,
+        workspaceId,
+        projectId: project.id,
+        datasetId,
+        datasetName,
+        spanId,
+        traceId,
+        expectedColumnNames: [
+          "obs_input",
+          "obs_output",
+          "obs_model",
+          "obs_latency_ms",
+        ],
+      });
+
+      await client.delete(apiPath("/tracer/dataset/{id}/", { id: datasetId }), {
+        okStatuses: [200, 204, 404],
+      });
+      const cleanupAudit = await hardDeleteObserveDatasetArtifacts({
+        datasetId,
+      });
+      hardCleanupDone = true;
+      assert(
+        cleanupAudit.remaining_dataset_count === 0 &&
+          cleanupAudit.remaining_column_count === 0 &&
+          cleanupAudit.remaining_row_count === 0 &&
+          cleanupAudit.remaining_cell_count === 0,
+        `Observe dataset cleanup left residue: ${JSON.stringify(cleanupAudit)}`,
+      );
+
+      evidence.push({
+        project_id: project.id,
+        trace_id: traceId,
+        span_id: spanId,
+        dataset_id: datasetId,
+        dataset_workspace_id: audit.dataset.workspace_id,
+        column_names: asArray(audit.columns).map((column) => column.name),
+        row_count: audit.row_count,
+        cell_count: audit.cell_count,
+        cleanup_remaining_dataset_count: cleanupAudit.remaining_dataset_count,
+      });
+    },
+  },
+  {
+    id: "OBS-API-027",
+    title: "Observe dataset root CRUD aliases preserve request scope",
+    tags: ["observe", "datasets", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      user,
+      evidence,
+    }) {
+      requireMutations();
+      const userId = currentUserId(user);
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+      assert(
+        isUuid(userId),
+        "Authenticated context did not resolve a user id.",
+      );
+
+      const suffix = journeySafeId(runId);
+      const datasetName = `OBS-API-027 root dataset ${suffix}`;
+      const replacedName = `OBS-API-027 root dataset replaced ${suffix}`;
+      const patchedName = `OBS-API-027 root dataset patched ${suffix}`;
+
+      const created = await client.post(apiPath("/tracer/dataset/"), {
+        name: datasetName,
+        organization: randomUUID(),
+        user: randomUUID(),
+      });
+      const datasetId = created?.id;
+      assert(isUuid(datasetId), "Root dataset create returned no id.");
+      assert(
+        created.organization === organizationId &&
+          created.user === userId &&
+          created.source === "observe",
+        `Root dataset create did not use request scope/default source: ${JSON.stringify(
+          created,
+        )}`,
+      );
+
+      let hardCleanupDone = false;
+      cleanup.defer("hard delete OBS-API-027 dataset artifacts", async () => {
+        if (hardCleanupDone) return null;
+        return hardDeleteObserveDatasetArtifacts({ datasetId });
+      });
+      cleanup.defer("delete OBS-API-027 dataset", () =>
+        ignoreNotFound(() =>
+          client.delete(apiPath("/tracer/dataset/{id}/", { id: datasetId }), {
+            okStatuses: [200, 204, 404],
+          }),
+        ),
+      );
+
+      const listed = await client.get(apiPath("/tracer/dataset/"), {
+        query: { name: datasetName },
+      });
+      const listedRows = asArray(listed);
+      assert(
+        listedRows.some((row) => row.id === datasetId),
+        "Root dataset list did not include the created dataset.",
+      );
+
+      const detail = await client.get(
+        apiPath("/tracer/dataset/{id}/", { id: datasetId }),
+      );
+      assert(
+        detail?.name === datasetName && detail?.id === datasetId,
+        "Root dataset detail did not return the created dataset.",
+      );
+
+      const replaced = await client.put(
+        apiPath("/tracer/dataset/{id}/", { id: datasetId }),
+        {
+          name: replacedName,
+          organization: randomUUID(),
+          user: randomUUID(),
+          model_type: "GenerativeLLM",
+          source: "observe",
+        },
+      );
+      assert(
+        replaced?.name === replacedName &&
+          replaced.organization === organizationId &&
+          replaced.user === userId,
+        "Root dataset PUT did not preserve request-owned fields.",
+      );
+
+      const patched = await client.patch(
+        apiPath("/tracer/dataset/{id}/", { id: datasetId }),
+        {
+          name: patchedName,
+          organization: randomUUID(),
+          user: randomUUID(),
+        },
+      );
+      assert(
+        patched?.name === patchedName &&
+          patched.organization === organizationId &&
+          patched.user === userId,
+        "Root dataset PATCH did not preserve request-owned fields.",
+      );
+
+      const activeAudit = await loadObserveDatasetRootCrudAudit({ datasetId });
+      assertObserveDatasetRootCrudAudit(activeAudit, {
+        organizationId,
+        workspaceId,
+        userId,
+        datasetId,
+        datasetName: patchedName,
+        deleted: false,
+      });
+
+      await client.delete(apiPath("/tracer/dataset/{id}/", { id: datasetId }), {
+        okStatuses: [200, 204, 404],
+      });
+      const deletedAudit = await loadObserveDatasetRootCrudAudit({ datasetId });
+      assertObserveDatasetRootCrudAudit(deletedAudit, {
+        organizationId,
+        workspaceId,
+        userId,
+        datasetId,
+        datasetName: patchedName,
+        deleted: true,
+      });
+
+      const cleanupAudit = await hardDeleteObserveDatasetArtifacts({
+        datasetId,
+      });
+      hardCleanupDone = true;
+      assert(
+        cleanupAudit.remaining_dataset_count === 0,
+        `Root dataset cleanup left residue: ${JSON.stringify(cleanupAudit)}`,
+      );
+
+      evidence.push({
+        dataset_id: datasetId,
+        dataset_workspace_id: activeAudit.dataset.workspace_id,
+        dataset_user_id: activeAudit.dataset.user_id,
+        list_count: listedRows.length,
+        deleted_at_set: deletedAudit.dataset.deleted_at_set,
+        cleanup_remaining_dataset_count: cleanupAudit.remaining_dataset_count,
+      });
+    },
+  },
+  {
     id: "OBS-API-019",
     title:
       "Dashboard widget full PUT route persists replacement and scope guards",
@@ -2421,6 +4241,8 @@ export const observeFilterJourneys = [
           Array.isArray(chartGraph?.data),
         "Charts fetch_graph did not return the single system metric shape.",
       );
+      const generatedContractAudit =
+        await loadGeneratedChartCrudContractAudit();
 
       const chartId = "00000000-0000-4000-8000-000000000017";
       const payload = {
@@ -2430,31 +4252,15 @@ export const observeFilterJourneys = [
         req_data_config: { id: "latency", type: "SYSTEM_METRIC" },
       };
       const guardCalls = [
-        ["GET", () => client.get(apiPath("/tracer/charts/"))],
-        ["POST", () => client.post(apiPath("/tracer/charts/"), payload)],
-        [
-          "GET detail",
-          () => client.get(apiPath("/tracer/charts/{id}/", { id: chartId })),
-        ],
-        [
-          "PUT",
-          () =>
-            client.put(
-              apiPath("/tracer/charts/{id}/", { id: chartId }),
-              payload,
-            ),
-        ],
+        ["GET", () => client.get("/tracer/charts/")],
+        ["POST", () => client.post("/tracer/charts/", payload)],
+        ["GET detail", () => client.get(`/tracer/charts/${chartId}/`)],
+        ["PUT", () => client.put(`/tracer/charts/${chartId}/`, payload)],
         [
           "PATCH",
-          () =>
-            client.patch(apiPath("/tracer/charts/{id}/", { id: chartId }), {
-              property: "p95",
-            }),
+          () => client.patch(`/tracer/charts/${chartId}/`, { property: "p95" }),
         ],
-        [
-          "DELETE",
-          () => client.delete(apiPath("/tracer/charts/{id}/", { id: chartId })),
-        ],
+        ["DELETE", () => client.delete(`/tracer/charts/${chartId}/`)],
       ];
       const guardedMethods = [];
       for (const [method, fn] of guardCalls) {
@@ -2474,6 +4280,14 @@ export const observeFilterJourneys = [
         project_id: project.id,
         chart_metric_name: chartGraph?.metric_name || "latency",
         guarded_methods: guardedMethods,
+        generated_contract_chart_crud_methods:
+          generatedContractAudit.advertised_crud_methods,
+        generated_contract_openapi_success_statuses:
+          generatedContractAudit.openapi_success_statuses,
+        generated_client_success_statuses:
+          generatedContractAudit.generated_client_success_statuses,
+        generated_contract_fetch_graph_methods:
+          generatedContractAudit.fetch_graph_methods,
       });
     },
   },
@@ -2554,39 +4368,21 @@ export const observeFilterJourneys = [
       );
 
       const routeId = "00000000-0000-4000-8000-000000000018";
+      const generatedContractAudit =
+        await loadGeneratedTraceAnnotationCrudContractAudit();
       const guardCalls = [
-        ["GET", () => client.get(apiPath("/tracer/trace-annotation/"))],
-        ["POST", () => client.post(apiPath("/tracer/trace-annotation/"), {})],
+        ["GET", () => client.get("/tracer/trace-annotation/")],
+        ["POST", () => client.post("/tracer/trace-annotation/", {})],
         [
           "GET detail",
-          () =>
-            client.get(
-              apiPath("/tracer/trace-annotation/{id}/", { id: routeId }),
-            ),
+          () => client.get(`/tracer/trace-annotation/${routeId}/`),
         ],
-        [
-          "PUT",
-          () =>
-            client.put(
-              apiPath("/tracer/trace-annotation/{id}/", { id: routeId }),
-              {},
-            ),
-        ],
+        ["PUT", () => client.put(`/tracer/trace-annotation/${routeId}/`, {})],
         [
           "PATCH",
-          () =>
-            client.patch(
-              apiPath("/tracer/trace-annotation/{id}/", { id: routeId }),
-              {},
-            ),
+          () => client.patch(`/tracer/trace-annotation/${routeId}/`, {}),
         ],
-        [
-          "DELETE",
-          () =>
-            client.delete(
-              apiPath("/tracer/trace-annotation/{id}/", { id: routeId }),
-            ),
-        ],
+        ["DELETE", () => client.delete(`/tracer/trace-annotation/${routeId}/`)],
       ];
       const guardedMethods = [];
       for (const [method, fn] of guardCalls) {
@@ -2764,6 +4560,16 @@ export const observeFilterJourneys = [
         active_score_count: audit.active_score_count,
         active_note_count: audit.active_note_count,
         legacy_trace_annotation_count: audit.legacy_trace_annotation_count,
+        generated_contract_trace_annotation_crud_methods:
+          generatedContractAudit.advertised_crud_methods,
+        generated_contract_trace_annotation_openapi_success_statuses:
+          generatedContractAudit.openapi_success_statuses,
+        generated_trace_annotation_client_success_statuses:
+          generatedContractAudit.generated_client_success_statuses,
+        generated_contract_get_annotation_values_methods:
+          generatedContractAudit.get_annotation_values_methods,
+        generated_contract_bulk_annotation_methods:
+          generatedContractAudit.bulk_annotation_methods,
       });
     },
   },
@@ -3997,6 +5803,72 @@ export const observeFilterJourneys = [
         "Trace-session eval_logs did not include the seeded session eval.",
       );
 
+      const replaySession = await client.post(
+        apiPath("/tracer/replay-session/"),
+        {
+          project_id: project.id,
+          replay_type: "session",
+          ids: [sessionId],
+          select_all: false,
+        },
+      );
+      const replaySessionId = replaySession.id;
+      assert(
+        isUuid(replaySessionId),
+        "Replay-session create returned no replay id.",
+      );
+      assert(
+        replaySession.project === project.id &&
+          replaySession.replay_type === "session" &&
+          replaySession.current_step === "init",
+        "Replay-session create returned the wrong project/type/step.",
+      );
+      assert(
+        asArray(replaySession.ids).includes(sessionId),
+        "Replay-session create did not preserve the selected session id.",
+      );
+      assert(
+        replaySession.suggestions?.agent_type === "text",
+        "Replay-session create did not return text agent suggestions.",
+      );
+
+      const replayList = await client.get(apiPath("/tracer/replay-session/"), {
+        query: {
+          project_id: project.id,
+          page: 1,
+          limit: 5,
+        },
+      });
+      assert(
+        asArray(replayList).some((row) => row.id === replaySessionId),
+        "Replay-session list did not include the disposable replay session.",
+      );
+
+      const replayDetail = await client.get(
+        apiPath("/tracer/replay-session/{id}/", { id: replaySessionId }),
+      );
+      assert(
+        replayDetail?.id === replaySessionId &&
+          replayDetail?.project === project.id &&
+          replayDetail?.current_step === "init",
+        "Replay-session detail did not return the disposable replay session.",
+      );
+      assert(
+        replayDetail?.agent_definition === null &&
+          replayDetail?.scenario === null,
+        "Replay-session detail should not have linked generated state before generation.",
+      );
+
+      const replayEvalConfigs = await client.get(
+        apiPath("/tracer/replay-session/eval-configs/"),
+        { query: { project_id: project.id } },
+      );
+      assert(
+        Array.isArray(replayEvalConfigs?.eval_configs) &&
+          Array.isArray(replayEvalConfigs?.common_models),
+        "Replay-session eval-configs did not return eval_configs/common_models arrays.",
+      );
+
       const activeAudit = await loadTraceSessionLifecycleDbAudit({
         organizationId,
         workspaceId,
@@ -4019,6 +5891,21 @@ export const observeFilterJourneys = [
         deletedSpanIds: [],
         activeEvalLogIds: [evalLogId],
         deletedEvalLogIds: [],
+      });
+
+      const replayAudit = await loadReplaySessionLifecycleDbAudit({
+        organizationId,
+        workspaceId,
+        projectId: project.id,
+        replaySessionId,
+        sessionId,
+      });
+      assertReplaySessionLifecycleDbAudit(replayAudit, {
+        organizationId,
+        workspaceId,
+        projectId: project.id,
+        replaySessionId,
+        sessionId,
       });
 
       await client.delete(
@@ -4089,6 +5976,7 @@ export const observeFilterJourneys = [
           Number(cleanupAudit.remaining_trace_count) === 0 &&
           Number(cleanupAudit.remaining_span_count) === 0 &&
           Number(cleanupAudit.remaining_eval_log_count) === 0 &&
+          Number(cleanupAudit.remaining_replay_session_count) === 0 &&
           Number(cleanupAudit.remaining_project_version_count) === 0 &&
           Number(cleanupAudit.remaining_project_count) === 0,
         `Trace-session cleanup left rows behind: ${JSON.stringify(cleanupAudit)}`,
@@ -4098,11 +5986,14 @@ export const observeFilterJourneys = [
         project_id: project.id,
         project_version_id: projectVersionId,
         session_id: sessionId,
+        replay_session_id: replaySessionId,
         trace_id: traceId,
         span_id: spanId,
         eval_log_id: evalLogId,
         raw_list_count: rawRows.length,
         list_sessions_count: sessionRows.length,
+        replay_list_count: responseCount(replayList),
+        replay_eval_config_count: replayEvalConfigs.eval_configs.length,
         export_bytes: csv.length,
         generic_delete_cascaded: true,
         cleanup_session_count: cleanupAudit.remaining_session_count,
@@ -5219,6 +7110,55 @@ export const observeFilterJourneys = [
         "Linked source trace has no matching spans for trace-row evaluation.",
       );
 
+      const updatedTaskName = `${taskName} edited`;
+      const edited = await client.patch(
+        apiPath("/tracer/eval-task/update_eval_task/"),
+        {
+          eval_task_id: createdTaskId,
+          name: updatedTaskName,
+          sampling_rate: 93,
+          filters: {
+            project_id: projectId,
+            trace_id: [traceId],
+          },
+          evals: [seedEval.id],
+          edit_type: "edit_rerun",
+        },
+      );
+      assert(
+        edited?.task_id === createdTaskId,
+        "Linked task edit response id mismatch.",
+      );
+      const editedDetail = await client.get(
+        apiPath("/tracer/eval-task/get_eval_details/"),
+        {
+          query: { eval_id: createdTaskId },
+        },
+      );
+      assert(
+        editedDetail?.name === updatedTaskName,
+        "Linked task edit did not persist the updated name.",
+      );
+      assert(
+        Number(editedDetail?.sampling_rate) === 93,
+        "Linked task edit did not persist the updated sampling rate.",
+      );
+      assert(
+        asArray(editedDetail?.filters_applied?.trace_id).includes(traceId),
+        "Linked task edit dropped the trace_id filter.",
+      );
+      const editedAudit = await loadEvalTaskLinkedSourceAudit({
+        organizationId,
+        workspaceId,
+        taskId: createdTaskId,
+        projectId,
+        traceId,
+      });
+      assert(
+        editedAudit.trace_id_filter_contains === true,
+        "Linked task DB filters dropped the selected trace_id after edit.",
+      );
+
       const deleted = await client.post(
         apiPath("/tracer/eval-task/mark_eval_tasks_deleted/"),
         { eval_task_ids: [createdTaskId] },
@@ -5240,7 +7180,10 @@ export const observeFilterJourneys = [
         source_trace_id: traceId,
         source_trace_name: trace.name || traceDetail?.name || null,
         source_url: `/dashboard/observe/${projectId}/trace/${traceId}`,
+        edited_task_name: updatedTaskName,
+        edited_sampling_rate: editedDetail.sampling_rate,
         filters_applied: taskDetail.filters_applied,
+        edited_filters_applied: editedDetail.filters_applied,
         matched_span_count: audit.matched_span_count,
         source_reverse_task_column_count:
           audit.source_reverse_task_column_count,
@@ -5440,6 +7383,35 @@ export const observeFilterJourneys = [
         "Created alert project mismatch.",
       );
 
+      const rootList = await client.get(apiPath("/tracer/user-alerts/"), {
+        query: {
+          project_id: project.id,
+          page_number: 0,
+          page_size: 10,
+        },
+      });
+      const rootRows = asArray(rootList);
+      assert(
+        rootRows.some((row) => row.id === created.id),
+        "Generated alert root list did not include the created alert.",
+      );
+      assert(
+        Number(rootList?.metadata?.total_rows ?? 0) >= rootRows.length,
+        "Generated alert root list metadata was inconsistent.",
+      );
+
+      const rootDetail = await client.get(
+        apiPath("/tracer/user-alerts/{id}/", { id: created.id }),
+      );
+      assert(
+        rootDetail.id === created.id,
+        "Generated alert root detail id mismatch.",
+      );
+      assert(
+        rootDetail.workspace === workspaceId,
+        "Generated alert root detail workspace mismatch.",
+      );
+
       const createdDetail = await client.get(
         apiPath("/tracer/user-alerts/{id}/details/", { id: created.id }),
       );
@@ -5459,6 +7431,9 @@ export const observeFilterJourneys = [
           name: renamedName,
           critical_threshold_value: 999997,
           warning_threshold_value: 999996,
+          organization: randomUUID(),
+          workspace: randomUUID(),
+          created_by: randomUUID(),
         },
       );
       const renamedDetail = await client.get(
@@ -5471,6 +7446,58 @@ export const observeFilterJourneys = [
       assert(
         Number(renamedDetail.critical_threshold_value) === 999997,
         "Alert PATCH critical threshold did not persist.",
+      );
+      assert(
+        renamedDetail.workspace === workspaceId,
+        "Alert PATCH accepted a client-supplied workspace.",
+      );
+      const renamedAudit = await loadAlertLifecycleAudit({
+        alertId: created.id,
+      });
+      assert(
+        renamedAudit.workspace_id === workspaceId,
+        "Alert PATCH changed the persisted workspace.",
+      );
+
+      const replacedName = `${alertName} replaced`;
+      await client.put(
+        apiPath("/tracer/user-alerts/{id}/", { id: created.id }),
+        {
+          project: project.id,
+          name: replacedName,
+          metric_type: "count_of_errors",
+          threshold_operator: "greater_than",
+          threshold_type: "static",
+          critical_threshold_value: 999995,
+          warning_threshold_value: 999994,
+          alert_frequency: 60,
+          filters: {},
+          organization: randomUUID(),
+          workspace: randomUUID(),
+          created_by: randomUUID(),
+        },
+      );
+      const replacedDetail = await client.get(
+        apiPath("/tracer/user-alerts/{id}/details/", { id: created.id }),
+      );
+      assert(
+        replacedDetail.name === replacedName,
+        "Alert PUT replace did not persist.",
+      );
+      assert(
+        Number(replacedDetail.critical_threshold_value) === 999995,
+        "Alert PUT critical threshold did not persist.",
+      );
+      assert(
+        replacedDetail.workspace === workspaceId,
+        "Alert PUT accepted a client-supplied workspace.",
+      );
+      const replacedAudit = await loadAlertLifecycleAudit({
+        alertId: created.id,
+      });
+      assert(
+        replacedAudit.workspace_id === workspaceId,
+        "Alert PUT changed the persisted workspace.",
       );
 
       await client.post(apiPath("/tracer/user-alerts/bulk-mute/"), {
@@ -5510,12 +7537,63 @@ export const observeFilterJourneys = [
         "Copied alert workspace mismatch.",
       );
 
-      const logId = randomUUID();
-      await insertAlertLog({
-        alertId: created.id,
-        logId,
-        message: `api journey alert log ${runId}`,
-      });
+      const createdLog = await client.post(
+        apiPath("/tracer/user-alert-logs/"),
+        {
+          alert: created.id,
+          type: "critical",
+          message: `api journey alert log ${runId}`,
+          resolved: false,
+        },
+      );
+      assert(
+        isUuid(createdLog?.id),
+        "Generated alert log root create did not return an id.",
+      );
+      const logId = createdLog.id;
+      const rootLogs = await client.get(apiPath("/tracer/user-alert-logs/"));
+      assert(
+        asArray(rootLogs).some((log) => log.id === logId),
+        "Generated alert log root list did not include the created log.",
+      );
+      const rootLogDetail = await client.get(
+        apiPath("/tracer/user-alert-logs/{id}/", { id: logId }),
+      );
+      assert(
+        rootLogDetail.id === logId,
+        "Generated alert log root detail id mismatch.",
+      );
+      await client.patch(
+        apiPath("/tracer/user-alert-logs/{id}/", { id: logId }),
+        {
+          message: `api journey alert log patched ${runId}`,
+        },
+      );
+      const patchedRootLog = await client.get(
+        apiPath("/tracer/user-alert-logs/{id}/", { id: logId }),
+      );
+      assert(
+        patchedRootLog.message.includes("patched"),
+        "Generated alert log root PATCH did not persist.",
+      );
+      await client.put(
+        apiPath("/tracer/user-alert-logs/{id}/", { id: logId }),
+        {
+          alert: created.id,
+          type: "warning",
+          message: `api journey alert log replaced ${runId}`,
+          resolved: false,
+        },
+      );
+      const replacedRootLog = await client.get(
+        apiPath("/tracer/user-alert-logs/{id}/", { id: logId }),
+      );
+      assert(
+        replacedRootLog.message.includes("replaced") &&
+          replacedRootLog.type === "warning" &&
+          replacedRootLog.resolved === false,
+        "Generated alert log root PUT did not persist replacement fields.",
+      );
       const detailWithLog = await client.get(
         apiPath("/tracer/user-alerts/{id}/details/", { id: created.id }),
         { query: { page_number: 0, page_size: 5 } },
@@ -5534,9 +7612,22 @@ export const observeFilterJourneys = [
         resolvedAudit.unresolved_log_count === 0,
         "Alert log resolve did not persist.",
       );
+      await client.delete(
+        apiPath("/tracer/user-alert-logs/{id}/", { id: logId }),
+      );
+      const deletedLogAudit = await loadAlertLifecycleAudit({
+        alertId: created.id,
+      });
+      assert(
+        deletedLogAudit.deleted_log_count === 1,
+        "Generated alert log root DELETE did not soft-delete the log.",
+      );
 
+      await client.delete(
+        apiPath("/tracer/user-alerts/{id}/", { id: created.id }),
+      );
       await client.delete(apiPath("/tracer/user-alerts/"), {
-        body: { ids: [created.id, copied.id] },
+        body: { ids: [copied.id] },
       });
       const deletedAudit = await loadAlertLifecycleAudit({
         alertId: created.id,
@@ -5558,7 +7649,14 @@ export const observeFilterJourneys = [
         created_alert_id: created.id,
         copied_alert_id: copied.id,
         inserted_log_id: logId,
+        root_list_total: rootList.metadata.total_rows,
+        root_log_id: logId,
         renamed_name: renamedName,
+        replaced_name: replacedName,
+        replaced_log_type: replacedRootLog.type,
+        update_scope_preserved:
+          renamedAudit.workspace_id === workspaceId &&
+          replacedAudit.workspace_id === workspaceId,
         copied_name: copiedName,
         final_public_deleted: deletedAudit.alert_deleted,
         copied_public_deleted: copiedDeletedAudit.alert_deleted,
@@ -5903,6 +8001,125 @@ SELECT json_build_object(
   'hidden_cluster_id', hidden_cluster_id
 )
 FROM counts;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadSavedViewLifecycleDbAudit({
+  organizationId,
+  workspaceId,
+  projectId,
+  savedViewIds,
+}) {
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlUuid(projectId)} AS project_id,
+    ${sqlUuidArray(savedViewIds)} AS saved_view_ids
+),
+view_rows AS (
+  SELECT
+    saved_view.id::text AS id,
+    saved_view.project_id::text AS project_id,
+    saved_view.workspace_id::text AS workspace_id,
+    saved_view.name,
+    saved_view.tab_type,
+    saved_view.visibility,
+    saved_view.position,
+    saved_view.icon,
+    saved_view.deleted,
+    saved_view.deleted_at IS NOT NULL AS deleted_at_set,
+    project.organization_id::text AS project_organization_id,
+    project.workspace_id::text AS project_workspace_id
+  FROM tracer_saved_view saved_view
+  JOIN tracer_project project ON project.id = saved_view.project_id
+  JOIN requested r ON saved_view.id = ANY(r.saved_view_ids)
+  ORDER BY saved_view.position ASC, saved_view.created_at ASC
+)
+SELECT json_build_object(
+  'views', coalesce((SELECT json_agg(row_to_json(view_rows)) FROM view_rows), '[]'::json),
+  'requested_count', (SELECT cardinality(saved_view_ids) FROM requested),
+  'wrong_scope_count', (
+    SELECT count(*)
+    FROM view_rows, requested r
+    WHERE view_rows.project_id != r.project_id::text
+       OR view_rows.workspace_id != r.workspace_id::text
+       OR view_rows.project_workspace_id != r.workspace_id::text
+       OR view_rows.project_organization_id != r.organization_id::text
+  )
+) AS audit
+FROM requested;
+`;
+  return runPostgresJson(sql);
+}
+
+function assertSavedViewLifecycleDbAudit(
+  audit,
+  { projectId, workspaceId, savedViewIds, viewNames },
+) {
+  const views = asArray(audit?.views);
+  assert(
+    views.length === savedViewIds.length,
+    `Saved view DB audit returned wrong row count: ${JSON.stringify(audit)}.`,
+  );
+  assert(
+    Number(audit?.wrong_scope_count) === 0,
+    `Saved view DB audit found wrong-scope rows: ${JSON.stringify(audit)}.`,
+  );
+
+  const ids = new Set(views.map((view) => view.id));
+  for (const id of savedViewIds) {
+    assert(ids.has(id), `Saved view DB audit missed ${id}.`);
+  }
+
+  const names = new Set(views.map((view) => view.name));
+  for (const name of viewNames) {
+    assert(names.has(name), `Saved view DB audit missed name ${name}.`);
+  }
+
+  for (const view of views) {
+    assert(
+      view.project_id === projectId && view.workspace_id === workspaceId,
+      `Saved view persisted to wrong scope: ${JSON.stringify(view)}.`,
+    );
+    assert(
+      view.visibility === "personal",
+      `Saved view lifecycle should leave disposable views personal: ${JSON.stringify(view)}.`,
+    );
+    assert(
+      view.deleted === false,
+      `Saved view should be active before cleanup: ${JSON.stringify(view)}.`,
+    );
+  }
+}
+
+async function hardDeleteSavedViewArtifacts({ savedViewIds }) {
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuidArray(savedViewIds)} AS saved_view_ids
+),
+deleted_saved_views AS (
+  DELETE FROM tracer_saved_view saved_view
+  USING requested r
+  WHERE saved_view.id = ANY(r.saved_view_ids)
+  RETURNING saved_view.id
+)
+SELECT json_build_object(
+  'deleted_saved_view_count', (SELECT count(*) FROM deleted_saved_views),
+  'remaining_saved_view_count', (
+    SELECT count(*)
+    FROM tracer_saved_view saved_view
+    JOIN requested r ON saved_view.id = ANY(r.saved_view_ids)
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM deleted_saved_views
+      WHERE deleted_saved_views.id = saved_view.id
+    )
+  )
+) AS cleanup
+FROM requested;
 `;
   return runPostgresJson(sql);
 }
@@ -6792,6 +9009,1120 @@ FROM requested;
   return runPostgresJson(sql);
 }
 
+async function loadObservabilityProviderDbAudit({
+  organizationId,
+  workspaceId,
+  providerId,
+  projectId,
+}) {
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for observability-provider audit.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for observability-provider audit.",
+  );
+  assert(
+    isUuid(providerId),
+    "providerId must be a UUID for observability-provider audit.",
+  );
+  assert(
+    isUuid(projectId),
+    "projectId must be a UUID for observability-provider audit.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlUuid(providerId)} AS provider_id,
+    ${sqlUuid(projectId)} AS project_id
+),
+provider_row AS (
+  SELECT
+    provider.id::text AS id,
+    provider.project_id::text AS project_id,
+    provider.provider,
+    provider.enabled,
+    provider.organization_id::text AS organization_id,
+    provider.workspace_id::text AS workspace_id,
+    provider.metadata,
+    provider.deleted,
+    provider.deleted_at IS NOT NULL AS deleted_at_set
+  FROM tracer_observability_provider provider
+  JOIN requested r ON provider.id = r.provider_id
+),
+project_row AS (
+  SELECT
+    project.id::text AS id,
+    project.name,
+    project.trace_type,
+    project.organization_id::text AS organization_id,
+    project.workspace_id::text AS workspace_id,
+    project.source,
+    project.deleted
+  FROM tracer_project project
+  JOIN requested r ON project.id = r.project_id
+)
+SELECT json_build_object(
+  'provider', coalesce((SELECT row_to_json(provider_row) FROM provider_row), '{}'::json),
+  'project', coalesce((SELECT row_to_json(project_row) FROM project_row), '{}'::json)
+)
+FROM requested;
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteObservabilityProviderArtifacts({
+  providerId,
+  projectId,
+}) {
+  assert(
+    isUuid(providerId),
+    "providerId must be a UUID for observability-provider cleanup.",
+  );
+  assert(
+    isUuid(projectId),
+    "projectId must be a UUID for observability-provider cleanup.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(providerId)} AS provider_id,
+    ${sqlUuid(projectId)} AS project_id
+),
+deleted_provider AS (
+  DELETE FROM tracer_observability_provider provider
+  USING requested r
+  WHERE provider.id = r.provider_id
+  RETURNING provider.id
+),
+deleted_project AS (
+  DELETE FROM tracer_project project
+  USING requested r
+  WHERE project.id = r.project_id
+  RETURNING project.id
+)
+SELECT json_build_object(
+  'deleted_provider_count', (SELECT count(*) FROM deleted_provider),
+  'deleted_project_count', (SELECT count(*) FROM deleted_project),
+  'remaining_provider_count', (
+    SELECT count(*)
+    FROM tracer_observability_provider provider
+    JOIN requested r ON provider.id = r.provider_id
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM deleted_provider
+      WHERE deleted_provider.id = provider.id
+    )
+  ),
+  'remaining_project_count', (
+    SELECT count(*)
+    FROM tracer_project project
+    JOIN requested r ON project.id = r.project_id
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM deleted_project
+      WHERE deleted_project.id = project.id
+    )
+  )
+)
+FROM requested;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadImagineAnalysisDbAudit({
+  organizationId,
+  workspaceId,
+  savedViewId,
+  projectId,
+  analysisId,
+  traceId,
+  widgetId,
+}) {
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for imagine-analysis audit.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for imagine-analysis audit.",
+  );
+  assert(
+    isUuid(savedViewId),
+    "savedViewId must be a UUID for imagine-analysis audit.",
+  );
+  assert(
+    isUuid(projectId),
+    "projectId must be a UUID for imagine-analysis audit.",
+  );
+  assert(
+    isUuid(analysisId),
+    "analysisId must be a UUID for imagine-analysis audit.",
+  );
+  assert(
+    String(traceId || "").trim(),
+    "traceId must be set for imagine-analysis audit.",
+  );
+  assert(
+    String(widgetId || "").trim(),
+    "widgetId must be set for imagine-analysis audit.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlUuid(savedViewId)} AS saved_view_id,
+    ${sqlUuid(projectId)} AS project_id,
+    ${sqlUuid(analysisId)} AS analysis_id,
+    ${sqlString(traceId)} AS trace_id,
+    ${sqlString(widgetId)} AS widget_id
+),
+analysis_row AS (
+  SELECT
+    analysis.id::text AS id,
+    analysis.saved_view_id::text AS saved_view_id,
+    analysis.project_id::text AS project_id,
+    analysis.organization_id::text AS organization_id,
+    analysis.widget_id,
+    analysis.trace_id,
+    analysis.prompt,
+    analysis.status,
+    analysis.content,
+    analysis.error,
+    analysis.workflow_id,
+    analysis.deleted
+  FROM tracer_imagine_analysis analysis
+  JOIN requested r ON analysis.id = r.analysis_id
+),
+saved_view_row AS (
+  SELECT
+    saved_view.id::text AS id,
+    saved_view.project_id::text AS project_id,
+    saved_view.workspace_id::text AS workspace_id,
+    saved_view.name,
+    saved_view.tab_type,
+    saved_view.visibility,
+    saved_view.deleted
+  FROM tracer_saved_view saved_view
+  JOIN requested r ON saved_view.id = r.saved_view_id
+),
+project_row AS (
+  SELECT
+    project.id::text AS id,
+    project.name,
+    project.trace_type,
+    project.organization_id::text AS organization_id,
+    project.workspace_id::text AS workspace_id,
+    project.deleted
+  FROM tracer_project project
+  JOIN requested r ON project.id = r.project_id
+)
+SELECT json_build_object(
+  'analysis', coalesce((SELECT row_to_json(analysis_row) FROM analysis_row), '{}'::json),
+  'saved_view', coalesce((SELECT row_to_json(saved_view_row) FROM saved_view_row), '{}'::json),
+  'project', coalesce((SELECT row_to_json(project_row) FROM project_row), '{}'::json)
+)
+FROM requested;
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteImagineAnalysisArtifacts({
+  savedViewId,
+  traceId,
+  widgetId,
+}) {
+  assert(
+    isUuid(savedViewId),
+    "savedViewId must be a UUID for imagine-analysis cleanup.",
+  );
+  assert(
+    String(traceId || "").trim(),
+    "traceId must be set for imagine-analysis cleanup.",
+  );
+  assert(
+    String(widgetId || "").trim(),
+    "widgetId must be set for imagine-analysis cleanup.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(savedViewId)} AS saved_view_id,
+    ${sqlString(traceId)} AS trace_id,
+    ${sqlString(widgetId)} AS widget_id
+),
+deleted_analysis AS (
+  DELETE FROM tracer_imagine_analysis analysis
+  USING requested r
+  WHERE analysis.saved_view_id = r.saved_view_id
+    AND analysis.trace_id = r.trace_id
+    AND analysis.widget_id = r.widget_id
+  RETURNING analysis.id
+),
+deleted_saved_view AS (
+  DELETE FROM tracer_saved_view saved_view
+  USING requested r
+  WHERE saved_view.id = r.saved_view_id
+  RETURNING saved_view.id
+)
+SELECT json_build_object(
+  'deleted_analysis_count', (SELECT count(*) FROM deleted_analysis),
+  'deleted_saved_view_count', (SELECT count(*) FROM deleted_saved_view),
+  'remaining_analysis_count', (
+    SELECT count(*)
+    FROM tracer_imagine_analysis analysis
+    JOIN requested r ON analysis.saved_view_id = r.saved_view_id
+      AND analysis.trace_id = r.trace_id
+      AND analysis.widget_id = r.widget_id
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM deleted_analysis
+      WHERE deleted_analysis.id = analysis.id
+    )
+  ),
+  'remaining_saved_view_count', (
+    SELECT count(*)
+    FROM tracer_saved_view saved_view
+    JOIN requested r ON saved_view.id = r.saved_view_id
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM deleted_saved_view
+      WHERE deleted_saved_view.id = saved_view.id
+    )
+  )
+)
+FROM requested;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadTracerAnnotationLabelDbAudit({
+  organizationId,
+  workspaceId,
+  projectId,
+  labelId,
+}) {
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for annotation-label audit.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for annotation-label audit.",
+  );
+  assert(
+    isUuid(projectId),
+    "projectId must be a UUID for annotation-label audit.",
+  );
+  assert(isUuid(labelId), "labelId must be a UUID for annotation-label audit.");
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlUuid(projectId)} AS project_id,
+    ${sqlUuid(labelId)} AS label_id
+),
+label_row AS (
+  SELECT
+    label.id::text AS id,
+    label.name,
+    label.type,
+    label.organization_id::text AS organization_id,
+    label.workspace_id::text AS workspace_id,
+    label.project_id::text AS project_id,
+    label.deleted,
+    label.deleted_at IS NOT NULL AS deleted_at_set
+  FROM model_hub_annotationslabels label
+  JOIN requested r ON label.id = r.label_id
+),
+project_row AS (
+  SELECT
+    project.id::text AS id,
+    project.name,
+    project.trace_type,
+    project.organization_id::text AS organization_id,
+    project.workspace_id::text AS workspace_id,
+    project.deleted
+  FROM tracer_project project
+  JOIN requested r ON project.id = r.project_id
+)
+SELECT json_build_object(
+  'label', coalesce((SELECT row_to_json(label_row) FROM label_row), '{}'::json),
+  'project', coalesce((SELECT row_to_json(project_row) FROM project_row), '{}'::json)
+)
+FROM requested;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadObserveProjectScopeAudit({
+  organizationId,
+  workspaceId,
+  projectId,
+}) {
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for observe project scope audit.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for observe project scope audit.",
+  );
+  assert(
+    isUuid(projectId),
+    "projectId must be a UUID for observe project scope audit.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlUuid(projectId)} AS project_id
+),
+project_row AS (
+  SELECT
+    project.id::text AS id,
+    project.organization_id::text AS organization_id,
+    project.workspace_id::text AS workspace_id,
+    project.trace_type,
+    project.deleted
+  FROM tracer_project project
+  JOIN requested r ON project.id = r.project_id
+)
+SELECT json_build_object(
+  'project_id', p.id,
+  'organization_id', p.organization_id,
+  'workspace_id', p.workspace_id,
+  'trace_type', p.trace_type,
+  'deleted', p.deleted,
+  'organization_matches', p.organization_id = (SELECT organization_id::text FROM requested),
+  'workspace_matches', p.workspace_id = (SELECT workspace_id::text FROM requested),
+  'usable_observe_project',
+    p.organization_id = (SELECT organization_id::text FROM requested)
+    AND p.workspace_id = (SELECT workspace_id::text FROM requested)
+    AND p.trace_type = 'observe'
+    AND p.deleted = false
+)
+FROM project_row p;
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteTracerAnnotationLabelArtifact({ labelId }) {
+  assert(
+    isUuid(labelId),
+    "labelId must be a UUID for annotation-label cleanup.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(labelId)} AS label_id
+),
+deleted_label AS (
+  DELETE FROM model_hub_annotationslabels label
+  USING requested r
+  WHERE label.id = r.label_id
+  RETURNING label.id
+)
+SELECT json_build_object(
+  'deleted_label_count', (SELECT count(*) FROM deleted_label),
+  'remaining_label_count', (
+    SELECT count(*)
+    FROM model_hub_annotationslabels label
+    JOIN requested r ON label.id = r.label_id
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM deleted_label
+      WHERE deleted_label.id = label.id
+    )
+  )
+)
+FROM requested;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadObserveDatasetAddToDatasetAudit({
+  organizationId,
+  workspaceId,
+  projectId,
+  datasetId,
+  spanId,
+  traceId,
+}) {
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for observe dataset audit.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for observe dataset audit.",
+  );
+  assert(
+    isUuid(projectId),
+    "projectId must be a UUID for observe dataset audit.",
+  );
+  assert(
+    isUuid(datasetId),
+    "datasetId must be a UUID for observe dataset audit.",
+  );
+  assert(String(spanId || "").trim(), "spanId must be set for dataset audit.");
+  assert(isUuid(traceId), "traceId must be a UUID for observe dataset audit.");
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlUuid(projectId)} AS project_id,
+    ${sqlUuid(datasetId)} AS dataset_id,
+    ${sqlString(spanId)} AS span_id,
+    ${sqlUuid(traceId)} AS trace_id
+),
+dataset_row AS (
+  SELECT
+    dataset.id::text AS id,
+    dataset.name,
+    dataset.source,
+    dataset.organization_id::text AS organization_id,
+    dataset.workspace_id::text AS workspace_id,
+    dataset.deleted,
+    dataset.column_order,
+    dataset.column_config
+  FROM model_hub_dataset dataset
+  JOIN requested r ON dataset.id = r.dataset_id
+),
+project_row AS (
+  SELECT
+    project.id::text AS id,
+    project.organization_id::text AS organization_id,
+    project.workspace_id::text AS workspace_id,
+    project.trace_type,
+    project.deleted
+  FROM tracer_project project
+  JOIN requested r ON project.id = r.project_id
+),
+trace_row AS (
+  SELECT
+    trace.id::text AS id,
+    trace.project_id::text AS project_id,
+    trace.deleted
+  FROM tracer_trace trace
+  JOIN requested r ON trace.id = r.trace_id
+),
+span_row AS (
+  SELECT
+    span.id,
+    span.project_id::text AS project_id,
+    span.trace_id::text AS trace_id,
+    span.deleted
+  FROM tracer_observation_span span
+  JOIN requested r ON span.id = r.span_id
+),
+column_rows AS (
+  SELECT
+    column_row.id::text AS id,
+    column_row.name,
+    column_row.data_type,
+    column_row.source,
+    column_row.deleted
+  FROM model_hub_column column_row
+  JOIN requested r ON column_row.dataset_id = r.dataset_id
+  ORDER BY column_row.created_at ASC, column_row.name ASC
+)
+SELECT json_build_object(
+  'dataset', COALESCE((SELECT row_to_json(dataset_row) FROM dataset_row), '{}'::json),
+  'project', COALESCE((SELECT row_to_json(project_row) FROM project_row), '{}'::json),
+  'trace', COALESCE((SELECT row_to_json(trace_row) FROM trace_row), '{}'::json),
+  'span', COALESCE((SELECT row_to_json(span_row) FROM span_row), '{}'::json),
+  'columns', COALESCE((
+    SELECT json_agg(row_to_json(column_rows))
+    FROM column_rows
+  ), '[]'::json),
+  'row_count', (
+    SELECT count(*)
+    FROM model_hub_row row_item
+    JOIN requested r ON row_item.dataset_id = r.dataset_id
+    WHERE row_item.deleted = false
+  ),
+  'cell_count', (
+    SELECT count(*)
+    FROM model_hub_cell cell
+    JOIN requested r ON cell.dataset_id = r.dataset_id
+    WHERE cell.deleted = false
+  )
+)
+FROM requested;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadObserveDatasetRootCrudAudit({ datasetId }) {
+  assert(isUuid(datasetId), "datasetId must be a UUID for root dataset audit.");
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(datasetId)} AS dataset_id
+),
+dataset_row AS (
+  SELECT
+    dataset.id::text AS id,
+    dataset.name,
+    dataset.source,
+    dataset.model_type,
+    dataset.organization_id::text AS organization_id,
+    dataset.workspace_id::text AS workspace_id,
+    dataset.user_id::text AS user_id,
+    dataset.deleted,
+    dataset.deleted_at IS NOT NULL AS deleted_at_set
+  FROM model_hub_dataset dataset
+  JOIN requested r ON dataset.id = r.dataset_id
+)
+SELECT json_build_object(
+  'dataset', COALESCE((SELECT row_to_json(dataset_row) FROM dataset_row), '{}'::json)
+)
+FROM requested;
+`;
+  return runPostgresJson(sql);
+}
+
+function assertObserveDatasetRootCrudAudit(
+  audit,
+  { organizationId, workspaceId, userId, datasetId, datasetName, deleted },
+) {
+  assert(
+    audit?.dataset?.id === datasetId,
+    "Root dataset DB audit missed the created dataset.",
+  );
+  assert(
+    audit.dataset.name === datasetName &&
+      audit.dataset.source === "observe" &&
+      audit.dataset.model_type === "GenerativeLLM" &&
+      audit.dataset.organization_id === organizationId &&
+      audit.dataset.workspace_id === workspaceId &&
+      audit.dataset.user_id === userId &&
+      audit.dataset.deleted === deleted,
+    `Root dataset DB audit returned unexpected dataset state: ${JSON.stringify(
+      audit.dataset,
+    )}`,
+  );
+  if (deleted) {
+    assert(
+      audit.dataset.deleted_at_set === true,
+      "Root dataset soft-delete did not set deleted_at.",
+    );
+  }
+}
+
+function assertObserveDatasetAddToDatasetAudit(
+  audit,
+  {
+    organizationId,
+    workspaceId,
+    projectId,
+    datasetId,
+    datasetName,
+    spanId,
+    traceId,
+    expectedColumnNames,
+  },
+) {
+  assert(
+    audit?.dataset?.id === datasetId,
+    "Observe dataset audit missed the created dataset.",
+  );
+  assert(
+    audit.dataset.name === datasetName &&
+      audit.dataset.source === "observe" &&
+      audit.dataset.organization_id === organizationId &&
+      audit.dataset.workspace_id === workspaceId &&
+      audit.dataset.deleted === false,
+    `Observe dataset audit returned unexpected dataset state: ${JSON.stringify(
+      audit.dataset,
+    )}`,
+  );
+  assert(
+    audit?.project?.id === projectId &&
+      audit.project.organization_id === organizationId &&
+      audit.project.workspace_id === workspaceId &&
+      audit.project.trace_type === "observe" &&
+      audit.project.deleted === false,
+    "Observe dataset audit missed the scoped project.",
+  );
+  assert(
+    audit?.trace?.id === traceId &&
+      audit.trace.project_id === projectId &&
+      audit.trace.deleted === false,
+    "Observe dataset audit missed the selected trace.",
+  );
+  assert(
+    audit?.span?.id === spanId &&
+      audit.span.project_id === projectId &&
+      audit.span.trace_id === traceId &&
+      audit.span.deleted === false,
+    "Observe dataset audit missed the selected span.",
+  );
+  const columnNames = asArray(audit.columns)
+    .filter((column) => column.deleted === false)
+    .map((column) => column.name);
+  for (const expectedName of expectedColumnNames) {
+    assert(
+      columnNames.includes(expectedName),
+      `Observe dataset audit missed column ${expectedName}.`,
+    );
+  }
+}
+
+async function hardDeleteObserveDatasetArtifacts({ datasetId }) {
+  assert(
+    isUuid(datasetId),
+    "datasetId must be a UUID for observe dataset cleanup.",
+  );
+  const deleteSql = `
+WITH requested AS (
+  SELECT ${sqlUuid(datasetId)} AS dataset_id
+),
+deleted_cells AS (
+  DELETE FROM model_hub_cell cell
+  USING requested r
+  WHERE cell.dataset_id = r.dataset_id
+  RETURNING cell.id
+),
+deleted_rows AS (
+  DELETE FROM model_hub_row row_item
+  USING requested r
+  WHERE row_item.dataset_id = r.dataset_id
+  RETURNING row_item.id
+),
+deleted_columns AS (
+  DELETE FROM model_hub_column column_row
+  USING requested r
+  WHERE column_row.dataset_id = r.dataset_id
+  RETURNING column_row.id
+),
+deleted_dataset AS (
+  DELETE FROM model_hub_dataset dataset
+  USING requested r
+  WHERE dataset.id = r.dataset_id
+  RETURNING dataset.id
+)
+SELECT json_build_object(
+  'deleted_cell_count', (SELECT count(*) FROM deleted_cells),
+  'deleted_row_count', (SELECT count(*) FROM deleted_rows),
+  'deleted_column_count', (SELECT count(*) FROM deleted_columns),
+  'deleted_dataset_count', (SELECT count(*) FROM deleted_dataset)
+)
+FROM requested;
+`;
+  const deleteSummary = await runPostgresJson(deleteSql);
+
+  const remainingSql = `
+WITH requested AS (
+  SELECT ${sqlUuid(datasetId)} AS dataset_id
+)
+SELECT json_build_object(
+  'remaining_cell_count', (
+    SELECT count(*)
+    FROM model_hub_cell cell
+    JOIN requested r ON cell.dataset_id = r.dataset_id
+  ),
+  'remaining_row_count', (
+    SELECT count(*)
+    FROM model_hub_row row_item
+    JOIN requested r ON row_item.dataset_id = r.dataset_id
+  ),
+  'remaining_column_count', (
+    SELECT count(*)
+    FROM model_hub_column column_row
+    JOIN requested r ON column_row.dataset_id = r.dataset_id
+  ),
+  'remaining_dataset_count', (
+    SELECT count(*)
+    FROM model_hub_dataset dataset
+    JOIN requested r ON dataset.id = r.dataset_id
+  )
+)
+FROM requested;
+`;
+  const remainingSummary = await runPostgresJson(remainingSql);
+  return { ...deleteSummary, ...remainingSummary };
+}
+
+async function loadSharedLinkDbAudit({
+  organizationId,
+  workspaceId,
+  sharedLinkIds,
+  traceId,
+  spanId,
+  projectId,
+  dashboardId,
+  widgetId,
+}) {
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for shared-link audit.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "workspaceId must be a UUID for shared-link audit.",
+  );
+  assert(
+    asArray(sharedLinkIds).every(isUuid),
+    "sharedLinkIds must be UUIDs for shared-link audit.",
+  );
+  assert(isUuid(traceId), "traceId must be a UUID for shared-link audit.");
+  assert(isUuid(projectId), "projectId must be a UUID for shared-link audit.");
+  assert(
+    String(spanId || "").trim(),
+    "spanId must be set for shared-link audit.",
+  );
+  assert(
+    isUuid(dashboardId),
+    "dashboardId must be a UUID for shared-link audit.",
+  );
+  assert(isUuid(widgetId), "widgetId must be a UUID for shared-link audit.");
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlUuidArray(sharedLinkIds)} AS shared_link_ids,
+    ${sqlUuid(traceId)} AS trace_id,
+    ${sqlUuid(projectId)} AS project_id,
+    ${sqlString(spanId)} AS span_id,
+    ${sqlUuid(dashboardId)} AS dashboard_id,
+    ${sqlUuid(widgetId)} AS widget_id
+),
+shared_link_rows AS (
+  SELECT
+    link.id::text AS id,
+    link.resource_type,
+    link.resource_id,
+    link.access_type,
+    link.is_active,
+    link.organization_id::text AS organization_id,
+    link.workspace_id::text AS workspace_id,
+    link.deleted,
+    link.deleted_at IS NOT NULL AS deleted_at_set
+  FROM tracer_sharedlink link
+  JOIN requested r ON link.id = ANY(r.shared_link_ids)
+),
+access_rows AS (
+  SELECT
+    access.id::text AS id,
+    access.shared_link_id::text AS shared_link_id,
+    access.email,
+    access.deleted,
+    access.deleted_at IS NOT NULL AS deleted_at_set
+  FROM tracer_sharedlinkaccess access
+  JOIN requested r ON access.shared_link_id = ANY(r.shared_link_ids)
+),
+project_row AS (
+  SELECT
+    project.id::text AS id,
+    project.organization_id::text AS organization_id,
+    project.workspace_id::text AS workspace_id,
+    project.trace_type,
+    project.model_type,
+    project.deleted
+  FROM tracer_project project
+  JOIN requested r ON project.id = r.project_id
+),
+trace_row AS (
+  SELECT
+    trace.id::text AS id,
+    trace.project_id::text AS project_id,
+    project.organization_id::text AS organization_id,
+    project.workspace_id::text AS workspace_id
+  FROM tracer_trace trace
+  JOIN tracer_project project ON project.id = trace.project_id
+  JOIN requested r ON trace.id = r.trace_id
+),
+span_row AS (
+  SELECT
+    span.id,
+    span.trace_id::text AS trace_id,
+    span.project_id::text AS project_id
+  FROM tracer_observation_span span
+  JOIN requested r ON span.id = r.span_id
+),
+dashboard_row AS (
+  SELECT
+    dashboard.id::text AS id,
+    dashboard.workspace_id::text AS workspace_id,
+    workspace.organization_id::text AS organization_id,
+    dashboard.deleted
+  FROM tracer_dashboard dashboard
+  JOIN accounts_workspace workspace ON workspace.id = dashboard.workspace_id
+  JOIN requested r ON dashboard.id = r.dashboard_id
+),
+widget_row AS (
+  SELECT
+    widget.id::text AS id,
+    widget.dashboard_id::text AS dashboard_id,
+    widget.deleted,
+    widget.chart_config::jsonb ->> 'chart_type' AS chart_type
+  FROM tracer_dashboardwidget widget
+  JOIN requested r ON widget.id = r.widget_id
+)
+SELECT json_build_object(
+  'shared_links', COALESCE((
+    SELECT json_agg(row_to_json(shared_link_rows) ORDER BY id)
+    FROM shared_link_rows
+  ), '[]'::json),
+  'access_rows', COALESCE((
+    SELECT json_agg(row_to_json(access_rows) ORDER BY email)
+    FROM access_rows
+  ), '[]'::json),
+  'active_shared_link_count', (
+    SELECT count(*) FROM shared_link_rows WHERE is_active = true AND deleted = false
+  ),
+  'active_access_count', (
+    SELECT count(*) FROM access_rows WHERE deleted = false
+  ),
+  'deleted_access_count', (
+    SELECT count(*) FROM access_rows WHERE deleted = true
+  ),
+  'trace', COALESCE((SELECT row_to_json(trace_row) FROM trace_row), '{}'::json),
+  'project', COALESCE((SELECT row_to_json(project_row) FROM project_row), '{}'::json),
+  'span', COALESCE((SELECT row_to_json(span_row) FROM span_row), '{}'::json),
+  'dashboard', COALESCE((SELECT row_to_json(dashboard_row) FROM dashboard_row), '{}'::json),
+  'widget', COALESCE((SELECT row_to_json(widget_row) FROM widget_row), '{}'::json)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+function assertSharedLinkDbAudit(
+  audit,
+  {
+    organizationId,
+    workspaceId,
+    traceId,
+    spanId,
+    projectId,
+    dashboardId,
+    widgetId,
+    publicTraceLinkId,
+    restrictedTraceLinkId,
+    dashboardLinkId,
+    projectLinkId,
+  },
+) {
+  const links = asArray(audit.shared_links);
+  assert(
+    links.length === 4,
+    `Shared-link DB audit expected 4 links, got ${links.length}.`,
+  );
+  const publicTraceLink = links.find((row) => row.id === publicTraceLinkId);
+  const restrictedTraceLink = links.find(
+    (row) => row.id === restrictedTraceLinkId,
+  );
+  const dashboardLink = links.find((row) => row.id === dashboardLinkId);
+  const projectLink = links.find((row) => row.id === projectLinkId);
+  assert(
+    publicTraceLink?.resource_type === "trace" &&
+      publicTraceLink.resource_id === traceId &&
+      publicTraceLink.is_active === false,
+    "Shared-link DB audit did not capture the revoked public trace link.",
+  );
+  assert(
+    restrictedTraceLink?.resource_type === "trace" &&
+      restrictedTraceLink.access_type === "restricted" &&
+      restrictedTraceLink.is_active === true,
+    "Shared-link DB audit did not capture the active restricted trace link.",
+  );
+  assert(
+    dashboardLink?.resource_type === "dashboard" &&
+      dashboardLink.resource_id === dashboardId &&
+      dashboardLink.is_active === true,
+    "Shared-link DB audit did not capture the active dashboard link.",
+  );
+  assert(
+    projectLink?.resource_type === "project" &&
+      projectLink.resource_id === projectId &&
+      projectLink.is_active === true,
+    "Shared-link DB audit did not capture the active project link.",
+  );
+  for (const link of links) {
+    assert(
+      link.organization_id === organizationId &&
+        link.workspace_id === workspaceId,
+      "Shared-link DB audit found a link outside the authenticated workspace.",
+    );
+  }
+
+  const accessRows = asArray(audit.access_rows);
+  assert(
+    accessRows.some(
+      (row) =>
+        row.shared_link_id === restrictedTraceLinkId &&
+        row.email === "api-journey-shared-viewer@example.com" &&
+        row.deleted === false,
+    ),
+    "Shared-link DB audit missed the active restricted viewer ACL row.",
+  );
+  assert(
+    accessRows.some(
+      (row) =>
+        row.shared_link_id === restrictedTraceLinkId &&
+        row.email === "api-journey-shared-second-viewer@example.com" &&
+        row.deleted === true,
+    ),
+    "Shared-link DB audit missed the removed ACL row.",
+  );
+  assert(
+    audit.trace?.id === traceId &&
+      audit.trace?.organization_id === organizationId &&
+      audit.trace?.workspace_id === workspaceId,
+    "Shared-link DB audit missed the seeded trace.",
+  );
+  assert(
+    audit.project?.id === projectId &&
+      audit.project?.organization_id === organizationId &&
+      audit.project?.workspace_id === workspaceId &&
+      audit.project?.trace_type === "observe" &&
+      audit.project?.deleted === false,
+    "Shared-link DB audit missed the seeded Observe project.",
+  );
+  assert(
+    audit.span?.id === spanId && audit.span?.trace_id === traceId,
+    "Shared-link DB audit missed the seeded span.",
+  );
+  assert(
+    audit.dashboard?.id === dashboardId &&
+      audit.dashboard?.organization_id === organizationId &&
+      audit.dashboard?.workspace_id === workspaceId &&
+      audit.dashboard?.deleted === false,
+    "Shared-link DB audit missed the seeded dashboard.",
+  );
+  assert(
+    audit.widget?.id === widgetId &&
+      audit.widget?.dashboard_id === dashboardId &&
+      audit.widget?.chart_type === "line",
+    "Shared-link DB audit missed the seeded dashboard widget.",
+  );
+}
+
+async function hardDeleteSharedLinkArtifacts({
+  sharedLinkIds = [],
+  dashboardId = null,
+  widgetId = null,
+}) {
+  const linkIds = asArray(sharedLinkIds).filter(Boolean);
+  assert(
+    linkIds.every(isUuid),
+    "sharedLinkIds must be UUIDs for shared-link cleanup.",
+  );
+  if (dashboardId) {
+    assert(
+      isUuid(dashboardId),
+      "dashboardId must be a UUID for shared-link cleanup.",
+    );
+  }
+  if (widgetId) {
+    assert(
+      isUuid(widgetId),
+      "widgetId must be a UUID for shared-link cleanup.",
+    );
+  }
+  if (!linkIds.length && !dashboardId && !widgetId) {
+    return {
+      deleted_access_count: 0,
+      deleted_shared_link_count: 0,
+      deleted_widget_count: 0,
+      deleted_dashboard_count: 0,
+      remaining_access_count: 0,
+      remaining_shared_link_count: 0,
+      remaining_widget_count: 0,
+      remaining_dashboard_count: 0,
+    };
+  }
+
+  const requestSql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuidArrayOrEmpty(linkIds)} AS shared_link_ids,
+    ${sqlUuidOrNull(dashboardId)} AS dashboard_id,
+    ${sqlUuidOrNull(widgetId)} AS widget_id
+),
+deleted_access AS (
+  DELETE FROM tracer_sharedlinkaccess access
+  USING requested r
+  WHERE access.shared_link_id = ANY(r.shared_link_ids)
+  RETURNING access.id
+),
+deleted_shared_links AS (
+  DELETE FROM tracer_sharedlink link
+  USING requested r
+  WHERE link.id = ANY(r.shared_link_ids)
+  RETURNING link.id
+),
+deleted_widgets AS (
+  DELETE FROM tracer_dashboardwidget widget
+  USING requested r
+  WHERE (r.widget_id IS NOT NULL AND widget.id = r.widget_id)
+     OR (r.dashboard_id IS NOT NULL AND widget.dashboard_id = r.dashboard_id)
+  RETURNING widget.id
+),
+deleted_dashboards AS (
+  DELETE FROM tracer_dashboard dashboard
+  USING requested r
+  WHERE r.dashboard_id IS NOT NULL
+    AND dashboard.id = r.dashboard_id
+  RETURNING dashboard.id
+)
+SELECT json_build_object(
+  'deleted_access_count', (SELECT count(*) FROM deleted_access),
+  'deleted_shared_link_count', (SELECT count(*) FROM deleted_shared_links),
+  'deleted_widget_count', (SELECT count(*) FROM deleted_widgets),
+  'deleted_dashboard_count', (SELECT count(*) FROM deleted_dashboards)
+)
+FROM requested;
+`;
+  const deleteSummary = await runPostgresJson(requestSql);
+
+  const remainingSql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuidArrayOrEmpty(linkIds)} AS shared_link_ids,
+    ${sqlUuidOrNull(dashboardId)} AS dashboard_id,
+    ${sqlUuidOrNull(widgetId)} AS widget_id
+)
+SELECT json_build_object(
+  'remaining_access_count', (
+    SELECT count(*)
+    FROM tracer_sharedlinkaccess access
+    JOIN requested r ON access.shared_link_id = ANY(r.shared_link_ids)
+  ),
+  'remaining_shared_link_count', (
+    SELECT count(*)
+    FROM tracer_sharedlink link
+    JOIN requested r ON link.id = ANY(r.shared_link_ids)
+  ),
+  'remaining_widget_count', (
+    SELECT count(*)
+    FROM tracer_dashboardwidget widget
+    JOIN requested r ON (
+      (r.widget_id IS NOT NULL AND widget.id = r.widget_id)
+      OR (r.dashboard_id IS NOT NULL AND widget.dashboard_id = r.dashboard_id)
+    )
+  ),
+  'remaining_dashboard_count', (
+    SELECT count(*)
+    FROM tracer_dashboard dashboard
+    JOIN requested r ON r.dashboard_id IS NOT NULL
+      AND dashboard.id = r.dashboard_id
+  )
+)
+FROM requested;
+`;
+  const remainingSummary = await runPostgresJson(remainingSql);
+  return { ...deleteSummary, ...remainingSummary };
+}
+
 async function loadObservationSpanDbAudit({
   organizationId,
   workspaceId,
@@ -7545,6 +10876,12 @@ deleted_eval_logs AS (
      OR eval_log.trace_id = ANY(r.trace_ids)
   RETURNING eval_log.id
 ),
+deleted_replay_sessions AS (
+  DELETE FROM tracer_replaysession replay
+  USING requested r
+  WHERE replay.project_id = r.project_id
+  RETURNING replay.id
+),
 deleted_spans AS (
   DELETE FROM tracer_observation_span span
   USING requested r
@@ -7577,6 +10914,7 @@ deleted_projects AS (
 )
 SELECT json_build_object(
   'deleted_eval_log_count', (SELECT count(*) FROM deleted_eval_logs),
+  'deleted_replay_session_count', (SELECT count(*) FROM deleted_replay_sessions),
   'deleted_span_count', (SELECT count(*) FROM deleted_spans),
   'deleted_trace_count', (SELECT count(*) FROM deleted_traces),
   'deleted_session_count', (SELECT count(*) FROM deleted_sessions),
@@ -7589,6 +10927,13 @@ SELECT json_build_object(
       WHERE eval_log.id = ANY(r.eval_log_ids)
          OR eval_log.trace_session_id = r.session_id
          OR eval_log.trace_id = ANY(r.trace_ids)
+    )
+  END,
+  'remaining_replay_session_count', CASE
+    WHEN (SELECT count(*) FROM deleted_replay_sessions) > 0 THEN 0
+    ELSE (
+      SELECT count(*) FROM tracer_replaysession replay, requested r
+      WHERE replay.project_id = r.project_id
     )
   END,
   'remaining_span_count', CASE
@@ -7629,6 +10974,124 @@ SELECT json_build_object(
 );
 `;
   return runPostgresJson(sql);
+}
+
+async function loadObserveChartsFilterDbAudit({
+  projectId,
+  projectVersionId,
+  sessionId,
+  traceIds,
+  spanIds,
+}) {
+  assert(isUuid(projectId), "projectId must be a UUID for chart audit.");
+  assert(
+    isUuid(projectVersionId),
+    "projectVersionId must be a UUID for chart audit.",
+  );
+  assert(isUuid(sessionId), "sessionId must be a UUID for chart audit.");
+  assert(asArray(traceIds).length > 0, "traceIds must be set for chart audit.");
+  assert(asArray(spanIds).length > 0, "spanIds must be set for chart audit.");
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(projectId)} AS project_id,
+    ${sqlUuid(projectVersionId)} AS project_version_id,
+    ${sqlUuid(sessionId)} AS session_id,
+    ${sqlUuidArray(traceIds)} AS trace_ids,
+    ${sqlStringArray(spanIds)} AS span_ids
+)
+SELECT json_build_object(
+  'project_id', project.id::text,
+  'project_organization_id', project.organization_id::text,
+  'project_workspace_id', project.workspace_id::text,
+  'project_deleted', project.deleted,
+  'project_version_id', pv.id::text,
+  'project_version_project_id', pv.project_id::text,
+  'session_count', (
+    SELECT count(*) FROM trace_session session, requested r
+    WHERE session.id = r.session_id
+      AND session.project_id = r.project_id
+      AND session.deleted = false
+  ),
+  'trace_count', (
+    SELECT count(*) FROM tracer_trace trace, requested r
+    WHERE trace.id = ANY(r.trace_ids)
+      AND trace.project_id = r.project_id
+      AND trace.deleted = false
+  ),
+  'session_trace_count', (
+    SELECT count(*) FROM tracer_trace trace, requested r
+    WHERE trace.id = ANY(r.trace_ids)
+      AND trace.session_id = r.session_id
+      AND trace.deleted = false
+  ),
+  'span_count', (
+    SELECT count(*) FROM tracer_observation_span span, requested r
+    WHERE span.id = ANY(r.span_ids)
+      AND span.project_id = r.project_id
+      AND span.project_version_id = r.project_version_id
+      AND span.deleted = false
+  ),
+  'span_attribute_count', (
+    SELECT count(*) FROM tracer_observation_span span, requested r
+    WHERE span.id = ANY(r.span_ids)
+      AND span.span_attributes ? 'api_journey_marker'
+      AND span.deleted = false
+  )
+)
+FROM requested r
+JOIN tracer_project project ON project.id = r.project_id
+JOIN tracer_project_version pv ON pv.id = r.project_version_id;
+`;
+  return runPostgresJson(sql);
+}
+
+function assertObserveChartsFilterDbAudit(
+  audit,
+  {
+    organizationId,
+    workspaceId,
+    projectId,
+    projectVersionId,
+    sessionId,
+    expectedSpanCount,
+    expectedTraceCount,
+  },
+) {
+  assert(audit?.project_id === projectId, "Chart audit project id mismatch.");
+  assert(
+    audit?.project_organization_id === organizationId,
+    "Chart audit project organization mismatch.",
+  );
+  assert(
+    audit?.project_workspace_id === workspaceId,
+    "Chart audit project workspace mismatch.",
+  );
+  assert(
+    audit?.project_version_id === projectVersionId &&
+      audit?.project_version_project_id === projectId,
+    "Chart audit project-version mismatch.",
+  );
+  assert(
+    Number(audit?.session_count) === 1,
+    `Chart audit missing session ${sessionId}.`,
+  );
+  assert(
+    Number(audit?.trace_count) === expectedTraceCount,
+    "Chart audit trace count mismatch.",
+  );
+  assert(
+    Number(audit?.session_trace_count) === 1,
+    "Chart audit session trace count mismatch.",
+  );
+  assert(
+    Number(audit?.span_count) === expectedSpanCount,
+    "Chart audit span count mismatch.",
+  );
+  assert(
+    Number(audit?.span_attribute_count) === expectedSpanCount,
+    "Chart audit span attribute count mismatch.",
+  );
 }
 
 async function loadOtelProjectResolutionAudit({
@@ -7681,6 +11144,142 @@ SELECT json_build_object(
 );
 `;
   return runPostgresJson(sql);
+}
+
+async function hardDeleteObserveTagTraceFixture({ projectVersionId, traceId }) {
+  assert(
+    isUuid(projectVersionId),
+    "projectVersionId must be a UUID for cleanup.",
+  );
+  assert(isUuid(traceId), "traceId must be a UUID for cleanup.");
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(projectVersionId)} AS project_version_id,
+    ${sqlUuidArray([traceId])} AS trace_ids
+),
+deleted_eval_logs AS (
+  DELETE FROM tracer_eval_logger eval_log
+  USING requested r
+  WHERE eval_log.trace_id = ANY(r.trace_ids)
+  RETURNING eval_log.id
+),
+deleted_trace_annotations AS (
+  DELETE FROM trace_annotation annotation
+  USING requested r
+  WHERE annotation.trace_id = ANY(r.trace_ids)
+  RETURNING annotation.id
+),
+deleted_spans AS (
+  DELETE FROM tracer_observation_span span
+  USING requested r
+  WHERE span.trace_id = ANY(r.trace_ids)
+  RETURNING span.id
+),
+deleted_traces AS (
+  DELETE FROM tracer_trace trace
+  USING requested r
+  WHERE trace.id = ANY(r.trace_ids)
+  RETURNING trace.id
+),
+deleted_project_version_winners AS (
+  DELETE FROM tracer_project_version_winner winner
+  USING requested r
+  WHERE winner.winner_version_id = r.project_version_id
+  RETURNING winner.id
+),
+deleted_project_versions AS (
+  DELETE FROM tracer_project_version pv
+  USING requested r
+  WHERE pv.id = r.project_version_id
+  RETURNING pv.id
+)
+SELECT json_build_object(
+  'deleted_eval_log_count', (SELECT count(*) FROM deleted_eval_logs),
+  'deleted_trace_annotation_count', (SELECT count(*) FROM deleted_trace_annotations),
+  'deleted_span_count', (SELECT count(*) FROM deleted_spans),
+  'deleted_trace_count', (SELECT count(*) FROM deleted_traces),
+  'deleted_project_version_winner_count', (SELECT count(*) FROM deleted_project_version_winners),
+  'deleted_project_version_count', (SELECT count(*) FROM deleted_project_versions),
+  'remaining_span_count', CASE
+    WHEN (SELECT count(*) FROM deleted_spans) > 0 THEN 0
+    ELSE (
+      SELECT count(*) FROM tracer_observation_span span, requested r
+      WHERE span.trace_id = ANY(r.trace_ids)
+    )
+  END,
+  'remaining_trace_count', CASE
+    WHEN (SELECT count(*) FROM deleted_traces) > 0 THEN 0
+    ELSE (
+      SELECT count(*) FROM tracer_trace trace, requested r
+      WHERE trace.id = ANY(r.trace_ids)
+    )
+  END,
+  'remaining_project_version_winner_count', CASE
+    WHEN (SELECT count(*) FROM deleted_project_version_winners) > 0 THEN 0
+    ELSE (
+      SELECT count(*) FROM tracer_project_version_winner winner, requested r
+      WHERE winner.winner_version_id = r.project_version_id
+    )
+  END,
+  'remaining_project_version_count', CASE
+    WHEN (SELECT count(*) FROM deleted_project_versions) > 0 THEN 0
+    ELSE (
+      SELECT count(*) FROM tracer_project_version pv, requested r
+      WHERE pv.id = r.project_version_id
+    )
+  END
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadObserveTagDbAudit({ projectId, traceId }) {
+  const traceSql = traceId ? sqlUuid(traceId) : "NULL::uuid";
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(projectId)} AS project_id, ${traceSql} AS trace_id
+),
+project_row AS (
+  SELECT
+    project.id::text,
+    project.organization_id::text,
+    project.workspace_id::text,
+    project.trace_type,
+    project.tags,
+    project.deleted
+  FROM tracer_project project
+  JOIN requested r ON project.id = r.project_id
+),
+trace_row AS (
+  SELECT
+    trace.id::text,
+    trace.project_id::text,
+    project.organization_id::text,
+    project.workspace_id::text,
+    trace.tags,
+    trace.deleted
+  FROM tracer_trace trace
+  JOIN requested r ON trace.id = r.trace_id
+  JOIN tracer_project project ON project.id = trace.project_id
+)
+SELECT json_build_object(
+  'project', coalesce((SELECT row_to_json(project_row) FROM project_row), '{}'::json),
+  'trace', coalesce((SELECT row_to_json(trace_row) FROM trace_row), '{}'::json)
+);
+`;
+  const audit = await runPostgresJson(sql);
+  assert(
+    audit?.project?.id,
+    `Observe tag DB audit missed project ${projectId}: ${JSON.stringify(audit)}.`,
+  );
+  if (traceId) {
+    assert(
+      audit?.trace?.id,
+      `Observe tag DB audit missed trace ${traceId}: ${JSON.stringify(audit)}.`,
+    );
+  }
+  return audit;
 }
 
 async function runPostgresJson(sql) {
@@ -7949,6 +11548,144 @@ function assertDashboardDbAudit(
   }
 }
 
+function assertObservabilityProviderDbAudit(
+  audit,
+  {
+    organizationId,
+    workspaceId,
+    providerId,
+    projectId,
+    projectName,
+    expectedDeleted,
+  },
+) {
+  assert(
+    audit?.provider?.id === providerId,
+    "Observability provider DB audit returned wrong provider id.",
+  );
+  assert(
+    audit?.provider?.project_id === projectId,
+    "Observability provider DB audit returned wrong project id.",
+  );
+  assert(
+    audit?.provider?.organization_id === organizationId,
+    "Observability provider DB audit returned wrong organization.",
+  );
+  assert(
+    audit?.provider?.workspace_id === workspaceId,
+    "Observability provider DB audit returned wrong provider workspace.",
+  );
+  assert(
+    audit?.provider?.provider === "retell",
+    "Observability provider DB audit returned wrong provider.",
+  );
+  assert(
+    audit?.provider?.deleted === expectedDeleted,
+    "Observability provider DB audit deleted flag mismatch.",
+  );
+  assert(
+    Boolean(audit?.provider?.deleted_at_set) === expectedDeleted,
+    "Observability provider DB audit deleted_at flag mismatch.",
+  );
+  assert(
+    audit?.project?.id === projectId,
+    "Observability provider DB audit missed linked project.",
+  );
+  assert(
+    audit?.project?.name === projectName,
+    "Observability provider DB audit returned wrong project name.",
+  );
+  assert(
+    audit?.project?.trace_type === "observe",
+    "Observability provider DB audit linked project is not an Observe project.",
+  );
+  assert(
+    audit?.project?.organization_id === organizationId,
+    "Observability provider DB audit returned wrong project organization.",
+  );
+  assert(
+    audit?.project?.workspace_id === workspaceId,
+    "Observability provider DB audit returned wrong project workspace.",
+  );
+}
+
+function assertImagineAnalysisDbAudit(
+  audit,
+  {
+    organizationId,
+    workspaceId,
+    savedViewId,
+    projectId,
+    analysisId,
+    traceId,
+    widgetId,
+    savedViewName,
+  },
+) {
+  assert(
+    audit?.analysis?.id === analysisId,
+    "Imagine analysis DB audit returned wrong analysis id.",
+  );
+  assert(
+    audit?.analysis?.saved_view_id === savedViewId,
+    "Imagine analysis DB audit returned wrong saved view id.",
+  );
+  assert(
+    audit?.analysis?.project_id === projectId,
+    "Imagine analysis DB audit returned wrong project id.",
+  );
+  assert(
+    audit?.analysis?.organization_id === organizationId,
+    "Imagine analysis DB audit returned wrong organization.",
+  );
+  assert(
+    audit?.analysis?.trace_id === traceId,
+    "Imagine analysis DB audit returned wrong trace id.",
+  );
+  assert(
+    audit?.analysis?.widget_id === widgetId,
+    "Imagine analysis DB audit returned wrong widget id.",
+  );
+  assert(
+    ["pending", "running", "completed", "failed"].includes(
+      audit?.analysis?.status,
+    ),
+    "Imagine analysis DB audit returned invalid status.",
+  );
+  assert(
+    audit?.saved_view?.id === savedViewId,
+    "Imagine analysis DB audit missed saved view.",
+  );
+  assert(
+    audit?.saved_view?.project_id === projectId,
+    "Imagine analysis DB audit saved view had wrong project.",
+  );
+  assert(
+    audit?.saved_view?.workspace_id === workspaceId,
+    "Imagine analysis DB audit saved view had wrong workspace.",
+  );
+  assert(
+    audit?.saved_view?.name === savedViewName,
+    "Imagine analysis DB audit saved view had wrong name.",
+  );
+  assert(
+    audit?.saved_view?.tab_type === "imagine",
+    "Imagine analysis DB audit saved view was not an Imagine tab.",
+  );
+  assert(
+    audit?.project?.id === projectId,
+    "Imagine analysis DB audit missed linked project.",
+  );
+  assert(
+    audit?.project?.organization_id === organizationId,
+    "Imagine analysis DB audit project had wrong organization.",
+  );
+  assert(
+    audit?.project?.workspace_id === workspaceId,
+    "Imagine analysis DB audit project had wrong workspace.",
+  );
+}
+
 function observationSpanPayload(payload) {
   return payload?.observation_span || payload;
 }
@@ -8112,6 +11849,99 @@ function assertTraceLifecycleDbAudit(
       `Span ${spanId} should have deleted_at set.`,
     );
   }
+}
+
+async function loadReplaySessionLifecycleDbAudit({
+  organizationId,
+  workspaceId,
+  projectId,
+  replaySessionId,
+  sessionId,
+}) {
+  assert(
+    isUuid(organizationId),
+    "organizationId must be a UUID for replay audit.",
+  );
+  assert(isUuid(workspaceId), "workspaceId must be a UUID for replay audit.");
+  assert(isUuid(projectId), "projectId must be a UUID for replay audit.");
+  assert(
+    isUuid(replaySessionId),
+    "replaySessionId must be a UUID for replay audit.",
+  );
+  assert(isUuid(sessionId), "sessionId must be a UUID for replay audit.");
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlUuid(projectId)} AS project_id,
+    ${sqlUuid(replaySessionId)} AS replay_session_id,
+    ${sqlUuid(sessionId)} AS session_id
+),
+replay_row AS (
+  SELECT
+    replay.id::text AS id,
+    replay.project_id::text AS project_id,
+    replay.replay_type,
+    replay.ids,
+    replay.select_all,
+    replay.current_step,
+    replay.deleted,
+    project.organization_id::text AS organization_id,
+    project.workspace_id::text AS workspace_id
+  FROM tracer_replaysession replay
+  JOIN tracer_project project ON project.id = replay.project_id
+  JOIN requested r ON replay.id = r.replay_session_id
+  WHERE replay.project_id = r.project_id
+)
+SELECT json_build_object(
+  'replay_exists', EXISTS (SELECT 1 FROM replay_row),
+  'id', (SELECT id FROM replay_row),
+  'project_id', (SELECT project_id FROM replay_row),
+  'organization_id', (SELECT organization_id FROM replay_row),
+  'workspace_id', (SELECT workspace_id FROM replay_row),
+  'replay_type', (SELECT replay_type FROM replay_row),
+  'ids', COALESCE((SELECT ids FROM replay_row), '[]'::jsonb),
+  'select_all', COALESCE((SELECT select_all FROM replay_row), false),
+  'current_step', (SELECT current_step FROM replay_row),
+  'deleted', COALESCE((SELECT deleted FROM replay_row), false)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+function assertReplaySessionLifecycleDbAudit(
+  audit,
+  { organizationId, workspaceId, projectId, replaySessionId, sessionId },
+) {
+  assert(
+    audit?.replay_exists === true,
+    `Replay-session DB audit missed ${replaySessionId}: ${JSON.stringify(audit)}.`,
+  );
+  assert(audit.id === replaySessionId, "Replay-session audit id mismatch.");
+  assert(
+    audit.project_id === projectId,
+    "Replay-session audit project id mismatch.",
+  );
+  assert(
+    audit.organization_id === organizationId,
+    "Replay-session audit organization id mismatch.",
+  );
+  assert(
+    audit.workspace_id === workspaceId,
+    "Replay-session audit workspace id mismatch.",
+  );
+  assert(
+    audit.replay_type === "session" &&
+      audit.current_step === "init" &&
+      audit.select_all === false &&
+      audit.deleted === false,
+    `Replay-session audit state mismatch: ${JSON.stringify(audit)}.`,
+  );
+  assert(
+    asArray(audit.ids).includes(sessionId),
+    "Replay-session audit did not include the selected session id.",
+  );
 }
 
 function assertTraceSessionLifecycleDbAudit(
@@ -8502,6 +12332,12 @@ SELECT json_build_object(
     JOIN requested r ON log.alert_id = r.alert_id
     WHERE log.resolved = true
   ),
+  'deleted_log_count', (
+    SELECT count(*)
+    FROM tracer_useralertmonitorlog log
+    JOIN requested r ON log.alert_id = r.alert_id
+    WHERE log.deleted = true
+  ),
   'unresolved_log_count', (
     SELECT count(*)
     FROM tracer_useralertmonitorlog log
@@ -8600,38 +12436,6 @@ print(json.dumps({
 }))
 `;
   return runBackendShellJson(script);
-}
-
-async function insertAlertLog({ alertId, logId, message }) {
-  const sql = `
-WITH inserted AS (
-  INSERT INTO tracer_useralertmonitorlog (
-    id,
-    alert_id,
-    type,
-    message,
-    resolved,
-    created_at,
-    updated_at,
-    deleted
-  )
-  VALUES (
-    ${sqlUuid(logId)},
-    ${sqlUuid(alertId)},
-    'critical',
-    ${sqlString(message)},
-    false,
-    NOW(),
-    NOW(),
-    false
-  )
-  RETURNING id
-)
-SELECT json_build_object(
-  'inserted_log_id', (SELECT id FROM inserted)
-);
-`;
-  return runPostgresJson(sql);
 }
 
 async function deleteAlertDbArtifacts({ alertIds }) {
@@ -8960,7 +12764,13 @@ async function resolveObserveSpanForLifecycle(
   cleanup,
   runId,
   evidence,
+  options = {},
 ) {
+  const {
+    organizationId = null,
+    workspaceId = null,
+    requireProjectWorkspace = false,
+  } = options;
   const preferredProjectId = process.env.OBSERVE_PROJECT_ID;
   const projects = preferredProjectId
     ? [{ id: preferredProjectId, name: "env observe project" }]
@@ -8972,6 +12782,16 @@ async function resolveObserveSpanForLifecycle(
 
   for (const project of projects) {
     if (!project?.id) continue;
+    if (requireProjectWorkspace) {
+      const scopeAudit = await loadObserveProjectScopeAudit({
+        organizationId,
+        workspaceId,
+        projectId: project.id,
+      });
+      if (!scopeAudit?.workspace_matches) {
+        continue;
+      }
+    }
     const observeList = await client.get(
       queryWithFilters(
         apiPath("/tracer/observation-span/list_spans_observe/"),
@@ -9019,9 +12839,35 @@ async function resolveObserveSpanForLifecycle(
     client,
     cleanup,
     runId,
-    projects,
+    requireProjectWorkspace
+      ? await filterObserveProjectsByWorkspace({
+          projects,
+          organizationId,
+          workspaceId,
+        })
+      : projects,
     evidence,
   );
+}
+
+async function filterObserveProjectsByWorkspace({
+  projects,
+  organizationId,
+  workspaceId,
+}) {
+  const scopedProjects = [];
+  for (const project of projects) {
+    if (!project?.id) continue;
+    const scopeAudit = await loadObserveProjectScopeAudit({
+      organizationId,
+      workspaceId,
+      projectId: project.id,
+    });
+    if (scopeAudit?.workspace_matches) {
+      scopedProjects.push(project);
+    }
+  }
+  return scopedProjects;
 }
 
 async function createDisposableObserveSpanForLifecycle(
@@ -9036,7 +12882,7 @@ async function createDisposableObserveSpanForLifecycle(
     skip("No observe project exists for disposable span lifecycle coverage.");
   }
 
-  const suffix = journeySafeId(runId);
+  const suffix = `${journeySafeId(runId)}-${randomUUID().slice(0, 8)}`;
   const projectVersion = await client.post(
     apiPath("/tracer/project-version/"),
     {
@@ -9526,6 +13372,243 @@ function observeChartsDateFilter(days) {
       filter_value: [start.toISOString(), end.toISOString()],
     },
   };
+}
+
+function observeChartsSystemFilter(
+  columnId,
+  filterType,
+  filterOp,
+  filterValue,
+) {
+  return {
+    column_id: columnId,
+    filter_config: {
+      col_type: "SYSTEM_METRIC",
+      filter_type: filterType,
+      filter_op: filterOp,
+      filter_value: filterValue,
+    },
+  };
+}
+
+function observeChartsSpanAttributeFilter(
+  columnId,
+  filterType,
+  filterOp,
+  filterValue,
+) {
+  return {
+    column_id: columnId,
+    filter_config: {
+      col_type: "SPAN_ATTRIBUTE",
+      filter_type: filterType,
+      filter_op: filterOp,
+      filter_value: filterValue,
+    },
+  };
+}
+
+const CHART_CRUD_CONTRACT_OPERATIONS = [
+  {
+    key: "list",
+    path: "/tracer/charts/",
+    method: "get",
+    responseType: "tracerChartsListResponse",
+  },
+  {
+    key: "create",
+    path: "/tracer/charts/",
+    method: "post",
+    responseType: "tracerChartsCreateResponse",
+  },
+  {
+    key: "read",
+    path: "/tracer/charts/{id}/",
+    method: "get",
+    responseType: "tracerChartsReadResponse",
+  },
+  {
+    key: "update",
+    path: "/tracer/charts/{id}/",
+    method: "put",
+    responseType: "tracerChartsUpdateResponse",
+  },
+  {
+    key: "partial_update",
+    path: "/tracer/charts/{id}/",
+    method: "patch",
+    responseType: "tracerChartsPartialUpdateResponse",
+  },
+  {
+    key: "delete",
+    path: "/tracer/charts/{id}/",
+    method: "delete",
+    responseType: "tracerChartsDeleteResponse",
+  },
+];
+
+const TRACE_ANNOTATION_CRUD_CONTRACT_OPERATIONS = [
+  {
+    key: "list",
+    path: "/tracer/trace-annotation/",
+    method: "get",
+    responseType: "tracerTraceAnnotationListResponse",
+  },
+  {
+    key: "create",
+    path: "/tracer/trace-annotation/",
+    method: "post",
+    responseType: "tracerTraceAnnotationCreateResponse",
+  },
+  {
+    key: "read",
+    path: "/tracer/trace-annotation/{id}/",
+    method: "get",
+    responseType: "tracerTraceAnnotationReadResponse",
+  },
+  {
+    key: "update",
+    path: "/tracer/trace-annotation/{id}/",
+    method: "put",
+    responseType: "tracerTraceAnnotationUpdateResponse",
+  },
+  {
+    key: "partial_update",
+    path: "/tracer/trace-annotation/{id}/",
+    method: "patch",
+    responseType: "tracerTraceAnnotationPartialUpdateResponse",
+  },
+  {
+    key: "delete",
+    path: "/tracer/trace-annotation/{id}/",
+    method: "delete",
+    responseType: "tracerTraceAnnotationDeleteResponse",
+  },
+];
+
+async function loadGeneratedChartCrudContractAudit() {
+  const [{ OPENAPI_CONTRACT }, generatedApiText] = await Promise.all([
+    import(
+      new URL(
+        "../../../src/api/contracts/openapi-contract.generated.js",
+        import.meta.url,
+      )
+    ),
+    readFile(
+      new URL("../../../src/generated/api-contracts/api.ts", import.meta.url),
+      "utf8",
+    ),
+  ]);
+  const endpoints = OPENAPI_CONTRACT?.endpoints || {};
+  const fetchGraphMethods = Object.keys(
+    endpoints["/tracer/charts/fetch_graph/"] || {},
+  ).sort();
+  assert(
+    fetchGraphMethods.includes("get"),
+    "Generated OpenAPI contract no longer advertises /tracer/charts/fetch_graph/.",
+  );
+
+  return {
+    fetch_graph_methods: fetchGraphMethods,
+    ...collectGeneratedCrudContractAudit({
+      endpoints,
+      generatedApiText,
+      operations: CHART_CRUD_CONTRACT_OPERATIONS,
+    }),
+  };
+}
+
+async function loadGeneratedTraceAnnotationCrudContractAudit() {
+  const [{ OPENAPI_CONTRACT }, generatedApiText] = await Promise.all([
+    import(
+      new URL(
+        "../../../src/api/contracts/openapi-contract.generated.js",
+        import.meta.url,
+      )
+    ),
+    readFile(
+      new URL("../../../src/generated/api-contracts/api.ts", import.meta.url),
+      "utf8",
+    ),
+  ]);
+  const endpoints = OPENAPI_CONTRACT?.endpoints || {};
+  const getAnnotationValuesMethods = Object.keys(
+    endpoints["/tracer/trace-annotation/get_annotation_values/"] || {},
+  ).sort();
+  const bulkAnnotationMethods = Object.keys(
+    endpoints["/tracer/bulk-annotation/"] || {},
+  ).sort();
+  assert(
+    getAnnotationValuesMethods.includes("get"),
+    "Generated OpenAPI contract no longer advertises /tracer/trace-annotation/get_annotation_values/.",
+  );
+  assert(
+    bulkAnnotationMethods.includes("post"),
+    "Generated OpenAPI contract no longer advertises /tracer/bulk-annotation/.",
+  );
+
+  return {
+    bulk_annotation_methods: bulkAnnotationMethods,
+    get_annotation_values_methods: getAnnotationValuesMethods,
+    ...collectGeneratedCrudContractAudit({
+      endpoints,
+      generatedApiText,
+      operations: TRACE_ANNOTATION_CRUD_CONTRACT_OPERATIONS,
+    }),
+  };
+}
+
+function collectGeneratedCrudContractAudit({
+  endpoints,
+  generatedApiText,
+  operations,
+}) {
+  const advertisedCrudMethods = [];
+  const openapiSuccessStatuses = {};
+  const generatedClientSuccessStatuses = {};
+  for (const operation of operations) {
+    const openapiOperation = endpoints[operation.path]?.[operation.method];
+    if (openapiOperation) {
+      advertisedCrudMethods.push(
+        `${operation.method.toUpperCase()} ${operation.path}`,
+      );
+      openapiSuccessStatuses[operation.key] = Object.keys(
+        openapiOperation.responses || {},
+      )
+        .filter((status) => /^[23]\d\d$/.test(status))
+        .sort();
+    }
+    generatedClientSuccessStatuses[operation.key] =
+      getGeneratedClientSuccessStatuses(
+        generatedApiText,
+        operation.responseType,
+      );
+  }
+
+  return {
+    advertised_crud_methods: advertisedCrudMethods,
+    generated_client_success_statuses: generatedClientSuccessStatuses,
+    openapi_success_statuses: openapiSuccessStatuses,
+  };
+}
+
+function getGeneratedClientSuccessStatuses(sourceText, responseType) {
+  const statuses = new Set();
+  const pattern = new RegExp(`export type ${responseType}(\\d{3})\\b`, "g");
+  for (const match of sourceText.matchAll(pattern)) {
+    statuses.add(match[1]);
+  }
+  return Array.from(statuses).sort();
+}
+
+async function getObserveChartsGraph(client, projectId, filters) {
+  return client.get(apiPath("/tracer/project/get_graph_data/"), {
+    query: {
+      project_id: projectId,
+      interval: "day",
+      filters: JSON.stringify(filters),
+    },
+  });
 }
 
 function assertObserveChartsGraph(graph, label) {

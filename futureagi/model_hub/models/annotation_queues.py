@@ -428,6 +428,7 @@ class QueueItem(BaseModel):
         null=True,
         blank=True,
         related_name="queue_items",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     observation_span = models.ForeignKey(
         "tracer.ObservationSpan",
@@ -435,6 +436,7 @@ class QueueItem(BaseModel):
         null=True,
         blank=True,
         related_name="queue_items",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     prototype_run = models.ForeignKey(
         "model_hub.RunPrompter",
@@ -456,6 +458,7 @@ class QueueItem(BaseModel):
         null=True,
         blank=True,
         related_name="queue_items",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
 
     organization = models.ForeignKey(

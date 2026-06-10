@@ -1,8 +1,9 @@
 import json
 import uuid
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework import status
 
 from accounts.models.organization import Organization
@@ -43,9 +44,7 @@ class TestKnowledgeBaseTableContracts:
         serializer = LegacyKnowledgeBaseTableQuerySerializer(
             data={
                 "search": "docs",
-                "sort": json.dumps(
-                    [{"column_id": "updated_at", "type": "descending"}]
-                ),
+                "sort": json.dumps([{"column_id": "updated_at", "type": "descending"}]),
                 "page_number": "1",
                 "page_size": "25",
             }
@@ -89,11 +88,14 @@ class TestLegacyKnowledgeBaseLifecycle:
         other_org = Organization.objects.create(name="Other KB Org")
         other_kb = _create_kb(other_org, None, name="other-kb")
 
-        with patch(
-            "model_hub.views.develop_dataset.cancel_kb_ingestion_workflow"
-        ) as cancel_workflow, patch(
-            "model_hub.views.develop_dataset.remove_kb_files.delay"
-        ) as remove_kb_files:
+        with (
+            patch(
+                "model_hub.views.develop_dataset.cancel_kb_ingestion_workflow"
+            ) as cancel_workflow,
+            patch(
+                "model_hub.views.develop_dataset.remove_kb_files.delay"
+            ) as remove_kb_files,
+        ):
             response = auth_client.delete(
                 "/model-hub/knowledge-base/",
                 {"kb_ids": [str(own_kb.id), str(other_kb.id)]},
@@ -159,6 +161,125 @@ class TestLegacyKnowledgeBaseLifecycle:
         target_file.refresh_from_db()
         assert outside_file.status == StatusType.COMPLETED.value
         assert target_file.status == StatusType.COMPLETED.value
+
+    @patch("ee.usage.services.entitlements.Entitlements.check_feature")
+    def test_patch_renames_existing_kb_without_replacing_files(
+        self, mock_check_feature, auth_client, organization, workspace
+    ):
+        mock_check_feature.return_value = MagicMock(allowed=True)
+        existing_file = _create_file("existing-rename-file.txt")
+        kb = _create_kb(
+            organization,
+            workspace,
+            name="patch-rename-source",
+            files=[existing_file],
+        )
+
+        response = auth_client.patch(
+            "/model-hub/knowledge-base/",
+            {"kb_id": str(kb.id), "name": "patch-rename-target"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["name"] == "patch-rename-target"
+        assert str(existing_file.id) in {str(file_id) for file_id in result["files"]}
+
+        kb.refresh_from_db()
+        assert kb.name == "patch-rename-target"
+        assert list(kb.files.values_list("id", flat=True)) == [existing_file.id]
+
+    @patch("model_hub.views.develop_dataset.schedule_kb_ingestion_on_commit")
+    @patch(
+        "model_hub.views.develop_dataset.CreateKnowledgeBaseView.create_files_and_upload"
+    )
+    @patch("model_hub.views.develop_dataset.CreateKnowledgeBaseView.validate_all_files")
+    @patch("ee.usage.services.entitlements.Entitlements.check_feature")
+    def test_patch_file_add_preserves_existing_name_when_name_omitted(
+        self,
+        mock_check_feature,
+        mock_validate_all_files,
+        mock_create_files_and_upload,
+        mock_schedule_ingestion,
+        auth_client,
+        organization,
+        workspace,
+    ):
+        mock_check_feature.return_value = MagicMock(allowed=True)
+        mock_validate_all_files.return_value = {"valid": True, "files_with_issues": []}
+        existing_file = _create_file("existing-file-only.txt")
+        uploaded_file = _create_file("uploaded-file-only.txt")
+        mock_create_files_and_upload.return_value = {
+            "files": [str(uploaded_file.id)],
+            "file_metadata": {
+                str(uploaded_file.id): {
+                    "name": uploaded_file.name,
+                    "extension": "txt",
+                }
+            },
+        }
+        kb = _create_kb(
+            organization,
+            workspace,
+            name="file-only-original-name",
+            files=[existing_file],
+            size=12,
+        )
+
+        response = auth_client.patch(
+            "/model-hub/knowledge-base/",
+            {
+                "kb_id": str(kb.id),
+                "file": SimpleUploadedFile(
+                    "uploaded-file-only.txt",
+                    b"new file content",
+                    content_type="text/plain",
+                ),
+            },
+            format="multipart",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["name"] == "file-only-original-name"
+
+        kb.refresh_from_db()
+        assert kb.name == "file-only-original-name"
+        assert set(kb.files.values_list("id", flat=True)) == {
+            existing_file.id,
+            uploaded_file.id,
+        }
+        mock_schedule_ingestion.assert_called_once()
+
+    @patch("ee.usage.services.entitlements.Entitlements.check_feature")
+    def test_patch_hides_same_org_other_workspace_kb(
+        self, mock_check_feature, auth_client, organization, workspace, user
+    ):
+        mock_check_feature.return_value = MagicMock(allowed=True)
+        other_workspace = Workspace.objects.create(
+            name="Other Same Org KB Workspace",
+            organization=organization,
+            created_by=user,
+        )
+        other_kb = KnowledgeBaseFile.no_workspace_objects.create(
+            name="other-workspace-kb",
+            organization=organization,
+            workspace=other_workspace,
+            status=StatusType.COMPLETED.value,
+            created_by="Other User",
+            size=12,
+        )
+
+        response = auth_client.patch(
+            "/model-hub/knowledge-base/",
+            {"kb_id": str(other_kb.id), "name": "should-not-update"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        other_kb.refresh_from_db()
+        assert other_kb.name == "other-workspace-kb"
 
 
 @pytest.mark.integration

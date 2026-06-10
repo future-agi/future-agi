@@ -1,4 +1,6 @@
+/* eslint-disable react/prop-types */
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import PropTypes from "prop-types";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import {
   buildAnnotatorFilterChipLabelMap,
@@ -40,14 +42,14 @@ vi.mock("src/hooks/use-debounce", () => ({
 
 vi.mock("ag-grid-react", async () => {
   const React = await import("react");
-  return {
-    AgGridReact: ({ onGridReady }) => {
-      React.useEffect(() => {
-        onGridReady?.({ api: agGridMock.api });
-      }, [onGridReady]);
-      return React.createElement("div", { "data-testid": "dataset-grid" });
-    },
+  const AgGridReact = ({ onGridReady }) => {
+    React.useEffect(() => {
+      onGridReady?.({ api: agGridMock.api });
+    }, [onGridReady]);
+    return React.createElement("div", { "data-testid": "dataset-grid" });
   };
+  AgGridReact.propTypes = { onGridReady: PropTypes.func };
+  return { AgGridReact };
 });
 
 vi.mock("@tanstack/react-query", async (importOriginal) => {

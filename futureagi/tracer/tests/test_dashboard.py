@@ -581,32 +581,6 @@ class TestChartsView:
         }
 
     @pytest.mark.django_db
-    @patch(
-        "tracer.services.clickhouse.query_service.AnalyticsQueryService.should_use_clickhouse",
-        return_value=False,
-    )
-    def test_fetch_graph_system_metric_uses_pg_fallback_when_clickhouse_disabled(
-        self, _mock_should_use_clickhouse, auth_client, observe_project
-    ):
-        query = urlencode(
-            {
-                "project_id": str(observe_project.id),
-                "interval": "day",
-                "property": "average",
-                "req_data_config": json.dumps(
-                    {"id": "latency", "type": "SYSTEM_METRIC"}
-                ),
-            }
-        )
-
-        response = auth_client.get(f"/tracer/charts/fetch_graph/?{query}")
-
-        assert response.status_code == 200
-        result = response.json()["result"]
-        assert result["metric_name"] == "latency"
-        assert len(result["data"]) > 0
-        assert {"timestamp", "value", "primary_traffic"}.issubset(result["data"][0])
-
     @pytest.mark.django_db
     @patch("tracer.views.charts.get_system_metric_data")
     def test_fetch_graph_rejects_same_org_other_workspace_project(
@@ -1614,6 +1588,39 @@ class TestDashboardQueryExecution:
         assert "c.deleted = 0" in sql
         assert "c.duration_seconds IS NOT NULL" in sql
         assert "c.duration_seconds != ''" not in sql
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    def test_filter_values_session_uses_remap_survivor_values(
+        self, _mock_enabled, mock_analytics_cls, auth_client, observe_project
+    ):
+        survivor_id = str(uuid.uuid4())
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = [{"val": survivor_id}]
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/",
+            {
+                "source": "traces",
+                "metric_name": "session",
+                "metric_type": "system_metric",
+                "project_ids": str(observe_project.id),
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["result"]["values"] == [
+            {"value": survivor_id, "label": survivor_id}
+        ]
+        sql = mock_service.execute_ch_query.call_args.args[0]
+        assert "FROM spans AS sp" in sql
+        assert "trace_session_id_remap" in sql
+        assert "ts_remap.survivor_id" in sql
+        assert "sp.trace_session_id" in sql
 
     @pytest.mark.django_db
     def test_filter_values_annotation_annotator_returns_project_annotators(

@@ -10,6 +10,7 @@ exercised directly.
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,7 +18,7 @@ import pytest
 # model_hub.tasks.__init__ -> tracer.utils.eval_tasks) by importing the
 # package first. See test_eval_logger_schema.py for the canonical comment.
 import model_hub.tasks  # noqa: F401
-from tracer.utils.eval import _dual_write_eval_value  # noqa: E402
+from tracer.utils.eval import _dual_write_eval_value, _eval_config_output  # noqa: E402
 
 EVAL_PY = (Path(__file__).resolve().parent.parent / "utils" / "eval.py").read_text()
 
@@ -209,6 +210,42 @@ def test_choices_list_mixes_strings_and_dicts():
     assert "output_str" in kw
 
 
+# ── output type resolved off the template config ─────────────────────────
+
+
+def _cfg(output_type):
+    return SimpleNamespace(
+        eval_template=SimpleNamespace(config={"output": output_type})
+    )
+
+
+def test_score_template_dict_dual_writes_valid_json():
+    kw = {}
+    _dual_write_eval_value(
+        {"score": 0.7, "choice": "Choice 1"}, _eval_config_output(_cfg("score")), kw
+    )
+    assert json.loads(kw["output_str"]) == {"score": 0.7, "choice": "Choice 1"}
+    assert kw["output_float"] == 0.7
+
+
+def test_choices_template_dict_dual_writes_valid_json():
+    kw = {}
+    _dual_write_eval_value(
+        {"score": 0.7, "choice": "Choice 1"}, _eval_config_output(_cfg("choices")), kw
+    )
+    assert json.loads(kw["output_str"]) == {"score": 0.7, "choice": "Choice 1"}
+    assert kw["output_str_list"] == ["Choice 1"]
+
+
+def test_choices_template_list_of_dicts_dual_writes_valid_json():
+    kw = {}
+    _dual_write_eval_value(
+        [{"choice": "A"}, {"choice": "B"}], _eval_config_output(_cfg("choices")), kw
+    )
+    assert json.loads(kw["output_str"]) == [{"choice": "A"}, {"choice": "B"}]
+    assert kw["output_str_list"] == ["A", "B"]
+
+
 # ── Pass/Fail, reason, numeric, other output_types ───────────────────────
 
 
@@ -261,9 +298,9 @@ def test_helper_is_called_from_exactly_seven_dispatch_sites():
     """Pins call-site count so future edits cannot drop a dispatcher silently."""
     calls = re.findall(r"_dual_write_eval_value\(", EVAL_PY)
     # 1 helper definition + 7 call sites = 8 occurrences total.
-    assert (
-        len(calls) == 8
-    ), f"Expected 1 def + 7 calls of _dual_write_eval_value, found {len(calls)}"
+    assert len(calls) == 8, (
+        f"Expected 1 def + 7 calls of _dual_write_eval_value, found {len(calls)}"
+    )
 
 
 def test_typed_columns_only_assigned_inside_helper():
@@ -287,9 +324,9 @@ def test_typed_columns_only_assigned_inside_helper():
         "_dual_write_eval_value to honour the score/choices gating."
     )
     # Sanity: the helper itself does assign them.
-    assert re.search(
-        r'logger_kwargs\["output_float"\]\s*=', helper_body
-    ), "helper should assign output_float internally"
-    assert re.search(
-        r'logger_kwargs\["output_str_list"\]\s*=', helper_body
-    ), "helper should assign output_str_list internally"
+    assert re.search(r'logger_kwargs\["output_float"\]\s*=', helper_body), (
+        "helper should assign output_float internally"
+    )
+    assert re.search(r'logger_kwargs\["output_str_list"\]\s*=', helper_body), (
+        "helper should assign output_str_list internally"
+    )

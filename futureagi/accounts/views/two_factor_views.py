@@ -416,6 +416,7 @@ class RecoveryCodesRegenerateView(APIView):
             has_totp = user.totp_device.confirmed
         except ObjectDoesNotExist:
             pass
+        has_passkey = user.webauthn_credentials.exists()
 
         code = request.validated_data.get("code")
         password = request.validated_data.get("password")
@@ -428,7 +429,7 @@ class RecoveryCodesRegenerateView(APIView):
                 )
             if not (verify_totp_code(user, code) or verify_recovery_code(user, code)):
                 return self._gm.bad_request("Invalid code.")
-        else:
+        elif has_passkey:
             # Passkey-only user — require password verification
             if not password:
                 return self._gm.bad_request(
@@ -436,6 +437,10 @@ class RecoveryCodesRegenerateView(APIView):
                 )
             if not user.check_password(password):
                 return self._gm.bad_request("Invalid password.")
+        else:
+            return self._gm.bad_request(
+                "Enable a two-factor authentication method before generating recovery codes."
+            )
 
         recovery_codes = generate_recovery_codes(user)
         return Response({"recovery_codes": recovery_codes})
@@ -507,6 +512,9 @@ class OrgTwoFactorPolicyView(APIView):
         if require_2fa and not org.require_2fa:
             # Newly enabling — set enforcement timestamp
             org.require_2fa_enforced_at = timezone.now()
+            update_fields.append("require_2fa_enforced_at")
+        elif not require_2fa and org.require_2fa_enforced_at is not None:
+            org.require_2fa_enforced_at = None
             update_fields.append("require_2fa_enforced_at")
 
         org.require_2fa = require_2fa

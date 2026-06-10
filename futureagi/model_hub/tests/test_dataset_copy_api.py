@@ -245,6 +245,48 @@ def test_duplicate_dataset_rejects_other_workspace_before_usage_charge(
 
 
 @pytest.mark.django_db
+def test_duplicate_dataset_rejects_rows_outside_source_before_usage_or_creation(
+    auth_client, organization, dataset_factory, monkeypatch
+):
+    source_dataset, input_column, _output_column = dataset_factory(
+        "Duplicate dataset source"
+    )
+    outside_dataset, outside_input, _outside_output = dataset_factory(
+        "Duplicate dataset outside"
+    )
+    add_row(source_dataset, {input_column: "inside"}, order=0)
+    outside_row = add_row(outside_dataset, {outside_input: "outside"}, order=0)
+    usage_calls = []
+
+    def record_usage(*args, **kwargs):
+        usage_calls.append((args, kwargs))
+        return _SuccessfulResourceCallLog()
+
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        record_usage,
+    )
+
+    response = auth_client.post(
+        f"/model-hub/datasets/{source_dataset.id}/duplicate/",
+        {
+            "name": "Should not duplicate outside rows",
+            "row_ids": [str(outside_row.id)],
+            "selected_all_rows": False,
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert usage_calls == []
+    assert not Dataset.objects.filter(
+        name="Should not duplicate outside rows",
+        organization=organization,
+        deleted=False,
+    ).exists()
+
+
+@pytest.mark.django_db
 def test_clone_dataset_rejects_other_workspace_before_usage_charge(
     auth_client, organization, user, dataset_factory, monkeypatch
 ):
@@ -316,3 +358,82 @@ def test_add_as_new_rejects_other_workspace_before_usage_charge(
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert usage_calls == []
+
+
+@pytest.mark.django_db
+def test_add_as_new_rejects_duplicate_name_before_usage_charge(
+    auth_client, organization, dataset_factory, monkeypatch
+):
+    dataset, input_column, _output_column = dataset_factory("Add as new duplicate name")
+    add_row(dataset, {input_column: "source"}, order=0)
+    usage_calls = []
+
+    def record_usage(*args, **kwargs):
+        usage_calls.append((args, kwargs))
+        return _SuccessfulResourceCallLog()
+
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        record_usage,
+    )
+
+    response = auth_client.post(
+        "/model-hub/develops/add-as-new/",
+        {
+            "dataset_id": str(dataset.id),
+            "name": dataset.name,
+            "columns": {str(input_column.id): "input copy"},
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert usage_calls == []
+    assert (
+        Dataset.objects.filter(
+            name=dataset.name,
+            organization=organization,
+            deleted=False,
+        ).count()
+        == 1
+    )
+
+
+@pytest.mark.django_db
+def test_add_as_new_rejects_columns_outside_source_before_usage_or_creation(
+    auth_client, organization, dataset_factory, monkeypatch
+):
+    source_dataset, input_column, _output_column = dataset_factory("Add as new source")
+    outside_dataset, outside_input, _outside_output = dataset_factory(
+        "Add as new outside"
+    )
+    add_row(source_dataset, {input_column: "inside"}, order=0)
+    add_row(outside_dataset, {outside_input: "outside"}, order=0)
+    usage_calls = []
+
+    def record_usage(*args, **kwargs):
+        usage_calls.append((args, kwargs))
+        return _SuccessfulResourceCallLog()
+
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        record_usage,
+    )
+
+    response = auth_client.post(
+        "/model-hub/develops/add-as-new/",
+        {
+            "dataset_id": str(source_dataset.id),
+            "name": "Should not add as new",
+            "columns": {str(outside_input.id): "outside copy"},
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert usage_calls == []
+    assert not Dataset.objects.filter(
+        name="Should not add as new",
+        organization=organization,
+        deleted=False,
+    ).exists()

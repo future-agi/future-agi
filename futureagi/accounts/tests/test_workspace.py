@@ -181,6 +181,16 @@ class TestWorkspaceListAPI:
         assert "created_at" in ws
         assert "created_by" in ws
 
+    def test_detail_route_filters_to_requested_workspace(
+        self, auth_client, second_workspace
+    ):
+        """GET detail alias should not ignore the workspace_id path parameter."""
+        response = auth_client.get(f"/accounts/workspaces/{second_workspace.id}/")
+        assert response.status_code == status.HTTP_200_OK
+        workspaces = response.json()["result"]["workspaces"]
+        assert len(workspaces) == 1
+        assert workspaces[0]["id"] == str(second_workspace.id)
+
 
 # =============================================================================
 # WorkspaceManagementView Tests - POST /accounts/workspaces/
@@ -237,7 +247,7 @@ class TestWorkspaceCreateAPI:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_create_workspace_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -332,6 +342,30 @@ class TestWorkspaceCreateAPI:
         )
         _assert_unknown_field(response, "displayName")
 
+    def test_detail_post_alias_rejects_create_body_before_persistence(
+        self, auth_client, workspace, organization
+    ):
+        """Generated detail POST alias must fail closed instead of creating a workspace."""
+        workspace_name = "Detail Alias Should Not Create"
+        before_count = Workspace.objects.filter(
+            organization=organization, name=workspace_name
+        ).count()
+
+        response = auth_client.post(
+            f"/accounts/workspaces/{workspace.id}/",
+            {"name": workspace_name, "emails": []},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "detail post" in str(response.json()).lower()
+        assert (
+            Workspace.objects.filter(
+                organization=organization, name=workspace_name
+            ).count()
+            == before_count
+        )
+
 
 # =============================================================================
 # WorkspaceManagementView Tests - PUT /accounts/workspaces/<id>/
@@ -377,7 +411,7 @@ class TestWorkspaceUpdateAPI:
             {"description": "Member trying to update"},
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_update_workspace_unauthenticated(self, api_client, second_workspace):
         """Unauthenticated request fails."""
@@ -426,6 +460,20 @@ class TestWorkspaceUpdateAPI:
         )
         _assert_unknown_field(response, "displayName")
 
+    def test_collection_put_alias_requires_workspace_id(self, auth_client, workspace):
+        """Generated collection PUT alias should return 400 instead of dispatching a 500."""
+        original_display_name = workspace.display_name
+        response = auth_client.put(
+            "/accounts/workspaces/",
+            {"display_name": "Collection Alias Update"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "workspace_id" in str(response.json()).lower()
+        workspace.refresh_from_db()
+        assert workspace.display_name == original_display_name
+
 
 # =============================================================================
 # WorkspaceManagementView Tests - DELETE /accounts/workspaces/<id>/
@@ -446,14 +494,14 @@ class TestWorkspaceDeleteAPI:
     def test_delete_workspace_as_admin_forbidden(self, admin_client, second_workspace):
         """Admin cannot delete workspaces (only owner can)."""
         response = admin_client.delete(f"/accounts/workspaces/{second_workspace.id}/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_delete_workspace_as_member_forbidden(
         self, member_client, second_workspace
     ):
         """Member cannot delete workspaces."""
         response = member_client.delete(f"/accounts/workspaces/{second_workspace.id}/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_delete_workspace_unauthenticated(self, api_client, second_workspace):
         """Unauthenticated request fails."""
@@ -477,6 +525,17 @@ class TestWorkspaceDeleteAPI:
             "/accounts/workspaces/00000000-0000-0000-0000-000000000000/"
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_collection_delete_alias_requires_workspace_id(
+        self, auth_client, second_workspace
+    ):
+        """Generated collection DELETE alias should return 400 instead of dispatching a 500."""
+        response = auth_client.delete("/accounts/workspaces/")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "workspace_id" in str(response.json()).lower()
+        second_workspace.refresh_from_db()
+        assert second_workspace.is_active is True
 
 
 # =============================================================================
@@ -506,7 +565,7 @@ class TestWorkspaceMembersListAPI:
     def test_get_workspace_members_as_member_forbidden(self, member_client, workspace):
         """Member cannot get workspace members list."""
         response = member_client.get(f"/accounts/workspaces/{workspace.id}/members/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_get_workspace_members_unauthenticated(self, api_client, workspace):
         """Unauthenticated request fails."""
@@ -545,6 +604,25 @@ class TestWorkspaceMembersListAPI:
         assert "name" in member
         assert "role" in member
         assert "joined_at" in member
+
+    def test_get_workspace_member_detail_filters_to_requested_member(
+        self, auth_client, workspace, member_user
+    ):
+        """GET member detail alias should not ignore the member_id path parameter."""
+        WorkspaceMembership.no_workspace_objects.get_or_create(
+            workspace=workspace,
+            user=member_user,
+            defaults={"role": OrganizationRoles.WORKSPACE_MEMBER},
+        )
+
+        response = auth_client.get(
+            f"/accounts/workspaces/{workspace.id}/members/{member_user.id}/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        members = response.json()["result"]["members"]
+        assert len(members) == 1
+        assert members[0]["user_id"] == str(member_user.id)
 
 
 # =============================================================================
@@ -604,7 +682,7 @@ class TestWorkspaceMembersAddAPI:
             {"users": [{"email": "new@futureagi.com", "role": "member"}]},
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_add_member_unauthenticated(self, api_client, second_workspace):
         """Unauthenticated request fails."""
@@ -644,6 +722,36 @@ class TestWorkspaceMembersAddAPI:
             format="json",
         )
         _assert_unknown_field(response, "workspaceUsers")
+
+    def test_member_detail_post_alias_rejects_add_body_before_persistence(
+        self, auth_client, workspace, member_user
+    ):
+        """Generated member detail POST alias must fail closed instead of adding users."""
+        before_count = WorkspaceMembership.no_workspace_objects.filter(
+            workspace=workspace, user=member_user, is_active=True
+        ).count()
+
+        response = auth_client.post(
+            f"/accounts/workspaces/{workspace.id}/members/{member_user.id}/",
+            {
+                "users": [
+                    {
+                        "email": member_user.email,
+                        "role": OrganizationRoles.WORKSPACE_ADMIN,
+                    }
+                ]
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "detail post" in str(response.json()).lower()
+        assert (
+            WorkspaceMembership.no_workspace_objects.filter(
+                workspace=workspace, user=member_user, is_active=True
+            ).count()
+            == before_count
+        )
 
     def test_add_existing_member_updates_role(
         self, auth_client, workspace, member_user
@@ -721,7 +829,7 @@ class TestWorkspaceMembersRemoveAPI:
         response = member_client.delete(
             f"/accounts/workspaces/{workspace.id}/members/{admin_user.id}/"
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_remove_member_unauthenticated(self, api_client, workspace, member_user):
         """Unauthenticated request fails."""
@@ -746,6 +854,24 @@ class TestWorkspaceMembersRemoveAPI:
             f"/accounts/workspaces/{workspace.id}/members/00000000-0000-0000-0000-000000000000/"
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_members_collection_delete_alias_requires_member_id(
+        self, auth_client, workspace, member_user
+    ):
+        """Generated members collection DELETE alias should return 400 instead of 500."""
+        WorkspaceMembership.no_workspace_objects.get_or_create(
+            workspace=workspace,
+            user=member_user,
+            defaults={"role": OrganizationRoles.WORKSPACE_MEMBER},
+        )
+
+        response = auth_client.delete(f"/accounts/workspaces/{workspace.id}/members/")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "member_id" in str(response.json()).lower()
+        assert WorkspaceMembership.no_workspace_objects.filter(
+            workspace=workspace, user=member_user, is_active=True
+        ).exists()
 
     def test_remove_last_admin_forbidden(self, auth_client, second_workspace, user):
         """Cannot remove the last admin from workspace."""

@@ -410,7 +410,13 @@ def validate_model_working(model_name, api_key, provider):
             return response.choices[0].message.content
 
     except Exception as e:
-        logger.exception(f"An error occurred: {str(e)}")
+        # Expected user-input/connectivity validation failure (e.g. a bad
+        # Vertex/Bedrock credential or an invalid private key). This function
+        # only validates user-supplied model credentials and always returns the
+        # error to the caller as an Exception (-> clean 400), so log at WARNING
+        # to keep it out of Sentry (event_level=ERROR) while preserving a
+        # breadcrumb. See CORE-BACKEND-119X.
+        logger.warning(f"An error occurred: {str(e)}")
         status = False
         try:
             error_message = str(e).split("litellm.")[1].split("Traceback")[0]

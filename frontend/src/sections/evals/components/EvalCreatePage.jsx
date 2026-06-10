@@ -33,9 +33,7 @@ import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TestPlayground from "./TestPlayground";
 import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
 import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys";
-import CodeEvalEditor, {
-  PYTHON_CODE_TEMPLATE,
-} from "./CodeEvalEditor";
+import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
 import { extractVariables } from "src/utils/utils";
@@ -179,6 +177,17 @@ const EvalCreatePage = () => {
   const handleColumnsLoaded = useCallback((cols, jsonSchemas) => {
     setDatasetColumns(cols || []);
     setDatasetJsonSchemas(jsonSchemas || {});
+  }, []);
+
+  // Active test-tab variable→column mapping. Threaded into the
+  // InstructionEditor so mapped variables render green; otherwise the
+  // {{var}} tokens stay red even after the user binds them in the test
+  // panel.
+  const [playgroundMapping, setPlaygroundMapping] = useState({});
+  const handlePlaygroundReadyChange = useCallback((_ready, mapping) => {
+    if (mapping && typeof mapping === "object") {
+      setPlaygroundMapping(mapping);
+    }
   }, []);
 
   // --- Composite eval state ---
@@ -333,7 +342,7 @@ const EvalCreatePage = () => {
       eval_type: evalType,
       instructions:
         evalType === "code"
-          ? ""
+          ? undefined
           : evalType === "llm"
             ? instructions ||
               messages.find((m) => m.role === "system")?.content ||
@@ -413,7 +422,7 @@ const EvalCreatePage = () => {
       );
       return;
     }
-    if (isOSS && FAGI_MODEL_VALUES.has(model)) {
+    if (isOSS && evalType !== "code" && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
         "Turing models are not available in OSS. Please select your own model.",
         { variant: "error" },
@@ -789,7 +798,13 @@ const EvalCreatePage = () => {
                       fontWeight={600}
                       sx={{ mb: 0.5 }}
                     >
-                      Eval Name<Box component="span" sx={{ color: "error.main", ml: 0.25 }}>*</Box>
+                      Eval Name
+                      <Box
+                        component="span"
+                        sx={{ color: "error.main", ml: 0.25 }}
+                      >
+                        *
+                      </Box>
                     </Typography>
                     <TextField
                       fullWidth
@@ -882,6 +897,8 @@ const EvalCreatePage = () => {
                       onTemplateFormatChange={setTemplateFormat}
                       datasetColumns={datasetColumns}
                       datasetJsonSchemas={datasetJsonSchemas}
+                      mappedVariables={playgroundMapping}
+                      modelSelectorDisabled={false}
                       mode={agentMode}
                       onModeChange={setAgentMode}
                       useInternet={checkInternet}
@@ -1234,6 +1251,7 @@ const EvalCreatePage = () => {
                   showVersions={false}
                   onTestResult={handleTestResult}
                   onColumnsLoaded={handleColumnsLoaded}
+                  onReadyChange={handlePlaygroundReadyChange}
                   errorLocalizerEnabled={
                     mode === "composite" ? false : errorLocalizerEnabled
                   }

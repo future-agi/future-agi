@@ -282,6 +282,18 @@ def update_node(
     """
     Partially update a node (name, position, prompt_template).
     """
+    prompt_template_for_name_sync = None
+    if "name" in data:
+        ptn = (
+            PromptTemplateNode.no_workspace_objects.filter(node=node)
+            .select_related("prompt_template")
+            .first()
+        )
+        if ptn:
+            prompt_template_for_name_sync = _resolve_prompt_template(
+                ptn.prompt_template_id, organization, workspace
+            )
+
     if "name" in data:
         node.name = data["name"]
     if "position" in data:
@@ -308,15 +320,9 @@ def update_node(
         _replace_output_ports(node, data["ports"])
 
     # Sync name to linked PromptTemplate (if any)
-    if "name" in data:
-        ptn = (
-            PromptTemplateNode.no_workspace_objects.filter(node=node)
-            .select_related("prompt_template")
-            .first()
-        )
-        if ptn:
-            ptn.prompt_template.name = data["name"]
-            ptn.prompt_template.save()
+    if prompt_template_for_name_sync is not None:
+        prompt_template_for_name_sync.name = data["name"]
+        prompt_template_for_name_sync.save()
 
     prompt_data = data.get("prompt_template")
     if prompt_data is not None:
@@ -454,6 +460,57 @@ def _resolve_ref_graph_version(
     return ref_version
 
 
+def _scoped_prompt_template_queryset(organization: Any, workspace: Any):
+    qs = PromptTemplate.no_workspace_objects.all()
+    if organization is not None:
+        qs = qs.filter(organization=organization)
+    if workspace is not None:
+        if getattr(workspace, "is_default", False):
+            qs = qs.filter(
+                Q(workspace=workspace)
+                | Q(
+                    workspace__is_default=True,
+                    workspace__organization_id=workspace.organization_id,
+                )
+                | Q(
+                    workspace__isnull=True,
+                    organization_id=workspace.organization_id,
+                )
+            )
+        else:
+            qs = qs.filter(workspace=workspace)
+    return qs
+
+
+def _resolve_prompt_template(
+    prompt_template_id: Any, organization: Any, workspace: Any
+) -> PromptTemplate:
+    try:
+        return _scoped_prompt_template_queryset(organization, workspace).get(
+            id=prompt_template_id
+        )
+    except PromptTemplate.DoesNotExist as exc:
+        raise ValidationError(
+            "Prompt template not found in the active workspace."
+        ) from exc
+
+
+def _resolve_prompt_version_for_template(
+    prompt_version_id: Any, prompt_template: PromptTemplate
+) -> PromptVersion:
+    try:
+        return PromptVersion.no_workspace_objects.select_related(
+            "original_template"
+        ).get(
+            id=prompt_version_id,
+            original_template=prompt_template,
+        )
+    except PromptVersion.DoesNotExist as exc:
+        raise ValidationError(
+            "Prompt version not found for the specified prompt template."
+        ) from exc
+
+
 def _resolve_or_create_pt_ptv(
     prompt_data: dict[str, Any],
     node_name: str,
@@ -476,12 +533,19 @@ def _resolve_or_create_pt_ptv(
 
     # Build variable_names dict from messages (model_hub convention)
     messages = prompt_data.get("messages", [])
-    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    _tf = prompt_data.get("template_format") or prompt_data.get(
+        "configuration", {}
+    ).get("template_format")
     var_names = _extract_variables(messages, template_format=_tf)
     var_names_dict = prompt_data.get("variable_names") or {v: [] for v in var_names}
     pv_metadata = prompt_data.get("metadata") or {}
 
     if not pt_id:
+        if pv_id:
+            raise ValidationError(
+                "prompt_template_id is required when prompt_version_id is provided."
+            )
+
         # Create new PT + new draft PTV
         pt = PromptTemplate.no_workspace_objects.create(
             name=node_name,
@@ -503,7 +567,7 @@ def _resolve_or_create_pt_ptv(
         )
         return pt, pv
 
-    pt = PromptTemplate.no_workspace_objects.get(id=pt_id)
+    pt = _resolve_prompt_template(pt_id, organization, workspace)
 
     if not pv_id:
         # Create new draft PTV under existing PT
@@ -522,7 +586,7 @@ def _resolve_or_create_pt_ptv(
         )
         return pt, pv
 
-    pv = PromptVersion.no_workspace_objects.get(id=pv_id)
+    pv = _resolve_prompt_version_for_template(pv_id, pt)
 
     if pv.is_draft:
         # Update draft PTV in-place
@@ -594,19 +658,23 @@ def _handle_ptv_lifecycle_on_update(
             node=node, prompt_template=pt, prompt_version=pv
         )
     else:
+        current_pt = _resolve_prompt_template(
+            ptn.prompt_template_id, organization, workspace
+        )
         pt = (
-            PromptTemplate.no_workspace_objects.get(id=pt_id)
+            _resolve_prompt_template(pt_id, organization, workspace)
             if pt_id
-            else ptn.prompt_template
+            else current_pt
         )
-        pv = (
-            PromptVersion.no_workspace_objects.get(id=pv_id)
-            if pv_id
-            else ptn.prompt_version
-        )
+        if pv_id:
+            pv = _resolve_prompt_version_for_template(pv_id, pt)
+        elif pt.id == current_pt.id:
+            pv = _resolve_prompt_version_for_template(ptn.prompt_version_id, pt)
+        else:
+            pv = None
 
         if not save_version:
-            if pv.is_draft:
+            if pv is not None and pv.is_draft:
                 # Update draft PTV in-place
                 pv.prompt_config_snapshot = snapshot
                 pv.variable_names = var_names_dict
@@ -624,7 +692,7 @@ def _handle_ptv_lifecycle_on_update(
                     is_draft=True,
                 )
         else:
-            if pv.is_draft:
+            if pv is not None and pv.is_draft:
                 # Commit the draft
                 pv.prompt_config_snapshot = snapshot
                 pv.variable_names = var_names_dict
@@ -672,7 +740,9 @@ def _reconcile_prompt_ports(node: Node, prompt_data: dict[str, Any]) -> None:
     """
     now = timezone.now()
     messages = prompt_data.get("messages", [])
-    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    _tf = prompt_data.get("template_format") or prompt_data.get(
+        "configuration", {}
+    ).get("template_format")
     new_vars = _extract_variables(messages, template_format=_tf)
 
     existing_input_ports = list(
@@ -729,7 +799,9 @@ def _reconcile_prompt_ports(node: Node, prompt_data: dict[str, Any]) -> None:
 def _create_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> None:
     """Create ports for an LLM prompt node from its messages."""
     messages = prompt_data.get("messages", [])
-    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    _tf = prompt_data.get("template_format") or prompt_data.get(
+        "configuration", {}
+    ).get("template_format")
     variables = _extract_variables(messages, template_format=_tf)
 
     # Input ports for each variable
@@ -757,7 +829,9 @@ def _create_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> None:
 def _create_input_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> None:
     """Create input ports for an LLM prompt node from variables in messages."""
     messages = prompt_data.get("messages", [])
-    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    _tf = prompt_data.get("template_format") or prompt_data.get(
+        "configuration", {}
+    ).get("template_format")
     variables = _extract_variables(messages, template_format=_tf)
 
     for var in variables:
@@ -1133,7 +1207,9 @@ def _replace_output_ports(node: Node, ports_data: list[dict]) -> None:
     _create_ports_from_fe_array(node, ports_data)
 
 
-def _extract_variables(messages: list[dict], template_format: str | None = None) -> list[str]:
+def _extract_variables(
+    messages: list[dict], template_format: str | None = None
+) -> list[str]:
     """Extract unique variable names from message contents, preserving order.
 
     When template_format is "jinja" or "jinja2", uses Jinja2 AST analysis to

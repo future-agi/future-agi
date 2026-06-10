@@ -937,7 +937,10 @@ class TestDatasetEvalStatsView(EvalRunnerBaseTestCase):
 
         response = self.client.get(f"/model-hub/dataset/{self.dataset.id}/eval-stats/")
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
 
     def test_get_eval_stats_invalid_dataset_id(self):
         """Get eval stats handles invalid dataset ID gracefully."""

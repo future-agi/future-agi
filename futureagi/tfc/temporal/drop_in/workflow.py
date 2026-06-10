@@ -25,7 +25,7 @@ class TaskRunnerInput:
     time_limit: Optional[int] = None  # Override default timeout
     max_retries: Optional[int] = None
     retry_delay: Optional[int] = None
-    schedule_to_start_timeout: Optional[int] = None  # Seconds; defaults to 6h
+    schedule_to_start_timeout: Optional[int] = None  # Seconds; defaults to 12h
 
 
 @dataclass
@@ -85,6 +85,9 @@ class TaskRunnerWorkflow:
         try:
             # Get timeout from activity metadata or use default
             time_limit = input.time_limit or 3600 * 12  # 12 hours default
+            schedule_to_start_seconds = (
+                input.schedule_to_start_timeout or 3600 * 12
+            )  # 12 hours default
 
             retry_policy = _resolve_retry_policy(input)
 
@@ -96,7 +99,9 @@ class TaskRunnerWorkflow:
                     "kwargs": input.kwargs,
                 },
                 start_to_close_timeout=timedelta(seconds=time_limit),
-                schedule_to_start_timeout=timedelta(minutes=5),
+                schedule_to_start_timeout=timedelta(
+                    seconds=schedule_to_start_seconds
+                ),
                 heartbeat_timeout=timedelta(minutes=5),
                 retry_policy=retry_policy,
                 versioning_intent=VersioningIntent.DEFAULT,

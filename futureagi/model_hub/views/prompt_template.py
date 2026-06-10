@@ -4,6 +4,7 @@ import re
 import time
 import traceback
 import uuid
+from urllib.parse import unquote, urlparse
 from uuid import UUID
 
 import litellm
@@ -29,6 +30,7 @@ from django.db import close_old_connections, models, transaction
 from django.db.models import Case, IntegerField, Prefetch, Q, Value, When
 from django.db.models.functions import Cast, Substr
 from django.forms.models import model_to_dict
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
@@ -117,6 +119,11 @@ from model_hub.utils.utils import (
     submit_with_retry,
     track_running_eval_count,
 )
+from model_hub.utils.workspace_scope import (
+    request_workspace_filter,
+    scoped_column_queryset,
+    scoped_dataset_queryset,
+)
 from model_hub.utils.websocket_manager import (
     get_websocket_manager,
 )
@@ -169,7 +176,10 @@ def _safe_background_task(func, *args, **kwargs):
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
-    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        count_text_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     count_text_tokens = None
     log_and_deduct_cost_for_api_request = None
@@ -276,7 +286,10 @@ def handle_media(item: dict, model_name: str):
 
 
 def replace_variables(
-    messages: list[dict], variable_names: dict, model_name: str, template_format: str = None
+    messages: list[dict],
+    variable_names: dict,
+    model_name: str,
+    template_format: str = None,
 ) -> list[dict]:
     """
     Replace variables in message content with their corresponding values.
@@ -526,6 +539,38 @@ class UploadFileView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    def _request_organization_id(self, request):
+        organization = getattr(request, "organization", None) or getattr(
+            request.user, "organization", None
+        )
+        return str(organization.id) if organization else None
+
+    def _file_name_from_link(self, link):
+        path = urlparse(link).path
+        file_name = unquote(path.rsplit("/", 1)[-1])
+        return file_name or None
+
+    def _file_name_with_extension(self, file_name, url):
+        if not file_name or "." in file_name:
+            return file_name
+
+        try:
+            response = requests.head(url, timeout=10)
+            content_type = (
+                response.headers.get("Content-Type", "").split(";")[0].strip()
+            )
+
+            if content_type in MIME_TO_EXT:
+                return f"{file_name}.{MIME_TO_EXT[content_type]}"
+
+        except requests.RequestException:
+            pass
+
+        path_extension = urlparse(url).path.rsplit(".", 1)[-1]
+        if path_extension and "/" not in path_extension and len(path_extension) <= 8:
+            return f"{file_name}.{path_extension}"
+        return file_name
+
     def _convert_to_base64(self, file):
         """Convert file content to base64 string with mime type prefix"""
         try:
@@ -562,7 +607,7 @@ class UploadFileView(APIView):
             links = validated_data.get("links")
             media_type = validated_data["type"]
             urls = []
-            file_name = None
+            org_id = self._request_organization_id(request)
             if media_type in ["image", "audio", "pdf", "text"]:
                 upload_func = (
                     upload_image_to_s3
@@ -578,38 +623,24 @@ class UploadFileView(APIView):
                     for item in source_items:
                         try:
                             if files:
+                                file_name = getattr(item, "name", None)
                                 item = self._convert_to_base64(item)
-                            if links:
-                                file_name = item.split("/")[-1].split("?")[0]
+                            else:
+                                file_name = self._file_name_from_link(item)
 
                             if upload_func == upload_audio_to_s3_duration:
                                 url, _ = upload_func(
                                     item,
                                     bucket_name="fi-customer-data-dev",
-                                    object_key=f"tempcust/{uuid.uuid4()}",
+                                    org_id=org_id,
                                 )
                             else:
                                 url = upload_func(
                                     item,
                                     bucket_name="fi-customer-data-dev",
-                                    object_key=f"tempcust/{uuid.uuid4()}",
+                                    org_id=org_id,
                                 )
-                            if file_name and "." not in file_name:
-                                try:
-                                    response = requests.head(url, timeout=10)
-                                    content_type = (
-                                        response.headers.get("Content-Type", "")
-                                        .split(";")[0]
-                                        .strip()
-                                    )
-
-                                    if content_type in MIME_TO_EXT:
-                                        file_name = (
-                                            f"{file_name}.{MIME_TO_EXT[content_type]}"
-                                        )
-
-                                except requests.RequestException:
-                                    pass
+                            file_name = self._file_name_with_extension(file_name, url)
                             urls.append({"url": url, "file_name": file_name})
                         except Exception as e:
                             urls.append(
@@ -663,6 +694,14 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
     def get_serializer_class(self):
         return self.serializer_class
 
+    def perform_create(self, serializer):
+        serializer.save(
+            organization=getattr(self.request, "organization", None)
+            or self.request.user.organization,
+            workspace=getattr(self.request, "workspace", None),
+            created_by=self.request.user,
+        )
+
     def retrieve(self, request, *args, **kwargs):
         """
         Retrieve a prompt template with version history and execution data.
@@ -679,19 +718,32 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
             # Prioritize draft versions — they contain the latest unsaved edits
             # (e.g. template_format changes) that haven't been committed yet.
-            org = getattr(self.request, "organization", None) or self.request.user.organization
+            org = (
+                getattr(self.request, "organization", None)
+                or self.request.user.organization
+            )
             base_qs = PromptVersion.objects.filter(
                 original_template=instance,
                 original_template__organization=org,
                 deleted=False,
             )
-            draft_execution = base_qs.filter(is_draft=True).order_by("-created_at").first()
+            draft_execution = (
+                base_qs.filter(is_draft=True).order_by("-created_at").first()
+            )
             if draft_execution:
                 execution = draft_execution
             elif base_qs.filter(is_default=True).exists():
-                execution = base_qs.filter(is_default=True).order_by("-is_default", "-created_at").first()
+                execution = (
+                    base_qs.filter(is_default=True)
+                    .order_by("-is_default", "-created_at")
+                    .first()
+                )
             elif base_qs.filter(is_draft=False).exists():
-                execution = base_qs.filter(is_draft=False).order_by("-is_default", "-created_at").first()
+                execution = (
+                    base_qs.filter(is_draft=False)
+                    .order_by("-is_default", "-created_at")
+                    .first()
+                )
             elif base_qs.exists():
                 execution = base_qs.order_by("-is_default", "-created_at").first()
             else:
@@ -1867,7 +1919,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         prompt_messages,
                         variable_combination,
                         config.get("configuration", {}).get("model"),
-                        template_format=config.get("configuration", {}).get("template_format"),
+                        template_format=config.get("configuration", {}).get(
+                            "template_format"
+                        ),
                     )
                     messages_with_replacement = remove_empty_text_from_messages(
                         messages_with_replacement
@@ -1928,12 +1982,12 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         if organization:
                             if log_and_deduct_cost_for_api_request is not None:
                                 log_and_deduct_cost_for_api_request(
-                                organization,
-                                APICallTypeChoices.PROMPT_BENCH.value,
-                                config=token_config,
-                                source="run_prompt_gen",
-                                workspace=workspace,
-                            )
+                                    organization,
+                                    APICallTypeChoices.PROMPT_BENCH.value,
+                                    config=token_config,
+                                    source="run_prompt_gen",
+                                    workspace=workspace,
+                                )
                             # log_and_deduct_cost_for_api_request_async = sync_to_async(log_and_deduct_cost_for_api_request)
                             # async_to_sync(log_and_deduct_cost_for_api_request_async)(organization, APICallTypeChoices.PROMPT_BENCH.value, config=token_config, source="run_prompt_gen")
 
@@ -1948,19 +2002,21 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                                 except ImportError:
                                     emit = None
 
-                                if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
-
+                                if (
+                                    emit is not None
+                                    and UsageEvent is not None
+                                    and BillingEventType is not None
+                                ):
                                     emit(
-                                    UsageEvent(
-                                        org_id=str(organization.id),
-                                        event_type=APICallTypeChoices.PROMPT_BENCH.value,
-                                        properties={
-                                            "source": "run_prompt_gen",
-                                            "source_id": str(template.id),
-                                        },
+                                        UsageEvent(
+                                            org_id=str(organization.id),
+                                            event_type=APICallTypeChoices.PROMPT_BENCH.value,
+                                            properties={
+                                                "source": "run_prompt_gen",
+                                                "source_id": str(template.id),
+                                            },
+                                        )
                                     )
-                                )
                             except Exception:
                                 pass  # Metering failure must not break the action
 
@@ -2429,7 +2485,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                             start=True,
                             prompt_config_eval_id=prompt_eval_config_id,
                             operation="set",
-                            num=1 if run_index else max_len,
+                            num=1 if run_index is not None else max_len,
                         )
                         if (
                             run_index is not None
@@ -2451,9 +2507,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                             ]
                             for result in results:
                                 result["status"] = StatusType.RUNNING.value
-                            eval_results[str(prompt_eval_config_id)][
-                                "results"
-                            ] = results
+                            eval_results[str(prompt_eval_config_id)]["results"] = (
+                                results
+                            )
 
                     execution.evaluation_results = eval_results
                     execution.save(update_fields=["evaluation_results"])
@@ -2696,20 +2752,27 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
-
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
                     emit(
-                    UsageEvent(
-                        org_id=str(org.id),
-                        event_type=BillingEventType.EVAL_EXPLANATION,
-                        properties={
-                            "source": "prompt_template",
-                            "source_id": str(eval_template.id),
-                        },
+                        UsageEvent(
+                            org_id=str(org.id),
+                            event_type=BillingEventType.EVAL_EXPLANATION,
+                            properties={
+                                "source": "prompt_template",
+                                "source_id": str(eval_template.id),
+                                **token_usage_properties(metadata.get("usage", {})),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass  # Metering failure must not break the action
 
@@ -2823,9 +2886,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 )
 
             # Update the specific result
-            eval_results[str(prompt_eval_config_id)]["results"][
-                result_index
-            ] = result_data
+            eval_results[str(prompt_eval_config_id)]["results"][result_index] = (
+                result_data
+            )
 
             # Save atomically
             execution.evaluation_results = eval_results
@@ -3303,7 +3366,11 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             if not statement:
                 return self._gm.bad_request(get_error_message("MISSING_STATEMENT"))
 
-            config = {"input_tokens": (count_text_tokens(statement) if count_text_tokens else 0)}
+            config = {
+                "input_tokens": (
+                    count_text_tokens(statement) if count_text_tokens else 0
+                )
+            }
             call_log_row = None
             if log_and_deduct_cost_for_api_request is not None:
                 call_log_row = log_and_deduct_cost_for_api_request(
@@ -3317,7 +3384,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     call_log_row is None
                     or call_log_row.status != APICallStatusChoices.PROCESSING.value
                 ):
-                    return self._gm.bad_request(get_error_message("INSUFFICIENT_CREDITS"))
+                    return self._gm.bad_request(
+                        get_error_message("INSUFFICIENT_CREDITS")
+                    )
 
             # Dual-write: emit usage event for new billing system
             try:
@@ -3333,22 +3402,30 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
                 )
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
                     emit(
-                    UsageEvent(
-                        org_id=str(_org.id),
-                        event_type=BillingEventType.AI_PROMPT_CREATION,
-                        properties={
-                            "source": "run_prompt_gen",
-                            "source_id": str(call_log_row.log_id) if call_log_row else None,
-                        },
+                        UsageEvent(
+                            org_id=str(_org.id),
+                            event_type=BillingEventType.AI_PROMPT_CREATION,
+                            properties={
+                                "source": "run_prompt_gen",
+                                "source_id": str(call_log_row.log_id) if call_log_row else None,
+                                **token_usage_properties(config),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass  # Metering failure must not break the action
 
@@ -3426,9 +3503,11 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 )
 
             config = {
-                "input_tokens": (count_text_tokens(
-                    existing_prompt + improvement_requirements
-                ) if count_text_tokens else 0)
+                "input_tokens": (
+                    count_text_tokens(existing_prompt + improvement_requirements)
+                    if count_text_tokens
+                    else 0
+                )
             }
             call_log_row = None
             if log_and_deduct_cost_for_api_request is not None:
@@ -3443,7 +3522,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     call_log_row is None
                     or call_log_row.status != APICallStatusChoices.PROCESSING.value
                 ):
-                    return self._gm.bad_request(get_error_message("INSUFFICIENT_CREDITS"))
+                    return self._gm.bad_request(
+                        get_error_message("INSUFFICIENT_CREDITS")
+                    )
 
             # Dual-write: emit usage event for new billing system
             try:
@@ -3459,22 +3540,30 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
                 )
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
                     emit(
-                    UsageEvent(
-                        org_id=str(_org.id),
-                        event_type=BillingEventType.AI_PROMPT_IMPROVEMENT,
-                        properties={
-                            "source": "run_prompt_improve",
-                            "source_id": str(call_log_row.log_id) if call_log_row else None,
-                        },
+                        UsageEvent(
+                            org_id=str(_org.id),
+                            event_type=BillingEventType.AI_PROMPT_IMPROVEMENT,
+                            properties={
+                                "source": "run_prompt_improve",
+                                "source_id": str(call_log_row.log_id) if call_log_row else None,
+                                **token_usage_properties(config),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass  # Metering failure must not break the action
 
@@ -3769,7 +3858,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
             # Check if name already exists for another template
             if (
-                PromptTemplate.objects.filter(
+                PromptTemplate.no_workspace_objects.filter(
+                    request_workspace_filter(request),
                     name=name,
                     organization=getattr(self.request, "organization", None)
                     or self.request.user.organization,
@@ -3798,15 +3888,14 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             if not prompt_folder_id:
                 return self._gm.bad_request("Prompt folder information not sent")
 
-            # Get the prompt folder object
-            try:
-                prompt_folder = PromptFolder.no_workspace_objects.get(
-                    id=prompt_folder_id,
-                    organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
-                    deleted=False,
-                )
-            except PromptFolder.DoesNotExist:
+            prompt_folder = PromptFolder.no_workspace_objects.filter(
+                request_workspace_filter(request),
+                id=prompt_folder_id,
+                organization=getattr(self.request, "organization", None)
+                or self.request.user.organization,
+                deleted=False,
+            ).first()
+            if prompt_folder is None:
                 return self._gm.bad_request("Prompt folder not found")
 
             template.prompt_folder = prompt_folder
@@ -3840,15 +3929,8 @@ class ColumnValuesAPIView(APIView):
                     get_error_message("MISSING_REQUIRED_FIELDS")
                 )
 
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
-            try:
-                dataset = Dataset.objects.get(id=dataset_id)
-            except Dataset.DoesNotExist:
-                return self._gm.not_found("Dataset not found")
-
-            if dataset.organization_id != organization.id:
+            dataset = scoped_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
                 return self._gm.not_found("Dataset not found")
 
             # Initialize the response dictionary to hold column values
@@ -3856,10 +3938,12 @@ class ColumnValuesAPIView(APIView):
 
             # Iterate over the column placeholders and fetch corresponding column values
             for placeholder_key, column_id in column_placeholders.items():
-                try:
-                    # Fetch the column based on column_id
-                    column = Column.objects.get(id=column_id, dataset=dataset)
-                except Column.DoesNotExist:
+                column = (
+                    scoped_column_queryset(request)
+                    .filter(id=column_id, dataset=dataset)
+                    .first()
+                )
+                if column is None:
                     return self._gm.bad_request(
                         {
                             "error": f"{get_error_message('COLUMN_NOT_FOUND')} {column_id}"
@@ -3867,7 +3951,9 @@ class ColumnValuesAPIView(APIView):
                     )
 
                 # Fetch the rows for the dataset
-                rows = Row.objects.filter(dataset=dataset).order_by("order")[:10]
+                rows = Row.objects.filter(dataset=dataset, deleted=False).order_by(
+                    "order"
+                )[:10]
 
                 # Get column values for the rows
                 values = self._get_column_values_for_rows(dataset, column, rows)
@@ -4073,7 +4159,19 @@ class PromptExecutionViewSet(BaseModelViewSetMixin, viewsets.ReadOnlyModelViewSe
 
         # Get root folders (no parent) and sample folders
         folders_queryset = PromptFolder.no_workspace_objects.filter(
-            models.Q(workspace=self.request.workspace) | models.Q(is_sample=True),
+            (
+                models.Q(
+                    organization=getattr(self.request, "organization", None)
+                    or self.request.user.organization,
+                )
+                & request_workspace_filter(self.request)
+            )
+            | models.Q(
+                is_sample=True,
+                organization__isnull=True,
+                workspace__isnull=True,
+            ),
+            parent_folder=None,
             deleted=False,
         )
 
@@ -4148,17 +4246,21 @@ class PromptHistoryExecutionViewSet(
     _gm = GeneralMethods()
 
     def get_queryset(self):
-        # Get base queryset with automatic filtering from mixin
+        organization = (
+            getattr(self.request, "organization", None)
+            or self.request.user.organization
+        )
         queryset = (
-            super()
-            .get_queryset()
-            .select_related("original_template", "original_template__organization")
+            PromptVersion.no_workspace_objects.select_related(
+                "original_template", "original_template__organization"
+            )
             .filter(
-                original_template__organization=getattr(
-                    self.request, "organization", None
-                )
-                or self.request.user.organization,
+                request_workspace_filter(
+                    self.request, field_name="original_template__workspace"
+                ),
+                original_template__organization=organization,
                 original_template__deleted=False,
+                deleted=False,
             )
             .order_by("-is_default", "-created_at")
         )
@@ -4202,22 +4304,13 @@ class PromptHistoryExecutionViewSet(
         Get detailed information about a specific PromptVersion
         """
         try:
-            execution = get_object_or_404(
-                PromptVersion.objects.select_related(
-                    "original_template", "original_template__organization"
-                ).filter(
-                    original_template__organization=getattr(
-                        self.request, "organization", None
-                    )
-                    or self.request.user.organization,
-                    original_template__deleted=False,
-                ),
-                id=execution_id,
-            )
+            execution = get_object_or_404(self.get_queryset(), id=execution_id)
 
             serializer = PromptHistoryExecutionSerializer(execution)
             return self._gm.success_response(serializer.data)
 
+        except Http404:
+            return self._gm.not_found("Prompt execution not found")
         except Exception as e:
             logger.exception(f"Error in fetching prompt execution details: {str(e)}")
             return self._gm.bad_request(

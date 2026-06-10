@@ -245,9 +245,7 @@ export default function JwtLoginView() {
         }
       }
     } catch (error) {
-      const errorCode =
-        error?.result?.error_code ||
-        error?.error_code
+      const errorCode = error?.result?.error_code || error?.error_code;
       if (errorCode) {
         switch (errorCode) {
           case LOGIN_ERROR_CODES.IP_BLOCKED:
@@ -261,8 +259,7 @@ export default function JwtLoginView() {
 
           case LOGIN_ERROR_CODES.ACCOUNT_BLOCKED:
           case LOGIN_ERROR_CODES.TOO_MANY_ATTEMPTS: {
-            const remaining =
-              error?.result?.block_time_remaining
+            const remaining = error?.result?.block_time_remaining;
             const minutes = remaining ? Math.ceil(remaining / 60) : null;
             setErrorMsg(
               minutes
@@ -330,7 +327,14 @@ export default function JwtLoginView() {
           );
         }
       }
-      logger.error("Login attempt failed", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Login attempt failed (expected)", error);
+      } else {
+        logger.error("Login attempt failed", error);
+      }
     }
   });
 
@@ -377,7 +381,14 @@ export default function JwtLoginView() {
           { variant: "error" },
         );
       }
-      logger.error("Passkey login failed", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Passkey login failed (expected)", error);
+      } else {
+        logger.error("Passkey login failed", error);
+      }
     } finally {
       setPasskeyLoading(false);
     }
@@ -421,7 +432,14 @@ export default function JwtLoginView() {
         });
       }
     } catch (error) {
-      logger.error("Error during social login:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Error during social login (expected)", error);
+      } else {
+        logger.error("Error during social login:", error);
+      }
       if (error.response?.status === 302 && error.response?.headers?.reason) {
         enqueueSnackbar(error.response.headers.reason, { variant: "error" });
       } else {

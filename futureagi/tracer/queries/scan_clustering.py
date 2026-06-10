@@ -11,12 +11,10 @@ import hashlib
 from typing import List, Optional, Tuple
 
 import structlog
-from django.db import models
 from django.utils import timezone
 
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
 from agentic_eval.core.embeddings.embedding_manager import model_manager
-from tracer.models.observation_span import ObservationSpan
 from tracer.models.trace import Trace
 from tracer.models.trace_error_analysis import (
     ClusterSource,
@@ -25,6 +23,7 @@ from tracer.models.trace_error_analysis import (
     TraceErrorGroup,
 )
 from tracer.models.trace_scan import TraceScanIssue, TraceScanResult
+from tracer.services.clickhouse.v2 import get_reader
 from tracer.types.scan_types import ClusterableIssue, TraceInputData
 
 logger = structlog.get_logger(__name__)
@@ -376,22 +375,29 @@ def get_trace_input_data(trace_ids: List[str], project_id: str) -> List[TraceInp
     if not scanned_trace_ids:
         return []
 
-    # Get root span input.value for the scanned traces only
-    root_spans = (
-        ObservationSpan.objects.filter(
-            trace_id__in=scanned_trace_ids,
-        )
-        .filter(
-            models.Q(parent_span_id__isnull=True) | models.Q(parent_span_id=""),
-        )
-        .values_list("trace_id", "span_attributes")
-    )
+    # Get root span input.value for the scanned traces only — was
+    # ObservationSpan.objects.filter(trace_id__in=, parent_span_id IS NULL
+    # OR parent_span_id="").values_list("trace_id", "span_attributes").
+    # CH `list_by_trace_ids` returns spans across all the requested
+    # traces in (trace_id, start_time, id) order; we pick the first
+    # parentless span per trace in Python — the same "first root span"
+    # semantics PG returns (.first() with parentless filter).
+    # `span_attributes` is reconstructed from CHSpan's typed Map columns
+    # (attrs_string is where string-valued attrs like input.value live).
+    with get_reader() as reader:
+        ch_spans = reader.list_by_trace_ids(scanned_trace_ids)
 
-    input_texts = {}
-    for trace_id, attrs in root_spans:
-        input_text = (attrs or {}).get("input.value", "")
+    input_texts: dict[str, str] = {}
+    for span in ch_spans:
+        # Root span = no parent_span_id (CHSpan stores it as "" when absent).
+        if span.parent_span_id:
+            continue
+        trace_id_str = str(span.trace_id)
+        if trace_id_str in input_texts:
+            continue  # already captured first root for this trace
+        input_text = (span.attrs_string or {}).get("input.value", "")
         if input_text:
-            input_texts[str(trace_id)] = str(input_text)
+            input_texts[trace_id_str] = str(input_text)
 
     # Fallback: check Trace.input for any missing
     missing = [tid for tid in scanned_trace_ids if tid not in input_texts]

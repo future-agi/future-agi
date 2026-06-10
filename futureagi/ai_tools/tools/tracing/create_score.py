@@ -79,14 +79,20 @@ class CreateScoreTool(BaseTool):
         # Validate span if provided
         span = None
         if params.observation_span_id:
-            from tracer.models.observation_span import ObservationSpan
+            # Span fetch from CH 25.3 (was ObservationSpan.objects.get with
+            # project__organization tenant filter); we 2-step the org check
+            # via a Project lookup on the span's project_id since the FK
+            # join isn't possible cross-store.
+            from tracer.models.project import Project
+            from tracer.services.clickhouse.v2 import get_reader
 
-            try:
-                span = ObservationSpan.objects.get(
-                    id=params.observation_span_id,
-                    project__organization=context.organization,
-                )
-            except ObservationSpan.DoesNotExist:
+            with get_reader() as reader:
+                span = reader.get(str(params.observation_span_id))
+            if span is None:
+                return ToolResult.not_found("Span", params.observation_span_id)
+            if not Project.objects.filter(
+                id=span.project_id, organization=context.organization
+            ).exists():
                 return ToolResult.not_found("Span", params.observation_span_id)
 
         # Ensure at least one value is provided
@@ -163,7 +169,9 @@ class CreateScoreTool(BaseTool):
             "source_type": score_source_type,
         }
         if span:
-            score_lookup["observation_span_id"] = span.pk
+            # CHSpan.id is already a str; passes through Django's FK
+            # coercion the same as PG's UUID pk would.
+            score_lookup["observation_span_id"] = span.id
         else:
             score_lookup["trace_id"] = trace.pk
 

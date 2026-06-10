@@ -12,7 +12,6 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from django.contrib.auth import get_user_model
-from django.db import models
 from django.db.models import (
     Avg,
     Case,
@@ -22,7 +21,6 @@ from django.db.models import (
     IntegerField,
     Q,
     QuerySet,
-    Sum,
     Value,
     When,
 )
@@ -30,7 +28,7 @@ from django.db.models.functions import TruncDate
 from django.utils import timezone
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.models.observation_span import EvalLogger
 from tracer.models.trace import Trace, TraceErrorAnalysisStatus
 from tracer.models.trace_error_analysis import (
     ClusterSource,
@@ -41,6 +39,8 @@ from tracer.models.trace_error_analysis import (
     TraceErrorGroup,
 )
 from tracer.models.trace_scan import TraceScanIssue, TraceScanResult
+from tracer.services.clickhouse.v2 import get_reader
+from tracer.services.clickhouse.v2.span_reader import CHSpan
 from tracer.types.feed_types import (
     CoOccurringIssue,
     DeepAnalysisDispatchResponse,
@@ -204,22 +204,60 @@ def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
     Return {cluster_id: distinct_end_user_count}.
 
     Goes ErrorClusterTraces → trace → ObservationSpan.end_user.
+
+    Cross-store algorithm (post-CH25 cutover):
+      1. ECT (PG) → trace_id → set[cluster_id] map (one query). A trace
+         can belong to multiple clusters; the legacy SQL JOIN counted
+         the span once per (trace, cluster) pair so we must replicate
+         that fan-out in Python.
+      2. CHSpanReader.list_by_trace_ids — single CH read for every
+         affected trace.
+      3. Distinct(end_user_id) per cluster_id in Python — for each span
+         we add the user to every cluster the trace belongs to.
     """
     if not cluster_ids:
         return {}
 
-    rows = (
-        ObservationSpan.objects.filter(
-            trace__error_cluster_traces__cluster__cluster_id__in=cluster_ids,
-            end_user__isnull=False,
-        )
-        .values("trace__error_cluster_traces__cluster__cluster_id")
-        .annotate(users=Count("end_user_id", distinct=True))
-    )
+    ect_rows = ErrorClusterTraces.objects.filter(
+        cluster__cluster_id__in=cluster_ids,
+    ).values_list("trace_id", "cluster__cluster_id")
 
-    return {
-        r["trace__error_cluster_traces__cluster__cluster_id"]: r["users"] for r in rows
-    }
+    # trace_id → set of cluster_ids it belongs to (one trace can sit in
+    # many clusters via separate ECT rows).
+    trace_to_clusters: dict[str, set] = {}
+    for tid, cid in ect_rows:
+        if not tid or not cid:
+            continue
+        trace_to_clusters.setdefault(str(tid), set()).add(cid)
+
+    if not trace_to_clusters:
+        return {}
+
+    # CH25-TODO (codex consolidated review P2 2026-05-26): this materializes
+    # every span for every trace in the cluster list. Bounded by clustering
+    # page-size today but unsafe under "all-clusters" sweeps. Pending reader
+    # extension:
+    #   CHSpanReader.distinct_end_users_by_trace_ids(trace_ids) ->
+    #       dict[trace_id, set[end_user_id]]
+    # which would push the DISTINCT into CH and return only the user-ids,
+    # not the full span payload.
+    with get_reader() as reader:
+        spans = reader.list_by_trace_ids(list(trace_to_clusters.keys()))
+
+    # Distinct end_user_id per cluster_id — a span contributes its
+    # end_user to every cluster the trace is in (fan-out matches the
+    # legacy SQL join).
+    users_by_cluster: dict[str, set] = {}
+    for s in spans:
+        if not s.end_user_id:
+            continue
+        clusters_for_trace = trace_to_clusters.get(str(s.trace_id))
+        if not clusters_for_trace:
+            continue
+        for cid in clusters_for_trace:
+            users_by_cluster.setdefault(cid, set()).add(s.end_user_id)
+
+    return {cid: len(users) for cid, users in users_by_cluster.items() if users}
 
 
 def _fetch_sessions_batch(cluster_ids: list[str]) -> dict:
@@ -771,16 +809,24 @@ def _project_cluster_inputs_corpus(
     if not all_trace_ids:
         return [], [], {}
 
-    root_spans = (
-        ObservationSpan.objects.filter(trace_id__in=list(all_trace_ids))
-        .filter(models.Q(parent_span_id__isnull=True) | models.Q(parent_span_id=""))
-        .values_list("trace_id", "span_attributes")
-    )
+    # Was: ObservationSpan.filter(trace_id__in=, parent_span_id IS NULL
+    # OR ="").values_list("trace_id", "span_attributes"). Loaded the
+    # full row set since PG returns one row per matching span; CH
+    # `list_by_trace_ids` does the same in one query then we pick the
+    # first parentless span per trace in Python. attrs_string is the
+    # typed-Map column where string-valued attrs like input.value live.
+    with get_reader() as reader:
+        all_spans = reader.list_by_trace_ids(list(all_trace_ids))
     trace_input: dict[str, str] = {}
-    for tid, attrs in root_spans:
-        text = (attrs or {}).get("input.value", "") or ""
+    for span in all_spans:
+        if span.parent_span_id:  # root = parent_span_id is "" (CHSpan default)
+            continue
+        tid_str = str(span.trace_id)
+        if tid_str in trace_input:
+            continue  # first root wins, matches PG one-row-per-trace semantics
+        text = (span.attrs_string or {}).get("input.value", "") or ""
         if text:
-            trace_input[str(tid)] = str(text)
+            trace_input[tid_str] = str(text)
 
     cluster_ids: list[str] = []
     corpus: list[str] = []
@@ -1081,58 +1127,67 @@ def _fetch_pattern_summary(cluster_id: str) -> PatternSummary:
     return PatternSummary(insights=insights, key_moments=key_moments)
 
 
-def _get_root_span(trace_id: str) -> ObservationSpan | None:
-    """Root span = no parent (NULL or empty string)."""
-    return (
-        ObservationSpan.objects.filter(trace_id=trace_id)
-        .filter(models.Q(parent_span_id__isnull=True) | models.Q(parent_span_id=""))
-        .first()
-    )
+def _get_root_span(trace_id: str) -> CHSpan | None:
+    """Root span = no parent (NULL or empty string).
+
+    Single-trace convenience -- uses CHSpanReader.list_by_trace and picks
+    the LAST parentless span (the legacy ObservationSpan.Meta.ordering
+    is `["-start_time"]`, so the old `.first()` returned the newest
+    root). Callers iterating many trace ids should use
+    _get_root_spans_batch to avoid N+1 CH reads.
+    """
+    with get_reader() as reader:
+        spans = reader.list_by_trace(str(trace_id))
+    for s in reversed(spans):
+        if not s.parent_span_id:
+            return s
+    return None
 
 
 def _get_root_spans_batch(trace_ids: list[str]) -> dict:
-    """Return {trace_id_str: ObservationSpan} — first root span per trace."""
+    """Return {trace_id_str: CHSpan} -- latest root span per trace."""
     if not trace_ids:
         return {}
-    rows = ObservationSpan.objects.filter(trace_id__in=trace_ids).filter(
-        models.Q(parent_span_id__isnull=True) | models.Q(parent_span_id="")
-    )
+    with get_reader() as reader:
+        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
     out: dict = {}
-    for span in rows:
-        tid = str(span.trace_id)
-        if tid not in out:
-            out[tid] = span
+    # CH orders by (trace_id, start_time, id) ASC; we want the latest
+    # parentless row per trace_id. A single pass that always overwrites
+    # gives us the last (= newest) parentless span for each trace.
+    for span in spans:
+        if span.parent_span_id:
+            continue
+        out[str(span.trace_id)] = span
     return out
 
 
 def _get_trace_totals(
     trace_id: str,
 ) -> tuple[int | None, int | None, int | None]:
-    """Return (latency_ms, prompt_tokens, completion_tokens) aggregated from spans."""
-    agg = ObservationSpan.objects.filter(trace_id=trace_id).aggregate(
-        latency=Sum("latency_ms"),
-        prompt=Sum("prompt_tokens"),
-        completion=Sum("completion_tokens"),
-    )
-    return agg["latency"], agg["prompt"], agg["completion"]
+    """Return (latency_ms, prompt_tokens, completion_tokens) aggregated from spans.
+
+    Single-trace convenience -- uses _get_trace_totals_batch under the
+    hood so the CH query shape is identical.
+    """
+    totals = _get_trace_totals_batch([str(trace_id)])
+    return totals.get(str(trace_id), (None, None, None))
 
 
 def _get_trace_totals_batch(trace_ids: list[str]) -> dict:
     """Return {trace_id_str: (latency, prompt, completion)} aggregated from spans."""
     if not trace_ids:
         return {}
-    rows = (
-        ObservationSpan.objects.filter(trace_id__in=trace_ids)
-        .values("trace_id")
-        .annotate(
-            latency=Sum("latency_ms"),
-            prompt=Sum("prompt_tokens"),
-            completion=Sum("completion_tokens"),
-        )
-    )
-    return {
-        str(r["trace_id"]): (r["latency"], r["prompt"], r["completion"]) for r in rows
-    }
+    with get_reader() as reader:
+        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+    rollup: dict[str, list[int | None]] = {}
+    for s in spans:
+        tid = str(s.trace_id)
+        row = rollup.setdefault(tid, [None, None, None])
+        for idx, val in enumerate((s.latency_ms, s.prompt_tokens, s.completion_tokens)):
+            if val is None:
+                continue
+            row[idx] = (row[idx] or 0) + val
+    return {tid: tuple(values) for tid, values in rollup.items()}
 
 
 def _get_trace_score(trace_id: str) -> float | None:
@@ -1242,7 +1297,7 @@ def _build_representative_trace(
     pass_reel: list[dict] | None = None,
     highlight_terms: list[str] | None = None,
     *,
-    root: ObservationSpan | None = None,
+    root: CHSpan | None = None,
     totals: tuple[int | None, int | None, int | None] | None = None,
     score: float | None = None,
     scan_result: TraceScanResult | None = None,
@@ -1274,7 +1329,9 @@ def _build_representative_trace(
     input_text = None
     output_text = None
     if root:
-        attrs = root.span_attributes or {}
+        # CHSpan stores typed-string attrs in attrs_string; input.value
+        # and output.value are string-valued so they live there.
+        attrs = root.attrs_string or {}
         input_text = _safe_str(attrs.get("input.value")) or _trace_input_str(trace)
         output_text = _safe_str(attrs.get("output.value")) or _trace_output_str(trace)
     else:
@@ -1345,7 +1402,8 @@ def _fetch_success_trace_pass_reel(cluster_id: str) -> list[dict]:
     input_text = None
     output_text = None
     if root:
-        attrs = root.span_attributes or {}
+        # CHSpan typed-Map string-valued attrs live in attrs_string.
+        attrs = root.attrs_string or {}
         input_text = attrs.get("input.value")
         output_text = attrs.get("output.value")
     input_text = input_text or _trace_input_str(success)
@@ -1506,16 +1564,11 @@ def _fetch_traces_aggregates(cluster_id: str) -> TracesAggregates:
     # Helper uses EVAL_SCORE_EXPR for bool-aware avg (sim/voice clusters).
     avg_score = _avg_eval_score(trace_ids) or 0.0
 
-    # Latency percentiles: sum(latency_ms) per trace
-    per_trace_latency: list[int] = []
-    latency_rows = (
-        ObservationSpan.objects.filter(trace_id__in=trace_ids)
-        .values("trace_id")
-        .annotate(total=Sum("latency_ms"))
-    )
-    for row in latency_rows:
-        if row["total"] is not None:
-            per_trace_latency.append(row["total"])
+    # Latency percentiles: sum(latency_ms) per trace via CH batch helper.
+    totals_by_trace = _get_trace_totals_batch(trace_ids)
+    per_trace_latency: list[int] = [
+        t[0] for t in totals_by_trace.values() if t[0] is not None
+    ]
 
     p50 = _percentile(per_trace_latency, 50)
     p95 = _percentile(per_trace_latency, 95)
@@ -1558,7 +1611,8 @@ def _fetch_trace_rows(
     )
 
     total = base.values("trace_id").distinct().count()
-    rows: list[TracesListRow] = []
+
+    page_traces: list[Trace] = []
     seen: set = set()
     for ect in base[offset : offset + limit * 3]:  # over-fetch for dedupe
         if not ect.trace:
@@ -1567,20 +1621,44 @@ def _fetch_trace_rows(
         if tid in seen:
             continue
         seen.add(tid)
+        page_traces.append(ect.trace)
+        if len(page_traces) >= limit:
+            break
 
-        latency, prompt, completion = _get_trace_totals(tid)
+    if not page_traces:
+        return [], total
+
+    page_trace_ids = [str(t.id) for t in page_traces]
+
+    # Pre-batch CH/PG lookups: one round-trip each.
+    totals_by_trace = _get_trace_totals_batch(page_trace_ids)
+    scores_by_trace = _get_trace_scores_batch(page_trace_ids)
+    roots_by_trace = _get_root_spans_batch(page_trace_ids)
+    scans_by_trace = {
+        str(sr.trace_id): sr
+        for sr in TraceScanResult.objects.filter(trace_id__in=page_trace_ids)
+        .only("trace_id", "meta")
+    }
+
+    rows: List[TracesListRow] = []
+    for trace in page_traces:
+        tid = str(trace.id)
+
+        latency, prompt, completion = totals_by_trace.get(tid, (None, None, None))
         tokens = (prompt or 0) + (completion or 0)
-        score = _get_trace_score(tid)
-        root = _get_root_span(tid)
+        score = scores_by_trace.get(tid)
+        root = roots_by_trace.get(tid)
+
         input_text = None
         if root:
-            attrs = root.span_attributes or {}
+            # CHSpan typed-Map string attrs live in attrs_string.
+            attrs = root.attrs_string or {}
             input_text = attrs.get("input.value")
         if not input_text:
-            input_text = _trace_input_str(ect.trace)
+            input_text = _trace_input_str(trace)
 
         turns = None
-        scan_result = TraceScanResult.objects.filter(trace_id=tid).only("meta").first()
+        scan_result = scans_by_trace.get(tid)
         if scan_result and scan_result.meta:
             turns = scan_result.meta.get("turn_count")
 
@@ -1588,7 +1666,7 @@ def _fetch_trace_rows(
             TracesListRow(
                 id=tid,
                 input=input_text,
-                timestamp=ect.trace.created_at,
+                timestamp=trace.created_at,
                 latency_ms=latency,
                 tokens=tokens if tokens else None,
                 cost=round(tokens * _COST_PER_TOKEN, 6) if tokens else None,
@@ -1596,8 +1674,6 @@ def _fetch_trace_rows(
                 turns=turns,
             )
         )
-        if len(rows) >= limit:
-            break
 
     return rows, total
 
@@ -1638,12 +1714,13 @@ def _users_affected_in_window(trace_ids: list[str]) -> int:
     """Distinct end_user_id across the given traces."""
     if not trace_ids:
         return 0
-    return (
-        ObservationSpan.objects.filter(trace_id__in=trace_ids, end_user__isnull=False)
-        .values("end_user_id")
-        .distinct()
-        .count()
-    )
+    with get_reader() as reader:
+        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+    users: set = set()
+    for s in spans:
+        if s.end_user_id:
+            users.add(s.end_user_id)
+    return len(users)
 
 
 def _avg_eval_score(trace_ids: list[str]) -> float | None:
@@ -1741,18 +1818,59 @@ def _fetch_events_over_time_with_passing(
     )
     errors_by_day: dict = {row["bucket"]: row["errors"] for row in err_rows}
 
-    # Distinct end users affected per day (via the cluster's traces)
-    user_rows = (
-        ObservationSpan.objects.filter(
-            trace__error_cluster_traces__cluster__cluster_id=cluster_id,
-            trace__error_cluster_traces__created_at__gte=since,
-            end_user__isnull=False,
-        )
-        .annotate(bucket=TruncDate("trace__error_cluster_traces__created_at"))
-        .values("bucket")
-        .annotate(users=Count("end_user_id", distinct=True))
+    # Distinct end users affected per day (via the cluster's traces).
+    # Was: ObservationSpan.filter(
+    #          trace__error_cluster_traces__cluster__cluster_id=,
+    #          trace__error_cluster_traces__created_at__gte=since,
+    #          end_user__isnull=False
+    #      ).annotate(bucket=TruncDate("trace__...__created_at"))
+    #       .values("bucket").annotate(users=Count("end_user_id", distinct=True))
+    # Cross-store: ECT (PG) gives us the (trace_id, bucket-day) pairs in
+    # the window, then CH list_by_trace_ids gets the spans + end_user_ids,
+    # then we group end_user_id by bucket in Python.
+    #
+    # Note: a single trace can appear in ECT multiple times across days
+    # (rare — re-clustering); the PG `TruncDate(ect.created_at)` picks
+    # each row's own bucket, so a span's end_user is counted on the day
+    # its ECT row was created. We model that 1:1 by carrying the per-ECT
+    # bucket dates rather than collapsing to one bucket per trace_id.
+    users_by_day: dict[object, set] = {}
+    ect_rows_in_window = list(
+        ErrorClusterTraces.objects.filter(
+            cluster__cluster_id=cluster_id,
+            created_at__gte=since,
+        ).values_list("trace_id", "created_at")
     )
-    users_by_day: dict = {row["bucket"]: row["users"] for row in user_rows}
+    if ect_rows_in_window:
+        # trace_id → list of bucket-dates (one ECT row may pair a trace
+        # with multiple buckets; that's preserved 1:1 in the legacy join).
+        # Use timezone.localtime to match Django's TruncDate semantics
+        # (which converts to the active timezone before truncating —
+        # otherwise UTC-side .date() can disagree with the err_rows /
+        # pass_rows keys, breaking the day-bucket union below).
+        buckets_by_trace: dict[str, list] = {}
+        for tid, ect_created in ect_rows_in_window:
+            if not tid or not ect_created:
+                continue
+            buckets_by_trace.setdefault(str(tid), []).append(
+                timezone.localtime(ect_created).date()
+            )
+
+        with get_reader() as reader:
+            spans = reader.list_by_trace_ids(list(buckets_by_trace.keys()))
+
+        # For each span with a non-null end_user_id, mark that user in
+        # every bucket-day its trace appeared on.
+        for s in spans:
+            if not s.end_user_id:
+                continue
+            buckets = buckets_by_trace.get(str(s.trace_id))
+            if not buckets:
+                continue
+            for bucket in buckets:
+                users_by_day.setdefault(bucket, set()).add(s.end_user_id)
+
+    users_by_day = {bucket: len(users) for bucket, users in users_by_day.items()}
 
     # Project-wide passing scans per day (has_issues=False) — context for
     # the dual-axis chart
@@ -1933,17 +2051,23 @@ def _fetch_sidebar_ai_metadata(
     model: str | None = None
     model_version: str | None = None
     if focus_trace_id:
-        llm_span = (
-            ObservationSpan.objects.filter(
-                trace_id=focus_trace_id, observation_type__iexact="llm"
-            )
-            .order_by("start_time")
-            .only("model", "span_attributes")
-            .first()
-        )
+        # Was: ObservationSpan.filter(trace_id=, observation_type__iexact="llm")
+        #          .order_by("start_time").only("model", "span_attributes").first()
+        # CH list_by_trace returns spans in (start_time, id) order with
+        # is_deleted=0 — matches the legacy filter+order_by. CH filters
+        # are case-sensitive, so the iexact="llm" is reproduced with a
+        # Python lower() comparison (the same idiom analyze_errors uses
+        # for status).
+        llm_span: Optional[CHSpan] = None
+        with get_reader() as reader:
+            for s in reader.list_by_trace(focus_trace_id):
+                if (s.observation_type or "").lower() == "llm":
+                    llm_span = s
+                    break
         if llm_span:
             model = llm_span.model or None
-            attrs = llm_span.span_attributes or {}
+            # CHSpan typed-Map string attrs live in attrs_string.
+            attrs = llm_span.attrs_string or {}
             model_version = (
                 attrs.get("gen_ai.request.model_version")
                 or attrs.get("llm.model_version")
