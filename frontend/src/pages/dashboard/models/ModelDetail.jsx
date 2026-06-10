@@ -95,14 +95,19 @@ const ModelDetail = () => {
   }, [error]);
 
   const links = useMemo(() => {
+    const modelName =
+      state?.model?.userModelId ||
+      state?.model?.user_model_id ||
+      modelDetails?.userModelId ||
+      modelDetails?.user_model_id ||
+      "New Model";
     const l = [
       {
         name: "Model",
         href: "/dashboard/models",
       },
       {
-        name:
-          state?.model?.userModelId || modelDetails?.userModelId || "New Model",
+        name: modelName,
         href: `/dashboard/models/${id}/performance`,
       },
     ];
@@ -168,7 +173,8 @@ const ModelDetail = () => {
                   navigate(`/dashboard/models/${id}/datasets`);
                 }}
               />
-              {modelDetails?.modelType === "GenerativeLLM" && (
+              {(modelDetails?.modelType || modelDetails?.model_type) ===
+                "GenerativeLLM" && (
                 <Tab
                   label={
                     <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
