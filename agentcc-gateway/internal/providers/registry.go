@@ -222,10 +222,12 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 	}
 
 	// Try prefix match: "openai/gpt-4o" → provider "openai", model "gpt-4o".
+	// ModelOverride is set so the handler updates rc.Request.Model to the bare
+	// model name before the provider call.
 	if idx := strings.Index(model, "/"); idx > 0 {
 		providerID := model[:idx]
 		if p, ok := r.providers[providerID]; ok {
-			return &ResolveResult{Provider: p}, nil
+			return &ResolveResult{Provider: p, ModelOverride: model[idx+1:]}, nil
 		}
 	}
 
