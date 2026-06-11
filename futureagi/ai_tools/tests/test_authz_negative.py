@@ -611,3 +611,347 @@ class TestApprovalIsolation:
         res_c2 = tool.run({"id": "victim-2", "confirm": True}, ctx_c2)
         assert res_c2.error_code == "CONFIRMATION_REQUIRED"
         assert executed == []
+
+
+# ---------------------------------------------------------------------------
+# Layer 4 — Phase 7A org-scoping seams (S1–S5) on the MCP surface
+#
+# Probes for the seams fixed in mcp_server/org_resolution.py + mcp_app.py +
+# views/transport.py (consumer-leg probes live in
+# ee/falcon_ai/tests/test_org_scoping_ws.py). Each class names its seam.
+# Five-actor topology (PHASES 7B): org-A owner (`user` fixture), a multi-org
+# user with a stale FK, a removed member with a revoked membership, a
+# workspace-restricted member, and a system API key.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def seam_actors(db, user, workspace):
+    """Five-actor fixture topology for the 7A/7B org-scoping probes."""
+    from types import SimpleNamespace
+
+    from accounts.models.organization import Organization
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from accounts.models.workspace import Workspace, WorkspaceMembership
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    org_a = user.organization
+    ws_a_default = workspace
+
+    org_b = Organization.objects.create(name="Seam Org B")
+    ws_b_default = Workspace.objects.create(
+        name="Seam Org B Default",
+        organization=org_b,
+        is_default=True,
+        is_active=True,
+        created_by=user,
+    )
+
+    def _mk_user(prefix, org, role=OrganizationRoles.MEMBER):
+        return User.objects.create_user(
+            email=f"{prefix}-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name=prefix,
+            organization=org,
+            organization_role=role,
+        )
+
+    def _member(u, org, level=Level.MEMBER, role=OrganizationRoles.MEMBER, active=True):
+        return OrganizationMembership.no_workspace_objects.create(
+            user=u, organization=org, role=role, level=level, is_active=active
+        )
+
+    # Multi-org user: legacy FK → org B, ACTIVE memberships in both A and B.
+    multi = _mk_user("seam-multi", org_b, role=OrganizationRoles.OWNER)
+    _member(multi, org_a, level=Level.OWNER, role=OrganizationRoles.OWNER)
+    _member(multi, org_b, level=Level.OWNER, role=OrganizationRoles.OWNER)
+
+    # Removed member: legacy FK → org A, ONLY a REVOKED membership row in A.
+    removed = _mk_user("seam-removed", org_a)
+    _member(removed, org_a, active=False)
+
+    # Workspace-restricted member of org A: Level.MEMBER (no global
+    # workspace access) with a WorkspaceMembership ONLY to a NON-default
+    # workspace — no access to org A's default workspace.
+    restricted = _mk_user("seam-restricted", org_a)
+    restricted_om = _member(restricted, org_a, level=Level.MEMBER)
+    ws_a_side = Workspace.objects.create(
+        name="Seam Side Workspace",
+        organization=org_a,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        workspace=ws_a_side,
+        user=restricted,
+        role=OrganizationRoles.WORKSPACE_ADMIN,
+        level=Level.WORKSPACE_ADMIN,
+        is_active=True,
+        organization_membership=restricted_om,
+    )
+
+    return SimpleNamespace(
+        org_a=org_a,
+        org_b=org_b,
+        ws_a_default=ws_a_default,
+        ws_b_default=ws_b_default,
+        ws_a_side=ws_a_side,
+        owner_a=user,
+        multi=multi,
+        removed=removed,
+        restricted=restricted,
+    )
+
+
+def _oauth_context(user, org, workspace=None):
+    """Mint a real OAuth token bound to (user, org[, workspace]) and run it
+    through the production authenticator — the exact S1 request path."""
+    from mcp_server.mcp_app import _authenticate_via_oauth
+    from mcp_server.oauth_utils import generate_oauth_token
+
+    token, _ = generate_oauth_token(
+        user_id=user.id,
+        org_id=org.id,
+        workspace_id=workspace.id if workspace else None,
+        client_id="seam-probe",
+        scope=[],
+    )
+    return _authenticate_via_oauth(token)
+
+
+@pytest.mark.django_db
+class TestSeamS1OAuthOrgBinding:
+    """S1: the OAuth path binds the TOKEN's org (membership re-verified per
+    request) — never the legacy user.organization FK."""
+
+    def test_token_org_beats_legacy_fk(self, seam_actors):
+        a = seam_actors
+        # multi's FK points at org B; the token was approved for org A.
+        ctx = _oauth_context(a.multi, a.org_a)
+        assert ctx is not None
+        assert ctx.organization.id == a.org_a.id  # token org, NOT the FK org
+
+    def test_removed_member_token_rejected(self, seam_actors):
+        # Stale-membership revocation: FK still → org A, membership revoked.
+        a = seam_actors
+        assert _oauth_context(a.removed, a.org_a) is None
+
+    def test_token_for_never_member_org_rejected(self, seam_actors):
+        a = seam_actors
+        assert _oauth_context(a.removed, a.org_b) is None
+
+    def test_cross_org_workspace_in_token_not_bound(self, seam_actors):
+        # Forged/stale workspace_id from org B in an org-A token: the
+        # workspace lookup is org-scoped, so it can never bind org B data.
+        a = seam_actors
+        ctx = _oauth_context(a.multi, a.org_a, workspace=a.ws_b_default)
+        assert ctx is not None
+        assert ctx.organization.id == a.org_a.id
+        assert ctx.workspace is None or (
+            ctx.workspace.organization_id == a.org_a.id
+        )
+        assert ctx.workspace is None or ctx.workspace.id != a.ws_b_default.id
+
+    def test_org_a_token_cannot_read_org_b_data(self, seam_actors):
+        # End-to-end leak check: a context minted from an org-A token must
+        # not read an org-B row, and the denial must not leak its content.
+        a = seam_actors
+        ctx = _oauth_context(a.multi, a.org_a)
+        ctx_b = ToolContext(
+            user=a.multi, organization=a.org_b, workspace=a.ws_b_default
+        )
+        tpl = make_prompt_template(ctx_b, name="org-b-secret-tpl")
+        result = run_tool("get_prompt_template", {"id": str(tpl.id)}, ctx)
+        _assert_denied(result)
+        assert "org-b-secret-tpl" not in (result.content or "")
+
+
+@pytest.mark.django_db
+class TestSeamS2MembershipResolution:
+    """S2: no stale-FK fallback — `_resolve_organization` semantics (FK only
+    for accounts with ZERO membership rows) on the resolver and the
+    transport views."""
+
+    def test_resolver_rejects_revoked_member(self, seam_actors):
+        from mcp_server.org_resolution import resolve_membership_org
+
+        assert resolve_membership_org(seam_actors.removed) is None
+        assert (
+            resolve_membership_org(
+                seam_actors.removed, org_id=seam_actors.org_a.id
+            )
+            is None
+        )
+
+    def test_resolver_keeps_truly_legacy_fk_parity(self, seam_actors, db):
+        # Zero membership rows + FK set = truly-legacy account: parity with
+        # accounts/authentication.py step 5 is preserved.
+        from accounts.models.user import User
+        from mcp_server.org_resolution import resolve_membership_org
+
+        legacy = User.objects.create_user(
+            email=f"seam-legacy-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="seam-legacy",
+            organization=seam_actors.org_a,
+        )
+        org = resolve_membership_org(legacy)
+        assert org is not None and org.id == seam_actors.org_a.id
+        bound = resolve_membership_org(legacy, org_id=seam_actors.org_a.id)
+        assert bound is not None and bound.id == seam_actors.org_a.id
+        # …but never for a DIFFERENT org than the FK.
+        assert resolve_membership_org(legacy, org_id=seam_actors.org_b.id) is None
+
+    def test_resolver_is_deterministic_for_multiorg(self, seam_actors):
+        # S5: joined_at ordering — repeated resolution always lands on the
+        # earliest-joined active membership (org A here).
+        from mcp_server.org_resolution import resolve_membership_org
+
+        resolved = {
+            resolve_membership_org(seam_actors.multi).id for _ in range(5)
+        }
+        assert resolved == {seam_actors.org_a.id}
+
+    def test_transport_tool_call_denies_revoked_member(self, seam_actors):
+        # Before the fix: request.organization None → user.organization FK
+        # (org A) → tool executed. Now: 403, nothing executes.
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        client.force_authenticate(user=seam_actors.removed)
+        resp = client.post(
+            "/mcp/internal/tool-call/",
+            {"tool_name": "whoami", "params": {}},
+            format="json",
+        )
+        assert resp.status_code == 403
+
+    def test_transport_tool_list_denies_revoked_member(self, seam_actors):
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        client.force_authenticate(user=seam_actors.removed)
+        resp = client.get("/mcp/internal/tools/")
+        assert resp.status_code == 403
+
+    def test_transport_tool_list_allows_active_member(self, seam_actors):
+        # Positive control: the same fallback resolves an ACTIVE membership.
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        client.force_authenticate(user=seam_actors.multi)
+        resp = client.get("/mcp/internal/tools/")
+        assert resp.status_code == 200
+
+
+@pytest.mark.django_db
+class TestSeamS3WorkspaceBinding:
+    """S3: every workspace bind is access-verified (HTTP parity with
+    accounts/authentication.py:193) — no silent default-workspace reads for
+    workspace-restricted users."""
+
+    def test_restricted_user_binds_own_workspace_not_default(self, seam_actors):
+        a = seam_actors
+        ctx = _oauth_context(a.restricted, a.org_a)
+        assert ctx is not None
+        assert ctx.workspace is not None
+        assert ctx.workspace.id == a.ws_a_side.id  # their workspace, not default
+
+    def test_restricted_user_explicit_default_workspace_rejected(self, seam_actors):
+        a = seam_actors
+        assert _oauth_context(a.restricted, a.org_a, workspace=a.ws_a_default) is None
+
+    def test_owner_binds_default_workspace(self, seam_actors):
+        a = seam_actors
+        ctx = _oauth_context(a.owner_a, a.org_a)
+        assert ctx is not None
+        assert ctx.workspace is not None
+        assert ctx.workspace.id == a.ws_a_default.id
+
+    def test_resolver_denies_restricted_with_no_accessible_workspace(
+        self, seam_actors
+    ):
+        from accounts.models.workspace import WorkspaceMembership
+        from mcp_server.org_resolution import (
+            WorkspaceAccessDenied,
+            resolve_accessible_workspace,
+        )
+
+        a = seam_actors
+        WorkspaceMembership.no_workspace_objects.filter(
+            user=a.restricted
+        ).update(is_active=False)
+        with pytest.raises(WorkspaceAccessDenied):
+            resolve_accessible_workspace(a.restricted, a.org_a)
+
+
+@pytest.mark.django_db
+class TestSeamS4SystemKeyPrincipal:
+    """S4: system API keys execute as a deliberate principal — the org's
+    longest-standing ACTIVE owner-level member — never a revoked user row."""
+
+    def test_system_key_skips_revoked_oldest_user(self, seam_actors):
+        from accounts.models.organization import Organization
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.user import OrgApiKey, User
+        from accounts.models.workspace import Workspace
+        from mcp_server.mcp_app import _authenticate_and_set_context
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        org_c = Organization.objects.create(name="Seam Org C")
+        # Oldest user row in org C: membership REVOKED.
+        old = User.objects.create_user(
+            email=f"seam-old-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="seam-old",
+            organization=org_c,
+        )
+        OrganizationMembership.no_workspace_objects.create(
+            user=old, organization=org_c, is_active=False
+        )
+        # Younger user: ACTIVE owner membership.
+        young = User.objects.create_user(
+            email=f"seam-young-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="seam-young",
+            organization=org_c,
+            organization_role=OrganizationRoles.OWNER,
+        )
+        OrganizationMembership.no_workspace_objects.create(
+            user=young,
+            organization=org_c,
+            role=OrganizationRoles.OWNER,
+            level=Level.OWNER,
+            is_active=True,
+        )
+        Workspace.objects.create(
+            name="Seam Org C Default",
+            organization=org_c,
+            is_default=True,
+            is_active=True,
+            created_by=young,
+        )
+        key = OrgApiKey.no_workspace_objects.create(
+            organization=org_c,
+            type="system",
+            api_key=f"seam-key-{uuid.uuid4().hex}",
+            secret_key=f"seam-secret-{uuid.uuid4().hex}",
+            enabled=True,
+        )
+
+        # Production MCP auth runs with no ambient workspace context; the
+        # test fixtures leave one set (org A), which would filter the
+        # OrgApiKey lookup. Clear it to probe the real request path.
+        from tfc.middleware.workspace_context import clear_workspace_context
+
+        clear_workspace_context()
+        ctx = _authenticate_and_set_context(key.api_key, key.secret_key)
+        assert ctx is not None
+        # Pre-fix: `.first()` user row = `old` (revoked). Post-fix: the
+        # active owner-level member.
+        assert ctx.user.id == young.id
+        assert ctx.organization.id == org_c.id
