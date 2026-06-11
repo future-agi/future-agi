@@ -1,5 +1,4 @@
 /* eslint-disable no-console */
-import { Buffer } from "node:buffer";
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import process from "node:process";
@@ -33,6 +32,7 @@ async function main() {
   const pageErrors = [];
   const consoleMessages = [];
   const traceRequests = [];
+  const expectedExportFailures = [];
   const evidence = {
     project_id: fixture.projectId,
     project_name: fixture.projectName,
@@ -66,6 +66,10 @@ async function main() {
     page.on("response", (response) => {
       const url = response.url();
       if (isObserveApiUrl(url) && response.status() >= 400) {
+        if (isTraceExportUrl(url) && response.status() === 400) {
+          expectedExportFailures.push(`${response.status()} ${url}`);
+          return;
+        }
         apiFailures.push(`${response.status()} ${url}`);
       }
     });
@@ -134,6 +138,26 @@ async function main() {
     await page.keyboard.press("Escape");
     await waitForTraceGridRow(page, traceRowLabel);
 
+    const exportResponse = await waitForResponseDuring(
+      page,
+      "observe trace CSV export diagnostic",
+      traceExportResponse(fixture.projectId),
+      () => clickExportCsvButton(page),
+    );
+    assert(
+      exportResponse.status() === 400,
+      `Trace CSV export returned unexpected HTTP ${exportResponse.status()}.`,
+    );
+    const exportBody = await readResponseJson(exportResponse);
+    const exportDiagnostic = stringifyDiagnostic(exportBody);
+    assertTraceExportDiagnostic(exportDiagnostic);
+    await waitForVisibleText(page, "Export failed:", { exact: false });
+    await waitForVisibleText(page, "Non-voice trace export", { exact: false });
+    evidence.export_diagnostic = {
+      status: exportResponse.status(),
+      message: exportDiagnostic,
+    };
+
     const detailResponse = await waitForResponseDuring(
       page,
       "open observe trace drawer",
@@ -178,6 +202,7 @@ async function main() {
           workspace_id: auth.workspaceId,
           evidence,
           observe_trace_request_count: traceRequests.length,
+          expected_export_failures: expectedExportFailures,
         },
         null,
         2,
@@ -200,6 +225,7 @@ async function main() {
           page_errors: pageErrors,
           browser_console_messages: consoleMessages.slice(-20),
           observe_trace_requests: traceRequests,
+          expected_export_failures: expectedExportFailures,
           failure_screenshot: FAILURE_SCREENSHOT_PATH,
         },
         null,
@@ -984,6 +1010,17 @@ function traceTagUpdateResponse(traceId) {
   };
 }
 
+function traceExportResponse(projectId) {
+  return (response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/tracer/trace/get_trace_export_data/" &&
+      response.request().method() === "GET" &&
+      url.searchParams.get("project_id") === projectId
+    );
+  };
+}
+
 async function waitForResponseDuring(page, label, predicate, action) {
   const responsePromise = page.waitForResponse(predicate, { timeout: 60000 });
   try {
@@ -1042,6 +1079,50 @@ async function waitForTraceGridRow(page, rowLabel) {
     { timeout: 60000 },
     rowLabel,
   );
+}
+
+async function clickExportCsvButton(page) {
+  await page.waitForFunction(
+    () =>
+      document.querySelector(
+        'button[aria-label="Export CSV"]:not(:disabled)',
+      ) ||
+      window.visibleElements(".component-iconify").some((icon) => {
+        const iconName =
+          icon.getAttribute("icon") || icon.getAttribute("data-icon") || "";
+        const button = icon.closest("button");
+        return (
+          iconName === "mdi:download-outline" && button && !button.disabled
+        );
+      }),
+    { timeout: 30000 },
+  );
+  const clicked = await page.evaluate(() => {
+    const labeledButton = document.querySelector(
+      'button[aria-label="Export CSV"]:not(:disabled)',
+    );
+    if (labeledButton) {
+      window.dispatchClick(labeledButton);
+      return true;
+    }
+    const icon = window
+      .visibleElements(".component-iconify")
+      .find((candidate) => {
+        const iconName =
+          candidate.getAttribute("icon") ||
+          candidate.getAttribute("data-icon") ||
+          "";
+        const button = candidate.closest("button");
+        return (
+          iconName === "mdi:download-outline" && button && !button.disabled
+        );
+      });
+    const button = icon?.closest("button");
+    if (!button) return false;
+    window.dispatchClick(button);
+    return true;
+  });
+  assert(clicked, "Could not click trace export CSV button.");
 }
 
 async function clickTraceGridRow(page, rowLabel) {
@@ -1206,6 +1287,22 @@ function assertTraceCsv(text, fixture) {
   );
 }
 
+function stringifyDiagnostic(body) {
+  if (typeof body === "string") return body;
+  if (typeof body?.message === "string") return body.message;
+  if (typeof body?.detail === "string") return body.detail;
+  if (typeof body?.error === "string") return body.error;
+  if (typeof body?.result === "string") return body.result;
+  return JSON.stringify(body || {});
+}
+
+function assertTraceExportDiagnostic(diagnostic) {
+  assert(
+    /unsupported|not supported|unbounded|CH-only/i.test(diagnostic),
+    `Trace export 400 did not include the CH diagnostic: ${diagnostic}`,
+  );
+}
+
 async function apiGetRaw(auth, pathName, query = {}) {
   const url = new URL(pathName, auth.apiBase);
   for (const [key, value] of Object.entries(query)) {
@@ -1293,6 +1390,10 @@ function isObserveApiUrl(url) {
 
 function isObserveTraceApiUrl(url) {
   return url.includes("/tracer/trace/");
+}
+
+function isTraceExportUrl(url) {
+  return url.includes("/tracer/trace/get_trace_export_data/");
 }
 
 function buildObserveTraceListUrl(projectId) {

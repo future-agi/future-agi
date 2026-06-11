@@ -36,6 +36,25 @@ import { useGetProjectDetails } from "src/api/project/project-detail";
 
 // CustomBackButton removed — replaced with inline Box button
 
+function exportErrorMessage(error) {
+  const data = error?.response?.data;
+  if (typeof data === "string" && data.trim()) return data;
+  if (typeof data?.message === "string" && data.message.trim()) {
+    return data.message;
+  }
+  if (typeof data?.detail === "string" && data.detail.trim()) {
+    return data.detail;
+  }
+  if (typeof data?.error === "string" && data.error.trim()) return data.error;
+  if (typeof data?.result === "string" && data.result.trim()) {
+    return data.result;
+  }
+  if (typeof error?.message === "string" && error.message.trim()) {
+    return error.message;
+  }
+  return "Failed to export data";
+}
+
 const ProjectDropdownButton = styled(Button)(({ theme }) => ({
   minWidth: 200,
   height: 26,
@@ -273,6 +292,11 @@ const ObserveHeader = ({
 
       link.remove();
       window.URL.revokeObjectURL(url);
+    },
+    onError: (error) => {
+      enqueueSnackbar(`Export failed: ${exportErrorMessage(error)}`, {
+        variant: "error",
+      });
     },
   });
 
@@ -604,6 +628,7 @@ const ObserveHeader = ({
                     size="small"
                     onClick={handleExportClick}
                     disabled={isExportData}
+                    aria-label={isExportData ? "Exporting data" : "Export CSV"}
                   >
                     <Iconify icon="mdi:download-outline" width={16} />
                   </ObserveIconButton>
