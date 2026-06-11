@@ -23,6 +23,14 @@ CHAT_SIMULATION_PROVIDER = os.getenv("CHAT_SIMULATION_PROVIDER", "futureagi")
 
 _chat_sim_config = ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN
 
+# The Bedrock config resolves model_name from BEDROCK_SONNET_ARN, which is
+# only set on cloud deployments. Without a fallback, self-hosted/local stacks
+# created chat simulator assistants with model="" and every chat simulation
+# died inside litellm ("LLM Provider NOT provided", surfaced as a Logging
+# JSON-serialization crash by the retry wrapper).
+if not _chat_sim_config.model_name:
+    _chat_sim_config = ModelConfigs.OPENAI_GPT_5_1
+
 FUTUREAGI_CHAT_MODEL = _chat_sim_config.model_name
 FUTUREAGI_CHAT_TEMPERATURE = _chat_sim_config.temperature
 FUTUREAGI_CHAT_MAX_TOKENS = _chat_sim_config.max_tokens

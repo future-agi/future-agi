@@ -18,6 +18,15 @@ class ModelHubConfig(AppConfig):
         if "migrate" in sys.argv or "makemigrations" in sys.argv:
             return
 
+        # Under pytest, conftest.pytest_configure owns ClickHouse schema and
+        # applies the v2 typed schema FIRST (see its docstring). Letting this
+        # boot hook race it creates the legacy `spans` shape in the test CH
+        # sidecar, after which the v2 ALTER fails (Missing columns
+        # attrs_string/...) and every DB test errors. On CI the sidecar is
+        # unreachable at boot so the race never fires; locally it does.
+        if "pytest" in sys.modules:
+            return
+
         # Seed system eval templates from YAML (idempotent)
         try:
             from model_hub.management.commands.seed_system_evals import seed_evals
