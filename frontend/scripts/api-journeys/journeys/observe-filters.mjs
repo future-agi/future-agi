@@ -1,4 +1,5 @@
 /* global process */
+import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -5234,6 +5235,216 @@ export const observeFilterJourneys = [
         label_id: labelId,
         audited_span_count: asArray(audit.spans).length,
         label_deleted: audit.label?.deleted === true,
+      });
+    },
+  },
+  {
+    id: "OBS-API-028",
+    title:
+      "Authenticated Langfuse and OTLP collector ingestion with API-key and Basic auth",
+    tags: [
+      "observe",
+      "ingestion",
+      "mutating",
+      "data-roundtrip",
+      "db-audit",
+      "authentication",
+    ],
+    async run({
+      apiBase,
+      client,
+      user,
+      organizationId,
+      workspaceId,
+      cleanup,
+      runId,
+      evidence,
+    }) {
+      requireMutations();
+      if (!canManageOrgSecrets(user)) {
+        skip(
+          "Current user is not an org owner/admin; collector key cleanup is unsafe.",
+        );
+      }
+      const userId = currentUserId(user);
+      assert(
+        userId,
+        "Authenticated context did not resolve a user id for collector ingestion.",
+      );
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const suffix = journeySafeId(runId);
+      const projectName = `api journey collector ${suffix}`;
+      const createdProject = await client.post(apiPath("/tracer/project/"), {
+        name: projectName,
+        model_type: "GenerativeLLM",
+        trace_type: "observe",
+        metadata: { source: "api-journey", run_id: runId },
+      });
+      const projectId = createdProject.project_id || createdProject.id;
+      assert(
+        isUuid(projectId),
+        "Collector ingestion project create returned no id.",
+      );
+      cleanup.defer("hard-delete OBS-API-028 collector project", () =>
+        hardDeleteCollectorIngestionDb({
+          organizationId,
+          workspaceId,
+          projectId,
+          projectName,
+        }),
+      );
+
+      const keyName = `api journey collector key ${suffix}`;
+      const createdKey = await client.post(
+        apiPath("/accounts/key/generate_secret_key/"),
+        { key_name: keyName },
+      );
+      assert(
+        isUuid(createdKey?.key_id),
+        "Collector ingestion key create returned no key id.",
+      );
+      assertRawDeveloperKeyMaterial(createdKey.api_key, "collector api_key");
+      assertRawDeveloperKeyMaterial(
+        createdKey.secret_key,
+        "collector secret_key",
+      );
+      cleanup.defer("hard-delete OBS-API-028 developer key", () =>
+        hardDeleteDeveloperSecretKeyDb({
+          keyId: createdKey.key_id,
+          organizationId,
+        }),
+      );
+
+      const apiKeyClient = createApiClient({
+        apiBase,
+        organizationId,
+        workspaceId,
+      });
+      const apiKeyHeaders = collectorApiKeyHeaders(createdKey);
+      const basicHeaders = collectorBasicHeaders(createdKey);
+      const apiKeyUserInfo = await apiKeyClient.get(
+        apiPath("/accounts/user-info/"),
+        { headers: apiKeyHeaders },
+      );
+      assert(
+        currentUserId(apiKeyUserInfo) === userId,
+        "Collector API key authenticated as a different user.",
+      );
+
+      const langfuse = buildLangfuseIngestionFixture({
+        projectName,
+        suffix,
+      });
+      const otlp = buildOtlpCollectorFixture({
+        projectName,
+        suffix,
+      });
+      cleanup.defer("hard-delete OBS-API-028 collector ingestion rows", () =>
+        hardDeleteCollectorIngestionDb({
+          organizationId,
+          workspaceId,
+          projectId,
+          projectName,
+          traceExternalIds: [langfuse.traceExternalId],
+          traceIds: [otlp.traceId],
+          spanIds: [langfuse.observationId, langfuse.rootSpanId, otlp.spanId],
+          evalIds: [langfuse.scoreId],
+        }),
+      );
+
+      const ingestionResponse = await apiKeyClient.post(
+        apiPath("/api/public/ingestion"),
+        { batch: langfuse.batch },
+        { headers: basicHeaders, okStatuses: [207], unwrap: false },
+      );
+      assertLangfuseIngestionResponse(ingestionResponse, {
+        expectedSuccessIds: langfuse.eventIds,
+      });
+
+      const langfuseAudit = await waitForCollectorIngestionDbAudit({
+        organizationId,
+        workspaceId,
+        projectId,
+        traceExternalIds: [langfuse.traceExternalId],
+        spanIds: [langfuse.observationId, langfuse.rootSpanId],
+        evalIds: [langfuse.scoreId],
+      });
+      assertCollectorIngestionDbAudit(langfuseAudit, {
+        organizationId,
+        workspaceId,
+        projectId,
+        traceExternalId: langfuse.traceExternalId,
+        observationId: langfuse.observationId,
+        rootSpanId: langfuse.rootSpanId,
+        scoreId: langfuse.scoreId,
+      });
+
+      const otlpResponse = await apiKeyClient.post(
+        apiPath("/tracer/v1/traces"),
+        otlp.payload,
+        {
+          headers: {
+            ...apiKeyHeaders,
+            Accept: "application/json",
+          },
+          unwrap: false,
+        },
+      );
+      assertCollectorAccepted(otlpResponse, "authenticated /tracer/v1/traces");
+
+      const compatResponse = await apiKeyClient.post(
+        apiPath("/api/public/otel/v1/traces"),
+        otlp.payload,
+        {
+          headers: {
+            ...basicHeaders,
+            Accept: "application/json",
+          },
+          unwrap: false,
+        },
+      );
+      assertCollectorAccepted(
+        compatResponse,
+        "Basic-auth /api/public/otel/v1/traces",
+      );
+
+      const otlpResidueAudit = await loadCollectorIngestionDbAudit({
+        organizationId,
+        workspaceId,
+        projectId,
+        traceIds: [otlp.traceId],
+        spanIds: [otlp.spanId],
+      });
+
+      evidence.push({
+        project_id: projectId,
+        project_name: projectName,
+        key_id: createdKey.key_id,
+        langfuse_trace_external_id: langfuse.traceExternalId,
+        langfuse_trace_id: langfuseAudit.trace_ids?.[0] || null,
+        langfuse_observation_id: langfuse.observationId,
+        langfuse_eval_id: langfuse.scoreId,
+        langfuse_success_count: asArray(ingestionResponse.successes).length,
+        langfuse_trace_count: langfuseAudit.trace_count,
+        langfuse_span_count: langfuseAudit.span_count,
+        langfuse_eval_log_count: langfuseAudit.eval_log_count,
+        otlp_trace_id: otlp.traceId,
+        otlp_span_id: otlp.spanId,
+        otlp_async_trace_count: otlpResidueAudit.trace_count,
+        otlp_async_span_count: otlpResidueAudit.span_count,
+        authenticated_collector_routes: [
+          "/api/public/ingestion",
+          "/tracer/v1/traces",
+          "/api/public/otel/v1/traces",
+        ],
       });
     },
   },
@@ -12126,6 +12337,254 @@ SELECT json_build_object(
   return audit;
 }
 
+async function loadCollectorIngestionDbAudit({
+  organizationId,
+  workspaceId,
+  projectId,
+  traceExternalIds = [],
+  traceIds = [],
+  spanIds = [],
+  evalIds = [],
+}) {
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlUuid(projectId)} AS project_id,
+    ${sqlStringArrayOrEmpty(traceExternalIds)} AS trace_external_ids,
+    ${sqlUuidArrayOrEmpty(traceIds)} AS trace_ids,
+    ${sqlStringArrayOrEmpty(spanIds)} AS span_ids,
+    ${sqlStringArrayOrEmpty(evalIds)} AS eval_ids
+),
+project_rows AS (
+  SELECT
+    project.id::text AS id,
+    project.name,
+    project.organization_id::text AS organization_id,
+    project.workspace_id::text AS workspace_id
+  FROM tracer_project project, requested r
+  WHERE project.id = r.project_id
+    AND project.organization_id = r.organization_id
+    AND project.workspace_id = r.workspace_id
+),
+trace_rows AS (
+  SELECT
+    trace.id,
+    trace.id::text AS id_text,
+    trace.external_id,
+    trace.name,
+    trace.project_id::text AS project_id
+  FROM tracer_trace trace, requested r
+  WHERE trace.project_id = r.project_id
+    AND (
+      trace.external_id = ANY(r.trace_external_ids)
+      OR trace.id = ANY(r.trace_ids)
+    )
+),
+span_rows AS (
+  SELECT
+    span.id,
+    span.trace_id::text AS trace_id,
+    span.project_id::text AS project_id,
+    span.org_id::text AS org_id,
+    span.parent_span_id,
+    span.observation_type,
+    span.name,
+    span.model,
+    span.prompt_tokens,
+    span.completion_tokens,
+    span.total_tokens
+  FROM tracer_observation_span span, requested r
+  WHERE span.project_id = r.project_id
+    AND (
+      span.trace_id IN (SELECT trace_rows.id FROM trace_rows)
+      OR span.id = ANY(r.span_ids)
+    )
+),
+eval_rows AS (
+  SELECT
+    eval_log.id::text AS id,
+    eval_log.eval_id,
+    eval_log.trace_id::text AS trace_id,
+    eval_log.observation_span_id AS observation_span_id,
+    eval_log.eval_type_id,
+    eval_log.output_float,
+    eval_log.output_bool,
+    eval_log.output_str
+  FROM tracer_eval_logger eval_log, requested r
+  WHERE eval_log.eval_id = ANY(r.eval_ids)
+     OR eval_log.trace_id IN (SELECT trace_rows.id FROM trace_rows)
+)
+SELECT json_build_object(
+  'project_id', (SELECT id FROM project_rows LIMIT 1),
+  'project_name', (SELECT name FROM project_rows LIMIT 1),
+  'project_organization_id', (SELECT organization_id FROM project_rows LIMIT 1),
+  'project_workspace_id', (SELECT workspace_id FROM project_rows LIMIT 1),
+  'trace_count', (SELECT count(*) FROM trace_rows),
+  'trace_ids', COALESCE((SELECT json_agg(id_text ORDER BY id_text) FROM trace_rows), '[]'::json),
+  'trace_external_ids', COALESCE((SELECT json_agg(external_id ORDER BY external_id) FROM trace_rows), '[]'::json),
+  'trace_names', COALESCE((SELECT json_agg(name ORDER BY id_text) FROM trace_rows), '[]'::json),
+  'span_count', (SELECT count(*) FROM span_rows),
+  'span_ids', COALESCE((SELECT json_agg(id ORDER BY id) FROM span_rows), '[]'::json),
+  'span_project_ids', COALESCE((SELECT json_agg(project_id ORDER BY id) FROM span_rows), '[]'::json),
+  'span_org_ids', COALESCE((SELECT json_agg(org_id ORDER BY id) FROM span_rows), '[]'::json),
+  'llm_span_count', (SELECT count(*) FROM span_rows WHERE observation_type = 'llm'),
+  'root_span_count', (SELECT count(*) FROM span_rows WHERE parent_span_id IS NULL),
+  'span_models', COALESCE((SELECT json_agg(model ORDER BY id) FROM span_rows), '[]'::json),
+  'span_prompt_tokens', COALESCE((SELECT json_agg(prompt_tokens ORDER BY id) FROM span_rows), '[]'::json),
+  'span_completion_tokens', COALESCE((SELECT json_agg(completion_tokens ORDER BY id) FROM span_rows), '[]'::json),
+  'span_total_tokens', COALESCE((SELECT json_agg(total_tokens ORDER BY id) FROM span_rows), '[]'::json),
+  'eval_log_count', (SELECT count(*) FROM eval_rows),
+  'eval_ids', COALESCE((SELECT json_agg(eval_id ORDER BY eval_id) FROM eval_rows), '[]'::json),
+  'eval_trace_ids', COALESCE((SELECT json_agg(trace_id ORDER BY id) FROM eval_rows), '[]'::json),
+  'eval_observation_span_ids', COALESCE((SELECT json_agg(observation_span_id ORDER BY id) FROM eval_rows), '[]'::json),
+  'eval_type_ids', COALESCE((SELECT json_agg(eval_type_id ORDER BY id) FROM eval_rows), '[]'::json),
+  'eval_output_float_values', COALESCE((SELECT json_agg(output_float ORDER BY id) FROM eval_rows), '[]'::json)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteCollectorIngestionDb({
+  organizationId,
+  workspaceId,
+  projectId,
+  projectName,
+  traceExternalIds = [],
+  traceIds = [],
+  spanIds = [],
+  evalIds = [],
+}) {
+  if (traceIds.length || spanIds.length) {
+    await hardDeleteObserveClickHouseSpans({
+      traceIds,
+      spanIds,
+      bestEffort: true,
+    });
+  }
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlUuid(projectId)} AS project_id,
+    ${sqlString(projectName)} AS project_name,
+    ${sqlStringArrayOrEmpty(traceExternalIds)} AS trace_external_ids,
+    ${sqlUuidArrayOrEmpty(traceIds)} AS trace_ids,
+    ${sqlStringArrayOrEmpty(spanIds)} AS span_ids,
+    ${sqlStringArrayOrEmpty(evalIds)} AS eval_ids
+),
+project_rows AS (
+  SELECT project.id
+  FROM tracer_project project, requested r
+  WHERE project.id = r.project_id
+    AND project.organization_id = r.organization_id
+    AND project.workspace_id = r.workspace_id
+    AND project.name = r.project_name
+),
+trace_rows AS (
+  SELECT trace.id
+  FROM tracer_trace trace, requested r
+  WHERE trace.project_id IN (SELECT id FROM project_rows)
+    AND (
+      trace.external_id = ANY(r.trace_external_ids)
+      OR trace.id = ANY(r.trace_ids)
+    )
+),
+deleted_eval_logs AS (
+  DELETE FROM tracer_eval_logger eval_log
+  USING requested r
+  WHERE eval_log.eval_id = ANY(r.eval_ids)
+     OR eval_log.trace_id IN (SELECT id FROM trace_rows)
+  RETURNING eval_log.id
+),
+deleted_spans AS (
+  DELETE FROM tracer_observation_span span
+  USING requested r
+  WHERE span.id = ANY(r.span_ids)
+     OR span.trace_id IN (SELECT id FROM trace_rows)
+  RETURNING span.id
+),
+deleted_traces AS (
+  DELETE FROM tracer_trace trace
+  WHERE trace.id IN (SELECT id FROM trace_rows)
+  RETURNING trace.id
+),
+deleted_project_versions AS (
+  DELETE FROM tracer_project_version version
+  WHERE version.project_id IN (SELECT id FROM project_rows)
+  RETURNING version.id
+),
+deleted_project AS (
+  DELETE FROM tracer_project project
+  WHERE project.id IN (SELECT id FROM project_rows)
+  RETURNING project.id
+)
+SELECT json_build_object(
+  'deleted_eval_log_count', (SELECT count(*) FROM deleted_eval_logs),
+  'deleted_span_count', (SELECT count(*) FROM deleted_spans),
+  'deleted_trace_count', (SELECT count(*) FROM deleted_traces),
+  'deleted_project_version_count', (SELECT count(*) FROM deleted_project_versions),
+  'deleted_project_count', (SELECT count(*) FROM deleted_project),
+  'remaining_eval_log_count', (
+    SELECT count(*)
+    FROM tracer_eval_logger eval_log, requested r
+    WHERE eval_log.eval_id = ANY(r.eval_ids)
+       OR eval_log.trace_id IN (SELECT id FROM trace_rows)
+  ),
+  'remaining_span_count', (
+    SELECT count(*)
+    FROM tracer_observation_span span, requested r
+    WHERE span.id = ANY(r.span_ids)
+       OR span.trace_id IN (SELECT id FROM trace_rows)
+  ),
+  'remaining_trace_count', (
+    SELECT count(*)
+    FROM tracer_trace trace, requested r
+    WHERE trace.project_id = r.project_id
+      AND (
+        trace.external_id = ANY(r.trace_external_ids)
+        OR trace.id = ANY(r.trace_ids)
+      )
+  ),
+  'remaining_project_count', (
+    SELECT count(*)
+    FROM tracer_project project, requested r
+    WHERE project.id = r.project_id
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteDeveloperSecretKeyDb({ keyId, organizationId }) {
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(keyId)} AS key_id,
+    ${sqlUuid(organizationId)} AS organization_id
+),
+deleted_key AS (
+  DELETE FROM accounts_orgapikey key
+  USING requested r
+  WHERE key.id = r.key_id
+    AND key.organization_id = r.organization_id
+  RETURNING key.id
+)
+SELECT json_build_object(
+  'deleted_key_count', (SELECT count(*) FROM deleted_key),
+  'remaining_key_count', (
+    SELECT count(*)
+    FROM accounts_orgapikey key, requested r
+    WHERE key.id = r.key_id
+      AND key.organization_id = r.organization_id
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
 async function runPostgresJson(sql) {
   const container = process.env.API_JOURNEY_DB_CONTAINER || "ws2-postgres";
   const user = process.env.API_JOURNEY_DB_USER || "user";
@@ -12382,6 +12841,12 @@ function sqlUuidArrayOrEmpty(values) {
 function sqlStringArray(values) {
   const rows = asArray(values);
   assert(rows.length > 0, "SQL text array must not be empty.");
+  return `ARRAY[${rows.map(sqlString).join(",")}]::text[]`;
+}
+
+function sqlStringArrayOrEmpty(values) {
+  const rows = asArray(values).filter(Boolean);
+  if (!rows.length) return "ARRAY[]::text[]";
   return `ARRAY[${rows.map(sqlString).join(",")}]::text[]`;
 }
 
@@ -14101,6 +14566,290 @@ function journeySafeId(value) {
     /[^a-zA-Z0-9_-]/g,
     "_",
   );
+}
+
+function canManageOrgSecrets(user) {
+  const role = String(
+    user?.organization_role || user?.role || "",
+  ).toLowerCase();
+  return (
+    role.includes("owner") ||
+    role.includes("admin") ||
+    Number(user?.org_level) >= 10
+  );
+}
+
+function assertRawDeveloperKeyMaterial(value, label) {
+  assert(
+    /^[0-9a-f]{32}$/i.test(String(value || "")),
+    `${label} was not one-time raw key material.`,
+  );
+}
+
+function collectorApiKeyHeaders(createdKey) {
+  return {
+    "X-Api-Key": createdKey.api_key,
+    "X-Secret-Key": createdKey.secret_key,
+  };
+}
+
+function collectorBasicHeaders(createdKey) {
+  return {
+    Authorization: `Basic ${Buffer.from(
+      `${createdKey.api_key}:${createdKey.secret_key}`,
+      "utf8",
+    ).toString("base64")}`,
+  };
+}
+
+function buildLangfuseIngestionFixture({ projectName, suffix }) {
+  const traceExternalId = `api_journey_langfuse_${suffix}`;
+  const observationId = `api_journey_langfuse_span_${suffix}`;
+  const scoreId = `api_journey_langfuse_score_${suffix}`;
+  const now = Date.now();
+  const startTime = new Date(now - 1000).toISOString();
+  const endTime = new Date(now).toISOString();
+  const eventIds = [
+    `trace-create-${suffix}`,
+    `generation-create-${suffix}`,
+    `score-create-${suffix}`,
+  ];
+
+  return {
+    traceExternalId,
+    observationId,
+    rootSpanId: `root-${traceExternalId.slice(0, 245)}`,
+    scoreId,
+    eventIds,
+    batch: [
+      {
+        id: eventIds[0],
+        type: "trace-create",
+        timestamp: startTime,
+        body: {
+          id: traceExternalId,
+          name: `api journey langfuse trace ${suffix}`,
+          input: { prompt: "collector ingestion prompt" },
+          output: { response: "collector ingestion response" },
+          metadata: {
+            source: "api-journey",
+            run_id: suffix,
+            project_name: projectName,
+          },
+          tags: ["api-journey", "collector-ingestion"],
+          userId: `api-user-${suffix}`,
+          sessionId: `api-session-${suffix}`,
+        },
+      },
+      {
+        id: eventIds[1],
+        type: "generation-create",
+        timestamp: startTime,
+        body: {
+          id: observationId,
+          traceId: traceExternalId,
+          name: `api journey langfuse generation ${suffix}`,
+          startTime,
+          endTime,
+          model: "gpt-4o-mini",
+          input: [{ role: "user", content: "Say hello." }],
+          output: { role: "assistant", content: "Hello from ingestion." },
+          usageDetails: { input: 5, output: 4, total: 9 },
+          metadata: { source: "api-journey", run_id: suffix },
+          level: "DEFAULT",
+        },
+      },
+      {
+        id: eventIds[2],
+        type: "score-create",
+        timestamp: endTime,
+        body: {
+          id: scoreId,
+          traceId: traceExternalId,
+          observationId,
+          name: "api_journey_quality",
+          value: 0.92,
+          dataType: "NUMERIC",
+          comment: "Collector ingestion score readback.",
+        },
+      },
+    ],
+  };
+}
+
+function buildOtlpCollectorFixture({ projectName, suffix }) {
+  const traceId = randomUUID();
+  const traceHex = traceId.replaceAll("-", "");
+  const spanId = randomUUID().replaceAll("-", "").slice(0, 16);
+  const nowNs = BigInt(Date.now()) * 1_000_000n;
+  const startNs = nowNs - 1_000_000_000n;
+
+  return {
+    traceId,
+    spanId,
+    payload: {
+      resource_spans: [
+        {
+          resource: {
+            attributes: [
+              otlpAttribute("project_name", projectName),
+              otlpAttribute("project_type", "observe"),
+              otlpAttribute("service.name", "api-journey"),
+            ],
+          },
+          scope_spans: [
+            {
+              scope: { name: "api-journey", version: "1.0" },
+              spans: [
+                {
+                  trace_id: base64FromHex(traceHex),
+                  span_id: base64FromHex(spanId),
+                  name: `api journey otlp collector ${suffix}`,
+                  start_time_unix_nano: String(startNs),
+                  end_time_unix_nano: String(nowNs),
+                  attributes: [
+                    otlpAttribute("gen_ai.span.kind", "LLM"),
+                    otlpAttribute("gen_ai.request.model", "api-journey-model"),
+                    otlpAttribute(
+                      "input.value",
+                      JSON.stringify({ prompt: "OTLP collector prompt" }),
+                    ),
+                    otlpAttribute(
+                      "output.value",
+                      JSON.stringify({ response: "OTLP collector response" }),
+                    ),
+                    otlpAttribute("api_journey.run_id", suffix),
+                  ],
+                  status: { code: "STATUS_CODE_OK" },
+                  events: [],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function otlpAttribute(key, value) {
+  if (typeof value === "boolean") {
+    return { key, value: { boolValue: value } };
+  }
+  if (Number.isInteger(value)) {
+    return { key, value: { intValue: String(value) } };
+  }
+  if (typeof value === "number") {
+    return { key, value: { doubleValue: value } };
+  }
+  return { key, value: { stringValue: String(value) } };
+}
+
+function base64FromHex(hex) {
+  return Buffer.from(hex, "hex").toString("base64");
+}
+
+function assertLangfuseIngestionResponse(response, { expectedSuccessIds }) {
+  const successes = asArray(response?.successes);
+  const errors = asArray(response?.errors);
+  assert(
+    errors.length === 0,
+    `Langfuse ingestion returned event errors: ${JSON.stringify(errors)}`,
+  );
+  for (const eventId of expectedSuccessIds) {
+    const success = successes.find((item) => item?.id === eventId);
+    assert(
+      success?.status === 201,
+      `Langfuse ingestion did not return success for ${eventId}.`,
+    );
+  }
+}
+
+function assertCollectorAccepted(response, label) {
+  const rejected = Number(response?.partial_success?.rejected_spans || 0);
+  const errorMessage = response?.partial_success?.error_message || "";
+  assert(rejected === 0, `${label} rejected ${rejected} spans.`);
+  assert(
+    !errorMessage,
+    `${label} returned partial_success error: ${errorMessage}`,
+  );
+}
+
+async function waitForCollectorIngestionDbAudit(params) {
+  let audit = null;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    audit = await loadCollectorIngestionDbAudit(params);
+    if (
+      Number(audit.trace_count) >= 1 &&
+      Number(audit.span_count) >= 2 &&
+      Number(audit.eval_log_count) >= 1
+    ) {
+      return audit;
+    }
+    await delay(250);
+  }
+  throw new Error(
+    `Collector ingestion DB audit did not observe persisted rows: ${JSON.stringify(
+      audit,
+    )}`,
+  );
+}
+
+function assertCollectorIngestionDbAudit(
+  audit,
+  {
+    organizationId,
+    workspaceId,
+    projectId,
+    traceExternalId,
+    observationId,
+    rootSpanId,
+    scoreId,
+  },
+) {
+  assert(
+    audit.project_id === projectId &&
+      audit.project_organization_id === organizationId &&
+      audit.project_workspace_id === workspaceId,
+    `Collector project scope mismatch: ${JSON.stringify(audit)}`,
+  );
+  assert(
+    Number(audit.trace_count) === 1 &&
+      asArray(audit.trace_external_ids).includes(traceExternalId),
+    `Collector trace audit mismatch: ${JSON.stringify(audit)}`,
+  );
+  assert(
+    asArray(audit.span_ids).includes(observationId) &&
+      asArray(audit.span_ids).includes(rootSpanId),
+    `Collector span audit missed expected spans: ${JSON.stringify(audit)}`,
+  );
+  assert(
+    Number(audit.llm_span_count) === 1 && Number(audit.root_span_count) === 1,
+    `Collector span type counts were unexpected: ${JSON.stringify(audit)}`,
+  );
+  assert(
+    asArray(audit.span_project_ids).every((id) => id === projectId) &&
+      asArray(audit.span_org_ids).every((id) => id === organizationId),
+    `Collector span scope mismatch: ${JSON.stringify(audit)}`,
+  );
+  assert(
+    Number(audit.eval_log_count) === 1 &&
+      asArray(audit.eval_ids).includes(scoreId) &&
+      asArray(audit.eval_observation_span_ids).includes(observationId),
+    `Collector eval-log audit mismatch: ${JSON.stringify(audit)}`,
+  );
+  assert(
+    asArray(audit.eval_output_float_values).some(
+      (value) => Math.abs(Number(value) - 0.92) < 0.0001,
+    ),
+    `Collector eval-log score value mismatch: ${JSON.stringify(audit)}`,
+  );
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function resolveObserveProjectWithUsers(client, evidence, filters = []) {
