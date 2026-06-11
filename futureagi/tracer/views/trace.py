@@ -68,6 +68,7 @@ from tracer.serializers.trace import (
     UsersQuerySerializer,
     UsersResponseSerializer,
 )
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.graph_dispatch import (
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
@@ -77,7 +78,6 @@ from tracer.services.clickhouse.query_builders import (
     AgentGraphQueryBuilder,
     UserListQueryBuilder,
 )
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.observability_providers import ObservabilityService
@@ -3103,6 +3103,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         processed_log = ObservabilityService.process_raw_logs(
             raw_log, provider, span_attributes=span_attrs
         )
+        # Sim-emitted spans have no raw_log: the span's own start_time is the
+        # call start (the empty-raw_log fallback leaves started_at unset).
+        if not raw_log and not processed_log.get("started_at"):
+            _st = row.get("start_time")
+            if _st:
+                processed_log["started_at"] = (
+                    _st.isoformat() if hasattr(_st, "isoformat") else str(_st)
+                )
         simulation_context = _simulation_context_for_voice_call(
             organization_id=request.user.organization_id,
             span_attributes=span_attrs,
@@ -4313,6 +4321,21 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             processed_log = ObservabilityService.process_raw_logs(
                 raw_log, provider, span_attributes=span_attrs
             )
+            # Sim-emitted spans carry no raw_log; the span's own start_time IS
+            # the call start (the empty-raw_log fallback leaves it unset).
+            if not raw_log:
+                if not processed_log.get("started_at"):
+                    _st = row.get("start_time")
+                    if _st:
+                        processed_log["started_at"] = (
+                            _st.isoformat() if hasattr(_st, "isoformat") else str(_st)
+                        )
+                if processed_log.get("duration_seconds") is None:
+                    _st, _et = row.get("start_time"), row.get("end_time")
+                    if _st and _et and hasattr(_st, "timestamp"):
+                        processed_log["duration_seconds"] = max(
+                            0, int(_et.timestamp() - _st.timestamp())
+                        )
 
             entry = {
                 **processed_log,

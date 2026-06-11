@@ -12,6 +12,7 @@ because two bugs hid behind mocked unit tests until a real DB-verified run:
 
 A mock cannot catch either; only a real write/read can.
 """
+
 import pytest
 
 from simulate.models.agent_definition import AgentDefinition
@@ -28,22 +29,45 @@ from tracer.models.observation_span import ObservationSpan
 
 def _seed_voice_call(organization, workspace):
     ad = AgentDefinition.objects.create(
-        agent_name="AUT voice", agent_type=AgentDefinition.AgentTypeChoices.VOICE,
-        inbound=False, description="obs db test", organization=organization,
-        workspace=workspace, provider="retell", assistant_id="agent_x")
+        agent_name="AUT voice",
+        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        inbound=False,
+        description="obs db test",
+        organization=organization,
+        workspace=workspace,
+        provider="retell",
+        assistant_id="agent_x",
+    )
     sc = Scenarios.objects.create(
-        name="obs scenario", description="d", source="test",
-        scenario_type=Scenarios.ScenarioTypes.DATASET, organization=organization,
-        workspace=workspace, agent_definition=ad)
+        name="obs scenario",
+        description="d",
+        source="test",
+        scenario_type=Scenarios.ScenarioTypes.DATASET,
+        organization=organization,
+        workspace=workspace,
+        agent_definition=ad,
+    )
     rt = RunTest.objects.create(
-        name="obs run", description="d", agent_definition=ad, organization=organization,
-        workspace=workspace, source_type=RunTest.SourceTypes.AGENT_DEFINITION)
+        name="obs run",
+        description="d",
+        agent_definition=ad,
+        organization=organization,
+        workspace=workspace,
+        source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+    )
     te = TestExecution.objects.create(
-        run_test=rt, status=TestExecution.ExecutionStatus.RUNNING,
-        total_scenarios=1, total_calls=1, agent_definition=ad)
+        run_test=rt,
+        status=TestExecution.ExecutionStatus.RUNNING,
+        total_scenarios=1,
+        total_calls=1,
+        agent_definition=ad,
+    )
     return CallExecution.objects.create(
-        test_execution=te, scenario=sc, status=CallExecution.CallStatus.COMPLETED,
-        simulation_call_type=CallExecution.SimulationCallType.VOICE)
+        test_execution=te,
+        scenario=sc,
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.VOICE,
+    )
 
 
 @pytest.mark.integration
@@ -51,16 +75,26 @@ def _seed_voice_call(organization, workspace):
 def test_emit_sim_trace_persists_real_nested_tree(organization, workspace):
     ce = _seed_voice_call(organization, workspace)
     turns = [
-        {"role": "assistant", "content": "Hi, this is the clinic. How can I help?", "latency_ms": 800},
+        {
+            "role": "assistant",
+            "content": "Hi, this is the clinic. How can I help?",
+            "latency_ms": 800,
+        },
         {"role": "user", "content": "I need to reschedule my appointment."},
-        {"role": "assistant", "content": "Sure — what day works for you?", "latency_ms": 850},
+        {
+            "role": "assistant",
+            "content": "Sure — what day works for you?",
+            "latency_ms": 850,
+        },
     ]
     emit_sim_trace(ce, turns=turns)
 
     root_id = _det_span_id(str(ce.id), "root")
     root = ObservationSpan.objects.get(id=root_id)
     assert root.parent_span_id is None
-    assert root.observation_type.lower() == "agent"
+    # Voice sim roots persist as 'conversation' so the voice-call list
+    # (root spans WHERE observation_type='conversation') includes them.
+    assert root.observation_type.lower() == "conversation"
     assert root.trace is not None
     assert root.project.name == "Simulations"
 
@@ -74,7 +108,9 @@ def test_emit_sim_trace_persists_real_nested_tree(organization, workspace):
 @pytest.mark.django_db
 def test_attach_sim_evals_writes_onto_root_span(organization, workspace):
     ce = _seed_voice_call(organization, workspace)
-    emit_sim_trace(ce, turns=[{"role": "assistant", "content": "Hello!", "latency_ms": 700}])
+    emit_sim_trace(
+        ce, turns=[{"role": "assistant", "content": "Hello!", "latency_ms": 700}]
+    )
 
     # REGRESSION (eval attach): must resolve the root span by PK ``id``.
     updated = attach_sim_evals_to_trace(ce, {"eval.score": 0.9, "eval.passed": True})

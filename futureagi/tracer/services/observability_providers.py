@@ -821,6 +821,30 @@ class ObservabilityService:
         Raises:
             ValueError: If provider is not recognized
         """
+        if not raw_log:
+            # Simulation-emitted conversation spans carry no provider raw_log.
+            # Running a provider processor on an empty dict made every sim row
+            # render as "In progress" with no start time and 0:00 duration in
+            # the voice-call list. Derive the call-log shape from the span's
+            # call.* attributes instead (set by simulate.services.
+            # sim_observability on the root span).
+            attrs = span_attributes or {}
+            sim_meta = (
+                (attrs.get("metadata") or {})
+                if isinstance(attrs.get("metadata"), dict)
+                else {}
+            )
+            duration = attrs.get("call.duration")
+            return {
+                "call_id": sim_meta.get("call_execution_id"),
+                "status": attrs.get("call.status") or "completed",
+                "started_at": None,  # the span's own start_time is authoritative
+                "duration_seconds": int(duration) if duration is not None else None,
+                "recording_url": attrs.get("conversation.recording.mono.combined"),
+                "stereo_recording_url": attrs.get("conversation.recording.stereo"),
+                "call_metadata": sim_meta,
+            }
+
         if provider == ProviderChoices.VAPI:
             processed = ObservabilityService._process_vapi_logs(raw_log)
         elif provider == ProviderChoices.RETELL:

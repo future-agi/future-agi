@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from datetime import UTC
 from typing import Any
 
 import structlog
@@ -39,6 +40,7 @@ def _det_trace_id(seed: str) -> str:
 def _det_span_id(seed: str, key: str) -> str:
     """Deterministic 64-bit (16 hex) span id from a seed + a per-span key."""
     return uuid.uuid5(_SIM_TRACE_NS, f"span:{seed}:{key}").hex[:16]
+
 
 # Attribute keys mirror tracer.utils.otel.SpanAttributes (FI/OpenInference). Kept
 # local so this module stays import-light + pure; test_sim_observability pins them
@@ -70,6 +72,12 @@ VOICE_LATENCY_KEYS = {
 SPAN_KIND_AGENT = "AGENT"
 SPAN_KIND_LLM = "LLM"
 SPAN_KIND_TOOL = "TOOL"
+# The voice observability surface lists ROOT spans WHERE
+# observation_type='conversation' (see query_builders/voice_call_list.py) —
+# the same shape the provider pullers emit. A voice sim root emitted as
+# AGENT never appears next to pulled calls, defeating this module's goal of
+# landing sims in the same UI as production traffic.
+SPAN_KIND_CONVERSATION = "CONVERSATION"
 
 
 def _trace_id() -> str:
@@ -81,10 +89,31 @@ def _span_id() -> str:
 
 
 def _span(
-    *, name, kind, span_id, parent_span_id, trace_id, attributes,
-    project_name, project_type, latency=None,
+    *,
+    name,
+    kind,
+    span_id,
+    parent_span_id,
+    trace_id,
+    attributes,
+    project_name,
+    project_type,
+    latency=None,
+    start_ns=None,
+    end_ns=None,
 ) -> dict[str, Any]:
+    # start_time/end_time are NANOSECOND epoch ints — the OTel ingest converter
+    # does ``otel_span.get("start_time", 0) / 1e9`` with default 0, so spans
+    # emitted WITHOUT timestamps landed at 1970-01-01: invisible in the
+    # CH-backed trace UI (the spans store's 90-day TTL deletes them on merge)
+    # and mis-sorted everywhere (found by the cross-provider sync audit).
+    timing = {}
+    if start_ns is not None:
+        timing["start_time"] = int(start_ns)
+    if end_ns is not None:
+        timing["end_time"] = int(end_ns)
     return {
+        **timing,
         "trace_id": trace_id,
         "span_id": span_id,
         # ``parent_span_id`` is the canonical key (asserted by tests / read by
@@ -105,7 +134,7 @@ def _span(
 def build_sim_spans(
     turns: list[dict[str, Any]],
     *,
-    modality: str,                 # "chat" | "voice"
+    modality: str,  # "chat" | "voice"
     project_name: str,
     project_type: str = "observe",
     session_id: str | None = None,
@@ -114,6 +143,8 @@ def build_sim_spans(
     metadata: dict[str, Any] | None = None,
     trace_id: str | None = None,
     seed: str | None = None,
+    started_at=None,
+    ended_at=None,
 ) -> list[dict[str, Any]]:
     """Build the OTLP span dicts for one simulated conversation.
 
@@ -130,6 +161,23 @@ def build_sim_spans(
     # Temporal retry produces the SAME trace + span ids instead of a duplicate trace.
     trace_id = trace_id or (_det_trace_id(seed) if seed else _trace_id())
     root_id = _det_span_id(seed, "root") if seed else _span_id()
+
+    # Real wall-clock window for the trace. Fall back to "now" (a zero-length
+    # window) rather than emitting timestamp-less spans — see _span().
+    from datetime import datetime
+
+    def _to_ns(dt) -> int:
+        return int(dt.timestamp() * 1e9)
+
+    _now = datetime.now(UTC)
+    _start_dt = started_at or ended_at or _now
+    _end_dt = ended_at or started_at or _now
+    if _end_dt < _start_dt:
+        _start_dt, _end_dt = _end_dt, _start_dt
+    root_start_ns = _to_ns(_start_dt)
+    root_end_ns = _to_ns(_end_dt)
+    n_agent_turns = max(1, sum(1 for t in turns if t.get("role") == "assistant"))
+    _slice_ns = max(1, (root_end_ns - root_start_ns) // n_agent_turns)
 
     user_turns = [t for t in turns if t.get("role") == "user"]
     agent_turns = [t for t in turns if t.get("role") == "assistant"]
@@ -158,11 +206,24 @@ def build_sim_spans(
     else:
         base_attrs[METADATA] = {"simulation_modality": modality}
 
+    root_kind = SPAN_KIND_CONVERSATION if modality == "voice" else SPAN_KIND_AGENT
+    if modality == "voice":
+        base_attrs["call.status"] = "completed"
+        base_attrs["call.duration"] = max(
+            0, int(round((root_end_ns - root_start_ns) / 1e9))
+        )
     spans = [
         _span(
-            name=f"{modality} simulation", kind=SPAN_KIND_AGENT, span_id=root_id,
-            parent_span_id=None, trace_id=trace_id, attributes=base_attrs,
-            project_name=project_name, project_type=project_type,
+            name=f"{modality} simulation",
+            kind=root_kind,
+            span_id=root_id,
+            parent_span_id=None,
+            trace_id=trace_id,
+            attributes=base_attrs,
+            project_name=project_name,
+            project_type=project_type,
+            start_ns=root_start_ns,
+            end_ns=root_end_ns,
         )
     ]
 
@@ -196,12 +257,21 @@ def build_sim_spans(
             for k, attr_key in VOICE_LATENCY_KEYS.items():
                 if t["voice_latency"].get(k) is not None:
                     attrs[attr_key] = t["voice_latency"][k]
+        _turn_start = root_start_ns + (turn_no - 1) * _slice_ns
+        _turn_end = min(root_end_ns, _turn_start + _slice_ns)
         spans.append(
             _span(
-                name=f"{modality}.turn {turn_no}", kind=SPAN_KIND_LLM, span_id=llm_id,
-                parent_span_id=root_id, trace_id=trace_id, attributes=attrs,
-                project_name=project_name, project_type=project_type,
+                name=f"{modality}.turn {turn_no}",
+                kind=SPAN_KIND_LLM,
+                span_id=llm_id,
+                parent_span_id=root_id,
+                trace_id=trace_id,
+                attributes=attrs,
+                project_name=project_name,
+                project_type=project_type,
                 latency=t.get("latency_ms"),
+                start_ns=_turn_start,
+                end_ns=_turn_end,
             )
         )
         for tool_idx, tc in enumerate(t.get("tool_calls") or []):
@@ -212,15 +282,21 @@ def build_sim_spans(
             )
             spans.append(
                 _span(
-                    name=tc.get("name") or "tool", kind=SPAN_KIND_TOOL,
-                    span_id=tool_sid, parent_span_id=llm_id, trace_id=trace_id,
+                    name=tc.get("name") or "tool",
+                    kind=SPAN_KIND_TOOL,
+                    span_id=tool_sid,
+                    parent_span_id=llm_id,
+                    trace_id=trace_id,
+                    start_ns=_turn_start,
+                    end_ns=_turn_end,
                     attributes={
                         TOOL_NAME: tc.get("name") or "",
                         TOOL_CALL_ID: tc.get("id") or "",
                         TOOL_CALL_ARGUMENTS: tc.get("arguments") or "",
                         TOOL_CALL_RESULT: tc.get("result") or "",
                     },
-                    project_name=project_name, project_type=project_type,
+                    project_name=project_name,
+                    project_type=project_type,
                 )
             )
         history.append(f"assistant: {content}")
@@ -255,12 +331,14 @@ def _tool_calls_from_row(row) -> list[dict[str, Any]]:
         for item in content:
             for tc in (item.get("tool_calls") or []) if isinstance(item, dict) else []:
                 fn = tc.get("function") or {}
-                out.append({
-                    "name": fn.get("name") or tc.get("name") or "",
-                    "arguments": fn.get("arguments") or tc.get("arguments") or "",
-                    "result": tc.get("result") or "",
-                    "id": tc.get("id") or "",
-                })
+                out.append(
+                    {
+                        "name": fn.get("name") or tc.get("name") or "",
+                        "arguments": fn.get("arguments") or tc.get("arguments") or "",
+                        "result": tc.get("result") or "",
+                        "id": tc.get("id") or "",
+                    }
+                )
     return out
 
 
@@ -355,6 +433,9 @@ def emit_sim_trace(
         agent_name=getattr(agent_def, "agent_name", "agent-under-test"),
         metadata={"call_execution_id": str(getattr(call_execution, "id", ""))},
         seed=str(getattr(call_execution, "id", "")) or None,
+        started_at=getattr(call_execution, "started_at", None)
+        or getattr(call_execution, "created_at", None),
+        ended_at=getattr(call_execution, "ended_at", None),
     )
     emitted = 0
     for span in spans:
@@ -362,7 +443,9 @@ def emit_sim_trace(
             create_single_otel_span(span, organization_id, user_id, workspace_id)
             emitted += 1
         except Exception:  # pragma: no cover - one bad span must not lose the rest
-            logger.exception("sim_trace_span_emit_failed", extra={"name": span.get("name")})
+            logger.exception(
+                "sim_trace_span_emit_failed", extra={"name": span.get("name")}
+            )
     return emitted
 
 
