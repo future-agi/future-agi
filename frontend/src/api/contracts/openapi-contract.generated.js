@@ -9376,8 +9376,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/falcon-ai/quick-analysis/": {
       "post": {
         "operationId": "falcon-ai_quick-analysis_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/QuickAnalysis"
         },
@@ -9385,9 +9385,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/QuickAnalysisResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/FalconErrorResponse"
           },
           "429": {
             "$ref": "#/definitions/FalconErrorResponse"
@@ -37845,26 +37842,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/usage/get-customer-invoices/": {
       "get": {
         "operationId": "usage_get-customer-invoices_list",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
         "requestBody": null,
-        "queryParameters": {
-          "page": {
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          "page_size": {
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            }
-          }
-        },
+        "queryParameters": {},
         "responses": {
           "200": {
             "$ref": "#/definitions/CustomerInvoicesResponse"
@@ -37896,8 +37877,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/usage/get-last-four-digits/": {
       "get": {
         "operationId": "usage_get-last-four-digits_list",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -39927,11 +39908,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_add-addon_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40034,11 +40013,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_addon_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40635,11 +40612,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_payment-methods_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40707,11 +40682,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_payment-methods_default_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40849,11 +40822,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_reinstate-addon_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40956,11 +40927,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_remove-addon_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
@@ -41118,6 +41087,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "string",
               "minLength": 1
+            }
+          },
+          "workspace_id": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
             }
           }
         },
@@ -42291,7 +42267,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Plan",
           "type": "string",
           "enum": [
-            "payg",
             "boost",
             "scale",
             "enterprise"

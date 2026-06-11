@@ -103,6 +103,37 @@ func TestAuthenticate_SetsLastUsedAt(t *testing.T) {
 	}
 }
 
+func TestAuthenticate_RevokedKeyFails(t *testing.T) {
+	ks := NewKeyStore(authCfg())
+
+	key, rawKey := ks.Create("revoked", "alice", nil, nil, nil)
+
+	if !ks.Revoke(key.ID) {
+		t.Fatal("expected revoke to succeed")
+	}
+
+	if got := ks.Authenticate(rawKey); got != nil {
+		t.Fatal("expected revoked key authentication to fail")
+	}
+}
+
+func TestAuthenticate_ExpiredKeyFails(t *testing.T) {
+	expires := time.Now().Add(-1 * time.Hour)
+
+	cfg := authCfg(config.AuthKeyConfig{
+		Name:      "expired",
+		Key:       "expired-secret",
+		Owner:     "alice",
+		ExpiresAt: expires.Format(time.RFC3339),
+	})
+
+	ks := NewKeyStore(cfg)
+
+	if got := ks.Authenticate("expired-secret"); got != nil {
+		t.Fatal("expected expired key authentication to fail")
+	}
+}
+
 // ---------- CanAccessModel ----------
 
 func TestCanAccessModel_NoRestrictions(t *testing.T) {

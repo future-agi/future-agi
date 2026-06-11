@@ -41,7 +41,7 @@ const ProjectFtux = () => {
           Welcome to {isObserve ? `Observe` : `Prototype`}
         </Typography>
         <Box sx={{ height: "5px" }} />
-        <Typography fontSize="14px" color="text.disabled">
+        <Typography fontSize="14px" color="text.secondary">
           Create a project to experiment on your model
         </Typography>
         <Box sx={{ height: "20px" }} />

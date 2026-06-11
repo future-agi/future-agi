@@ -20,6 +20,17 @@ import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import DeleteConfirmation from "./DeleteConfirmation";
 
+const POLL_INTERVAL_MS = 5000;
+
+// Continuous tasks stay in "running" forever — only poll their pending → running flip.
+const shouldPollRow = (row) => {
+  const status = row?.status?.toLowerCase?.();
+  const runType = row?.run_type?.toLowerCase?.();
+  if (status === "pending") return true;
+  if (status === "running") return runType === "historical";
+  return false;
+};
+
 // ── Status Config ──
 
 const STATUS_CONFIG = {
@@ -354,6 +365,12 @@ const TaskListView = ({
       return resp?.result;
     },
     keepPreviousData: true,
+    structuralSharing: false,
+    refetchInterval: (query) =>
+      (query?.state?.data?.table || []).some(shouldPollRow)
+        ? POLL_INTERVAL_MS
+        : false,
+    refetchIntervalInBackground: false,
   });
 
   const items = useMemo(

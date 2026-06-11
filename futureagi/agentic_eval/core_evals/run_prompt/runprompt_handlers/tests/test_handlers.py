@@ -238,6 +238,66 @@ class TestModelHandlerContext:
         assert context.provider == "openai"
 
 
+@pytest.mark.unit
+class TestPayloadBuilder:
+    """Test LiteLLM payload construction."""
+
+    def test_string_api_key_sets_provider_for_anthropic(
+        self, mock_organization_id, simple_messages
+    ):
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers import (
+            ModelHandlerContext,
+        )
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.payload_builder import (
+            PayloadBuilder,
+        )
+
+        context = ModelHandlerContext(
+            model="claude-3-5-haiku-20241022",
+            messages=simple_messages,
+            organization_id=mock_organization_id,
+            api_key="test-key",
+            provider="anthropic",
+        )
+
+        payload = PayloadBuilder.build_llm_payload(
+            context=context,
+            provider="anthropic",
+            api_key="test-key",
+        )
+
+        assert payload["model"] == "claude-3-5-haiku-20241022"
+        assert payload["api_key"] == "test-key"
+        assert payload["custom_llm_provider"] == "anthropic"
+
+    def test_string_api_key_does_not_set_provider_for_openai(
+        self, mock_organization_id, simple_messages
+    ):
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers import (
+            ModelHandlerContext,
+        )
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.payload_builder import (
+            PayloadBuilder,
+        )
+
+        context = ModelHandlerContext(
+            model="gpt-4o",
+            messages=simple_messages,
+            organization_id=mock_organization_id,
+            api_key="test-key",
+            provider="openai",
+        )
+
+        payload = PayloadBuilder.build_llm_payload(
+            context=context,
+            provider="openai",
+            api_key="test-key",
+        )
+
+        assert payload["api_key"] == "test-key"
+        assert "custom_llm_provider" not in payload
+
+
 # =============================================================================
 # Unit Tests - ModelHandlerFactory Routing
 # =============================================================================

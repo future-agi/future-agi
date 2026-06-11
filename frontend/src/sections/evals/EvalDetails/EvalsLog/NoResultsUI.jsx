@@ -36,7 +36,7 @@ export default function NoResultsUI({
         {description && (
           <Typography
             variant="s1"
-            color="text.disabled"
+            color="text.secondary"
             fontWeight="fontWeightRegular"
           >
             {description}

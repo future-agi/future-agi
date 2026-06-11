@@ -39,6 +39,7 @@ _RUNTIME_ALLOWED_KEYS = {
         "choices",
         "choice_scores",
         "reverse_output",
+        "multi_choice",
     },
     "CustomPromptEvaluator": {
         "check_internet",
@@ -275,6 +276,7 @@ def prepare_eval_config(
         config["knowledge_bases"] = eval_template.config.get("knowledge_bases", [])
         config["data_injection"] = eval_template.config.get("data_injection", {})
         config["summary"] = eval_template.config.get("summary", {"type": "concise"})
+        config["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
         # Pass org/workspace context for tool resolution
         config["organization_id"] = (
             str(eval_template.organization.id) if eval_template.organization else None
@@ -299,7 +301,14 @@ def prepare_eval_config(
         if eval_template.config.get("messages"):
             config["messages"] = eval_template.config.get("messages")
         if eval_template.config.get("few_shot_examples"):
-            config["few_shot_examples"] = eval_template.config.get("few_shot_examples")
+            from model_hub.utils.few_shot_examples import (
+                expand_static_few_shot_examples,
+            )
+
+            config["few_shot_examples"] = expand_static_few_shot_examples(
+                eval_template.config.get("few_shot_examples"),
+                organization=eval_template.organization,
+            )
 
         # Resolve model
         raw_model = model or eval_template.config.get("model")
@@ -333,6 +342,7 @@ def prepare_eval_config(
             else []
         )
         config["choice_scores"] = eval_template.choice_scores
+        config["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
 
     # FutureAGI evals (DeterministicEvaluator, RankingEvaluator)
     if is_futureagi:

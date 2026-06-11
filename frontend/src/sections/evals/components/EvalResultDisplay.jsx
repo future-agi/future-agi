@@ -471,6 +471,44 @@ const ErrorLocalizationSection = ({ result }) => {
       </Box>
     );
   }
+    if (errorLocalizerStatus === "skipped") {
+    return (
+      <Box
+        sx={{
+          mx: 1.5,
+          my: 1,
+          px: 1.5,
+          py: 1,
+          borderRadius: "6px",
+          border: "1px solid",
+          borderColor: "divider",
+          backgroundColor: (theme) =>
+            theme.palette.mode === "dark"
+              ? "rgba(145, 158, 171, 0.08)"
+              : "rgba(145, 158, 171, 0.04)",
+        }}
+      >
+        <Typography
+      
+          typography="s3"
+          color="text.secondary"
+          sx={{ display: "block" }}
+        >
+          Error localization skipped
+        </Typography>
+        {errorLocalizerMessage && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: "block", fontSize: "11px", mt: 0.25 }}
+          >
+            {errorLocalizerMessage}
+          </Typography>
+        )}
+      </Box>
+    );
+  }
+
 
   // Surface a clear failed state so users don't assume the feature is
   // just silently broken.
@@ -492,8 +530,8 @@ const ErrorLocalizationSection = ({ result }) => {
         }}
       >
         <Typography
-          variant="caption"
-          fontWeight={600}
+          typography="s3"
+     
           color="error.main"
           sx={{ display: "block" }}
         >
@@ -511,6 +549,7 @@ const ErrorLocalizationSection = ({ result }) => {
       </Box>
     );
   }
+
 
   if (!errorDetails) return null;
 
