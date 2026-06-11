@@ -58,6 +58,11 @@ import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
+import {
+  buildSummaryConfig,
+  getSummaryTemplateId,
+  resolveSummarySelection,
+} from "./summaryConfig";
 
 const extract_selected_tools = (tools) => {
   if (Array.isArray(tools)) return tools;
@@ -74,14 +79,6 @@ const build_tools_payload = (selected_tools) =>
     if (tool_name) acc[tool_name] = true;
     return acc;
   }, {});
-
-const resolve_summary_type = (summary) => {
-  if (summary && typeof summary === "object" && summary.type) {
-    return summary.type;
-  }
-  if (typeof summary === "string" && summary.trim()) return summary;
-  return "concise";
-};
 
 const resolve_context_options = (data_injection) => {
   if (!data_injection || typeof data_injection !== "object") {
@@ -141,6 +138,8 @@ const EvalDetailPage = () => {
   const [checkInternet, setCheckInternet] = useState(false);
   const [agentMode, setAgentMode] = useState("agent");
   const [summaryType, setSummaryType] = useState("concise");
+  const [customSummary, setCustomSummary] = useState("");
+  const [summaryTemplateId, setSummaryTemplateId] = useState(null);
   const [connectorIds, setConnectorIds] = useState([]);
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
@@ -235,6 +234,21 @@ const EvalDetailPage = () => {
       setTestPassed(false);
     }
   }, []);
+
+  const handleSummaryChange = useCallback(
+    (value, template) => {
+      setSummaryType(value);
+      const templateId = getSummaryTemplateId(value);
+      setSummaryTemplateId(templateId);
+      if (templateId && template?.criteria) {
+        setCustomSummary(template.criteria);
+      } else if (value !== "custom") {
+        setCustomSummary("");
+      }
+      markDirty();
+    },
+    [markDirty],
+  );
 
   // Derived flags — must be above handleVersionSelect which uses isComposite
   const isComposite = evalData?.template_type === "composite";
@@ -346,7 +360,11 @@ const EvalDetailPage = () => {
           setDescription(evalData.description || "");
           setCheckInternet(config.check_internet ?? false);
           setAgentMode(config.agent_mode || "agent");
-          setSummaryType(resolve_summary_type(config.summary));
+          setSummaryType(resolveSummarySelection(config.summary));
+          setCustomSummary(config.summary?.custom || "");
+          setSummaryTemplateId(
+            config.summary?.template_id || config.summary?.templateId || null,
+          );
           setConnectorIds(extract_selected_tools(config.tools));
           setKnowledgeBaseIds(
             Array.isArray(config.knowledge_bases) ? config.knowledge_bases : [],
@@ -390,8 +408,12 @@ const EvalDetailPage = () => {
         },
         { replace: true },
       );
-      const config =
+      const versionSnapshot =
         versionToLoad.config_snapshot || versionToLoad.configSnapshot || {};
+      const config = {
+        ...(evalData?.config || {}),
+        ...versionSnapshot,
+      };
       const promptText = versionToLoad.criteria || config.rule_prompt || "";
 
       // Composite versions: load aggregation + children from snapshot
@@ -477,7 +499,11 @@ const EvalDetailPage = () => {
       }
       setCheckInternet(config.check_internet ?? false);
       setAgentMode(config.agent_mode || "agent");
-      setSummaryType(resolve_summary_type(config.summary));
+      setSummaryType(resolveSummarySelection(config.summary));
+      setCustomSummary(config.summary?.custom || "");
+      setSummaryTemplateId(
+        config.summary?.template_id || config.summary?.templateId || null,
+      );
       setConnectorIds(extract_selected_tools(config.tools));
       setKnowledgeBaseIds(
         Array.isArray(config.knowledge_bases) ? config.knowledge_bases : [],
@@ -608,7 +634,11 @@ const EvalDetailPage = () => {
         setDescription(evalData.description || "");
         setCheckInternet(config.check_internet ?? false);
         setAgentMode(config.agent_mode || "agent");
-        setSummaryType(resolve_summary_type(config.summary));
+        setSummaryType(resolveSummarySelection(config.summary));
+        setCustomSummary(config.summary?.custom || "");
+        setSummaryTemplateId(
+          config.summary?.template_id || config.summary?.templateId || null,
+        );
         setConnectorIds(extract_selected_tools(config.tools));
         setKnowledgeBaseIds(
           Array.isArray(config.knowledge_bases) ? config.knowledge_bases : [],
@@ -743,10 +773,10 @@ const EvalDetailPage = () => {
     }
     try {
       const dataInjection = buildDataInjection(contextOptions);
-      const summary =
-        summaryType === "custom"
-          ? { type: "custom", custom: "" }
-          : { type: summaryType };
+      const summary = buildSummaryConfig(summaryType, {
+        customSummary,
+        templateId: summaryTemplateId,
+      });
       const tools = build_tools_payload(connectorIds);
       // Update the template first
       const payload = {
@@ -860,6 +890,8 @@ const EvalDetailPage = () => {
     checkInternet,
     agentMode,
     summaryType,
+    customSummary,
+    summaryTemplateId,
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
@@ -937,10 +969,10 @@ const EvalDetailPage = () => {
       // state.
       if (!isSystemEval && !isComposite) {
         const dataInjection = buildDataInjection(contextOptions);
-        const summary =
-          summaryType === "custom"
-            ? { type: "custom", custom: "" }
-            : { type: summaryType };
+        const summary = buildSummaryConfig(summaryType, {
+          customSummary,
+          templateId: summaryTemplateId,
+        });
         const tools = build_tools_payload(connectorIds);
         await updateEval.mutateAsync({
           instructions: evalType === "code" ? "" : instructions,
@@ -1012,6 +1044,8 @@ const EvalDetailPage = () => {
     checkInternet,
     agentMode,
     summaryType,
+    customSummary,
+    summaryTemplateId,
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
@@ -1497,10 +1531,7 @@ const EvalDetailPage = () => {
                       markDirty();
                     }}
                     activeSummary={summaryType}
-                    onActiveSummaryChange={(v) => {
-                      setSummaryType(v);
-                      markDirty();
-                    }}
+                    onActiveSummaryChange={handleSummaryChange}
                     activeConnectorIds={connectorIds}
                     onActiveConnectorIdsChange={(v) => {
                       setConnectorIds(v);

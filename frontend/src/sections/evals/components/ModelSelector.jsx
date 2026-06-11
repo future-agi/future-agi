@@ -26,6 +26,7 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
+import { getSummaryTemplateId } from "./summaryConfig";
 
 // ---------------------------------------------------------------------------
 // Modes — how the evaluator runs
@@ -196,6 +197,10 @@ const CHIP_STYLES = {
 };
 
 const DELETE_ICON = <Iconify icon="mdi:close" width={12} />;
+const SUMMARY_SELECTION_PROP_TYPE = PropTypes.oneOfType([
+  PropTypes.string,
+  PropTypes.oneOf([null]),
+]);
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
@@ -271,12 +276,16 @@ function SummarySubmenu({ activeSummary, onSelect }) {
       }
       return axios.post(endpoints.develop.eval.summaryTemplates, payload);
     },
-    onSuccess: () => {
+    onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ["eval-summary-templates"] });
       setCustomMode(false);
       setEditId(null);
       setEditName("");
       setEditCriteria("");
+      const template = response?.data?.result;
+      if (template?.id) {
+        onSelect(`custom:${template.id}`, template);
+      }
     },
   });
 
@@ -284,8 +293,12 @@ function SummarySubmenu({ activeSummary, onSelect }) {
   const deleteMutation = useMutation({
     mutationFn: (id) =>
       axios.delete(endpoints.develop.eval.summaryTemplate(id)),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["eval-summary-templates"] }),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ["eval-summary-templates"] });
+      if (getSummaryTemplateId(activeSummary) === id) {
+        onSelect("concise");
+      }
+    },
   });
 
   const handleSave = () => {
@@ -343,6 +356,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
         />
         <Box sx={{ display: "flex", gap: 0.5, justifyContent: "flex-end" }}>
           <IconButton
+            aria-label="Cancel summary template edit"
             size="small"
             onClick={() => {
               setCustomMode(false);
@@ -354,6 +368,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
             <Iconify icon="mdi:close" width={16} />
           </IconButton>
           <IconButton
+            aria-label="Save summary template"
             size="small"
             onClick={handleSave}
             disabled={
@@ -463,7 +478,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
             return (
               <MenuItem
                 key={tmpl.id}
-                onClick={() => onSelect(`custom:${tmpl.id}`)}
+                onClick={() => onSelect(`custom:${tmpl.id}`, tmpl)}
                 selected={isSelected}
                 sx={{ borderRadius: "6px", py: 0.75, gap: 1 }}
               >
@@ -494,6 +509,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
                 </Box>
                 <Box sx={{ display: "flex", gap: 0.25, flexShrink: 0 }}>
                   <IconButton
+                    aria-label={`Edit summary template ${tmpl.name}`}
                     size="small"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -508,6 +524,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
                     />
                   </IconButton>
                   <IconButton
+                    aria-label={`Delete summary template ${tmpl.name}`}
                     size="small"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -547,7 +564,7 @@ function SummarySubmenu({ activeSummary, onSelect }) {
 }
 
 SummarySubmenu.propTypes = {
-  activeSummary: PropTypes.string,
+  activeSummary: SUMMARY_SELECTION_PROP_TYPE,
   onSelect: PropTypes.func.isRequired,
 };
 
@@ -608,8 +625,8 @@ const ModelSelector = ({
   const [activeSummaryLocal, setActiveSummaryLocal] = useState("concise");
   const activeSummary =
     activeSummaryProp !== undefined ? activeSummaryProp : activeSummaryLocal;
-  const setActiveSummary = (v) => {
-    if (onActiveSummaryChange) onActiveSummaryChange(v);
+  const setActiveSummary = (v, template) => {
+    if (onActiveSummaryChange) onActiveSummaryChange(v, template);
     else setActiveSummaryLocal(v);
   };
 
@@ -836,6 +853,7 @@ const ModelSelector = ({
       {/* ── + button + config chips (hidden when showPlus=false, e.g. LLM tab) ── */}
       {showPlus && (
         <IconButton
+          aria-label="Open evaluation runtime options"
           size="small"
           disabled={disabled}
           onClick={(e) => setPlusAnchor(e.currentTarget)}
@@ -1779,8 +1797,8 @@ const ModelSelector = ({
             {plusSubmenu === "summary" && (
               <SummarySubmenu
                 activeSummary={activeSummary}
-                onSelect={(val) => {
-                  setActiveSummary(val);
+                onSelect={(val, template) => {
+                  setActiveSummary(val, template);
                   setPlusSubmenu(null);
                   setPlusAnchor(null);
                 }}
@@ -1802,6 +1820,8 @@ const ModelSelector = ({
 ModelSelector.propTypes = {
   model: PropTypes.string.isRequired,
   onModelChange: PropTypes.func.isRequired,
+  activeSummary: SUMMARY_SELECTION_PROP_TYPE,
+  onActiveSummaryChange: PropTypes.func,
   disabled: PropTypes.bool,
   showMode: PropTypes.bool,
   showPlus: PropTypes.bool,

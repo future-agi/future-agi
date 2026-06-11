@@ -21,6 +21,11 @@ import { useNavigate, useParams } from "react-router";
 import { useSnackbar } from "notistack";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import {
+  buildSummaryConfig,
+  getSummaryTemplateId,
+  resolveSummarySelection,
+} from "./summaryConfig";
 
 import { useCreateEval } from "../hooks/useCreateEval";
 import { useUpdateEval } from "../hooks/useEvalDetail";
@@ -101,14 +106,6 @@ const buildToolsPayload = (selectedTools) =>
     return acc;
   }, {});
 
-const resolveSummaryType = (summary) => {
-  if (summary && typeof summary === "object" && summary.type) {
-    return summary.type;
-  }
-  if (typeof summary === "string" && summary.trim()) return summary;
-  return "concise";
-};
-
 const resolveContextOptions = (dataInjection) => {
   if (!dataInjection || typeof dataInjection !== "object") {
     return ["variables_only"];
@@ -161,6 +158,7 @@ const EvalCreatePage = () => {
   const [agentMode, setAgentMode] = useState("agent");
   const [summaryType, setSummaryType] = useState("concise");
   const [customSummary, setCustomSummary] = useState("");
+  const [summaryTemplateId, setSummaryTemplateId] = useState(null);
   const [connectorIds, setConnectorIds] = useState([]);
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
@@ -267,8 +265,11 @@ const EvalCreatePage = () => {
             setDescription(d.description || "");
             setCheckInternet(config.check_internet ?? false);
             setAgentMode(config.agent_mode || "agent");
-            setSummaryType(resolveSummaryType(config.summary));
+            setSummaryType(resolveSummarySelection(config.summary));
             setCustomSummary(config.summary?.custom || "");
+            setSummaryTemplateId(
+              config.summary?.template_id || config.summary?.templateId || null,
+            );
             setConnectorIds(extractSelectedTools(config.tools));
             setKnowledgeBaseIds(
               Array.isArray(config.knowledge_bases)
@@ -325,16 +326,27 @@ const EvalCreatePage = () => {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleSummaryChange = useCallback((value, template) => {
+    setSummaryType(value);
+    const templateId = getSummaryTemplateId(value);
+    setSummaryTemplateId(templateId);
+    if (templateId && template?.criteria) {
+      setCustomSummary(template.criteria);
+    } else if (value !== "custom") {
+      setCustomSummary("");
+    }
+  }, []);
+
   // Auto-save config to draft (debounced, skip initial load)
   const autoSaveTimer = useRef(null);
   const autoSaveSkipFirst = useRef(!!urlDraftId); // skip first trigger when loading existing draft
   const buildUpdatePayload = useCallback(() => {
     const dataInjection = buildDataInjection(contextOptions);
 
-    const summary =
-      summaryType === "custom"
-        ? { type: "custom", custom: customSummary }
-        : { type: summaryType };
+    const summary = buildSummaryConfig(summaryType, {
+      customSummary,
+      templateId: summaryTemplateId,
+    });
 
     const tools = buildToolsPayload(connectorIds);
 
@@ -385,6 +397,7 @@ const EvalCreatePage = () => {
     agentMode,
     summaryType,
     customSummary,
+    summaryTemplateId,
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
@@ -904,7 +917,7 @@ const EvalCreatePage = () => {
                       useInternet={checkInternet}
                       onUseInternetChange={setCheckInternet}
                       activeSummary={summaryType}
-                      onActiveSummaryChange={setSummaryType}
+                      onActiveSummaryChange={handleSummaryChange}
                       activeConnectorIds={connectorIds}
                       onActiveConnectorIdsChange={setConnectorIds}
                       selectedKBs={knowledgeBaseIds}
