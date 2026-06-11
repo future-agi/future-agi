@@ -12,7 +12,7 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { PromptNode, AgentNode, EvalNode } from "./nodes";
+import { PromptNode, AgentNode, EvalNode, CodeExecutionNode } from "./nodes";
 import { AnimatedEdge } from "./edges";
 import { enqueueSnackbar } from "notistack";
 import {
@@ -35,7 +35,8 @@ import logger from "src/utils/logger";
 
 const nodeTypes = {
   [NODE_TYPES.LLM_PROMPT]: PromptNode,
-  agent: AgentNode,
+  [NODE_TYPES.CODE_EXECUTION]: CodeExecutionNode,
+  [NODE_TYPES.AGENT]: AgentNode,
   eval: EvalNode,
 };
 

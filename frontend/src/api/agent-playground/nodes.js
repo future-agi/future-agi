@@ -62,6 +62,51 @@ export const useUpdateNode = (options = {}) =>
     ...options,
   });
 
+const canonicalCodeExecutionResult = (result) => {
+  if (!result || typeof result !== "object") return result;
+
+  const metadata = result.metadata || {};
+  return {
+    ok: result.ok,
+    value: result.value,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exit_code: result.exit_code ?? result.exitCode ?? null,
+    duration_ms: result.duration_ms ?? result.durationMs ?? 0,
+    error: result.error ?? null,
+    metadata: {
+      language: metadata.language,
+      runner: metadata.runner ?? null,
+      timed_out: metadata.timed_out ?? metadata.timedOut ?? false,
+      memory_mb: metadata.memory_mb ?? metadata.memoryMb ?? null,
+    },
+  };
+};
+
+const canonicalTestExecutionOutput = (output) => {
+  if (!output?.result) return output;
+  return { ...output, result: canonicalCodeExecutionResult(output.result) };
+};
+
+export const testNodeExecutionApi = async (payload) => {
+  const res = await axios.post(
+    endpoints.agentPlayground.testNodeExecution(
+      payload.graphId,
+      payload.versionId,
+      payload.nodeId,
+    ),
+    payload.data,
+  );
+  return canonicalTestExecutionOutput(res.data?.result);
+};
+
+export const useTestNodeExecution = (options = {}) =>
+  useMutation({
+    mutationFn: testNodeExecutionApi,
+    meta: { errorHandled: true },
+    ...options,
+  });
+
 /**
  * Deletes a node via DELETE. Backend cascades: soft-deletes edges,
  * connections, ports, PromptTemplateNode, and the node itself.
