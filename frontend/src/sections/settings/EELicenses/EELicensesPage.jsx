@@ -368,7 +368,7 @@ export default function EELicensesPage() {
           <Typography variant="subtitle1" color="text.secondary">
             No licenses yet
           </Typography>
-          <Typography variant="body2" color="text.disabled" mb={2}>
+          <Typography variant="body2" color="text.secondary" mb={2}>
             Generate a license key to unlock EE features on your self-hosted
             instance.
           </Typography>

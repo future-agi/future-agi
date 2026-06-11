@@ -206,7 +206,8 @@ class LiteLLMModelManager:
 
         except CustomAIModel.DoesNotExist:
             raise ValueError(
-                f"Custom model not found for {model_name} for organization {organization_id} and workspace {workspace_id}"
+                f"Model '{model_name}' is not available in the current model catalog. "
+                "It may be deprecated or retired. Please select a supported model from the latest available models list."
             )
 
     def get_model_by_provider(self, provider):

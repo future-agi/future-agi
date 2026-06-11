@@ -41,6 +41,7 @@ from model_hub.utils.utils import convert_messages_to_text_only
 
 from model_hub.utils.websocket_manager import get_websocket_manager
 from tfc.utils.error_codes import get_error_message
+
 try:
     from ee.usage.utils.usage_entries import count_tiktoken_tokens
 except ImportError:
@@ -50,6 +51,7 @@ from agentic_eval.core_evals.run_prompt.other_services.manager import (
     OtherServicesManager,
 )
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+
 # (available_models always available)
 from tfc.utils.storage import (
     detect_audio_format,
@@ -62,6 +64,7 @@ from agentic_eval.core_evals.run_prompt.other_services.elevenlabs_response impor
 )
 from model_hub.utils.utils import get_model_mode
 from agentic_eval.core_evals.run_prompt.error_handler import (
+    ErrorContext,
     handle_api_error,
     litellm_try_except,
 )
@@ -319,7 +322,9 @@ class RunPrompt:
 
         # Token usage: prompt (text) via tiktoken helper, completion (audio) via 32 tokens/sec
         try:
-            prompt_tokens = (count_tiktoken_tokens(input_text) if count_tiktoken_tokens else 0)
+            prompt_tokens = (
+                count_tiktoken_tokens(input_text) if count_tiktoken_tokens else 0
+            )
         except Exception:
             prompt_tokens = None
         completion_tokens = int(duration_seconds * 32) if duration_seconds else None
@@ -969,8 +974,16 @@ class RunPrompt:
                 completion_text = response_content
 
                 # Use tiktoken for accurate token counting (handles both text and images)
-                estimated_prompt_tokens = (count_tiktoken_tokens(prompt_text, image_urls) if count_tiktoken_tokens else 0)
-                estimated_completion_tokens = (count_tiktoken_tokens(completion_text) if count_tiktoken_tokens else 0)
+                estimated_prompt_tokens = (
+                    count_tiktoken_tokens(prompt_text, image_urls)
+                    if count_tiktoken_tokens
+                    else 0
+                )
+                estimated_completion_tokens = (
+                    count_tiktoken_tokens(completion_text)
+                    if count_tiktoken_tokens
+                    else 0
+                )
                 total_tokens = estimated_prompt_tokens + estimated_completion_tokens
 
                 # Use calculate_total_cost with custom model pricing as fallback
@@ -1264,25 +1277,25 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"]["arguments"] += (
-                                    tool_call.function.arguments
-                                )
+                                tc["function"][
+                                    "arguments"
+                                ] += tool_call.function.arguments
 
         except Exception as e:
             if "value must be a string" in str(e):
                 raise Exception(str(e))
 
             # Build context for error logging
-            context = {
-                "model": self.model,
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-                "message_count": len(self.messages) if self.messages else 0,
-                "output_format": self.output_format,
-                "organization_id": self.organization_id,
-                "workspace_id": self.workspace_id,
-                "template_id": template_id,
-            }
+            context = ErrorContext(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                message_count=len(self.messages) if self.messages else 0,
+                output_format=self.output_format,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+                template_id=template_id,
+            )
 
             # Use error handler for concise message and verbose logging
             concise_error = handle_api_error(e, logger, context)
@@ -1368,9 +1381,11 @@ class RunPrompt:
                 "data": {"response": response_content},
                 "failure": None,
                 "runtime": time.time() - start_time,
-                "model": chunk.model
-                if "chunk" in locals() and hasattr(chunk, "model")
-                else None,
+                "model": (
+                    chunk.model
+                    if "chunk" in locals() and hasattr(chunk, "model")
+                    else None
+                ),
                 "metrics": [],
                 "metadata": {},
                 "output": None,
@@ -1627,9 +1642,11 @@ class RunPrompt:
                     message="String response_format is deprecated. Use dict format instead.",
                 )
                 response_format = {
-                    "type": "text"
-                    if self.response_format.lower() == "text"
-                    else "json_object"
+                    "type": (
+                        "text"
+                        if self.response_format.lower() == "text"
+                        else "json_object"
+                    )
                 }
             else:
                 logger.error(
@@ -1666,15 +1683,19 @@ class RunPrompt:
         payload = {
             "messages": self.messages,
             "model": self.model,
-            "temperature": float(self.temperature)
-            if self.temperature is not None
-            else None,
-            "frequency_penalty": float(self.frequency_penalty)
-            if self.frequency_penalty is not None
-            else None,
-            "presence_penalty": float(self.presence_penalty)
-            if self.presence_penalty is not None
-            else None,
+            "temperature": (
+                float(self.temperature) if self.temperature is not None else None
+            ),
+            "frequency_penalty": (
+                float(self.frequency_penalty)
+                if self.frequency_penalty is not None
+                else None
+            ),
+            "presence_penalty": (
+                float(self.presence_penalty)
+                if self.presence_penalty is not None
+                else None
+            ),
             "max_tokens": int(self.max_tokens) if self.max_tokens is not None else None,
             "top_p": float(self.top_p) if self.top_p is not None else None,
             "response_format": response_format,
@@ -1839,14 +1860,22 @@ class RunPrompt:
                 if provider_for_payload == "openai":
                     payload["model"] = "openai/" + payload["model"]
             elif provider_for_payload.startswith("vertex_ai"):
-                vertex_location = api_key.get("location") if isinstance(api_key, dict) else None
-                creds = {k: v for k, v in api_key.items() if k != "location"} if isinstance(api_key, dict) else api_key
+                vertex_location = (
+                    api_key.get("location") if isinstance(api_key, dict) else None
+                )
+                creds = (
+                    {k: v for k, v in api_key.items() if k != "location"}
+                    if isinstance(api_key, dict)
+                    else api_key
+                )
                 payload["vertex_credentials"] = json.dumps(creds)
                 if vertex_location:
                     payload["vertex_location"] = vertex_location
             else:
                 payload["api_key"] = api_key
         else:
+            if provider != "openai":
+                payload["custom_llm_provider"] = provider
             payload["api_key"] = api_key
 
         return payload
@@ -1954,9 +1983,9 @@ class RunPrompt:
                                 "voice", "Kore"
                             )
                             fallback_payload["audio"] = {
-                                "voice": voice_val
-                                if isinstance(voice_val, str)
-                                else "Kore",
+                                "voice": (
+                                    voice_val if isinstance(voice_val, str) else "Kore"
+                                ),
                                 "format": "pcm16",
                             }
                             # Strip OpenAI-only params
@@ -2125,15 +2154,15 @@ class RunPrompt:
 
         except Exception as e:
             # Build context for error logging
-            context = {
-                "model": self.model,
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-                "message_count": len(self.messages) if self.messages else 0,
-                "output_format": self.output_format,
-                "organization_id": self.organization_id,
-                "workspace_id": self.workspace_id,
-            }
+            context = ErrorContext(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                message_count=len(self.messages) if self.messages else 0,
+                output_format=self.output_format,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+            )
 
             logger.info(f"Original messages: {payload.get('messages', [])}")
 
@@ -2404,9 +2433,9 @@ class RunPrompt:
                                 "voice", "Kore"
                             )
                             fallback_payload["audio"] = {
-                                "voice": voice_val
-                                if isinstance(voice_val, str)
-                                else "Kore",
+                                "voice": (
+                                    voice_val if isinstance(voice_val, str) else "Kore"
+                                ),
                                 "format": "pcm16",
                             }
                             # Strip OpenAI-only params
@@ -2702,15 +2731,15 @@ class RunPrompt:
                 return await sync_to_async(self._regular_response)(payload, start_time)
         except Exception as e:
             # Build context for error logging
-            context = {
-                "model": self.model,
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-                "message_count": len(self.messages) if self.messages else 0,
-                "output_format": self.output_format,
-                "organization_id": self.organization_id,
-                "workspace_id": self.workspace_id,
-            }
+            context = ErrorContext(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                message_count=len(self.messages) if self.messages else 0,
+                output_format=self.output_format,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+            )
 
             logger.info(f"Original messages: {payload.get('messages', [])}")
 
@@ -2959,25 +2988,25 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"]["arguments"] += (
-                                    tool_call.function.arguments
-                                )
+                                tc["function"][
+                                    "arguments"
+                                ] += tool_call.function.arguments
 
         except Exception as e:
             if "value must be a string" in str(e):
                 raise Exception(str(e))
 
             # Build context for error logging
-            context = {
-                "model": self.model,
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-                "message_count": len(self.messages) if self.messages else 0,
-                "output_format": self.output_format,
-                "organization_id": self.organization_id,
-                "workspace_id": self.workspace_id,
-                "template_id": template_id,
-            }
+            context = ErrorContext(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                message_count=len(self.messages) if self.messages else 0,
+                output_format=self.output_format,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+                template_id=template_id,
+            )
 
             # Use error handler for concise message and verbose logging
             concise_error = handle_api_error(e, logger, context)
@@ -3062,9 +3091,11 @@ class RunPrompt:
                 "data": {"response": response_content},
                 "failure": None,
                 "runtime": time.time() - start_time,
-                "model": chunk.model
-                if "chunk" in locals() and hasattr(chunk, "model")
-                else None,
+                "model": (
+                    chunk.model
+                    if "chunk" in locals() and hasattr(chunk, "model")
+                    else None
+                ),
                 "metrics": [],
                 "metadata": {},
                 "output": None,
@@ -3186,21 +3217,19 @@ class RunPrompt:
             return handler_response.to_value_info()
 
         except Exception as e:
-            # Expected, handled validation failures (text-only input to an STT
-            # eval, or empty messages) are user misconfiguration, not bugs;
-            # the caller persists a failed result. Downgrade only those to
-            # warning so real errors keep creating Sentry issues.
-            if any(
-                s in str(e)
-                for s in (
-                    "No audio input found in messages for STT.",
-                    "Messages are required",
-                )
-            ):
-                logger.warning(f"[NEW] An error occurred: {str(e)}")
-            else:
-                logger.error(f"[NEW] An error occurred: {str(e)}")
-            raise Exception(str(e))
+            context = ErrorContext(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                message_count=len(self.messages) if self.messages else 0,
+                output_format=self.output_format,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+                template_id=template_id,
+            )
+            concise_error = handle_api_error(e, logger, context)
+            logger.error(f"[NEW] An error occurred: {concise_error}")
+            raise Exception(concise_error) from e
 
     async def _litellm_response_async_new(
         self,
@@ -3284,21 +3313,19 @@ class RunPrompt:
             return handler_response.to_value_info()
 
         except Exception as e:
-            # Expected, handled validation failures (text-only input to an STT
-            # eval, or empty messages) are user misconfiguration, not bugs;
-            # the caller persists a failed result. Downgrade only those to
-            # warning so real errors keep creating Sentry issues.
-            if any(
-                s in str(e)
-                for s in (
-                    "No audio input found in messages for STT.",
-                    "Messages are required",
-                )
-            ):
-                logger.warning(f"[NEW] An error occurred: {str(e)}")
-            else:
-                logger.error(f"[NEW] An error occurred: {str(e)}")
-            raise Exception(str(e))
+            context = ErrorContext(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                message_count=len(self.messages) if self.messages else 0,
+                output_format=self.output_format,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+                template_id=template_id,
+            )
+            concise_error = handle_api_error(e, logger, context)
+            logger.error(f"[NEW] An error occurred: {concise_error}")
+            raise Exception(concise_error) from e
 
     # =========================================================================
     # PUBLIC API - WRAPPER METHODS THAT TOGGLE BETWEEN OLD AND NEW
