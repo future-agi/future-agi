@@ -125,6 +125,7 @@ dependencies = [
     "rouge-score",
     "python-levenshtein",
     "scipy",
+    "scikit-learn",  # TF-IDF clustering in tracer/queries/feed.py
     "numpy",
     "sentry-sdk",
     "structlog>=24.1.0",
