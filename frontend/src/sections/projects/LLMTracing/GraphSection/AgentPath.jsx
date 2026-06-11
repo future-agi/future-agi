@@ -480,8 +480,11 @@ const AgentPathInner = ({
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
       sx={{
+        display: "flex",
+        flexDirection: "column",
         position: "relative",
         bgcolor: "background.paper",
+        overflow: "hidden",
         ...(isFullscreen
           ? { height: "100%", width: "100%" }
           : { mx: 2, my: 1 }),
@@ -500,7 +503,8 @@ const AgentPathInner = ({
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "6px",
-            boxShadow: (t) => `0 1px 3px ${alpha(t.palette.common.black, 0.06)}`,
+            boxShadow: (t) =>
+              `0 1px 3px ${alpha(t.palette.common.black, 0.06)}`,
             overflow: "hidden",
           }}
         >
@@ -554,7 +558,13 @@ const AgentPathInner = ({
       )}
 
       {!isCollapsed && (
-        <Box sx={{ overflow: "auto" }}>
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflow: "auto",
+          }}
+        >
           <SankeyChart
             layout={layout}
             width={chartWidth}
