@@ -745,11 +745,16 @@ if CHANNELS_BACKEND == "rabbitmq":
         },
     }
 else:
+    # channels-redis 4.3 needs the (host, port) tuple or {"address": url}
+    # form — a bare URL string in `hosts` reuses connections in a way that
+    # raises "Transport not initialized or closed" on every consumer after
+    # the first. Use the dict form so the URL (incl. /db number) is parsed
+    # correctly while pooling stays per-consumer.
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",
             "CONFIG": {
-                "hosts": [REDIS_URL],
+                "hosts": [{"address": REDIS_URL}],
                 "expiry": 300,
                 "capacity": 1500,
             },
