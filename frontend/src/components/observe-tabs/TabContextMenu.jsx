@@ -31,8 +31,8 @@ const TabContextMenu = ({
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const { mutate: updateView } = useUpdateSavedView(projectId);
-  const { mutate: deleteView } = useDeleteSavedView(projectId);
-  const { mutate: duplicateView } = useDuplicateSavedView(projectId);
+  const { mutateAsync: deleteView } = useDeleteSavedView(projectId);
+  const { mutateAsync: duplicateView } = useDuplicateSavedView(projectId);
 
   if (!view || !anchorPosition) return null;
 
@@ -44,18 +44,15 @@ const TabContextMenu = ({
   };
 
   const handleDuplicate = () => {
-    duplicateView(
-      { id: view.id },
-      {
-        onSuccess: (res) => {
-          const newView = res.data?.result;
-          if (newView?.id) {
-            onTabChange(`view-${newView.id}`);
-          }
-        },
-      },
-    );
     onClose();
+    void duplicateView({ id: view.id })
+      .then((res) => {
+        const newView = res.data?.result;
+        if (newView?.id) {
+          onTabChange(`view-${newView.id}`);
+        }
+      })
+      .catch(() => null);
   };
 
   const handleToggleVisibility = () => {
@@ -67,13 +64,13 @@ const TabContextMenu = ({
   };
 
   const handleDeleteConfirm = () => {
-    deleteView(view.id, {
-      onSuccess: () => {
-        onTabChange("traces");
-      },
-    });
     setDeleteConfirmOpen(false);
     onClose();
+    void deleteView(view.id)
+      .then(() => {
+        onTabChange("traces");
+      })
+      .catch(() => null);
   };
 
   return (
