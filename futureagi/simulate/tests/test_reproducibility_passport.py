@@ -12,6 +12,7 @@ from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import TestExecution as TestExecutionModel
 from simulate.services.reproducibility_passport import (
     REDACTED,
+    build_stabilization_plan,
     build_replay_plan,
     build_reproducibility_report,
     build_test_execution_passport,
@@ -489,3 +490,49 @@ class TestReproducibilityPassport:
             report["score_change_diagnosis"]["classification"]
             == "replay_inputs_changed"
         )
+        assert report["stabilization_plan"]["risk_level"] == "medium"
+        assert report["stabilization_plan"]["actions"][0]["section"] == (
+            "execution_options"
+        )
+        assert report["stabilization_plan"]["actions"][0]["title"] == (
+            "Match execution options"
+        )
+
+    def test_stabilization_plan_prefers_blocking_replay_issues(
+        self,
+        db,
+        organization,
+        workspace,
+        prompt_scenario,
+    ):
+        run_test = RunTest.objects.create(
+            name="Unpinned prompt run",
+            source_type=RunTest.SourceTypes.PROMPT,
+            organization=organization,
+            workspace=workspace,
+        )
+        run_test.scenarios.add(prompt_scenario)
+        execution = TestExecutionModel.objects.create(
+            run_test=run_test,
+            status=TestExecutionModel.ExecutionStatus.PENDING,
+            total_scenarios=1,
+            total_calls=1,
+            scenario_ids=[str(prompt_scenario.id)],
+        )
+        replay_plan = build_replay_plan(execution)
+
+        plan = build_stabilization_plan(
+            replay_plan,
+            {
+                "has_drift": False,
+                "highest_severity": None,
+                "changes": [],
+            },
+            {"classification": "runtime_or_model_behavior"},
+        )
+
+        assert plan["can_run_without_stabilization"] is False
+        assert plan["risk_level"] == "high"
+        assert plan["actions"][0]["source"] == "readiness_issue"
+        assert plan["actions"][0]["section"] == "prompt"
+        assert plan["actions"][0]["severity"] == "blocker"

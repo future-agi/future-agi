@@ -8,6 +8,7 @@ import {
   FormControl,
   FormControlLabel,
   IconButton,
+  LinearProgress,
   Radio,
   RadioGroup,
   Typography,
@@ -16,8 +17,17 @@ import PropTypes from "prop-types";
 import React, { useState } from "react";
 import Iconify from "src/components/iconify";
 import { RerunTestOptions } from "./common";
-import { useRerunTest } from "src/api/tests/testDetails";
+import {
+  useExecutionReproducibility,
+  useRerunTest,
+} from "src/api/tests/testDetails";
 import { AGENT_TYPES } from "../agents/constants";
+
+const riskColor = {
+  high: "error.main",
+  medium: "warning.main",
+  low: "success.main",
+};
 
 const RerunModal = ({
   open,
@@ -42,6 +52,14 @@ const RerunModal = ({
       },
     },
   );
+  const { data: reproReport, isFetching: isReproFetching } =
+    useExecutionReproducibility(executionId, {
+      enabled: open && !!executionId,
+      retry: false,
+    });
+
+  const stabilizationPlan = reproReport?.stabilization_plan;
+  const stabilizationActions = stabilizationPlan?.actions ?? [];
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
@@ -106,6 +124,71 @@ const RerunModal = ({
               </RadioGroup>
             )}
           </FormControl>
+        </Box>
+        <Box
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 1,
+            p: 1.5,
+            display: "flex",
+            flexDirection: "column",
+            gap: 1,
+          }}
+        >
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 1,
+            }}
+          >
+            <Typography typography="m3" fontWeight="fontWeightMedium">
+              Replay preflight
+            </Typography>
+            {stabilizationPlan?.risk_level && (
+              <Typography
+                typography="caption"
+                sx={{
+                  color:
+                    riskColor[stabilizationPlan.risk_level] ?? "text.secondary",
+                  textTransform: "capitalize",
+                }}
+              >
+                {stabilizationPlan.risk_level} risk
+              </Typography>
+            )}
+          </Box>
+          {isReproFetching && <LinearProgress />}
+          {stabilizationPlan ? (
+            <>
+              <Typography typography="caption" color="text.secondary">
+                {stabilizationPlan.summary}
+              </Typography>
+              {stabilizationActions.slice(0, 3).map((action) => (
+                <Box key={`${action.source}-${action.section}`}>
+                  <Typography
+                    typography="caption"
+                    fontWeight="fontWeightMedium"
+                  >
+                    {action.title}
+                  </Typography>
+                  <Typography
+                    typography="caption"
+                    color="text.secondary"
+                    display="block"
+                  >
+                    {action.action}
+                  </Typography>
+                </Box>
+              ))}
+            </>
+          ) : (
+            <Typography typography="caption" color="text.secondary">
+              Preflight report is not available yet.
+            </Typography>
+          )}
         </Box>
         <Box
           sx={{

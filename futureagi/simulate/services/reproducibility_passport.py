@@ -62,6 +62,38 @@ DRIFT_REASON_BY_SECTION = {
     "execution_options": "Execution metadata or selected ids changed.",
     "execution": "Execution status or counters changed.",
 }
+STABILIZATION_ACTION_BY_SECTION = {
+    "agent": {
+        "title": "Pin the agent version",
+        "action": "Replay against the same agent version snapshot used by the baseline.",
+        "why": "Agent configuration drift can change behavior before the model output is compared.",
+    },
+    "prompt": {
+        "title": "Pin the prompt version",
+        "action": "Replay against the baseline prompt version and prompt config snapshot.",
+        "why": "Prompt text, variables, or provider config changes can dominate score movement.",
+    },
+    "scenarios": {
+        "title": "Replay the same scenarios",
+        "action": "Restore the baseline scenario ids and dataset row selection before rerunning.",
+        "why": "Scenario drift changes the task distribution, so scores are no longer comparable.",
+    },
+    "eval_configs": {
+        "title": "Freeze eval configuration",
+        "action": "Compare eval template, mapping, filters, threshold, and model before rerun.",
+        "why": "Eval drift can change the judge, scoring rubric, or rows being scored.",
+    },
+    "run_test": {
+        "title": "Confirm run-level settings",
+        "action": "Check run source, dataset rows, and tool-evaluation settings.",
+        "why": "Run-level drift can change which execution path is measured.",
+    },
+    "execution_options": {
+        "title": "Match execution options",
+        "action": "Replay with the same selected scenarios, dataset rows, and external metadata.",
+        "why": "Execution option drift can make a rerun look like a model regression when it is not.",
+    },
+}
 REPLAY_INPUT_SECTIONS = (
     "run_test",
     "agent",
@@ -135,6 +167,11 @@ def build_reproducibility_report(test_execution: TestExecution) -> dict[str, obj
         baseline_passport,
         current_passport,
     )
+    stabilization_plan = build_stabilization_plan(
+        replay_plan,
+        input_drift,
+        score_change_diagnosis,
+    )
 
     return {
         "test_execution_id": str(test_execution.id),
@@ -155,6 +192,7 @@ def build_reproducibility_report(test_execution: TestExecution) -> dict[str, obj
             "input_from_start": input_drift,
         },
         "score_change_diagnosis": score_change_diagnosis,
+        "stabilization_plan": stabilization_plan,
         "has_start_snapshot": isinstance(start_snapshot, Mapping),
         "has_completion_snapshot": isinstance(completion_snapshot, Mapping),
     }
@@ -444,6 +482,86 @@ def diagnose_eval_score_change(
     }
 
 
+def build_stabilization_plan(
+    replay_plan: Mapping[str, object],
+    input_drift: Mapping[str, object],
+    diagnosis: Mapping[str, object],
+) -> dict[str, object]:
+    """Return concrete rerun-stabilization actions for the UI and API."""
+
+    issues = _sequence_or_empty(replay_plan.get("issues"))
+    drift_changes = _sequence_or_empty(input_drift.get("changes"))
+    actions: list[dict[str, object]] = []
+    seen_keys: set[tuple[str, str]] = set()
+
+    for issue in issues:
+        action = {
+            "priority": _action_priority(str(issue.get("severity"))),
+            "source": "readiness_issue",
+            "section": str(issue.get("section") or "unknown"),
+            "title": str(issue.get("message") or "Replay readiness issue"),
+            "action": str(issue.get("remediation") or "Resolve this issue before rerun."),
+            "why": "The replay plan is not fully pinned.",
+            "severity": str(issue.get("severity") or "warning"),
+        }
+        _append_unique_action(actions, seen_keys, action)
+
+    for change in drift_changes:
+        section = str(change.get("section") or "unknown")
+        template = STABILIZATION_ACTION_BY_SECTION.get(
+            section,
+            {
+                "title": f"Review {section} drift",
+                "action": "Compare the baseline and current section hashes before rerun.",
+                "why": "This replay input changed from the baseline.",
+            },
+        )
+        action = {
+            "priority": _action_priority(str(change.get("severity"))),
+            "source": "input_drift",
+            "section": section,
+            "title": template["title"],
+            "action": template["action"],
+            "why": template["why"],
+            "severity": str(change.get("severity") or "warning"),
+            "before_hash": change.get("before_hash"),
+            "after_hash": change.get("after_hash"),
+        }
+        _append_unique_action(actions, seen_keys, action)
+
+    actions.sort(
+        key=lambda item: (
+            int(item.get("priority", 99)),
+            str(item.get("section") or ""),
+            str(item.get("source") or ""),
+        )
+    )
+
+    can_run_without_stabilization = (
+        replay_plan.get("can_replay") is True
+        and input_drift.get("highest_severity") not in {"blocker", "warning"}
+    )
+    if not actions and diagnosis.get("classification") == "runtime_or_model_behavior":
+        actions.append(
+            {
+                "priority": 2,
+                "source": "runtime_comparison",
+                "section": "execution",
+                "title": "Compare runtime outputs",
+                "action": "Inspect transcripts, provider responses, eval outputs, and latency traces.",
+                "why": "Replay inputs match, so the score movement is likely runtime or model behavior.",
+                "severity": "info",
+            }
+        )
+
+    return {
+        "can_run_without_stabilization": can_run_without_stabilization,
+        "risk_level": _stabilization_risk_level(actions),
+        "summary": _stabilization_summary(actions, diagnosis),
+        "actions": actions,
+    }
+
+
 def stable_hash(value: object) -> str:
     """Hash a JSON-compatible value after stable normalization."""
 
@@ -711,6 +829,42 @@ def _diagnosis_recommendation(changed_sections: Sequence[object]) -> str:
     if "scenarios" in sections:
         return "Verify the same scenario and dataset rows were replayed."
     return "Resolve replay-input drift before attributing score deltas."
+
+
+def _append_unique_action(
+    actions: list[dict[str, object]],
+    seen_keys: set[tuple[str, str]],
+    action: dict[str, object],
+) -> None:
+    key = (str(action.get("source")), str(action.get("section")))
+    if key in seen_keys:
+        return
+    seen_keys.add(key)
+    actions.append(action)
+
+
+def _action_priority(severity: str) -> int:
+    return {"blocker": 0, "warning": 1, "info": 2}.get(severity, 3)
+
+
+def _stabilization_risk_level(actions: Sequence[Mapping[str, object]]) -> str:
+    severities = {str(action.get("severity")) for action in actions}
+    if "blocker" in severities:
+        return "high"
+    if "warning" in severities:
+        return "medium"
+    return "low"
+
+
+def _stabilization_summary(
+    actions: Sequence[Mapping[str, object]],
+    diagnosis: Mapping[str, object],
+) -> str:
+    if not actions:
+        return "Replay inputs look stable. Compare runtime outputs if scores moved."
+    if diagnosis.get("classification") == "replay_inputs_changed":
+        return "Stabilize changed replay inputs before treating score movement as model behavior."
+    return "Resolve replay readiness issues before starting a high-confidence rerun."
 
 
 def _agent_definition_payload(
