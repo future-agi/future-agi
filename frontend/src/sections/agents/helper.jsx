@@ -6,7 +6,8 @@ import VoiceCostCell from "./CallLogs/VoiceCostCell";
 import VoiceLatencyCell from "./CallLogs/VoiceLatencyCell";
 import VoiceTokenCell from "./CallLogs/VoiceTokenCell";
 import TalkRatioCell from "./CallLogs/TalkRatioCell";
-import EvalCellRenderer from "../test-detail/CellRenderers/EvalCellRenderer";
+import { evalCellChips } from "src/sections/projects/LLMTracing/evalCellModel";
+import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
 import VOICE_CALLS_DUMMY from "./CallLogs/__dummy__/voiceCallsDummy.json";
 import VOICE_CALL_DETAIL_DUMMY from "./CallLogs/__dummy__/voiceCallDetailDummy.json";
@@ -414,14 +415,44 @@ export const generateEvalColumnsFromConfig = (items = []) => {
             </Box>
           );
         }
+        if (evalData?.error) {
+          return (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                height: "100%",
+                px: "8px",
+              }}
+            >
+              <ResultChip label="Errored" tone="errored" dense />
+            </Box>
+          );
+        }
+        const chips = evalCellChips(evalData.output, {
+          outputType: evalData.output_type,
+          choicesMap: item.choices_map,
+        });
         return (
-          <EvalCellRenderer
-            value={{
-              ...evalData,
-              type: evalData?.output_type,
-              value: evalData.output,
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+              flexWrap: "nowrap",
+              height: "100%",
+              width: "100%",
+              px: "8px",
+              overflow: "hidden",
+              minWidth: 0,
             }}
-          />
+          >
+            {chips.length
+              ? chips.map((c) => (
+                  <ResultChip key={c.label} label={c.label} tone={c.tone} dense />
+                ))
+              : "-"}
+          </Box>
         );
       },
     };

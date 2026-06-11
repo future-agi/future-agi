@@ -172,20 +172,53 @@
       "cost_breakdown.analysisCostBreakdown.structuredOutputCachedPromptTokens": 0,
       "cost_breakdown.analysisCostBreakdown.successEvaluationCachedPromptTokens": 0,
       "eval_outputs": {
-        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
-          "name": "rmse_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "ca707041-9454-4638-8866-0b0793578229": {
+          "name": "latency_check_task_19_may_2026_16_27",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 1,
+            "fail": 3
+          }
         },
-        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
-          "name": "sajdlkjad_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
+          "name": "syntax_validation_task_19_may_2026_16_21",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 3,
+            "fail": 0
+          }
+        },
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 0,
+            "fail": 3
+          }
         },
         "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
           "name": "supasdasdasd_asdmalsd",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "error": true
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": null
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 45.0
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 0,
+            "neutral": 0,
+            "negative": 0
+          }
         }
       }
     },
@@ -328,20 +361,45 @@
       "cost_breakdown.analysisCostBreakdown.structuredOutputCachedPromptTokens": 0,
       "cost_breakdown.analysisCostBreakdown.successEvaluationCachedPromptTokens": 0,
       "eval_outputs": {
+        "ca707041-9454-4638-8866-0b0793578229": {
+          "name": "latency_check_task_19_may_2026_16_27",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 3,
+            "fail": 0
+          }
+        },
+        "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
+          "name": "syntax_validation_task_19_may_2026_16_21",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 0,
+            "fail": 3
+          }
+        },
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "error": true
+        },
         "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
           "name": "rmse_11_may_2026",
           "output_type": "score",
-          "output": 0.0
+          "output": 3.5
         },
         "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
           "name": "sajdlkjad_11_may_2026",
           "output_type": "score",
-          "output": 0.0
+          "output": 52.5
         },
-        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
-          "name": "supasdasdasd_asdmalsd",
-          "output_type": "Pass/Fail",
-          "output": "Fail"
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 1,
+            "neutral": 0,
+            "negative": 2
+          }
         }
       }
     },
@@ -497,25 +555,45 @@
       "cost_breakdown.analysisCostBreakdown.structuredOutputCachedPromptTokens": 0,
       "cost_breakdown.analysisCostBreakdown.successEvaluationCachedPromptTokens": 0,
       "eval_outputs": {
-        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
-          "name": "latency_check_task_14_may_2026_22_01",
+        "ca707041-9454-4638-8866-0b0793578229": {
+          "name": "latency_check_task_19_may_2026_16_27",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 0,
+            "fail": 4
+          }
         },
-        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
-          "name": "rmse_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
-        },
-        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
-          "name": "sajdlkjad_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
+          "name": "syntax_validation_task_19_may_2026_16_21",
+          "output_type": "Pass/Fail",
+          "error": true
         },
         "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
           "name": "supasdasdasd_asdmalsd",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 1,
+            "fail": 1
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 10.0
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 59.0
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 0,
+            "neutral": 1,
+            "negative": 1
+          }
         }
       }
     },
@@ -669,7 +747,49 @@
       "cost_breakdown.analysisCostBreakdown.structuredOutputCompletionTokens": 0,
       "cost_breakdown.analysisCostBreakdown.successEvaluationCompletionTokens": 0,
       "cost_breakdown.analysisCostBreakdown.structuredOutputCachedPromptTokens": 0,
-      "cost_breakdown.analysisCostBreakdown.successEvaluationCachedPromptTokens": 0
+      "cost_breakdown.analysisCostBreakdown.successEvaluationCachedPromptTokens": 0,
+      "eval_outputs": {
+        "ca707041-9454-4638-8866-0b0793578229": {
+          "name": "latency_check_task_19_may_2026_16_27",
+          "output_type": "Pass/Fail",
+          "error": true
+        },
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 2,
+            "fail": 2
+          }
+        },
+        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
+          "name": "supasdasdasd_asdmalsd",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 4,
+            "fail": 0
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 17.5
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 66.5
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 3,
+            "neutral": 1,
+            "negative": 1
+          }
+        }
+      }
     },
     {
       "id": "909e4370-fa03-4e9c-a53e-df29bbd74d2b",
@@ -711,7 +831,52 @@
       "call.total_turns": 0,
       "gen_ai.span.kind": "conversation",
       "workflow.background_sound": "off",
-      "call.participant_phone_number": "+19086638348"
+      "call.participant_phone_number": "+19086638348",
+      "eval_outputs": {
+        "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
+          "name": "syntax_validation_task_19_may_2026_16_21",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 2,
+            "fail": 3
+          }
+        },
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 5,
+            "fail": 0
+          }
+        },
+        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
+          "name": "supasdasdasd_asdmalsd",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 0,
+            "fail": 4
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 24.0
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 73.0
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 2,
+            "neutral": 2,
+            "negative": 0
+          }
+        }
+      }
     },
     {
       "id": "a35dd891-e6c1-47f4-b4e3-a19b5360d020",
@@ -758,12 +923,50 @@
         "ca707041-9454-4638-8866-0b0793578229": {
           "name": "latency_check_task_19_may_2026_16_27",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 3,
+            "fail": 2
+          }
         },
         "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
           "name": "syntax_validation_task_19_may_2026_16_21",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 2,
+            "fail": 0
+          }
+        },
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 0,
+            "fail": 2
+          }
+        },
+        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
+          "name": "supasdasdasd_asdmalsd",
+          "output_type": "Pass/Fail",
+          "error": true
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 31.5
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": null
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 0,
+            "neutral": 0,
+            "negative": 0
+          }
         }
       }
     },
@@ -812,27 +1015,42 @@
         "ca707041-9454-4638-8866-0b0793578229": {
           "name": "latency_check_task_19_may_2026_16_27",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 2,
+            "fail": 0
+          }
         },
         "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
           "name": "syntax_validation_task_19_may_2026_16_21",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 0,
+            "fail": 2
+          }
+        },
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "error": true
         },
         "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
           "name": "rmse_11_may_2026",
           "output_type": "score",
-          "output": 0.0
+          "output": null
         },
         "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
           "name": "sajdlkjad_11_may_2026",
           "output_type": "score",
-          "output": 0.0
+          "output": 87.0
         },
-        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
-          "name": "supasdasdasd_asdmalsd",
-          "output_type": "Pass/Fail",
-          "output": "Fail"
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 0,
+            "neutral": 0,
+            "negative": 2
+          }
         }
       }
     },
@@ -871,20 +1089,45 @@
       "ai_interruption_count": null,
       "observation_span": [],
       "eval_outputs": {
-        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
-          "name": "rmse_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "ca707041-9454-4638-8866-0b0793578229": {
+          "name": "latency_check_task_19_may_2026_16_27",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 0,
+            "fail": 3
+          }
         },
-        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
-          "name": "sajdlkjad_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
+          "name": "syntax_validation_task_19_may_2026_16_21",
+          "output_type": "Pass/Fail",
+          "error": true
         },
         "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
           "name": "supasdasdasd_asdmalsd",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 3,
+            "fail": 3
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 45.5
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 94.5
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 3,
+            "neutral": 0,
+            "negative": 1
+          }
         }
       }
     },
@@ -926,12 +1169,42 @@
         "ca707041-9454-4638-8866-0b0793578229": {
           "name": "latency_check_task_19_may_2026_16_27",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "error": true
         },
-        "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
-          "name": "syntax_validation_task_19_may_2026_16_21",
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 1,
+            "fail": 2
+          }
+        },
+        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
+          "name": "supasdasdasd_asdmalsd",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 3,
+            "fail": 0
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 52.0
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 1.0
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 2,
+            "neutral": 1,
+            "negative": 0
+          }
         }
       }
     },
@@ -970,30 +1243,48 @@
       "ai_interruption_count": null,
       "observation_span": [],
       "eval_outputs": {
-        "ca707041-9454-4638-8866-0b0793578229": {
-          "name": "latency_check_task_19_may_2026_16_27",
-          "output_type": "Pass/Fail",
-          "output": "Fail"
-        },
         "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
           "name": "syntax_validation_task_19_may_2026_16_21",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 1,
+            "fail": 3
+          }
         },
-        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
-          "name": "rmse_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
-        },
-        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
-          "name": "sajdlkjad_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 4,
+            "fail": 0
+          }
         },
         "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
           "name": "supasdasdasd_asdmalsd",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 0,
+            "fail": 3
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 59.5
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 8.5
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 1,
+            "neutral": 1,
+            "negative": 0
+          }
         }
       }
     },
@@ -1032,20 +1323,53 @@
       "ai_interruption_count": null,
       "observation_span": [],
       "eval_outputs": {
-        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
-          "name": "rmse_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "ca707041-9454-4638-8866-0b0793578229": {
+          "name": "latency_check_task_19_may_2026_16_27",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 2,
+            "fail": 2
+          }
         },
-        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
-          "name": "sajdlkjad_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
+          "name": "syntax_validation_task_19_may_2026_16_21",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 5,
+            "fail": 0
+          }
+        },
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 0,
+            "fail": 4
+          }
         },
         "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
           "name": "supasdasdasd_asdmalsd",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "error": true
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 66.0
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 15.0
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 0,
+            "neutral": 0,
+            "negative": 0
+          }
         }
       }
     },
@@ -1206,20 +1530,45 @@
       "cost_breakdown.analysisCostBreakdown.structuredOutputCachedPromptTokens": 0,
       "cost_breakdown.analysisCostBreakdown.successEvaluationCachedPromptTokens": 0,
       "eval_outputs": {
+        "ca707041-9454-4638-8866-0b0793578229": {
+          "name": "latency_check_task_19_may_2026_16_27",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 5,
+            "fail": 0
+          }
+        },
+        "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
+          "name": "syntax_validation_task_19_may_2026_16_21",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 0,
+            "fail": 4
+          }
+        },
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "error": true
+        },
         "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
           "name": "rmse_11_may_2026",
           "output_type": "score",
-          "output": 0.0
+          "output": 73.5
         },
         "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
           "name": "sajdlkjad_11_may_2026",
           "output_type": "score",
-          "output": 0.0
+          "output": null
         },
-        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
-          "name": "supasdasdasd_asdmalsd",
-          "output_type": "Pass/Fail",
-          "output": "Fail"
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 3,
+            "neutral": 2,
+            "negative": 1
+          }
         }
       }
     },
@@ -1261,12 +1610,42 @@
         "ca707041-9454-4638-8866-0b0793578229": {
           "name": "latency_check_task_19_may_2026_16_27",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 0,
+            "fail": 2
+          }
         },
         "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
           "name": "syntax_validation_task_19_may_2026_16_21",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "error": true
+        },
+        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
+          "name": "supasdasdasd_asdmalsd",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 2,
+            "fail": 3
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": null
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 29.0
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 2,
+            "neutral": 0,
+            "negative": 1
+          }
         }
       }
     },
@@ -1305,20 +1684,45 @@
       "ai_interruption_count": null,
       "observation_span": [],
       "eval_outputs": {
-        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
-          "name": "rmse_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "ca707041-9454-4638-8866-0b0793578229": {
+          "name": "latency_check_task_19_may_2026_16_27",
+          "output_type": "Pass/Fail",
+          "error": true
         },
-        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
-          "name": "sajdlkjad_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 3,
+            "fail": 1
+          }
         },
         "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
           "name": "supasdasdasd_asdmalsd",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 2,
+            "fail": 0
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 87.5
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 36.5
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 1,
+            "neutral": 0,
+            "negative": 0
+          }
         }
       }
     },
@@ -1478,30 +1882,48 @@
       "cost_breakdown.analysisCostBreakdown.structuredOutputCachedPromptTokens": 0,
       "cost_breakdown.analysisCostBreakdown.successEvaluationCachedPromptTokens": 0,
       "eval_outputs": {
-        "ca707041-9454-4638-8866-0b0793578229": {
-          "name": "latency_check_task_19_may_2026_16_27",
-          "output_type": "Pass/Fail",
-          "output": "Fail"
-        },
         "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
           "name": "syntax_validation_task_19_may_2026_16_21",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 3,
+            "fail": 2
+          }
         },
-        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
-          "name": "rmse_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
-        },
-        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
-          "name": "sajdlkjad_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 3,
+            "fail": 0
+          }
         },
         "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
           "name": "supasdasdasd_asdmalsd",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 0,
+            "fail": 2
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 94.0
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 43.0
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 0,
+            "neutral": 1,
+            "negative": 2
+          }
         }
       }
     },
@@ -1543,27 +1965,50 @@
         "ca707041-9454-4638-8866-0b0793578229": {
           "name": "latency_check_task_19_may_2026_16_27",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 1,
+            "fail": 2
+          }
         },
         "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
           "name": "syntax_validation_task_19_may_2026_16_21",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 4,
+            "fail": 0
+          }
         },
-        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
-          "name": "rmse_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
-        },
-        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
-          "name": "sajdlkjad_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 0,
+            "fail": 3
+          }
         },
         "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
           "name": "supasdasdasd_asdmalsd",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "error": true
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 1.5
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 50.5
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 0,
+            "neutral": 0,
+            "negative": 0
+          }
         }
       }
     },
@@ -1605,27 +2050,42 @@
         "ca707041-9454-4638-8866-0b0793578229": {
           "name": "latency_check_task_19_may_2026_16_27",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 4,
+            "fail": 0
+          }
         },
         "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
           "name": "syntax_validation_task_19_may_2026_16_21",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 0,
+            "fail": 3
+          }
+        },
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "error": true
         },
         "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
           "name": "rmse_11_may_2026",
           "output_type": "score",
-          "output": 0.0
+          "output": 8.0
         },
         "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
           "name": "sajdlkjad_11_may_2026",
           "output_type": "score",
-          "output": 0.0
+          "output": 57.0
         },
-        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
-          "name": "supasdasdasd_asdmalsd",
-          "output_type": "Pass/Fail",
-          "output": "Fail"
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 2,
+            "neutral": 2,
+            "negative": 1
+          }
         }
       }
     },
@@ -1777,32 +2237,42 @@
         "ca707041-9454-4638-8866-0b0793578229": {
           "name": "latency_check_task_19_may_2026_16_27",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 0,
+            "fail": 4
+          }
         },
         "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
           "name": "syntax_validation_task_19_may_2026_16_21",
           "output_type": "Pass/Fail",
-          "output": "Fail"
-        },
-        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
-          "name": "latency_check_task_14_may_2026_22_01",
-          "output_type": "Pass/Fail",
-          "output": "Fail"
-        },
-        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
-          "name": "rmse_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
-        },
-        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
-          "name": "sajdlkjad_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+          "error": true
         },
         "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
           "name": "supasdasdasd_asdmalsd",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 1,
+            "fail": 3
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 15.5
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": null
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 1,
+            "neutral": 2,
+            "negative": 0
+          }
         }
       }
     },
@@ -1844,27 +2314,42 @@
         "ca707041-9454-4638-8866-0b0793578229": {
           "name": "latency_check_task_19_may_2026_16_27",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "error": true
         },
-        "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
-          "name": "syntax_validation_task_19_may_2026_16_21",
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
           "output_type": "Pass/Fail",
-          "output": "Fail"
-        },
-        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
-          "name": "rmse_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
-        },
-        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
-          "name": "sajdlkjad_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+          "output": {
+            "pass": 2,
+            "fail": 1
+          }
         },
         "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
           "name": "supasdasdasd_asdmalsd",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 5,
+            "fail": 0
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": null
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 71.0
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 0,
+            "neutral": 0,
+            "negative": 0
+          }
         }
       }
     },
@@ -2034,25 +2519,48 @@
       "cost_breakdown.analysisCostBreakdown.structuredOutputCachedPromptTokens": 0,
       "cost_breakdown.analysisCostBreakdown.successEvaluationCachedPromptTokens": 0,
       "eval_outputs": {
+        "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
+          "name": "syntax_validation_task_19_may_2026_16_21",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 2,
+            "fail": 2
+          }
+        },
         "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
           "name": "latency_check_task_14_may_2026_22_01",
           "output_type": "Pass/Fail",
-          "output": "Fail"
-        },
-        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
-          "name": "rmse_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
-        },
-        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
-          "name": "sajdlkjad_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+          "output": {
+            "pass": 2,
+            "fail": 0
+          }
         },
         "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
           "name": "supasdasdasd_asdmalsd",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 0,
+            "fail": 4
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 29.5
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 78.5
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 3,
+            "neutral": 0,
+            "negative": 2
+          }
         }
       }
     },
@@ -2236,12 +2744,50 @@
         "ca707041-9454-4638-8866-0b0793578229": {
           "name": "latency_check_task_19_may_2026_16_27",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 3,
+            "fail": 1
+          }
         },
         "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
           "name": "syntax_validation_task_19_may_2026_16_21",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 3,
+            "fail": 0
+          }
+        },
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 0,
+            "fail": 2
+          }
+        },
+        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
+          "name": "supasdasdasd_asdmalsd",
+          "output_type": "Pass/Fail",
+          "error": true
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 36.0
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 85.0
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 0,
+            "neutral": 0,
+            "negative": 0
+          }
         }
       }
     },
@@ -2283,27 +2829,42 @@
         "ca707041-9454-4638-8866-0b0793578229": {
           "name": "latency_check_task_19_may_2026_16_27",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 3,
+            "fail": 0
+          }
         },
         "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
           "name": "syntax_validation_task_19_may_2026_16_21",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 0,
+            "fail": 2
+          }
+        },
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "error": true
         },
         "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
           "name": "rmse_11_may_2026",
           "output_type": "score",
-          "output": 0.0
+          "output": 43.5
         },
         "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
           "name": "sajdlkjad_11_may_2026",
           "output_type": "score",
-          "output": 0.0
+          "output": 92.5
         },
-        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
-          "name": "supasdasdasd_asdmalsd",
-          "output_type": "Pass/Fail",
-          "output": "Fail"
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 1,
+            "neutral": 1,
+            "negative": 1
+          }
         }
       }
     },
@@ -2345,12 +2906,42 @@
         "ca707041-9454-4638-8866-0b0793578229": {
           "name": "latency_check_task_19_may_2026_16_27",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 0,
+            "fail": 3
+          }
         },
         "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
           "name": "syntax_validation_task_19_may_2026_16_21",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "error": true
+        },
+        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
+          "name": "supasdasdasd_asdmalsd",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 3,
+            "fail": 2
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 50.0
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 99.0
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 0,
+            "neutral": 2,
+            "negative": 0
+          }
         }
       }
     },
@@ -2387,7 +2978,49 @@
       "bot_wpm": null,
       "user_interruption_count": null,
       "ai_interruption_count": null,
-      "observation_span": []
+      "observation_span": [],
+      "eval_outputs": {
+        "ca707041-9454-4638-8866-0b0793578229": {
+          "name": "latency_check_task_19_may_2026_16_27",
+          "output_type": "Pass/Fail",
+          "error": true
+        },
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 1,
+            "fail": 1
+          }
+        },
+        "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
+          "name": "supasdasdasd_asdmalsd",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 4,
+            "fail": 0
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": 57.5
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": null
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 3,
+            "neutral": 2,
+            "negative": 2
+          }
+        }
+      }
     },
     {
       "id": "81d3ce9b-6054-40aa-bba3-ef24d5df46d7",
@@ -2424,30 +3057,48 @@
       "ai_interruption_count": null,
       "observation_span": [],
       "eval_outputs": {
-        "ca707041-9454-4638-8866-0b0793578229": {
-          "name": "latency_check_task_19_may_2026_16_27",
-          "output_type": "Pass/Fail",
-          "output": "Fail"
-        },
         "f499bcd2-2225-4ee8-a388-e9d7e95c24f2": {
           "name": "syntax_validation_task_19_may_2026_16_21",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 1,
+            "fail": 2
+          }
         },
-        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
-          "name": "rmse_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
-        },
-        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
-          "name": "sajdlkjad_11_may_2026",
-          "output_type": "score",
-          "output": 0.0
+        "d3e06a35-c0f9-4d38-8308-eb0d48bf9157": {
+          "name": "latency_check_task_14_may_2026_22_01",
+          "output_type": "Pass/Fail",
+          "output": {
+            "pass": 5,
+            "fail": 0
+          }
         },
         "21de7629-d4e1-4cae-8ef4-f3ee0cc52eb0": {
           "name": "supasdasdasd_asdmalsd",
           "output_type": "Pass/Fail",
-          "output": "Fail"
+          "output": {
+            "pass": 0,
+            "fail": 3
+          }
+        },
+        "02b4a36a-573e-49d1-b89d-bf2983d2fa47": {
+          "name": "rmse_11_may_2026",
+          "output_type": "score",
+          "output": null
+        },
+        "1dac046b-82bd-4f94-a783-eb47a9aef05b": {
+          "name": "sajdlkjad_11_may_2026",
+          "output_type": "score",
+          "output": 13.0
+        },
+        "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001": {
+          "name": "sentiment_check_task",
+          "output_type": "choices",
+          "output": {
+            "positive": 2,
+            "neutral": 0,
+            "negative": 2
+          }
         }
       }
     }
@@ -2560,6 +3211,32 @@
       "parent_eval_id": null,
       "eval_task_name": "supasdasdasd task",
       "eval_task_created_at": "2026-05-11T00:00:00Z"
+    },
+    {
+      "id": "b7e1c0a4-1111-4aaa-9bbb-c0ffee000001",
+      "name": "sentiment_check_task",
+      "is_visible": true,
+      "group_by": "Evaluation Metrics",
+      "output_type": "choices",
+      "reverse_output": false,
+      "annotation_label_type": null,
+      "choices": [
+        "positive",
+        "neutral",
+        "negative"
+      ],
+      "settings": null,
+      "choices_map": {
+        "positive": "pass",
+        "neutral": "neutral",
+        "negative": "fail"
+      },
+      "eval_template_id": "941e2128-01d1-41dc-ab4c-ff82a747b086",
+      "annotators": null,
+      "source_field": null,
+      "parent_eval_id": null,
+      "eval_task_name": "sentiment task",
+      "eval_task_created_at": "2026-05-14T22:01:00Z"
     }
   ]
 }

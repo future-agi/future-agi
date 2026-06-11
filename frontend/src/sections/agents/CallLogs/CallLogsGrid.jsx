@@ -245,6 +245,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
           groupBy: c.field.match(/^[0-9a-f-]{36}/)
             ? "Evaluation Metrics"
             : "Call Columns",
+          evalTaskName: c.evalTaskName ?? null,
         }));
       onConfigLoaded(colConfig);
     }
