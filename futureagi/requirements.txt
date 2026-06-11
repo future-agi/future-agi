@@ -35,7 +35,6 @@ argon2-cffi-bindings==21.2.0
 asgiref==3.11.1
     # via
     #   channels
-    #   channels-redis
     #   django
     #   django-cors-headers
     #   django-structlog
@@ -68,6 +67,8 @@ botocore==1.38.45
     #   traceai-bedrock
 cachetools==5.5.2
     # via google-auth
+carehare==1.0.2
+    # via channels-rabbitmq
 cbor2==5.8.0
     # via webauthn
 celery==5.5.3
@@ -92,8 +93,8 @@ cffi==1.17.1
 channels==4.2.2
     # via
     #   core-backend (pyproject.toml)
-    #   channels-redis
-channels-redis==4.3.0
+    #   channels-rabbitmq
+channels-rabbitmq==4.0.1
     # via core-backend (pyproject.toml)
 charset-normalizer==3.4.2
     # via
@@ -434,7 +435,7 @@ minio==7.2.15
 mixpanel==4.10.1
     # via core-backend (pyproject.toml)
 msgpack==1.1.1
-    # via channels-redis
+    # via channels-rabbitmq
 multidict==6.7.0
     # via
     #   core-backend (pyproject.toml)
@@ -632,6 +633,8 @@ packaging==24.2
     #   marshmallow
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-pika
+pamqp==3.3.0
+    # via carehare
 pandas==2.3.0
     # via core-backend (pyproject.toml)
 partial-json-parser==0.2.1.1.post6
@@ -801,7 +804,6 @@ rapidfuzz==3.13.0
 redis==7.1.0
     # via
     #   core-backend (pyproject.toml)
-    #   channels-redis
     #   django-redis
 referencing==0.36.2
     # via

@@ -501,10 +501,7 @@ AVAILABLE_REGIONS = os.environ.get("AVAILABLE_REGIONS", "")
 # Celery Configuration Options
 
 CELERY_BROKER_URL = os.getenv(
-    # OSS default = Redis (one broker container, not two). EE/cloud
-    # set CELERY_BROKER_URL=amqp://… to keep RabbitMQ.
-    "CELERY_BROKER_URL",
-    os.getenv("REDIS_URL", "redis://redis:6379/0"),
+    "CELERY_BROKER_URL", "amqp://user:password@rabbitmq:5672//"
 )
 CELERY_RESULT_BACKEND = "django-db"  # If you want to use Django's ORM
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -726,40 +723,24 @@ ENABLE_INTEGRATIONS = os.getenv("ENABLE_INTEGRATIONS", "false").lower() == "true
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-# Channels layer backend — OSS default is Redis (single broker, one fewer
-# container). EE/cloud can opt back into RabbitMQ via CHANNELS_BACKEND=rabbitmq
-# which uses the `voice` extra's `channels-rabbitmq` package.
-CHANNELS_BACKEND = os.getenv("CHANNELS_BACKEND", "redis").lower()
-if CHANNELS_BACKEND == "rabbitmq":
-    CHANNEL_LAYERS = {
-        "default": {
-            "BACKEND": "channels_rabbitmq.core.RabbitmqChannelLayer",
-            "CONFIG": {
-                "host": CELERY_BROKER_URL,
-                "ssl_context": None,
-                "expiry": 300,
-                "local_capacity": 500,
-                "local_expiry": 300,
-                "remote_capacity": 500,
-            },
+# Channels layer — kept on RabbitMQ. Initial OSS-slimming attempt routed
+# this through channels-redis to drop the rabbitmq container, but that
+# combo (channels-redis 4.3 + Granian) raises spurious "Transport not
+# initialized or closed" on every WS consumer dispatch. Revisit when
+# either side fixes the lifecycle interaction.
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_rabbitmq.core.RabbitmqChannelLayer",
+        "CONFIG": {
+            "host": CELERY_BROKER_URL,
+            "ssl_context": None,
+            "expiry": 300,
+            "local_capacity": 500,
+            "local_expiry": 300,
+            "remote_capacity": 500,
         },
-    }
-else:
-    # channels-redis 4.3 needs the (host, port) tuple or {"address": url}
-    # form — a bare URL string in `hosts` reuses connections in a way that
-    # raises "Transport not initialized or closed" on every consumer after
-    # the first. Use the dict form so the URL (incl. /db number) is parsed
-    # correctly while pooling stays per-consumer.
-    CHANNEL_LAYERS = {
-        "default": {
-            "BACKEND": "channels_redis.core.RedisChannelLayer",
-            "CONFIG": {
-                "hosts": [{"address": REDIS_URL}],
-                "expiry": 300,
-                "capacity": 1500,
-            },
-        },
-    }
+    },
+}
 
 if os.getenv("DJANGO_CACHE_BACKEND") == "locmem":
     CACHES = {

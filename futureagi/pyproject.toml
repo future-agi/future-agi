@@ -101,7 +101,7 @@ dependencies = [
     "channels",
     # OSS default broker = Redis (channels-redis). EE/cloud can flip
     # CHANNELS_BACKEND=rabbitmq to use channels-rabbitmq from the `voice` extra.
-    "channels-redis>=4.2.0",
+    "channels-rabbitmq",
     "filetype",
     "google-genai",
     # Audio segmentation for STT providers (Deepgram). Tiny pure-python lib.
@@ -193,12 +193,11 @@ pii = [
     "spacy>=3.7.0",
 ]
 
-# Voice / call simulation (ee/voice/*). EE-only feature.
+## Voice / call simulation (ee/voice/*). EE-only feature.
 voice = [
     "livekit>=1.0.0",
     "livekit-api>=1.0.0",
     "elevenlabs",
-    "channels-rabbitmq",  # EE keeps AMQP channels backend
 ]
 
 # Prompt optimizer (ee/agent_opt). EE-only.
