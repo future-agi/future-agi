@@ -10034,6 +10034,7 @@ export interface GroundTruthItemApi {
   /** @minLength 1 */
   storage_type?: string;
   created_at?: string;
+  embeddings_stale?: boolean;
 }
 
 export interface GroundTruthListResponseResultApi {
@@ -10078,6 +10079,22 @@ export interface GroundTruthUploadResponseResultApi {
 export interface GroundTruthUploadResponseApi {
   status: boolean;
   result: GroundTruthUploadResponseResultApi;
+}
+
+export type GroundTruthValidateOutputRequestApiValue = { [key: string]: unknown };
+
+export interface GroundTruthValidateOutputRequestApi {
+  value: GroundTruthValidateOutputRequestApiValue;
+}
+
+export interface GroundTruthValidateOutputResponseResultApi {
+  ok: boolean;
+  error?: string;
+}
+
+export interface GroundTruthValidateOutputResponseApi {
+  status: boolean;
+  result: GroundTruthValidateOutputResponseResultApi;
 }
 
 export type EvalTemplateUpdateV2RequestApiEvalType = typeof EvalTemplateUpdateV2RequestApiEvalType[keyof typeof EvalTemplateUpdateV2RequestApiEvalType];
@@ -11426,6 +11443,7 @@ export interface GroundTruthRoleMappingResponseResultApi {
   role_mapping?: GroundTruthRoleMappingResponseResultApiRoleMapping;
   /** @minLength 1 */
   embedding_status: string;
+  embeddings_stale?: boolean;
 }
 
 export interface GroundTruthRoleMappingResponseApi {
@@ -11433,21 +11451,35 @@ export interface GroundTruthRoleMappingResponseApi {
   result: GroundTruthRoleMappingResponseResultApi;
 }
 
+/**
+ * Multi-variable runtime inputs: {"variable_name": "value", ...}
+ */
+export type GroundTruthSearchRequestApiInputs = { [key: string]: unknown };
+
 export interface GroundTruthSearchRequestApi {
-  /** @minLength 1 */
-  query: string;
+  /** Legacy single-text query. Prefer `inputs` for multi-variable. */
+  query?: string;
+  /** Multi-variable runtime inputs: {"variable_name": "value", ...} */
+  inputs?: GroundTruthSearchRequestApiInputs;
   /**
      * @minimum 1
      * @maximum 20
      */
   max_results?: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  similarity_threshold?: number;
 }
+
+export type GroundTruthSearchResponseResultApiInputs = { [key: string]: unknown };
 
 export type GroundTruthSearchResponseResultApiResultsItem = { [key: string]: unknown };
 
 export interface GroundTruthSearchResponseResultApi {
-  /** @minLength 1 */
   query: string;
+  inputs?: GroundTruthSearchResponseResultApiInputs;
   results: GroundTruthSearchResponseResultApiResultsItem[];
   total: number;
 }
@@ -11464,6 +11496,7 @@ export interface GroundTruthStatusResponseResultApi {
   embedded_row_count: number;
   total_rows: number;
   progress_percent: number;
+  embeddings_stale?: boolean;
 }
 
 export interface GroundTruthStatusResponseApi {
@@ -22006,7 +22039,6 @@ export type AddonRequestApiPlan = typeof AddonRequestApiPlan[keyof typeof AddonR
 
 
 export const AddonRequestApiPlan = {
-  payg: 'payg',
   boost: 'boost',
   scale: 'scale',
   enterprise: 'enterprise',
@@ -26419,18 +26451,6 @@ month?: number;
 api_call_type?: string;
 };
 
-export type UsageGetCustomerInvoicesListParams = {
-/**
- * @minimum 1
- */
-page?: number;
-/**
- * @minimum 1
- * @maximum 100
- */
-page_size?: number;
-};
-
 export type UsageUsageSummaryListParams = {
 /**
  * @minimum 1
@@ -26451,6 +26471,7 @@ period?: string;
  * @pattern ^\d{4}-\d{2}$
  */
 period_end?: string;
+workspace_id?: string;
 };
 
 export type UsageV2UsageTimeSeriesListParams = {

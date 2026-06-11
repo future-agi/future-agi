@@ -19716,7 +19716,7 @@ export const ModelHubEvalTemplatesGroundTruthListParams = zod.object({
 
 
 
-
+export const modelHubEvalTemplatesGroundTruthListResponseResultItemsItemEmbeddingsStaleDefault = false;
 
 export const ModelHubEvalTemplatesGroundTruthListResponse = zod.object({
   "status": zod.boolean(),
@@ -19738,7 +19738,8 @@ export const ModelHubEvalTemplatesGroundTruthListResponse = zod.object({
   "embedding_status": zod.string().min(1).optional(),
   "embedded_row_count": zod.number().optional(),
   "storage_type": zod.string().min(1).optional(),
-  "created_at": zod.string().optional()
+  "created_at": zod.string().optional(),
+  "embeddings_stale": zod.boolean().default(modelHubEvalTemplatesGroundTruthListResponseResultItemsItemEmbeddingsStaleDefault)
 })),
   "total": zod.number()
 })
@@ -19786,6 +19787,32 @@ export const ModelHubEvalTemplatesGroundTruthUploadCreateResponse = zod.object({
   "row_count": zod.number(),
   "columns": zod.array(zod.string().min(1)),
   "embedding_status": zod.string().min(1)
+})
+})
+
+
+/**
+ * Validates a candidate eval-output value against the template's
+configured output type. Used by the FE when previewing/importing
+rows so the user gets immediate feedback if their mapped output
+column contains values that won't be accepted at eval time.
+ * @summary POST /model-hub/eval-templates/<id>/ground-truth/validate-output/
+ */
+export const ModelHubEvalTemplatesGroundTruthValidateOutputCreateParams = zod.object({
+  "template_id": zod.string()
+})
+
+export const ModelHubEvalTemplatesGroundTruthValidateOutputCreateBody = zod.object({
+  "value": zod.object({
+
+}).passthrough()
+})
+
+export const ModelHubEvalTemplatesGroundTruthValidateOutputCreateResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "ok": zod.boolean(),
+  "error": zod.string().optional()
 })
 })
 
@@ -22042,7 +22069,13 @@ export const ModelHubGroundTruthEmbedCreateResponse = zod.object({
 
 
 /**
- * PUT /model-hub/ground-truth/<id>/mapping/
+ * Updates ``variable_mapping`` — the per-row mapping from a rule
+prompt's ``{{template_variable}}`` placeholders to GT column names.
+Used when a CustomPromptEvaluator is run against a GT dataset (each
+row produces a templated prompt). Distinct from
+:class:`GroundTruthRoleMappingView`, which handles the semantic
+roles used by retrieval (input / expected_output / score / reason).
+ * @summary PUT /model-hub/ground-truth/<id>/mapping/
  */
 export const ModelHubGroundTruthMappingUpdateParams = zod.object({
   "ground_truth_id": zod.string()
@@ -22079,7 +22112,7 @@ export const ModelHubGroundTruthRoleMappingUpdateBody = zod.object({
 })
 
 
-
+export const modelHubGroundTruthRoleMappingUpdateResponseResultEmbeddingsStaleDefault = false;
 
 export const ModelHubGroundTruthRoleMappingUpdateResponse = zod.object({
   "status": zod.boolean(),
@@ -22088,7 +22121,8 @@ export const ModelHubGroundTruthRoleMappingUpdateResponse = zod.object({
   "role_mapping": zod.object({
 
 }).passthrough().optional(),
-  "embedding_status": zod.string().min(1)
+  "embedding_status": zod.string().min(1),
+  "embeddings_stale": zod.boolean().default(modelHubGroundTruthRoleMappingUpdateResponseResultEmbeddingsStaleDefault)
 })
 })
 
@@ -22100,23 +22134,27 @@ export const ModelHubGroundTruthSearchCreateParams = zod.object({
   "ground_truth_id": zod.string()
 })
 
-
 export const modelHubGroundTruthSearchCreateBodyMaxResultsMax = 20;
+
+export const modelHubGroundTruthSearchCreateBodySimilarityThresholdMin = 0;
+export const modelHubGroundTruthSearchCreateBodySimilarityThresholdMax = 1;
 
 
 
 export const ModelHubGroundTruthSearchCreateBody = zod.object({
-  "query": zod.string().min(1),
-  "max_results": zod.number().min(1).max(modelHubGroundTruthSearchCreateBodyMaxResultsMax).optional()
+  "query": zod.string().optional().describe('Legacy single-text query. Prefer `inputs` for multi-variable.'),
+  "inputs": zod.record(zod.string(), zod.unknown()).optional().describe('Multi-variable runtime inputs: {\"variable_name\": \"value\", ...}'),
+  "max_results": zod.number().min(1).max(modelHubGroundTruthSearchCreateBodyMaxResultsMax).optional(),
+  "similarity_threshold": zod.number().min(modelHubGroundTruthSearchCreateBodySimilarityThresholdMin).max(modelHubGroundTruthSearchCreateBodySimilarityThresholdMax).optional()
 })
-
-
-
 
 export const ModelHubGroundTruthSearchCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-  "query": zod.string().min(1),
+  "query": zod.string(),
+  "inputs": zod.object({
+
+}).passthrough().optional(),
   "results": zod.array(zod.object({
 
 }).passthrough()),
@@ -22133,7 +22171,7 @@ export const ModelHubGroundTruthStatusListParams = zod.object({
 })
 
 
-
+export const modelHubGroundTruthStatusListResponseResultEmbeddingsStaleDefault = false;
 
 export const ModelHubGroundTruthStatusListResponse = zod.object({
   "status": zod.boolean(),
@@ -22142,7 +22180,8 @@ export const ModelHubGroundTruthStatusListResponse = zod.object({
   "embedding_status": zod.string().min(1),
   "embedded_row_count": zod.number(),
   "total_rows": zod.number(),
-  "progress_percent": zod.number()
+  "progress_percent": zod.number(),
+  "embeddings_stale": zod.boolean().default(modelHubGroundTruthStatusListResponseResultEmbeddingsStaleDefault)
 })
 })
 
@@ -43652,16 +43691,6 @@ export const UsageGetBillingDetailsListResponse = zod.object({
 
 
 
-export const usageGetCustomerInvoicesListQueryPageSizeMax = 100;
-
-
-
-export const UsageGetCustomerInvoicesListQueryParams = zod.object({
-  "page": zod.number().min(1).optional(),
-  "page_size": zod.number().min(1).max(usageGetCustomerInvoicesListQueryPageSizeMax).optional()
-})
-
-
 
 
 
@@ -44735,7 +44764,7 @@ export const UsageUsageSummaryListResponse = zod.object({
  * Add or remove an add-on subscription.
  */
 export const UsageV2AddAddonCreateBody = zod.object({
-  "plan": zod.enum(['payg', 'boost', 'scale', 'enterprise']).optional()
+  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
 })
 
 
@@ -44772,10 +44801,6 @@ export const UsageV2AddAddonUpdateResponse = zod.object({
 /**
  * Add or remove an add-on subscription.
  */
-export const UsageV2AddAddonDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -44791,7 +44816,7 @@ export const UsageV2AddAddonDeleteResponse = zod.object({
  * Add or remove an add-on subscription.
  */
 export const UsageV2AddonCreateBody = zod.object({
-  "plan": zod.enum(['payg', 'boost', 'scale', 'enterprise']).optional()
+  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
 })
 
 
@@ -44828,10 +44853,6 @@ export const UsageV2AddonUpdateResponse = zod.object({
 /**
  * Add or remove an add-on subscription.
  */
-export const UsageV2AddonDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -45277,10 +45298,6 @@ export const UsageV2PaymentMethodsDeleteParams = zod.object({
   "pm_id": zod.string()
 })
 
-export const UsageV2PaymentMethodsDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -45320,10 +45337,6 @@ export const UsageV2PaymentMethodsDefaultCreateResponse = zod.object({
 export const UsageV2PaymentMethodsDefaultDeleteParams = zod.object({
   "pm_id": zod.string()
 })
-
-export const UsageV2PaymentMethodsDefaultDeleteBody = zod.object({
-
-}).passthrough()
 
 
 
@@ -45406,7 +45419,7 @@ export const UsageV2PlansAndAddonsListResponse = zod.object({
  * Add or remove an add-on subscription.
  */
 export const UsageV2ReinstateAddonCreateBody = zod.object({
-  "plan": zod.enum(['payg', 'boost', 'scale', 'enterprise']).optional()
+  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
 })
 
 
@@ -45443,10 +45456,6 @@ export const UsageV2ReinstateAddonUpdateResponse = zod.object({
 /**
  * Add or remove an add-on subscription.
  */
-export const UsageV2ReinstateAddonDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -45462,7 +45471,7 @@ export const UsageV2ReinstateAddonDeleteResponse = zod.object({
  * Add or remove an add-on subscription.
  */
 export const UsageV2RemoveAddonCreateBody = zod.object({
-  "plan": zod.enum(['payg', 'boost', 'scale', 'enterprise']).optional()
+  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
 })
 
 
@@ -45499,10 +45508,6 @@ export const UsageV2RemoveAddonUpdateResponse = zod.object({
 /**
  * Add or remove an add-on subscription.
  */
-export const UsageV2RemoveAddonDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -45588,7 +45593,7 @@ and projected month-end usage.
 
 Query params:
     period: YYYY-MM (default: current month)
-    period_end: YYYY-MM (optional; defaults to period for a single month)
+    workspace_id: optional (filter by workspace)
  * @summary Get usage overview for the current billing period.
  */
 
@@ -45601,7 +45606,8 @@ export const usageV2UsageOverviewListQueryPeriodEndRegExp = new RegExp('^\\d{4}-
 
 export const UsageV2UsageOverviewListQueryParams = zod.object({
   "period": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodRegExp).optional(),
-  "period_end": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodEndRegExp).optional()
+  "period_end": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodEndRegExp).optional(),
+  "workspace_id": zod.string().uuid().optional()
 })
 
 
