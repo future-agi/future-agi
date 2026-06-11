@@ -335,7 +335,10 @@ def run_eval_func(
         if _is_code_eval:
             from evaluations.engine.preprocessing import preprocess_inputs
 
-            _run_kwargs = preprocess_inputs(template.name, _run_kwargs)
+            eval_type_id = (template.config or {}).get("eval_type_id")
+            _run_kwargs = preprocess_inputs(
+                eval_type_id, _run_kwargs, fallback_eval_name=template.name
+            )
 
         # Apply the shared empty-input rules so the playground (and
         # every other caller of run_eval_func — composite children,
