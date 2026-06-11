@@ -42,7 +42,9 @@ const OptimizationResultGrid = ({ optimizationId, isDrawer = true }) => {
   }));
 
   const columnDefs = useMemo(() => {
-    return getOptimizationResultColumnConfig(optimizationData?.columnConfig);
+    return getOptimizationResultColumnConfig(
+      optimizationData?.column_config ?? optimizationData?.columnConfig,
+    );
   }, [optimizationData]);
 
   return (

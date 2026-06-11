@@ -121,7 +121,9 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
               },
             }}
           >
-            {steps?.map(({ status, name, description, updatedAt }, index) => {
+            {steps?.map((step, index) => {
+              const { status, name, description } = step || {};
+              const updatedAt = step?.updated_at ?? step?.updatedAt;
               const isFailedStep =
                 steps
                   .slice(0, index)

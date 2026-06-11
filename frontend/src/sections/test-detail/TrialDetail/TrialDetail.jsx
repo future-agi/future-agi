@@ -58,7 +58,10 @@ const TrialDetail = () => {
               href: `/dashboard/simulate/test/${testId}/${executionId}/${optimizationId}`,
             },
             {
-              label: trailPromptData?.trialName ?? trialId,
+              label:
+                trailPromptData?.trial_name ??
+                trailPromptData?.trialName ??
+                trialId,
               isLoading: isLoadingTrial,
             },
           ]}

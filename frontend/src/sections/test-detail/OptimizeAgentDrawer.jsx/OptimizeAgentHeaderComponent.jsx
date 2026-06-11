@@ -29,8 +29,15 @@ import { getDocsLinkBasedOnOptimizer } from "./common";
 import { formatStartTimeByRequiredFormat } from "src/utils/utils";
 
 const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
-  const { optimiserType, model, status, optimiserName, providerLogo } =
-    optimization || {};
+  // The API responds in snake_case (plain JSONRenderer); accept both
+  // spellings so this header keeps working if a camelizing layer returns.
+  const { model, status } = optimization || {};
+  const optimiserType =
+    optimization?.optimiser_type ?? optimization?.optimiserType;
+  const optimiserName =
+    optimization?.optimiser_name ?? optimization?.optimiserName;
+  const providerLogo =
+    optimization?.provider_logo ?? optimization?.providerLogo;
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [createEditOptimizationModalOpen, setCreateEditOptimizationModalOpen] =
     useState(null);
@@ -44,9 +51,10 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
 
   const getDefaultValues = (optimization) => {
     return {
-      name: `${optimization?.optimiserName} - Rerun - ${format(new Date(), "dd MMM yyyy")}`,
+      name: `${optimization?.optimiser_name ?? optimization?.optimiserName} - Rerun - ${format(new Date(), "dd MMM yyyy")}`,
       model: optimization?.model,
-      optimiserType: optimization?.optimiserType,
+      optimiserType:
+        optimization?.optimiser_type ?? optimization?.optimiserType,
       configuration: optimization?.configuration,
     };
   };

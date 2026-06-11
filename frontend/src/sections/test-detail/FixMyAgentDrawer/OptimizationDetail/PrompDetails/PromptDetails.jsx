@@ -13,15 +13,18 @@ import PromptPanel from "./PromptPanel";
 // took: a new default PromptVersion (prompt-template runs), a live write to
 // the hosted provider agent, or a new active AgentVersion (self-hosted).
 const applySuccessMessage = (result) => {
-  if (result?.newPromptVersionId) {
-    return `Applied as prompt version ${result.templateVersion ?? ""}`.trim();
+  // The API responds in snake_case; accept camelCase too for safety.
+  if (result?.new_prompt_version_id ?? result?.newPromptVersionId) {
+    return `Applied as prompt version ${result.template_version ?? result.templateVersion ?? ""}`.trim();
   }
   if (result?.target === "provider_agent") {
-    const fields = (result.appliedFields || []).join(", ");
+    const fields = (result.applied_fields ?? result.appliedFields ?? []).join(
+      ", ",
+    );
     return `Applied to the live ${result.provider} agent${fields ? ` (${fields})` : ""}`;
   }
   if (result?.target === "agent_version") {
-    return `Applied as agent version v${result.versionNumber} (${result.provider})`;
+    return `Applied as agent version v${result.version_number ?? result.versionNumber} (${result.provider})`;
   }
   return "Fix applied";
 };
@@ -64,8 +67,12 @@ const PromptDetails = ({ optimizationId, trialId, showDiff }) => {
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
         {applyButton}
         <PromptDiffView
-          originalPrompt={trailPromptData?.basePrompt}
-          optimizedPrompt={trailPromptData?.trialPrompt}
+          originalPrompt={
+            trailPromptData?.base_prompt ?? trailPromptData?.basePrompt
+          }
+          optimizedPrompt={
+            trailPromptData?.trial_prompt ?? trailPromptData?.trialPrompt
+          }
         />
       </Box>
     );
@@ -78,7 +85,9 @@ const PromptDetails = ({ optimizationId, trialId, showDiff }) => {
         <Box sx={{ flex: 1 }}>
           <PromptPanel
             title="OPTIMIZED AGENT PROMPT"
-            prompt={trailPromptData?.trialPrompt}
+            prompt={
+              trailPromptData?.trial_prompt ?? trailPromptData?.trialPrompt
+            }
           />
         </Box>
       </Box>

@@ -37,8 +37,10 @@ export const getOptimizationResultColumnConfig = (optimizationColumns) => {
           valueGetter: (params) => {
             return {
               title: params.data?.trial,
-              improvement: params.data?.scorePercentageChange,
-              isBest: params.data?.isBest,
+              improvement:
+                params.data?.score_percentage_change ??
+                params.data?.scorePercentageChange,
+              isBest: params.data?.is_best ?? params.data?.isBest,
             };
           },
         };

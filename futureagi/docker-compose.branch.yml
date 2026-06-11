@@ -28,6 +28,21 @@ x-livekit-env: &livekit-env
   # Agora RTC connector (web_agora): RTC tokens + ConvAI agent llm/tts defaults.
   AGORA_APP_ID: aa038cecadcc47e7b3e493cef42e7d49
   AGORA_APP_CERT: 1466bc6a58bf48759a7b2f3641b1758a
+  # Local v2 span store (TH-5642 browser E2E): the CH 25.3 test sidecar is
+  # connected to futureagi-network and hosts the v2 spans schema in
+  # `local_app`, backfilled from PG via tracer.services.clickhouse.v2.backfill.
+  # Point the legacy CH client at the same 25.3 server (dev parity: one
+  # server hosts both the v2 spans store and the analytics dicts), with the
+  # cutover flag so the legacy v1 spans DDL never lands next to v2.
+  CH_HOST: futureagi-test-clickhouse-1
+  CH_PORT: "9000"
+  CH_DATABASE: local_app
+  CH25_DROP_LEGACY_CDC_CHAIN: "true"
+  CH25_HOST: futureagi-test-clickhouse-1
+  CH25_HTTP_PORT: "8123"
+  CH25_TCP_PORT: "9000"
+  CH25_DATABASE: local_app
+  CH25_QUERY_TYPES_V2_ONLY: "trace_list,span_list,trace_detail,trace_of_session_list,session_list,voice_call_list,voice_call_detail,eval_metrics,time_series,span_graph"
   CARTESIA_API_KEY: sk_car_K7SEemFZgJwBhWwW2N9W78
   ELEVENLABS_API_KEY: sk_594e200cd46087427a7bc27e3852e78ba5e5c0f2eaf16ce5
 
