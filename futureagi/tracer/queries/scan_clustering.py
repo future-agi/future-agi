@@ -43,17 +43,9 @@ def _seed_severity(category: str, brief: str) -> str | None:
     """Cheap-LLM user-impact severity for a new cluster's seed (centroid) issue,
     mirroring the eval-cluster path. Single datapoint, one call per new cluster.
     EE-absent (OSS) or any LLM failure → None so the caller defaults to medium."""
-    try:
-        from ee.agenthub.trace_scanner.eval_cluster_title import (
-            generate_scan_cluster_severity,
-        )
-    except ImportError:
-        return None
-    try:
-        return generate_scan_cluster_severity(category, brief)
-    except Exception:
-        logger.warning("scan_cluster_severity_llm_failed", exc_info=True)
-        return None
+    from tracer.ee_boundary import generate_scan_cluster_severity
+
+    return generate_scan_cluster_severity(category, brief)
 
 
 # ---------------------------------------------------------------------------

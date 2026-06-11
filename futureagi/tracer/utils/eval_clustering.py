@@ -19,14 +19,7 @@ from tracer.queries.eval_clustering import (
 )
 from tracer.types.eval_cluster_types import EvalClusteringSummary
 
-# EE-only distillation — OSS embeds the raw explanation (same gating
-# pattern as the cheap-LLM cluster meta in queries.eval_clustering).
-try:
-    from ee.agenthub.trace_scanner.eval_cluster_title import (
-        distill_failure_phrases,
-    )
-except ImportError:  # OSS build
-    distill_failure_phrases = None
+from tracer.ee_boundary import distill_eval_failure_phrases
 
 logger = structlog.get_logger(__name__)
 
@@ -56,17 +49,7 @@ def cluster_eval_results(project_id: str) -> EvalClusteringSummary:
     # embedding — raw explanations carry trace-specific noise (names,
     # numbers, quotes) that fragments clusters. Best-effort: a failed
     # batch leaves ``distilled`` None and the raw text is embedded.
-    if distill_failure_phrases is not None:
-        try:
-            phrases = distill_failure_phrases(
-                [(r.eval_name, r.explanation) for r in results]
-            )
-            for result, phrase in zip(results, phrases, strict=True):
-                result.distilled = phrase
-        except Exception:
-            logger.warning(
-                "eval_distill_skipped", project_id=project_id, exc_info=True
-            )
+    distill_eval_failure_phrases(results)
 
     texts = [r.embedding_text for r in results]
     embeddings = embed_texts(texts)

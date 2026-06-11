@@ -1585,21 +1585,9 @@ def _attribute_old_key_moments(key_moments: list, trace_id: str) -> list:
     trace's live spans. Hybrid fast-path — new scans already carry ``role`` and
     never reach here. Returns the moments unchanged if EE/spans are unavailable.
     """
-    try:
-        from ee.agenthub.trace_scanner.compress import attribute_key_moments
-        from tracer.queries.trace_scanner import fetch_trace_data
-    except ImportError:  # OSS — no scanner; keep flat fallback.
-        return key_moments
-    traces = fetch_trace_data([trace_id])
-    if not traces:
-        return key_moments
-    trace_dict = traces[0].to_dict()
-    quotes = [(km.get("kevinified") or km.get("verbatim") or "") for km in key_moments]
-    attribution = attribute_key_moments(quotes, trace_dict)
-    return [
-        {**km, **attr} if not km.get("role") else km
-        for km, attr in zip(key_moments, attribution, strict=False)
-    ]
+    from tracer.ee_boundary import attribute_key_moments
+
+    return attribute_key_moments(key_moments, trace_id)
 
 
 def _key_moments_to_reel(
