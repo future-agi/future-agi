@@ -237,6 +237,8 @@ class CheckBalanceInput:
 
     org_id: str
     estimated_duration_minutes: int
+    # Billing event type: "voice_call" or "text_call" (TH-5610 dimension fix)
+    event_type: str = "voice_call"
 
 
 @dataclass

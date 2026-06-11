@@ -42,6 +42,9 @@ class CallExecutionInput:
     # Used for eval-only reruns where the call data already exists
     eval_only: bool = False
 
+    # Billing event type for usage gating: "voice_call" or "text_call"
+    event_type: str = "voice_call"
+
 
 @dataclass
 class CallInfo:

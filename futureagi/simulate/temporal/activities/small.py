@@ -216,8 +216,11 @@ async def check_call_balance(input: CheckBalanceInput) -> CheckBalanceOutput:
         except ImportError:
             check_usage = None
 
-        # Check voice_call limit (covers both voice and text — both are sim calls)
-        result = await sync_to_async(check_usage)(input.org_id, "voice_call")
+        # OSS image has no ee.usage — don't allow the call.
+        if check_usage is None:
+            return CheckBalanceOutput(sufficient=False)
+
+        result = await sync_to_async(check_usage)(input.org_id, input.event_type)
 
         if not result.allowed:
             activity.logger.warning(

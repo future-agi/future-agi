@@ -149,12 +149,12 @@ from simulate.services.test_executor import (
     run_new_evals_on_call_executions_task,
 )
 from simulate.tasks.eval_summary_tasks import run_eval_summary_task
-from simulate.utils.baseline import resolve_baseline_id
 from simulate.utils.agent_optimiser import (
     create_optimiser_run_for_test_execution,
     get_latest_optimiser_result,
     get_or_create_optimiser_for_test_execution,
 )
+from simulate.utils.baseline import resolve_baseline_id
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,
@@ -212,6 +212,35 @@ def _voice_sim_gate_response(user_organization, gm):
     if not feat_check.allowed:
         return gm.forbidden_response(feat_check.reason)
     return None
+
+
+def simulation_event_type(agent_definition) -> str:
+    """Billing event type for a simulation run: voice calls meter
+    voice_sim_minutes, everything else (chat/text) meters text_sim_tokens."""
+    if (
+        agent_definition is not None
+        and agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE
+    ):
+        return "voice_call"
+    return "text_call"
+
+
+def simulation_usage_gate_response(user_organization, gm, event_type):
+    """Return a 402 response if the org's hard-cap (free) plan has exhausted
+    its free allowance for this simulation type, else None.
+
+    Reuses the shared metering pre-check (ee.usage.services.metering.check_usage)
+    and GeneralMethods.usage_limit_response — no new response API.
+    """
+    try:
+        from ee.usage.services.metering import check_usage
+    except ImportError:
+        return None
+
+    check = check_usage(str(user_organization.id), event_type)
+    if check.allowed:
+        return None
+    return gm.usage_limit_response(check)
 
 
 class RunTestListView(APIView):
@@ -713,6 +742,14 @@ class RunTestExecutionView(APIView):
                 if forbidden is not None:
                     return forbidden
 
+            gate = simulation_usage_gate_response(
+                user_organization,
+                self.gm,
+                simulation_event_type(run_test.agent_definition),
+            )
+            if gate is not None:
+                return gate
+
             # Get parameters from request
             scenario_ids = request.data.get("scenario_ids", [])
             simulator_id = request.data.get("simulator_id", None)
@@ -823,6 +860,7 @@ class RunTestExecutionView(APIView):
                 org_id=str(run_test.organization_id),
                 scenario_ids=scenario_ids,
                 simulator_id=str(simulator_id) if simulator_id else None,
+                event_type=simulation_event_type(run_test.agent_definition),
             )
 
             logger.info(
@@ -3186,11 +3224,14 @@ class CallExecutionDetailView(APIView):
                     .first()
                 )
                 scenario_ids = call_execution.test_execution.scenario_ids
-                is_replay = bool(scenario_ids) and Scenarios.objects.filter(
-                    id__in=scenario_ids,
-                    deleted=False,
-                    metadata__created_from="replay_session",
-                ).exists()
+                is_replay = (
+                    bool(scenario_ids)
+                    and Scenarios.objects.filter(
+                        id__in=scenario_ids,
+                        deleted=False,
+                        metadata__created_from="replay_session",
+                    ).exists()
+                )
                 baseline_id = resolve_baseline_id(metadata, is_replay=is_replay)
                 if baseline_id:
                     row_session_id_map[str(row_id)] = baseline_id
@@ -6025,6 +6066,7 @@ class CallExecutionRerunView(APIView):
         responses={
             200: RerunCallsResponseSerializer,
             400: ErrorResponseSerializer,
+            402: ErrorResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
@@ -6086,6 +6128,14 @@ class CallExecutionRerunView(APIView):
                     forbidden = _voice_sim_gate_response(user_organization, self._gm)
                     if forbidden is not None:
                         return forbidden
+
+                gate = simulation_usage_gate_response(
+                    user_organization,
+                    self._gm,
+                    simulation_event_type(test_execution.run_test.agent_definition),
+                )
+                if gate is not None:
+                    return gate
 
             # Get call executions to rerun
             if select_all:
@@ -6558,6 +6608,14 @@ class TestExecutionRerunView(APIView):
                     if forbidden is not None:
                         return forbidden
 
+                gate = simulation_usage_gate_response(
+                    user_organization,
+                    self._gm,
+                    simulation_event_type(run_test.agent_definition),
+                )
+                if gate is not None:
+                    return gate
+
             # Get test executions to rerun, excluding those in non-terminal statuses
             non_rerunnable_statuses = [
                 TestExecution.ExecutionStatus.PENDING,
@@ -6993,9 +7051,7 @@ def add_trace_details_to_call_executions(call_executions):
     # (``tracer_obse_eval_attr_gin``) was dropped in migration 0074. The
     # equivalent containment check now goes to ClickHouse, which has the
     # same data and is much cheaper for this access pattern.
-    spans_by_call_exec = spans_by_eval_attribute_call_execution_ids(
-        call_execution_ids
-    )
+    spans_by_call_exec = spans_by_eval_attribute_call_execution_ids(call_execution_ids)
 
     # Collect trace IDs and build trace_details
     trace_ids = set()
@@ -7008,7 +7064,11 @@ def add_trace_details_to_call_executions(call_executions):
         # original PG version also took whichever row came first).
         span = spans[0]
         try:
-            eval_attrs = json.loads(span["eval_attributes"]) if span.get("eval_attributes") else {}
+            eval_attrs = (
+                json.loads(span["eval_attributes"])
+                if span.get("eval_attributes")
+                else {}
+            )
         except (TypeError, ValueError):
             eval_attrs = {}
         trace_id_str = span["trace_id"]

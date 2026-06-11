@@ -437,6 +437,14 @@ class ExecutePromptSimulationView(APIView):
             if not user_organization:
                 return self.gm.not_found("Organization not found for the user.")
 
+            from simulate.views.run_test import simulation_usage_gate_response
+
+            gate = simulation_usage_gate_response(
+                user_organization, self.gm, "text_call"
+            )
+            if gate is not None:
+                return gate
+
             # Verify prompt template
             prompt_template = get_object_or_404(
                 PromptTemplate,

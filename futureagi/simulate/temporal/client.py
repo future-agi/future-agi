@@ -27,6 +27,7 @@ def start_test_execution_workflow(
     org_id: str,
     scenario_ids: list[str],
     simulator_id: Optional[str] = None,
+    event_type: str = "voice_call",
 ) -> str:
     """
     Start a TestExecutionWorkflow from sync Django code.
@@ -37,6 +38,7 @@ def start_test_execution_workflow(
         org_id: Organization ID
         scenario_ids: List of scenario IDs to execute
         simulator_id: Optional simulator agent ID
+        event_type: Billing event type ("voice_call" or "text_call")
 
     Returns:
         Workflow ID of the started workflow
@@ -50,6 +52,7 @@ def start_test_execution_workflow(
         org_id=org_id,
         scenario_ids=scenario_ids,
         simulator_id=simulator_id,
+        event_type=event_type,
     )
 
 
@@ -59,6 +62,7 @@ async def _start_test_execution_workflow_async(
     org_id: str,
     scenario_ids: list[str],
     simulator_id: Optional[str] = None,
+    event_type: str = "voice_call",
 ) -> str:
     """Async implementation for starting test execution workflow."""
     from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
@@ -85,6 +89,7 @@ async def _start_test_execution_workflow_async(
             org_id=org_id,
             scenario_ids=scenario_ids,
             simulator_id=simulator_id,
+            event_type=event_type,
         ),
         id=workflow_id,
         task_queue=QUEUE_L,

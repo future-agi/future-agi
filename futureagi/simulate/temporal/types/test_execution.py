@@ -48,6 +48,9 @@ class TestExecutionInput:
     # Optional simulator agent
     simulator_id: Optional[str] = None
 
+    # Billing event type for usage gating: "voice_call" or "text_call"
+    event_type: str = "voice_call"
+
     # State for continue-as-new (None for initial run)
     state: Optional[TestExecutionState] = None
 

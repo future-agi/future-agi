@@ -97,6 +97,14 @@ class RunTestChatExecutionView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
+            from simulate.views.run_test import simulation_usage_gate_response
+
+            gate = simulation_usage_gate_response(
+                user_organization, self.gm, "text_call"
+            )
+            if gate is not None:
+                return gate
+
             # Get the run test
             run_test = get_object_or_404(
                 RunTest, id=run_test_id, organization=user_organization, deleted=False

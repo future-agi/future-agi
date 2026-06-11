@@ -37,6 +37,8 @@ from simulate.temporal.signals import SIGNAL_CALL_ANALYZING, SIGNAL_CALL_COMPLET
 from simulate.temporal.types.activities import (
     CancelPendingCallsInput,
     CancelPendingCallsOutput,
+    CheckBalanceInput,
+    CheckBalanceOutput,
     CreateCallRecordsInput,
     CreateCallRecordsOutput,
     FinalizeInput,
@@ -118,6 +120,28 @@ class TestExecutionWorkflow:
             # ========================================
             if not input.state:
                 self._status = "INITIALIZING"
+
+                # Free-tier gate (TH-5610): deny the whole run up front when a
+                # hard-cap (free) plan has exhausted its allowance, instead of
+                # launching children that each fail their own balance check.
+                if workflow.patched("free-tier-run-gate"):
+                    balance_result = await workflow.execute_activity(
+                        "check_call_balance",
+                        CheckBalanceInput(
+                            org_id=input.org_id,
+                            estimated_duration_minutes=30,
+                            event_type=input.event_type,
+                        ),
+                        start_to_close_timeout=timedelta(seconds=30),
+                        retry_policy=DB_RETRY_POLICY,
+                        task_queue=QUEUE_S,
+                        result_type=CheckBalanceOutput,
+                    )
+                    if not balance_result.sufficient:
+                        return await self._fail(
+                            input,
+                            balance_result.error or "Free tier limit reached.",
+                        )
 
                 # Setup and validate
                 setup_result = await workflow.execute_activity(
@@ -411,6 +435,7 @@ class TestExecutionWorkflow:
                     workspace_id=self._workspace_id or "",
                     test_workflow_id=workflow.info().workflow_id,
                     test_execution_id=input.test_execution_id,
+                    event_type=input.event_type,
                 ),
                 id=workflow_id,
                 task_queue=QUEUE_L,
