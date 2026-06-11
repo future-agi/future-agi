@@ -473,13 +473,15 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             project_ids = [str(p["id"]) for p in projects_data]
             if project_ids:
                 try:
-                    from tracer.services.clickhouse.client import get_clickhouse_client
+                    from tracer.services.clickhouse.client import (
+                        get_v2_clickhouse_client,
+                    )
                     from tracer.services.clickhouse.query_service import (
                         is_clickhouse_enabled,
                     )
 
                     if is_clickhouse_enabled():
-                        ch = get_clickhouse_client()
+                        ch = get_v2_clickhouse_client()
                         thirty_days_ago = (
                             datetime.now() - timedelta(days=30)
                         ).strftime("%Y-%m-%d")

@@ -22,7 +22,7 @@ Covered:
 """
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -116,7 +116,7 @@ def mock_ch_enabled():
 @pytest.fixture
 def mock_ch_client():
     """Mock the ClickHouse client used by widget query execution."""
-    with patch("tracer.views.dashboard.get_clickhouse_client") as mock_get:
+    with patch("tracer.views.dashboard.get_v2_clickhouse_client") as mock_get:
         mock_client = MagicMock()
         mock_client.execute_read.return_value = (
             [(datetime(2025, 1, 1), 123.45), (datetime(2025, 1, 2), 200.10)],
@@ -363,7 +363,7 @@ class TestDashboardAPIFlow:
         self, auth_client, dashboard, widget_with_query
     ):
         """Deleting a dashboard should delete its widgets."""
-        widget_id = widget_with_query.id
+        _ = widget_with_query.id  # ensure fixture is evaluated
         dashboard_id = dashboard.id
         resp = auth_client.delete(f"/tracer/dashboard/{dashboard_id}/")
         assert resp.status_code in (200, 204)

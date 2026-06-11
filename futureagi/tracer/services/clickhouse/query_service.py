@@ -16,7 +16,7 @@ import structlog
 
 from tracer.services.clickhouse.client import (
     ClickHouseClient,
-    get_clickhouse_client,
+    get_v2_clickhouse_client,
     is_clickhouse_enabled,
 )
 
@@ -76,7 +76,7 @@ class AnalyticsQueryService:
     @property
     def ch_client(self) -> ClickHouseClient:
         if self._ch_client is None:
-            self._ch_client = get_clickhouse_client()
+            self._ch_client = get_v2_clickhouse_client()
         return self._ch_client
 
     def should_use_clickhouse(self, query_type: QueryType | str) -> bool:

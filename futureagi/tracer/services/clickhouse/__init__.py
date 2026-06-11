@@ -9,6 +9,7 @@ All analytics, dashboarding, and filtering reads are served by ClickHouse.
 from tracer.services.clickhouse.client import (
     ClickHouseClient,
     get_clickhouse_client,
+    get_v2_clickhouse_client,
     is_clickhouse_enabled,
 )
 from tracer.services.clickhouse.consistency import ConsistencyChecker, HealthStatus
@@ -21,6 +22,7 @@ from tracer.services.clickhouse.query_service import (
 __all__ = [
     "ClickHouseClient",
     "get_clickhouse_client",
+    "get_v2_clickhouse_client",
     "is_clickhouse_enabled",
     "AnalyticsQueryService",
     "QueryType",

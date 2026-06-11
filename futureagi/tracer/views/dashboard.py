@@ -29,7 +29,7 @@ from tracer.serializers.dashboard import (
     DashboardWidgetSerializer,
 )
 from tracer.services.clickhouse.client import (
-    get_clickhouse_client,
+    get_v2_clickhouse_client,
     is_clickhouse_enabled,
 )
 from tracer.services.clickhouse.query_builders.dashboard import (
@@ -1068,10 +1068,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 used_template_ids = []
                 if is_clickhouse_enabled():
                     from tracer.services.clickhouse.client import (
-                        get_clickhouse_client,
+                        get_v2_clickhouse_client,
                     )
 
-                    ch = get_clickhouse_client()
+                    ch = get_v2_clickhouse_client()
 
                     if filter_by_project:
                         # Get eval template IDs that have results on traces in the given project(s)
@@ -1177,7 +1177,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 from model_hub.models.develop_annotations import AnnotationsLabels
 
                 if filter_by_project:
-
                     from model_hub.models.score import Score
 
                     used_label_ids = list(
@@ -1241,9 +1240,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             custom_attributes = []
             try:
                 if is_clickhouse_enabled() and project_ids:
-                    from tracer.services.clickhouse.client import get_clickhouse_client
+                    from tracer.services.clickhouse.client import (
+                        get_v2_clickhouse_client,
+                    )
 
-                    ch = get_clickhouse_client()
+                    ch = get_v2_clickhouse_client()
                     # Single batch query with type inference across all projects
                     rows, cols, _ = ch.execute_read(
                         """
@@ -2868,7 +2869,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             m for m in query_config["metrics"] if m.get("source") == "simulation"
         ]
 
-        ch_client = get_clickhouse_client()
+        ch_client = get_v2_clickhouse_client()
         metric_results = []
 
         if trace_metrics:
