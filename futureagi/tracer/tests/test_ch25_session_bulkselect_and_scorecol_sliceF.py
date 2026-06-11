@@ -176,11 +176,11 @@ def _purge_pg_project(project_id) -> None:
 def _raw_insert_session_score(
     *, score_id, trace_session_id, label_id, annotator_id, organization_id, value
 ):
-    """Insert a trace_session Score via RAW SQL, writing ONLY the columns that
-    exist on pg-test's (older) ``model_hub_score`` snapshot — the baked ORM
-    model declares newer columns (e.g. ``value_history``) absent there, so an
-    ORM ``.create()`` 500s. ``project_id`` is deliberately left NULL (the
-    production tracer-side write shape). ``value`` is JSONB."""
+    """Insert a trace_session Score via RAW SQL.
+
+    ``project_id`` is deliberately left NULL (the production tracer-side write
+    shape). ``value`` and ``value_history`` are JSONB.
+    """
     import json
 
     from django.db import connection
@@ -190,16 +190,17 @@ def _raw_insert_session_score(
     with connection.cursor() as cur:
         cur.execute(
             "INSERT INTO model_hub_score "
-            "(id, created_at, updated_at, deleted, source_type, value, "
+            "(id, created_at, updated_at, deleted, source_type, value, value_history, "
             " score_source, label_id, annotator_id, organization_id, "
             " trace_session_id, project_id) "
-            "VALUES (%s, %s, %s, false, 'trace_session', %s, 'human', "
+            "VALUES (%s, %s, %s, false, 'trace_session', %s, %s, 'human', "
             " %s, %s, %s, %s, NULL)",
             [
                 str(score_id),
                 now,
                 now,
                 json.dumps(value),
+                json.dumps([]),
                 str(label_id),
                 str(annotator_id),
                 str(organization_id),
@@ -646,12 +647,8 @@ class TestSessionBulkSelectAndScoreColSliceF:
                     label_id=label.id, trace_session_id__isnull=False, deleted=False
                 ).count()
 
-                # Insert the Score rows via RAW SQL (not the ORM): pg-test's
-                # model_hub_score snapshot predates columns the baked Score
-                # model declares (e.g. value_history), so an ORM .create() 500s
-                # on UndefinedColumn. We write ONLY the columns pg-test has; the
-                # HEAD/POST reads select only (label_id, annotator_id), which
-                # exist. project_id is left NULL — production's tracer-side shape.
+                # Insert the Score rows via RAW SQL (not the ORM) so project_id
+                # stays NULL, matching production's tracer-side write shape.
                 _raw_insert_session_score(
                     score_id=hist_score_id,
                     trace_session_id=hist_session.id,

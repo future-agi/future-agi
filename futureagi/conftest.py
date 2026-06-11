@@ -249,15 +249,21 @@ def _force_flush_cascade():
 
 @pytest.fixture(autouse=True, scope="session")
 def _make_contenttype_post_migrate_idempotent():
-    """Avoid duplicate content types during TransactionTestCase flush teardown.
+    """Avoid duplicate content types/permissions during flush teardown.
 
     ``transaction=True`` tests call Django ``flush`` after each test, which
     emits ``post_migrate`` and recreates content types. In the full suite,
-    background DB connection cleanup can make Django attempt the same
-    content-type insert twice. Keep the normal receiver behavior, but use
-    ``ignore_conflicts`` for the insert so teardown stays idempotent.
+    background DB connection cleanup can make Django attempt the same inserts
+    twice. Keep the normal receiver behavior, but use ``ignore_conflicts`` for
+    the inserts so teardown stays idempotent.
     """
     from django.apps import apps as global_apps
+    from django.contrib.auth.management import (
+        _get_all_permissions,
+    )
+    from django.contrib.auth.management import (
+        create_permissions as _original_create_permissions,
+    )
     from django.contrib.contenttypes.management import (
         create_contenttypes as _original_create_contenttypes,
     )
@@ -299,11 +305,91 @@ def _make_contenttype_post_migrate_idempotent():
                 ignore_conflicts=True,
             )
 
+    def _safe_create_permissions(
+        app_config,
+        verbosity=2,
+        interactive=True,
+        using=DEFAULT_DB_ALIAS,
+        apps=global_apps,
+        **kwargs,
+    ):
+        if not app_config.models_module:
+            return
+
+        try:
+            Permission = apps.get_model("auth", "Permission")
+        except LookupError:
+            return
+        if not router.allow_migrate_model(using, Permission):
+            return
+
+        _safe_create_contenttypes(
+            app_config,
+            verbosity=verbosity,
+            interactive=interactive,
+            using=using,
+            apps=apps,
+            **kwargs,
+        )
+
+        app_label = app_config.label
+        try:
+            app_config = apps.get_app_config(app_label)
+            ContentTypeModel = apps.get_model("contenttypes", "ContentType")
+        except LookupError:
+            return
+
+        models = list(app_config.get_models())
+        ctypes = ContentTypeModel.objects.db_manager(using).get_for_models(
+            *models,
+            for_concrete_models=False,
+        )
+        all_perms = set(
+            Permission.objects.using(using)
+            .filter(content_type__in=set(ctypes.values()))
+            .values_list("content_type", "codename")
+        )
+
+        perms = []
+        for model in models:
+            ctype = ctypes[model]
+            for codename, name in _get_all_permissions(model._meta):
+                if (ctype.pk, codename) not in all_perms:
+                    permission = Permission()
+                    permission._state.db = using
+                    permission.codename = codename
+                    permission.name = name
+                    permission.content_type = ctype
+                    perms.append(permission)
+
+        if perms:
+            Permission.objects.using(using).bulk_create(
+                perms,
+                ignore_conflicts=True,
+            )
+
     post_migrate.disconnect(_original_create_contenttypes)
     post_migrate.connect(_safe_create_contenttypes, weak=False)
+    post_migrate.disconnect(
+        _original_create_permissions,
+        dispatch_uid="django.contrib.auth.management.create_permissions",
+    )
+    post_migrate.connect(
+        _safe_create_permissions,
+        weak=False,
+        dispatch_uid="django.contrib.auth.management.create_permissions",
+    )
     try:
         yield
     finally:
+        post_migrate.disconnect(
+            _safe_create_permissions,
+            dispatch_uid="django.contrib.auth.management.create_permissions",
+        )
+        post_migrate.connect(
+            _original_create_permissions,
+            dispatch_uid="django.contrib.auth.management.create_permissions",
+        )
         post_migrate.disconnect(_safe_create_contenttypes)
         post_migrate.connect(_original_create_contenttypes)
 
