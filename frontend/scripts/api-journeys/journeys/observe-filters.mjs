@@ -5449,6 +5449,173 @@ export const observeFilterJourneys = [
     },
   },
   {
+    id: "OBS-API-029",
+    title: "Legacy OTLP collector ingestion accepts API-key and Basic auth",
+    tags: [
+      "observe",
+      "ingestion",
+      "otlp",
+      "legacy",
+      "mutating",
+      "authentication",
+    ],
+    async run({
+      apiBase,
+      client,
+      user,
+      organizationId,
+      workspaceId,
+      cleanup,
+      runId,
+      evidence,
+    }) {
+      requireMutations();
+      if (!canManageOrgSecrets(user)) {
+        skip(
+          "Current user is not an org owner/admin; collector key cleanup is unsafe.",
+        );
+      }
+      const userId = currentUserId(user);
+      assert(
+        userId,
+        "Authenticated context did not resolve a user id for legacy OTLP ingestion.",
+      );
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const suffix = journeySafeId(runId);
+      const projectName = `api journey legacy otlp ${suffix}`;
+      const createdProject = await client.post(apiPath("/tracer/project/"), {
+        name: projectName,
+        model_type: "GenerativeLLM",
+        trace_type: "observe",
+        metadata: { source: "api-journey", run_id: runId },
+      });
+      const projectId = createdProject.project_id || createdProject.id;
+      assert(isUuid(projectId), "Legacy OTLP project create returned no id.");
+      cleanup.defer("hard-delete OBS-API-029 legacy OTLP project", () =>
+        hardDeleteCollectorIngestionDb({
+          organizationId,
+          workspaceId,
+          projectId,
+          projectName,
+        }),
+      );
+
+      const keyName = `api journey legacy otlp key ${suffix}`;
+      const createdKey = await client.post(
+        apiPath("/accounts/key/generate_secret_key/"),
+        { key_name: keyName },
+      );
+      assert(
+        isUuid(createdKey?.key_id),
+        "Legacy OTLP key create returned no key id.",
+      );
+      assertRawDeveloperKeyMaterial(createdKey.api_key, "legacy otlp api_key");
+      assertRawDeveloperKeyMaterial(
+        createdKey.secret_key,
+        "legacy otlp secret_key",
+      );
+      cleanup.defer("hard-delete OBS-API-029 developer key", () =>
+        hardDeleteDeveloperSecretKeyDb({
+          keyId: createdKey.key_id,
+          organizationId,
+        }),
+      );
+
+      const apiKeyClient = createApiClient({
+        apiBase,
+        organizationId,
+        workspaceId,
+      });
+      const apiKeyHeaders = collectorApiKeyHeaders(createdKey);
+      const basicHeaders = collectorBasicHeaders(createdKey);
+      const apiKeyUserInfo = await apiKeyClient.get(
+        apiPath("/accounts/user-info/"),
+        { headers: apiKeyHeaders },
+      );
+      assert(
+        currentUserId(apiKeyUserInfo) === userId,
+        "Legacy OTLP API key authenticated as a different user.",
+      );
+
+      const apiKeyOtlp = buildOtlpCollectorFixture({
+        projectName,
+        suffix: `${suffix}-legacy-api-key`,
+      });
+      const basicOtlp = buildOtlpCollectorFixture({
+        projectName,
+        suffix: `${suffix}-legacy-basic`,
+      });
+      cleanup.defer("hard-delete OBS-API-029 legacy OTLP rows", () =>
+        hardDeleteCollectorIngestionDb({
+          organizationId,
+          workspaceId,
+          projectId,
+          projectName,
+          traceIds: [apiKeyOtlp.traceId, basicOtlp.traceId],
+          spanIds: [apiKeyOtlp.spanId, basicOtlp.spanId],
+        }),
+      );
+
+      const apiKeyResponse = await apiKeyClient.post(
+        apiPath("/tracer/otlp/v1/traces"),
+        apiKeyOtlp.payload,
+        {
+          headers: {
+            ...apiKeyHeaders,
+            Accept: "application/json",
+          },
+          unwrap: false,
+        },
+      );
+      assertCollectorAccepted(apiKeyResponse, "API-key /tracer/otlp/v1/traces");
+
+      const basicResponse = await apiKeyClient.post(
+        apiPath("/tracer/otlp/v1/traces"),
+        basicOtlp.payload,
+        {
+          headers: {
+            ...basicHeaders,
+            Accept: "application/json",
+          },
+          unwrap: false,
+        },
+      );
+      assertCollectorAccepted(
+        basicResponse,
+        "Basic-auth /tracer/otlp/v1/traces",
+      );
+
+      const asyncAudit = await loadCollectorIngestionDbAudit({
+        organizationId,
+        workspaceId,
+        projectId,
+        traceIds: [apiKeyOtlp.traceId, basicOtlp.traceId],
+        spanIds: [apiKeyOtlp.spanId, basicOtlp.spanId],
+      });
+
+      evidence.push({
+        project_id: projectId,
+        project_name: projectName,
+        key_id: createdKey.key_id,
+        api_key_trace_id: apiKeyOtlp.traceId,
+        api_key_span_id: apiKeyOtlp.spanId,
+        basic_trace_id: basicOtlp.traceId,
+        basic_span_id: basicOtlp.spanId,
+        legacy_async_trace_count: asyncAudit.trace_count,
+        legacy_async_span_count: asyncAudit.span_count,
+        legacy_collector_routes: ["/tracer/otlp/v1/traces"],
+      });
+    },
+  },
+  {
     id: "OBS-API-015",
     title:
       "Observe trace raw CRUD, bulk, list, export, compare, navigation, agent graph, and delete cascade",
