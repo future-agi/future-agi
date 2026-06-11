@@ -7,6 +7,8 @@ import axios, { endpoints } from "src/utils/axios";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { Editor } from "@monaco-editor/react";
+import { enqueueSnackbar } from "notistack";
+import { copyToClipboard } from "src/utils/utils";
 
 const editorOptions = {
   selectOnLineNumbers: true,
@@ -51,11 +53,13 @@ const BottomEvaluationSection = ({
 
   const { data, isPending, isLoading, isRefetching } = useQuery({
     queryFn: ({ signal }) => {
+      const { mapping, ...restSelectedData } = selectedData || {};
       const params = {
         template_id: evaluation?.id,
-        ...selectedData,
+        ...restSelectedData,
+        mapping: { ...(mapping || {}) },
       };
-      delete params["mapping"]["model"];
+      delete params.mapping.model;
       return axios.get(endpoints.develop.eval.evalsSDKCode, {
         params,
         signal,
@@ -78,6 +82,7 @@ const BottomEvaluationSection = ({
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes (formerly cacheTime)
   });
+  const activeCode = activeTab ? data?.[activeTab] || "" : "";
 
   const handleEditorMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -95,6 +100,14 @@ const BottomEvaluationSection = ({
       domReadOnly: true,
     });
   };
+
+  const handleCopy = React.useCallback(async () => {
+    if (!activeCode) return;
+    const copied = await copyToClipboard(activeCode);
+    enqueueSnackbar(copied ? "Copied to clipboard" : "Failed to copy", {
+      variant: copied ? "success" : "error",
+    });
+  }, [activeCode]);
 
   return (
     <Box
@@ -159,20 +172,27 @@ const BottomEvaluationSection = ({
               position: "relative",
             }}
           >
-            <SvgColor
-              // @ts-ignore
-              src="/assets/icons/ic_copy.svg"
-              alt="Copy"
+            <IconButton
+              aria-label={`Copy ${activeTab} SDK code`}
+              disabled={!activeCode}
+              onClick={handleCopy}
               sx={{
-                width: "16px",
-                height: "16px",
                 position: "absolute",
-                top: "10px",
-                right: "10px",
-                cursor: "pointer",
+                top: "4px",
+                right: "4px",
                 zIndex: 1,
               }}
-            />
+            >
+              <SvgColor
+                // @ts-ignore
+                src="/assets/icons/ic_copy.svg"
+                alt=""
+                sx={{
+                  width: "16px",
+                  height: "16px",
+                }}
+              />
+            </IconButton>
             <Box>
               <Editor
                 ref={editorRef}
