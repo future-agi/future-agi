@@ -136,6 +136,20 @@ class TestTraceWorkspaceScopeAPI:
         other_trace.refresh_from_db()
         assert other_trace.tags == ["hidden"]
 
+    def test_update_tags_accepts_structured_trace_tags(self, auth_client, trace):
+        tags = [{"name": "triaged", "color": "#22C55E"}]
+
+        response = auth_client.patch(
+            f"/tracer/trace/{trace.id}/tags/",
+            {"tags": tags},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["result"]["tags"] == tags
+        trace.refresh_from_db()
+        assert trace.tags == tags
+
     def test_custom_actions_reject_same_org_other_workspace_project_or_run(
         self, auth_client, organization, user
     ):
@@ -227,7 +241,7 @@ class TestTraceWorkspaceScopeAPI:
             lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("ch down")),
         )
 
-        # AST-walk guard (per codex P2 findings 2026-05-25 and 2026-05-26):
+        # AST-walk guard for the previous P2 regression findings:
         # asserting "got 400" is necessary but not sufficient — a future
         # regression could re-introduce the PG-fallback helper, have it ALSO
         # error, and still hand the operator a 400. The contract is "PG
@@ -240,9 +254,12 @@ class TestTraceWorkspaceScopeAPI:
         # Stays robust against tracer.views.trace circular-import path at
         # test setup time that defeated a runtime-sentinel approach.
         import inspect
+
         from django.urls import get_resolver
-        get_resolver().reverse_dict  # forces URL conf + view imports
+
+        _ = get_resolver().reverse_dict  # forces URL conf + view imports
         import sys
+
         trace_module = sys.modules["tracer.views.trace"]
         agent_graph_fn = trace_module.TraceView.agent_graph
         src = inspect.getsource(agent_graph_fn)
@@ -252,6 +269,7 @@ class TestTraceWorkspaceScopeAPI:
         # caught equally — re.search rather than substring to allow word-
         # boundary detection.
         import re
+
         forbidden = [
             r"\b_build_agent_graph_pg\b",
             r"\b_agent_graph_pg\b",

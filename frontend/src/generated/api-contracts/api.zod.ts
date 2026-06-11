@@ -41706,18 +41706,12 @@ export const TracerTraceUpdateTagsParams = zod.object({
   "id": zod.string()
 })
 
-
-
-
 export const TracerTraceUpdateTagsBody = zod.object({
-  "tags": zod.array(zod.string().min(1))
+  "tags": zod.array(zod.unknown().describe('Any valid JSON value.'))
 })
 
-
-
-
 export const TracerTraceUpdateTagsResponse = zod.object({
-  "tags": zod.array(zod.string().min(1))
+  "tags": zod.array(zod.unknown().describe('Any valid JSON value.'))
 })
 
 

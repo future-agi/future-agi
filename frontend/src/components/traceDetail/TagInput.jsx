@@ -120,14 +120,26 @@ const TagInput = ({
         />
         {value.trim() && (
           <Box
+            component="button"
+            type="button"
+            aria-label="Add tag"
             onMouseDown={(e) => e.preventDefault()}
             onClick={handleSubmit}
             sx={{
+              p: 0,
+              border: 0,
               cursor: "pointer",
               display: "flex",
               alignItems: "center",
+              bgcolor: "transparent",
               color: previewColor,
+              lineHeight: 0,
               "&:hover": { opacity: 0.7 },
+              "&:focus-visible": {
+                outline: "1px solid",
+                outlineColor: previewColor,
+                outlineOffset: 2,
+              },
             }}
           >
             <Iconify icon="mdi:keyboard-return" width={compact ? 12 : 14} />

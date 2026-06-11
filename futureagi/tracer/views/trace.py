@@ -45,6 +45,7 @@ from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.serializer_fields import JsonValueField
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
@@ -68,6 +69,7 @@ from tracer.serializers.trace import (
     UsersQuerySerializer,
     UsersResponseSerializer,
 )
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.graph_dispatch import (
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
@@ -77,7 +79,6 @@ from tracer.services.clickhouse.query_builders import (
     AgentGraphQueryBuilder,
     UserListQueryBuilder,
 )
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.observability_providers import ObservabilityService
@@ -170,7 +171,7 @@ def _users_attr_enrichment_query(project_id=None):
 
 
 class TraceTagsUpdateSerializer(serializers.Serializer):
-    tags = serializers.ListField(child=serializers.CharField(), allow_empty=True)
+    tags = serializers.ListField(child=JsonValueField(), allow_empty=True)
 
 
 def _sanitize_nonfinite_floats(value):

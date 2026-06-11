@@ -71390,8 +71390,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "tags": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "object",
+            "x-json-value": true,
+            "description": "Any valid JSON value."
           }
         }
       }

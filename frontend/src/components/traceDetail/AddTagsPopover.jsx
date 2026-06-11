@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
-import { Box, Popover, Stack, Typography } from "@mui/material";
+import { Popover, Stack, Typography } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
@@ -9,6 +9,8 @@ import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 
+const EMPTY_TAGS = [];
+
 const AddTagsPopover = ({
   anchorEl,
   open,
@@ -16,11 +18,15 @@ const AddTagsPopover = ({
   traceId,
   spanId,
   bulkItems,
-  currentTags = [],
+  currentTags = EMPTY_TAGS,
   onSuccess,
 }) => {
-  const items = Array.isArray(bulkItems) ? bulkItems : [];
-  const isBulk = items.length > 1;
+  const items = useMemo(
+    () => (Array.isArray(bulkItems) ? bulkItems : []),
+    [bulkItems],
+  );
+  const isBulk = items.length > 0;
+  const currentTagsJson = JSON.stringify(normalizeTags(currentTags));
 
   const [tags, setTags] = useState(() =>
     isBulk ? [] : normalizeTags(currentTags),
@@ -28,8 +34,8 @@ const AddTagsPopover = ({
   const queryClient = useQueryClient();
 
   React.useEffect(() => {
-    if (open) setTags(isBulk ? [] : normalizeTags(currentTags));
-  }, [open, currentTags, isBulk]);
+    if (open) setTags(isBulk ? [] : JSON.parse(currentTagsJson));
+  }, [open, currentTagsJson, isBulk]);
 
   const patchTrace = (id, newTags) =>
     axios.patch(apiPath("/tracer/trace/{id}/tags/", { id }), { tags: newTags });
@@ -40,12 +46,17 @@ const AddTagsPopover = ({
     });
 
   const { mutate: saveTags, isPending } = useMutation({
-    mutationFn: (newTags) => {
-      if (isBulk) {
+    mutationFn: ({
+      newTags,
+      targetItems = [],
+      targetTraceId,
+      targetSpanId,
+    }) => {
+      if (targetItems.length > 0) {
         // Merge with each item's existing tags to avoid overwriting.
         // Backend PATCH replaces tags[], so we compute the full set here.
         return Promise.all(
-          items.map((item) => {
+          targetItems.map((item) => {
             const existing = normalizeTags(item.currentTags || []);
             const merged = [...existing];
             newTags.forEach((t) => {
@@ -57,14 +68,19 @@ const AddTagsPopover = ({
           }),
         );
       }
-      if (spanId) {
-        return patchSpan(spanId, newTags);
+      if (targetSpanId) {
+        return patchSpan(targetSpanId, newTags);
       }
-      return patchTrace(traceId, newTags);
+      if (targetTraceId) {
+        return patchTrace(targetTraceId, newTags);
+      }
+      throw new Error("Missing trace or span id for tag update");
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      const count = variables?.targetItems?.length || 0;
+      const itemLabel = count === 1 ? "item" : "items";
       enqueueSnackbar(
-        isBulk ? `Tags applied to ${items.length} items` : "Tags updated",
+        count > 0 ? `Tags applied to ${count} ${itemLabel}` : "Tags updated",
         { variant: "success" },
       );
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
@@ -72,18 +88,29 @@ const AddTagsPopover = ({
       queryClient.invalidateQueries({ queryKey: ["spanList"] });
       onSuccess?.();
     },
-    onError: () => {
-      if (!isBulk) setTags(normalizeTags(currentTags));
+    onError: (_error, variables) => {
+      if (!variables?.targetItems?.length) setTags(JSON.parse(currentTagsJson));
       enqueueSnackbar("Failed to update tags", { variant: "error" });
     },
   });
 
   const persist = useCallback(
     (nextTags) => {
+      const targetItems = items
+        .map((item) => ({
+          ...item,
+          currentTags: normalizeTags(item.currentTags || []),
+        }))
+        .filter((item) => item.id);
       setTags(nextTags);
-      saveTags(nextTags);
+      saveTags({
+        newTags: nextTags,
+        targetItems,
+        targetTraceId: traceId,
+        targetSpanId: spanId,
+      });
     },
-    [saveTags],
+    [items, saveTags, spanId, traceId],
   );
 
   const handleAdd = useCallback(
@@ -166,10 +193,10 @@ AddTagsPopover.propTypes = {
     PropTypes.shape({
       id: PropTypes.string.isRequired,
       type: PropTypes.oneOf(["trace", "span"]).isRequired,
-      currentTags: PropTypes.array,
+      currentTags: PropTypes.oneOfType([PropTypes.array, PropTypes.string]),
     }),
   ),
-  currentTags: PropTypes.array,
+  currentTags: PropTypes.oneOfType([PropTypes.array, PropTypes.string]),
   onSuccess: PropTypes.func,
 };
 

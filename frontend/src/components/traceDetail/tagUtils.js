@@ -49,6 +49,18 @@ export function normalizeTag(tag) {
 
 /** Normalize an array of tags. */
 export function normalizeTags(tags) {
+  if (typeof tags === "string") {
+    const trimmed = tags.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed)
+        ? parsed.map(normalizeTag)
+        : [normalizeTag(parsed)];
+    } catch {
+      return [normalizeTag(trimmed)];
+    }
+  }
   if (!Array.isArray(tags)) return [];
   return tags.map(normalizeTag);
 }

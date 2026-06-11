@@ -20644,7 +20644,7 @@ export interface TraceApi {
 }
 
 export interface TraceTagsUpdateApi {
-  tags: string[];
+  tags: unknown[];
 }
 
 export type UserAlertMonitorLogApiType = typeof UserAlertMonitorLogApiType[keyof typeof UserAlertMonitorLogApiType];
