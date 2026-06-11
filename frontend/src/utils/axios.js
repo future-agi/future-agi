@@ -37,9 +37,24 @@ const avoidRedirect = [
   "/auth/jwt/org-removed",
 ];
 
-axiosInstance.interceptors.request.use((config) =>
-  assertContractedRequestConfig(config),
-);
+// Many "action" endpoints (cancel/stop/pause/resume/restore/close/revoke)
+// declare a required `EmptyRequest` body in the OpenAPI contract but take no
+// real payload. Call sites that did `axios.post(url)` with no body therefore
+// failed dev strict-mode request-contract validation and the request was
+// never sent (every such button was a silent no-op locally; in prod the
+// non-strict warning let it through). Default a missing body to {} for
+// body-bearing methods so EmptyRequest is satisfied; endpoints that require
+// real fields still fail validation against {} as before.
+axiosInstance.interceptors.request.use((config) => {
+  const method = (config.method || "get").toLowerCase();
+  if (
+    ["post", "put", "patch"].includes(method) &&
+    (config.data === undefined || config.data === null)
+  ) {
+    config.data = {};
+  }
+  return assertContractedRequestConfig(config);
+});
 
 axiosInstance.interceptors.response.use(
   (res) => {
