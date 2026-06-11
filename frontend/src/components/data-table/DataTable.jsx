@@ -31,7 +31,12 @@ export default function DataTable({
   const muiColumns = useMemo(() => {
     return columns.map((col) => {
       const muiCol = {
-        field: col.id || col.accessorKey,
+        // accessorKey is the DATA key (snake_case API fields); col.id is the
+        // display/sort id (often camelCase). Preferring id over accessorKey
+        // made params.value read row[camelId] -> undefined, blanking every
+        // column where the two differ (e.g. agent list Contact Number /
+        // Version showed "-"). Data field must be the accessorKey.
+        field: col.accessorKey || col.id,
         headerName: col.header,
         sortable: col.enableSorting !== false,
         disableColumnMenu: true,
@@ -48,15 +53,20 @@ export default function DataTable({
         muiCol.flex = 1;
       }
 
-      // Cell renderer
+      // Cell renderer. Render as a COMPONENT (JSX), not a plain function
+      // call: cells like the run-grid StatusCell use hooks (useMutation for
+      // Stop/cancel), and calling them as functions binds those hooks to the
+      // wrong fiber — the Stop button rendered but its mutation was a silent
+      // no-op (caught by QA browser sweep).
       if (col.cell) {
         const CellFn = col.cell;
-        muiCol.renderCell = (params) =>
-          CellFn({
-            getValue: () => params.value,
-            row: { original: params.row, getIsSelected: () => false },
-            column: col,
-          });
+        muiCol.renderCell = (params) => (
+          <CellFn
+            getValue={() => params.value}
+            row={{ original: params.row, getIsSelected: () => false }}
+            column={col}
+          />
+        );
       }
 
       return muiCol;
@@ -66,11 +76,14 @@ export default function DataTable({
   // Sort model — convert our format to MUI format
   const sortModel = useMemo(() => {
     if (!sorting?.length) return [];
-    return sorting.map((s) => ({
-      field: s.id,
-      sort: s.desc ? "desc" : "asc",
-    }));
-  }, [sorting]);
+    return sorting.map((s) => {
+      const col = columns.find((c) => c.id === s.id);
+      return {
+        field: col?.accessorKey || s.id,
+        sort: s.desc ? "desc" : "asc",
+      };
+    });
+  }, [sorting, columns]);
 
   const handleSortModelChange = useCallback(
     (newModel) => {
@@ -79,10 +92,12 @@ export default function DataTable({
         onSortingChange([]);
       } else {
         const s = newModel[0];
-        onSortingChange([{ id: s.field, desc: s.sort === "desc" }]);
+        // Map the MUI field (accessorKey) back to our column id.
+        const col = columns.find((c) => (c.accessorKey || c.id) === s.field);
+        onSortingChange([{ id: col?.id || s.field, desc: s.sort === "desc" }]);
       }
     },
-    [onSortingChange],
+    [onSortingChange, columns],
   );
 
   // Row selection — convert between array (MUI) and object (our API)

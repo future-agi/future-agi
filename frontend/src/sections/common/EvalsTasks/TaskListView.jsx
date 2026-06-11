@@ -375,13 +375,14 @@ const TaskListView = ({
 
   // Pause/Resume mutations
   const { mutate: pauseTask } = useMutation({
-    mutationFn: (taskId) => axios.post(endpoints.project.pauseEvalTask(taskId)),
+    mutationFn: (taskId) =>
+      axios.post(endpoints.project.pauseEvalTask(taskId), {}),
     onSuccess: () => refetch(),
   });
 
   const { mutate: resumeTask } = useMutation({
     mutationFn: (taskId) =>
-      axios.post(endpoints.project.resumeEvalTask(taskId)),
+      axios.post(endpoints.project.resumeEvalTask(taskId), {}),
     meta: { errorHandled: true },
     onSuccess: () => refetch(),
     onError: () => {
