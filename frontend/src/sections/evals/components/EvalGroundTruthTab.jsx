@@ -19,13 +19,12 @@ import {
   useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { useSnackbar } from "notistack";
 import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
-import { canonicalEntries } from "src/utils/utils";
 import { apiPath } from "src/api/contracts/api-surface";
 
 import {
@@ -40,7 +39,6 @@ import {
   useGroundTruthData,
   useGroundTruthList,
   useGroundTruthStatus,
-  useSearchGroundTruth,
   useTriggerEmbedding,
   useUpdateGroundTruthConfig,
   useUpdateRoleMapping,
@@ -48,6 +46,7 @@ import {
   useUploadGroundTruth,
 } from "../hooks/useGroundTruth";
 import SwitchComponent from "src/components/Switch/SwitchComponent";
+import TestRetrievalPanel from "./TestRetrievalPanel";
 
 // ═══════════════════════════════════════════════════════════════
 // Status Badge
@@ -109,6 +108,24 @@ const ACCEPTED_TYPES = {
     ".xlsx",
   ],
   "application/vnd.ms-excel": [".xls"],
+};
+
+// ── shared helpers ───────────────────────────────────────────────
+// Strip empty values + sort keys so two mappings compare structurally,
+// independent of insertion order or trailing blanks. Used by every
+// dirty-state check in this file.
+const normalizeMapping = (m = {}) =>
+  Object.fromEntries(
+    Object.entries(m)
+      .filter(([, v]) => v !== "" && v != null)
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+
+const shallowEqual = (a, b) => {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((k) => a[k] === b[k]);
 };
 
 const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
@@ -966,30 +983,28 @@ const EmptyState = ({ onUpload }) => (
 // Variable Mapping Section — maps eval {{variables}} to GT columns
 // ═══════════════════════════════════════════════════════════════
 const VariableMappingSection = ({ gt, evalVariables, onUpdate }) => {
-  const [mapping, setMapping] = useState(
-    gt.variable_mapping || gt.variableMapping || {},
+  const persisted = useMemo(
+    () => normalizeMapping(gt.variable_mapping || gt.variableMapping || {}),
+    [gt.variable_mapping, gt.variableMapping],
   );
-  const updateMapping = useUpdateVariableMapping();
-  const { enqueueSnackbar } = useSnackbar();
+  const [mapping, setMapping] = useState(persisted);
+  // Resync when the server-side value changes (after a successful save
+  // triggers a list refetch → new gt prop).
+  useEffect(() => setMapping(persisted), [persisted]);
 
-  const handleSave = useCallback(async () => {
-    const filtered = Object.fromEntries(
-      Object.entries(mapping).filter(([, v]) => v),
-    );
-    try {
-      await updateMapping.mutateAsync({
-        gtId: gt.id,
-        variableMapping: filtered,
-      });
-      enqueueSnackbar("Variable mapping saved", { variant: "success" });
-      onUpdate?.();
-    } catch (err) {
-      enqueueSnackbar(
-        err?.response?.data?.message || "Failed to save mapping",
-        { variant: "error" },
-      );
-    }
-  }, [mapping, gt.id, updateMapping, enqueueSnackbar, onUpdate]);
+  const updateMapping = useUpdateVariableMapping();
+
+  const isDirty = !shallowEqual(normalizeMapping(mapping), persisted);
+
+  // Success / error feedback is owned by the mutation hook so it
+  // fires reliably even mid-resync. We just trigger the request here.
+  const handleSave = useCallback(() => {
+    updateMapping.mutate({
+      gtId: gt.id,
+      variableMapping: normalizeMapping(mapping),
+    });
+    onUpdate?.();
+  }, [mapping, gt.id, updateMapping, onUpdate]);
 
   if (!evalVariables.length) return null;
 
@@ -1044,72 +1059,125 @@ const VariableMappingSection = ({ gt, evalVariables, onUpdate }) => {
           </TextField>
         </Box>
       ))}
-      <Button
-        size="small"
-        variant="outlined"
-        onClick={handleSave}
-        disabled={updateMapping.isPending}
-        sx={{ alignSelf: "flex-start", mt: 0.5 }}
-      >
-        {updateMapping.isPending ? "Saving..." : "Save Mapping"}
-      </Button>
+      <DirtySaveBar
+        isDirty={isDirty}
+        isSaving={updateMapping.isPending}
+        onSave={handleSave}
+        labelClean="Mapping saved"
+        labelDirty="Save Mapping"
+      />
     </Box>
   );
 };
 
+// ── Save bar — shared dirty-state indicator ───────────────────────
+// Visual contract:
+//   • Clean → outlined disabled button with "Mapping saved" / "Config
+//     saved" label (no caption). User knows nothing is pending.
+//   • Dirty → contained "Save …" button + small "Unsaved changes"
+//     caption next to it so the user can't miss it.
+//   • Saving → button shows "Saving…" + disabled.
+const DirtySaveBar = ({
+  isDirty,
+  isSaving,
+  onSave,
+  labelClean,
+  labelDirty,
+  disabled = false,
+}) => (
+  <Box
+    sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}
+  >
+    <Button
+      size="small"
+      variant={isDirty ? "contained" : "outlined"}
+      onClick={onSave}
+      disabled={isSaving || disabled || !isDirty}
+      sx={{ alignSelf: "flex-start" }}
+    >
+      {isSaving ? "Saving..." : isDirty ? labelDirty : labelClean}
+    </Button>
+    {isDirty && !isSaving && (
+      <Typography variant="caption" sx={{ color: "warning.main" }}>
+        Unsaved changes
+      </Typography>
+    )}
+  </Box>
+);
+
 // ═══════════════════════════════════════════════════════════════
-// Role Mapping Section — maps semantic roles for few-shot formatting
+// Role Mapping Section — labels the eval-output side of each GT row.
+// Two columns surface here: the labelled eval output (validated against
+// the template's output type) and an optional human-written explanation.
+// Inputs are handled separately by the variable_mapping section above.
 // ═══════════════════════════════════════════════════════════════
 const RoleMappingSection = ({ gt, onUpdate }) => {
-  const [roleMapping, setRoleMapping] = useState(
-    gt.roleMapping || gt.role_mapping || {},
+  const initial = useMemo(
+    () => gt.roleMapping || gt.role_mapping || {},
+    [gt.roleMapping, gt.role_mapping],
   );
+  const persistedOutput =
+    initial.output || initial.expected_output || "";
+  const persistedExplanation =
+    initial.explanation || initial.reasoning || initial.reason || "";
+
+  const [outputColumn, setOutputColumn] = useState(persistedOutput);
+  const [explanationColumn, setExplanationColumn] = useState(persistedExplanation);
+  // Resync local state when persisted value changes (post-save refetch).
+  useEffect(() => {
+    setOutputColumn(persistedOutput);
+    setExplanationColumn(persistedExplanation);
+  }, [persistedOutput, persistedExplanation]);
   const updateRole = useUpdateRoleMapping();
-  const { enqueueSnackbar } = useSnackbar();
 
-  const roles = [
-    { key: "input", label: "Input", desc: "The input/question column" },
+  const isDirty =
+    outputColumn !== persistedOutput ||
+    explanationColumn !== persistedExplanation;
+
+  const handleSave = useCallback(() => {
+    const payload = {};
+    if (outputColumn) payload.output = outputColumn;
+    if (explanationColumn) payload.explanation = explanationColumn;
+    updateRole.mutate({ gtId: gt.id, roleMapping: payload });
+    onUpdate?.();
+  }, [outputColumn, explanationColumn, gt.id, updateRole, onUpdate]);
+
+  const fields = [
     {
-      key: "expected_output",
-      label: "Expected Output",
-      desc: "The expected/reference answer",
+      key: "output",
+      label: "Eval Output",
+      required: true,
+      desc: "The GT column carrying each row's labelled eval output (pass/fail / score / choice).",
+      value: outputColumn,
+      setter: setOutputColumn,
     },
-    { key: "score", label: "Score", desc: "Human-assigned score (0-1)" },
-    { key: "reasoning", label: "Reasoning", desc: "Explanation for the score" },
+    {
+      key: "explanation",
+      label: "Eval Explanation",
+      required: false,
+      desc: "Optional — the GT column carrying the human-written reason for the labelled output.",
+      value: explanationColumn,
+      setter: setExplanationColumn,
+    },
   ];
-
-  const handleSave = useCallback(async () => {
-    const filtered = Object.fromEntries(
-      Object.entries(roleMapping).filter(([, v]) => v),
-    );
-    try {
-      await updateRole.mutateAsync({ gtId: gt.id, roleMapping: filtered });
-      enqueueSnackbar("Role mapping saved", { variant: "success" });
-      onUpdate?.();
-    } catch (err) {
-      enqueueSnackbar(
-        err?.response?.data?.message || "Failed to save mapping",
-        { variant: "error" },
-      );
-    }
-  }, [roleMapping, gt.id, updateRole, enqueueSnackbar, onUpdate]);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
       <Typography variant="body2" fontWeight={600} sx={{ fontSize: "12px" }}>
         Role Mapping{" "}
         <Typography component="span" variant="caption" color="text.secondary">
-          (for few-shot formatting)
+          (the labelled side of each example)
         </Typography>
       </Typography>
-      {roles.map(({ key, label, desc }) => (
+      {fields.map(({ key, label, required, desc, value, setter }) => (
         <Box key={key} sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Tooltip title={desc} placement="left">
             <Typography
               variant="caption"
-              sx={{ width: 110, flexShrink: 0, color: "text.secondary" }}
+              sx={{ width: 130, flexShrink: 0, color: "text.secondary" }}
             >
               {label}
+              {required ? " *" : ""}
             </Typography>
           </Tooltip>
           <Iconify
@@ -1121,14 +1189,12 @@ const RoleMappingSection = ({ gt, onUpdate }) => {
             select
             size="small"
             fullWidth
-            value={roleMapping[key] || ""}
-            onChange={(e) =>
-              setRoleMapping((prev) => ({ ...prev, [key]: e.target.value }))
-            }
+            value={value || ""}
+            onChange={(e) => setter(e.target.value)}
             sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
           >
             <MenuItem value="">
-              <em>None</em>
+              <em>{required ? "— pick a column —" : "None"}</em>
             </MenuItem>
             {(gt.columns || []).map((col) => (
               <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
@@ -1138,15 +1204,14 @@ const RoleMappingSection = ({ gt, onUpdate }) => {
           </TextField>
         </Box>
       ))}
-      <Button
-        size="small"
-        variant="outlined"
-        onClick={handleSave}
-        disabled={updateRole.isPending}
-        sx={{ alignSelf: "flex-start", mt: 0.5 }}
-      >
-        {updateRole.isPending ? "Saving..." : "Save Mapping"}
-      </Button>
+      <DirtySaveBar
+        isDirty={isDirty}
+        isSaving={updateRole.isPending}
+        onSave={handleSave}
+        disabled={!outputColumn}
+        labelClean="Mapping saved"
+        labelDirty="Save Mapping"
+      />
     </Box>
   );
 };
@@ -1157,48 +1222,39 @@ const RoleMappingSection = ({ gt, onUpdate }) => {
 const ConfigPanel = ({ templateId, gtId }) => {
   const { data: config } = useGroundTruthConfig(templateId);
   const updateConfig = useUpdateGroundTruthConfig(templateId);
-  const { enqueueSnackbar } = useSnackbar();
-  const [maxExamples, setMaxExamples] = useState(
-    config?.maxExamples ?? config?.max_examples ?? 3,
-  );
+  const persistedMax = config?.maxExamples ?? config?.max_examples ?? 3;
+  const persistedThreshold =
+    config?.similarityThreshold ?? config?.similarity_threshold ?? 0.7;
+  const [maxExamples, setMaxExamples] = useState(persistedMax);
   const theme = useTheme()
-  const [threshold, setThreshold] = useState(
-    config?.similarityThreshold ?? config?.similarity_threshold ?? 0.7,
-  );
+  const [threshold, setThreshold] = useState(persistedThreshold);
+  // Resync local state when persisted values arrive (initial load) or
+  // change post-save.
+  useEffect(() => setMaxExamples(persistedMax), [persistedMax]);
+  useEffect(() => setThreshold(persistedThreshold), [persistedThreshold]);
   const enabled = config?.enabled ?? false;
 
-  const handleToggle = useCallback(async () => {
-    try {
-      await updateConfig.mutateAsync({
-        enabled: !enabled,
-        ground_truth_id: gtId,
-        mode: "auto",
-        max_examples: maxExamples,
-        similarity_threshold: threshold,
-      });
-      enqueueSnackbar(
-        enabled ? "Ground truth disabled" : "Ground truth enabled",
-        { variant: "success" },
-      );
-    } catch {
-      enqueueSnackbar("Failed to update config", { variant: "error" });
-    }
-  }, [enabled, gtId, maxExamples, threshold, updateConfig, enqueueSnackbar]);
+  const isDirty =
+    maxExamples !== persistedMax || threshold !== persistedThreshold;
 
-  const handleSave = useCallback(async () => {
-    try {
-      await updateConfig.mutateAsync({
-        enabled: true,
+  const saveConfig = useCallback(
+    (patch) =>
+      updateConfig.mutate({
+        enabled,
         ground_truth_id: gtId,
-        mode: "auto",
         max_examples: maxExamples,
         similarity_threshold: threshold,
-      });
-      enqueueSnackbar("Config saved", { variant: "success" });
-    } catch {
-      enqueueSnackbar("Failed to save config", { variant: "error" });
-    }
-  }, [gtId, maxExamples, threshold, updateConfig, enqueueSnackbar]);
+        ...patch,
+      }),
+    [enabled, gtId, maxExamples, threshold, updateConfig],
+  );
+
+  const handleToggle = useCallback(
+    () => saveConfig({ enabled: !enabled }),
+    [enabled, saveConfig],
+  );
+
+  const handleSave = useCallback(() => saveConfig({}), [saveConfig]);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
@@ -1270,117 +1326,13 @@ const ConfigPanel = ({ templateId, gtId }) => {
           {threshold}
         </Typography>
       </Box>
-      <Button
-        size="small"
-        variant="outlined"
-        onClick={handleSave}
-        disabled={updateConfig.isPending}
-        sx={{ alignSelf: "flex-start" }}
-      >
-        Save Config
-      </Button>
-    </Box>
-  );
-};
-
-// ═══════════════════════════════════════════════════════════════
-// Test Retrieval
-// ═══════════════════════════════════════════════════════════════
-const TestRetrieval = ({ gtId }) => {
-  const [query, setQuery] = useState("");
-  const search = useSearchGroundTruth();
-
-  const handleSearch = useCallback(() => {
-    if (!query.trim()) return;
-    search.mutate({ gtId, query: query.trim(), maxResults: 3 });
-  }, [gtId, query, search]);
-
-  return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-      <Typography variant="body2" fontWeight={600} sx={{ fontSize: "12px" }}>
-        Test Retrieval
-      </Typography>
-      <Box sx={{ display: "flex", gap: 1 }}>
-        <TextField
-          size="small"
-          fullWidth
-          placeholder="Enter a query to test similarity search..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-          sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
-        />
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={handleSearch}
-          disabled={search.isPending || !query.trim()}
-          sx={{ flexShrink: 0, minWidth: 70 }}
-        >
-          {search.isPending ? <CircularProgress size={14} /> : "Search"}
-        </Button>
-      </Box>
-      {search.data?.results?.length > 0 && (
-        <Box
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 1,
-            maxHeight: 200,
-            overflow: "auto",
-          }}
-        >
-          {search.data.results.map((r, i) => (
-            <Box
-              key={i}
-              sx={{
-                p: 1,
-                borderRadius: "6px",
-                border: "1px solid",
-                borderColor: "divider",
-                fontSize: "11px",
-              }}
-            >
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  mb: 0.5,
-                }}
-              >
-                <Typography variant="caption" fontWeight={600}>
-                  Match {i + 1}
-                </Typography>
-                <Chip
-                  label={`${(r.similarity * 100).toFixed(0)}%`}
-                  size="small"
-                  color={
-                    r.similarity > 0.8
-                      ? "success"
-                      : r.similarity > 0.6
-                        ? "warning"
-                        : "default"
-                  }
-                  sx={{ fontSize: "10px", height: 18 }}
-                />
-              </Box>
-              {canonicalEntries(r.row_data || r.rowData || {})
-                .slice(0, 4)
-                .map(([k, v]) => (
-                  <Typography
-                    key={k}
-                    variant="caption"
-                    color="text.secondary"
-                    component="div"
-                    noWrap
-                  >
-                    <strong>{k}:</strong> {String(v).slice(0, 100)}
-                  </Typography>
-                ))}
-            </Box>
-          ))}
-        </Box>
-      )}
+      <DirtySaveBar
+        isDirty={isDirty}
+        isSaving={updateConfig.isPending}
+        onSave={handleSave}
+        labelClean="Config saved"
+        labelDirty="Save Config"
+      />
     </Box>
   );
 };
@@ -1398,6 +1350,10 @@ const EvalGroundTruthTab = ({ templateId }) => {
     const config = evalData?.config || {};
     return config.requiredKeys || config.required_keys || [];
   }, [evalData]);
+  const rulePrompt = useMemo(() => {
+    const config = evalData?.config || {};
+    return config.rulePrompt || config.rule_prompt || "";
+  }, [evalData]);
 
   const { data: listData, isLoading: listLoading } =
     useGroundTruthList(templateId);
@@ -1409,9 +1365,15 @@ const EvalGroundTruthTab = ({ templateId }) => {
     pageSize: 500,
   });
   const { data: statusData } = useGroundTruthStatus(activeDataset?.id, {
+    // Poll while the embed job is still in flight. The trigger view
+    // sets `pending` synchronously and the Temporal activity flips
+    // through `processing` before settling on a terminal status — both
+    // need polling so the UI can react.
     enabled:
-      (activeDataset?.embedding_status || activeDataset?.embeddingStatus) ===
-      "processing",
+      ((activeDataset?.embedding_status || activeDataset?.embeddingStatus) ===
+        "pending" ||
+        (activeDataset?.embedding_status || activeDataset?.embeddingStatus) ===
+          "processing"),
   });
 
   const deleteGt = useDeleteGroundTruth();
@@ -1544,7 +1506,8 @@ const EvalGroundTruthTab = ({ templateId }) => {
             />
             <StatusBadge status={embeddingStatus} />
 
-            {embeddingStatus === "processing" && (
+            {(embeddingStatus === "processing" ||
+              (embeddingStatus === "pending" && triggerEmbed.isPending)) && (
               <Box
                 sx={{
                   display: "flex",
@@ -1555,12 +1518,20 @@ const EvalGroundTruthTab = ({ templateId }) => {
                 }}
               >
                 <LinearProgress
-                  variant="determinate"
-                  value={totalRows > 0 ? (embeddedCount / totalRows) * 100 : 0}
+                  variant={
+                    embeddingStatus === "processing" ? "determinate" : "indeterminate"
+                  }
+                  value={
+                    embeddingStatus === "processing" && totalRows > 0
+                      ? (embeddedCount / totalRows) * 100
+                      : undefined
+                  }
                   sx={{ flex: 1, height: 4, borderRadius: 2 }}
                 />
                 <Typography variant="caption" color="text.secondary">
-                  {embeddedCount}/{totalRows}
+                  {embeddingStatus === "processing"
+                    ? `${embeddedCount}/${totalRows}`
+                    : "Queuing…"}
                 </Typography>
               </Box>
             )}
@@ -1568,8 +1539,17 @@ const EvalGroundTruthTab = ({ templateId }) => {
             <Box sx={{ flex: 1 }} />
 
             {(embeddingStatus === "pending" ||
-              embeddingStatus === "failed") && (
-              <Tooltip title="Generate embeddings for similarity search">
+              embeddingStatus === "failed" ||
+              activeDataset?.embeddings_stale ||
+              activeDataset?.embeddingsStale) && (
+              <Tooltip
+                title={
+                  activeDataset?.embeddings_stale ||
+                  activeDataset?.embeddingsStale
+                    ? "Variable mapping changed — re-embed to refresh vectors"
+                    : "Generate embeddings for similarity search"
+                }
+              >
                 <Button
                   size="small"
                   variant="outlined"
@@ -1578,7 +1558,10 @@ const EvalGroundTruthTab = ({ templateId }) => {
                   disabled={triggerEmbed.isPending}
                   sx={{ fontSize: "11px", height: 26 }}
                 >
-                  Embed
+                  {activeDataset?.embeddings_stale ||
+                  activeDataset?.embeddingsStale
+                    ? "Re-embed"
+                    : "Embed"}
                 </Button>
               </Tooltip>
             )}
@@ -1623,12 +1606,24 @@ const EvalGroundTruthTab = ({ templateId }) => {
               <RoleMappingSection gt={activeDataset} onUpdate={() => {}} />
               <Divider />
               <ConfigPanel templateId={templateId} gtId={activeDataset.id} />
-              {embeddingStatus === "completed" && (
-                <>
-                  <Divider />
-                  <TestRetrieval gtId={activeDataset.id} />
-                </>
-              )}
+              <Divider />
+              <TestRetrievalPanel
+                groundTruthId={activeDataset.id}
+                rulePrompt={rulePrompt}
+                variableMapping={
+                  activeDataset.variable_mapping ||
+                  activeDataset.variableMapping
+                }
+                roleMapping={
+                  activeDataset.role_mapping ||
+                  activeDataset.roleMapping
+                }
+                embeddingStatus={embeddingStatus}
+                embeddingsStale={
+                  activeDataset.embeddings_stale ||
+                  activeDataset.embeddingsStale
+                }
+              />
             </Box>
             {/* Right: data preview — AG Grid spreadsheet */}
             <Box
