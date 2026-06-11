@@ -29,8 +29,14 @@ import { getDocsLinkBasedOnOptimizer } from "./common";
 import { formatStartTimeByRequiredFormat } from "src/utils/utils";
 
 const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
-  const { optimiserType, model, status, optimiserName, providerLogo } =
-    optimization || {};
+  const {
+    model,
+    status,
+    optimiser_type: optimiserType,
+    optimiser_name: optimiserName,
+    provider_logo: providerLogo,
+    start_time: startTime,
+  } = optimization || {};
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [createEditOptimizationModalOpen, setCreateEditOptimizationModalOpen] =
     useState(null);
@@ -44,9 +50,9 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
 
   const getDefaultValues = (optimization) => {
     return {
-      name: `${optimization?.optimiserName} - Rerun - ${format(new Date(), "dd MMM yyyy")}`,
+      name: `${optimiserName} - Rerun - ${format(new Date(), "dd MMM yyyy")}`,
       model: optimization?.model,
-      optimiserType: optimization?.optimiserType,
+      optimiserType: optimiserType,
       configuration: optimization?.configuration,
     };
   };
@@ -55,7 +61,7 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
     return <OptimizeAgentHeaderComponentSkeleton />;
   }
   const formattedStartTime = formatStartTimeByRequiredFormat(
-    optimization?.start_time,
+    startTime,
     "MMM dd, yyyy 'at' h:mm a",
   );
   return (
@@ -74,9 +80,7 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
           <CallStatus value={status ?? "Completed"} />
         </Box>
 
-        <ShowComponent
-          condition={!!optimization?.start_time && !!formattedStartTime}
-        >
+        <ShowComponent condition={!!startTime && !!formattedStartTime}>
           <Typography typography={"s3"} fontWeight={"fontWeightRegular"}>
             Optimization ran on {formattedStartTime}
           </Typography>
