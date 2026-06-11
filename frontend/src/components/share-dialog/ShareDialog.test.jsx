@@ -6,6 +6,7 @@ import ShareDialog from "./ShareDialog";
 
 const mocks = vi.hoisted(() => ({
   useGetSharedLinks: vi.fn(),
+  useGetSharedLinkDetail: vi.fn(),
   useCreateSharedLink: vi.fn(),
   useUpdateSharedLink: vi.fn(),
   useAddSharedLinkAccess: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock("notistack", () => ({
 
 vi.mock("src/api/shared-links", () => ({
   useGetSharedLinks: mocks.useGetSharedLinks,
+  useGetSharedLinkDetail: mocks.useGetSharedLinkDetail,
   useCreateSharedLink: mocks.useCreateSharedLink,
   useUpdateSharedLink: mocks.useUpdateSharedLink,
   useAddSharedLinkAccess: mocks.useAddSharedLinkAccess,
@@ -53,6 +55,11 @@ describe("ShareDialog", () => {
       isLoading: false,
       isError: false,
     });
+    mocks.useGetSharedLinkDetail.mockReturnValue({
+      data: null,
+      isLoading: false,
+      isError: false,
+    });
     mocks.useCreateSharedLink.mockReturnValue({
       mutate: createMutate,
       isPending: false,
@@ -73,6 +80,13 @@ describe("ShareDialog", () => {
   });
 
   it("uses a just-created link for invite mutations before the list refetch lands", async () => {
+    addAccessMutate.mockImplementation((_, options) => {
+      options?.onSuccess?.({
+        data: {
+          result: [{ id: "access-created", email: "viewer@example.com" }],
+        },
+      });
+    });
     mocks.useCreateSharedLink.mockReturnValue({
       mutate: createMutate,
       isPending: false,
@@ -106,12 +120,29 @@ describe("ShareDialog", () => {
     );
     await user.click(screen.getByRole("button", { name: "Invite" }));
 
-    expect(addAccessMutate).toHaveBeenCalledWith({
-      linkId: "link-created",
-      emails: ["viewer@example.com"],
-    });
+    expect(addAccessMutate).toHaveBeenCalledWith(
+      {
+        linkId: "link-created",
+        emails: ["viewer@example.com"],
+      },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
     expect(screen.getByText("People with access (1)")).toBeInTheDocument();
     expect(screen.getByText("viewer@example.com")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Remove access for viewer@example.com",
+      }),
+    );
+    expect(removeAccessMutate).toHaveBeenCalledWith(
+      {
+        linkId: "link-created",
+        accessId: "access-created",
+      },
+      expect.objectContaining({ onError: expect.any(Function) }),
+    );
+    expect(screen.queryByText("viewer@example.com")).not.toBeInTheDocument();
   });
 
   it("does not optimistically add an invite when no tokenized link exists yet", async () => {
@@ -175,19 +206,31 @@ describe("ShareDialog", () => {
           token: "active-token",
           access_type: "restricted",
           is_active: true,
-          access_list: [
-            {
-              id: "access-viewer",
-              email: "viewer@example.com",
-            },
-          ],
         },
       ],
       isLoading: false,
       isError: false,
     });
+    mocks.useGetSharedLinkDetail.mockReturnValue({
+      data: {
+        id: "link-active",
+        token: "active-token",
+        access_type: "restricted",
+        is_active: true,
+        access_list: [
+          {
+            id: "access-viewer",
+            email: "viewer@example.com",
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    });
 
     renderDialog();
+
+    expect(mocks.useGetSharedLinkDetail).toHaveBeenCalledWith("link-active");
 
     const user = userEvent.setup();
     await user.click(
@@ -196,9 +239,13 @@ describe("ShareDialog", () => {
       }),
     );
 
-    expect(removeAccessMutate).toHaveBeenCalledWith({
-      linkId: "link-active",
-      accessId: "access-viewer",
-    });
+    expect(removeAccessMutate).toHaveBeenCalledWith(
+      {
+        linkId: "link-active",
+        accessId: "access-viewer",
+      },
+      expect.objectContaining({ onError: expect.any(Function) }),
+    );
+    expect(screen.queryByText("viewer@example.com")).not.toBeInTheDocument();
   });
 });

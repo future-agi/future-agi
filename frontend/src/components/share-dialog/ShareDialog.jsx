@@ -22,6 +22,7 @@ import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import {
   useGetSharedLinks,
+  useGetSharedLinkDetail,
   useCreateSharedLink,
   useUpdateSharedLink,
   useAddSharedLinkAccess,
@@ -124,7 +125,8 @@ const ShareDialog = ({
 }) => {
   const [emailInput, setEmailInput] = useState("");
   const [copied, setCopied] = useState(false);
-  const [localEmails, setLocalEmails] = useState([]); // optimistic local ACL
+  const [localAccessEntries, setLocalAccessEntries] = useState([]); // optimistic local ACL
+  const [removedAccessIds, setRemovedAccessIds] = useState([]);
   const [accessMode, setAccessMode] = useState("restricted"); // "restricted" | "public"
 
   // Fetch existing shared links for this resource
@@ -146,7 +148,11 @@ const ShareDialog = ({
   const autoCreated = useRef(false);
   const createdLink =
     createMutation.data?.data?.result || createMutation.data?.result || null;
-  const shareLink = activeLink || createdLink;
+  const shareLinkShell = activeLink || createdLink;
+  const { data: detailedShareLink } = useGetSharedLinkDetail(
+    shareLinkShell?.id,
+  );
+  const shareLink = detailedShareLink || shareLinkShell;
   const shareLinkReady = Boolean(shareLink?.id);
 
   // Auto-create a restricted shared link when dialog opens and none exists
@@ -218,16 +224,22 @@ const ShareDialog = ({
 
   const allEmails = useMemo(() => {
     const accessList = shareLink?.accessList || shareLink?.access_list || [];
-    const backendEmails = accessList.map((e) => ({
-      id: e.id,
-      email: e.email,
-      source: "server",
-    }));
-    const localOnly = localEmails
-      .filter((e) => !backendEmails.some((b) => b.email === e))
-      .map((e) => ({ id: e, email: e, source: "local" }));
+    const backendEmails = accessList
+      .filter((e) => !removedAccessIds.includes(e.id))
+      .map((e) => ({
+        id: e.id,
+        email: e.email,
+        source: "server",
+      }));
+    const localOnly = localAccessEntries
+      .filter((entry) => !backendEmails.some((b) => b.email === entry.email))
+      .map((entry) => ({
+        id: entry.id || entry.email,
+        email: entry.email,
+        source: entry.id ? "server" : "local",
+      }));
     return [...backendEmails, ...localOnly];
-  }, [shareLink, localEmails]);
+  }, [shareLink, localAccessEntries, removedAccessIds]);
 
   const handleCopy = useCallback(() => {
     copyToClipboard(shareUrl);
@@ -256,25 +268,61 @@ const ShareDialog = ({
     }
 
     // Try backend, always add locally for instant feedback
-    setLocalEmails((prev) => [...prev, email]);
+    setLocalAccessEntries((prev) => [...prev, { email }]);
     setEmailInput("");
     enqueueSnackbar(`Shared with ${email}`, {
       variant: "success",
       autoHideDuration: 2000,
     });
 
-    addAccessMutation.mutate({ linkId, emails: [email] });
+    addAccessMutation.mutate(
+      { linkId, emails: [email] },
+      {
+        onSuccess: (data) => {
+          const rows = data?.data?.result || data?.result || data || [];
+          const created = Array.isArray(rows)
+            ? rows.find((row) => row?.email === email)
+            : null;
+          if (!created?.id) return;
+          setRemovedAccessIds((prev) =>
+            prev.filter((accessId) => accessId !== created.id),
+          );
+          setLocalAccessEntries((prev) =>
+            prev.map((entry) =>
+              entry.email === email ? { ...entry, id: created.id } : entry,
+            ),
+          );
+        },
+      },
+    );
   }, [emailInput, allEmails, shareLink, addAccessMutation]);
 
   const handleRemoveEmail = useCallback(
     (entry) => {
       if (entry.source === "local") {
-        setLocalEmails((prev) => prev.filter((e) => e !== entry.email));
+        setLocalAccessEntries((prev) =>
+          prev.filter((localEntry) => localEntry.email !== entry.email),
+        );
       } else if (shareLink?.id) {
-        removeAccessMutation.mutate({
-          linkId: shareLink.id,
-          accessId: entry.id,
-        });
+        setRemovedAccessIds((prev) =>
+          prev.includes(entry.id) ? prev : [...prev, entry.id],
+        );
+        setLocalAccessEntries((prev) =>
+          prev.filter((localEntry) => localEntry.email !== entry.email),
+        );
+        removeAccessMutation.mutate(
+          {
+            linkId: shareLink.id,
+            accessId: entry.id,
+          },
+          {
+            onError: () => {
+              setRemovedAccessIds((prev) =>
+                prev.filter((accessId) => accessId !== entry.id),
+              );
+            },
+          },
+        );
       }
     },
     [shareLink, removeAccessMutation],
