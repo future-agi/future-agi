@@ -1,8 +1,10 @@
-"""
-Temporal activities for ground truth embedding generation.
+"""Temporal activity wrapper around the ground-truth embedding service.
 
-Generates per-row embeddings for a ground truth dataset so they can be
-used for similarity-based retrieval at eval time.
+The activity itself stays a thin async shell that hands the work to
+:meth:`model_hub.services.ground_truth_service.GroundTruthService.embed_dataset`.
+All business logic — modality dispatch, soft-delete of prior vectors,
+CH bulk write, PG status transitions — lives in the service so it can
+be unit-tested without a Temporal worker.
 """
 
 import structlog
@@ -17,175 +19,90 @@ from tfc.temporal.ground_truth.types import (
 logger = structlog.get_logger(__name__)
 
 
-def _generate_embeddings_sync(ground_truth_id: str) -> dict:
-    """
-    Synchronous implementation of embedding generation.
-
-    For each row in the ground truth dataset:
-    1. Prepare text from role-mapped columns
-    2. Generate embedding via serving client
-    3. Store in EvalGroundTruthEmbedding
-    4. Update progress on parent EvalGroundTruth
-    """
+def _run_embed_dataset(ground_truth_id: str) -> GenerateEmbeddingsOutput:
+    """Synchronous path executed by the Temporal activity."""
     close_old_connections()
 
-    from model_hub.models.evals_metric import EvalGroundTruth, EvalGroundTruthEmbedding
-    from model_hub.utils.ground_truth_retrieval import (
-        EMBED_MODEL_IMAGE_TEXT,
-        EMBED_MODEL_TEXT,
-        compute_row_embedding,
-        detect_row_modality,
-        prepare_embedding_text,
-    )
+    from model_hub.models.evals_metric import EvalGroundTruth
+    from model_hub.services.ground_truth_service import GroundTruthService
 
     try:
         gt = EvalGroundTruth.objects.get(id=ground_truth_id, deleted=False)
     except EvalGroundTruth.DoesNotExist:
-        return {
-            "ground_truth_id": ground_truth_id,
-            "rows_embedded": 0,
-            "status": "failed",
-            "error": "Ground truth not found",
-        }
+        return GenerateEmbeddingsOutput(
+            ground_truth_id=ground_truth_id,
+            rows_embedded=0,
+            status="failed",
+            error="Ground truth not found",
+        )
 
-    gt.embedding_status = "processing"
-    gt.embedded_row_count = 0
-    gt.save(update_fields=["embedding_status", "embedded_row_count", "updated_at"])
-
-    EvalGroundTruthEmbedding.objects.filter(ground_truth=gt).delete()
-
-    data = gt.data or []
-    variable_mapping = gt.variable_mapping
-    rows_embedded = 0
-
-    # Decide once which embedding model the whole dataset uses (per-row
-    # mixing would put vectors in different spaces and break cosine
-    # similarity between them). If any row has an image-shaped mapped
-    # value the entire dataset embeds via the joint image-text model.
-    dataset_modality = EMBED_MODEL_TEXT
-    for row in data:
-        if detect_row_modality(row, variable_mapping) == "image":
-            dataset_modality = EMBED_MODEL_IMAGE_TEXT
-            break
-
-    for idx, row in enumerate(data):
-        try:
-            if dataset_modality == EMBED_MODEL_IMAGE_TEXT:
-                model_used, embedding = compute_row_embedding(row, variable_mapping)
-                text_for_storage = prepare_embedding_text(row, variable_mapping)
-            else:
-                text_for_storage = prepare_embedding_text(row, variable_mapping)
-                if not text_for_storage.strip():
-                    logger.warning(
-                        "empty_embedding_text",
-                        gt_id=ground_truth_id,
-                        row_index=idx,
-                    )
-                    continue
-                model_used, embedding = compute_row_embedding(row, variable_mapping)
-
-            if embedding is None:
-                logger.warning(
-                    "row_embedding_returned_none",
-                    gt_id=ground_truth_id,
-                    row_index=idx,
-                    model=model_used,
-                )
-                continue
-
-            EvalGroundTruthEmbedding.objects.create(
-                ground_truth=gt,
-                row_index=idx,
-                text_content=(text_for_storage or "")[:5000],
-                embedding=embedding,
-                row_data=row,
-            )
-            rows_embedded += 1
-
-            if rows_embedded % 50 == 0:
-                gt.embedded_row_count = rows_embedded
-                gt.save(update_fields=["embedded_row_count", "updated_at"])
-
-            activity.heartbeat(f"Embedded {rows_embedded}/{len(data)} rows")
-
-        except Exception as e:
-            logger.warning(
-                "row_embedding_failed",
-                gt_id=ground_truth_id,
-                row_index=idx,
-                error=str(e),
-            )
-
-    gt.embedded_row_count = rows_embedded
-    gt.embedding_status = "completed" if rows_embedded > 0 else "failed"
-    gt.embedding_model = dataset_modality
-    gt.save(
-        update_fields=[
-            "embedding_status",
-            "embedded_row_count",
-            "embedding_model",
-            "updated_at",
-        ]
+    result = GroundTruthService.embed_dataset(gt=gt)
+    return GenerateEmbeddingsOutput(
+        ground_truth_id=result.ground_truth_id,
+        rows_embedded=result.rows_embedded,
+        status=result.status,
+        error=result.error,
     )
-
-    return {
-        "ground_truth_id": ground_truth_id,
-        "rows_embedded": rows_embedded,
-        "status": gt.embedding_status,
-        "error": None if rows_embedded > 0 else "No rows could be embedded",
-    }
 
 
 @activity.defn
 async def generate_ground_truth_embeddings_activity(
     input: GenerateEmbeddingsInput,
 ) -> GenerateEmbeddingsOutput:
-    """
-    Temporal activity that generates embeddings for all rows in a ground truth dataset.
-    Runs on tasks_xl queue (long-running, uses embedding model).
+    """Temporal entry point for the embed-dataset workflow.
+
+    Runs on the ``tasks_xl`` queue because the underlying CH bulk write
+    fans out to a 20-thread pool and can saturate a small worker pod.
     """
     logger.info(
         "generate_ground_truth_embeddings_start",
         gt_id=input.ground_truth_id,
     )
 
-    try:
-        from tfc.telemetry import otel_sync_to_async
+    from tfc.telemetry import otel_sync_to_async
 
-        result = await otel_sync_to_async(_generate_embeddings_sync)(
+    try:
+        result = await otel_sync_to_async(_run_embed_dataset)(
             input.ground_truth_id
         )
-
-        logger.info(
-            "generate_ground_truth_embeddings_done",
-            gt_id=input.ground_truth_id,
-            rows_embedded=result["rows_embedded"],
-            status=result["status"],
-        )
-
-        return GenerateEmbeddingsOutput(**result)
-
-    except Exception as e:
-        logger.error(
+    except Exception as exc:
+        logger.exception(
             "generate_ground_truth_embeddings_error",
             gt_id=input.ground_truth_id,
-            error=str(e),
+            error=str(exc),
         )
-
-        # Mark as failed
-        try:
-            close_old_connections()
-            from model_hub.models.evals_metric import EvalGroundTruth
-
-            gt = EvalGroundTruth.objects.get(id=input.ground_truth_id)
-            gt.embedding_status = "failed"
-            gt.save(update_fields=["embedding_status", "updated_at"])
-        except Exception:
-            pass
-
+        _force_mark_failed(input.ground_truth_id, str(exc))
         return GenerateEmbeddingsOutput(
             ground_truth_id=input.ground_truth_id,
             rows_embedded=0,
             status="failed",
-            error=str(e),
+            error=str(exc),
+        )
+
+    logger.info(
+        "generate_ground_truth_embeddings_done",
+        gt_id=input.ground_truth_id,
+        rows_embedded=result.rows_embedded,
+        status=result.status,
+    )
+    return result
+
+
+def _force_mark_failed(ground_truth_id: str, reason: str) -> None:
+    """Last-resort PG status update when the service raises before it can
+    mark itself failed (e.g. DB connection drops mid-embed). Best-effort:
+    we already logged the original exception, so a second failure here
+    is swallowed rather than masking the first."""
+    try:
+        close_old_connections()
+        from model_hub.models.evals_metric import EvalGroundTruth
+
+        gt = EvalGroundTruth.objects.get(id=ground_truth_id)
+        gt.embedding_status = "failed"
+        gt.save(update_fields=["embedding_status", "updated_at"])
+    except Exception:
+        logger.warning(
+            "ground_truth_force_mark_failed_no_op",
+            gt_id=ground_truth_id,
+            reason=reason,
         )

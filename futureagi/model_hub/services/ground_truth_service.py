@@ -1,11 +1,19 @@
 """Service layer for ground-truth operations.
 
-Views in ``model_hub/views/separate_evals.py`` delegate here so they
-stay thin: validate the request, call the service, map the result to a
-typed error envelope or success response.
+Views, Temporal activities, and management commands delegate here so the
+caller stays thin: each surface is responsible only for *taking* the
+work and *responding*; the actual embedding writes, retrieval, and
+state transitions live on :class:`GroundTruthService`.
 
-Mirrors the ``ServiceError`` shape used by ``dataset_service`` so the
-view-side branching stays consistent across the app.
+Storage: vectors live in the ClickHouse ``ground_truths`` table managed
+by :class:`agentic_eval.core.embeddings.embedding_manager.EmbeddingManager`,
+keyed by ``EvalTemplate.id`` + ``organization_id`` + ``workspace_id``.
+The corresponding ``EvalGroundTruth`` PG row remains the user-facing
+metadata anchor (name, columns, status, file).
+
+The legacy ``EvalGroundTruthEmbedding`` PG table is no longer written
+by this service. Existing PG rows are tolerated but ignored; a separate
+follow-up will drop the model.
 """
 
 from __future__ import annotations
@@ -24,6 +32,16 @@ logger = structlog.get_logger(__name__)
 class ServiceError:
     message: str
     code: str = "ERROR"
+
+
+@dataclass(frozen=True)
+class EmbedDatasetResult:
+    """Outcome of a full-dataset embed pass."""
+
+    ground_truth_id: str
+    rows_embedded: int
+    status: str
+    error: str | None = None
 
 
 class GroundTruthService:
@@ -141,7 +159,153 @@ class GroundTruthService:
             ),
         }
 
-    # ── search ────────────────────────────────────────────────────
+    # ── CH embedding write (full-dataset pass) ────────────────────
+
+    @staticmethod
+    def embed_dataset(*, gt: EvalGroundTruth) -> EmbedDatasetResult:
+        """Embed every row of ``gt`` into the CH ``ground_truths`` table.
+
+        Drives the Temporal activity, the explicit re-embed endpoint, and
+        the management command roundtrip test. The PG ``EvalGroundTruth``
+        row is the source of truth for status (``pending`` → ``processing``
+        → ``completed`` / ``failed``); CH only stores the vectors.
+
+        Idempotency: the writer soft-deletes any existing vectors for the
+        same ``(eval_template_id, organization_id, workspace_id)`` triple
+        before re-embedding, so re-runs replace cleanly rather than
+        accumulate. Single GT per (template, org, workspace) is the
+        product invariant (FE only surfaces one).
+        """
+        from agentic_eval.core.embeddings.embedding_manager import (
+            EmbeddingManager,
+            GROUND_TRUTH_TABLE_NAME,
+        )
+
+        data = gt.data or []
+        if not data:
+            return _mark_failed(gt, "Ground truth has no rows to embed.")
+
+        mapped_columns = _mapped_column_order(gt.variable_mapping)
+        if not mapped_columns:
+            return _mark_failed(
+                gt,
+                "variable_mapping is empty — at least one mapped column is "
+                "required before embedding.",
+            )
+
+        organization_id = _organization_id_or_raise(gt)
+        workspace_id = _workspace_id_or_none(gt)
+        eval_id = str(gt.eval_template_id)
+
+        gt.embedding_status = "processing"
+        gt.embedded_row_count = 0
+        gt.save(
+            update_fields=["embedding_status", "embedded_row_count", "updated_at"]
+        )
+
+        logger.info(
+            "ground_truth_embed_start",
+            ground_truth_id=str(gt.id),
+            eval_id=eval_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            rows=len(data),
+            mapped_columns=mapped_columns,
+        )
+
+        manager = EmbeddingManager()
+        _soft_delete_prior_vectors(
+            manager=manager,
+            eval_id=eval_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
+
+        try:
+            manager.parallel_process_metadata(
+                eval_id=eval_id,
+                metadatas=list(data),
+                inputs_formater=mapped_columns,
+                table_name=GROUND_TRUTH_TABLE_NAME,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
+        except Exception as exc:
+            logger.exception(
+                "ground_truth_embed_failed",
+                ground_truth_id=str(gt.id),
+                error=str(exc),
+            )
+            return _mark_failed(gt, f"Embedding failed: {exc}")
+
+        rows_embedded = len(data)
+        gt.embedded_row_count = rows_embedded
+        gt.embedding_status = "completed"
+        gt.save(
+            update_fields=[
+                "embedding_status",
+                "embedded_row_count",
+                "updated_at",
+            ]
+        )
+        logger.info(
+            "ground_truth_embed_done",
+            ground_truth_id=str(gt.id),
+            rows_embedded=rows_embedded,
+        )
+        return EmbedDatasetResult(
+            ground_truth_id=str(gt.id),
+            rows_embedded=rows_embedded,
+            status="completed",
+        )
+
+    # ── CH retrieval ──────────────────────────────────────────────
+
+    @staticmethod
+    def retrieve_few_shot(
+        *,
+        gt: EvalGroundTruth,
+        inputs: dict[str, Any],
+        max_results: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Return GT example rows most similar to ``inputs``.
+
+        Wraps :func:`retrieve_ground_truth_fewshots` with the GT's stored
+        ``variable_mapping`` (template-var → GT-column) and tenant
+        identifiers. Returns the raw source-row dicts in rank order —
+        callers downstream are responsible for projecting them into
+        whatever surface they need (few-shot prompt text, agent-tool
+        output, FE Match cards).
+        """
+        from agentic_eval.core.embeddings.ground_truth_fewshots import (
+            GroundTruthFewShotRequest,
+            retrieve_ground_truth_fewshots,
+        )
+
+        if gt.embedding_status != "completed":
+            logger.info(
+                "ground_truth_retrieve_skipped_not_ready",
+                ground_truth_id=str(gt.id),
+                status=gt.embedding_status,
+            )
+            return []
+
+        input_cols = _flatten_variable_mapping(gt.variable_mapping)
+        if not input_cols:
+            return []
+
+        request = GroundTruthFewShotRequest(
+            eval_id=str(gt.eval_template_id),
+            inputs=inputs,
+            input_cols=input_cols,
+            organization_id=_organization_id_or_raise(gt),
+            workspace_id=_workspace_id_or_none(gt),
+            max_results=max_results,
+        )
+        matches = retrieve_ground_truth_fewshots(request)
+        return [match.row for match in matches]
+
+    # ── search (FE Test Retrieval) ────────────────────────────────
 
     @staticmethod
     def search(
@@ -150,15 +314,11 @@ class GroundTruthService:
         inputs: dict[str, Any] | None,
         query: str | None,
         max_results: int,
-        similarity_threshold: float,
+        # Kept for API compatibility; per-column intersection already
+        # gates noise. Honoured only if the underlying retrieval helper
+        # is extended to surface similarity (TODO cross-feature).
+        similarity_threshold: float = 0.0,  # noqa: ARG004
     ) -> dict[str, Any] | ServiceError:
-        from model_hub.utils.ground_truth_retrieval import (
-            EMBED_MODEL_TEXT,
-            build_query_text,
-            compute_query_embedding,
-            retrieve_similar_examples,
-        )
-
         if gt.embedding_status != "completed":
             return ServiceError(
                 f"Embeddings not ready. Status: {gt.embedding_status}. "
@@ -166,9 +326,9 @@ class GroundTruthService:
                 code="EMBEDDINGS_NOT_READY",
             )
 
-        current_input: dict[str, Any] | str
+        resolved_inputs: dict[str, Any]
         if isinstance(inputs, dict) and inputs:
-            current_input = inputs
+            resolved_inputs = inputs
         else:
             stripped = (query or "").strip()
             if not stripped:
@@ -177,35 +337,27 @@ class GroundTruthService:
                     "dict matching the rule prompt's template variables.",
                     code="EMPTY_INPUT",
                 )
-            current_input = stripped
+            # Legacy single-text-box callers: project the query string
+            # onto every mapped template variable so per-column search
+            # still has something to compare against.
+            mapped = _flatten_variable_mapping(gt.variable_mapping)
+            if not mapped:
+                return ServiceError(
+                    "variable_mapping is empty; cannot route the legacy "
+                    "`query` string to a column.",
+                    code="VARIABLE_MAPPING_MISSING",
+                )
+            resolved_inputs = {var: stripped for var in mapped}
 
-        query_embedding = compute_query_embedding(
-            current_input,
-            gt.variable_mapping,
-            gt.embedding_model or EMBED_MODEL_TEXT,
-        )
-        if not query_embedding:
-            return ServiceError(
-                "Could not embed the query — no usable input values.",
-                code="EMBED_FAILED",
-            )
-
-        results = retrieve_similar_examples(
-            ground_truth_id=str(gt.id),
-            query_embedding=query_embedding,
-            max_examples=max_results,
-            similarity_threshold=similarity_threshold,
-        )
-
-        preview_query = (
-            build_query_text(inputs, gt.variable_mapping)
-            if isinstance(inputs, dict) and inputs
-            else (query or "").strip()
+        results = GroundTruthService.retrieve_few_shot(
+            gt=gt,
+            inputs=resolved_inputs,
+            max_results=max_results,
         )
 
         return {
-            "query": preview_query,
-            "inputs": inputs if isinstance(inputs, dict) else None,
+            "query": (query or "").strip(),
+            "inputs": resolved_inputs,
             "results": results,
             "total": len(results),
         }
@@ -245,3 +397,135 @@ def _first_missing_column(
             if c not in available:
                 return c, key
     return None
+
+
+def _mapped_column_order(variable_mapping: dict[str, Any] | None) -> list[str]:
+    """Flatten ``variable_mapping`` values into the GT column order used at
+    write time. List-of-columns mappings (multimodal) expand into multiple
+    entries while preserving order and dropping duplicates."""
+    if not variable_mapping:
+        return []
+    seen: set[str] = set()
+    columns: list[str] = []
+    for value in variable_mapping.values():
+        candidates = value if isinstance(value, list) else [value]
+        for col in candidates:
+            if col and col not in seen:
+                seen.add(col)
+                columns.append(col)
+    return columns
+
+
+def _flatten_variable_mapping(
+    variable_mapping: dict[str, Any] | None,
+) -> dict[str, str]:
+    """Pick a single GT column per template variable for the retrieval side.
+
+    Reads expect ``{template_var: gt_column}`` (one column per variable);
+    if a variable maps to a list, we take the first. This is a
+    documented simplification — the writer ingests every column in the
+    list, but the reader's per-column search is one query per template
+    variable.
+    """
+    if not variable_mapping:
+        return {}
+    flat: dict[str, str] = {}
+    for var, value in variable_mapping.items():
+        if isinstance(value, list):
+            first = next((c for c in value if c), None)
+            if first:
+                flat[var] = first
+        elif value:
+            flat[var] = value
+    return flat
+
+
+def _organization_id_or_raise(gt: EvalGroundTruth) -> str:
+    """Tenant-scoped CH writes require an organization. Refuse to embed
+    a row without one — the alternative is a silent cross-tenant leak."""
+    organization_id = getattr(gt, "organization_id", None) or (
+        gt.organization.id if getattr(gt, "organization", None) else None
+    )
+    if not organization_id:
+        raise ValueError(
+            f"EvalGroundTruth {gt.id} has no organization; refusing to embed."
+        )
+    return str(organization_id)
+
+
+def _workspace_id_or_none(gt: EvalGroundTruth) -> str | None:
+    workspace_id = getattr(gt, "workspace_id", None) or (
+        gt.workspace.id if getattr(gt, "workspace", None) else None
+    )
+    return str(workspace_id) if workspace_id else None
+
+
+def _mark_failed(gt: EvalGroundTruth, reason: str) -> EmbedDatasetResult:
+    """Persist a failed embed pass on the PG row and return the typed result."""
+    gt.embedding_status = "failed"
+    gt.embedded_row_count = 0
+    gt.save(
+        update_fields=["embedding_status", "embedded_row_count", "updated_at"]
+    )
+    logger.warning(
+        "ground_truth_embed_marked_failed",
+        ground_truth_id=str(gt.id),
+        reason=reason,
+    )
+    return EmbedDatasetResult(
+        ground_truth_id=str(gt.id),
+        rows_embedded=0,
+        status="failed",
+        error=reason,
+    )
+
+
+def _soft_delete_prior_vectors(
+    *,
+    manager,
+    eval_id: str,
+    organization_id: str,
+    workspace_id: str | None,
+) -> None:
+    """Mark any existing CH rows for this (eval, org, workspace) as deleted.
+
+    The CH writer doesn't dedup on its own — re-running the embed pass
+    would accumulate stale vectors otherwise. Soft-delete via
+    ``ALTER … UPDATE deleted=1`` keeps the historical data recoverable
+    if we ever need to audit.
+    """
+    from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+    from agentic_eval.core.embeddings.embedding_manager import (
+        GROUND_TRUTH_TABLE_NAME,
+    )
+
+    db = ClickHouseVectorDB()
+    try:
+        db.create_table(GROUND_TRUTH_TABLE_NAME)
+        clauses = [
+            f"eval_id = '{eval_id}'",
+            "has(metadata.key, 'organization_id')",
+            f"metadata.value[indexOf(metadata.key, 'organization_id')] = '{organization_id}'",
+        ]
+        if workspace_id:
+            clauses.append("has(metadata.key, 'workspace_id')")
+            clauses.append(
+                f"metadata.value[indexOf(metadata.key, 'workspace_id')] = '{workspace_id}'"
+            )
+        where = " AND ".join(clauses)
+        # ``ALTER ... UPDATE`` is async on MergeTree; this returns once
+        # the mutation is queued. Subsequent inserts use fresh UUIDs so
+        # there is no item_id collision with the soft-deleted rows; reads
+        # filter ``deleted=0`` so old rows fall out as the mutation
+        # catches up.
+        db.client.execute(
+            f"ALTER TABLE {GROUND_TRUTH_TABLE_NAME} UPDATE deleted = 1 WHERE {where}"
+        )
+        logger.info(
+            "ground_truth_prior_vectors_soft_deleted",
+            eval_id=eval_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
+    finally:
+        db.close()

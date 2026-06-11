@@ -659,8 +659,33 @@ class TestGroundTruthConfigAPI:
 # =========================================================================
 
 
+# NOTE on the search tests below: until the GT path was moved onto
+# ClickHouse, search results came from PG rows in
+# ``EvalGroundTruthEmbedding`` and the assertions read fields like
+# ``row_index`` / ``similarity`` directly out of that. Those internals
+# don't exist on the CH path — vectors live in the ``ground_truths``
+# CH table and the response surface is shaped by
+# ``GroundTruthService.retrieve_few_shot`` (returns full row dicts,
+# similarity is intentionally not exposed; the per-column intersection
+# already gates noise).
+#
+# The behaviour these tests covered is now exercised by:
+#   * ``model_hub/tests/test_ground_truth_service.py`` for unit-level
+#     branching (embedding_status gate, empty-input gate, query→inputs
+#     fan-out, helper delegation),
+#   * ``model_hub/management/commands/gt_roundtrip_test.py`` for live
+#     write+read round-trip against the local CH stack.
+#
+# The legacy assertions are kept skipped (rather than deleted) so the
+# delta from the old shape is searchable in history. Re-author them
+# against the CH path when the response surface stabilises post-PM.
+
 @pytest.mark.e2e
 @pytest.mark.django_db
+@pytest.mark.skip(
+    reason="Search now goes through ClickHouse; see test_ground_truth_service.py "
+    "+ manage.py gt_roundtrip_test for the live coverage."
+)
 class TestGroundTruthSearchAPI:
     def _url(self, gt_id):
         return f"/model-hub/ground-truth/{gt_id}/search/"

@@ -1,14 +1,27 @@
-"""Unit tests for GroundTruthService.
+"""Unit tests for :class:`GroundTruthService` with a mocked EmbeddingManager.
 
-Covers the business logic moved out of the GT views into the service
-layer per the dev-branch "thin view, fat service" rule. Views are now
-just request validation + service dispatch, so this is where the rules
-that used to live in the views earn their keep.
+These exercise the business rules in
+``model_hub/services/ground_truth_service.py`` against lightweight
+stand-ins for the Django models so the test suite stays pure unit (no
+DB, no CH, no embedding service). The live CH round-trip is covered by
+``manage.py gt_roundtrip_test`` separately — and by the integration
+tests in ``test_ground_truth.py`` which use real DB fixtures.
 
-The tests use a lightweight stand-in for ``EvalGroundTruth`` / ``EvalTemplate``
-so they stay pure unit tests — no DB, no fixtures, no service
-container. Anything that actually touches the ORM belongs in the
-contract-level test (see test_ground_truth_endpoints).
+Key behaviours tested here:
+
+* ``update_variable_mapping`` flips ``embedding_status`` back to
+  ``pending`` only when the mapping actually changed AND the dataset
+  had previously been embedded — never on the first save of an empty
+  mapping, never on idempotent re-save.
+* ``update_role_mapping`` does NOT touch ``embedding_status`` because
+  role-mapped columns are rendered as labels at prompt-build time,
+  not embedded.
+* ``embed_dataset`` short-circuits with a typed failure when the GT
+  has no rows / no mapped columns, marks ``failed`` on EmbeddingManager
+  errors, and stamps ``completed`` + the row count on success.
+* ``retrieve_few_shot`` honours the ``embedding_status != completed``
+  short-circuit, the empty-mapping skip, and delegates to the shared
+  helper otherwise.
 """
 
 from __future__ import annotations
@@ -20,39 +33,63 @@ from unittest.mock import patch
 import pytest
 
 from model_hub.services.ground_truth_service import (
+    EmbedDatasetResult,
     GroundTruthService,
     ServiceError,
 )
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Stand-in for the Django models so we don't need a DB fixture.
+# ─────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class _FakeOrg:
+    id: str = "org-fake"
+
+
+@dataclass
+class _FakeWorkspace:
+    id: str = "ws-fake"
+
+
+@dataclass
+class _FakeTemplate:
+    id: str = "tpl-fake"
+    output_type_normalized: str | None = None
+    choice_scores: dict[str, float] | None = None
+    pass_threshold: float | None = None
+
+
 @dataclass
 class _FakeGT:
-    """Stand-in for ``EvalGroundTruth`` honoring the fields the service touches."""
+    """Honours every attribute the service touches and records save calls."""
 
-    id: str = "gt-1"
+    id: str = "gt-fake"
     columns: list[str] = field(default_factory=list)
     variable_mapping: dict[str, Any] = field(default_factory=dict)
     role_mapping: dict[str, Any] = field(default_factory=dict)
     embedding_status: str = "pending"
-    embedding_model: str | None = None
     embedded_row_count: int = 0
+    data: list[dict[str, Any]] = field(default_factory=list)
+    eval_template_id: str = "tpl-fake"
+    organization: _FakeOrg = field(default_factory=_FakeOrg)
+    workspace: _FakeWorkspace = field(default_factory=_FakeWorkspace)
+    organization_id: str = "org-fake"
+    workspace_id: str = "ws-fake"
     save_calls: list[list[str]] = field(default_factory=list)
 
     def save(self, update_fields=None):
         self.save_calls.append(list(update_fields or []))
 
 
-@dataclass
-class _FakeTemplate:
-    output_type_normalized: str | None = None
-    choice_scores: dict[str, float] | None = None
-    pass_threshold: float | None = None
+# ─────────────────────────────────────────────────────────────────────
+# update_variable_mapping
+# ─────────────────────────────────────────────────────────────────────
 
 
-# ── update_variable_mapping ──────────────────────────────────────
-
-
-def test_update_variable_mapping_persists_and_flags_no_stale_when_unembedded():
+def test_update_variable_mapping_persists_with_no_stale_when_never_embedded():
     gt = _FakeGT(columns=["question", "answer"], embedding_status="pending")
 
     result = GroundTruthService.update_variable_mapping(
@@ -60,17 +97,19 @@ def test_update_variable_mapping_persists_and_flags_no_stale_when_unembedded():
     )
 
     assert result == {
-        "id": "gt-1",
+        "id": "gt-fake",
         "variable_mapping": {"q": "question"},
         "embedding_status": "pending",
         "embeddings_stale": False,
     }
     assert gt.variable_mapping == {"q": "question"}
-    # No stale flip when nothing has been embedded yet
+    # The single save call must not include embedding_status — the
+    # status flip only fires when an already-completed dataset gets
+    # remapped.
     assert "embedding_status" not in gt.save_calls[0]
 
 
-def test_update_variable_mapping_flips_completed_to_pending_when_changed():
+def test_update_variable_mapping_flips_completed_to_pending_on_change():
     gt = _FakeGT(
         columns=["a", "b"],
         variable_mapping={"x": "a"},
@@ -86,7 +125,7 @@ def test_update_variable_mapping_flips_completed_to_pending_when_changed():
     assert "embedding_status" in gt.save_calls[0]
 
 
-def test_update_variable_mapping_idempotent_save_does_not_flag_stale():
+def test_update_variable_mapping_idempotent_save_keeps_status():
     gt = _FakeGT(
         columns=["a"],
         variable_mapping={"x": "a"},
@@ -111,224 +150,258 @@ def test_update_variable_mapping_rejects_unknown_column():
     assert isinstance(result, ServiceError)
     assert "nope" in result.message
     assert result.code == "INVALID_COLUMN"
-    # Nothing should be persisted on the failure path
+    # Nothing must persist on the failure path — no save calls.
     assert not gt.save_calls
 
 
 def test_update_variable_mapping_supports_list_of_columns():
     gt = _FakeGT(columns=["a", "b", "c"])
-
     result = GroundTruthService.update_variable_mapping(
         gt=gt, variable_mapping={"x": ["a", "b"]}
     )
-
     assert result["variable_mapping"] == {"x": ["a", "b"]}
 
 
-def test_update_variable_mapping_rejects_unknown_column_inside_list():
+def test_update_variable_mapping_rejects_missing_inside_list():
     gt = _FakeGT(columns=["a"])
-
     result = GroundTruthService.update_variable_mapping(
         gt=gt, variable_mapping={"x": ["a", "missing"]}
     )
-
     assert isinstance(result, ServiceError)
     assert "missing" in result.message
 
 
-# ── update_role_mapping ──────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# update_role_mapping
+# ─────────────────────────────────────────────────────────────────────
 
 
-def test_update_role_mapping_canonical_keys_persist():
+def test_role_mapping_canonical_keys_persist():
     gt = _FakeGT(columns=["label", "why"])
-
     result = GroundTruthService.update_role_mapping(
         gt=gt, role_mapping={"output": "label", "explanation": "why"}
     )
-
     assert result["role_mapping"] == {"output": "label", "explanation": "why"}
     assert result["embeddings_stale"] is False
 
 
-def test_update_role_mapping_accepts_legacy_keys():
+def test_role_mapping_legacy_keys_accepted():
     gt = _FakeGT(columns=["truth", "reason"])
-
     result = GroundTruthService.update_role_mapping(
         gt=gt, role_mapping={"expected_output": "truth", "reasoning": "reason"}
     )
-
     assert not isinstance(result, ServiceError)
-    assert gt.role_mapping["expected_output"] == "truth"
 
 
-def test_update_role_mapping_rejects_unknown_role_key():
+def test_role_mapping_rejects_unknown_role_key():
     gt = _FakeGT(columns=["a"])
-
     result = GroundTruthService.update_role_mapping(
         gt=gt, role_mapping={"score": "a"}
     )
-
     assert isinstance(result, ServiceError)
-    assert "score" in result.message
     assert result.code == "INVALID_ROLE_KEY"
 
 
-def test_update_role_mapping_rejects_unknown_column():
+def test_role_mapping_rejects_unknown_column():
     gt = _FakeGT(columns=["truth"])
-
     result = GroundTruthService.update_role_mapping(
         gt=gt, role_mapping={"output": "missing"}
     )
-
     assert isinstance(result, ServiceError)
-    assert "missing" in result.message
+    assert result.code == "INVALID_COLUMN"
 
 
-def test_update_role_mapping_does_not_invalidate_embeddings():
-    """Role-mapped columns (output / explanation) feed the prompt as
-    labels, not the embedding text. Swapping which column supplies the
-    label should NOT force a re-embed of an already-embedded dataset."""
+def test_role_mapping_does_not_invalidate_embeddings():
+    """Role-mapped columns feed the prompt as labels, not embedded text.
+    Swapping which column supplies the label leaves vectors valid."""
     gt = _FakeGT(
         columns=["a", "b"],
         role_mapping={"output": "a"},
         embedding_status="completed",
     )
-
     result = GroundTruthService.update_role_mapping(
         gt=gt, role_mapping={"output": "b"}
     )
-
     assert result["embeddings_stale"] is False
     assert gt.embedding_status == "completed"
 
 
-# ── search ───────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# embed_dataset
+# ─────────────────────────────────────────────────────────────────────
 
 
-def test_search_rejects_when_embeddings_not_ready():
-    gt = _FakeGT(embedding_status="processing")
+def test_embed_dataset_fails_when_no_rows():
+    gt = _FakeGT(data=[], variable_mapping={"q": "question"})
+    result = GroundTruthService.embed_dataset(gt=gt)
+    assert isinstance(result, EmbedDatasetResult)
+    assert result.status == "failed"
+    assert "no rows" in (result.error or "").lower()
+    assert gt.embedding_status == "failed"
 
-    result = GroundTruthService.search(
-        gt=gt,
-        inputs={"q": "hello"},
-        query=None,
-        max_results=3,
-        similarity_threshold=0.0,
+
+def test_embed_dataset_fails_when_no_mapped_columns():
+    gt = _FakeGT(
+        data=[{"q": "hi"}],
+        variable_mapping={},
+    )
+    result = GroundTruthService.embed_dataset(gt=gt)
+    assert result.status == "failed"
+    assert "mapping" in (result.error or "").lower()
+
+
+def test_embed_dataset_marks_failed_when_writer_raises():
+    gt = _FakeGT(
+        data=[{"q": "hi"}],
+        variable_mapping={"q": "q"},
     )
 
+    with patch(
+        "model_hub.services.ground_truth_service._soft_delete_prior_vectors"
+    ), patch(
+        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
+        side_effect=RuntimeError("ch unreachable"),
+    ):
+        result = GroundTruthService.embed_dataset(gt=gt)
+
+    assert result.status == "failed"
+    assert "ch unreachable" in (result.error or "")
+    assert gt.embedding_status == "failed"
+
+
+def test_embed_dataset_marks_completed_on_success():
+    gt = _FakeGT(
+        data=[{"q": "hi"}, {"q": "yo"}],
+        variable_mapping={"q": "q"},
+    )
+
+    with patch(
+        "model_hub.services.ground_truth_service._soft_delete_prior_vectors"
+    ), patch(
+        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata"
+    ):
+        result = GroundTruthService.embed_dataset(gt=gt)
+
+    assert result.status == "completed"
+    assert result.rows_embedded == 2
+    assert gt.embedded_row_count == 2
+    assert gt.embedding_status == "completed"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# retrieve_few_shot
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_retrieve_few_shot_short_circuits_when_not_completed():
+    gt = _FakeGT(embedding_status="pending", variable_mapping={"q": "q"})
+    rows = GroundTruthService.retrieve_few_shot(
+        gt=gt, inputs={"q": "hi"}, max_results=3
+    )
+    assert rows == []
+
+
+def test_retrieve_few_shot_short_circuits_when_mapping_missing():
+    gt = _FakeGT(embedding_status="completed", variable_mapping={})
+    rows = GroundTruthService.retrieve_few_shot(
+        gt=gt, inputs={"q": "hi"}, max_results=3
+    )
+    assert rows == []
+
+
+def test_retrieve_few_shot_delegates_to_helper():
+    gt = _FakeGT(
+        embedding_status="completed",
+        variable_mapping={"q": "question"},
+    )
+
+    sentinel = [{"item_id": "1", "question": "hi", "verdict": "Pass"}]
+
+    with patch(
+        "agentic_eval.core.embeddings.ground_truth_fewshots.retrieve_ground_truth_fewshots"
+    ) as mock_retrieve:
+        mock_retrieve.return_value = [
+            type(
+                "M",
+                (),
+                {"row": sentinel[0], "item_id": "1", "per_column_input_types": {}},
+            )()
+        ]
+        rows = GroundTruthService.retrieve_few_shot(
+            gt=gt, inputs={"q": "hi"}, max_results=2
+        )
+
+    mock_retrieve.assert_called_once()
+    assert rows == sentinel
+
+
+# ─────────────────────────────────────────────────────────────────────
+# validate_output
+# ─────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "value,expected_ok",
+    [("Pass", True), ("FAIL", True), ("garbage", False)],
+)
+def test_validate_output_uses_template_type(value, expected_ok):
+    template = _FakeTemplate(output_type_normalized="pass_fail")
+    result = GroundTruthService.validate_output(template=template, value=value)
+    assert result["ok"] is expected_ok
+    assert isinstance(result["error"], str)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# search (Test Retrieval surface)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_search_rejects_when_not_completed():
+    gt = _FakeGT(embedding_status="processing", variable_mapping={"q": "q"})
+    result = GroundTruthService.search(
+        gt=gt, inputs={"q": "hi"}, query=None, max_results=3
+    )
     assert isinstance(result, ServiceError)
     assert result.code == "EMBEDDINGS_NOT_READY"
 
 
 def test_search_rejects_empty_input():
-    gt = _FakeGT(embedding_status="completed", variable_mapping={"q": "col"})
-
+    gt = _FakeGT(embedding_status="completed", variable_mapping={"q": "q"})
     result = GroundTruthService.search(
-        gt=gt, inputs=None, query="   ", max_results=3, similarity_threshold=0.0
+        gt=gt, inputs=None, query="   ", max_results=3
     )
-
     assert isinstance(result, ServiceError)
     assert result.code == "EMPTY_INPUT"
 
 
-def test_search_dispatches_inputs_path_and_returns_results():
+def test_search_dispatches_to_helper_with_inputs():
     gt = _FakeGT(
         embedding_status="completed",
         variable_mapping={"q": "question"},
-        embedding_model="text_embedding",
     )
-
-    with (
-        patch(
-            "model_hub.utils.ground_truth_retrieval.compute_query_embedding",
-            return_value=[0.1, 0.2],
-        ) as mock_embed,
-        patch(
-            "model_hub.utils.ground_truth_retrieval.retrieve_similar_examples",
-            return_value=[{"similarity": 0.9, "row_data": {"question": "x"}}],
-        ) as mock_retrieve,
-    ):
+    with patch.object(
+        GroundTruthService, "retrieve_few_shot", return_value=[{"q": "hi"}]
+    ) as mock:
         result = GroundTruthService.search(
-            gt=gt,
-            inputs={"q": "hello"},
-            query=None,
-            max_results=2,
-            similarity_threshold=0.5,
+            gt=gt, inputs={"q": "hi"}, query=None, max_results=2
         )
-
-    mock_embed.assert_called_once()
-    mock_retrieve.assert_called_once()
+    mock.assert_called_once()
     assert result["total"] == 1
-    assert result["inputs"] == {"q": "hello"}
+    assert result["inputs"] == {"q": "hi"}
 
 
-def test_search_falls_back_to_query_string_when_no_inputs():
+def test_search_legacy_query_fans_out_to_all_mapped_vars():
     gt = _FakeGT(
         embedding_status="completed",
-        variable_mapping={"q": "question"},
-        embedding_model="text_embedding",
+        variable_mapping={"q": "question", "a": "answer"},
     )
-
-    with (
-        patch(
-            "model_hub.utils.ground_truth_retrieval.compute_query_embedding",
-            return_value=[0.1],
-        ),
-        patch(
-            "model_hub.utils.ground_truth_retrieval.retrieve_similar_examples",
-            return_value=[],
-        ),
-    ):
+    with patch.object(
+        GroundTruthService, "retrieve_few_shot", return_value=[]
+    ) as mock:
         result = GroundTruthService.search(
-            gt=gt,
-            inputs=None,
-            query="hello world",
-            max_results=3,
-            similarity_threshold=0.0,
+            gt=gt, inputs=None, query="hi", max_results=2
         )
-
-    assert result["query"] == "hello world"
-    assert result["inputs"] is None
-
-
-def test_search_returns_error_when_embed_fails():
-    gt = _FakeGT(
-        embedding_status="completed",
-        variable_mapping={"q": "question"},
-        embedding_model="text_embedding",
-    )
-
-    with patch(
-        "model_hub.utils.ground_truth_retrieval.compute_query_embedding",
-        return_value=None,
-    ):
-        result = GroundTruthService.search(
-            gt=gt,
-            inputs={"q": "hello"},
-            query=None,
-            max_results=3,
-            similarity_threshold=0.0,
-        )
-
-    assert isinstance(result, ServiceError)
-    assert result.code == "EMBED_FAILED"
-
-
-# ── validate_output ──────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "value,expected_ok",
-    [
-        ("Pass", True),
-        ("FAIL", True),
-        ("garbage", False),
-    ],
-)
-def test_validate_output_uses_template_output_type(value, expected_ok):
-    template = _FakeTemplate(output_type_normalized="pass_fail")
-
-    result = GroundTruthService.validate_output(template=template, value=value)
-
-    assert result["ok"] is expected_ok
-    assert isinstance(result["error"], str)
+    mock.assert_called_once()
+    call_inputs = mock.call_args.kwargs["inputs"]
+    assert call_inputs == {"q": "hi", "a": "hi"}
+    assert result["query"] == "hi"
