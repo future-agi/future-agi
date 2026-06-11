@@ -22,6 +22,7 @@ import React, {
 } from "react";
 import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
+import { ShowComponent } from "src/components/show/ShowComponent";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
@@ -33,7 +34,9 @@ import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { useCreateEval } from "src/sections/evals/hooks/useCreateEval";
 import { useUpdateEval } from "src/sections/evals/hooks/useEvalDetail";
 import { useCreateCompositeEval } from "src/sections/evals/hooks/useCompositeEval";
-import ModelSelector, { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
+import ModelSelector, {
+  FAGI_MODEL_VALUES,
+} from "src/sections/evals/components/ModelSelector";
 import InstructionEditor from "src/sections/evals/components/InstructionEditor";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import LLMPromptEditor from "src/sections/evals/components/LLMPromptEditor";
@@ -47,6 +50,36 @@ import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
+import { buildCompositeChildConfigs } from "src/sections/evals/Helpers/compositeRuntimeConfig";
+import {
+  contextOptionsForRowType,
+  extractCodeEvaluateParams,
+} from "./evalPickerConfigUtils";
+import { useParams } from "react-router";
+
+const TRACING_ROW_TYPE_TO_KEY = {
+  Span: "spans",
+  Trace: "traces",
+  Session: "sessions",
+  VoiceCall: "voiceCalls",
+};
+
+const dataInjectionFromContextOptions = (opts) => {
+  if (
+    !opts ||
+    opts.length === 0 ||
+    (opts.length === 1 && opts[0] === "variables_only")
+  ) {
+    return { variables_only: true };
+  }
+  const flags = {};
+  if (opts.includes("dataset_row")) flags.full_row = true;
+  if (opts.includes("span_context")) flags.span_context = true;
+  if (opts.includes("trace_context")) flags.trace_context = true;
+  if (opts.includes("session_context")) flags.session_context = true;
+  if (opts.includes("call_context")) flags.call_context = true;
+  return Object.keys(flags).length > 0 ? flags : { variables_only: true };
+};
 
 const PYTHON_CODE_TEMPLATE = `from typing import Any
 
@@ -95,7 +128,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const sourceRef = useRef(null);
-
+  const {testId,executionId} = useParams();
   // Form state (same as EvalCreatePage)
   const [name, setName] = useState("");
   const [mode, setMode] = useState("single");
@@ -114,6 +147,16 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const [templateFormat, setTemplateFormat] = useState("mustache");
   const [datasetColumns, setDatasetColumns] = useState([]);
   const [datasetJsonSchemas, setDatasetJsonSchemas] = useState({});
+  const [contextOptions, setContextOptions] = useState(
+    () => contextOptionsForRowType(sourceRowType) || ["variables_only"],
+  );
+
+  const handleSourceRowTypeChange = useCallback((rt) => {
+    const map = TRACING_ROW_TYPE_TO_KEY;
+    const key = map[rt];
+    const seeded = key ? contextOptionsForRowType(key) : null;
+    if (seeded) setContextOptions(seeded);
+  }, []);
 
   const localFormFilters = useWatch({
     control: localFilterForm.control,
@@ -140,6 +183,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         ? null
         : {
             child_template_ids: selectedChildren.map((c) => c.child_id),
+            child_configs: buildCompositeChildConfigs(selectedChildren),
             aggregation_enabled: aggregationEnabled,
             aggregation_function: aggregationFunction,
             composite_child_axis: compositeChildAxis || "",
@@ -219,7 +263,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       try {
         const data = await createEval.mutateAsync({
           is_draft: true,
-          eval_type: "agent",
+          // eval_type: "agent",
           output_type: "pass_fail",
           model: "turing_large",
           pass_threshold: 0.5,
@@ -234,6 +278,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   // Auto-save to draft
   const buildPayload = useCallback(
     () => ({
+      eval_type: evalType,
       instructions: evalType === "code" ? "" : instructions,
       code: evalType === "code" ? code : undefined,
       code_language: evalType === "code" ? codeLanguage : undefined,
@@ -248,6 +293,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
+      data_injection:
+        evalType === "agent"
+          ? dataInjectionFromContextOptions(contextOptions)
+          : undefined,
     }),
     [
       evalType,
@@ -261,6 +310,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       messages,
       fewShotExamples,
       templateFormat,
+      contextOptions,
     ],
   );
 
@@ -296,6 +346,15 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     }
   }, [draftId, buildPayload, updateDraft, handleTestResult]);
 
+  const hasDataInjection = useMemo(
+    () =>
+      evalType === "agent" &&
+      (source === "task" || source === "tracing") &&
+      Array.isArray(contextOptions) &&
+      contextOptions.some((o) => o && o !== "variables_only"),
+    [evalType, source, contextOptions],
+  );
+
   // Validate all required fields for single-eval mode. Composite mode has
   // its own light validation (name + at least one child) inside
   // handleSaveAndAddComposite, so this gate is only applied to the
@@ -322,14 +381,17 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       if (!code.trim()) next.instructions = "Code is required";
     } else if (!instructions.trim()) {
       next.instructions = "Instructions are required";
-    } else if (!/\{\{\s*[^{}]+?\s*\}\}/.test(instructions)) {
+    } else if (instructions.trim().length < 10) {
+      next.instructions = "Instructions must be at least 10 characters.";
+    } else if (
+      !hasDataInjection &&
+      !/\{\{\s*[^{}]+?\s*\}\}/.test(instructions)
+    ) {
       next.instructions =
         "Instructions must contain at least one template variable (e.g. {{input}})";
     }
 
-    // Mapping — no dataset to map against in the composite child-picker flow,
-    // so skip this check. Matches the canSave bypass below.
-    if (!sourceReady && source !== "composite") {
+    if (!sourceReady && source !== "composite" && !hasDataInjection) {
       next.mapping = "Map all variables before saving";
     }
 
@@ -365,6 +427,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     passThreshold,
     outputType,
     choiceScores,
+    hasDataInjection,
   ]);
 
   // Field-change wrappers — set the value and clear the corresponding
@@ -441,7 +504,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       if (source === "task" && onFiltersChange) {
         onFiltersChange(localFilterForm.getValues("filters") || []);
       }
-      // Now add to the current context
+      // Now add to the current context. data_injection (seeded from
+      // sourceRowType) is forwarded so the consumer's serializeEvalConfig
+      // captures it inside config.run_config — same shape an existing
+      // eval would emit through EvalPickerConfigFull.
       onSave({
         templateId: draftId,
         evalTemplateId: draftId,
@@ -451,6 +517,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         evalType,
         outputType,
         instructions,
+        data_injection:
+          evalType === "agent"
+            ? dataInjectionFromContextOptions(contextOptions)
+            : undefined,
       });
     } catch (error) {
       enqueueSnackbar(error?.message || "Failed to save", { variant: "error" });
@@ -471,6 +541,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     evalType,
     outputType,
     instructions,
+    contextOptions,
     enqueueSnackbar,
     isOSS,
     source,
@@ -505,6 +576,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         name: name.trim(),
         description: description || null,
         child_template_ids: childIds,
+        child_configs: buildCompositeChildConfigs(selectedChildren),
         aggregation_enabled: aggregationEnabled,
         aggregation_function: aggregationFunction,
         composite_child_axis: compositeChildAxis,
@@ -556,13 +628,18 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     ? !!name.trim() && selectedChildren.length > 0
     : name.trim() &&
       (evalType === "code" ? code.trim() : instructions.trim()) &&
-      (source === "composite" || sourceReady);
+      (source === "composite" || sourceReady || hasDataInjection);
 
   // Variables from instructions
   const variables = useMemo(() => {
-    const codeStdVars =
-      evalType === "code" ? ["input", "output", "expected"] : [];
-    if (!instructions && evalType !== "code") return [];
+    if (evalType === "code") {
+      // Live-parse the user's `def evaluate(...)` signature so adding /
+      // renaming a parameter immediately surfaces a new mapping row.
+      const liveParams = extractCodeEvaluateParams(code, codeLanguage);
+      if (liveParams.length > 0) return [...new Set(liveParams)];
+      return ["input", "output", "expected"];
+    }
+    if (!instructions) return [];
     let vars;
     if (templateFormat === "jinja") {
       vars = extractJinjaVariables(instructions || "");
@@ -571,8 +648,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         (instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
       vars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
     }
-    return [...new Set([...codeStdVars, ...vars])];
-  }, [instructions, evalType, templateFormat]);
+    return [...new Set(vars)];
+  }, [instructions, evalType, templateFormat, code, codeLanguage]);
 
   return (
     <Box
@@ -775,23 +852,27 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 <Tabs
                   value={evalType}
                   onChange={(_, val) => setEvalType(val)}
+                  variant="standard"
                   TabIndicatorProps={{ style: { display: "none" } }}
                   sx={{
-                    minHeight: 28,
+                    width: "fit-content",
+                    minHeight: 32,
                     "& .MuiTab-root": {
+                      height: 28,
                       minHeight: 28,
+                      maxHeight: 28,
                       px: 1.5,
                       py: 0,
                       mr: "0px !important",
                       textTransform: "none",
                       fontSize: "13px",
+                      lineHeight: "28px",
                       borderRadius: "6px",
                     },
                     border: "1px solid",
                     borderColor: "divider",
                     p: "2px",
                     borderRadius: "8px",
-                    width: "fit-content",
                     bgcolor: (theme) =>
                       theme.palette.mode === "dark"
                         ? "rgba(255,255,255,0.04)"
@@ -843,6 +924,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     datasetColumns={datasetColumns}
                     datasetJsonSchemas={datasetJsonSchemas}
                     mappedVariables={sourceMapping}
+                    activeContextOptions={contextOptions}
+                    onActiveContextOptionsChange={setContextOptions}
                   />
                   {errors.instructions && (
                     <Typography variant="caption" color="error.main">
@@ -877,6 +960,11 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     selectedDatasets={fewShotExamples}
                     onChange={setFewShotExamples}
                   />
+                  {errors.instructions && (
+                    <Typography variant="caption" color="error.main">
+                      {errors.instructions}
+                    </Typography>
+                  )}
                 </>
               )}
 
@@ -920,7 +1008,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     >
                       <Typography variant="caption">0</Typography>
                       <Slider
-                        value={passThreshold * 100}
+                        value={Math.round(passThreshold * 100)}
                         onChange={(_, val) =>
                           handlePassThresholdChange(val / 100)
                         }
@@ -978,7 +1066,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   />
                 </Box>
               )}
-
             </Box>
           }
           rightPanel={
@@ -1086,6 +1173,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    onReadyChange={handleSourceReadyChange}
+                    onRowTypeChange={handleSourceRowTypeChange}
                     isComposite={isComposite}
                     compositeAdhocConfig={compositeAdhocConfig}
                   />
@@ -1099,7 +1188,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    onReadyChange={handleSourceReadyChange}
                     isComposite={isComposite}
+                    initialRunTestId={testId}
+                    initialExecutionId={executionId}
                     compositeAdhocConfig={compositeAdhocConfig}
                   />
                 )}
@@ -1179,7 +1271,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
             </Typography>
           </Box>
         )}
-        {!sourceReady && !testError && !testPassed && (
+        {!sourceReady && !hasDataInjection && !testError && !testPassed && (
           <Typography
             variant="caption"
             color="text.disabled"
@@ -1190,28 +1282,30 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
           </Typography>
         )}
 
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={handleTestEvaluation}
-          disabled={
-            isTesting ||
-            !sourceReady ||
-            !draftId ||
-            isComposite ||
-            source === "workbench"
-          }
-          startIcon={
-            isTesting ? (
-              <CircularProgress size={14} />
-            ) : (
-              <Iconify icon="mdi:play-circle-outline" width={16} />
-            )
-          }
-          sx={{ textTransform: "none" }}
-        >
-          {isTesting ? "Testing..." : "Test Evaluation"}
-        </Button>
+        <ShowComponent condition={!hasDataInjection}>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={handleTestEvaluation}
+            disabled={
+              isTesting ||
+              (!sourceReady && !hasDataInjection) ||
+              !draftId ||
+              isComposite ||
+              source === "workbench"
+            }
+            startIcon={
+              isTesting ? (
+                <CircularProgress size={14} />
+              ) : (
+                <Iconify icon="mdi:play-circle-outline" width={16} />
+              )
+            }
+            sx={{ textTransform: "none" }}
+          >
+            {isTesting ? "Testing..." : "Test Evaluation"}
+          </Button>
+        </ShowComponent>
 
         <LoadingButton
           variant="contained"

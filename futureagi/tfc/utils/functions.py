@@ -14,10 +14,7 @@ from model_hub.models.develop_dataset import Cell, Column
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from tfc.utils.clickhouse import ClickHouseClientSingleton
-try:
-    from ee.usage.models.usage import APICallStatusChoices
-except ImportError:
-    APICallStatusChoices = None
+from tfc.constants.api_calls import APICallStatusChoices
 
 
 def add_one_day_in_date(date_str):
@@ -549,8 +546,7 @@ def calculate_column_average(column_id, row_ids=None):
                                                 sum(cell_scores) / len(cell_scores)
                                             )
                             except Exception as e:
-                                logger.error(f"Error processing cell: {str(e)}")
-                                traceback.print_exc()
+                                logger.warning(f"Error processing cell: {str(e)}")
                                 continue
                         if valid_scores:
                             stats["average"] = round(
@@ -608,7 +604,7 @@ def calculate_column_average(column_id, row_ids=None):
                             stats["success_rate"] = stats["average"]
 
                 except UserEvalMetric.DoesNotExist:
-                    logger.error(
+                    logger.warning(
                         f"UserEvalMetric does not exist for column {column_id}"
                     )
                     stats["average"] = None

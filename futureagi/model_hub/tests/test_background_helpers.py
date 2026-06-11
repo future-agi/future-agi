@@ -433,7 +433,7 @@ class TestCreateKnowledgeBaseEntitlements:
         mock_kb_filter,
         mock_user_get,
     ):
-        from ee.usage.models.usage import APICallStatusChoices
+        from tfc.constants.api_calls import APICallStatusChoices
         from model_hub.views.develop_dataset import CreateKnowledgeBaseView
 
         view = CreateKnowledgeBaseView()

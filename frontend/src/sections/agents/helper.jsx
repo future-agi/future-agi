@@ -10,10 +10,9 @@ import EvalCellRenderer from "../test-detail/CellRenderers/EvalCellRenderer";
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import { Skeleton } from "@mui/material";
+import { Box, Skeleton } from "@mui/material";
 import { AGENT_TYPES, isLiveKitProvider } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
-import headerComponentLabels from "./headerComponetLabels";
 import NewAnnotationCellRenderer from "./NewAnnotationCellRenderer";
 
 export const agentDefinitionSections = [
@@ -137,42 +136,42 @@ export const createAgentDefinitionSchema = (options) => {
         !isLiveKitProvider(data.provider)
       ) {
         // Phone number is optional when API key + assistant ID are provided (web bridge)
-        const hasWebBridgeCreds =
-          data.apiKey?.trim() && data.assistantId?.trim();
+        // const hasWebBridgeCreds =
+        //   data.apiKey?.trim() && data.assistantId?.trim();
         const hasCountryCode = !!data.countryCode?.trim();
         const hasContactNumber = !!data.contactNumber?.trim();
-        if (!hasWebBridgeCreds) {
-          if (!hasCountryCode) {
-            ctx.addIssue({
-              path: ["countryCode"],
-              message: "Country code is required",
-              code: z.ZodIssueCode.custom,
-            });
-          }
-          if (!hasContactNumber) {
-            ctx.addIssue({
-              path: ["contactNumber"],
-              message: "Contact number is required",
-              code: z.ZodIssueCode.custom,
-            });
-          }
-        } else {
-          // Both are optional, but if one is provided the other is required
-          if (hasContactNumber && !hasCountryCode) {
-            ctx.addIssue({
-              path: ["countryCode"],
-              message: "Country code is required when contact number is provided",
-              code: z.ZodIssueCode.custom,
-            });
-          }
-          if (hasCountryCode && !hasContactNumber) {
-            ctx.addIssue({
-              path: ["contactNumber"],
-              message: "Contact number is required when country code is provided",
-              code: z.ZodIssueCode.custom,
-            });
-          }
+        // if (!hasWebBridgeCreds) {
+        if (!hasCountryCode) {
+          ctx.addIssue({
+            path: ["countryCode"],
+            message: "Country code is required",
+            code: z.ZodIssueCode.custom,
+          });
         }
+        if (!hasContactNumber) {
+          ctx.addIssue({
+            path: ["contactNumber"],
+            message: "Contact number is required",
+            code: z.ZodIssueCode.custom,
+          });
+        }
+        // } else {
+        // Both are optional, but if one is provided the other is required
+        if (hasContactNumber && !hasCountryCode) {
+          ctx.addIssue({
+            path: ["countryCode"],
+            message: "Country code is required when contact number is provided",
+            code: z.ZodIssueCode.custom,
+          });
+        }
+        if (hasCountryCode && !hasContactNumber) {
+          ctx.addIssue({
+            path: ["contactNumber"],
+            message: "Contact number is required when country code is provided",
+            code: z.ZodIssueCode.custom,
+          });
+        }
+        // }
         if (hasContactNumber) {
           // Validate contact number format only if it's provided
           const trimmedNumber = data.contactNumber.trim();
@@ -381,16 +380,36 @@ export const generateEvalColumnsFromConfig = (items = []) => {
   return items.map((item) => {
     const evalId = item.id;
     const displayName = item.name?.replace(/_/g, " ") || evalId;
+    const isReason = item.source_field === "reason";
+    const dataKey = isReason ? item.parent_eval_id : evalId;
     return {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,
       flex: 1,
-      minWidth: 140,
+      minWidth: isReason ? 240 : 140,
+      hide: item.is_visible === false,
       headerComponent: CallLogsHeaderCellRenderer,
       headerComponentParams: { displayName },
-      valueGetter: (params) => params.data?.eval_outputs?.[evalId] || {},
+      valueGetter: (params) => params.data?.eval_outputs?.[dataKey] || {},
       cellRenderer: (params) => {
-        const evalData = params?.data?.eval_outputs?.[evalId] || {};
+        const evalData = params?.data?.eval_outputs?.[dataKey] || {};
+        if (isReason) {
+          const reason = evalData?.reason;
+          return (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                height: "100%",
+                width: "100%",
+                padding: "4px 8px",
+                color: "text.primary",
+              }}
+            >
+              {reason || "-"}
+            </Box>
+          );
+        }
         return (
           <EvalCellRenderer
             value={{
@@ -435,9 +454,8 @@ const generateAnnotationColumnsFromConfig = (
     }
   }
 
-  return Object.entries(grouping).map(([groupName, metrics]) => ({
-    headerName: groupName,
-    children: metrics.map((metric) => {
+  return Object.values(grouping).flatMap((metrics) =>
+    metrics.flatMap((metric) => {
       const metricId = metric?.id;
       const displayName = metric?.name?.replace(/_/g, " ") || metricId;
       const outputType = metric?.annotation_label_type;
@@ -446,7 +464,6 @@ const generateAnnotationColumnsFromConfig = (
         outputType === "text" || expandedMetrics.includes(metricId);
 
       if (!isExpanded) {
-        // Collapsed: flat column under group → 2 header rows
         return {
           headerName: displayName,
           field: `annotation_outputs.${metricId}`,
@@ -457,6 +474,7 @@ const generateAnnotationColumnsFromConfig = (
             displayName: displayName,
             metricId,
             isTextType: outputType === "text",
+            showActions: true,
           },
           valueGetter: (params) => {
             const metricData = params?.data?.annotation_outputs?.[metricId];
@@ -474,7 +492,8 @@ const generateAnnotationColumnsFromConfig = (
         };
       }
 
-      // Expanded: nested group → 3 header rows with annotator columns
+      // Expanded columns stay flat so AG Grid does not create a tall global
+      // grouped-header row that makes unrelated columns look oversized.
       const metricAnnotators = Object.values(metric?.annotators || {});
 
       const avgColumn = {
@@ -482,10 +501,14 @@ const generateAnnotationColumnsFromConfig = (
         field: `annotation_outputs.${metricId}.score`,
         flex: 1,
         minWidth: 200,
-        headerComponent: headerComponentLabels,
+        headerComponent: AnnotationHeaderCellRenderer,
         headerComponentParams: {
-          displayName: "Avg",
-          isAverage: true,
+          displayName,
+          metricId,
+          isTextType: false,
+          subLabel: "Avg",
+          subLabelType: "average",
+          showActions: true,
         },
         valueGetter: (params) => {
           const metricData = params?.data?.annotation_outputs?.[metricId];
@@ -508,10 +531,14 @@ const generateAnnotationColumnsFromConfig = (
         flex: 1,
         minWidth: 200,
         ...(outputType === "text" ? { wrapText: true, autoHeight: true } : {}),
-        headerComponent: headerComponentLabels,
+        headerComponent: AnnotationHeaderCellRenderer,
         headerComponentParams: {
-          displayName: annotator?.user_name,
-          isAverage: false,
+          displayName,
+          metricId,
+          isTextType: outputType === "text",
+          subLabel: annotator?.user_name,
+          subLabelType: "person",
+          showActions: outputType === "text",
         },
         valueGetter: (params) => {
           const annotatorData =
@@ -531,21 +558,12 @@ const generateAnnotationColumnsFromConfig = (
         },
       }));
 
-      return {
-        headerName: displayName,
-        headerGroupComponent: AnnotationHeaderCellRenderer,
-        headerGroupComponentParams: {
-          displayName,
-          metricId,
-          isTextType: outputType === "text",
-        },
-        children: [
-          ...(outputType !== "text" ? [avgColumn] : []),
-          ...annotatorColumns,
-        ],
-      };
+      return [
+        ...(outputType !== "text" ? [avgColumn] : []),
+        ...annotatorColumns,
+      ];
     }),
-  }));
+  );
 };
 
 // Generate AG Grid columns from evalOutputs
@@ -557,32 +575,6 @@ export const getCallLogsColumnDefs = (
   config = null,
   expandedMetrics = [],
 ) => {
-  if (isLoading) {
-    return [
-      {
-        headerName:
-          agentType === AGENT_TYPES.CHAT ? "Chat Details" : "Call Details",
-        field: "call_summary",
-        cellRenderer: LoadingSkeleton,
-      },
-      {
-        headerName: "Participant",
-        field: "customer_name",
-        cellRenderer: LoadingSkeleton,
-      },
-      {
-        headerName: "Duration",
-        field: "duration_seconds",
-        cellRenderer: LoadingSkeleton,
-      },
-      {
-        headerName: "Status",
-        field: "status",
-        cellRenderer: LoadingSkeleton,
-      },
-    ];
-  }
-
   const evalItems = [];
   const annotationItems = [];
   (config || []).forEach((item) => {
@@ -598,7 +590,8 @@ export const getCallLogsColumnDefs = (
   const baseColumns = [
     // ── Identity ──────────────────────────────────────────────────────
     {
-      headerName: "Call Details",
+      headerName:
+        agentType === AGENT_TYPES.CHAT ? "Chat Details" : "Call Details",
       field: "call_summary",
       flex: 2,
       minWidth: 200,
@@ -609,6 +602,7 @@ export const getCallLogsColumnDefs = (
       field: "status",
       flex: 0,
       minWidth: 100,
+      width: 140,
       cellRenderer: CallLogsCellRenderer,
     },
     {
@@ -753,6 +747,14 @@ export const getCallLogsColumnDefs = (
     },
   ];
 
+  if (isLoading) {
+    return baseColumns.map((column) => ({
+      ...column,
+      cellRenderer: LoadingSkeleton,
+      valueGetter: undefined,
+    }));
+  }
+
   return [...baseColumns, ...evalColumns, ...annotationColumns];
 };
 
@@ -797,18 +799,19 @@ export const useCallLogs = ({
   params,
   enabled = true,
 }) => {
-  let endpoint = endpoints.agentDefinitions.getCallLogs(id, version);
-  let condition = !!id && !!version;
-  let queryKey = ["callLogs", module, id, version, pageLimit, params, page];
-  if (module === "project") {
-    endpoint = endpoints.project.getCallLogs;
-    condition = !!id;
-    queryKey = ["callLogs", module, id, pageLimit, params, page];
-  }
+  const isProjectModule = module === "project";
+  const condition = isProjectModule ? !!id : !!id && !!version;
+  const queryKey = isProjectModule
+    ? ["callLogs", module, id, pageLimit, params, page]
+    : ["callLogs", module, id, version, pageLimit, params, page];
+  const getEndpoint = () =>
+    isProjectModule
+      ? endpoints.project.getCallLogs
+      : endpoints.agentDefinitions.getCallLogs(id, version);
   const { data, isLoading, error } = useQuery({
     queryKey: queryKey,
     queryFn: () =>
-      axios.get(endpoint, {
+      axios.get(getEndpoint(), {
         params: { page, page_size: pageLimit, ...params },
       }),
     enabled: condition && enabled,
@@ -821,12 +824,17 @@ export const prefetchCallLogs = (
   queryClient,
   { module, id, version, page, pageLimit, params },
 ) => {
-  let endpoint = endpoints.agentDefinitions.getCallLogs(id, version);
-  let queryKey = ["callLogs", module, id, version, pageLimit, params, page];
-  if (module === "project") {
-    endpoint = endpoints.project.getCallLogs;
-    queryKey = ["callLogs", module, id, pageLimit, params, page];
+  const isProjectModule = module === "project";
+  const condition = isProjectModule ? !!id : !!id && !!version;
+  if (!condition) {
+    return;
   }
+  const endpoint = isProjectModule
+    ? endpoints.project.getCallLogs
+    : endpoints.agentDefinitions.getCallLogs(id, version);
+  const queryKey = isProjectModule
+    ? ["callLogs", module, id, pageLimit, params, page]
+    : ["callLogs", module, id, version, pageLimit, params, page];
   queryClient.prefetchQuery({
     queryKey,
     queryFn: () =>

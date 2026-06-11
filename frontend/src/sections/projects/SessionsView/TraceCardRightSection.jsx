@@ -54,6 +54,7 @@ const TraceCardRightSection = ({
         padding: 2,
         position: "relative",
         height: "440px",
+        minWidth: 0,
       }}
     >
       {/* <Grid
@@ -79,6 +80,7 @@ const TraceCardRightSection = ({
           direction={"row"}
           justifyContent={"space-between"}
           alignItems={"center"}
+          gap={1}
         >
           <Typography
             fontWeight={"fontWeightMedium"}
@@ -87,7 +89,11 @@ const TraceCardRightSection = ({
           >
             Trace ID:
           </Typography>
-          <Typography typography={"s1"} color={"text.primary"}>
+          <Typography
+            typography={"s1"}
+            color={"text.primary"}
+            sx={{ minWidth: 0, overflowWrap: "anywhere", textAlign: "right" }}
+          >
             {traceId}
           </Typography>
         </Stack>

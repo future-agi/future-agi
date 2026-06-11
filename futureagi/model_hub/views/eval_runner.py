@@ -11,6 +11,7 @@ import structlog
 # from ee.agenthub.feedback_agent_updated.utils import RAG
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import close_old_connections, models, transaction
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -26,13 +27,13 @@ from accounts.utils import get_request_organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.fi_evals.grounded.similarity import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
-from common.utils.data_injection import normalize as _di_normalize
 from analytics.utils import (
     MixpanelEvents,
     MixpanelSources,
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from common.utils.data_injection import normalize as _di_normalize
 from evaluations.constants import FUTUREAGI_EVAL_TYPES  # noqa: E402
 from model_hub.models.choices import (
     CellStatus,
@@ -49,8 +50,18 @@ from model_hub.models.develop_dataset import (
     KnowledgeBaseFile,
     Row,
 )
-from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.models.evals_metric import (
+    EvalTemplate,
+    EvalTemplateVersion,
+    UserEvalMetric,
+)
 from model_hub.models.run_prompt import RunPrompter
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    CustomEvalTemplateCreateResponseSerializer,
+    DatasetEvalStatsResponseSerializer,
+    ModelHubStringResultResponseSerializer,
+)
 from model_hub.serializers.develop_optimisation import UserEvalMetricSerializer
 from model_hub.serializers.eval_runner import (
     CustomEvalTemplateCreateSerializer,
@@ -64,6 +75,9 @@ from model_hub.utils.json_path_resolver import (  # noqa: E402
     resolve_json_path,
 )
 from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+from tfc.middleware.workspace_context import get_current_workspace
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import (
     get_error_for_api_status,
     get_error_message,
@@ -72,17 +86,75 @@ from tfc.utils.error_codes import (
 from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
+
 try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
-try:
-    from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request, refund_cost_for_api_call
+    from ee.usage.utils.usage_entries import (
+        count_tiktoken_tokens,
+        log_and_deduct_cost_for_api_request,
+        refund_cost_for_api_call,
+    )
 except ImportError:
     count_tiktoken_tokens = None
     log_and_deduct_cost_for_api_request = None
     refund_cost_for_api_call = None
+
+
+def _request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _request_workspace_filter(request, field_name="workspace"):
+    workspace = getattr(request, "workspace", None) or get_current_workspace()
+    if not workspace:
+        return models.Q()
+
+    if getattr(workspace, "is_default", False):
+        return (
+            models.Q(**{field_name: workspace})
+            | models.Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization_id": workspace.organization_id,
+                }
+            )
+            | models.Q(**{f"{field_name}__isnull": True})
+        )
+
+    return models.Q(**{field_name: workspace})
+
+
+def _request_dataset_queryset(request):
+    return Dataset.objects.filter(
+        _request_workspace_filter(request),
+        organization=_request_organization(request),
+        deleted=False,
+    )
+
+
+def _request_eval_template_queryset(request):
+    organization = _request_organization(request)
+    return EvalTemplate.no_workspace_objects.filter(deleted=False).filter(
+        models.Q(owner=OwnerChoices.SYSTEM.value)
+        | (
+            models.Q(owner=OwnerChoices.USER.value, organization=organization)
+            & _request_workspace_filter(request)
+        )
+    )
+
+
+def _mapped_column_ids(config):
+    mapping = config.get("mapping") if isinstance(config, dict) else None
+    if not isinstance(mapping, dict):
+        return set()
+
+    column_ids = set()
+    for value in mapping.values():
+        if not isinstance(value, str):
+            continue
+        column_id_or_name, _json_path = _extract_column_id_and_path(value)
+        if is_uuid(str(column_id_or_name)):
+            column_ids.add(str(column_id_or_name))
+    return column_ids
 
 
 def _format_messages_to_prompt_chain(messages):
@@ -284,7 +356,7 @@ def _get_cell_value_with_json_path(cell, json_path):
 
     # Try to parse the cell value as JSON and extract the path
     parsed_json, is_valid = parse_json_safely(cell.value)
-    if is_valid and parsed_json:
+    if is_valid:
         return resolve_json_path(parsed_json, json_path)
 
     # If not valid JSON, return the original value
@@ -1026,16 +1098,18 @@ class EvaluationRunner:
                 mapping_error,
                 config_error,
                 eval_instance,
+                partial_input_warning,
             ) = self._run_evaluation(row, mappings, config)
             # Format response first so we can access the formatted data
-            response = self._format_response(eval_result)
+            response = self._format_response(
+                eval_result, partial_input_warning=partial_input_warning
+            )
             # Reason column is always-on for experiments (matches dataset
             # behavior in develop_dataset.py:7102-7128). For datasets we
             # still respect the legacy config.reason_column flag.
-            wants_reason = (
-                bool(self.experiment_dataset)
-                or self.user_eval_metric.config.get("reason_column")
-            )
+            wants_reason = bool(
+                self.experiment_dataset
+            ) or self.user_eval_metric.config.get("reason_column")
             if wants_reason and not self.optimize:
                 reason_column_name = f"{self.user_eval_metric.name}-reason"
                 reason_column = self._create_reason_column(
@@ -1052,35 +1126,35 @@ class EvaluationRunner:
                     )
             value = self.format_output(response, row)
 
-            config_dict = json.loads(api_call_log_row.config)
-            config_dict.update(
-                {
-                    "output": {
-                        "output": value,
-                        "reason": (
-                            response["reason"] if "reason" in response.keys() else None
-                        ),
-                    }
+            if api_call_log_row is not None:
+                config_dict = json.loads(api_call_log_row.config)
+                output_payload = {
+                    "output": value,
+                    "reason": (
+                        response["reason"] if "reason" in response.keys() else None
+                    ),
                 }
-            )
-            input_types = {}
-            for key, mapping_value in mappings.items():
-                # Extract base column ID to look up data type
-                base_col_id, _ = (
-                    _extract_column_id_and_path(str(mapping_value))
-                    if mapping_value
-                    else (None, None)
-                )
-                data_type = col_map.get(str(base_col_id)) if base_col_id else None
-                input_types[key] = (
-                    data_type if data_type in ["image", "images", "audio"] else "text"
-                )
-            config_dict.update({"input_data_types": input_types})
-            # logger.info(f' ----- INSIDE EvaluationRunner : function _process_eval_result | config_dict : {config_dict} -----')
-            api_call_log_row.config = json.dumps(config_dict)
-            api_call_log_row.save()
+                if response.get("warnings"):
+                    output_payload["warnings"] = response["warnings"]
+                config_dict.update({"output": output_payload})
+                input_types = {}
+                for key, mapping_value in mappings.items():
+                    base_col_id, _ = (
+                        _extract_column_id_and_path(str(mapping_value))
+                        if mapping_value
+                        else (None, None)
+                    )
+                    data_type = col_map.get(str(base_col_id)) if base_col_id else None
+                    input_types[key] = (
+                        data_type
+                        if data_type in ["image", "images", "audio"]
+                        else "text"
+                    )
+                config_dict.update({"input_data_types": input_types})
+                api_call_log_row.config = json.dumps(config_dict)
+                api_call_log_row.save()
 
-            self._handle_api_call_status(api_call_log_row, CellStatus.PASS.value)
+                self._handle_api_call_status(api_call_log_row, CellStatus.PASS.value)
 
             # Post-eval cost-based usage emit
             try:
@@ -1096,12 +1170,21 @@ class EvaluationRunner:
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
-                billing_config = BillingConfig.get()
+                billing_config = None
+                if BillingConfig is not None:
+                    billing_config = BillingConfig.get()
                 eval_cost = getattr(eval_instance, "cost", {})
                 llm_cost = eval_cost.get("total_cost", 0)
-                per_run_fee = billing_config.get_eval_per_run_fee()
+                per_run_fee = (
+                    billing_config.get_eval_per_run_fee() if billing_config else 0
+                )
                 actual_cost = llm_cost + per_run_fee
+                _token_usage = getattr(eval_instance, "token_usage", {})
 
                 # Also compute fallback cost for comparison logging
                 _fallback_cost = 0
@@ -1110,7 +1193,6 @@ class EvaluationRunner:
                         calculate_total_cost,
                     )
 
-                    _token_usage = getattr(eval_instance, "token_usage", {})
                     _model = self.user_eval_metric.model or "unknown"
                     _fallback = calculate_total_cost(_model, _token_usage)
                     _fallback_cost = _fallback.get("total_cost", 0)
@@ -1128,7 +1210,11 @@ class EvaluationRunner:
                     token_usage=getattr(eval_instance, "token_usage", {}),
                 )
 
-                credits = billing_config.calculate_ai_credits(actual_cost)
+                credits = (
+                    billing_config.calculate_ai_credits(actual_cost)
+                    if billing_config
+                    else 0
+                )
                 emit_org_id = str(
                     self.organization_id
                     or (
@@ -1146,28 +1232,35 @@ class EvaluationRunner:
                 _is_code_eval = getattr(self.eval_template, "eval_type", "") == "code"
                 eval_event_type = (
                     BillingEventType.CODE_EVALUATOR.value
-                    if _is_code_eval
+                    if _is_code_eval and BillingEventType is not None
                     else _get_api_call_type(self.user_eval_metric.model)
                 )
-                emit(
-                    UsageEvent(
-                        org_id=emit_org_id,
-                        event_type=eval_event_type,
-                        amount=credits,
-                        properties={
-                            "source": self.source,
-                            "source_id": str(
-                                self.source_id
-                                or (
-                                    str(self.user_eval_metric.template.id)
-                                    if self.user_eval_metric
-                                    else ""
-                                )
-                            ),
-                            "raw_cost_usd": str(actual_cost),
-                        },
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
+
+                    emit(
+                        UsageEvent(
+                            org_id=emit_org_id,
+                            event_type=eval_event_type,
+                            amount=credits,
+                            properties={
+                                "source": self.source,
+                                "source_id": str(
+                                    self.source_id
+                                    or (
+                                        str(self.user_eval_metric.template.id)
+                                        if self.user_eval_metric
+                                        else ""
+                                    )
+                                ),
+                                "raw_cost_usd": str(actual_cost),
+                                **token_usage_properties(_token_usage),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass
 
@@ -1175,7 +1268,9 @@ class EvaluationRunner:
             # (UserEvalMetric) or directly on the eval template.
             should_run_error_localizer = bool(
                 self.user_eval_metric.error_localizer
-                or getattr(self.user_eval_metric.template, "error_localizer_enabled", False)
+                or getattr(
+                    self.user_eval_metric.template, "error_localizer_enabled", False
+                )
             )
             if should_run_error_localizer:
                 from model_hub.tasks.user_evaluation import (
@@ -1196,12 +1291,24 @@ class EvaluationRunner:
                         eval_result=value,
                         response=response,
                         cell=cell,
-                        log_id=str(api_call_log_row.log_id),
+                        log_id=(
+                            str(api_call_log_row.log_id) if api_call_log_row else None
+                        ),
                     )
 
         except Exception as e:
-            logger.exception(f"Error in evaluation of row: {str(e)}")
-            traceback.print_exc()
+            # Expected, handled validation failures (a required input was not
+            # mapped/provided, or the eval targets a cell that already errored)
+            # are user-driven, not bugs; the row is persisted as a failed result
+            # below. Downgrade only those to warning so genuine errors keep
+            # creating Sentry issues.
+            if str(e).startswith("No input received") or str(e) == get_error_message(
+                "EVALUATION_NOT_FOR_ERROR_CELL"
+            ):
+                logger.warning(f"Error in evaluation of row: {str(e)}")
+            else:
+                logger.exception(f"Error in evaluation of row: {str(e)}")
+                traceback.print_exc()
 
             # Use the centralized error handling function
             error_message = get_specific_error_message(e)
@@ -1211,10 +1318,9 @@ class EvaluationRunner:
 
             # Create reason column and cell with error status. Always-on for
             # experiments; respect legacy flag for datasets.
-            wants_reason = (
-                bool(self.experiment_dataset)
-                or self.user_eval_metric.config.get("reason_column")
-            )
+            wants_reason = bool(
+                self.experiment_dataset
+            ) or self.user_eval_metric.config.get("reason_column")
             if wants_reason and not self.optimize:
                 reason_column_name = f"{self.user_eval_metric.name}-reason"
                 reason_column = self._create_reason_column(
@@ -1225,7 +1331,9 @@ class EvaluationRunner:
                         self.dataset,
                         reason_column,
                         row,
-                        {"reason": "No reasoning available. Please rerun the evaluation."},
+                        {
+                            "reason": "No reasoning available. Please rerun the evaluation."
+                        },
                         "No reasoning available. Please rerun the evaluation.",
                         CellStatus.ERROR.value,
                     )
@@ -1296,6 +1404,9 @@ class EvaluationRunner:
                 }
             )
 
+        if log_and_deduct_cost_for_api_request is None:
+            return None
+
         api_call_log_row = log_and_deduct_cost_for_api_request(
             org if org else self.user_eval_metric.organization,
             api_call_type,
@@ -1317,7 +1428,6 @@ class EvaluationRunner:
             raise ValueError("API call not allowed : Error validating the api call.")
 
         if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            # Use the dedicated function to get the appropriate error message for this status
             error_message = get_error_for_api_status(api_call_log_row.status)
             raise ValueError(error_message)
 
@@ -1870,25 +1980,20 @@ class EvaluationRunner:
         # Build ordered inputs from mapping keys and row values.
         required_field, mapping = self._prepare_mapping_data(row, mappings)
         config_copy = config.copy()
+        kb_id = (
+            str(self.user_eval_metric.kb_id)
+            if self.user_eval_metric and self.user_eval_metric.kb_id
+            else None
+        )
         eval_instance = self._create_eval_instance(
             config=config,
             model=self.user_eval_metric.model,
-            kb_id=getattr(self.user_eval_metric, "kb_id", None),
+            kb_id=kb_id,
         )
 
         config_error = self._prepare_eval_config(config_copy)
         required_field_error = required_field
         mapping_error = mapping
-
-        def _is_empty_value(value):
-            """Return True when value is effectively empty."""
-            if value is None:
-                return True
-            if isinstance(value, str) and not value.strip():
-                return True
-            if isinstance(value, list) and all(not item for item in value):
-                return True
-            return False
 
         def _is_mapped(mapping_config):
             """Return True when a key is mapped to any column."""
@@ -1911,25 +2016,39 @@ class EvaluationRunner:
                     return True
             return False
 
-        # Use eval template config with row mappings.
+        # Mapping-validity check: a configured-but-unresolvable mapping is
+        # a real config error regardless of eval type. Surface it before
+        # the emptiness check so the user gets the specific error message.
         required_keys = []
         optional_keys = []
+        is_user_custom_eval = False
         if getattr(self.eval_template, "config", None):
             required_keys = self.eval_template.config.get("required_keys", [])
             optional_keys = self.eval_template.config.get("optional_keys", [])
+            is_user_custom_eval = self.eval_template.config.get("custom_eval", False)
 
-        # Validate mapped required/optional keys only.
+        # Emptiness rules live in the shared validator so dataset,
+        # playground, tracing, and SDK paths apply the same logic.
+        from model_hub.utils.eval_input_validation import (
+            is_empty_value,
+            validate_eval_inputs,
+        )
+
+        # Validate mapped required/optional keys only. Skip for user-built
+        # custom evals so empty cells flow through to the eval (the template
+        # can define explicit handling, e.g. a "No Input" choice). This keeps
+        # the dataset path consistent with the eval playground, which never
+        # applied this row-level guard. For custom evals the shared
+        # validator below still enforces the all-empty safety net.
         keys_to_check = list(set(required_keys) | set(optional_keys))
-        if keys_to_check:
+        if keys_to_check and not is_user_custom_eval:
             for key in keys_to_check:
-                # Mapping config indicates whether the user mapped this key.
                 mapping_config = (
                     mappings.get(key) if isinstance(mappings, dict) else None
                 )
                 # Skip unmapped keys.
                 if not _is_mapped(mapping_config):
                     continue
-
                 # Raise if mapped key has no row value.
                 if key not in required_field:
                     if not _has_valid_mapping(mapping_config, row.dataset_id):
@@ -1939,13 +2058,43 @@ class EvaluationRunner:
                     raise ValueError(
                         f"No input received for '{key}'. Please check your input."
                     )
-
                 # Map back from key to row value via the ordered lists.
                 value = mapping[required_field.index(key)]
-                if _is_empty_value(value):
+                if is_empty_value(value):
                     raise ValueError(
                         f"No input received for '{key}'. Please check your input."
                     )
+
+        values_for_validation = {
+            key: mapping[required_field.index(key)]
+            for key in required_field
+            if key in keys_to_check
+        }
+        mapped_keys_for_validation = set()
+        # Mapped-but-unresolved keys count as empty so the all-empty
+        # safety net can still fire for custom evals.
+        for key in keys_to_check:
+            mapping_config = mappings.get(key) if isinstance(mappings, dict) else None
+            if _is_mapped(mapping_config):
+                mapped_keys_for_validation.add(key)
+                if key not in values_for_validation:
+                    values_for_validation[key] = None
+
+        partial_input_warning, _normalized_values = validate_eval_inputs(
+            self.eval_template,
+            values_for_validation,
+            mapped_keys=mapped_keys_for_validation,
+        )
+        # The dataset path runs rows in parallel via ThreadPoolExecutor,
+        # so we cannot stash this on self — sibling threads would race and
+        # lose each other's warnings. Threaded through the return tuple
+        # and into _format_response per-row instead.
+        #
+        # Note: the dataset path builds kwargs separately via map_fields
+        # below, so normalized_values from the validator isn't fed into
+        # eval_instance.run here. The map_fields path already handles
+        # missing/empty cells; this validator's role on the dataset
+        # path is the all-empty guard + warning attach.
 
         # Validate param modalities for function evals (deterministic evals
         # validate inside their own _validate_param_modalities).
@@ -2063,10 +2212,9 @@ class EvaluationRunner:
         _di_raw = {}
         if self.user_eval_metric and self.user_eval_metric.config:
             _uem_cfg = self.user_eval_metric.config
-            _di_raw = (
-                _uem_cfg.get("run_config", {}).get("data_injection", {})
-                or _uem_cfg.get("data_injection", {})
-            )
+            _di_raw = _uem_cfg.get("run_config", {}).get(
+                "data_injection", {}
+            ) or _uem_cfg.get("data_injection", {})
         if not _di_raw and self.eval_template:
             _di_raw = self.eval_template.config.get("data_injection", {})
         _di = _di_normalize(_di_raw)
@@ -2074,9 +2222,9 @@ class EvaluationRunner:
         if _di["full_row"] and "row_context" not in _mapped:
             try:
                 row_dict = {}
-                cells = Cell.objects.filter(
-                    row=row, deleted=False
-                ).select_related("column")
+                cells = Cell.objects.filter(row=row, deleted=False).select_related(
+                    "column"
+                )
                 for cell in cells:
                     col_name = cell.column.name if cell.column else None
                     if not col_name:
@@ -2099,6 +2247,7 @@ class EvaluationRunner:
             mapping_error,
             config_error,
             eval_instance,
+            partial_input_warning,
         )
 
     def _prepare_mapping_data(self, row, mappings):
@@ -2238,8 +2387,10 @@ class EvaluationRunner:
         except Exception:
             logger.error(f"unable to retrieve rule prompt for column id : {column_id}")
 
-        input_token_count = count_tiktoken_tokens(
-            input_words_string, cell_values_image_urls
+        input_token_count = (
+            count_tiktoken_tokens(input_words_string, cell_values_image_urls)
+            if count_tiktoken_tokens
+            else 0
         )
         return input_token_count
 
@@ -2425,10 +2576,9 @@ class EvaluationRunner:
             # snake_case flags so downstream code never has to re-handle aliases.
             _uem_di = {}
             if self.user_eval_metric and self.user_eval_metric.config:
-                _uem_di = (
-                    self.user_eval_metric.config.get("run_config", {}).get("data_injection", {})
-                    or self.user_eval_metric.config.get("data_injection", {})
-                )
+                _uem_di = self.user_eval_metric.config.get("run_config", {}).get(
+                    "data_injection", {}
+                ) or self.user_eval_metric.config.get("data_injection", {})
             config["data_injection"] = _di_normalize(
                 _uem_di or self.eval_template.config.get("data_injection", {})
             )
@@ -2569,13 +2719,21 @@ class EvaluationRunner:
 
         return config
 
-    def _format_response(self, eval_result):
+    def _format_response(self, eval_result, partial_input_warning=None):
         """Format evaluation result response"""
         from evaluations.engine.formatting import extract_raw_result
 
         response = extract_raw_result(eval_result, self.eval_template)
         response["name"] = self.user_eval_metric.name
         response["model"] = ""  # Dataset path doesn't track model used
+
+        # Attach the per-row partial-input warning so the cell payload
+        # and the EvalLogger projection (output_metadata.warnings) both
+        # carry it. Threaded in as an argument because rows run in
+        # parallel — see _process_eval_result.
+        if partial_input_warning:
+            response.setdefault("warnings", []).append(partial_input_warning)
+
         return response
 
     def _handle_error(self, error):
@@ -2595,7 +2753,8 @@ class EvaluationRunner:
                 api_call_log_row.save(update_fields=["status"])
 
                 refund_config = {"evaluation_id": str(self.user_eval_metric_id)}
-                refund_cost_for_api_call(api_call_log_row, config=refund_config)
+                if refund_cost_for_api_call is not None:
+                    refund_cost_for_api_call(api_call_log_row, config=refund_config)
             except Exception as e:
                 logger.error(f"Error refunding cost for api call: {str(e)}")
         elif value == CellStatus.PASS.value and api_call_log_row:
@@ -3028,6 +3187,7 @@ class EvaluationRunner:
             self.load_user_eval_metric()
 
             from sdk.utils.helpers import _get_api_call_type
+
             try:
                 from ee.usage.services.metering import check_usage
             except ImportError:
@@ -3046,11 +3206,12 @@ class EvaluationRunner:
                 getattr(self.user_eval_metric, "model", None)
                 or ModelChoices.TURING_LARGE.value
             )
-            usage_check = check_usage(org_id, api_call_type)
-            if not usage_check.allowed:
-                self.user_eval_metric.status = StatusType.FAILED.value
-                self.user_eval_metric.save(update_fields=["status"])
-                raise ValueError(usage_check.reason or "Usage limit exceeded")
+            if check_usage is not None:
+                usage_check = check_usage(org_id, api_call_type)
+                if not usage_check.allowed:
+                    self.user_eval_metric.status = StatusType.FAILED.value
+                    self.user_eval_metric.save(update_fields=["status"])
+                    raise ValueError(usage_check.reason or "Usage limit exceeded")
 
             self.update_cell(row_ids=row_ids)
             logger.info(
@@ -3115,79 +3276,83 @@ class CustomEvalTemplateCreateView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=CustomEvalTemplateCreateSerializer,
+        responses={
+            200: CustomEvalTemplateCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         try:
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            serializer = CustomEvalTemplateCreateSerializer(data=request.data)
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
-                if (
-                    EvalTemplate.objects.filter(
-                        name=validated_data.get("name"),
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
-                        deleted=False,
-                    ).exists()
-                    or EvalTemplate.no_workspace_objects.filter(
-                        name=request.data.get("name"),
-                        owner=OwnerChoices.SYSTEM.value,
-                        deleted=False,
-                    ).exists()
-                ):
-                    return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
-
-                validated_data = prepare_user_eval_config(validated_data, bypass=False)
-                logger.debug(f"Prepared eval config: {validated_data}")
-                eval_template = EvalTemplate.objects.create(
+            validated_data = request.validated_data
+            if (
+                EvalTemplate.objects.filter(
                     name=validated_data.get("name"),
-                    organization=organization,
-                    owner=OwnerChoices.USER.value,
-                    eval_tags=validated_data.get("eval_tags"),
-                    config=(
-                        validated_data.get("configuration")
-                        if validated_data.get("configuration", None)
-                        else validated_data.get("config")
-                    ),
-                    choices=validated_data.get("choices"),
-                    description=validated_data.get("description"),
-                    criteria=validated_data.get("criteria"),
-                    multi_choice=validated_data.get("multi_choice"),
-                    proxy_agi=validated_data.get("config", {}).get("proxy_agi", True),
-                    visible_ui=validated_data.get("config", {}).get("visible_ui", True),
-                    model=validated_data.get("config", {}).get("model", "turing_small"),
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    deleted=False,
+                ).exists()
+                or EvalTemplate.no_workspace_objects.filter(
+                    name=validated_data.get("name"),
+                    owner=OwnerChoices.SYSTEM.value,
+                    deleted=False,
+                ).exists()
+            ):
+                return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
+
+            validated_data = prepare_user_eval_config(validated_data, bypass=False)
+            logger.debug(f"Prepared eval config: {validated_data}")
+            eval_template = EvalTemplate.objects.create(
+                name=validated_data.get("name"),
+                organization=organization,
+                owner=OwnerChoices.USER.value,
+                eval_tags=validated_data.get("eval_tags"),
+                config=(
+                    validated_data.get("configuration")
+                    if validated_data.get("configuration", None)
+                    else validated_data.get("config")
+                ),
+                choices=validated_data.get("choices"),
+                description=validated_data.get("description"),
+                criteria=validated_data.get("criteria"),
+                multi_choice=validated_data.get("multi_choice"),
+                proxy_agi=validated_data.get("config", {}).get("proxy_agi", True),
+                visible_ui=validated_data.get("config", {}).get("visible_ui", True),
+                model=validated_data.get("config", {}).get("model", "turing_large"),
+            )
+
+            # Create v0 version for the new template
+            try:
+                from model_hub.models.evals_metric import EvalTemplateVersion
+                from model_hub.utils.prompt_migration import (
+                    config_to_prompt_messages,
                 )
 
-                # Create v0 version for the new template
-                try:
-                    from model_hub.models.evals_metric import EvalTemplateVersion
-                    from model_hub.utils.prompt_migration import (
-                        config_to_prompt_messages,
+                template_config = eval_template.config or {}
+                prompt_messages = validated_data.get("prompt_messages")
+                if not prompt_messages:
+                    prompt_messages = config_to_prompt_messages(
+                        template_config,
+                        eval_template.criteria,
+                        template_config.get("eval_type_id"),
                     )
-
-                    template_config = eval_template.config or {}
-                    prompt_messages = validated_data.get("prompt_messages")
-                    if not prompt_messages:
-                        prompt_messages = config_to_prompt_messages(
-                            template_config,
-                            eval_template.criteria,
-                            template_config.get("eval_type_id"),
-                        )
-                    EvalTemplateVersion.objects.create_version(
-                        eval_template=eval_template,
-                        prompt_messages=prompt_messages,
-                        config_snapshot=template_config,
-                        criteria=eval_template.criteria,
-                        model=eval_template.model,
-                        user=request.user,
-                        organization=organization,
-                        workspace=getattr(eval_template, "workspace", None),
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create v0 for custom eval: {e}")
-            else:
-                return self._gm.bad_request(parse_serialized_errors(serializer))
+                EvalTemplateVersion.objects.create_version(
+                    eval_template=eval_template,
+                    prompt_messages=prompt_messages,
+                    config_snapshot=template_config,
+                    criteria=eval_template.criteria,
+                    model=eval_template.model,
+                    user=request.user,
+                    organization=organization,
+                    workspace=getattr(eval_template, "workspace", None),
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create v0 for custom eval: {e}")
 
             return self._gm.success_response({"eval_template_id": eval_template.id})
         except Exception as e:
@@ -3201,25 +3366,45 @@ class EvalTemplateCreateView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=EvalTemplateSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         try:
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            serializer = EvalTemplateSerializer(data=request.data)
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
-
-                EvalTemplate.objects.create(
-                    name=validated_data.get("name"),
-                    organization=organization,
-                    owner=validated_data.get("owner"),
-                    eval_tags=validated_data.get("eval_tags"),
-                    config=validated_data.get("config"),
+            workspace = getattr(request, "workspace", None)
+            validated_data = request.validated_data
+            owner = validated_data.get("owner", OwnerChoices.USER.value)
+            if owner != OwnerChoices.USER.value:
+                return self._gm.bad_request(
+                    "Only user-owned eval templates can be created through this endpoint."
                 )
 
-                return self._gm.success_response("success")
-            return self._gm.bad_request(parse_serialized_errors(serializer))
+            eval_template = EvalTemplate.objects.create(
+                name=validated_data.get("name"),
+                organization=organization,
+                workspace=workspace,
+                owner=owner,
+                eval_tags=validated_data.get("eval_tags"),
+                config=validated_data.get("config"),
+            )
+            EvalTemplateVersion.objects.create_version(
+                eval_template=eval_template,
+                config_snapshot=eval_template.config,
+                user=request.user,
+                organization=organization,
+                workspace=workspace,
+                eval_tags=eval_template.eval_tags,
+            )
+
+            return self._gm.success_response("success")
         except Exception as e:
             logger.exception(f"Error in creation of eval template: {str(e)}")
             return self._gm.bad_request(
@@ -3231,27 +3416,73 @@ class EvalUserTemplateCreateView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=EvalUserTemplateSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         try:
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
+            organization = _request_organization(request)
+            workspace = getattr(request, "workspace", None) or get_current_workspace()
+            validated_data = request.validated_data
+
+            dataset = (
+                _request_dataset_queryset(request)
+                .filter(id=validated_data.get("dataset_id"))
+                .first()
             )
-            serializer = EvalUserTemplateSerializer(data=request.data)
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
+            if not dataset:
+                return self._gm.not_found("Dataset not found")
 
-                UserEvalMetric.objects.create(
-                    name=validated_data.get("name"),
-                    organization=organization,
-                    dataset_id=validated_data.get("dataset_id"),
-                    template_id=validated_data.get("template_id"),
-                    config=validated_data.get("config"),
-                    user=request.user,
-                    model=validated_data.get("model", ModelChoices.TURING_LARGE.value),
+            template = (
+                _request_eval_template_queryset(request)
+                .filter(id=validated_data.get("template_id"))
+                .first()
+            )
+            if not template:
+                return self._gm.not_found("Eval template not found")
+
+            if UserEvalMetric.objects.filter(
+                _request_workspace_filter(request),
+                organization=organization,
+                dataset=dataset,
+                name=validated_data.get("name"),
+                deleted=False,
+            ).exists():
+                return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
+
+            mapped_column_ids = _mapped_column_ids(validated_data.get("config") or {})
+            if mapped_column_ids:
+                existing_column_ids = set(
+                    Column.objects.filter(
+                        id__in=mapped_column_ids,
+                        dataset=dataset,
+                        deleted=False,
+                    ).values_list("id", flat=True)
                 )
+                if {str(column_id) for column_id in existing_column_ids} != set(
+                    mapped_column_ids
+                ):
+                    return self._gm.bad_request(
+                        "Eval mapping contains columns outside the selected dataset."
+                    )
 
-                return self._gm.success_response("success")
-            return self._gm.bad_request(parse_serialized_errors(serializer))
+            UserEvalMetric.objects.create(
+                name=validated_data.get("name"),
+                organization=organization,
+                workspace=workspace,
+                dataset=dataset,
+                template=template,
+                config=validated_data.get("config"),
+                user=request.user,
+                model=validated_data.get("model", ModelChoices.TURING_LARGE.value),
+            )
+
+            return self._gm.success_response("success")
         except Exception as e:
             logger.exception(f"Error in creation of user eval template: {str(e)}")
             return self._gm.bad_request(
@@ -3320,6 +3551,9 @@ class DatasetEvalStatsView(APIView):
             )
         ]
 
+    @swagger_auto_schema(
+        responses={200: DatasetEvalStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, dataset_id):
         try:
             # Get all evaluation columns for this dataset

@@ -1,18 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, userEvent } from "src/utils/test-utils";
 import FilterChips from "../FilterChips";
-
-// FilterChips uses snake_case extraFilters and splits each chip into three
-// <Typography> elements (field / op / value), so we query by function matchers.
-const textMatcher = (expected) => (content, node) => {
-  // Concatenate the full text of the element and all descendants.
-  const hasText = (el) => el?.textContent === expected;
-  const elementMatches = hasText(node);
-  const childrenDontMatch = Array.from(node?.children || []).every(
-    (child) => !hasText(child),
-  );
-  return elementMatches && childrenDontMatch;
-};
 
 describe("FilterChips", () => {
   it("renders nothing when no filters are active", () => {
@@ -66,6 +54,39 @@ describe("FilterChips", () => {
     expect(screen.getByText("ERROR")).toBeInTheDocument();
   });
 
+  it("renders annotator ids using the provided name and email label", () => {
+    render(
+      <FilterChips
+        extraFilters={[
+          {
+            column_id: "annotator",
+            display_name: "Annotator",
+            filter_config: {
+              filter_op: "in",
+              filter_value: ["e1f8e455-9248-4aec-a510-ead35a946235"],
+            },
+          },
+        ]}
+        fieldLabelMap={{
+          annotator: {
+            "e1f8e455-9248-4aec-a510-ead35a946235":
+              "Kartik (kartik.nvj@futureagi.com)",
+          },
+        }}
+        onRemoveFilter={vi.fn()}
+        onClearAll={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Annotator")).toBeInTheDocument();
+    expect(
+      screen.getByText("Kartik (kartik.nvj@futureagi.com)"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("e1f8e455-9248-4aec-a510-ead35a946235"),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows a Clear button when chips are present", () => {
     render(
       <FilterChips
@@ -98,6 +119,36 @@ describe("FilterChips", () => {
     );
     screen.getByText("Clear").click();
     expect(onClearAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes clicked chips and the add button as popover anchors", async () => {
+    const user = userEvent.setup();
+    const onAddFilter = vi.fn();
+    const onChipClick = vi.fn();
+
+    render(
+      <FilterChips
+        extraFilters={[
+          {
+            column_id: "latency",
+            filter_config: { filter_op: "more_than", filter_value: 7 },
+          },
+        ]}
+        onRemoveFilter={vi.fn()}
+        onClearAll={vi.fn()}
+        onAddFilter={onAddFilter}
+        onChipClick={onChipClick}
+      />,
+    );
+
+    await user.click(screen.getByText("Latency"));
+    expect(onChipClick).toHaveBeenCalledTimes(1);
+    expect(onChipClick.mock.calls[0][0]).toBe(0);
+    expect(onChipClick.mock.calls[0][1]).toBeInstanceOf(HTMLElement);
+
+    await user.click(screen.getByRole("button", { name: /add filter/i }));
+    expect(onAddFilter).toHaveBeenCalledTimes(1);
+    expect(onAddFilter.mock.calls[0][0]).toBeInstanceOf(HTMLElement);
   });
 
   describe("UUID column_id fallback", () => {

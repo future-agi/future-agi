@@ -17,7 +17,9 @@ import uuid
 import pytest
 from rest_framework import status
 
+from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentDefinition, AgentVersion
+from simulate.models.agent_definition import ProviderCredentials
 
 # ============================================================================
 # Fixtures
@@ -88,10 +90,10 @@ class TestListAgentVersions:
         # Verify version fields present
         version_data = data["results"][0]
         assert "id" in version_data
-        assert "versionNumber" in version_data
-        assert "versionNameDisplay" in version_data
-        assert "isActive" in version_data
-        assert "isLatest" in version_data
+        assert "version_number" in version_data
+        assert "version_name_display" in version_data
+        assert "is_active" in version_data
+        assert "is_latest" in version_data
 
     def test_agent_not_found(self, auth_client):
         response = auth_client.get(_url(uuid.uuid4()))
@@ -128,7 +130,7 @@ class TestCreateAgentVersion:
         response = auth_client.post(
             _url(agent_definition.id, "create/"),
             {
-                "commitMessage": "Updated prompts",
+                "commit_message": "Updated prompts",
                 "description": "Better refund handling",
             },
             format="json",
@@ -137,12 +139,74 @@ class TestCreateAgentVersion:
         data = response.json()
         assert data["message"] == "Agent version created successfully"
         assert "version" in data
-        assert data["version"]["versionNumber"] == 2
+        assert data["version"]["version_number"] == 2
+
+    def test_create_archives_previous_active_version(
+        self, auth_client, agent_definition, agent_version
+    ):
+        response = auth_client.post(
+            _url(agent_definition.id, "create/"),
+            {
+                "commit_message": "Updated prompts",
+                "description": "Only one version should stay active",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        agent_version.refresh_from_db()
+        new_version_id = response.json()["version"]["id"]
+        new_version = AgentVersion.objects.get(id=new_version_id)
+        assert new_version.status == AgentVersion.StatusChoices.ACTIVE
+        assert agent_version.status == AgentVersion.StatusChoices.ARCHIVED
+        assert (
+            AgentVersion.objects.filter(
+                agent_definition=agent_definition,
+                status=AgentVersion.StatusChoices.ACTIVE,
+            ).count()
+            == 1
+        )
+
+    def test_create_with_masked_api_key_preserves_existing_secret(
+        self, auth_client, agent_definition, agent_version
+    ):
+        raw_api_key = "sk-version-preserve-secret-123456"
+        agent_definition.provider = "vapi"
+        agent_definition.api_key = raw_api_key
+        agent_definition.assistant_id = "asst_version_masked"
+        agent_definition.authentication_method = "api_key"
+        agent_definition.save()
+        ProviderCredentials.objects.create(
+            agent_definition=agent_definition,
+            provider_type=ProviderCredentials.ProviderType.VAPI,
+            api_key=raw_api_key,
+            assistant_id="asst_version_masked",
+        )
+
+        response = auth_client.post(
+            _url(agent_definition.id, "create/"),
+            {
+                "commit_message": "Masked key roundtrip",
+                "api_key": mask_key(raw_api_key),
+                "description": "Update without rotating credentials",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        agent_definition.refresh_from_db()
+        assert agent_definition.api_key == raw_api_key
+        assert agent_definition.credentials.get_api_key() == raw_api_key
+        serialized = response.json()
+        assert raw_api_key not in str(serialized)
+        assert serialized["version"]["configuration_snapshot"]["api_key"] == mask_key(
+            raw_api_key
+        )
 
     def test_creates_snapshot(self, auth_client, agent_definition, agent_version):
         response = auth_client.post(
             _url(agent_definition.id, "create/"),
-            {"commitMessage": "Snapshot test"},
+            {"commit_message": "Snapshot test"},
             format="json",
         )
         assert response.status_code == status.HTTP_201_CREATED
@@ -156,8 +220,8 @@ class TestCreateAgentVersion:
         response = auth_client.post(
             _url(agent_definition.id, "create/"),
             {
-                "agentName": "Renamed Agent",
-                "commitMessage": "Renamed",
+                "agent_name": "Renamed Agent",
+                "commit_message": "Renamed",
             },
             format="json",
         )
@@ -168,7 +232,7 @@ class TestCreateAgentVersion:
     def test_agent_not_found(self, auth_client):
         response = auth_client.post(
             _url(uuid.uuid4(), "create/"),
-            {"commitMessage": "Test"},
+            {"commit_message": "Test"},
             format="json",
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -176,15 +240,29 @@ class TestCreateAgentVersion:
     def test_invalid_data(self, auth_client, agent_definition, agent_version):
         response = auth_client.post(
             _url(agent_definition.id, "create/"),
-            {"agentName": "   "},
+            {"agent_name": "   "},
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_rejects_unknown_body_field(
+        self, auth_client, agent_definition, agent_version
+    ):
+        response = auth_client.post(
+            _url(agent_definition.id, "create/"),
+            {"commit_message": "Updated prompts", "legacy_extra": "ignore me"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["status"] is False
+        assert data["details"]["legacy_extra"] == ["Unknown field."]
+
     def test_unauthenticated(self, api_client, agent_definition):
         response = api_client.post(
             _url(agent_definition.id, "create/"),
-            {"commitMessage": "Test"},
+            {"commit_message": "Test"},
             format="json",
         )
         assert response.status_code in [
@@ -208,8 +286,8 @@ class TestGetAgentVersion:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["id"] == str(agent_version.id)
-        assert "configurationSnapshot" in data
-        assert isinstance(data["configurationSnapshot"], dict)
+        assert "configuration_snapshot" in data
+        assert isinstance(data["configuration_snapshot"], dict)
 
     def test_agent_not_found(self, auth_client, agent_version):
         response = auth_client.get(_version_url(uuid.uuid4(), agent_version.id))
@@ -224,12 +302,12 @@ class TestGetAgentVersion:
     ):
         response = auth_client.get(_version_url(agent_definition.id, agent_version.id))
         data = response.json()
-        snapshot = data["configurationSnapshot"]
+        snapshot = data["configuration_snapshot"]
         for key, value in snapshot.items():
             if value is not None:
-                assert isinstance(
-                    value, (str, int, float, bool, list, dict)
-                ), f"Snapshot key '{key}' has type {type(value)}"
+                assert isinstance(value, (str, int, float, bool, list, dict)), (
+                    f"Snapshot key '{key}' has type {type(value)}"
+                )
 
     def test_unauthenticated(self, api_client, agent_definition, agent_version):
         response = api_client.get(_version_url(agent_definition.id, agent_version.id))
@@ -405,7 +483,7 @@ class TestAgentVersionEvalSummary:
         )
         assert response.status_code == status.HTTP_200_OK
         # Empty array when no eval configs exist
-        assert response.json() == []
+        assert response.json() == {"status": True, "result": []}
 
     def test_unauthenticated(self, api_client, agent_definition, agent_version):
         response = api_client.get(

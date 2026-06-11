@@ -207,7 +207,7 @@ class AgentVersion(BaseModel):
             api_key=agent.api_key or "",
             inbound=agent.inbound,
             language=agent.language,
-            languages=agent.languages,
+            languages=agent.languages or [],
             provider=agent.provider,
             agent_name=agent.agent_name,
             agent_type=agent.agent_type,

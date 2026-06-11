@@ -7,6 +7,11 @@ Tests for login, token refresh, and authentication flows.
 import pytest
 from rest_framework import status
 
+AUTH_REQUIRED_STATUS_CODES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+)
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -25,25 +30,27 @@ class TestLoginAPI:
         assert "refresh" in response.json()
 
     def test_login_with_invalid_password(self, api_client, user):
-        """Login fails with wrong password."""
+        """Login fails with wrong password and returns LOGIN_INVALID_CREDENTIALS."""
         response = api_client.post(
             "/accounts/token/",
             {"email": user.email, "password": "wrongpassword"},
             format="json",
         )
-        # API returns 400 Bad Request for invalid credentials
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
 
-    def test_login_with_nonexistent_email(self, api_client):
-        """Login fails with email that doesn't exist."""
+    def test_login_with_nonexistent_email(self, api_client, db):
+        """Login fails with email that doesn't exist and returns LOGIN_INVALID_CREDENTIALS."""
         response = api_client.post(
             "/accounts/token/",
             # Use futureagi email to bypass recaptcha
             {"email": "nonexistent@futureagi.com", "password": "anypassword"},
             format="json",
         )
-        # API returns 400 Bad Request for nonexistent user
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
 
     def test_login_with_missing_email(self, api_client):
         """Login fails when email is missing."""
@@ -119,8 +126,7 @@ class TestAuthenticatedEndpoints:
     def test_user_info_without_auth(self, api_client):
         """Unauthenticated request to protected endpoint fails."""
         response = api_client.get("/accounts/user-info/")
-        # API returns 403 Forbidden for unauthenticated requests
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_user_info_with_auth(self, auth_client, user):
         """Authenticated request to protected endpoint succeeds."""

@@ -4,14 +4,20 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
+from tfc.routers import uses_db
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+from tracer.db_routing import DATABASE_FOR_SAVED_VIEW_LIST
 from tracer.models.project import Project
 from tracer.models.saved_view import SavedView
 from tracer.serializers.saved_view import (
     SavedViewCreateSerializer,
+    SavedViewDetailResponseSerializer,
     SavedViewDetailSerializer,
+    SavedViewListResponseSerializer,
     SavedViewListSerializer,
+    SavedViewMessageResponseSerializer,
     SavedViewReorderSerializer,
     SavedViewUpdateSerializer,
 )
@@ -66,17 +72,29 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     # LIST — returns default tabs + custom views
     # ------------------------------------------------------------------
 
+    @uses_db(DATABASE_FOR_SAVED_VIEW_LIST, feature_key="feature:saved_view_list")
+    @validated_request(responses={200: SavedViewListResponseSerializer})
     def list(self, request, *args, **kwargs):
         try:
             project_id = request.query_params.get("project_id")
             if project_id:
-                # Verify project exists and user has access
+                # Existence check only — does NOT validate workspace/user
+                # access for this project. Workspace/user access is enforced
+                # by `BaseModelViewSetMixin.get_queryset()` below (the actual
+                # SavedView rows it returns are already workspace/user-scoped).
+                # Stays on `default`: Project isn't opted in to replica
+                # routing, and a stale 404 here would be confusing right
+                # after a project create.
                 try:
                     Project.objects.get(id=project_id)
                 except Project.DoesNotExist:
                     return self._gm.not_found("Project not found.")
 
-            queryset = self.get_queryset()
+            # Route the saved-view list read to the replica when the
+            # feature key is opted in. See tracer/db_routing.py.
+            # No-op (stays on "default") until READ_REPLICA_OPT_IN includes
+            # "feature:saved_view_list".
+            queryset = self.get_queryset().using(DATABASE_FOR_SAVED_VIEW_LIST)
             serializer = SavedViewListSerializer(
                 queryset, many=True, context={"request": request}
             )
@@ -95,6 +113,7 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     # RETRIEVE
     # ------------------------------------------------------------------
 
+    @validated_request(responses={200: SavedViewDetailResponseSerializer})
     def retrieve(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
@@ -112,6 +131,7 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     # CREATE
     # ------------------------------------------------------------------
 
+    @validated_request(responses={200: SavedViewDetailResponseSerializer})
     def create(self, request, *args, **kwargs):
         try:
             serializer = SavedViewCreateSerializer(data=request.data)
@@ -160,7 +180,11 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
                 saved_view.save()
             except IntegrityError:
                 # A view with this name already exists for this user+project — update it instead
-                lookup = {"created_by": request.user, "name": data["name"], "deleted": False}
+                lookup = {
+                    "created_by": request.user,
+                    "name": data["name"],
+                    "deleted": False,
+                }
                 if project is not None:
                     lookup["project"] = project
                 else:
@@ -188,6 +212,7 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     # UPDATE / PARTIAL UPDATE
     # ------------------------------------------------------------------
 
+    @validated_request(responses={200: SavedViewDetailResponseSerializer})
     def update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
@@ -197,6 +222,8 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request(serializer.errors)
 
             data = serializer.validated_data
+            if instance.project_id is None and data.get("visibility") == "project":
+                data["visibility"] = "personal"
             for attr, value in data.items():
                 setattr(instance, attr, value)
             instance.updated_by = request.user
@@ -210,6 +237,7 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to update saved view: {e}", exc_info=True)
             return self._gm.bad_request("Failed to update saved view.")
 
+    @validated_request(responses={200: SavedViewDetailResponseSerializer})
     def partial_update(self, request, *args, **kwargs):
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
@@ -218,6 +246,7 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     # DESTROY (soft delete)
     # ------------------------------------------------------------------
 
+    @validated_request(responses={200: SavedViewMessageResponseSerializer})
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
@@ -231,6 +260,7 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     # DUPLICATE
     # ------------------------------------------------------------------
 
+    @validated_request(responses={200: SavedViewDetailResponseSerializer})
     @action(detail=True, methods=["post"], url_path="duplicate")
     def duplicate(self, request, *args, **kwargs):
         try:
@@ -238,14 +268,20 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
             new_name = request.data.get("name", f"{original.name} (Copy)")
 
             # Calculate next position
-            max_position = (
-                SavedView.objects.filter(
-                    project=original.project,
-                    created_by=request.user,
-                    deleted=False,
+            position_qs = SavedView.objects.filter(
+                created_by=request.user,
+                deleted=False,
+            )
+            if original.project_id is not None:
+                position_qs = position_qs.filter(project=original.project)
+            else:
+                position_qs = position_qs.filter(
+                    project__isnull=True,
+                    workspace=request.workspace,
+                    tab_type=original.tab_type,
                 )
-                .aggregate(max_pos=models.Max("position"))
-                .get("max_pos")
+            max_position = position_qs.aggregate(max_pos=models.Max("position")).get(
+                "max_pos"
             )
             next_position = (max_position or 0) + 1
 
@@ -274,6 +310,7 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
     # REORDER
     # ------------------------------------------------------------------
 
+    @validated_request(responses={200: SavedViewMessageResponseSerializer})
     @action(detail=False, methods=["post"], url_path="reorder")
     def reorder(self, request, *args, **kwargs):
         try:
@@ -307,8 +344,8 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
                 if tab_type:
                     accessible_views = accessible_views.filter(tab_type=tab_type)
 
-            accessible_ids = set(str(v.id) for v in accessible_views)
-            requested_ids = set(str(vid) for vid in view_ids)
+            accessible_ids = {str(v.id) for v in accessible_views}
+            requested_ids = {str(vid) for vid in view_ids}
             if not requested_ids.issubset(accessible_ids):
                 return self._gm.bad_request(
                     "Some view IDs are not accessible or do not exist."

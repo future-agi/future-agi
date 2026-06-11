@@ -246,15 +246,41 @@ export const getScorePercentage = (s, decimalPlaces = 0) => {
 };
 
 export async function copyToClipboard(text) {
+  // Serialize objects/arrays to JSON to avoid "[object Object]" from .toString();
+  // pass primitives through unchanged.
+  const value =
+    typeof text === "object" && text !== null
+      ? JSON.stringify(text, null, 2)
+      : text;
   try {
-    // Serialize objects/arrays to JSON to avoid "[object Object]" from .toString()
-    const value =
-      typeof text === "object" && text !== null
-        ? JSON.stringify(text, null, 2)
-        : text;
-    await navigator.clipboard.writeText(value);
+    // navigator.clipboard is undefined on insecure (http) origins; guard with
+    // optional chaining before touching .writeText so it never throws
+    // "Cannot read properties of undefined (reading 'writeText')".
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+    // Fallback for contexts without the async Clipboard API.
+    const textarea = document.createElement("textarea");
+    textarea.value = value == null ? "" : String(value);
+    textarea.style.position = "fixed";
+    textarea.style.top = "-9999px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } finally {
+      document.body.removeChild(textarea);
+    }
+    return ok;
   } catch (err) {
-    logger.error("Failed to copy text: ", err);
+    // Expected on non-secure contexts / when clipboard is blocked.
+    // Log as a warning (breadcrumb) rather than an error (Sentry issue).
+    logger.warn("Failed to copy text: ", err);
+    return false;
   }
 }
 
@@ -497,7 +523,7 @@ export const useThrottle = (callback, delay) => {
   return [throttledFn, stop, resume];
 };
 
-// Converts a camelCase string to snake_case. Used by objectCamelToSnake for filter serialization.
+// Converts a camelCase string to snake_case for narrow, explicit call sites.
 export const camelToSnakeCase = (str, strict = false) => {
   if (!strict) {
     return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -766,31 +792,20 @@ export function mergeRefs(...refs) {
 // ---------------------------------------------------------------------------
 // canonicalKeys / canonicalEntries / canonicalValues
 //
-// The axios response interceptor (`src/utils/axios.js`) adds camelCase
-// aliases alongside every snake_case key in backend responses so existing
-// camelCase reads keep working without a big-bang refactor. Those aliases
-// are plain enumerable own-properties, so `Object.keys(obj)` returns BOTH
-// the snake_case key AND its camelCase alias — the object effectively
-// doubles in size when enumerated. Call sites that iterate API response
-// objects (dynamic columns, metadata lists, chart categories, span
-// attribute tables, etc) end up rendering every field twice, or merging
-// duplicate entries into `flat[...]` buckets.
+// Some client-side objects can contain both a snake_case key and a camelCase
+// key for the same value, especially data built outside generated contracts
+// (for example imported JSON, local cache, or developer tooling payloads).
+// Those duplicate keys are plain enumerable own-properties, so `Object.keys`
+// returns both and dynamic UI lists can render duplicate fields.
 //
-// Use these helpers instead of `Object.keys/entries/values` whenever you
-// are iterating an API-originated object to build UI. Logic: keep a key
-// if it contains an underscore (it's an original snake_case key) OR if
-// converting it to snake_case yields a key that does NOT exist in the
-// object (it's a genuine camelCase-only field). This drops only the
-// alias half of every duplicated pair and leaves real camelCase keys
-// alone.
+// These helpers only de-dupe an object that already has both keys. They do
+// not add aliases or mutate response payloads.
 // ---------------------------------------------------------------------------
 const SNAKE_TO_CAMEL_ALIAS_RE = /_([a-z0-9])/g;
 
-// Build the set of camelCase alias keys the axios interceptor would have
-// added for snake_case keys in `obj`. Mirrors `snakeToCamelKey` in
-// `src/utils/axios.js`. Forward-mapping this way is robust to digit
-// separators (e.g. `tone_17_apr_2026` → `tone17Apr2026`), which a naïve
-// reverse regex on camelCase cannot recover.
+// Forward-mapping is robust to digit separators
+// (e.g. `tone_17_apr_2026` -> `tone17Apr2026`), which a reverse regex on
+// camelCase cannot recover.
 const buildAliasSet = (obj) => {
   const aliases = new Set();
   const keys = Object.keys(obj);
@@ -820,26 +835,6 @@ export const canonicalValues = (obj) => {
   return canonicalKeys(obj).map((key) => obj[key]);
 };
 
-export const objectCamelToSnake = (obj) => {
-  if (obj === null || obj === undefined) {
-    return obj;
-  }
-
-  if (Array.isArray(obj)) {
-    return obj.map((item) => objectCamelToSnake(item));
-  }
-
-  if (typeof obj !== "object") {
-    return obj;
-  }
-
-  return Object.keys(obj).reduce((acc, key) => {
-    const snakeKey = camelToSnakeCase(key);
-    acc[snakeKey] = objectCamelToSnake(obj[key]);
-    return acc;
-  }, {});
-};
-
 // Converts object keys from snake_case to camelCase
 export const objectSnakeToCamel = (obj) => {
   if (obj === null || obj === undefined) return obj;
@@ -859,8 +854,10 @@ export const paramsSerializer = () => {
 
       Object.entries(params).forEach(([key, value]) => {
         if (Array.isArray(value)) {
-          value.forEach((v) => searchParams.append(key, v));
-        } else if (value !== undefined) {
+          value
+            .filter((v) => v !== undefined && v !== null)
+            .forEach((v) => searchParams.append(key, v));
+        } else if (value !== undefined && value !== null) {
           searchParams.append(key, value);
         }
       });

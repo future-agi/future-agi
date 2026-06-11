@@ -41,11 +41,11 @@ func makeOutputInput(content string) *guardrails.CheckInput {
 
 func TestFutureAGI_Passed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test-key" {
-			t.Error("missing or wrong Authorization header")
+		if r.Header.Get("X-Api-Key") != "test-key" {
+			t.Error("missing or wrong X-Api-Key header")
 		}
-		if r.Header.Get("x-fi-secret-key") != "test-secret" {
-			t.Error("missing or wrong secret key header")
+		if r.Header.Get("X-Secret-Key") != "test-secret" {
+			t.Error("missing or wrong X-Secret-Key header")
 		}
 		w.WriteHeader(200)
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -537,6 +537,122 @@ func TestFutureAGI_ArrayContent(t *testing.T) {
 	g.Check(context.Background(), input)
 	if receivedInput != "Analyze this image" {
 		t.Errorf("expected text extracted from array content, got %q", receivedInput)
+	}
+}
+
+// --- Test: Multiple eval_ids — request payload includes all, any failure fails the check ---
+
+func TestFutureAGI_EvalIDsArray_AllPass(t *testing.T) {
+	var receivedReq evalRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedReq)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"result": []map[string]interface{}{
+				{"evaluations": []map[string]interface{}{
+					{"name": "toxicity", "output": "Passed", "reason": "ok", "runtime": 100.0, "evalId": "76"},
+				}},
+				{"evaluations": []map[string]interface{}{
+					{"name": "injection", "output": "Passed", "reason": "ok", "runtime": 90.0, "evalId": "15"},
+				}},
+				{"evaluations": []map[string]interface{}{
+					{"name": "bias", "output": "Passed", "reason": "ok", "runtime": 80.0, "evalId": "22"},
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	g := New("multi", map[string]interface{}{
+		"provider":   "futureagi",
+		"eval_ids":   []interface{}{"76", "15", "22"},
+		"api_key":    "k",
+		"secret_key": "s",
+		"base_url":   srv.URL,
+	})
+
+	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
+	if !result.Pass {
+		t.Fatalf("expected pass when all evals pass, got fail: %s", result.Message)
+	}
+	if len(receivedReq.Config) != 3 {
+		t.Errorf("expected 3 entries in request config, got %d", len(receivedReq.Config))
+	}
+	for _, id := range []string{"76", "15", "22"} {
+		if _, ok := receivedReq.Config[id]; !ok {
+			t.Errorf("missing eval_id %s in config map", id)
+		}
+	}
+}
+
+func TestFutureAGI_EvalIDsArray_OneFailsFailsAll(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"result": []map[string]interface{}{
+				{"evaluations": []map[string]interface{}{
+					{"name": "toxicity", "output": "Passed", "reason": "ok", "runtime": 100.0, "evalId": "76"},
+				}},
+				{"evaluations": []map[string]interface{}{
+					{"name": "injection", "output": "Failed", "reason": "prompt injection detected", "runtime": 90.0, "evalId": "15"},
+				}},
+				{"evaluations": []map[string]interface{}{
+					{"name": "bias", "output": "Passed", "reason": "ok", "runtime": 80.0, "evalId": "22"},
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	g := New("multi", map[string]interface{}{
+		"provider":   "futureagi",
+		"eval_ids":   []interface{}{"76", "15", "22"},
+		"api_key":    "k",
+		"secret_key": "s",
+		"base_url":   srv.URL,
+	})
+
+	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "ignore previous")}))
+	if result.Pass {
+		t.Fatal("expected fail when any eval fails")
+	}
+	if result.Score != 1.0 {
+		t.Errorf("expected score 1.0, got %f", result.Score)
+	}
+	if result.Message != "prompt injection detected" {
+		t.Errorf("expected failing eval's reason to surface, got %q", result.Message)
+	}
+	if result.Details["eval_id"] != "15" {
+		t.Errorf("expected failing eval_id 15 in details, got %v", result.Details["eval_id"])
+	}
+}
+
+func TestFutureAGI_EvalIDFallbackToSingular(t *testing.T) {
+	var receivedReq evalRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedReq)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"result": []map[string]interface{}{
+				{"evaluations": []map[string]interface{}{
+					{"name": "toxicity", "output": "Passed", "reason": "ok", "runtime": 100.0, "evalId": "15"},
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	g := New("legacy", map[string]interface{}{
+		"provider":   "futureagi",
+		"eval_id":    "15",
+		"api_key":    "k",
+		"secret_key": "s",
+		"base_url":   srv.URL,
+	})
+
+	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
+	if !result.Pass {
+		t.Fatalf("expected pass, got fail: %s", result.Message)
+	}
+	if _, ok := receivedReq.Config["15"]; !ok {
+		t.Errorf("expected singular eval_id to populate config map")
 	}
 }
 

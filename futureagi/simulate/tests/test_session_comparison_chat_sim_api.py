@@ -6,9 +6,10 @@ GET /simulate/call-executions/<uuid:call_execution_id>/session-comparison/
 """
 
 import uuid
+from contextlib import contextmanager
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.utils import timezone
@@ -245,10 +246,34 @@ class TestSessionComparisonChatSimAPI:
         base_trace,
         observation_spans,
         assistant_chat_message,
+        trace_session,
     ):
-        response = auth_client.get(
-            f"/simulate/call-executions/{completed_text_call_execution.id}/session-comparison/"
-        )
+        # Mock CH reader — session metrics now come from ClickHouse, not PG.
+        start = timezone.now() - timedelta(seconds=10)
+        end = timezone.now()
+        mock_reader = MagicMock()
+        mock_reader.aggregate_by_session_ids.return_value = {
+            str(trace_session.id): {
+                "start_time": start,
+                "end_time": end,
+                "tokens": 100,
+                "traces_count": 1,
+                "span_count": 2,
+                "cost": 0.0,
+            }
+        }
+        mock_reader.count_with_filters.return_value = 2
+
+        @contextmanager
+        def fake_get_reader():
+            yield mock_reader
+
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader", fake_get_reader
+        ):
+            response = auth_client.get(
+                f"/simulate/call-executions/{completed_text_call_execution.id}/session-comparison/"
+            )
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -276,7 +301,7 @@ class TestSessionComparisonChatSimAPI:
             status.HTTP_403_FORBIDDEN,
         ]
 
-    def test_bad_request_when_call_execution_not_chat(
+    def test_bad_request_when_voice_execution_has_no_replay_baseline(
         self, auth_client, completed_text_call_execution
     ):
         completed_text_call_execution.simulation_call_type = (
@@ -291,7 +316,7 @@ class TestSessionComparisonChatSimAPI:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         data = response.json()
         assert data["status"] is False
-        assert data["result"] == "Call execution is not a chat execution"
+        assert data["result"] == "Comparison is only available for replay sessions"
 
     def test_bad_request_when_call_execution_not_completed(
         self, auth_client, completed_text_call_execution
@@ -421,8 +446,12 @@ class TestSessionComparisonChatSimViewUnit:
             patch(
                 "simulate.views.session_comparison_chat_sim.fetch_comparison_recordings"
             ) as mock_recordings,
+            patch(
+                "simulate.views.session_comparison_chat_sim.fetch_voice_conversation_span"
+            ) as mock_span,
         ):
             mock_get_obj.side_effect = [fake_call_exec, fake_row]
+            mock_span.return_value = object()
             mock_metrics.return_value = [{"metric": "duration", "value": 3}]
             mock_transcripts.return_value = {
                 "base_session_transcripts": [],
@@ -443,9 +472,13 @@ class TestSessionComparisonChatSimViewUnit:
         assert "comparison_metrics" in data["result"]
         assert "comparison_transcripts" in data["result"]
         assert "comparison_recordings" in data["result"]
-        mock_metrics.assert_called_once_with(fake_call_exec, "trace-456")
-        mock_transcripts.assert_called_once_with(fake_call_exec, "trace-456")
-        mock_recordings.assert_called_once_with(fake_call_exec, "trace-456")
+        mock_span.assert_called_once_with("trace-456")
+        span = mock_span.return_value
+        mock_metrics.assert_called_once_with(fake_call_exec, "trace-456", _span=span)
+        mock_transcripts.assert_called_once_with(
+            fake_call_exec, "trace-456", _span=span
+        )
+        mock_recordings.assert_called_once_with(fake_call_exec, "trace-456", _span=span)
 
     def test_get_rejects_not_completed_execution(self, user):
         factory = APIRequestFactory()

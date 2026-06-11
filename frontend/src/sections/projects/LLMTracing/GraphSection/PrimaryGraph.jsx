@@ -179,6 +179,7 @@ const PrimaryGraph = ({
   trafficLabel = "traces",
 }) => {
   const { observeId } = useParams();
+  const effectiveObserveId = observeIdOverride || observeId;
   const theme = useTheme();
   const [selectedMetric, setSelectedMetric] = useState(
     defaultMetric || "latency",
@@ -306,7 +307,7 @@ const PrimaryGraph = ({
   // Combine filters with date filter + eval filter
   const combinedFilters = useMemo(() => {
     const base = filters || [];
-    const hasDateFilter = base.some((f) => f?.columnId === "created_at");
+    const hasDateFilter = base.some((f) => f?.column_id === "created_at");
     const startDate = dateFilter?.dateFilter?.[0];
     const endDate = dateFilter?.dateFilter?.[1];
 
@@ -314,11 +315,11 @@ const PrimaryGraph = ({
       !hasDateFilter && startDate && endDate
         ? [
             {
-              columnId: "created_at",
-              filterConfig: {
-                filterType: "datetime",
-                filterOp: "between",
-                filterValue: [
+              column_id: "created_at",
+              filter_config: {
+                filter_type: "datetime",
+                filter_op: "between",
+                filter_value: [
                   new Date(startDate).toISOString(),
                   new Date(endDate).toISOString(),
                 ],
@@ -339,7 +340,7 @@ const PrimaryGraph = ({
   const { data: graphData, isLoading } = useQuery({
     queryKey: [
       "primary-graph",
-      observeId,
+      effectiveObserveId,
       selectedMetric,
       selectedInterval,
       combinedFilters,
@@ -355,10 +356,10 @@ const PrimaryGraph = ({
           type: metricDef.apiType || "SYSTEM_METRIC",
           ...(metricDef.outputType && { output_type: metricDef.outputType }),
         },
-        project_id: observeId,
+        project_id: effectiveObserveId,
       }),
     select: (d) => d.data?.result,
-    enabled: !!observeId && !!metricDef.id,
+    enabled: !!effectiveObserveId && !!metricDef.id,
     staleTime: 30_000,
   });
 

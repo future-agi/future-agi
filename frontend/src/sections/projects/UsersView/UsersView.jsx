@@ -9,7 +9,7 @@ import React, {
   useState,
 } from "react";
 import PropTypes from "prop-types";
-import { Box, CircularProgress, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import { useParams, useLocation, useNavigate } from "react-router";
 import { Helmet } from "react-helmet-async";
 import { formatDate } from "src/utils/report-utils";
@@ -18,6 +18,7 @@ import { useUrlState } from "src/routes/hooks/use-url-state";
 import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
+import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
 import {
   useUpdateSavedView,
   useUpdateWorkspaceSavedView,
@@ -98,8 +99,8 @@ const USER_FILTER_FIELDS = [
 // Default filter and date range
 const defaultFilterBase = [
   {
-    columnId: "",
-    filterConfig: { filterType: "", filterOp: "", filterValue: "" },
+    column_id: "",
+    filter_config: { filter_type: "", filter_op: "", filter_value: "" },
   },
 ];
 
@@ -238,6 +239,10 @@ const UsersView = ({
   // --- Extra filters from TraceFilterPanel (popover) ---
   const [extraFilters, setExtraFilters] = useState([]);
   const [isFilterOpen, setIsFilterOpen] = useUrlState("userFilterOpen", false);
+  // Anchor for the filter popover when opened via the chip-row `+` or
+  // by clicking an existing chip. Null falls back to the toolbar Filter
+  // button (handled by ObserveToolbar).
+  const [externalFilterAnchor, setExternalFilterAnchor] = useState(null);
 
   const hasActiveFilter = extraFilters.length > 0;
 
@@ -253,48 +258,10 @@ const UsersView = ({
   );
   const [showCompare, setShowCompare] = useUrlState("userShowCompare", false);
 
-  // Combine validated filters with extra filters
-  // extraFilters from ObserveToolbar use snake_case keys (column_id, filter_config)
-  // validatedFilters from useLLMTracingFilters use camelCase keys (columnId, filterConfig)
-  // Normalize extra filters to camelCase so useGetValidatedFilters in UsersGrid accepts them
+  // Combine canonical filter arrays. Both sources already use the API shape.
   const finalFilters = useMemo(() => {
     if (!extraFilters.length) return validatedFilters;
-
-    // ObserveToolbar number operators → Zod AllowedOperators
-    const opFixMap = {
-      equal_to: "equals",
-      not_equal_to: "not_equals",
-      not_between: "not_in_between",
-    };
-
-    const normalized = extraFilters.map((f) => {
-      const rawOp =
-        f.filter_config?.filter_op || f.filterConfig?.filterOp || "equals";
-      const rawType =
-        f.filter_config?.filter_type || f.filterConfig?.filterType || "text";
-      const rawValue =
-        f.filter_config?.filter_value ?? f.filterConfig?.filterValue ?? "";
-
-      // Number values arrive as comma-joined strings; Zod expects arrays
-      let filterValue = rawValue;
-      if (rawType === "number" && typeof rawValue === "string") {
-        filterValue = rawValue.includes(",") ? rawValue.split(",") : [rawValue];
-      }
-
-      return {
-        columnId: f.column_id || f.columnId || "",
-        _meta: { parentProperty: "" },
-        filterConfig: {
-          filterType: rawType,
-          filterOp: opFixMap[rawOp] || rawOp,
-          filterValue,
-          ...(f.filter_config?.col_type && {
-            col_type: f.filter_config.col_type,
-          }),
-        },
-      };
-    });
-    return [...validatedFilters, ...normalized];
+    return [...validatedFilters, ...extraFilters];
   }, [validatedFilters, extraFilters]);
 
   // --- Row height ---
@@ -330,14 +297,12 @@ const UsersView = ({
         showErrors,
         showNonAnnotated,
         hasEvalFilter,
+        dateFilter,
         visibleColumns,
         ...(columnState ? { columnState } : {}),
         ...(customColumns.length > 0 ? { customColumns } : {}),
       },
-      filters: {
-        extraFilters,
-        dateFilter,
-      },
+      extra_filters: extraFilters || [],
     };
   }, [
     columns,
@@ -373,7 +338,8 @@ const UsersView = ({
       skipNextSaveRef.current = true;
       const saved = JSON.parse(raw);
       if (saved.cellHeight) setCellHeight(saved.cellHeight);
-      if (typeof saved.showErrors === "boolean") setShowErrors(saved.showErrors);
+      if (typeof saved.showErrors === "boolean")
+        setShowErrors(saved.showErrors);
       if (typeof saved.showNonAnnotated === "boolean") {
         setShowNonAnnotated(saved.showNonAnnotated);
       }
@@ -499,7 +465,6 @@ const UsersView = ({
         return;
       }
       const display = config.display || {};
-      const filtersCfg = config.filters || {};
       if (display.cellHeight) setCellHeight(display.cellHeight);
       if (typeof display.showErrors === "boolean")
         setShowErrors(display.showErrors);
@@ -524,7 +489,10 @@ const UsersView = ({
       if (display.visibleColumns && columns?.length) {
         updateColumnVisibility(display.visibleColumns);
       }
-      if (Array.isArray(display.columnState) && display.columnState.length > 0) {
+      if (
+        Array.isArray(display.columnState) &&
+        display.columnState.length > 0
+      ) {
         // Defer columnState when custom cols are being added — AG Grid's
         // columnDefs prop only flips next render, so applying this tick
         // would drop entries for the custom colIds. Drained by the
@@ -540,11 +508,11 @@ const UsersView = ({
           pendingColumnStateRef.current = display.columnState;
         }
       }
-      if (Array.isArray(filtersCfg.extraFilters)) {
-        setExtraFilters(filtersCfg.extraFilters);
+      if (Array.isArray(config.extra_filters)) {
+        setExtraFilters(hydrateStoredFilterList(config.extra_filters));
       }
-      if (filtersCfg.dateFilter) {
-        setDateFilter(filtersCfg.dateFilter);
+      if (display.dateFilter) {
+        setDateFilter(display.dateFilter);
       }
     },
     [
@@ -584,16 +552,16 @@ const UsersView = ({
   }, [savedViewApiRef, getConfig, applyConfig]);
 
   // "Save view" surfaces only on a custom saved-view tab when the live state
-  // diverges from its saved baseline. UsersView's config nests dateFilter
-  // inside `filters` (not `display` like LLMTracingView/SessionsView).
+  // diverges from its saved baseline. User saved-view metadata lives in
+  // `display`; filter lists are first-class top-level config keys.
   const canSaveView = useMemo(() => {
     if (!activeViewConfig) return false;
 
-    const baselineFilters = activeViewConfig.filters || {};
     const baselineDisplay = activeViewConfig.display || {};
-    const baselineExtraFilters = baselineFilters.extraFilters || [];
-    const baselineDateOption =
-      baselineFilters.dateFilter?.dateOption ?? null;
+    const baselineExtraFilters = hydrateStoredFilterList(
+      activeViewConfig.extra_filters,
+    );
+    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
     if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
@@ -679,9 +647,7 @@ const UsersView = ({
 
   const activeViewTabId = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
-    const key = isObservePath
-      ? params.get("tab")
-      : params.get("usersTab");
+    const key = isObservePath ? params.get("tab") : params.get("usersTab");
     return key?.startsWith("view-") ? key.slice(5) : null;
   }, [activeViewConfig, isObservePath]);
 
@@ -762,8 +728,6 @@ const UsersView = ({
     searchState === "searching" ||
     hasActiveFilter;
 
-  const shouldShowLoading = isLoading && hasData === null;
-
   return (
     <>
       {!observeId && (
@@ -785,7 +749,13 @@ const UsersView = ({
         onSaveView={handleSaveView}
         graphFilters={extraFilters}
         isFilterOpen={isFilterOpen}
-        onFilterToggle={() => setIsFilterOpen(!isFilterOpen)}
+        externalFilterAnchor={externalFilterAnchor}
+        onFilterToggle={() => {
+          // Clear any chip-row anchor so the popover re-anchors to the
+          // toolbar Filter button on the next open.
+          setExternalFilterAnchor(null);
+          setIsFilterOpen(!isFilterOpen);
+        }}
         filterFields={USER_FILTER_FIELDS}
         onApplyExtraFilters={setExtraFilters}
         // Columns (Display panel)
@@ -852,9 +822,23 @@ const UsersView = ({
             USER_FILTER_FIELDS.find((c) => c.id === f.column_id)?.name,
         }))}
         onRemoveFilter={(idx) => {
+          // Chips are keyed by array index, so any removal re-mounts the
+          // later chips and invalidates a chip-anchored popover ref.
+          setExternalFilterAnchor(null);
           setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
         }}
-        onClearAll={() => setExtraFilters([])}
+        onClearAll={() => {
+          setExternalFilterAnchor(null);
+          setExtraFilters([]);
+        }}
+        onAddFilter={(anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
+        onChipClick={(_idx, anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
       />
 
       {/* Graph — hidden in cross-project mode (no project context to
@@ -885,20 +869,6 @@ const UsersView = ({
           pt: 1,
         }}
       >
-        {/* Loading spinner */}
-        {shouldShowLoading && (
-          <Box
-            sx={{
-              flex: 1,
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-            }}
-          >
-            <CircularProgress />
-          </Box>
-        )}
-
         {/* Empty state */}
         {shouldShowEmptyLayout && (
           <Box

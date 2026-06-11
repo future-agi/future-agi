@@ -9,11 +9,20 @@ Tests cover:
 """
 
 import uuid
+from datetime import timedelta
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
 
-from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
+from model_hub.models.annotation_queues import (
+    AnnotationQueue,
+    AnnotationQueueAnnotator,
+    QueueItem,
+    QueueItemAssignment,
+    QueueItemReviewThread,
+)
+from model_hub.models.choices import AnnotatorRole
 from model_hub.models.develop_dataset import Dataset, Row
 from tfc.middleware.workspace_context import set_workspace_context
 
@@ -33,8 +42,19 @@ def bulk_remove_url(queue_id):
     return f"{QUEUE_URL}{queue_id}/items/bulk-remove/"
 
 
+def assign_items_url(queue_id):
+    return f"{QUEUE_URL}{queue_id}/items/assign/"
+
+
 def item_detail_url(queue_id, item_id):
     return f"{QUEUE_URL}{queue_id}/items/{item_id}/"
+
+
+def demote_queue_creator_to_annotator(queue_id, user):
+    membership = AnnotationQueueAnnotator.objects.get(queue_id=queue_id, user=user)
+    membership.role = AnnotatorRole.ANNOTATOR.value
+    membership.roles = [AnnotatorRole.ANNOTATOR.value]
+    membership.save(update_fields=["role", "roles", "updated_at"])
 
 
 # ---------------------------------------------------------------------------
@@ -71,8 +91,7 @@ def dataset_with_rows(organization, workspace):
 
 @pytest.mark.django_db
 class TestAddItems:
-
-    def test_add_dataset_rows(self, auth_client, queue, dataset_with_rows):
+    def test_add_dataset_rows(self, auth_client, queue, dataset_with_rows, workspace):
         """TC-1: Add dataset rows to queue."""
         _, rows = dataset_with_rows
         items = [{"source_type": "dataset_row", "source_id": str(r.id)} for r in rows]
@@ -80,6 +99,55 @@ class TestAddItems:
         assert resp.status_code == status.HTTP_200_OK
         result = resp.data.get("result", resp.data)
         assert result["added"] == 3
+        assert set(
+            QueueItem.objects.filter(queue_id=queue).values_list(
+                "workspace_id", flat=True
+            )
+        ) == {workspace.id}
+
+    def test_add_trace_session_item(self, auth_client, queue, organization, workspace):
+        """Explicit trace_session sources persist with workspace/org scope."""
+        from model_hub.models.ai_model import AIModel
+        from tracer.models.project import Project
+        from tracer.models.trace_session import TraceSession
+
+        project = Project.objects.create(
+            name=f"Session Add Project {uuid.uuid4().hex[:8]}",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        session = TraceSession.objects.create(
+            project=project,
+            name="queue-session-source",
+        )
+
+        resp = auth_client.post(
+            add_items_url(queue),
+            {
+                "items": [
+                    {
+                        "source_type": "trace_session",
+                        "source_id": str(session.id),
+                    }
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["added"] == 1
+        assert result["errors"] == []
+        item = QueueItem.objects.get(
+            queue_id=queue,
+            source_type="trace_session",
+            trace_session=session,
+            deleted=False,
+        )
+        assert item.organization_id == organization.id
+        assert item.workspace_id == workspace.id
 
     def test_add_duplicate_items(self, auth_client, queue, dataset_with_rows):
         """TC-3: Adding duplicate items reports duplicates."""
@@ -93,6 +161,28 @@ class TestAddItems:
         result = resp.data.get("result", resp.data)
         assert result["duplicates"] == 1
         assert result["added"] == 0
+
+    def test_create_duplicate_item_returns_validation_error(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        """Direct nested create returns 400 instead of leaking DB IntegrityError."""
+        _, rows = dataset_with_rows
+        payload = {"source_type": "dataset_row", "source_id": str(rows[0].id)}
+
+        first = auth_client.post(items_url(queue), payload, format="json")
+        assert first.status_code == status.HTTP_201_CREATED
+
+        duplicate = auth_client.post(items_url(queue), payload, format="json")
+
+        assert duplicate.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            QueueItem.objects.filter(
+                queue_id=queue,
+                dataset_row=rows[0],
+                deleted=False,
+            ).count()
+            == 1
+        )
 
     def test_add_invalid_source_type(self, auth_client, queue):
         """TC-4: Invalid source_type returns 400."""
@@ -124,6 +214,135 @@ class TestAddItems:
         )
         assert resp.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_add_items_requires_queue_manager(
+        self, queue, dataset_with_rows, organization, workspace
+    ):
+        """Annotators can work items, but only managers can add items."""
+        from accounts.models.user import User
+        from conftest import WorkspaceAwareAPIClient
+        from tfc.constants.roles import OrganizationRoles
+
+        _, rows = dataset_with_rows
+        annotator_user = User.objects.create_user(
+            email=f"queue-add-annotator-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Queue Add Annotator",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        AnnotationQueueAnnotator.objects.create(
+            queue_id=queue,
+            user=annotator_user,
+            role=AnnotatorRole.ANNOTATOR.value,
+            roles=[AnnotatorRole.ANNOTATOR.value],
+        )
+
+        annotator_client = WorkspaceAwareAPIClient()
+        annotator_client.force_authenticate(user=annotator_user)
+        annotator_client.set_workspace(workspace)
+        resp = annotator_client.post(
+            add_items_url(queue),
+            {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+        annotator_client.stop_workspace_injection()
+
+    def test_enabling_auto_assign_backfills_existing_items(
+        self, auth_client, queue, dataset_with_rows, organization
+    ):
+        """Toggling auto-assign assigns existing items to all annotator members."""
+        from accounts.models.user import User
+        from tfc.constants.roles import OrganizationRoles
+
+        _, rows = dataset_with_rows
+        items = [{"source_type": "dataset_row", "source_id": str(r.id)} for r in rows]
+        auth_client.post(add_items_url(queue), {"items": items}, format="json")
+        auto_assigned_user = User.objects.create_user(
+            email=f"queue-auto-assign-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Queue Auto Assign Annotator",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        AnnotationQueueAnnotator.objects.create(
+            queue_id=queue,
+            user=auto_assigned_user,
+            role=AnnotatorRole.ANNOTATOR.value,
+            roles=[AnnotatorRole.ANNOTATOR.value],
+        )
+
+        resp = auth_client.patch(
+            f"{QUEUE_URL}{queue}/", {"auto_assign": True}, format="json"
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        item_ids = list(
+            QueueItem.objects.filter(queue_id=queue).values_list("id", flat=True)
+        )
+        assert QueueItemAssignment.objects.filter(
+            queue_item_id__in=item_ids,
+            user=auto_assigned_user,
+            deleted=False,
+        ).count() == len(item_ids)
+
+    def test_add_call_execution_with_agent_workspace_fallback(
+        self, auth_client, queue, organization, workspace
+    ):
+        """Simulation calls can be added when only the agent carries workspace."""
+        from simulate.models.agent_definition import AgentDefinition
+        from simulate.models.run_test import RunTest
+        from simulate.models.scenarios import Scenarios
+        from simulate.models.test_execution import CallExecution, TestExecution
+
+        agent = AgentDefinition.objects.create(
+            agent_name="Workspace Agent",
+            agent_type="voice",
+            inbound=False,
+            description="Agent with workspace ownership",
+            organization=organization,
+            workspace=workspace,
+        )
+        run_test = RunTest.objects.create(
+            name="Run without workspace",
+            agent_definition=agent,
+            organization=organization,
+            workspace=None,
+        )
+        scenario = Scenarios.objects.create(
+            name="Workspace Scenario",
+            source="hello",
+            agent_definition=agent,
+            organization=organization,
+            workspace=None,
+        )
+        execution = TestExecution.objects.create(
+            run_test=run_test,
+            agent_definition=agent,
+        )
+        call = CallExecution.objects.create(
+            test_execution=execution,
+            scenario=scenario,
+        )
+
+        resp = auth_client.post(
+            add_items_url(queue),
+            {"items": [{"source_type": "call_execution", "source_id": str(call.id)}]},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["added"] == 1
+        assert result["errors"] == []
+        assert QueueItem.objects.filter(
+            queue_id=queue,
+            source_type="call_execution",
+            call_execution=call,
+            deleted=False,
+        ).exists()
+
 
 # ---------------------------------------------------------------------------
 # 2A.2 – List Items
@@ -132,7 +351,6 @@ class TestAddItems:
 
 @pytest.mark.django_db
 class TestListItems:
-
     def _add_rows(self, auth_client, queue, rows):
         items = [{"source_type": "dataset_row", "source_id": str(r.id)} for r in rows]
         auth_client.post(add_items_url(queue), {"items": items}, format="json")
@@ -152,6 +370,77 @@ class TestListItems:
         resp = auth_client.get(items_url(queue), {"status": "pending"})
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["count"] == 3  # All are pending by default
+        assert resp.data["results"][0]["workflow_status"] == "pending"
+        assert resp.data["results"][0]["workflow_status_label"] == (
+            "Pending Annotation"
+        )
+
+    def test_filter_by_in_review_workflow_status(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        """status=in_review maps to review_status=pending_review."""
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+        item = QueueItem.objects.filter(queue_id=queue).order_by("order").first()
+        item.status = "in_progress"
+        item.review_status = "pending_review"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+
+        resp = auth_client.get(items_url(queue), {"status": "in_review"})
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 1
+        assert resp.data["results"][0]["workflow_status"] == "in_review"
+        assert resp.data["results"][0]["workflow_status_label"] == "In Review"
+
+    def test_filter_by_resubmitted_workflow_status(
+        self, auth_client, queue, dataset_with_rows, user, organization
+    ):
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+        item = QueueItem.objects.filter(queue_id=queue).order_by("order").first()
+        item.status = "in_progress"
+        item.review_status = "pending_review"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        QueueItemReviewThread.objects.create(
+            queue_item=item,
+            created_by=user,
+            action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+            scope=QueueItemReviewThread.SCOPE_ITEM,
+            blocking=True,
+            status=QueueItemReviewThread.STATUS_ADDRESSED,
+            organization=organization,
+        )
+
+        resp = auth_client.get(items_url(queue), {"status": "resubmitted"})
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 1
+        assert resp.data["results"][0]["workflow_status"] == "resubmitted"
+        assert resp.data["results"][0]["workflow_status_label"] == "Resubmitted"
+
+    def test_status_all_does_not_filter_items(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        """The UI sends status=all for All Statuses; treat it as no filter."""
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+        resp = auth_client.get(items_url(queue), {"status": "all"})
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 3
+
+    def test_filter_by_multiple_statuses(self, auth_client, queue, dataset_with_rows):
+        """The item list accepts repeated status params from the multi-select UI."""
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+        first_item = QueueItem.objects.filter(queue_id=queue).order_by("order").first()
+        first_item.status = "completed"
+        first_item.save(update_fields=["status", "updated_at"])
+
+        resp = auth_client.get(items_url(queue), {"status": ["pending", "completed"]})
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 3
 
     def test_filter_by_source_type(self, auth_client, queue, dataset_with_rows):
         """TC-9: Filter by source_type."""
@@ -161,6 +450,105 @@ class TestListItems:
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["count"] == 3
 
+    def test_filter_by_multiple_source_types(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        """The item list accepts repeated source_type params from the multi-select UI."""
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+
+        resp = auth_client.get(
+            items_url(queue), {"source_type": ["dataset_row", "trace"]}
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 3
+
+    def test_order_items_by_added_at(self, auth_client, queue, dataset_with_rows):
+        """Queue item list supports whole-queue sorting by Added."""
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+
+        created_items = list(QueueItem.objects.filter(queue_id=queue).order_by("order"))
+        base_time = timezone.now()
+        for index, item in enumerate(created_items):
+            QueueItem.objects.filter(id=item.id).update(
+                created_at=base_time + timedelta(minutes=index)
+            )
+
+        desc_resp = auth_client.get(items_url(queue), {"ordering": "-created_at"})
+        assert desc_resp.status_code == status.HTTP_200_OK
+        assert [row["id"] for row in desc_resp.data["results"]] == [
+            str(item.id) for item in reversed(created_items)
+        ]
+
+        default_resp = auth_client.get(items_url(queue))
+        assert default_resp.status_code == status.HTTP_200_OK
+        assert [row["id"] for row in default_resp.data["results"]] == [
+            str(item.id) for item in reversed(created_items)
+        ]
+
+        asc_resp = auth_client.get(items_url(queue), {"ordering": "created_at"})
+        assert asc_resp.status_code == status.HTTP_200_OK
+        assert [row["id"] for row in asc_resp.data["results"]] == [
+            str(item.id) for item in created_items
+        ]
+
+    def test_list_items_accepts_pagination_with_ordering(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        """DRF owns page/limit while the query serializer owns business params."""
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+
+        resp = auth_client.get(
+            items_url(queue),
+            {
+                "ordering": "-created_at",
+                "page": 1,
+                "limit": 2,
+            },
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 3
+        assert len(resp.data["results"]) == 2
+
+    def test_list_items_includes_assignee_email_for_stable_initials(
+        self, auth_client, queue, dataset_with_rows, organization
+    ):
+        """Assignee identity includes email so the frontend does not infer initials."""
+        from accounts.models.user import User
+        from tfc.constants.roles import OrganizationRoles
+
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+        item = QueueItem.objects.filter(queue_id=queue).order_by("order").first()
+        assignee = User.objects.create_user(
+            email=f"nikhil-initials-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        QueueItemAssignment.objects.create(queue_item=item, user=assignee)
+
+        resp = auth_client.get(items_url(queue))
+
+        assert resp.status_code == status.HTTP_200_OK
+        assigned_users = next(
+            row["assigned_users"]
+            for row in resp.data["results"]
+            if row["id"] == str(item.id)
+        )
+        assert assigned_users == [
+            {
+                "id": str(assignee.id),
+                "name": "",
+                "email": assignee.email,
+            }
+        ]
+
 
 # ---------------------------------------------------------------------------
 # 2A.3 – Remove Items
@@ -169,7 +557,6 @@ class TestListItems:
 
 @pytest.mark.django_db
 class TestRemoveItems:
-
     def _add_and_get_item_ids(self, auth_client, queue, rows):
         items = [{"source_type": "dataset_row", "source_id": str(r.id)} for r in rows]
         auth_client.post(add_items_url(queue), {"items": items}, format="json")
@@ -197,6 +584,135 @@ class TestRemoveItems:
         list_resp = auth_client.get(items_url(queue))
         assert list_resp.data["count"] == 1
 
+    def test_annotator_cannot_self_claim_unassigned_item_or_manage_items(
+        self, auth_client, queue, dataset_with_rows, organization, workspace
+    ):
+        """Only managers can assign items, including assigning to self."""
+        from accounts.models.user import User
+        from conftest import WorkspaceAwareAPIClient
+        from tfc.constants.roles import OrganizationRoles
+
+        _, rows = dataset_with_rows
+        item_ids = self._add_and_get_item_ids(auth_client, queue, rows)
+        annotator_user = User.objects.create_user(
+            email=f"queue-self-claim-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Queue Self Claim Annotator",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        AnnotationQueueAnnotator.objects.create(
+            queue_id=queue,
+            user=annotator_user,
+            role=AnnotatorRole.ANNOTATOR.value,
+            roles=[AnnotatorRole.ANNOTATOR.value],
+        )
+
+        annotator_client = WorkspaceAwareAPIClient()
+        annotator_client.force_authenticate(user=annotator_user)
+        annotator_client.set_workspace(workspace)
+
+        delete_resp = annotator_client.delete(item_detail_url(queue, item_ids[0]))
+        bulk_resp = annotator_client.post(
+            bulk_remove_url(queue),
+            {"item_ids": item_ids[:1]},
+            format="json",
+        )
+        assign_other_resp = annotator_client.post(
+            assign_items_url(queue),
+            {
+                "item_ids": item_ids[:1],
+                "user_ids": [str(uuid.uuid4())],
+                "action": "set",
+            },
+            format="json",
+        )
+        self_assign_resp = annotator_client.post(
+            assign_items_url(queue),
+            {
+                "item_ids": item_ids[:1],
+                "user_ids": [str(annotator_user.id)],
+                "action": "set",
+            },
+            format="json",
+        )
+
+        assert delete_resp.status_code == status.HTTP_403_FORBIDDEN
+        assert bulk_resp.status_code == status.HTTP_403_FORBIDDEN
+        assert assign_other_resp.status_code == status.HTTP_403_FORBIDDEN
+        assert self_assign_resp.status_code == status.HTTP_403_FORBIDDEN
+        item = QueueItem.objects.get(pk=item_ids[0])
+        assert item.assigned_to_id is None
+        assert not QueueItemAssignment.objects.filter(
+            queue_item_id=item_ids[0],
+            user=annotator_user,
+            deleted=False,
+        ).exists()
+        annotator_client.stop_workspace_injection()
+
+    def test_annotator_cannot_self_assign_item_owned_by_another_user(
+        self, auth_client, queue, dataset_with_rows, organization, workspace
+    ):
+        """Self-claim is only for unassigned items; managers handle reassignment."""
+        from accounts.models.user import User
+        from conftest import WorkspaceAwareAPIClient
+        from tfc.constants.roles import OrganizationRoles
+
+        _, rows = dataset_with_rows
+        item_ids = self._add_and_get_item_ids(auth_client, queue, rows)
+        annotator_user = User.objects.create_user(
+            email=f"queue-claim-denied-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Queue Claim Denied Annotator",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        other_user = User.objects.create_user(
+            email=f"queue-owner-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Queue Owner",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        AnnotationQueueAnnotator.objects.create(
+            queue_id=queue,
+            user=annotator_user,
+            role=AnnotatorRole.ANNOTATOR.value,
+            roles=[AnnotatorRole.ANNOTATOR.value],
+        )
+        AnnotationQueueAnnotator.objects.create(
+            queue_id=queue,
+            user=other_user,
+            role=AnnotatorRole.ANNOTATOR.value,
+            roles=[AnnotatorRole.ANNOTATOR.value],
+        )
+        QueueItemAssignment.objects.create(
+            queue_item_id=item_ids[0],
+            user=other_user,
+        )
+        QueueItem.objects.filter(pk=item_ids[0]).update(assigned_to=other_user)
+
+        annotator_client = WorkspaceAwareAPIClient()
+        annotator_client.force_authenticate(user=annotator_user)
+        annotator_client.set_workspace(workspace)
+        resp = annotator_client.post(
+            assign_items_url(queue),
+            {
+                "item_ids": item_ids[:1],
+                "user_ids": [str(annotator_user.id)],
+                "action": "add",
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+        assert not QueueItemAssignment.objects.filter(
+            queue_item_id=item_ids[0],
+            user=annotator_user,
+            deleted=False,
+        ).exists()
+        annotator_client.stop_workspace_injection()
+
 
 # ---------------------------------------------------------------------------
 # 2A.4 – Model Validation
@@ -205,7 +721,6 @@ class TestRemoveItems:
 
 @pytest.mark.django_db
 class TestQueueItemModelValidation:
-
     def test_create_item_matching_fk(
         self, organization, workspace, queue, dataset_with_rows, auth_client
     ):

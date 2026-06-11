@@ -85,10 +85,8 @@ class ClusterableIssue:
 
     @property
     def embedding_text(self) -> str:
-        """brief + key moments → single string for embedding."""
-        parts = [self.brief]
-        parts.extend(self.key_moments_text)
-        return " | ".join(parts)
+        """Embed only the issue brief."""
+        return self.brief
 
 
 @dataclass

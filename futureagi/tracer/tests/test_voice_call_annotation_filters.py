@@ -37,8 +37,8 @@ def _make_annotation_filter(
     """Build a single annotation filter item."""
     return {
         "column_id": column_id,
-        "col_type": col_type,
         "filter_config": {
+            "col_type": col_type,
             "filter_type": filter_type,
             "filter_op": filter_op,
             "filter_value": filter_value,
@@ -116,6 +116,25 @@ class TestVoiceCallAnnotationNumberFilters:
         )
         assert result != Q()
 
+    def test_not_equals_requires_existing_score(self):
+        uid = str(uuid.uuid4())
+        filters = [_make_annotation_filter(uid, "number", "not_equals", 4.0)]
+        result, _ = FilterEngine.get_filter_conditions_for_voice_call_annotations(
+            filters
+        )
+
+        assert result != Q()
+        assert f"('annotation_{uid}__score__isnull', False)" in repr(result)
+
+    def test_legacy_not_equal_to_alias_is_rejected(self):
+        uid = str(uuid.uuid4())
+        filters = [_make_annotation_filter(uid, "number", "not_equal_to", 4.0)]
+        result, _ = FilterEngine.get_filter_conditions_for_voice_call_annotations(
+            filters
+        )
+
+        assert result == Q()
+
     def test_greater_than_or_equal(self):
         uid = str(uuid.uuid4())
         filters = [_make_annotation_filter(uid, "number", "greater_than_or_equal", 3.0)]
@@ -140,13 +159,23 @@ class TestVoiceCallAnnotationNumberFilters:
         )
         assert result != Q()
 
-    def test_not_in_between(self):
+    def test_not_between(self):
         uid = str(uuid.uuid4())
-        filters = [_make_annotation_filter(uid, "number", "not_in_between", [2.0, 8.0])]
+        filters = [_make_annotation_filter(uid, "number", "not_between", [2.0, 8.0])]
         result, _ = FilterEngine.get_filter_conditions_for_voice_call_annotations(
             filters
         )
         assert result != Q()
+
+    def test_not_between_requires_existing_score(self):
+        uid = str(uuid.uuid4())
+        filters = [_make_annotation_filter(uid, "number", "not_between", [2.0, 8.0])]
+        result, _ = FilterEngine.get_filter_conditions_for_voice_call_annotations(
+            filters
+        )
+
+        assert result != Q()
+        assert f"('annotation_{uid}__score__isnull', False)" in repr(result)
 
     def test_invalid_filter_value_is_skipped(self):
         uid = str(uuid.uuid4())
@@ -209,11 +238,11 @@ class TestVoiceCallAnnotationSubFieldNumberFilters:
         )
         assert result != Q()
 
-    def test_sub_field_not_in_between(self):
+    def test_sub_field_not_between(self):
         uid = str(uuid.uuid4())
         filters = [
             _make_annotation_filter(
-                f"{uid}**thumbs_up", "number", "not_in_between", [0, 1]
+                f"{uid}**thumbs_up", "number", "not_between", [0, 1]
             )
         ]
         result, _ = FilterEngine.get_filter_conditions_for_voice_call_annotations(
@@ -371,6 +400,21 @@ class TestVoiceCallAnnotationTextFilters:
         assert result != Q()
         assert extra == {}
 
+    def test_not_contains_requires_existing_text_annotation(self):
+        uid = str(uuid.uuid4())
+        filters = [_make_annotation_filter(uid, "text", "not_contains", "bad")]
+        result, extra = FilterEngine.get_filter_conditions_for_voice_call_annotations(
+            filters
+        )
+
+        exists_count = sum(
+            1
+            for node in result.flatten()
+            if node.__class__.__name__ == "Exists"
+        )
+        assert exists_count >= 2
+        assert extra == {}
+
     def test_equals(self):
         uid = str(uuid.uuid4())
         filters = [_make_annotation_filter(uid, "text", "equals", "exact match")]
@@ -387,6 +431,21 @@ class TestVoiceCallAnnotationTextFilters:
             filters
         )
         assert result != Q()
+        assert extra == {}
+
+    def test_not_equals_requires_existing_text_annotation(self):
+        uid = str(uuid.uuid4())
+        filters = [_make_annotation_filter(uid, "text", "not_equals", "bad value")]
+        result, extra = FilterEngine.get_filter_conditions_for_voice_call_annotations(
+            filters
+        )
+
+        exists_count = sum(
+            1
+            for node in result.flatten()
+            if node.__class__.__name__ == "Exists"
+        )
+        assert exists_count >= 2
         assert extra == {}
 
     def test_starts_with(self):
@@ -1117,8 +1176,9 @@ class TestAnnotationFilterSeparation:
         non_annotation_filters = [
             f
             for f in filters
-            if f.get("col_type") not in annotation_col_types
-            and (f.get("column_id") or f.get("columnId")) not in annotation_column_ids
+            if (f.get("filter_config") or {}).get("col_type")
+            not in annotation_col_types
+            and f.get("column_id") not in annotation_column_ids
         ]
         return non_annotation_filters
 
@@ -1133,8 +1193,8 @@ class TestAnnotationFilterSeparation:
         filters = [
             {
                 "column_id": str(uuid.uuid4()),
-                "col_type": "EVAL_METRIC",
                 "filter_config": {
+                    "col_type": "EVAL_METRIC",
                     "filter_type": "number",
                     "filter_op": "greater_than",
                     "filter_value": 0.8,
@@ -1181,8 +1241,8 @@ class TestAnnotationFilterSeparation:
             _make_annotation_filter(ann_uid, "number", "greater_than", 3.0),
             {
                 "column_id": eval_uid,
-                "col_type": "EVAL_METRIC",
                 "filter_config": {
+                    "col_type": "EVAL_METRIC",
                     "filter_type": "number",
                     "filter_op": "equals",
                     "filter_value": 0.95,
@@ -1206,8 +1266,8 @@ class TestAnnotationFilterSeparation:
             },
             {
                 "column_id": "created_at",
-                "col_type": "SYSTEM",
                 "filter_config": {
+                    "col_type": "SYSTEM",
                     "filter_type": "datetime",
                     "filter_op": "between",
                     "filter_value": ["2025-01-01", "2026-01-01"],
@@ -1220,9 +1280,7 @@ class TestAnnotationFilterSeparation:
         assert eval_uid in ids
         assert "created_at" in ids
 
-    def test_columnId_key_also_checked(self):
-        """The separation uses (f.get('column_id') or f.get('columnId'))
-        so camelCase key should also be excluded."""
+    def test_camel_case_key_is_not_part_of_filter_contract(self):
         filters = [
             {
                 "columnId": "my_annotations",
@@ -1234,7 +1292,7 @@ class TestAnnotationFilterSeparation:
             },
         ]
         result = self._separate_filters(filters)
-        assert result == []
+        assert result == filters
 
     def test_empty_filters(self):
         assert self._separate_filters([]) == []

@@ -7,14 +7,12 @@ import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { getUsersColumnConfig, userTraceRowHeightMapping } from "./common";
 import { mergeCellStyle } from "../LLMTracing/common";
 import axios, { endpoints } from "src/utils/axios";
-import { objectCamelToSnake } from "src/utils/utils";
 import { useNavigate, useParams } from "react-router";
 import { useDebounce } from "src/hooks/use-debounce";
-import { useGetValidatedFilters } from "src/hooks/use-get-validated-filters";
 import PropTypes from "prop-types";
-import { getRandomId } from "src/utils/utils";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
 
 const USERS_GRID_THEME_PARAMS = {
   columnBorder: false,
@@ -67,29 +65,21 @@ const UsersGrid = React.memo(
     const updatedObserveId = selectedProjectId || observeId;
     const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
 
-    const projectFilterId = useMemo(() => getRandomId(), []);
-
     const projectFilter = useMemo(
       () => ({
-        columnId: "created_at",
-        filterConfig: {
-          filterType: "datetime",
-          filterOp: "between",
-          filterValue: convertToISO([pastDate, today]),
-        },
-        id: projectFilterId,
-        _meta: {
-          parentProperty: "",
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: convertToISO([pastDate, today]),
         },
       }),
-      [projectFilterId, selectedProjectDay],
+      [selectedProjectDay],
     );
 
-    const validatedUserFilters = useGetValidatedFilters(filters);
-
     const validatedFilters = useMemo(() => {
-      return [...validatedUserFilters, projectFilter];
-    }, [validatedUserFilters, projectFilter]);
+      return serializeFilterListForApi([...(filters || []), projectFilter]);
+    }, [filters, projectFilter]);
 
     const navigate = useNavigate();
 
@@ -214,17 +204,19 @@ const UsersGrid = React.memo(
                 ...(updatedObserveId ? { project_id: updatedObserveId } : {}),
                 sort_params:
                   request.sortModel && request.sortModel.length > 0
-                    ? JSON.stringify({
-                        column_id: request.sortModel[0].colId,
-                        direction: request.sortModel[0].sort,
-                      })
+                    ? JSON.stringify(
+                        request.sortModel.map(({ colId, sort }) => ({
+                          column_id: colId,
+                          direction: sort,
+                        })),
+                      )
                     : JSON.stringify(request.sortModel),
                 search: debouncedSearchQuery?.length
                   ? debouncedSearchQuery
                   : null,
                 page_size: pageSize,
                 current_page_index: pageNumber,
-                filters: JSON.stringify(objectCamelToSnake(validatedFilters)),
+                filters: JSON.stringify(validatedFilters),
               },
             });
 
@@ -488,14 +480,13 @@ const UsersGrid = React.memo(
               headerHeight={40}
               rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
               theme={agTheme}
-              rowSelection={{ mode: "multiRow" }}
+              rowSelection={{ mode: "multiRow", enableClickSelection: false }}
               pagination={true}
               paginationPageSize={10}
               rowModelType="serverSide"
               paginationPageSizeSelector={false}
               defaultColDef={defaultColDef}
               onColumnHeaderClicked={onColumnHeaderClicked}
-              suppressRowClickSelection={true}
               rowStyle={{ cursor: "pointer" }}
               suppressSizeToFit={true}
               suppressAutoSize={true}

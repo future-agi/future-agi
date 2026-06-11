@@ -19,7 +19,7 @@ Route · cache · govern · guard · observe. Single Go binary. Drop-in OpenAI A
   <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/built%20with-Go%201.23-00ADD8?style=flat-square&logo=go" alt="Go 1.23"></a>
   <a href="https://docs.futureagi.com/docs/prism"><img src="https://img.shields.io/badge/docs-docs.futureagi.com-fafafa?style=flat-square" alt="Docs"></a>
-  <a href="https://discord.gg/UjZ2gRT5p"><img src="https://img.shields.io/badge/community-Discord-5865F2?style=flat-square" alt="Discord"></a>
+  <a href="https://discord.com/invite/n2tCUKBkAw"><img src="https://img.shields.io/badge/community-Discord-5865F2?style=flat-square" alt="Discord"></a>
 </p>
 
 <p>
@@ -1046,6 +1046,6 @@ Apache License 2.0 — see [LICENSE](../../LICENSE) and [NOTICE](../../NOTICE).
 
 **Built with ❤️ in Go by the [Future AGI](https://futureagi.com) team and contributors.**
 
-[🌐 futureagi.com](https://futureagi.com) · [📖 docs](https://docs.futureagi.com/docs/prism) · [💬 Discord](https://discord.gg/UjZ2gRT5p) · [🐦 Twitter](https://twitter.com/futureagi)
+[🌐 futureagi.com](https://futureagi.com) · [📖 docs](https://docs.futureagi.com/docs/prism) · [💬 Discord](https://discord.com/invite/n2tCUKBkAw) · [🐦 Twitter](https://twitter.com/futureagi)
 
 </div>

@@ -8,6 +8,7 @@ import {
   Skeleton,
   Stack,
   Switch,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
@@ -23,7 +24,9 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import "src/styles/clean-data-table.css";
-import CreateRuleDialog from "./create-rule-dialog";
+import CreateRuleDialog, {
+  TRIGGER_FREQUENCY_OPTIONS,
+} from "./create-rule-dialog";
 import EditRuleDialog from "./edit-rule-dialog";
 
 // ---------------------------------------------------------------------------
@@ -76,6 +79,19 @@ function EnabledCellRenderer({ data, context }) {
   );
 }
 
+function TriggerFrequencyCellRenderer({ data }) {
+  if (!data) return null;
+  const label =
+    TRIGGER_FREQUENCY_OPTIONS.find(
+      (option) => option.value === (data.trigger_frequency || "manual"),
+    )?.label || "Manually";
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+      <Chip label={label} size="small" variant="outlined" />
+    </Box>
+  );
+}
+
 function TriggersCellRenderer({ data }) {
   if (!data) return null;
   return (
@@ -99,20 +115,48 @@ function LastTriggeredCellRenderer({ data }) {
 
 function ActionsCellRenderer({ data, context }) {
   if (!data) return null;
+  const isRunning = String(context?.evaluatingRuleId || "") === String(data.id);
+  const runDisabled = isRunning || !data.enabled;
+  const tooltip = data.enabled
+    ? "Run this rule now"
+    : "Enable this rule before running it";
+
   return (
     <Box
       sx={{ display: "flex", alignItems: "center", height: "100%", gap: 0.5 }}
     >
-      <Button
-        size="small"
-        onClick={(e) => {
-          e.stopPropagation();
-          context?.onRunNow(data);
-        }}
-        disabled={context?.evaluatingRuleId != null || !data.enabled}
-      >
-        Run Now
-      </Button>
+      <Tooltip title={tooltip} placement="top">
+        <span>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={
+              <Iconify
+                icon={
+                  isRunning ? "svg-spinners:180-ring" : "mingcute:play-line"
+                }
+                width={15}
+              />
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              context?.onRunNow(data);
+            }}
+            disabled={runDisabled}
+            sx={{
+              minWidth: 108,
+              justifyContent: "center",
+              fontWeight: 700,
+              borderColor: "primary.main",
+              "&.Mui-disabled": {
+                borderColor: "action.disabledBackground",
+              },
+            }}
+          >
+            {isRunning ? "Running..." : "Run Now"}
+          </Button>
+        </span>
+      </Tooltip>
       <IconButton
         size="small"
         color="error"
@@ -130,7 +174,7 @@ function ActionsCellRenderer({ data, context }) {
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-export default function AutomationRulesTab({ queueId }) {
+export default function AutomationRulesTab({ queueId, queue }) {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
   const gridRef = useRef(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -166,6 +210,13 @@ export default function AutomationRulesTab({ queueId }) {
         flex: 0.8,
         minWidth: 100,
         cellRenderer: isLoading ? SkeletonCell : EnabledCellRenderer,
+      },
+      {
+        field: "trigger_frequency",
+        headerName: "Trigger",
+        flex: 1,
+        minWidth: 130,
+        cellRenderer: isLoading ? SkeletonCell : TriggerFrequencyCellRenderer,
       },
       {
         field: "trigger_count",
@@ -214,7 +265,11 @@ export default function AutomationRulesTab({ queueId }) {
         setEvaluatingRuleId(rule.id);
         evaluateRule(
           { queueId, ruleId: rule.id },
-          { onSettled: () => setEvaluatingRuleId(null) },
+          {
+            onSettled: () => {
+              setEvaluatingRuleId(null);
+            },
+          },
         );
       },
       onDeleteConfirm: (rule) => setDeleteTarget(rule),
@@ -306,6 +361,7 @@ export default function AutomationRulesTab({ queueId }) {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         queueId={queueId}
+        queue={queue}
       />
 
       <EditRuleDialog
@@ -313,6 +369,7 @@ export default function AutomationRulesTab({ queueId }) {
         onClose={() => setEditTarget(null)}
         queueId={queueId}
         rule={editTarget}
+        queue={queue}
       />
 
       <ConfirmDialog

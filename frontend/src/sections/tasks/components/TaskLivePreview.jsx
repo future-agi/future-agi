@@ -39,6 +39,8 @@ import {
   isAudioUrlString,
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
+import { ID_ONLY_FIELDS } from "src/sections/projects/LLMTracing/idFields";
+import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
 
 // ───────────────────────────────────────────────────────────────
 // Helpers (ported from TracingTestMode)
@@ -50,31 +52,90 @@ const COL_TYPE_MAP = {
   annotation: "ANNOTATION",
 };
 
-// Direct id columns the backend resolves without col_type — injecting one
-// routes the filter through the metrics pipeline and silently returns 0.
-const ID_COLUMNS = new Set(["trace_id", "span_id"]);
+const RANGE_OPS = new Set(["between", "not_between"]);
+const LIST_OPS = new Set(["in", "not_in"]);
+const NO_VALUE_OPS = new Set(NULL_OPERATORS);
+
+// Form rows from `TaskFilterBar.convertNewToOld` carry scalar `filterValue`
+// for single-value ops and arrays for `in`/`not_in`/`between`/`not_between`.
+// Multiple scalar rows for the same (field, op) need to be merged into one
+// wire entry so the BE `in` validator gets a single array clause instead of
+// N independently-evaluated scalar clauses.
+function mergeRowsByFieldAndOp(rows) {
+  const merged = new Map();
+  rows.forEach((f) => {
+    const isAttribute = f.property === "attributes";
+    const columnId = isAttribute ? f.propertyId : f.property;
+    if (!columnId) return;
+    const op = f?.filterConfig?.filterOp || "equals";
+    const filterType = f?.filterConfig?.filterType || "text";
+    const key = `${columnId}|${op}|${f.fieldCategory || "system"}|${filterType}`;
+    if (!merged.has(key)) {
+      merged.set(key, {
+        columnId,
+        fieldCategory: f.fieldCategory,
+        op,
+        filterType,
+        isAttribute,
+        value: undefined,
+        values: [],
+      });
+    }
+    const entry = merged.get(key);
+    const v = f?.filterConfig?.filterValue;
+    if (RANGE_OPS.has(op)) {
+      // Range rows already carry the [low, high] array.
+      entry.value = Array.isArray(v) ? v : entry.value;
+    } else if (LIST_OPS.has(op)) {
+      const arr = Array.isArray(v) ? v : v != null && v !== "" ? [v] : [];
+      entry.values.push(...arr);
+    } else if (v !== undefined && v !== null && v !== "") {
+      entry.values.push(v);
+    }
+  });
+  return Array.from(merged.values());
+}
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
-  const userFilters = (oldFormatFilters || [])
-    .filter((f) => f?.propertyId || f?.property)
-    .map((f) => {
-      const isAttribute = f.property === "attributes";
-      const columnId = isAttribute ? f.propertyId : f.property;
-      const isIdColumn = ID_COLUMNS.has(columnId);
+  const userFilters = mergeRowsByFieldAndOp(oldFormatFilters || []).map(
+    (entry) => {
+      const isIdColumn = ID_ONLY_FIELDS.has(entry.columnId);
       const colType =
-        COL_TYPE_MAP[f.fieldCategory] ||
-        (isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
+        COL_TYPE_MAP[entry.fieldCategory] ||
+        (entry.isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
+      let filterValue;
+      if (NO_VALUE_OPS.has(entry.op)) {
+        filterValue = "";
+      } else if (RANGE_OPS.has(entry.op)) {
+        filterValue = entry.value;
+      } else if (LIST_OPS.has(entry.op)) {
+        filterValue = entry.values;
+      } else if (entry.values.length > 1) {
+        // Multiple scalar rows under a single-value op — collapse to `in`.
+        filterValue = entry.values;
+      } else if (entry.values.length === 1) {
+        filterValue = entry.values[0];
+      } else {
+        filterValue = undefined;
+      }
+      const filterOp =
+        !RANGE_OPS.has(entry.op) &&
+        !LIST_OPS.has(entry.op) &&
+        Array.isArray(filterValue)
+          ? "in"
+          : entry.op;
       return {
-        column_id: columnId,
+        column_id: entry.columnId,
         filter_config: {
-          filter_type: f?.filterConfig?.filterType || "text",
-          filter_op: f?.filterConfig?.filterOp || "equals",
-          filter_value: f?.filterConfig?.filterValue,
+          filter_type: entry.filterType,
+          filter_op: filterOp,
+          ...(filterValue !== undefined && { filter_value: filterValue }),
           ...(!isIdColumn && { col_type: colType }),
         },
       };
-    });
+    },
+  );
 
   if (startDate && endDate) {
     userFilters.push({
@@ -496,8 +557,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         });
         return;
       }
-      // canonicalEntries drops the camelCase aliases the axios interceptor
-      // layers on — otherwise `span_attributes.*` and `spanAttributes.*`
+      // canonicalEntries drops legacy camelCase aliases that may exist on cached or pre-normalized objects — otherwise `span_attributes.*` and `spanAttributes.*`
       // both end up in valueMap and only the snake side gets stripped.
       for (const [k, v] of canonicalEntries(node)) {
         if (k.startsWith("_")) continue;
@@ -577,7 +637,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           const savedMapping = evalItem?.mapping || {};
           const playgroundConfig = {
             ...(Object.keys(diFlags).length > 0
-              ? { data_injection: diFlags }
+              ? { run_config: { data_injection: diFlags } }
               : {}),
           };
           if (!isSession) {
@@ -688,6 +748,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                   bgcolor: "background.neutral",
                   color: "text.secondary",
                   "& .MuiChip-label": { px: 0.75 },
+                  "&:hover": { bgcolor: "background.neutral" },
                 }}
               />
             )}
@@ -849,9 +910,7 @@ const RowDetailTable = ({
   // `gen_ai.span.kind` row would also have a duplicate `genAi.span.kind`
   // sibling rendered next to it.
   const entries = useMemo(() => {
-    const raw = canonicalEntries(spanDetail).filter(
-      ([key]) => key !== "spans",
-    );
+    const raw = canonicalEntries(spanDetail).filter(([key]) => key !== "spans");
     const spanAttrs = spanDetail?.span_attributes;
     if (
       !spanAttrs ||
@@ -1176,6 +1235,7 @@ const VariableMappingView = ({
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.5 },
+                      "&:hover": { bgcolor: "background.neutral" },
                     }}
                   />
                 )}
@@ -1189,6 +1249,7 @@ const VariableMappingView = ({
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.5 },
+                      "&:hover": { bgcolor: "background.neutral" },
                     }}
                   />
                 )}

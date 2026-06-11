@@ -11,7 +11,13 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import axios, { endpoints } from "src/utils/axios";
@@ -284,6 +290,7 @@ const InstructionEditor = ({
   onSelectedKBsChange,
   activeContextOptions,
   onActiveContextOptionsChange,
+  hideDatasetContextToggle = false,
 }) => {
   const modelBarDisabled = modelSelectorDisabled ?? disabled;
   const quillRef = useRef(null);
@@ -979,6 +986,7 @@ const InstructionEditor = ({
               onSelectedKBsChange={onSelectedKBsChange}
               activeContextOptions={activeContextOptions}
               onActiveContextOptionsChange={onActiveContextOptionsChange}
+              hideDatasetContextToggle={hideDatasetContextToggle}
             />
           </Box>
           {!aiOpen && (
@@ -1023,6 +1031,7 @@ InstructionEditor.propTypes = {
   onTemplateFormatChange: PropTypes.func,
   datasetColumns: PropTypes.array,
   datasetJsonSchemas: PropTypes.object,
+  hideDatasetContextToggle: PropTypes.bool,
 };
 
 export default InstructionEditor;

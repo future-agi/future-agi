@@ -1266,4 +1266,35 @@ BILLING_ERROR_CODES = {
 # Merge billing error codes into the main dict
 err_dict.update(BILLING_ERROR_CODES)
 
+# ── Login Error Codes ────────────────────────────────────────────────────
+LOGIN_ERROR_CODES = {
+    "LOGIN_IP_BLOCKED": [
+        "Your IP address has been temporarily blocked due to multiple failed attempts. Please try again later."
+    ],
+    "LOGIN_IP_RATE_LIMITED": [
+        "Too many login attempts from your network. Please try again later."
+    ],
+    "LOGIN_ACCOUNT_BLOCKED": [
+        "Account temporarily blocked due to too many failed attempts. Please try again later."
+    ],
+    "LOGIN_RECAPTCHA_FAILED": ["reCAPTCHA verification failed. Please try again."],
+    "LOGIN_INVALID_CREDENTIALS": [
+        "Invalid email or password. Please check your credentials and try again."
+    ],
+    "LOGIN_ACCOUNT_DEACTIVATED": [
+        "Your account has been deactivated. Please contact your organization admin."
+    ],
+    "LOGIN_TOO_MANY_ATTEMPTS": [
+        "Too many failed login attempts. Your account has been temporarily blocked."
+    ],
+    "LOGIN_UNEXPECTED_ERROR": [
+        "An unexpected error occurred during login. Please try again."
+    ],
+    "LOGIN_PASSWORD_RESET_RATE_LIMITED": [
+        "Too many password reset requests. Please try again later."
+    ],
+}
+
+err_dict.update(LOGIN_ERROR_CODES)
+
 # get_error_message("METRIC_VALID_CONTENT")

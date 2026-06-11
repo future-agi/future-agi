@@ -10,6 +10,7 @@ import {
   TextField,
   Tooltip,
   Typography,
+  alpha,
 } from "@mui/material";
 import {
   useInfiniteQuery,
@@ -147,6 +148,55 @@ const FAGI_MODELS = [
 
 export const FAGI_MODEL_VALUES = new Set(FAGI_MODELS.map((m) => m.value));
 
+const CHIP_STYLES = {
+  backgroundColor: (theme) =>
+    alpha(
+      theme.palette.primary.main,
+      theme.palette.mode === "dark" ? 0.24 : 0.1,
+    ),
+  "&:hover": {
+    backgroundColor: (theme) =>
+      alpha(
+        theme.palette.primary.main,
+        theme.palette.mode === "dark" ? 0.32 : 0.16,
+      ),
+  },
+  color: (theme) =>
+    theme.palette.mode === "dark"
+      ? theme.palette.primary.light
+      : theme.palette.primary.main,
+  border: "1px solid",
+  borderColor: (theme) =>
+    alpha(
+      theme.palette.primary.main,
+      theme.palette.mode === "dark" ? 0.4 : 0.2,
+    ),
+  borderRadius: "4px",
+  fontWeight: 500,
+  fontSize: "11px",
+  height: 22,
+  "& .MuiChip-label": { px: 0.75 },
+  "& .MuiChip-icon": {
+    color: "inherit",
+  },
+  "& .MuiChip-deleteIcon": {
+    margin: "0 4px 0 -2px",
+    color: (theme) =>
+      theme.palette.mode === "dark"
+        ? theme.palette.primary.light
+        : theme.palette.primary.main,
+    transition: "color 0.15s ease",
+    "&:hover": {
+      color: (theme) =>
+        theme.palette.mode === "dark"
+          ? theme.palette.primary.contrastText
+          : theme.palette.primary.dark,
+    },
+  },
+};
+
+const DELETE_ICON = <Iconify icon="mdi:close" width={12} />;
+
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Summary Chip — resolves name for both presets and custom templates
@@ -179,7 +229,8 @@ function SummaryChip({ activeSummary, onClick, onDelete }) {
       label={chipLabel}
       onClick={onClick}
       onDelete={onDelete}
-      sx={{ height: 22, fontSize: "11px", fontWeight: 500, cursor: "pointer" }}
+      deleteIcon={DELETE_ICON}
+      sx={{ ...CHIP_STYLES, cursor: "pointer" }}
     />
   );
 }
@@ -524,6 +575,7 @@ const ModelSelector = ({
   onSelectedKBsChange,
   activeContextOptions: activeContextOptionsProp,
   onActiveContextOptionsChange,
+  hideDatasetContextToggle = false,
 }) => {
   // For each field, pick "controlled" (parent-driven) or "uncontrolled" (local state).
   const [modeLocal, setModeLocal] = useState("agent");
@@ -655,7 +707,11 @@ const ModelSelector = ({
     queryKey: ["eval-model-list", debouncedModelSearch],
     queryFn: ({ pageParam }) =>
       axios.get(endpoints.develop.modelList, {
-        params: { page: pageParam, search: debouncedModelSearch, model_type: "llm" },
+        params: {
+          page: pageParam,
+          search: debouncedModelSearch,
+          model_type: "llm",
+        },
       }),
     getNextPageParam: (o) => (o.data.next ? o.data.current_page + 1 : null),
     initialPageParam: 1,
@@ -802,7 +858,8 @@ const ModelSelector = ({
           icon={<Iconify icon="mdi:web" width={12} sx={{ ml: 0.5 }} />}
           label="Internet"
           onDelete={() => setUseInternet(false)}
-          sx={{ height: 22, fontSize: "11px", fontWeight: 500 }}
+          deleteIcon={DELETE_ICON}
+          sx={CHIP_STYLES}
         />
       )}
       {showPlus && activeSummary && activeSummary !== "concise" && (
@@ -859,7 +916,8 @@ const ModelSelector = ({
               onDelete={() =>
                 setActiveConnectorIds((p) => p.filter((x) => x !== cId))
               }
-              sx={{ height: 22, fontSize: "11px", fontWeight: 500 }}
+              deleteIcon={DELETE_ICON}
+              sx={CHIP_STYLES}
             />
           );
         })}
@@ -897,12 +955,8 @@ const ModelSelector = ({
               setPlusSubmenu("knowledge");
             }}
             onDelete={() => setSelectedKBs([])}
-            sx={{
-              height: 22,
-              fontSize: "11px",
-              fontWeight: 500,
-              cursor: "pointer",
-            }}
+            deleteIcon={DELETE_ICON}
+            sx={{ ...CHIP_STYLES, cursor: "pointer" }}
           />
         </Tooltip>
       )}
@@ -944,12 +998,8 @@ const ModelSelector = ({
                 setPlusSubmenu("injection");
               }}
               onDelete={() => setActiveContextOptions(["variables_only"])}
-              sx={{
-                height: 22,
-                fontSize: "11px",
-                fontWeight: 500,
-                cursor: "pointer",
-              }}
+              deleteIcon={DELETE_ICON}
+              sx={{ ...CHIP_STYLES, cursor: "pointer" }}
             />
           </Tooltip>
         )}
@@ -1552,7 +1602,8 @@ const ModelSelector = ({
                               prev.filter((x) => x !== kbId),
                             )
                           }
-                          sx={{ height: 20, fontSize: "11px" }}
+                          deleteIcon={DELETE_ICON}
+                          sx={{ ...CHIP_STYLES, height: 20 }}
                         />
                       );
                     })}
@@ -1626,7 +1677,10 @@ const ModelSelector = ({
             {/* ══ Data Injection submenu ══ */}
             {plusSubmenu === "injection" && (
               <Box>
-                {CONTEXT_OPTIONS.map((opt) => {
+                {CONTEXT_OPTIONS.filter(
+                  (opt) =>
+                    !(hideDatasetContextToggle && opt.value === "dataset_row"),
+                ).map((opt) => {
                   const isActive = activeContextOptions.includes(opt.value);
                   return (
                     <MenuItem
@@ -1751,6 +1805,7 @@ ModelSelector.propTypes = {
   disabled: PropTypes.bool,
   showMode: PropTypes.bool,
   showPlus: PropTypes.bool,
+  hideDatasetContextToggle: PropTypes.bool,
 };
 
 export default ModelSelector;

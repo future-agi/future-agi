@@ -125,7 +125,7 @@ const SelectOrganizationChild = React.forwardRef(
                   color="text.primary"
                   fontWeight={500}
                 >
-                  {org.display_name || org.displayName || org.name}
+                  {org.display_name || org.name}
                 </Typography>
                 <ShowComponent condition={org.id === currentOrganizationId}>
                   <Iconify

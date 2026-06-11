@@ -94,6 +94,27 @@ const OutputTypeConfig = ({
         >
           Select your preferred evaluation output format.
         </Typography>
+        {radioDisabled && (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.75,
+              mb: 1,
+            }}
+          >
+            <Iconify
+              icon="solar:info-circle-bold"
+              width={14}
+              height={14}
+              sx={{ color: "text.disabled", flexShrink: 0 }}
+            />
+            <Typography variant="caption" color="text.secondary">
+              Output type is fixed for this evaluation and can&apos;t be
+              changed.
+            </Typography>
+          </Box>
+        )}
         <RadioGroup
           row
           value={outputType}
@@ -108,7 +129,7 @@ const OutputTypeConfig = ({
               onChoiceScoresChange({ "Choice 1": 0.5 });
             }
           }}
-          sx={{px:0.25}}
+          sx={{ px: 0.25 }}
         >
           <FormControlLabel
             value="pass_fail"
@@ -245,7 +266,7 @@ const OutputTypeConfig = ({
             <Box sx={{ display: "flex", alignItems: "center", gap: 2, px: 1 }}>
               <Typography variant="caption">0</Typography>
               <Slider
-                value={passThreshold * 100}
+                value={Math.round(passThreshold * 100)}
                 onChange={(_, val) => onPassThresholdChange(val / 100)}
                 min={0}
                 max={100}
@@ -429,7 +450,7 @@ const OutputTypeConfig = ({
                   Allow multiple choices (LLM can select more than one)
                 </Typography>
               }
-              sx={{ mt: 0.5, px:0.25 }}
+              sx={{ mt: 0.5, px: 0.25 }}
             />
           </Box>
         </Box>

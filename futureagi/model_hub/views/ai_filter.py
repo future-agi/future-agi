@@ -28,9 +28,20 @@ import structlog
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from model_hub.serializers.ai_filter import (
+    AIFilterRequestSerializer,
+    AIFilterResponseSerializer,
+)
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+
+ERROR_RESPONSES = {
+    400: ApiTextErrorResponseSerializer,
+    500: ApiTextErrorResponseSerializer,
+}
 
 SYSTEM_PROMPT = """You are a filter assistant. Given a user's natural language query and a schema of available filter fields, return a JSON array of filter conditions.
 
@@ -975,12 +986,18 @@ class AIFilterView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=AIFilterRequestSerializer,
+        responses={200: AIFilterResponseSerializer, **ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         mode = "build_filters"  # default — referenced by except blocks below
         try:
-            mode = request.data.get("mode", "build_filters")
-            query = request.data.get("query", "").strip()
-            schema = request.data.get("schema", [])
+            payload = request.validated_data
+            mode = payload.get("mode", "build_filters")
+            query = payload.get("query", "").strip()
+            schema = payload.get("schema", [])
 
             if not query:
                 return self._gm.bad_request("Query is required")
@@ -993,16 +1010,12 @@ class AIFilterView(APIView):
             # Smart mode — agentic tool-use loop
             # ------------------------------------------------------------
             if mode == "smart":
-                source = request.data.get("source", "traces")
+                source = payload.get("source", "traces")
                 if source == "traces":
-                    project_id = request.data.get("project_id")
-                    project_ids = _resolve_project_ids(
-                        request.workspace, project_id
-                    )
+                    project_id = payload.get("project_id")
+                    project_ids = _resolve_project_ids(request.workspace, project_id)
                     if project_id and not project_ids:
-                        return self._gm.bad_request(
-                            "project not found in workspace"
-                        )
+                        return self._gm.bad_request("project not found in workspace")
                     metric_type_by_id = {
                         s.get("field"): {
                             "system": "system_metric",
@@ -1025,16 +1038,12 @@ class AIFilterView(APIView):
                     # Smart mode for dataset rows: scope to one dataset and
                     # look up per-column distinct cell values so the LLM can
                     # fuzzy-match the user's wording against real data.
-                    raw_dataset_id = request.data.get(
-                        "dataset_id"
-                    ) or request.data.get("project_id")
-                    dataset_id = _resolve_dataset_id(
-                        request.workspace, raw_dataset_id
+                    raw_dataset_id = payload.get("dataset_id") or payload.get(
+                        "project_id"
                     )
+                    dataset_id = _resolve_dataset_id(request.workspace, raw_dataset_id)
                     if not dataset_id:
-                        return self._gm.bad_request(
-                            "dataset_id not found in workspace"
-                        )
+                        return self._gm.bad_request("dataset_id not found in workspace")
 
                     def fetch_values(field_id):
                         return _fetch_dataset_column_values(dataset_id, field_id)

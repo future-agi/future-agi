@@ -13,12 +13,16 @@ via `transaction.on_commit` after each upsert.
 import asyncio
 
 import structlog
+from django.db import transaction
 
-from simulate.temporal.utils.async_storage import convert_audio_url_to_s3_async
+from simulate.temporal.utils.async_storage import (
+    convert_audio_url_to_s3_async_with_size,
+)
 from tfc.temporal import temporal_activity
 from tracer.models.observability_provider import ProviderChoices
 from tracer.models.observation_span import ObservationSpan
 from tracer.utils.otel import ConversationAttributes
+from tracer.utils.usage_emit import emit_span_ingestion_usage
 
 logger = structlog.get_logger(__name__)
 
@@ -83,7 +87,7 @@ def rehost_external_recordings(span_id: str) -> None:
     """Re-host external provider recording URLs (Vapi/Retell) on FAGI S3.
 
     Hands each non-S3 `conversation.recording.*` URL to
-    `convert_audio_url_to_s3_async` (downloads run concurrently) and
+    `convert_audio_url_to_s3_async_with_size` (downloads run concurrently) and
     overwrites the key with the durable S3 URL. The helper returns the
     input URL unchanged on download failure, so the key falls back to the
     provider URL and a future tick can pick it up.
@@ -101,47 +105,95 @@ def rehost_external_recordings(span_id: str) -> None:
     if not keys:
         return
 
+    # Billing marker — url_types we've already emitted OBSERVE_ADD for on
+    # this span. Survives `_update_observation_span` overwriting
+    # span_attributes back to provider URLs, so subsequent polls of the
+    # same call don't re-bill the same audio.
+    already_billed = set((span.metadata or {}).get("rehost_billed_url_types", []))
+
     attrs = dict(span.span_attributes or {})
     jobs = [
         (key, attrs[key], url_type)
         for key, url_type in keys
-        if attrs.get(key) and not is_already_s3_url(attrs[key])
+        if attrs.get(key)
+        and not is_already_s3_url(attrs[key])
+        and url_type not in already_billed
     ]
     if not jobs:
         return
 
     call_id = _resolve_call_id(span)
 
-    async def _rehost_all() -> list[str]:
+    async def _rehost_all() -> list[tuple[str, int]]:
         return await asyncio.gather(
             *(
-                convert_audio_url_to_s3_async(call_id, url, url_type)
+                convert_audio_url_to_s3_async_with_size(call_id, url, url_type)
                 for _, url, url_type in jobs
             )
         )
 
     results = asyncio.run(_rehost_all())
 
-    changed = False
-    for (key, original_url, url_type), s3_url in zip(jobs, results):
+    successful: list[tuple[str, str, str, int]] = []  # (key, url_type, s3_url, size)
+    for (key, original_url, url_type), (s3_url, size) in zip(jobs, results):
         if s3_url and s3_url != original_url:
-            attrs[key] = s3_url
-            changed = True
+            successful.append((key, url_type, s3_url, size))
             logger.info(
                 "rehost_external_recordings: uploaded to S3",
                 call_id=call_id,
                 url_type=url_type,
                 s3_url=s3_url,
+                bytes=size,
             )
 
-    if not changed:
+    if not successful:
         return
 
-    span.span_attributes = attrs
-    span.save(update_fields=["span_attributes"])
+    # Re-check the marker under a row lock so concurrent activities for
+    # the same span (e.g., overlapping poll + webhook) can't both bill
+    # the same url_types. S3 uploads above are idempotent thanks to
+    # deterministic object keys, so they are safe to do without a lock.
+    with transaction.atomic():
+        locked = (
+            ObservationSpan.objects.select_for_update().filter(id=span_id).first()
+        )
+        if not locked:
+            return
+
+        current_billed = set(
+            (locked.metadata or {}).get("rehost_billed_url_types", [])
+        )
+        to_bill_types = {ut for (_, ut, _, _) in successful if ut not in current_billed}
+        bytes_to_bill = sum(
+            size for (_, ut, _, size) in successful if ut in to_bill_types
+        )
+
+        new_attrs = dict(locked.span_attributes or {})
+        for (key, _, s3_url, _) in successful:
+            new_attrs[key] = s3_url
+
+        md = dict(locked.metadata or {})
+        md["rehost_billed_url_types"] = sorted(current_billed | to_bill_types)
+
+        locked.span_attributes = new_attrs
+        locked.metadata = md
+        locked.save(update_fields=["span_attributes", "metadata"])
+
+        org_id = locked.project.organization_id
+
     logger.info(
         "rehost_external_recordings: persisted recordings",
         span_id=span_id,
         provider=span.provider,
         call_id=call_id,
+        uploaded_bytes=bytes_to_bill,
     )
+
+    if bytes_to_bill:
+        emit_span_ingestion_usage(
+            organization_id=org_id,
+            num_traces=0,
+            num_spans=0,
+            payload_bytes=bytes_to_bill,
+            source="voice_recording_rehost",
+        )

@@ -5,7 +5,7 @@ Type definitions and dataclasses for model_hub
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel, Field
 
 
 @dataclass
@@ -106,17 +106,7 @@ class EvalCreateRequest(BaseModel):
         extra = "forbid"
 
     name: str = Field(min_length=0, max_length=255, default="")
-    # Accept camelCase `isDraft` as an alias. The frontend's response
-    # interceptor installs enumerable camelCase twins on every response
-    # object; if a caller spreads response-derived state into a request
-    # body without also setting `is_draft`, the twin `isDraft` is what
-    # arrives here. Treating the two names as equivalent keeps the draft
-    # intent intact and stops the "Instructions are required" 400 from
-    # firing at mount time (TH-4076).
-    is_draft: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("is_draft", "isDraft"),
-    )
+    is_draft: bool = False
     eval_type: Literal["llm", "code", "agent"] = "llm"
     instructions: str = Field(default="", max_length=100000)
     model: str = Field(default="turing_large", max_length=255)
@@ -263,7 +253,19 @@ class EvalVersionItem(BaseModel):
     model: str = ""
     config_snapshot: dict = Field(default_factory=dict)
     created_by_name: str = ""
+    created_by_email: str = ""
     created_at: str = ""
+    # Column-level snapshot fields (mirror _VERSION_SNAPSHOT_FIELDS).
+    prompt_messages: list = Field(default_factory=list)
+    output_type_normalized: str | None = None
+    pass_threshold: float | None = None
+    choice_scores: dict | None = None
+    error_localizer_enabled: bool = False
+    eval_tags: list = Field(default_factory=list)
+    # Derived from config_snapshot for FE label rendering.
+    choices: list = Field(default_factory=list)
+    choices_map: dict = Field(default_factory=dict)
+    multi_choice: bool = False
 
 
 class EvalVersionListResponse(BaseModel):
@@ -309,6 +311,7 @@ class CompositeChildItem(BaseModel):
     pinned_version_id: str | None = None
     pinned_version_number: int | None = None
     weight: float = 1.0
+    config: dict[str, Any] = Field(default_factory=dict)
     # Populated from the child template's config so the EvalPicker can
     # show a single combined mapping panel for composites. Empty for
     # children with no declared required variables.
@@ -325,6 +328,8 @@ class CompositeCreateRequest(BaseModel):
     aggregation_enabled: bool = True
     aggregation_function: str = "weighted_avg"
     child_weights: dict[str, float] | None = None
+    child_pinned_versions: dict[str, str | None] | None = None
+    child_configs: dict[str, dict[str, Any]] | None = None
     # Empty string means legacy / unset: no homogeneity enforcement.
     # Frontend always sends a real axis.
     composite_child_axis: str = ""
@@ -375,6 +380,8 @@ class CompositeUpdateRequest(BaseModel):
         default=None, min_length=1, max_length=50
     )
     child_weights: dict[str, float] | None = None
+    child_pinned_versions: dict[str, str | None] | None = None
+    child_configs: dict[str, dict[str, Any]] | None = None
     composite_child_axis: str | None = None
 
 
@@ -405,6 +412,7 @@ class CompositeAdhocExecuteRequest(BaseModel):
     aggregation_function: str = "weighted_avg"
     composite_child_axis: str = ""
     child_weights: dict[str, float] | None = None
+    child_configs: dict[str, dict[str, Any]] | None = None
     pass_threshold: float = 0.5
 
     mapping: dict[str, Any]

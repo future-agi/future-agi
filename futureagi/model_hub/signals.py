@@ -99,16 +99,15 @@ def _has_relevant_changes(prompt_version) -> bool:
     if not old_state:
         return False
 
-    old_vars = (
-        set(old_state["variable_names"].keys())
-        if old_state.get("variable_names")
-        else set()
-    )
-    new_vars = (
-        set(prompt_version.variable_names.keys())
-        if prompt_version.variable_names
-        else set()
-    )
+    def _variable_keys(value):
+        if isinstance(value, dict):
+            return set(value.keys())
+        if isinstance(value, (list, tuple, set)):
+            return set(value)
+        return set()
+
+    old_vars = _variable_keys(old_state.get("variable_names"))
+    new_vars = _variable_keys(prompt_version.variable_names)
 
     if old_vars != new_vars:
         logger.info(
@@ -120,11 +119,16 @@ def _has_relevant_changes(prompt_version) -> bool:
         return True
 
     # Check if response_format changed
-    old_config = old_state.get("prompt_config_snapshot") or {}
-    new_config = prompt_version.prompt_config_snapshot or {}
+    def _response_format(config):
+        if not isinstance(config, dict):
+            return None
+        configuration = config.get("configuration")
+        if not isinstance(configuration, dict):
+            return None
+        return configuration.get("response_format")
 
-    old_format = old_config.get("configuration", {}).get("response_format")
-    new_format = new_config.get("configuration", {}).get("response_format")
+    old_format = _response_format(old_state.get("prompt_config_snapshot"))
+    new_format = _response_format(prompt_version.prompt_config_snapshot)
 
     if old_format != new_format:
         logger.info(

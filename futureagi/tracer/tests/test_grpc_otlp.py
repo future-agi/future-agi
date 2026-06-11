@@ -5,6 +5,7 @@ Tests for the gRPC OTLP trace endpoint.
 """
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from google.protobuf.json_format import MessageToJson
@@ -87,7 +88,11 @@ class TestObservationSpanServiceUnit:
             service = ObservationSpanService()
             request = create_test_otlp_request(num_spans=3)
 
-            response = await service.Export(request, mock_context)
+            with patch(
+                "ee.usage.services.rate_limiter.RateLimiter.check",
+                return_value=SimpleNamespace(allowed=True, reason=None),
+            ), patch("tracer.services.grpc.payload_storage.store", return_value="payload-key"):
+                response = await service.Export(request, mock_context)
 
             # Verify response
             assert isinstance(response, ExportTraceServiceResponse)
@@ -100,8 +105,8 @@ class TestObservationSpanServiceUnit:
         asyncio.run(run_test())
 
     @patch("tracer.services.grpc.bulk_create_observation_span_task")
-    def test_export_preserves_proto_field_names(self, mock_task):
-        """Test that Export preserves proto field names in JSON."""
+    def test_export_stores_protobuf_payload_key(self, mock_task):
+        """Test that Export stores protobuf bytes and passes a payload key to the task."""
 
         async def run_test():
             mock_task.apply_async.return_value = None
@@ -120,17 +125,16 @@ class TestObservationSpanServiceUnit:
             service = ObservationSpanService()
             request = create_test_otlp_request()
 
-            await service.Export(request, mock_context)
+            with patch(
+                "ee.usage.services.rate_limiter.RateLimiter.check",
+                return_value=SimpleNamespace(allowed=True, reason=None),
+            ), patch("tracer.services.grpc.payload_storage.store", return_value="payload-key"):
+                await service.Export(request, mock_context)
 
-            # Get the JSON that was passed to the task
             call_args = mock_task.apply_async.call_args
-            # apply_async is called with args=[request_json, ...] as keyword arg
-            request_json = call_args.kwargs["args"][0]
-
-            # Verify field names are preserved (snake_case, not camelCase)
-            assert (
-                "resource_spans" in request_json or "resourceSpans" not in request_json
-            )
+            task_args = call_args.kwargs["args"]
+            assert task_args[0] == "payload-key"
+            assert task_args[-1] == "protobuf"
 
         asyncio.run(run_test())
 

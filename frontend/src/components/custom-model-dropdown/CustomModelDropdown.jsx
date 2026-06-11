@@ -11,6 +11,23 @@ import { ShowComponent } from "../show";
 import ModelButtonField from "./ModelButtonField";
 import AddCustomModal from "src/pages/dashboard/settings/AddCustomModal";
 
+const normalizeModelOption = (option) => {
+  if (!option || option?.value === "no") return option;
+  const modelName =
+    option.modelName ?? option.model_name ?? option.name ?? option.value ?? "";
+  return {
+    ...option,
+    modelName,
+    model_name: option.model_name ?? modelName,
+    providers: option.providers ?? option.provider ?? "",
+    isAvailable: option.isAvailable ?? option.is_available ?? false,
+    is_available: option.is_available ?? option.isAvailable ?? false,
+    logoUrl: option.logoUrl ?? option.logo_url ?? "",
+    logo_url: option.logo_url ?? option.logoUrl ?? "",
+    type: option.type ?? option.mode ?? option.model_type ?? "",
+  };
+};
+
 const CustomModelDropdown = ({
   isModalContainer = false,
   buttonTitle = "Select Model",
@@ -33,6 +50,9 @@ const CustomModelDropdown = ({
   customTrigger,
   onModelTypeChange,
   modelType,
+  // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
+  // eslint-disable-next-line no-unused-vars
+  shrink: _shrink,
   ...rest
 }) => {
   const btnRef = useRef(null);
@@ -100,7 +120,10 @@ const CustomModelDropdown = ({
   const options = useMemo(() => {
     const filtered =
       modelList?.pages.reduce(
-        (acc, curr) => [...acc, ...curr.data.results],
+        (acc, curr) => [
+          ...acc,
+          ...(curr.data.results || []).map(normalizeModelOption),
+        ],
         [],
       ) || [];
     return filtered.length > 0
@@ -319,4 +342,5 @@ CustomModelDropdown.propTypes = {
   customTrigger: PropTypes.oneOfType([PropTypes.node, PropTypes.func]),
   onModelTypeChange: PropTypes.func,
   modelType: PropTypes.string,
+  shrink: PropTypes.bool,
 };

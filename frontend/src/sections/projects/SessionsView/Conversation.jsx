@@ -97,6 +97,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
       sx={{
         position: "relative",
         height: "100%",
+        minWidth: 0,
         backgroundColor: "background.paper",
       }}
     >
@@ -108,7 +109,9 @@ const Conversation = ({ human, ai, activeSessionId }) => {
           rowGap: "50px",
           height: "100%",
           overflowY: "scroll",
+          overflowX: "hidden",
           py: 4,
+          minWidth: 0,
         }}
       >
         {/* Human Conversation */}
@@ -119,6 +122,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
             justifyContent: "flex-start",
             position: "relative",
             marginLeft: 10,
+            minWidth: 0,
           }}
         >
           <Box
@@ -150,6 +154,8 @@ const Conversation = ({ human, ai, activeSessionId }) => {
               borderRadius: "4px",
               backgroundColor: "background.paper",
               padding: "12px",
+              maxWidth: "100%",
+              minWidth: 0,
             }}
           >
             <Stack gap={0} mb={1}>
@@ -175,6 +181,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
             justifyContent: "flex-end",
             position: "relative",
             marginRight: 10,
+            minWidth: 0,
           }}
         >
           <Box
@@ -208,6 +215,8 @@ const Conversation = ({ human, ai, activeSessionId }) => {
               borderRadius: "4px",
               backgroundColor: "background.paper",
               padding: "12px",
+              maxWidth: "100%",
+              minWidth: 0,
             }}
           >
             <Stack gap={0} mb={1}>

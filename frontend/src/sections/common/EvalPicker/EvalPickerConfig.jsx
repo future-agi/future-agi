@@ -180,13 +180,13 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
       name: evalName,
       model,
       mapping,
-        evalTemplate: normalizedEvalData,
-        evalType: normalizedEvalData?.evalType,
-        templateType: normalizedEvalData?.templateType,
-        outputType: normalizedEvalData?.outputType,
-        config: normalizedEvalData?.config,
-      };
-      onSave(evalConfig);
+      evalTemplate: normalizedEvalData,
+      evalType: normalizedEvalData?.evalType,
+      templateType: normalizedEvalData?.templateType,
+      outputType: normalizedEvalData?.outputType,
+      config: normalizedEvalData?.config,
+    };
+    onSave(evalConfig);
   }, [evalData, normalizedEvalData, evalName, model, mapping, onSave]);
 
   return (

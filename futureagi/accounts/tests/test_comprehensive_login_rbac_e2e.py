@@ -678,10 +678,10 @@ class TestPostInviteAccess:
         )
         assert resp.status_code == status.HTTP_200_OK
 
-    def test_invited_admin_cannot_invite_admin(
+    def test_invited_admin_can_invite_admin(
         self, auth_client, api_client, organization, workspace
     ):
-        """Admin cannot invite at Admin level (8 is not > 8)."""
+        """Admin can invite at Admin level (equal to their own level)."""
         new_user, token = self._invite_and_accept(
             auth_client,
             api_client,
@@ -698,10 +698,7 @@ class TestPostInviteAccess:
             Level.ADMIN,
             workspace,
         )
-        assert resp.status_code in (
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_403_FORBIDDEN,
-        )
+        assert resp.status_code == status.HTTP_200_OK
 
 
 # ============================================================================
@@ -1281,7 +1278,7 @@ class TestRoleUpdatePermissions:
         resp = self._update_role(admin_client, target.id, Level.VIEWER)
         assert resp.status_code == status.HTTP_200_OK
 
-    def test_admin_cannot_promote_to_admin(self, auth_client, organization, workspace):
+    def test_admin_can_promote_to_admin(self, auth_client, organization, workspace):
         admin = _make_user(
             organization,
             "admin-noadmin@futureagi.com",
@@ -1299,10 +1296,7 @@ class TestRoleUpdatePermissions:
 
         admin_client = _make_client(admin, workspace)
         resp = self._update_role(admin_client, target.id, Level.ADMIN)
-        assert resp.status_code in (
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_403_FORBIDDEN,
-        )
+        assert resp.status_code == status.HTTP_200_OK
 
     def test_admin_cannot_change_owner_role(
         self, auth_client, organization, workspace, user
@@ -1426,7 +1420,7 @@ class TestInvitePermissions:
             status.HTTP_403_FORBIDDEN,
         )
 
-    def test_admin_cannot_invite_admin(self, auth_client, organization, workspace):
+    def test_admin_can_invite_admin(self, auth_client, organization, workspace):
         admin = _make_user(
             organization,
             "admin-inv2@futureagi.com",
@@ -1442,10 +1436,7 @@ class TestInvitePermissions:
             Level.ADMIN,
             workspace,
         )
-        assert resp.status_code in (
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_403_FORBIDDEN,
-        )
+        assert resp.status_code == status.HTTP_200_OK
 
     def test_admin_can_invite_member(self, auth_client, organization, workspace):
         admin = _make_user(

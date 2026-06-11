@@ -90,6 +90,8 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -140,7 +142,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         SELECT id AS span_id, span_attributes_raw, span_attr_str, span_attr_num, metadata_map
         FROM {self.TABLE}
         PREWHERE id IN %(content_span_ids)s
-        WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0
+        WHERE project_id = %(project_id)s AND is_deleted = 0
         """
         return query, params
 
@@ -149,6 +151,8 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         params = dict(self.params)
@@ -217,19 +221,41 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             "eval_config_ids": tuple(self.eval_config_ids),
         }
 
+        # Include errored rows but compute aggregates only over successful
+        # rows (error = 0). ``success_count`` / ``error_count`` let the
+        # pivot surface an explicit error state on the UI when every eval
+        # row for a (trace, config) pair errored.
+        # Column order must match what ``pivot_eval_results`` expects:
+        # trace_id, eval_config_id, avg_score, pass_rate, success_count,
+        # error_count, eval_count, str_lists.
         query = f"""
         SELECT
             trace_id,
             toString(custom_eval_config_id) AS eval_config_id,
-            -- ifNotFinite(, NULL): avg over an all-NULL group returns NaN, which
-            -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
-            ifNotFinite(avg(output_float), NULL) AS avg_score,
-            ifNotFinite(avg(CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END), NULL)
-                AS pass_rate,
+            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN,
+            -- which json.dumps(allow_nan=False) rejects. NULL serializes as null.
+            ifNotFinite(avgIf(
+                output_float,
+                error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ), NULL) AS avg_score,
+            ifNotFinite(avgIf(
+                CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
+                error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ), NULL) AS pass_rate,
+            countIf(
+                error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ) AS success_count,
+            countIf(
+                error = 1 OR ifNull(output_str, '') = 'ERROR'
+            ) AS error_count,
             count() AS eval_count,
-            any(output_str_list) AS output_str_list
+            groupArrayIf(
+                output_str_list,
+                error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ) AS str_lists
         FROM {self.EVAL_TABLE} FINAL
         WHERE _peerdb_is_deleted = 0
+          AND (deleted = 0 OR deleted IS NULL)
           AND trace_id IN %(trace_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
         GROUP BY trace_id, custom_eval_config_id
@@ -261,13 +287,27 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
 
         query = f"""
         SELECT
-            toString(s.trace_id) AS trace_id,
+            if(
+                isNull(s.trace_id)
+                OR s.trace_id = toUUID('00000000-0000-0000-0000-000000000000'),
+                sp.trace_id,
+                toString(s.trace_id)
+            ) AS trace_id,
             toString(s.label_id) AS label_id,
             toString(s.annotator_id) AS user_id,
             s.value
         FROM {self.ANNOTATION_TABLE} AS s FINAL
+        LEFT JOIN {self.TABLE} AS sp
+          ON sp.id = s.observation_span_id
+         AND sp._peerdb_is_deleted = 0
         WHERE s._peerdb_is_deleted = 0
-          AND s.trace_id IN %(trace_ids)s
+          AND s.deleted = false
+          AND if(
+                isNull(s.trace_id)
+                OR s.trace_id = toUUID('00000000-0000-0000-0000-000000000000'),
+                sp.trace_id,
+                toString(s.trace_id)
+              ) IN %(trace_ids)s
           AND s.label_id IN %(label_ids)s
         """
         return query, params
@@ -317,7 +357,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             tags
         FROM {self.TABLE}
         WHERE project_id = %(project_id)s
-          AND _peerdb_is_deleted = 0
+          AND is_deleted = 0
           AND trace_id IN %(trace_ids)s
           AND parent_span_id IS NOT NULL
         ORDER BY start_time ASC

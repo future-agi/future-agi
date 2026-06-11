@@ -57,6 +57,28 @@ class ModelTypes(Enum):
     def get_choices(cls):
         return [(tag.value, tag.name.replace("_", " ").title()) for tag in cls]
 
+    @classmethod
+    def coerce_value(cls, value):
+        if value is None:
+            return value
+        if isinstance(value, cls):
+            return value.value
+
+        value_str = str(value).strip()
+        if not value_str:
+            return value_str
+
+        lookup = {}
+        for tag in cls:
+            canonical = tag.value
+            lookup[canonical] = canonical
+            lookup[canonical.lower()] = canonical
+            lookup[tag.name.lower()] = canonical
+            lookup[tag.name.lower().replace("_", "-")] = canonical
+            lookup[tag.name.lower().replace("_", " ")] = canonical
+
+        return lookup.get(value_str, lookup.get(value_str.lower(), value_str))
+
 
 class ModelChoices(Enum):
     TURING_LARGE = "turing_large"
@@ -107,6 +129,18 @@ class AnnotationQueueStatusChoices(Enum):
     ACTIVE = "active"
     PAUSED = "paused"
     COMPLETED = "completed"
+
+    @classmethod
+    def get_choices(cls):
+        return [(tag.value, tag.name.replace("_", " ").title()) for tag in cls]
+
+
+class AutomationRuleTriggerFrequency(Enum):
+    MANUAL = "manual"
+    HOURLY = "hourly"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
 
     @classmethod
     def get_choices(cls):

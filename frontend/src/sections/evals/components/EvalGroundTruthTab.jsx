@@ -16,6 +16,7 @@ import {
   TextField,
   Tooltip,
   Typography,
+  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useMemo, useState } from "react";
@@ -25,6 +26,7 @@ import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
 import { canonicalEntries } from "src/utils/utils";
+import { apiPath } from "src/api/contracts/api-surface";
 
 import {
   useDevelopDatasetList,
@@ -45,6 +47,7 @@ import {
   useUpdateVariableMapping,
   useUploadGroundTruth,
 } from "../hooks/useGroundTruth";
+import SwitchComponent from "src/components/Switch/SwitchComponent";
 
 // ═══════════════════════════════════════════════════════════════
 // Status Badge
@@ -232,9 +235,14 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
       const datasetId = selectedDataset.dataset_id || selectedDataset.id;
       const { data: res } = await (
         await import("src/utils/axios")
-      ).default.get(`/model-hub/develops/${datasetId}/get-dataset-table/`, {
-        params: { current_page_index: 0, page_size: 10000 },
-      });
+      ).default.get(
+        apiPath("/model-hub/develops/{dataset_id}/get-dataset-table/", {
+          dataset_id: datasetId,
+        }),
+        {
+          params: { current_page_index: 0, page_size: 10000 },
+        },
+      );
       const tableData = res?.result;
       const tableRows = tableData?.table || [];
 
@@ -1153,6 +1161,7 @@ const ConfigPanel = ({ templateId, gtId }) => {
   const [maxExamples, setMaxExamples] = useState(
     config?.maxExamples ?? config?.max_examples ?? 3,
   );
+  const theme = useTheme()
   const [threshold, setThreshold] = useState(
     config?.similarityThreshold ?? config?.similarity_threshold ?? 0.7,
   );
@@ -1203,15 +1212,19 @@ const ConfigPanel = ({ templateId, gtId }) => {
         <Typography variant="body2" fontWeight={600} sx={{ fontSize: "12px" }}>
           Injection Settings
         </Typography>
-        <Button
-          size="small"
-          variant={enabled ? "contained" : "outlined"}
-          color={enabled ? "success" : "inherit"}
-          onClick={handleToggle}
-          sx={{ fontSize: "11px", height: 26 }}
-        >
-          {enabled ? "Enabled" : "Disabled"}
-        </Button>
+
+        <SwitchComponent
+          label={enabled ? "Enabled" : "Disabled"}
+          labelPlacement={"start"}
+          labelStyle={{
+            fontSize: theme.spacing(1.5),
+          }}
+          size={"small"}
+          checked={enabled}
+          disableRipple
+          onChange={handleToggle}
+        />
+
       </Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
         <Typography

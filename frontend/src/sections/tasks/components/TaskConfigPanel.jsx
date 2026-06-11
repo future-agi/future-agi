@@ -27,9 +27,9 @@ import {
   serializeEvalConfig,
 } from "src/sections/common/EvalPicker";
 import { enqueueSnackbar } from "src/components/snackbar";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import TaskSchedulingSection from "./TaskSchedulingSection";
 import { getNewTaskFilters } from "src/sections/tasks/schema";
-import { objectCamelToSnake } from "src/utils/utils";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import TaskFilterBar from "./TaskFilterBar";
@@ -334,6 +334,7 @@ const TaskConfigPanel = ({
     fields: configuredEvals,
     append: addEval,
     remove: removeEval,
+    replace: replaceEvals,
     update: updateEval,
   } = useFieldArray({
     name: "evalsDetails",
@@ -342,6 +343,30 @@ const TaskConfigPanel = ({
     // the `id` field (which holds the real CustomEvalConfig UUID from the API).
     keyName: "_fieldId",
   });
+
+  const [pendingProject, setPendingProject] = useState(null);
+
+  const handleProjectFieldChange = useCallback(
+    (newVal) => {
+      if (!newVal || newVal === project) return;
+      if (configuredEvals.length === 0) return;
+      setPendingProject(project);
+    },
+    [project, configuredEvals.length],
+  );
+
+  const handleConfirmProjectChange = useCallback(() => {
+    replaceEvals([]);
+    setPendingProject(null);
+  }, [replaceEvals]);
+
+  const handleCancelProjectChange = useCallback(() => {
+    setValue("project", pendingProject, {
+      shouldDirty: false,
+      shouldValidate: false,
+    });
+    setPendingProject(null);
+  }, [pendingProject, setValue]);
 
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
 
@@ -374,7 +399,7 @@ const TaskConfigPanel = ({
         params: {
           project_id: project,
           row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
+          filters: JSON.stringify(filtersWithoutDate),
         },
       }),
     select: (data) => data.data?.result,
@@ -400,7 +425,6 @@ const TaskConfigPanel = ({
         editingIndex !== null ? configuredEvals[editingIndex]?.id : undefined;
 
       const serialized = serializeEvalConfig(evalConfig);
-
 
       const corePayload = {
         eval_template: tplId,
@@ -452,8 +476,8 @@ const TaskConfigPanel = ({
       } catch (error) {
         enqueueSnackbar(
           error?.response?.data?.result ||
-          error?.response?.data?.error ||
-          "Failed to save evaluation",
+            error?.response?.data?.error ||
+            "Failed to save evaluation",
           { variant: "error" },
         );
         throw error;
@@ -500,7 +524,8 @@ const TaskConfigPanel = ({
     if (!stored) return null;
     // API response uses `eval_template` for the template FK;
     // locally-added evals use `templateId` / `template_id`.
-    const tplId = stored.templateId || stored.template_id || stored.eval_template;
+    const tplId =
+      stored.templateId || stored.template_id || stored.eval_template;
 
     const savedErrorLocalizer =
       stored.error_localizer_enabled ?? stored.error_localizer;
@@ -582,6 +607,7 @@ const TaskConfigPanel = ({
                     value: p.id,
                   })) || []
                 }
+                onChange={handleProjectFieldChange}
                 style={{ width: "100%" }}
                 noOptions="No projects available"
               />
@@ -651,16 +677,16 @@ const TaskConfigPanel = ({
                         bgcolor:
                           rowType === t.value
                             ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
+                                theme.palette.mode === "dark"
+                                  ? "rgba(255,255,255,0.12)"
+                                  : "background.paper"
                             : "transparent",
                         boxShadow:
                           rowType === t.value
                             ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
+                                theme.palette.mode === "dark"
+                                  ? "none"
+                                  : "0 1px 3px rgba(0,0,0,0.08)"
                             : "none",
                         borderRadius: "6px",
                         fontWeight: rowType === t.value ? 600 : 400,
@@ -809,6 +835,18 @@ const TaskConfigPanel = ({
         onFiltersChange={(f) =>
           setValue("filters", f || [], { shouldDirty: true })
         }
+      />
+
+      <ModalWrapper
+        open={!!pendingProject}
+        onClose={handleCancelProjectChange}
+        onCancelBtn={handleCancelProjectChange}
+        onSubmit={handleConfirmProjectChange}
+        title="Switch project?"
+        subTitle="Switching the project will remove the evaluations you've already added to this task."
+        actionBtnTitle="Confirm"
+        cancelBtnTitle="Cancel"
+        isValid
       />
     </>
   );

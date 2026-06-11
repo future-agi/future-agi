@@ -9,14 +9,22 @@ Tests cover:
 """
 
 import uuid
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from rest_framework import status
+
+# TestAnnotationSummaryView tests don't mock the EE entitlement, so they get
+# 403 in non-EE test environments. See PLAN.md. The legacy ``Annotations``
+# model is still exposed through generated frontend contracts, so these tests
+# lock its supported fallback behavior while unified ``Score`` remains the
+# canonical annotation store.
 from rest_framework.test import APIClient
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
+from model_hub.models import AIModel, AnnotationTask
 from model_hub.models.choices import (
     AnnotationTypeChoices,
     DatasetSourceChoices,
@@ -109,6 +117,23 @@ def auth_client(user, workspace):
     client.force_authenticate(user=user)
     set_workspace_context(workspace=workspace, organization=user.organization)
     return client
+
+
+def _create_annotation_task(organization, workspace, user, name="Task"):
+    ai_model = AIModel.objects.create(
+        user_model_id=f"annotation-task-model-{uuid.uuid4()}",
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        organization=organization,
+        workspace=workspace,
+    )
+    task = AnnotationTask.objects.create(
+        task_name=name,
+        ai_model=ai_model,
+        organization=organization,
+        workspace=workspace,
+    )
+    task.assigned_users.add(user)
+    return task
 
 
 @pytest.fixture
@@ -219,6 +244,22 @@ class TestAnnotationsLabelsViewSet:
         data = response.json()
         assert "results" in data
         assert len(data["results"]) >= 1
+
+    def test_list_annotation_labels_rejects_legacy_query_aliases(self, auth_client):
+        """Label list accepts canonical snake_case query params only."""
+        response = auth_client.get(
+            f"/model-hub/annotations-labels/?projectId={uuid.uuid4()}"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_list_annotation_labels_rejects_invalid_boolean_query(self, auth_client):
+        """Boolean query params should be validated instead of silently coerced."""
+        response = auth_client.get(
+            "/model-hub/annotations-labels/?include_usage_count=maybe"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_create_numeric_label(self, auth_client, numeric_label_settings):
         """Test creating a numeric annotation label."""
@@ -415,14 +456,14 @@ class TestAnnotationsViewSet:
         assert response.status_code == status.HTTP_200_OK
 
     def test_create_annotation(
-        self, auth_client, dataset, user, annotation_label, column
+        self, auth_client, dataset, user, workspace, annotation_label, column
     ):
         """Test creating an annotation."""
         payload = {
             "name": "New Annotation",
             "dataset": str(dataset.id),
             "assigned_users": [str(user.id)],
-            "labels": [{"id": str(annotation_label.id), "required": True}],
+            "labels": [{"id": str(annotation_label.id), "required": False}],
             "responses": 1,
             "static_fields": [
                 {
@@ -434,7 +475,9 @@ class TestAnnotationsViewSet:
         }
         response = auth_client.post("/model-hub/annotations/", payload, format="json")
         assert response.status_code == status.HTTP_200_OK
-        assert Annotations.objects.filter(name="New Annotation").exists()
+        created = Annotations.objects.get(name="New Annotation")
+        assert created.workspace == workspace
+        assert created.labels.filter(id=annotation_label.id).exists()
 
     def test_create_annotation_responses_exceeds_users(
         self, auth_client, dataset, user, annotation_label
@@ -444,11 +487,26 @@ class TestAnnotationsViewSet:
             "name": "Invalid Annotation",
             "dataset": str(dataset.id),
             "assigned_users": [str(user.id)],  # Only 1 user
-            "labels": [str(annotation_label.id)],
+            "labels": [{"id": str(annotation_label.id), "required": False}],
             "responses": 5,  # More than users
         }
         response = auth_client.post("/model-hub/annotations/", payload, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not Annotations.objects.filter(name="Invalid Annotation").exists()
+
+    def test_create_annotation_required_label_requires_entitlement(
+        self, auth_client, dataset, user, annotation_label
+    ):
+        """Required labels are plan-gated and should fail cleanly."""
+        payload = {
+            "name": "Required Label Annotation",
+            "dataset": str(dataset.id),
+            "assigned_users": [str(user.id)],
+            "labels": [{"id": str(annotation_label.id), "required": True}],
+            "responses": 1,
+        }
+        response = auth_client.post("/model-hub/annotations/", payload, format="json")
+        assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
 
     def test_retrieve_annotation(self, auth_client, annotation):
         """Test retrieving a specific annotation."""
@@ -463,7 +521,7 @@ class TestAnnotationsViewSet:
             "name": "Updated Annotation",
             "dataset": str(annotation.dataset.id),
             "labels": [
-                {"id": str(label.id), "required": True}
+                {"id": str(label.id), "required": False}
                 for label in annotation.labels.all()
             ],
             "responses": 1,
@@ -476,11 +534,91 @@ class TestAnnotationsViewSet:
         assert response.status_code == status.HTTP_200_OK
         annotation.refresh_from_db()
         assert annotation.name == "Updated Annotation"
+        assert annotation.labels.exists()
+
+    def test_update_annotation_required_label_requires_entitlement(
+        self, auth_client, annotation
+    ):
+        """Update should propagate required-label entitlement denial as 402."""
+        payload = {
+            "name": "Required Updated Annotation",
+            "dataset": str(annotation.dataset.id),
+            "labels": [
+                {"id": str(label.id), "required": True}
+                for label in annotation.labels.all()
+            ],
+            "responses": 1,
+        }
+        response = auth_client.put(
+            f"/model-hub/annotations/{annotation.id}/",
+            payload,
+            format="json",
+        )
+        assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
+
+    def test_partial_update_preserves_labels_and_assignees(
+        self, auth_client, annotation
+    ):
+        """PATCH name-only updates must not clear legacy M2M relationships."""
+        label_ids = set(annotation.labels.values_list("id", flat=True))
+        user_ids = set(annotation.assigned_users.values_list("id", flat=True))
+
+        response = auth_client.patch(
+            f"/model-hub/annotations/{annotation.id}/",
+            {"name": "Patched Annotation"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        annotation.refresh_from_db()
+        assert annotation.name == "Patched Annotation"
+        assert set(annotation.labels.values_list("id", flat=True)) == label_ids
+        assert set(annotation.assigned_users.values_list("id", flat=True)) == user_ids
 
     def test_delete_annotation(self, auth_client, annotation):
         """Test deleting an annotation."""
         response = auth_client.delete(f"/model-hub/annotations/{annotation.id}/")
         assert response.status_code == status.HTTP_200_OK
+
+    def test_delete_annotation_soft_deletes_generated_cells(
+        self, auth_client, annotation, annotation_label, row
+    ):
+        """Deleting an annotation should soft-delete generated columns and cells."""
+        generated_column = Column.objects.create(
+            name="Generated Annotation Column",
+            dataset=annotation.dataset,
+            data_type=DataTypeChoices.FLOAT.value,
+            source=SourceChoices.ANNOTATION_LABEL.value,
+            source_id=f"{annotation.id}-sourceid-{annotation_label.id}",
+        )
+        annotation.columns.add(generated_column)
+        generated_cell = Cell.objects.create(
+            dataset=annotation.dataset,
+            row=row,
+            column=generated_column,
+            value=None,
+            feedback_info={
+                "description": "reset note",
+                "annotation": {
+                    "user_id": None,
+                    "label_id": str(annotation_label.id),
+                    "annotation_id": str(annotation.id),
+                },
+            },
+        )
+
+        response = auth_client.delete(f"/model-hub/annotations/{annotation.id}/")
+
+        assert response.status_code == status.HTTP_200_OK
+        generated_column.refresh_from_db()
+        generated_cell.refresh_from_db()
+        assert generated_column.deleted is True
+        assert generated_column.deleted_at is not None
+        assert generated_cell.deleted is True
+        assert generated_cell.deleted_at is not None
+
+        response = auth_client.delete(f"/model-hub/annotations/{annotation.id}/")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_bulk_destroy_annotations(self, auth_client, annotation):
         """Test bulk deleting annotations."""
@@ -513,6 +651,98 @@ class TestAnnotationsViewSet:
 class TestAnnotationsViewSetActions:
     """Tests for AnnotationsViewSet custom actions."""
 
+    def test_annotation_tasks_reject_legacy_predictive_journey_alias(self, auth_client):
+        """Annotation task list uses canonical predictive_journey query params."""
+        response = auth_client.get(
+            f"/model-hub/annotation-tasks/?predictiveJourney={uuid.uuid4()}"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_annotation_tasks_list_and_detail_return_seeded_task(
+        self, api_client, organization, workspace, user
+    ):
+        """AnnotationTask list/detail expose the read-only legacy task contract."""
+        task = _create_annotation_task(
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            name="Legacy annotation task contract",
+        )
+        api_client.force_authenticate(user=user)
+        api_client.set_workspace(workspace)
+
+        response = api_client.get(
+            "/model-hub/annotation-tasks/",
+            {
+                "page": 1,
+                "limit": 10,
+                "predictive_journey": str(task.ai_model_id),
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        results = response.json()["results"]
+        assert [row["id"] for row in results] == [str(task.id)]
+        assert results[0]["task_name"] == task.task_name
+        assert results[0]["ai_model"]["id"] == str(task.ai_model_id)
+        assert [assigned["id"] for assigned in results[0]["assigned_users"]] == [
+            str(user.id)
+        ]
+
+        detail = api_client.get(f"/model-hub/annotation-tasks/{task.id}/")
+
+        assert detail.status_code == status.HTTP_200_OK
+        detail_payload = detail.json()
+        assert detail_payload["id"] == str(task.id)
+        assert detail_payload["task_name"] == task.task_name
+        assert detail_payload["ai_model"]["id"] == str(task.ai_model_id)
+
+    def test_annotation_tasks_reject_same_org_other_workspace_task(
+        self, api_client, organization, workspace, user
+    ):
+        """AnnotationTask read routes must stay scoped to request.workspace."""
+        other_workspace = Workspace.objects.create(
+            name="Other annotation task workspace",
+            organization=organization,
+            is_default=False,
+            created_by=user,
+        )
+        task = _create_annotation_task(
+            organization=organization,
+            workspace=other_workspace,
+            user=user,
+            name="Other workspace annotation task",
+        )
+        api_client.force_authenticate(user=user)
+        api_client.set_workspace(workspace)
+
+        list_response = api_client.get(
+            "/model-hub/annotation-tasks/",
+            {
+                "page": 1,
+                "limit": 10,
+                "predictive_journey": str(task.ai_model_id),
+            },
+        )
+        detail_response = api_client.get(f"/model-hub/annotation-tasks/{task.id}/")
+
+        assert list_response.status_code == status.HTTP_200_OK
+        assert list_response.json()["results"] == []
+        assert detail_response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_bulk_destroy_rejects_legacy_annotation_ids_alias(
+        self, auth_client, annotation
+    ):
+        """bulk_destroy accepts annotation_ids only, not annotationIds."""
+        response = auth_client.post(
+            "/model-hub/annotations/bulk_destroy/",
+            {"annotationIds": [str(annotation.id)]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     def test_annotate_row(self, auth_client, annotation, row):
         """Test annotating a specific row."""
         response = auth_client.get(
@@ -523,6 +753,14 @@ class TestAnnotationsViewSetActions:
         # Response can be {"data": ...} or {"result": {"data": ...}}
         result = data.get("result", data)
         assert "data" in result or "label" in result.get("data", result)
+
+    def test_annotate_row_rejects_legacy_row_order_alias(self, auth_client, annotation):
+        """annotate_row accepts row_order only, not rowOrder."""
+        response = auth_client.get(
+            f"/model-hub/annotations/{annotation.id}/annotate_row/?rowOrder=0"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_annotate_row_missing_row_order(self, auth_client, annotation):
         """Test annotating without row_order parameter."""
@@ -552,6 +790,7 @@ class TestAnnotationsViewSetActions:
                 {
                     "row_id": str(row.id),
                     "label_id": str(annotation.labels.first().id),
+                    "column_id": str(uuid.uuid4()),
                     "value": 5,
                 }
             ]
@@ -561,7 +800,51 @@ class TestAnnotationsViewSetActions:
             payload,
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+
+    def test_update_cells_rejects_legacy_label_values_alias(
+        self, auth_client, annotation, row
+    ):
+        """update_cells accepts label_values only, not labelValues."""
+        payload = {
+            "labelValues": [
+                {
+                    "row_id": str(row.id),
+                    "label_id": str(annotation.labels.first().id),
+                    "column_id": str(uuid.uuid4()),
+                    "value": 5,
+                }
+            ]
+        }
+        response = auth_client.post(
+            f"/model-hub/annotations/{annotation.id}/update_cells/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_update_cells_accepts_zero_label_value(
+        self, auth_client, annotation, row, column
+    ):
+        """Falsy-but-valid annotation values should survive request validation."""
+        payload = {
+            "label_values": [
+                {
+                    "row_id": str(row.id),
+                    "label_id": str(annotation.labels.first().id),
+                    "column_id": str(column.id),
+                    "value": 0,
+                }
+            ]
+        }
+        response = auth_client.post(
+            f"/model-hub/annotations/{annotation.id}/update_cells/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
 
     def test_update_cells_missing_data(self, auth_client, annotation):
         """Test update_cells with missing label_values and response_field_values."""
@@ -591,11 +874,19 @@ class TestAnnotationsViewSetActions:
             payload,
             format="json",
         )
-        # Can return 400 or 500 depending on error handling
-        assert response.status_code in [
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ]
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_reset_annotations_rejects_legacy_row_id_alias(
+        self, auth_client, annotation
+    ):
+        """reset_annotations accepts row_id only, not rowId."""
+        response = auth_client.post(
+            f"/model-hub/annotations/{annotation.id}/reset_annotations/",
+            {"rowId": str(uuid.uuid4())},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_preview_annotations(self, auth_client, dataset, column, row, cell):
         """Test previewing annotations."""
@@ -623,6 +914,22 @@ class TestAnnotationsViewSetActions:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_preview_annotations_rejects_legacy_column_aliases(
+        self, auth_client, dataset, column
+    ):
+        """preview_annotations accepts static_column/response_column only."""
+        payload = {
+            "dataset_id": str(dataset.id),
+            "staticColumn": [str(column.id)],
+        }
+        response = auth_client.post(
+            "/model-hub/annotations/preview_annotations/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     def test_preview_annotations_missing_columns(self, auth_client, dataset):
         """Test preview_annotations without any columns."""
         payload = {"dataset_id": str(dataset.id)}
@@ -645,8 +952,9 @@ class TestUserViewSet:
         """Test listing users in an organization."""
         response = auth_client.get(f"/model-hub/organizations/{organization.id}/users/")
         assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert len(data) >= 1
+        rows = response.json()["results"]
+        assert [row["email"] for row in rows] == [user.email]
+        assert rows[0]["id"] == str(user.id)
 
     def test_list_users_filter_active(self, auth_client, organization, user):
         """Test filtering users by is_active=true."""
@@ -654,27 +962,205 @@ class TestUserViewSet:
             f"/model-hub/organizations/{organization.id}/users/?is_active=true"
         )
         assert response.status_code == status.HTTP_200_OK
+        rows = response.json()["results"]
+        assert [row["id"] for row in rows] == [str(user.id)]
 
     def test_list_users_filter_inactive(self, auth_client, organization, user):
         """Test filtering users by is_active=false."""
         response = auth_client.get(
             f"/model-hub/organizations/{organization.id}/users/?is_active=false"
         )
-        # Can return 200 or 500 depending on implementation
-        assert response.status_code in [
-            status.HTTP_200_OK,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ]
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["results"] == []
+
+    def test_list_users_search_matches_name_or_email(
+        self, auth_client, organization, user
+    ):
+        response = auth_client.get(
+            f"/model-hub/organizations/{organization.id}/users/?search={user.email}"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert [row["id"] for row in response.json()["results"]] == [str(user.id)]
+
+    def test_list_users_search_no_match_returns_empty_page(
+        self, auth_client, organization
+    ):
+        response = auth_client.get(
+            f"/model-hub/organizations/{organization.id}/users/?search=no-such-user"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["results"] == []
 
     def test_list_users_nonexistent_organization(self, auth_client):
         """Test listing users for non-existent organization."""
         fake_org_id = uuid.uuid4()
         response = auth_client.get(f"/model-hub/organizations/{fake_org_id}/users/")
-        # Can return 404 or 500 depending on error handling
-        assert response.status_code in [
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ]
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_list_users_rejects_cross_organization_path(
+        self, auth_client, other_organization, other_org_user
+    ):
+        from accounts.models.organization_membership import OrganizationMembership
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        OrganizationMembership.no_workspace_objects.create(
+            user=other_org_user,
+            organization=other_organization,
+            role=OrganizationRoles.MEMBER,
+            level=Level.MEMBER,
+            is_active=True,
+        )
+
+        response = auth_client.get(
+            f"/model-hub/organizations/{other_organization.id}/users/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert User.objects.filter(id=other_org_user.id).exists()
+
+    def test_retrieve_user_scoped_to_requested_organization(
+        self, auth_client, organization, user
+    ):
+        response = auth_client.get(
+            f"/model-hub/organizations/{organization.id}/users/{user.id}/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["email"] == user.email
+
+    @pytest.mark.parametrize(
+        "method,payload",
+        [
+            ("post", {"email": "new-org-route@example.com", "name": "New Route User"}),
+            ("put", {"email": "changed@example.com", "name": "Changed Name"}),
+            ("patch", {"name": "Changed Name"}),
+            ("delete", None),
+        ],
+    )
+    def test_authenticated_user_mutations_are_disabled(
+        self, auth_client, organization, user, method, payload
+    ):
+        path = f"/model-hub/organizations/{organization.id}/users/"
+        if method != "post":
+            path = f"{path}{user.id}/"
+        before_count = User.objects.count()
+
+        request = getattr(auth_client, method)
+        response = (
+            request(path, payload, format="json")
+            if payload is not None
+            else request(path)
+        )
+
+        assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
+        user.refresh_from_db()
+        assert user.email == "test@example.com"
+        assert user.name == "Test User"
+        assert user.is_active is True
+        assert User.objects.count() == before_count
+
+    def test_list_users_includes_new_rbac_org_member_without_legacy_user_org(
+        self, auth_client, organization
+    ):
+        """RBAC-created org members appear without manually setting user.organization."""
+        from accounts.models.organization_membership import OrganizationMembership
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        new_user = User.objects.create_user(
+            email="new-member@example.com",
+            password="testpassword123",
+            name="New Member",
+            organization=None,
+        )
+        OrganizationMembership.no_workspace_objects.create(
+            user=new_user,
+            organization=organization,
+            role=OrganizationRoles.MEMBER,
+            level=Level.MEMBER,
+            is_active=True,
+        )
+
+        response = auth_client.get(f"/model-hub/organizations/{organization.id}/users/")
+
+        assert response.status_code == status.HTTP_200_OK
+        payload = response.json()
+        rows = payload.get("results", payload)
+        assert str(new_user.id) in {str(row["id"]) for row in rows}
+
+    def test_workspace_member_queryset_includes_new_rbac_user_without_manual_fk(
+        self, organization, workspace, user
+    ):
+        """Queue settings uses workspace membership, not the legacy User.organization FK."""
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.workspace import WorkspaceMembership
+        from model_hub.views.develop_annotations import UserViewSet
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        new_user = User.objects.create_user(
+            email="workspace-new-member@example.com",
+            password="testpassword123",
+            name="Workspace New Member",
+            organization=None,
+        )
+        org_membership = OrganizationMembership.no_workspace_objects.create(
+            user=new_user,
+            organization=organization,
+            role=OrganizationRoles.MEMBER,
+            level=Level.MEMBER,
+            is_active=True,
+        )
+        WorkspaceMembership.no_workspace_objects.create(
+            user=new_user,
+            workspace=workspace,
+            role=OrganizationRoles.WORKSPACE_MEMBER,
+            level=Level.WORKSPACE_MEMBER,
+            is_active=True,
+            organization_membership=org_membership,
+        )
+
+        view = UserViewSet()
+        view.kwargs = {"organization_id": str(organization.id)}
+        view.request = SimpleNamespace(query_params={}, workspace=workspace, user=user)
+
+        assert str(new_user.id) in {
+            str(user_id) for user_id in view.get_queryset().values_list("id", flat=True)
+        }
+
+    def test_workspace_member_queryset_includes_org_admin_auto_access_user(
+        self, organization, workspace, user
+    ):
+        """Org Admin+ users appear in queue settings even without explicit WS rows."""
+        from accounts.models.organization_membership import OrganizationMembership
+        from model_hub.views.develop_annotations import UserViewSet
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        admin_user = User.objects.create_user(
+            email="workspace-auto-admin@example.com",
+            password="testpassword123",
+            name="Workspace Auto Admin",
+            organization=None,
+        )
+        OrganizationMembership.no_workspace_objects.create(
+            user=admin_user,
+            organization=organization,
+            role=OrganizationRoles.ADMIN,
+            level=Level.ADMIN,
+            is_active=True,
+        )
+
+        view = UserViewSet()
+        view.kwargs = {"organization_id": str(organization.id)}
+        view.request = SimpleNamespace(query_params={}, workspace=workspace, user=user)
+
+        assert str(admin_user.id) in {
+            str(user_id) for user_id in view.get_queryset().values_list("id", flat=True)
+        }
 
 
 # ==================== AnnotationSummaryView Tests ====================
@@ -684,21 +1170,29 @@ class TestUserViewSet:
 class TestAnnotationSummaryView:
     """Tests for AnnotationSummaryView."""
 
-    @patch("model_hub.views.develop_annotations.SQLQueryHandler")
-    def test_get_annotation_summary(self, mock_sql_handler, auth_client, dataset):
+    @patch(
+        "ee.usage.services.entitlements.Entitlements.check_feature",
+        return_value=SimpleNamespace(allowed=True, reason=None),
+    )
+    @patch("model_hub.services.annotation_summary_service.get_annotation_summary_data")
+    def test_get_annotation_summary(
+        self, mock_summary_service, mock_check_feature, auth_client, dataset
+    ):
         """Test getting annotation summary statistics."""
         import pandas as pd
 
-        # Mock the SQL query responses
-        mock_sql_handler.get_annotation_summary_stats.side_effect = [
-            pd.DataFrame({"label_id": [], "type": [], "name": []}),  # header_df
-            pd.DataFrame(
+        # Mock the summary service response
+        mock_summary_service.return_value = {
+            "header_data": pd.DataFrame(
+                {"label_id": [], "type": [], "name": []}
+            ),
+            "metric_calc": pd.DataFrame(
                 {"label_id": [], "row_id": [], "user_id": [], "value": []}
-            ),  # metric_df
-            pd.DataFrame(
+            ),
+            "graph": pd.DataFrame(
                 {"label_id": [], "bucket_min": [], "bucket_max": [], "count": []}
-            ),  # graph_df
-            pd.DataFrame(
+            ),
+            "heatmap": pd.DataFrame(
                 {
                     "label_id": [],
                     "user_id": [],
@@ -706,14 +1200,14 @@ class TestAnnotationSummaryView:
                     "bucket_max": [],
                     "count": [],
                 }
-            ),  # heatmap_df
-            pd.DataFrame(
+            ),
+            "annotator_performance": pd.DataFrame(
                 {"user_id": [], "avg_time": [], "total_annotations": []}
-            ),  # annotator_performance_df
-            pd.DataFrame(
+            ),
+            "dataset_annot_summary": pd.DataFrame(
                 {"fully_annotated_rows": [10], "not_deleted_rows": [20]}
-            ),  # dataset_coverage_df
-        ]
+            ),
+        }
 
         response = auth_client.get(
             f"/model-hub/dataset/{dataset.id}/annotation-summary/"

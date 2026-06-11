@@ -2,7 +2,9 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   IconButton,
+  InputAdornment,
   Table,
   TableBody,
   TableCell,
@@ -178,7 +180,9 @@ const EvalDetailPanel = ({ evalData }) => {
   const { data: configData, isLoading } = useQuery({
     queryKey: ["evals", "detail", templateId],
     queryFn: async () => {
-      const { data } = await axios.get(endpoints.develop.eval.getEvalDetail(templateId));
+      const { data } = await axios.get(
+        endpoints.develop.eval.getEvalDetail(templateId),
+      );
       return data?.result;
     },
     enabled: !!templateId,
@@ -201,7 +205,8 @@ const EvalDetailPanel = ({ evalData }) => {
   const normalizedConfigData = normalizeEvalPickerEval(configData);
   const normalizedEvalData = normalizeEvalPickerEval(evalData);
 
-  const evalType = normalizedConfigData?.evalType || normalizedEvalData?.evalType || "llm";
+  const evalType =
+    normalizedConfigData?.evalType || normalizedEvalData?.evalType || "llm";
   const outputType =
     normalizedConfigData?.outputType || normalizedEvalData?.outputType || "";
   const description = configData?.description || evalData?.description || "";
@@ -222,7 +227,8 @@ const EvalDetailPanel = ({ evalData }) => {
     configData?.choicesMap ||
     {};
   const instructions = configData?.instructions || evalData?.instructions || "";
-  const code = getEvalCode(normalizedConfigData) || getEvalCode(normalizedEvalData);
+  const code =
+    getEvalCode(normalizedConfigData) || getEvalCode(normalizedEvalData);
   const codeLanguage =
     getEvalCodeLanguage(normalizedConfigData) ||
     getEvalCodeLanguage(normalizedEvalData);
@@ -487,6 +493,7 @@ const EvalPickerList = ({ onSelectEval }) => {
     items,
     total,
     isLoading,
+    isSearching,
     searchQuery,
     setSearchQuery,
     page,
@@ -589,101 +596,113 @@ const EvalPickerList = ({ onSelectEval }) => {
               setPage(0);
               setExpandedEvalId(null);
             }}
+            InputProps={
+              isSearching && searchQuery.trim()
+                ? {
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <CircularProgress
+                          size={14}
+                          thickness={5}
+                          aria-label="Searching evaluations"
+                        />
+                      </InputAdornment>
+                    ),
+                  }
+                : undefined
+            }
           />
-          {!lockedFilters && (
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<Iconify icon="mage:filter" width={14} />}
-              onClick={(e) => setFilterAnchorEl(e.currentTarget)}
-              sx={{
-                textTransform: "none",
-                fontSize: "12px",
-                height: "32px",
-                borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
-                color:
-                  activeFilterCount > 0 ? "primary.main" : "text.secondary",
-              }}
-            >
-              Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
-            </Button>
-          )}
+
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<Iconify icon="mage:filter" width={14} />}
+            onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+            sx={{
+              textTransform: "none",
+              fontSize: "12px",
+              height: "32px",
+              borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
+              color: activeFilterCount > 0 ? "primary.main" : "text.secondary",
+            }}
+          >
+            Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+          </Button>
         </Box>
       </Box>
 
       {/* Quick tag filters */}
-      {!lockedFilters && (
-        <Box
-          sx={{
-            display: "flex",
-            gap: 0.5,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
-          {EVAL_TAGS.map((tag) => {
-            const activeTagValues = filters?.tags || [];
-            const tagValues = tag.match || [tag.value];
-            const isActive = tagValues.some((v) => activeTagValues.includes(v));
-            return (
-              <Chip
-                key={tag.value}
-                icon={<Iconify icon={tag.icon} width={14} />}
-                label={tag.label}
-                size="small"
-                variant={isActive ? "filled" : "outlined"}
-                color={isActive ? "primary" : "default"}
-                onClick={() => {
-                  if (isActive) {
-                    const toRemove = new Set(tagValues);
-                    setFilters((prev) => {
-                      const safe = prev || {};
-                      const remaining = (safe.tags || []).filter(
-                        (v) => !toRemove.has(v),
-                      );
-                      if (!remaining.length) {
-                        const next = { ...safe };
-                        delete next.tags;
-                        return Object.keys(next).length ? next : null;
-                      }
-                      return { ...safe, tags: remaining };
-                    });
-                  } else {
-                    setFilters((prev) => {
-                      const safe = prev || {};
-                      return {
-                        ...safe,
-                        tags: [...(safe.tags || []), ...tagValues],
-                      };
-                    });
-                  }
-                  setPage(0);
-                  setExpandedEvalId(null);
-                }}
-                sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-              />
-            );
-          })}
-          {filters?.tags?.length ? (
+
+      <Box
+        sx={{
+          display: "flex",
+          gap: 0.5,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
+        {EVAL_TAGS.map((tag) => {
+          const activeTagValues = filters?.tags || [];
+          const tagValues = tag.match || [tag.value];
+          const isActive = tagValues.some((v) => activeTagValues.includes(v));
+          return (
             <Chip
-              label="Clear"
+              key={tag.value}
+              icon={<Iconify icon={tag.icon} width={14} />}
+              label={tag.label}
               size="small"
-              variant="outlined"
-              onDelete={() => {
-                setFilters((prev) => {
-                  const safe = prev || {};
-                  const next = { ...safe };
-                  delete next.tags;
-                  return Object.keys(next).length ? next : null;
-                });
+              variant={isActive ? "filled" : "outlined"}
+              color={isActive ? "primary" : "default"}
+              onClick={() => {
+                if (isActive) {
+                  const toRemove = new Set(tagValues);
+                  setFilters((prev) => {
+                    const safe = prev || {};
+                    const remaining = (safe.tags || []).filter(
+                      (v) => !toRemove.has(v),
+                    );
+                    if (!remaining.length) {
+                      const next = { ...safe };
+                      delete next.tags;
+                      return Object.keys(next).length ? next : null;
+                    }
+                    return { ...safe, tags: remaining };
+                  });
+                } else {
+                  setFilters((prev) => {
+                    const safe = prev || {};
+                    return {
+                      ...safe,
+                      tags: [...(safe.tags || []), ...tagValues],
+                    };
+                  });
+                }
                 setPage(0);
                 setExpandedEvalId(null);
               }}
-              sx={{ fontSize: "11px", height: 26 }}
+              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
             />
-          ) : null}
-        </Box>
-      )}
+          );
+        })}
+        {filters?.tags?.length ? (
+          <Chip
+            label="Clear"
+            size="small"
+            variant="outlined"
+            onDelete={() => {
+              setFilters((prev) => {
+                const safe = prev || {};
+                const next = { ...safe };
+                delete next.tags;
+                return Object.keys(next).length ? next : null;
+              });
+              setPage(0);
+              setExpandedEvalId(null);
+            }}
+            sx={{ fontSize: "11px", height: 26 }}
+          />
+        ) : null}
+      </Box>
 
       {/* Scrollable Table */}
       <TableContainer sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>
@@ -929,6 +948,7 @@ const EvalPickerList = ({ onSelectEval }) => {
         open={Boolean(filterAnchorEl)}
         onClose={() => setFilterAnchorEl(null)}
         currentFilters={filters}
+        lockedFilters={lockedFilters}
         onApply={(newFilters) => {
           setFilters(newFilters);
           setPage(0);

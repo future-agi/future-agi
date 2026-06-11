@@ -27,15 +27,14 @@ class ServiceError:
 def _check_resource_limit(organization, workspace, api_call_type, config=None):
     """Check resource limits. Returns True if allowed, False if limit reached."""
     try:
-        try:
-            from ee.usage.models import APICallStatusChoices, APICallTypeChoices
-        except ImportError:
-            APICallStatusChoices = None
-            APICallTypeChoices = None
+        from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
         try:
             from ee.usage.utils import log_and_deduct_cost_for_resource_request
         except ImportError:
             log_and_deduct_cost_for_resource_request = None
+
+        if log_and_deduct_cost_for_resource_request is None:
+            return True
 
         call_log = log_and_deduct_cost_for_resource_request(
             organization,
@@ -737,6 +736,8 @@ def delete_datasets(*, dataset_ids, organization):
     Returns:
         dict with deleted count and names or ServiceError
     """
+    from django.utils import timezone
+
     from model_hub.models.develop_dataset import Dataset
 
     datasets = Dataset.objects.filter(
@@ -753,7 +754,7 @@ def delete_datasets(*, dataset_ids, organization):
         )
 
     names = list(datasets.values_list("name", flat=True))
-    deleted = datasets.update(deleted=True)
+    deleted = datasets.update(deleted=True, deleted_at=timezone.now())
 
     return {"deleted": deleted, "names": names}
 

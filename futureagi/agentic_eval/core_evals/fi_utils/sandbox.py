@@ -454,12 +454,16 @@ def _set_resource_limits():
 def _call_executor_service(code: str, input_data: dict, language: str, timeout: int) -> dict | None:
     """Call the nsjail code-executor service via HTTP. Returns None if unavailable."""
     try:
+        # default=str so non-JSON-native types coming through trace/span column
+        # mapping (Decimal from clickhouse-driver, datetime, UUID) serialize
+        # cleanly. The eval body still gets a string for those keys, which
+        # matches what `str(kwargs.get(...))` already expects in every system eval.
         payload = json.dumps({
             "code": code,
             "input_data": input_data,
             "language": language,
             "timeout": timeout,
-        }).encode("utf-8")
+        }, default=str).encode("utf-8")
 
         req = urllib.request.Request(
             f"{CODE_EXECUTOR_URL}/execute",

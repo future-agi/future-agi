@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from model_hub.models.choices import StatusType
 from simulate.models import Scenarios
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 
 
 class SimulatorAgentResponseSerializer(serializers.Serializer):
@@ -31,7 +32,7 @@ class PromptVersionDetailResponseSerializer(serializers.Serializer):
     """Nested serializer for prompt version detail in scenario responses."""
 
     id = serializers.UUIDField(read_only=True)
-    template_version = serializers.IntegerField(read_only=True)
+    template_version = serializers.CharField(read_only=True, allow_null=True)
     is_default = serializers.BooleanField(read_only=True)
     commit_message = serializers.CharField(read_only=True, allow_null=True)
 
@@ -154,7 +155,7 @@ class ScenarioResponseSerializer(serializers.ModelSerializer):
         if obj.prompt_version:
             return PromptVersionDetailResponseSerializer(obj.prompt_version).data
         return None
-    
+
     def validate_name(self, value):
         """Validate that name is not empty or just whitespace"""
         if not value.strip():
@@ -202,9 +203,7 @@ class ScenarioDetailResponseSerializer(serializers.Serializer):
     updated_at = serializers.DateTimeField(read_only=True)
     deleted = serializers.BooleanField(read_only=True)
     deleted_at = serializers.DateTimeField(read_only=True, allow_null=True)
-    status = serializers.ChoiceField(
-        choices=StatusType.get_choices(), read_only=True
-    )
+    status = serializers.ChoiceField(choices=StatusType.get_choices(), read_only=True)
     agent_type = serializers.CharField(read_only=True, allow_null=True)
     graph = serializers.DictField(read_only=True)
     prompts = serializers.ListField(
@@ -276,16 +275,6 @@ class ScenarioPromptsUpdateResponseSerializer(serializers.Serializer):
     prompts = serializers.CharField(read_only=True)
 
 
-class ScenarioErrorResponseSerializer(serializers.Serializer):
+class ScenarioErrorResponseSerializer(ApiTextErrorResponseSerializer):
     """Standardized error response shape — used only for Swagger documentation.
-
-    Not applied to actual response construction (preserves existing behavior).
-
-    Shape:
-        {"error": "Human-readable message", "details": {"field": ["validation error"]}}
-
-    `details` is only present for 400 validation errors.
     """
-
-    error = serializers.CharField(read_only=True)
-    details = serializers.DictField(required=False, read_only=True)

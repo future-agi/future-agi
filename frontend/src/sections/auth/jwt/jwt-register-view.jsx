@@ -90,7 +90,17 @@ export default function JwtRegisterView() {
     locallyExtractUtmParams();
   }, [locallyExtractUtmParams]);
 
+  // Persist returnTo on an auth action so it survives flows that drop the
+  // URL param (OAuth / SSO round-trip, register → setup-org).
+  const persistReturnTo = () => {
+    const returnTo = new URLSearchParams(search).get("returnTo");
+    if (returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")) {
+      localStorage.setItem("redirectUrl", returnTo);
+    }
+  };
+
   const handleSsoLogin = () => {
+    persistReturnTo();
     // Navigate to SSO login page
     navigate(paths.auth.jwt.sso);
   };
@@ -110,6 +120,7 @@ export default function JwtRegisterView() {
   const email = watch("email");
 
   const handleSignup = async (data) => {
+    persistReturnTo();
     const token = GOOGLE_SITE_KEY ? await executeRecaptcha("signup") : "";
     setErrorMsg("");
     try {
@@ -118,7 +129,7 @@ export default function JwtRegisterView() {
         email: data?.email,
         full_name: data?.fullName,
         company_name: "",
-        "recaptcha-response": token,
+        recaptcha_response: token,
         allow_email: true,
       };
       let response;
@@ -169,7 +180,14 @@ export default function JwtRegisterView() {
       setLoading(false);
     } catch (error) {
       setLoading(false);
-      logger.error("Registration Error:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Registration Error (expected)", error);
+      } else {
+        logger.error("Registration Error:", error);
+      }
       setErrorMsg(
         typeof error === "string"
           ? error
@@ -181,6 +199,7 @@ export default function JwtRegisterView() {
   };
 
   const handleLogin = async (data) => {
+    persistReturnTo();
     const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
 
     trackEvent(Events.loginClicked, {
@@ -191,7 +210,7 @@ export default function JwtRegisterView() {
       const response = await axios.post(endpoints.auth.login, {
         email: data.email,
         password: data.password,
-        "recaptcha-response": token,
+        recaptcha_response: token,
       });
       if (response.status === 200) {
         await login(response);
@@ -219,7 +238,14 @@ export default function JwtRegisterView() {
             : error?.detail || error?.result?.error,
         );
       }
-      logger.error("Login failed", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Login failed (expected)", error);
+      } else {
+        logger.error("Login failed", error);
+      }
     } finally {
       setLoading(false);
     }
@@ -237,6 +263,7 @@ export default function JwtRegisterView() {
   });
 
   const handleServiceProvider = async (provider) => {
+    persistReturnTo();
     try {
       const response = await axios.get(endpoints.auth.service(provider));
       logger.debug("Service provider response:", {
@@ -255,7 +282,14 @@ export default function JwtRegisterView() {
         });
       }
     } catch (error) {
-      logger.error("Error during social login:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Error during social login (expected)", error);
+      } else {
+        logger.error("Error during social login:", error);
+      }
       if (error.response?.status === 302 && error.response?.headers?.reason) {
         enqueueSnackbar(error.response.headers.reason, { variant: "error" });
       } else {

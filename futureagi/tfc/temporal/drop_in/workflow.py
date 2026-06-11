@@ -23,7 +23,9 @@ class TaskRunnerInput:
     kwargs: dict[str, Any]
     queue: str = "default"
     time_limit: Optional[int] = None  # Override default timeout
-    schedule_to_start_timeout: Optional[int] = None  # Seconds; defaults to 6h
+    max_retries: Optional[int] = None
+    retry_delay: Optional[int] = None
+    schedule_to_start_timeout: Optional[int] = None  # Seconds; defaults to 12h
 
 
 @dataclass
@@ -45,6 +47,26 @@ DEFAULT_RETRY_POLICY = RetryPolicy(
 )
 
 
+def _resolve_retry_policy(input: TaskRunnerInput) -> RetryPolicy:
+    """Build a RetryPolicy from TaskRunnerInput's decorator-derived fields.
+
+    Returns DEFAULT_RETRY_POLICY when ``max_retries`` is None — covers both
+    activities whose decorator does not set max_retries and in-flight
+    workflows whose serialized inputs predate the field. Otherwise builds
+    a per-activity policy where decorator's ``max_retries`` (retries beyond
+    the first attempt) maps to Temporal's ``maximum_attempts`` (which counts
+    the first attempt too): ``max_retries=0 -> maximum_attempts=1``.
+    """
+    if input.max_retries is None:
+        return DEFAULT_RETRY_POLICY
+    return RetryPolicy(
+        initial_interval=timedelta(seconds=input.retry_delay or 5),
+        maximum_interval=timedelta(minutes=5),
+        maximum_attempts=max(1, input.max_retries + 1),
+        backoff_coefficient=2.0,
+    )
+
+
 @workflow.defn
 class TaskRunnerWorkflow:
     """
@@ -63,6 +85,11 @@ class TaskRunnerWorkflow:
         try:
             # Get timeout from activity metadata or use default
             time_limit = input.time_limit or 3600 * 12  # 12 hours default
+            schedule_to_start_seconds = (
+                input.schedule_to_start_timeout or 3600 * 12
+            )  # 12 hours default
+
+            retry_policy = _resolve_retry_policy(input)
 
             # Don't pin to workflow's build_id; bound stuck-time as safety net.
             result = await workflow.execute_activity(
@@ -72,9 +99,11 @@ class TaskRunnerWorkflow:
                     "kwargs": input.kwargs,
                 },
                 start_to_close_timeout=timedelta(seconds=time_limit),
-                schedule_to_start_timeout=timedelta(minutes=5),
+                schedule_to_start_timeout=timedelta(
+                    seconds=schedule_to_start_seconds
+                ),
                 heartbeat_timeout=timedelta(minutes=5),
-                retry_policy=DEFAULT_RETRY_POLICY,
+                retry_policy=retry_policy,
                 versioning_intent=VersioningIntent.DEFAULT,
             )
 

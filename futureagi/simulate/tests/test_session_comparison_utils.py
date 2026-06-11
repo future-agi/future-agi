@@ -228,15 +228,16 @@ class TestFetchSimulatedCallRecordings:
 @pytest.mark.unit
 class TestFetchBaselineTraceRecordings:
     def test_extracts_recordings_from_span_attributes(self):
-        fake_span = SimpleNamespace(
-            span_attributes={
+        fake_span = {
+            "span_attributes": {
                 "conversation.recording.stereo": "https://example.com/stereo.wav",
                 "conversation.recording.mono.combined": "https://example.com/combined.wav",
-            }
+            },
+            "eval_attributes": {},
+        }
+        result = session_comparison.fetch_baseline_trace_recordings(
+            "trace-123", _span=fake_span
         )
-        with patch.object(session_comparison.ObservationSpan, "objects") as mock_qs:
-            mock_qs.filter.return_value.only.return_value.first.return_value = fake_span
-            result = session_comparison.fetch_baseline_trace_recordings("trace-123")
 
         assert result == {
             "stereo": "https://example.com/stereo.wav",
@@ -244,8 +245,11 @@ class TestFetchBaselineTraceRecordings:
         }
 
     def test_returns_empty_when_no_span(self):
-        with patch.object(session_comparison.ObservationSpan, "objects") as mock_qs:
-            mock_qs.filter.return_value.only.return_value.first.return_value = None
+        with patch.object(
+            session_comparison,
+            "fetch_voice_conversation_span",
+            side_effect=ValueError("missing"),
+        ):
             result = session_comparison.fetch_baseline_trace_recordings("trace-123")
 
         assert result == {}
@@ -265,14 +269,13 @@ class TestFetchComparisonRecordings:
             recording_url=None,
             stereo_recording_url=None,
         )
-        fake_span = SimpleNamespace(
-            span_attributes={"conversation.recording.stereo": "https://base.wav"}
+        fake_span = {
+            "span_attributes": {"conversation.recording.stereo": "https://base.wav"},
+            "eval_attributes": {},
+        }
+        result = session_comparison.fetch_comparison_recordings(
+            call_exec, "trace-1", _span=fake_span
         )
-        with patch.object(session_comparison.ObservationSpan, "objects") as mock_qs:
-            mock_qs.filter.return_value.only.return_value.first.return_value = fake_span
-            result = session_comparison.fetch_comparison_recordings(
-                call_exec, "trace-1"
-            )
 
         assert result["baseline"] == {"stereo": "https://base.wav"}
         assert result["simulated"] == {"stereo": "https://sim.wav"}

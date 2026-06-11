@@ -63,6 +63,7 @@ export const useErrorFeedStore = create((set, get) => ({
 // ── Sort key mapping: frontend camelCase → backend snake_case ──
 const SORT_KEY_MAP = {
   lastSeen: "last_seen",
+  severity: "severity",
   firstSeen: "first_seen",
   occurrences: "error_count",
   traceCount: "unique_traces",
@@ -77,6 +78,7 @@ export const useErrorFeedApiParams = () => {
   const selectedProject = useErrorFeedStore((s) => s.selectedProject);
   const searchQuery = useErrorFeedStore((s) => s.searchQuery);
   const selectedStatus = useErrorFeedStore((s) => s.selectedStatus);
+  const selectedSeverity = useErrorFeedStore((s) => s.selectedSeverity);
   const selectedFixLayer = useErrorFeedStore((s) => s.selectedFixLayer);
   const selectedSource = useErrorFeedStore((s) => s.selectedSource);
   const selectedErrorType = useErrorFeedStore((s) => s.selectedErrorType);
@@ -91,6 +93,7 @@ export const useErrorFeedApiParams = () => {
     if (selectedProject) params.project_id = selectedProject;
     if (searchQuery?.trim()) params.search = searchQuery.trim();
     if (selectedStatus) params.status = selectedStatus;
+    if (selectedSeverity) params.severity = selectedSeverity;
     if (selectedFixLayer) params.fix_layer = selectedFixLayer;
     if (selectedSource) params.source = selectedSource;
     if (selectedErrorType) params.issue_group = selectedErrorType;
@@ -106,6 +109,7 @@ export const useErrorFeedApiParams = () => {
     selectedProject,
     searchQuery,
     selectedStatus,
+    selectedSeverity,
     selectedFixLayer,
     selectedSource,
     selectedErrorType,

@@ -169,7 +169,18 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
     bulkCreate(
       { sourceType, sourceId, scores, notes, spanNotes: notes },
       {
-        onSuccess: () => {
+        onSuccess: (response) => {
+          // Inspect errors[] before exiting edit mode. The mutation hook
+          // already shows a partial-failure snackbar; here we just keep the
+          // user in edit mode so they can retry the failed labels without
+          // having to re-open the annotator.
+          const result = response?.data?.result || {};
+          const errors = result.errors || [];
+          if (errors.length > 0) {
+            // Keep editing open; values stay populated for retry.
+            onScoresChanged?.();
+            return;
+          }
           setEditing(false);
           setNotes("");
           onScoresChanged?.();
@@ -314,9 +325,9 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
             onClose={() => setAddLabelDrawerOpen(false)}
             projectId={projectId}
             onLabelsChanged={() => {
-                refetchQueueLabels();
-                onScoresChanged?.();
-              }}
+              refetchQueueLabels();
+              onScoresChanged?.();
+            }}
           />
         )}
       </Box>
@@ -366,11 +377,10 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
           onChange={(e) => setNotes(e.target.value)}
         />
 
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" justifyContent={"flex-end"} spacing={1}>
           <Button
             variant="contained"
             size="small"
-            fullWidth
             onClick={handleSubmit}
             disabled={isSaving || !hasValues}
             startIcon={
@@ -395,9 +405,9 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
           onClose={() => setAddLabelDrawerOpen(false)}
           projectId={projectId}
           onLabelsChanged={() => {
-                refetchQueueLabels();
-                onScoresChanged?.();
-              }}
+            refetchQueueLabels();
+            onScoresChanged?.();
+          }}
         />
       )}
     </Box>

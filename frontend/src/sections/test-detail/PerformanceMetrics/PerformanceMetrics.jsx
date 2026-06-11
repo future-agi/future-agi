@@ -26,11 +26,11 @@ const STATUS_MAPPER = {
 };
 
 const defaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
   id: getRandomId(),
 };
@@ -57,7 +57,7 @@ export default function PerformanceMetrics() {
 
     // 🟩 CASE 1: total_calls → remove status filters, keep others
     if (type === "total_calls") {
-      const otherFilters = copy.filter((f) => f.columnId !== "status");
+      const otherFilters = copy.filter((f) => f.column_id !== "status");
 
       const newFilters =
         otherFilters.length === 0 ? [defaultFilter] : otherFilters;
@@ -76,32 +76,32 @@ export default function PerformanceMetrics() {
       const targetValue = STATUS_MAPPER[type];
 
       // Remove empty column filters
-      const cleanedFilters = copy.filter((f) => f.columnId !== "");
+      const cleanedFilters = copy.filter((f) => f.column_id !== "");
       const updatedFilters = [...cleanedFilters];
 
       // Find existing status filter
       const existingStatusIndex = updatedFilters.findIndex(
-        (f) => f.columnId === "status",
+        (f) => f.column_id === "status",
       );
 
       if (existingStatusIndex >= 0) {
         // Update existing status filter
         updatedFilters[existingStatusIndex] = {
           ...updatedFilters[existingStatusIndex],
-          filterConfig: {
-            ...updatedFilters[existingStatusIndex].filterConfig,
-            filterValue: targetValue,
+          filter_config: {
+            ...updatedFilters[existingStatusIndex].filter_config,
+            filter_value: targetValue,
           },
         };
       } else {
         // Append new status filter
         updatedFilters.push({
           id: getRandomId(),
-          columnId: "status",
-          filterConfig: {
-            filterType: "text",
-            filterOp: "equals",
-            filterValue: targetValue,
+          column_id: "status",
+          filter_config: {
+            filter_type: "text",
+            filter_op: "equals",
+            filter_value: targetValue,
           },
           _meta: { parentProperty: "status" },
         });

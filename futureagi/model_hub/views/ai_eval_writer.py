@@ -8,13 +8,19 @@ and generates a full, structured eval instruction prompt with
 template variables.
 """
 
-import json
 import traceback
 
 import structlog
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    AIEvalWriterRequestSerializer,
+    AIEvalWriterResponseSerializer,
+)
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -90,10 +96,15 @@ class AIEvalWriterView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=AIEvalWriterRequestSerializer,
+        responses={200: AIEvalWriterResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
-            description = request.data.get("description", "").strip()
-            output_format = request.data.get("output_format", "prompt")
+            description = request.validated_data.get("description", "").strip()
+            output_format = request.validated_data.get("output_format", "prompt")
             if not description:
                 return self._gm.bad_request("Description is required")
 

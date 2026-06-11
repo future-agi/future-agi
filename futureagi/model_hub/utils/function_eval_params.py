@@ -57,6 +57,21 @@ def _normalize_integer(value, field: str):
     raise ValueError(f"{field} must be an integer")
 
 
+def _normalize_number(value, field: str):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{field} must be a number")
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except (TypeError, ValueError):
+            pass
+    raise ValueError(f"{field} must be a number")
+
+
 def normalize_function_params(
     template_config: dict | None, params: dict | None
 ) -> dict:
@@ -113,9 +128,14 @@ def normalize_function_params(
             else:
                 raise ValueError(f"{name} must be a boolean")
         elif field_type == "number":
-            if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
-                raise ValueError(f"{name} must be a number")
-            normalized[name] = float(raw_value)
+            value = _normalize_number(raw_value, name)
+            minimum = definition.get("minimum")
+            maximum = definition.get("maximum")
+            if minimum is not None and value < minimum:
+                raise ValueError(f"{name} must be >= {minimum}")
+            if maximum is not None and value > maximum:
+                raise ValueError(f"{name} must be <= {maximum}")
+            normalized[name] = value
         elif field_type == "string":
             if not isinstance(raw_value, str):
                 raise ValueError(f"{name} must be a string")

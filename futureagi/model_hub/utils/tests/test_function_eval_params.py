@@ -207,3 +207,90 @@ def test_min_max_bounds_still_enforced():
         normalize_function_params(schema, {"k": 101})
     # In-range value passes
     assert normalize_function_params(schema, {"k": 50}) == {"k": 50}
+
+
+# ---------------------------------------------------------------------------
+# Number type — FE form fields serialize numeric inputs as strings, so the
+# normalizer must coerce. Regression coverage for TH-5022 (latency_check
+# rejected a number entered as "1000" because the strict isinstance check
+# only accepted int/float and never str).
+# ---------------------------------------------------------------------------
+
+
+def _schema_max_latency():
+    return {
+        "function_params_schema": {
+            "max_latency_ms": {
+                "type": "number",
+                "default": None,
+                "required": True,
+                "minimum": 0,
+            }
+        }
+    }
+
+
+def test_number_accepts_native_int():
+    assert normalize_function_params(_schema_max_latency(), {"max_latency_ms": 1000}) == {
+        "max_latency_ms": 1000.0
+    }
+
+
+def test_number_accepts_native_float():
+    assert normalize_function_params(
+        _schema_max_latency(), {"max_latency_ms": 1500.5}
+    ) == {"max_latency_ms": 1500.5}
+
+
+def test_number_accepts_stringified_int():
+    """FE serializes the form field as a string — must coerce."""
+    assert normalize_function_params(
+        _schema_max_latency(), {"max_latency_ms": "1000"}
+    ) == {"max_latency_ms": 1000.0}
+
+
+def test_number_accepts_stringified_float():
+    assert normalize_function_params(
+        _schema_max_latency(), {"max_latency_ms": "1500.5"}
+    ) == {"max_latency_ms": 1500.5}
+
+
+def test_number_accepts_stringified_with_whitespace():
+    assert normalize_function_params(
+        _schema_max_latency(), {"max_latency_ms": "  250  "}
+    ) == {"max_latency_ms": 250.0}
+
+
+def test_number_rejects_garbage_string():
+    with pytest.raises(ValueError, match="max_latency_ms must be a number"):
+        normalize_function_params(_schema_max_latency(), {"max_latency_ms": "fast"})
+
+
+def test_number_rejects_bool():
+    """Booleans are int subclasses in Python — must be rejected explicitly."""
+    with pytest.raises(ValueError, match="max_latency_ms must be a number"):
+        normalize_function_params(_schema_max_latency(), {"max_latency_ms": True})
+
+
+def test_number_enforces_minimum():
+    with pytest.raises(ValueError, match=">= 0"):
+        normalize_function_params(_schema_max_latency(), {"max_latency_ms": -1})
+
+
+def test_number_minimum_applies_after_string_coercion():
+    """Bound check runs against the coerced float, not the raw string."""
+    with pytest.raises(ValueError, match=">= 0"):
+        normalize_function_params(_schema_max_latency(), {"max_latency_ms": "-50"})
+
+
+def test_number_enforces_maximum():
+    schema = {
+        "function_params_schema": {
+            "temperature": {"type": "number", "minimum": 0.0, "maximum": 2.0},
+        }
+    }
+    with pytest.raises(ValueError, match="<= 2.0"):
+        normalize_function_params(schema, {"temperature": "2.5"})
+    assert normalize_function_params(schema, {"temperature": "1.5"}) == {
+        "temperature": 1.5
+    }

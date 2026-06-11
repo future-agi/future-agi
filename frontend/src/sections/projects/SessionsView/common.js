@@ -32,7 +32,7 @@ export const getSessionListColumnDef = (col) => {
         originType: "Tracing",
       },
       cellStyle: {
-        paddingInline: 0,
+        paddingInline: "0 26px",
         justifyContent: "flex-end",
         display: "flex",
       },
@@ -67,7 +67,7 @@ export const getSessionListColumnDef = (col) => {
           ? "—"
           : params.value,
       cellStyle: {
-        paddingInline: 0,
+        paddingInline: "0 26px",
         justifyContent: "flex-end",
         display: "flex",
       },
@@ -86,7 +86,7 @@ export const getSessionListColumnDef = (col) => {
     filter: id === "duration" || id === "lastMessage" ? false : undefined,
     cellRenderer: SessionCellRenderer,
     cellStyle: {
-      paddingInline: 0,
+      paddingInline: "0 17px",
       justifyContent: "flex-end",
       display: "flex",
     },
@@ -126,11 +126,11 @@ export const getVisiblePercentage = (elementRect, containerRect) => {
 };
 
 export const defaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 

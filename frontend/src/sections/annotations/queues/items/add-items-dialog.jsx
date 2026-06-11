@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { enqueueSnackbar } from "notistack";
 import {
+  Alert,
   Autocomplete,
   Box,
   Button,
@@ -20,6 +21,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import { AgGridReact } from "ag-grid-react";
 import Iconify from "src/components/iconify";
 import { useAddQueueItems } from "src/api/annotation-queues/annotation-queues";
@@ -44,7 +46,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useTestRunsList } from "src/api/tests/testRuns";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
-import { objectCamelToSnake } from "src/utils/utils";
 import {
   getTraceListColumnDefs,
   TRACE_DEFAULT_COLUMNS,
@@ -52,183 +53,125 @@ import {
   generateSpanObserveFilterDefinition,
   SPAN_DEFAULT_COLUMNS,
 } from "src/sections/projects/LLMTracing/common";
-import LLMFilterBox from "src/sections/projects/LLMTracing/LLMFilterBox";
 import DateRangePill, {
   dateFilterForOption,
 } from "src/sections/projects/LLMTracing/DateRangePill";
 import FilterChips from "src/sections/projects/LLMTracing/FilterChips";
 import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
+import { apiPath } from "src/api/contracts/api-surface";
+import { useDashboardFilterValues } from "src/hooks/useDashboards";
+import {
+  getPickerOptionLabel,
+  getPickerOptionSecondaryLabel,
+  getPickerOptionValue,
+} from "src/sections/projects/LLMTracing/filterValuePickerUtils";
 import CallLogsGrid from "src/sections/agents/CallLogs/CallLogsGrid";
 import SelectAllBanner from "src/sections/projects/LLMTracing/SelectAllBanner";
 import { useGetProjectDetails } from "src/api/project/project-detail";
+import { useDebounce } from "src/hooks/use-debounce";
 import { PROJECT_SOURCE } from "src/utils/constants";
-
-// ---------------------------------------------------------------------------
-// TraceFilterPanel ↔ API filter converters (mirror ObserveToolbar's inline
-// logic). Moved here so the dialog's Trace and Span selectors can mount the
-// same popover the main tracing page uses.
-// ---------------------------------------------------------------------------
-const PANEL_OP_TO_API = {
-  is: "equals",
-  is_not: "not_equals",
-  contains: "contains",
-  not_contains: "not_contains",
-  equals: "equals",
-  equal_to: "equal_to",
-  not_equal_to: "not_equal_to",
-  greater_than: "greater_than",
-  greater_than_or_equal: "greater_than_or_equal",
-  less_than: "less_than",
-  less_than_or_equal: "less_than_or_equal",
-  between: "between",
-  not_between: "not_between",
-};
-const API_OP_TO_PANEL = {
-  equals: "is",
-  not_equals: "is_not",
-  contains: "contains",
-  not_contains: "not_contains",
-  starts_with: "starts_with",
-  // `in` / `not_in` are the multi-value promotion of equals / not_equals
-  // that panelFilterToApi emits. Reverse back to `is` / `is_not` so the
-  // panel's operator Select finds a matching option (STRING_OPS and
-  // CATEGORICAL_OPS don't include `in` — without the reverse mapping the
-  // Operator dropdown goes blank on re-open).
-  in: "is",
-  not_in: "is_not",
-};
-const PANEL_TYPE_TO_API = {
-  string: "text",
-  number: "number",
-  boolean: "boolean",
-  categorical: "categorical",
-  text: "text",
-};
-const PANEL_CAT_TO_COL_TYPE = {
-  attribute: "SPAN_ATTRIBUTE",
-  system: "SYSTEM_METRIC",
-  eval: "EVAL_METRIC",
-  annotation: "ANNOTATION",
-};
-const COL_TYPE_TO_PANEL_CAT = {
-  SPAN_ATTRIBUTE: "attribute",
-  SYSTEM_METRIC: "system",
-  EVAL_METRIC: "eval",
-  ANNOTATION: "annotation",
-};
-const NUMBER_OPS = new Set([
-  "equal_to",
-  "not_equal_to",
-  "greater_than",
-  "greater_than_or_equal",
-  "less_than",
-  "less_than_or_equal",
-  "between",
-  "not_between",
-]);
-const RANGE_OPS = new Set(["between", "not_between"]);
-
-function panelFilterToApi(panel) {
-  const baseOp = PANEL_OP_TO_API[panel.operator] || panel.operator;
-  let filterOp = baseOp;
-  let filterValue = panel.value;
-  if (Array.isArray(filterValue)) {
-    if (filterValue.length === 1) {
-      filterValue = filterValue[0];
-    } else if (filterValue.length > 1) {
-      if (baseOp === "equals") filterOp = "in";
-      else if (baseOp === "not_equals") filterOp = "not_in";
-      else filterValue = filterValue.join(",");
-    }
-  }
-  const filterType = PANEL_TYPE_TO_API[panel.fieldType] || "text";
-  const colType = PANEL_CAT_TO_COL_TYPE[panel.fieldCategory];
-  return {
-    columnId: panel.field,
-    ...(panel.fieldName && { displayName: panel.fieldName }),
-    filterConfig: {
-      filterType,
-      filterOp,
-      filterValue,
-      // `col_type` (snake_case) matches the Zod schema in
-      // ComplexFilter/common.js — a `colType` key would be stripped by
-      // safeParse, which is how `ended_reason` ended up falling through
-      // the SYSTEM_METRIC → VOICE_SYSTEM_METRIC_STR_MAP path and
-      // generating an "Unknown identifier" ClickHouse error.
-      ...(colType && { col_type: colType }),
-    },
-    _meta: { parentProperty: "" },
-  };
-}
-
-function apiFilterToPanel(api) {
-  const rawOp = api?.filterConfig?.filterOp || "equals";
-  const isNumberOp = NUMBER_OPS.has(rawOp);
-  const isRange = RANGE_OPS.has(rawOp);
-  const rawVal = api?.filterConfig?.filterValue;
-  let value;
-  if (isRange && rawVal) {
-    value = Array.isArray(rawVal)
-      ? rawVal.map((v) => String(v))
-      : String(rawVal)
-          .split(",")
-          .map((v) => v.trim());
-  } else if (isNumberOp) {
-    value = rawVal != null ? String(rawVal) : "";
-  } else if (Array.isArray(rawVal)) {
-    value = rawVal.map((v) => String(v));
-  } else {
-    value = rawVal
-      ? String(rawVal)
-          .split(",")
-          .map((v) => v.trim())
-      : [];
-  }
-  const rawColType =
-    api?.filterConfig?.col_type ||
-    api?.filterConfig?.colType ||
-    api?.col_type ||
-    api?.colType ||
-    "SYSTEM_METRIC";
-  const filterType = api?.filterConfig?.filterType;
-  return {
-    field: api.columnId,
-    fieldName: api.displayName,
-    fieldCategory: COL_TYPE_TO_PANEL_CAT[rawColType] || "system",
-    fieldType: isNumberOp
-      ? "number"
-      : filterType === "number"
-        ? "number"
-        : filterType === "categorical"
-          ? "categorical"
-          : filterType === "text" && rawColType === "ANNOTATION"
-            ? "text"
-            : "string",
-    operator: isNumberOp ? rawOp : API_OP_TO_PANEL[rawOp] || rawOp,
-    value,
-  };
-}
-import { getComplexFilterValidation } from "src/components/ComplexFilter/common";
+import { apiFilterHasValue } from "src/sections/annotations/queues/utils/filter-operators";
+import {
+  apiFilterToPanel as apiFilterToPanelBase,
+  panelFilterToApi as panelFilterToApiBase,
+} from "src/sections/annotations/queues/utils/api-filter-converters";
+import { SIMULATION_PERSONA_FILTER_FIELDS } from "src/sections/annotations/queues/utils/simulation-persona-filter-fields";
 import {
   getSessionListColumnDef,
-  filterDefinition as sessionFilterDefinition,
   defaultFilter as sessionDefaultFilterBase,
 } from "src/sections/projects/SessionsView/common";
+import {
+  buildSessionSelectAllMeta,
+  buildSessionSelectionFilters,
+  buildSessionSelectorFilterFields,
+  SESSION_DATE_FILTER_COLUMN,
+} from "./add-items-session-utils";
 import "src/styles/clean-data-table.css";
 import { fetchRootSpans } from "src/api/project/llm-tracing";
-import { VoiceCallsGrid } from "src/components/data-table";
 
+const panelFilterToApi = (panel) =>
+  panelFilterToApiBase(panel, { includeMeta: true });
+
+const apiFilterToPanel = (api, propertiesById = {}) =>
+  apiFilterToPanelBase(api, {
+    propertiesById,
+    dateFieldType: "datetime",
+    formatDateValues: false,
+  });
+
+function hasAppliedAnnotatorFilter(filters) {
+  return filters.some(
+    (filter) => filter?.column_id === "annotator" && apiFilterHasValue(filter),
+  );
+}
+
+export function SelectionCheckboxNudge({ selectionCount }) {
+  if (selectionCount > 0) return null;
+
+  return (
+    <Alert
+      severity="info"
+      variant="outlined"
+      icon={<Iconify icon="mdi:checkbox-marked-outline" width={18} />}
+      sx={{
+        mt: 2,
+        borderRadius: 0.75,
+        "& .MuiAlert-message": {
+          width: "100%",
+        },
+      }}
+    >
+      <Typography variant="body2" fontWeight={600}>
+        Use the checkbox column to select rows before adding them to this queue.
+      </Typography>
+    </Alert>
+  );
+}
+
+SelectionCheckboxNudge.propTypes = {
+  selectionCount: PropTypes.number.isRequired,
+};
+
+export function buildAnnotatorFilterChipLabelMap(annotatorOptions = []) {
+  const entries = annotatorOptions
+    .map((option) => {
+      const value = String(getPickerOptionValue(option));
+      if (!value) return null;
+      const label = getPickerOptionLabel(option);
+      const email = getPickerOptionSecondaryLabel(option);
+      return [value, email ? `${label} (${email})` : label];
+    })
+    .filter(Boolean);
+
+  return entries.length > 0
+    ? { annotator: Object.fromEntries(entries) }
+    : undefined;
+}
+
+function renderProjectAutocompleteOption(props, option, state) {
+  const { key, ...optionProps } = props;
+  return (
+    <li
+      {...optionProps}
+      key={option?.id || key || `${option?.name || "project"}-${state.index}`}
+    >
+      {option?.name}
+      {option?.trace_type === "experiment" && (
+        <Chip
+          label="Prototype"
+          size="small"
+          sx={{ ml: 1, height: 20, fontSize: 10 }}
+        />
+      )}
+    </li>
+  );
+}
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 const DATASET_ROWS_LIMIT = 10;
 const TRACE_ROWS_LIMIT = 20;
 const DEFAULT_MIN_WIDTH = 300;
-const DONT_FORMAT_COL_ID_FOR = [
-  "Evaluation Metrics",
-  "Attribute",
-  "Annotation Metrics",
-];
 
 const DATASET_GRID_THEME_PARAMS = {
   columnBorder: true,
@@ -280,6 +223,144 @@ const SOURCE_TYPES = [
     enabled: true,
   },
 ];
+
+const SIMULATION_FILTER_CATEGORIES = [
+  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
+  { key: "system", label: "System Metrics", icon: "mdi:tune-variant" },
+  { key: "persona", label: "Persona", icon: "mdi:account-outline" },
+  { key: "attribute", label: "Attributes", icon: "mdi:tag-multiple-outline" },
+  { key: "eval", label: "Evals", icon: "mdi:check-decagram-outline" },
+];
+
+const SIMULATION_STATIC_FILTER_FIELDS = [
+  {
+    id: "status",
+    name: "Status",
+    category: "system",
+    type: "categorical",
+    choices: ["completed", "failed", "in_progress", "pending", "cancelled"],
+  },
+  ...SIMULATION_PERSONA_FILTER_FIELDS,
+  {
+    id: "agent_definition",
+    name: "Agent Definition",
+    category: "system",
+    type: "text",
+  },
+  {
+    id: "call_type",
+    name: "Call Type",
+    category: "system",
+    type: "categorical",
+    choices: ["voice", "text", "inbound", "outbound"],
+  },
+  {
+    id: "simulation_call_type",
+    name: "Simulation Call Type",
+    category: "system",
+    type: "text",
+  },
+  {
+    id: "duration_seconds",
+    name: "Duration",
+    category: "system",
+    type: "number",
+  },
+  {
+    id: "avg_agent_latency_ms",
+    name: "Latency",
+    category: "system",
+    type: "number",
+  },
+  {
+    id: "cost_cents",
+    name: "Cost",
+    category: "system",
+    type: "number",
+  },
+  {
+    id: "overall_score",
+    name: "Overall Score",
+    category: "system",
+    type: "number",
+  },
+  {
+    id: "created_at",
+    name: "Created At",
+    category: "system",
+    type: "date",
+  },
+];
+
+function simulationFilterTypeFromColumn(col) {
+  const rawType = String(
+    col?.data_type ||
+      col?.dataType ||
+      col?.output_type ||
+      col?.outputType ||
+      col?.eval_config?.output_type ||
+      col?.eval_config?.outputType ||
+      "",
+  ).toLowerCase();
+
+  if (
+    ["integer", "float", "number", "numeric", "decimal", "score"].some(
+      (token) => rawType.includes(token),
+    )
+  ) {
+    return "number";
+  }
+  if (rawType.includes("bool")) {
+    return "boolean";
+  }
+  if (rawType.includes("date") || rawType.includes("time")) {
+    return "datetime";
+  }
+  return "text";
+}
+
+function buildDynamicSimulationFilterField(col) {
+  if (!col?.id) return null;
+
+  const normalizedColumnId = normalizeSimulationColumnId(col.id);
+  if (SIMULATION_HIDDEN_COLUMN_IDS.has(normalizedColumnId)) return null;
+
+  if (col.type === "scenario_dataset_column") {
+    return {
+      id: col.id,
+      name: col.column_name || col.name || col.id,
+      category: "attribute",
+      type: simulationFilterTypeFromColumn(col),
+    };
+  }
+
+  if (col.type === "evaluation" || col.type === "tool_evaluation") {
+    return {
+      id: col.id,
+      name: col.column_name || col.name || col.id,
+      category: "eval",
+      type: simulationFilterTypeFromColumn(col),
+    };
+  }
+
+  return null;
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildSimulationSelectorFilterFields(columnOrder = []) {
+  const fieldsById = new Map(
+    SIMULATION_STATIC_FILTER_FIELDS.map((field) => [field.id, field]),
+  );
+
+  columnOrder.forEach((col) => {
+    const field = buildDynamicSimulationFilterField(col);
+    if (field && !fieldsById.has(field.id)) {
+      fieldsById.set(field.id, field);
+    }
+  });
+
+  return Array.from(fieldsById.values());
+}
 
 // ---------------------------------------------------------------------------
 // Fetch all row IDs from a dataset (paginating through all pages)
@@ -334,10 +415,13 @@ const SPAN_ROWS_LIMIT = 20;
 // selectAll enumeration path when the backend filter-mode resolver isn't
 // available for a source type.
 // ---------------------------------------------------------------------------
-async function fetchAllTraceIds(projectId, excludedIds, filters, projectVersionId) {
-  const serializedFilters = JSON.stringify(
-    objectCamelToSnake(filters || []),
-  );
+async function fetchAllTraceIds(
+  projectId,
+  excludedIds,
+  filters,
+  projectVersionId,
+) {
+  const serializedFilters = JSON.stringify(filters || []);
   const allIds = [];
   const excluded = excludedIds || new Set();
   let page = 0;
@@ -369,10 +453,13 @@ async function fetchAllTraceIds(projectId, excludedIds, filters, projectVersionI
   return allIds;
 }
 
-async function fetchAllSpanIds(projectId, excludedIds, filters, projectVersionId) {
-  const serializedFilters = JSON.stringify(
-    objectCamelToSnake(filters || []),
-  );
+async function fetchAllSpanIds(
+  projectId,
+  excludedIds,
+  filters,
+  projectVersionId,
+) {
+  const serializedFilters = JSON.stringify(filters || []);
   const allIds = [];
   const excluded = excludedIds || new Set();
   let page = 0;
@@ -407,7 +494,7 @@ async function fetchAllSpanIds(projectId, excludedIds, filters, projectVersionId
 // ---------------------------------------------------------------------------
 // Main component – Drawer-based
 // ---------------------------------------------------------------------------
-export default function AddItemsDialog({ open, onClose, queueId }) {
+export default function AddItemsDialog({ open, onClose, queueId, queue }) {
   const [sourceType, setSourceType] = useState(null);
   // Selection can be in two modes:
   // 'manual' – individual IDs tracked in selectedIds
@@ -415,9 +502,14 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
   const [selectionMode, setSelectionMode] = useState("manual");
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [selectAllInfo, setSelectAllInfo] = useState(null);
+  // Voice/simulator projects route trace selections through CallLogsGrid;
+  // those selections must keep `source_type: "trace"` (matching the voice
+  // obs page's "Add to queue") instead of being converted to root spans.
+  const [isVoiceTraceSelection, setIsVoiceTraceSelection] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
   const { mutate: addItems, isPending } = useAddQueueItems();
   const queryClient = useQueryClient();
+  const isDefaultQueue = !!queue?.is_default;
 
   const selectionCount =
     selectionMode === "selectAll" && selectAllInfo
@@ -438,6 +530,7 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
     setSelectionMode("manual");
     setSelectedIds(new Set());
     setSelectAllInfo(null);
+    setIsVoiceTraceSelection(false);
   }, []);
 
   const handleSubmit = async () => {
@@ -467,6 +560,9 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               project_id: selectAllInfo.projectId,
               filter: selectAllInfo.filters || [],
               exclude_ids: Array.from(selectAllInfo.excludedIds || []),
+              ...(sourceType === "trace" && isVoiceTraceSelection
+                ? { is_voice_call: true }
+                : {}),
             },
           },
           {
@@ -538,14 +634,36 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               source_id: id,
             }));
           }
-
         } finally {
           setIsResolving(false);
         }
       } else {
-        const ids = Array.from(selectedIds);
+        let ids = Array.from(selectedIds);
+        let effectiveSourceType = sourceType;
+
+        // Voice/simulator projects keep `source_type: "trace"` — matches
+        // the "Add to queue" flow on the voice observability page so the
+        // queue badge says "Trace" (not "Span") and the annotator drawer
+        // resolves the call via the trace FK. For regular tracing
+        // projects, remap trace -> root span so the queue items match the
+        // annotator workspace's span-oriented UI (consistent with the
+        // ``mappedIds`` branch above at lines 540-548).
+        if (sourceType === "trace" && !isVoiceTraceSelection) {
+          const rootSpanMap = await fetchRootSpans(ids);
+          const originalCount = ids.length;
+          ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
+          effectiveSourceType = "observation_span";
+          const droppedCount = originalCount - ids.length;
+          if (droppedCount > 0) {
+            enqueueSnackbar(
+              `${droppedCount} trace${droppedCount !== 1 ? "s" : ""} skipped — no root span found yet`,
+              { variant: "warning" },
+            );
+          }
+        }
+
         itemsToAdd = ids.map((id) => ({
-          source_type: sourceType,
+          source_type: effectiveSourceType,
           source_id: id,
         }));
       }
@@ -638,7 +756,11 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
     >
       {/* Source type selection (step 1) */}
       {!sourceType && (
-        <SourceTypeSelection onClose={handleClose} onSelect={setSourceType} />
+        <SourceTypeSelection
+          onClose={handleClose}
+          onSelect={setSourceType}
+          isDefaultQueue={isDefaultQueue}
+        />
       )}
 
       {/* Dataset / Trace selection (step 2) */}
@@ -659,31 +781,35 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
+              gap: 1.5,
+              flexWrap: "wrap",
               borderBottom: "1px solid",
               borderColor: "divider",
               flexShrink: 0,
             }}
           >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                minWidth: 0,
+                flex: "1 1 280px",
+              }}
+            >
               <IconButton size="small" onClick={handleBack}>
                 <Iconify icon="eva:arrow-ios-back-fill" width={20} />
               </IconButton>
-              <Box>
-                <Typography variant="h6">{sourceLabel}</Typography>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="h6" noWrap sx={{ minWidth: 0 }}>
+                  {sourceLabel}
+                </Typography>
                 <Typography variant="body2" color="text.secondary">
                   {sourceSubtitle}
                 </Typography>
               </Box>
             </Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography
-                component="a"
-                variant="body2"
-                href="#"
-                sx={{ color: "primary.main", textDecoration: "none" }}
-              >
-                Learn more
-              </Typography>
               <IconButton onClick={handleClose}>
                 <Iconify icon="mingcute:close-line" width={20} />
               </IconButton>
@@ -700,6 +826,13 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               px: 3,
             }}
           >
+            {isDefaultQueue && (
+              <Alert severity="info" variant="outlined" sx={{ mt: 2 }}>
+                This is a default queue. Direct annotations still land here
+                automatically, and you can add items from any selected source.
+              </Alert>
+            )}
+            <SelectionCheckboxNudge selectionCount={selectionCount} />
             {sourceType === "dataset_row" && (
               <DatasetRowSelector
                 onSetSelection={handleSetSelection}
@@ -710,6 +843,7 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               <TraceSelector
                 onSetSelection={handleSetSelection}
                 onSelectAll={handleSelectAll}
+                onVoiceProjectChange={setIsVoiceTraceSelection}
               />
             )}
             {sourceType === "observation_span" && (
@@ -719,7 +853,10 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               />
             )}
             {sourceType === "trace_session" && (
-              <SessionSelector onSetSelection={handleSetSelection} />
+              <SessionSelector
+                onSetSelection={handleSetSelection}
+                onSelectAll={handleSelectAll}
+              />
             )}
             {sourceType === "call_execution" && (
               <SimulationSelector onSetSelection={handleSetSelection} />
@@ -734,18 +871,27 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
               borderTop: "1px solid",
               borderColor: "divider",
               display: "flex",
-              justifyContent: "flex-end",
               alignItems: "center",
               gap: 1.5,
+              flexWrap: "wrap",
               flexShrink: 0,
             }}
           >
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ flex: "1 1 220px", minWidth: 0 }}
+            >
+              {selectionCount === 0
+                ? "No rows selected"
+                : `${selectionCount} selected`}
+            </Typography>
             <Button
               variant="outlined"
               color="primary"
               onClick={handleClose}
               disabled={isPending || isResolving}
-              sx={{ minWidth: 160 }}
+              sx={{ minWidth: 140, flexShrink: 0 }}
             >
               Cancel
             </Button>
@@ -759,7 +905,7 @@ export default function AddItemsDialog({ open, onClose, queueId }) {
                   <CircularProgress size={16} />
                 ) : undefined
               }
-              sx={{ minWidth: 160 }}
+              sx={{ minWidth: 140, flexShrink: 0 }}
             >
               {selectionCount > 0
                 ? `(${selectionCount}) Add to queue`
@@ -776,12 +922,13 @@ AddItemsDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   queueId: PropTypes.string.isRequired,
+  queue: PropTypes.object,
 };
 
 // ---------------------------------------------------------------------------
 // Source Type Selection (Step 1)
 // ---------------------------------------------------------------------------
-function SourceTypeSelection({ onSelect, onClose }) {
+function SourceTypeSelection({ onSelect, onClose, isDefaultQueue }) {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", flex: 1 }}>
       <Box
@@ -837,6 +984,16 @@ function SourceTypeSelection({ onSelect, onClose }) {
             Check docs
           </Typography>
         </Typography>
+        {isDefaultQueue && (
+          <Alert
+            severity="info"
+            variant="outlined"
+            sx={{ width: "100%", maxWidth: 560, mb: 2 }}
+          >
+            This default queue auto-receives direct annotations for its default
+            source, but you can add items from any source here.
+          </Alert>
+        )}
 
         <Box
           sx={{
@@ -924,6 +1081,7 @@ function SourceTypeSelection({ onSelect, onClose }) {
 SourceTypeSelection.propTypes = {
   onSelect: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
+  isDefaultQueue: PropTypes.bool,
 };
 
 // ---------------------------------------------------------------------------
@@ -965,7 +1123,13 @@ function buildReadOnlyColumnDefs(columnConfig) {
 // ---------------------------------------------------------------------------
 // Server-side datasource for dataset grid (read-only, with filters)
 // ---------------------------------------------------------------------------
-function createDataSource(queryClient, datasetId, filtersRef, searchRef) {
+function createDataSource(
+  queryClient,
+  datasetId,
+  filtersRef,
+  searchRef,
+  setGridLoading,
+) {
   return {
     getRows: async (params) => {
       const { request } = params;
@@ -981,6 +1145,7 @@ function createDataSource(queryClient, datasetId, filtersRef, searchRef) {
       const search = searchRef.current || "";
 
       try {
+        setGridLoading?.(true);
         const queryOptions = getDatasetQueryOptions(
           datasetId,
           pageNumber,
@@ -1003,6 +1168,8 @@ function createDataSource(queryClient, datasetId, filtersRef, searchRef) {
         });
       } catch {
         params.fail();
+      } finally {
+        setGridLoading?.(false);
       }
     },
   };
@@ -1044,32 +1211,155 @@ StatusBar.propTypes = {
   api: PropTypes.object,
 };
 
+function FieldLoadingAdornment({ loading }) {
+  if (!loading) return null;
+  return (
+    <InputAdornment position="end" sx={{ mr: 2 }}>
+      <CircularProgress size={16} thickness={4} />
+    </InputAdornment>
+  );
+}
+
+FieldLoadingAdornment.propTypes = {
+  loading: PropTypes.bool,
+};
+
+function SelectorEmptyState({
+  loading,
+  title,
+  description,
+  requiredLabel,
+  loadingLabel,
+}) {
+  return (
+    <Box
+      sx={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        color: "text.secondary",
+        px: 2,
+      }}
+    >
+      {loading ? (
+        <CircularProgress size={28} sx={{ mb: 2 }} />
+      ) : (
+        <Box
+          sx={{
+            width: 40,
+            height: 40,
+            borderRadius: 1,
+            border: "1px solid",
+            borderColor: "divider",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            mb: 1.5,
+            color: "text.secondary",
+          }}
+        >
+          <Typography component="span" color="error.main" fontWeight={700}>
+            *
+          </Typography>
+        </Box>
+      )}
+      <Typography variant="h6" color="text.primary" sx={{ mb: 0.75 }}>
+        {loading ? loadingLabel || title : title}
+      </Typography>
+      <Typography variant="body2" sx={{ maxWidth: 420 }}>
+        {description}
+      </Typography>
+      {!loading && requiredLabel && (
+        <Typography variant="caption" sx={{ mt: 1.25 }}>
+          Please select{" "}
+          <Box component="span" sx={{ fontWeight: 600, color: "text.primary" }}>
+            {requiredLabel}
+          </Box>{" "}
+          to move forward.
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+SelectorEmptyState.propTypes = {
+  loading: PropTypes.bool,
+  title: PropTypes.string.isRequired,
+  description: PropTypes.string.isRequired,
+  requiredLabel: PropTypes.string,
+  loadingLabel: PropTypes.string,
+};
+
+function GridLoadingOverlay({ open, label = "Loading rows..." }) {
+  if (!open) return null;
+  return (
+    <Box
+      sx={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 2,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        bgcolor: (theme) => alpha(theme.palette.background.paper, 0.72),
+        backdropFilter: "blur(1px)",
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <CircularProgress size={18} />
+        <Typography variant="body2" color="text.secondary">
+          {label}
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
+
+GridLoadingOverlay.propTypes = {
+  open: PropTypes.bool,
+  label: PropTypes.string,
+};
+
 // ---------------------------------------------------------------------------
 // Dataset Row Selector – Same AG Grid as dataset view
 // ---------------------------------------------------------------------------
-function DatasetRowSelector({ onSetSelection, onSelectAll }) {
+export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   const [datasetId, setDatasetId] = useState("");
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search.trim(), 300);
   const [gridApi, setGridApi] = useState(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFiltersState] = useState([
     { ...DefaultFilter, id: getRandomId() },
   ]);
+  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const agTheme = useAgThemeWith(DATASET_GRID_THEME_PARAMS);
   const queryClient = useQueryClient();
   const filtersRef = useRef([]);
   const searchRef = useRef("");
 
-  const { data: datasets } = useQuery({
+  const {
+    data: datasets,
+    isLoading: isDatasetsLoading,
+    isFetching: isDatasetsFetching,
+  } = useQuery({
     queryKey: ["datasets-list-simple"],
-    queryFn: () => axios.get("/model-hub/develops/get-datasets-names/"),
+    queryFn: () =>
+      axios.get(apiPath("/model-hub/develops/get-datasets-names/")),
     select: (d) => d.data?.result?.datasets || [],
     staleTime: 1000 * 60 * 5,
   });
 
   // Get column config from page 0
-  const { data: tableData } = useQuery(
+  const {
+    data: tableData,
+    isLoading: isTableLoading,
+    isFetching: isTableFetching,
+  } = useQuery(
     getDatasetQueryOptions(datasetId, 0, [], [], "", {
       enabled: !!datasetId,
       staleTime: Infinity,
@@ -1116,6 +1406,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           datasetId,
           filtersRef,
           searchRef,
+          setIsGridLoading,
         );
         params.api.setGridOption("serverSideDatasource", ds);
       }
@@ -1131,26 +1422,39 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         datasetId,
         filtersRef,
         searchRef,
+        setIsGridLoading,
       );
       gridApi.setGridOption("serverSideDatasource", ds);
     }
   }, [datasetId, gridApi, queryClient]);
 
-  // Handle search
+  const applyDatasetSearch = useCallback(
+    (nextSearch) => {
+      searchRef.current = nextSearch.trim();
+      if (!gridApi || !datasetId) return;
+      const ds = createDataSource(
+        queryClient,
+        datasetId,
+        filtersRef,
+        searchRef,
+        setIsGridLoading,
+      );
+      gridApi.setGridOption("serverSideDatasource", ds);
+    },
+    [gridApi, datasetId, queryClient],
+  );
+
+  useEffect(() => {
+    applyDatasetSearch(debouncedSearch);
+  }, [applyDatasetSearch, debouncedSearch]);
+
   const handleSearchKeyDown = useCallback(
     (e) => {
-      if (e.key === "Enter" && gridApi) {
-        searchRef.current = search;
-        const ds = createDataSource(
-          queryClient,
-          datasetId,
-          filtersRef,
-          searchRef,
-        );
-        gridApi.setGridOption("serverSideDatasource", ds);
-      }
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      applyDatasetSearch(search);
     },
-    [gridApi, search, datasetId, queryClient],
+    [applyDatasetSearch, search],
   );
 
   // Handle row selection — detect select-all via getServerSideSelectionState
@@ -1193,6 +1497,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         datasetId,
         filtersRef,
         searchRef,
+        setIsGridLoading,
       );
       gridApi.setGridOption("serverSideDatasource", ds);
     }
@@ -1247,6 +1552,12 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
     setFilterOpen(false);
   };
 
+  const isDatasetListLoading =
+    isDatasetsLoading || (isDatasetsFetching && !datasets);
+  const isDatasetSchemaLoading =
+    !!datasetId &&
+    (isTableLoading || (isTableFetching && columnDefs.length === 0));
+
   return (
     <Box
       sx={{
@@ -1263,6 +1574,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           display: "flex",
           alignItems: "center",
           gap: 2,
+          flexWrap: "wrap",
           flexShrink: 0,
         }}
       >
@@ -1272,7 +1584,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           label="Dataset"
           value={datasetId}
           onChange={handleDatasetChange}
-          sx={{ minWidth: 300 }}
+          sx={{ minWidth: 220, flex: "1 1 260px" }}
           required
           SelectProps={{
             MenuProps: {
@@ -1281,10 +1593,24 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
               },
             },
           }}
+          InputProps={{
+            endAdornment: (
+              <FieldLoadingAdornment loading={isDatasetListLoading} />
+            ),
+          }}
+          helperText={
+            !datasetId ? "Required. Select a dataset to continue." : " "
+          }
         >
           <MenuItem value="" disabled>
-            Choose a dataset
+            {isDatasetListLoading ? "Loading datasets..." : "Choose a dataset"}
           </MenuItem>
+          {isDatasetListLoading && (
+            <MenuItem disabled>
+              <CircularProgress size={14} sx={{ mr: 1 }} />
+              Loading datasets...
+            </MenuItem>
+          )}
           {(datasets || []).map((ds) => (
             <MenuItem key={ds.datasetId || ds.id} value={ds.datasetId || ds.id}>
               {ds.name}
@@ -1294,7 +1620,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
 
         {datasetId && (
           <>
-            <Box sx={{ flex: 1 }} />
+            <Box sx={{ flex: "1 1 auto", minWidth: 0 }} />
             <IconButton
               size="small"
               onClick={() => setFilterOpen((v) => !v)}
@@ -1303,7 +1629,10 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
                 borderColor: isFilterApplied ? "primary.main" : "divider",
                 borderRadius: 0.5,
                 p: 0.75,
-                bgcolor: isFilterApplied ? "primary.lighter" : "transparent",
+                bgcolor: (theme) =>
+                  isFilterApplied
+                    ? alpha(theme.palette.primary.main, 0.12)
+                    : "transparent",
               }}
             >
               <SvgColor
@@ -1321,7 +1650,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={handleSearchKeyDown}
-              sx={{ minWidth: 220 }}
+              sx={{ minWidth: 180, flex: "1 1 220px" }}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
@@ -1387,22 +1716,22 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
 
       {/* Empty state */}
       {!datasetId && (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            Start by Selecting a Dataset
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Pick a dataset from the dropdown above to load its datapoints.
-          </Typography>
-        </Box>
+        <SelectorEmptyState
+          loading={isDatasetListLoading}
+          loadingLabel="Loading datasets..."
+          title="Select a dataset"
+          description="Choose a dataset from the dropdown above to load its datapoints."
+          requiredLabel="Dataset"
+        />
+      )}
+
+      {datasetId && isDatasetSchemaLoading && (
+        <SelectorEmptyState
+          loading
+          title="Loading dataset"
+          description="Loading dataset columns and datapoints."
+          loadingLabel="Loading dataset..."
+        />
       )}
 
       {/* AG Grid – same as dataset view */}
@@ -1416,7 +1745,8 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
               flexDirection: "column",
             }}
           >
-            <Box sx={{ flex: 1 }}>
+            <Box sx={{ flex: 1, position: "relative" }}>
+              <GridLoadingOverlay open={isGridLoading} />
               <AgGridReact
                 ref={gridRef}
                 rowHeight={100}
@@ -1459,15 +1789,15 @@ DatasetRowSelector.propTypes = {
 // ---------------------------------------------------------------------------
 
 const traceDefaultFilterBase = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 
-function TraceSelector({ onSetSelection, onSelectAll }) {
+function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [columns, setColumns] = useState([]);
@@ -1478,9 +1808,11 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
     dateFilter: dateFilterForOption("7D"),
     dateOption: "7D",
   }));
-  const [filterDefinition, setFilterDefinition] = useState([]);
+  const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [gridApi, setGridApi] = useState(null);
+  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
@@ -1494,7 +1826,11 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
     pageLimit: 25,
   });
 
-  const { data: projects } = useQuery({
+  const {
+    data: projects,
+    isLoading: isProjectsLoading,
+    isFetching: isProjectsFetching,
+  } = useQuery({
     queryKey: ["projects-list-all-for-traces"],
     queryFn: () => axios.get(endpoints.project.listProjects()),
     select: (d) => d.data?.result?.projects || [],
@@ -1510,11 +1846,25 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
   // Simulator / voice projects render CallLogsGrid (voice-specific
   // columns: Duration / Avg Latency / Turn Count / Talk Ratio / Cost).
   // Matches the main LLM Tracing page for simulator projects.
-  const { data: projectDetails } = useGetProjectDetails(projectId, !!projectId);
+  const {
+    data: projectDetails,
+    isLoading: isProjectDetailsLoading,
+    isFetching: isProjectDetailsFetching,
+  } = useGetProjectDetails(projectId, !!projectId);
   const isVoiceProject = projectDetails?.source === PROJECT_SOURCE.SIMULATOR;
 
+  // Surface voice/simulator state to the parent so handleSubmit knows to
+  // keep `source_type: "trace"` instead of resolving to root spans.
+  useEffect(() => {
+    onVoiceProjectChange?.(isVoiceProject);
+  }, [isVoiceProject, onVoiceProjectChange]);
+
   // Fetch versions for prototype projects
-  const { data: versions } = useQuery({
+  const {
+    data: versions,
+    isLoading: isVersionsLoading,
+    isFetching: isVersionsFetching,
+  } = useQuery({
     queryKey: ["project-versions-dropdown-traces", projectId],
     queryFn: () =>
       axios.get(endpoints.project.runListSearch(), {
@@ -1525,17 +1875,31 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
     staleTime: 1000 * 60 * 2,
   });
 
-  // Validate & transform filters using the same Zod pipeline as the tracer view.
-  // This converts columnId to snake_case, validates filterType/filterOp, and strips invalid filters.
+  // TraceFilterPanel output is already the canonical API filter shape. Keep
+  // selection fetches and bulk-select payloads on that same shape.
   const validatedMainFilters = useMemo(() => {
-    // TraceFilterPanel's output (via panelFilterToApi) is already correct
-    // shape — columnId + filterConfig with col_type preserved. Don't run
-    // it through the legacy Zod validator in ComplexFilter/common.js:
+    // Don't run it through the legacy Zod validator in ComplexFilter/common.js:
     // its AllowedOperators enum omits `in` / `not_in` (which we promote
     // to for multi-value equals) so the whole filter gets dropped on
     // second apply. We only need to drop the empty-default row.
-    return filters.filter((f) => f?.columnId);
+    return filters.filter((f) => f?.column_id);
   }, [filters]);
+
+  const hasAnnotatorChip = useMemo(
+    () => hasAppliedAnnotatorFilter(validatedMainFilters),
+    [validatedMainFilters],
+  );
+  const { data: annotatorFilterOptions = [] } = useDashboardFilterValues({
+    metricName: "annotator",
+    metricType: "annotation_metric",
+    projectIds: projectId ? [projectId] : [],
+    source: "traces",
+    enabled: hasAnnotatorChip && !!projectId,
+  });
+  const filterChipLabelMap = useMemo(
+    () => buildAnnotatorFilterChipLabelMap(annotatorFilterOptions),
+    [annotatorFilterOptions],
+  );
 
   // Append the date range as a created_at between filter — mirrors
   // `useLLMTracingFilters`. The backend list_traces endpoint + bulk-select
@@ -1546,11 +1910,11 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
     return [
       ...validatedMainFilters,
       {
-        columnId: "created_at",
-        filterConfig: {
-          filterType: "datetime",
-          filterOp: "between",
-          filterValue: [
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: [
             new Date(range[0]).toISOString(),
             new Date(range[1]).toISOString(),
           ],
@@ -1577,11 +1941,12 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: TRACE_ROWS_LIMIT,
-            filters: JSON.stringify(objectCamelToSnake(filtersRef.current)),
+            filters: JSON.stringify(filtersRef.current || []),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
           }
+          setIsGridLoading(true);
           const results = await axios.get(
             endpoints.project.getTracesForObserveProject(),
             { params: apiParams },
@@ -1609,6 +1974,8 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
           });
         } catch {
           params.fail();
+        } finally {
+          setIsGridLoading(false);
         }
       },
     }),
@@ -1697,8 +2064,7 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
         const visibleRowIds = [];
         const rendered = event.api.getRenderedNodes?.() || [];
         rendered.forEach((node) => {
-          const rowId =
-            node?.data?.trace_id ?? node?.data?.traceId ?? node?.id;
+          const rowId = node?.data?.trace_id ?? node?.data?.traceId ?? node?.id;
           if (rowId && !excludedIds.has(rowId)) visibleRowIds.push(rowId);
         });
         onSetSelection(visibleRowIds);
@@ -1730,7 +2096,7 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
   }, [pageSelectAllMeta, onSelectAll, projectId, versionId]);
 
   const isFilterApplied = useMemo(
-    () => filters.some((f) => f.columnId),
+    () => filters.some((f) => f.column_id),
     [filters],
   );
 
@@ -1739,6 +2105,7 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
     setVersionId("");
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
     setFilterOpen(false);
     onSetSelection([]);
   };
@@ -1747,11 +2114,19 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
     setVersionId(e.target.value);
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
     setFilterOpen(false);
   };
 
   // For prototype projects, require a version to be selected before showing grid
   const canShowGrid = projectId && (!isPrototype || versionId);
+  const isProjectListLoading =
+    isProjectsLoading || (isProjectsFetching && !projects);
+  const isVersionListLoading =
+    isVersionsLoading || (isVersionsFetching && !versions);
+  const isResolvingProjectKind =
+    !!projectId &&
+    (isProjectDetailsLoading || (isProjectDetailsFetching && !projectDetails));
 
   return (
     <Box
@@ -1775,6 +2150,8 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
       >
         <Autocomplete
           size="small"
+          loading={isProjectListLoading}
+          loadingText="Loading projects..."
           options={projects || []}
           getOptionLabel={(p) => p?.name || ""}
           value={(projects || []).find((p) => p.id === projectId) || null}
@@ -1784,28 +2161,31 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
             })
           }
           isOptionEqualToValue={(opt, val) => opt?.id === val?.id}
-          renderOption={(props, option) => (
-            <li {...props} key={option.id}>
-              {option.name}
-              {option.trace_type === "experiment" && (
-                <Chip
-                  label="Prototype"
-                  size="small"
-                  sx={{ ml: 1, height: 20, fontSize: 10 }}
-                />
-              )}
-            </li>
-          )}
+          renderOption={renderProjectAutocompleteOption}
           renderInput={(params) => (
             <TextField
               {...params}
               label="Project"
               placeholder="Choose a project"
               required
+              helperText={
+                !projectId ? "Required. Select a project to continue." : " "
+              }
+              InputProps={{
+                ...params.InputProps,
+                endAdornment: (
+                  <>
+                    {isProjectListLoading && (
+                      <CircularProgress size={16} sx={{ mr: 1 }} />
+                    )}
+                    {params.InputProps.endAdornment}
+                  </>
+                ),
+              }}
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 300 }}
+          sx={{ minWidth: 220, flex: "1 1 280px" }}
         />
 
         {isPrototype && (
@@ -1815,8 +2195,14 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 220 }}
+            sx={{ minWidth: 180, flex: "1 1 220px" }}
             required
+            InputProps={{
+              endAdornment: (
+                <FieldLoadingAdornment loading={isVersionListLoading} />
+              ),
+            }}
+            helperText={!versionId ? "Required for prototype projects." : " "}
             SelectProps={{
               MenuProps: {
                 PaperProps: { style: { maxHeight: 300, overflowY: "auto" } },
@@ -1824,8 +2210,16 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
             }}
           >
             <MenuItem value="" disabled>
-              Choose a version
+              {isVersionListLoading
+                ? "Loading versions..."
+                : "Choose a version"}
             </MenuItem>
+            {isVersionListLoading && (
+              <MenuItem disabled>
+                <CircularProgress size={14} sx={{ mr: 1 }} />
+                Loading versions...
+              </MenuItem>
+            )}
             {(versions || []).map((v) => (
               <MenuItem key={v.id} value={v.id}>
                 {v.name}
@@ -1844,13 +2238,19 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
             <IconButton
               ref={filterButtonRef}
               size="small"
-              onClick={() => setFilterOpen((v) => !v)}
+              onClick={() => {
+                setFilterAnchorEl(filterButtonRef.current);
+                setFilterOpen((v) => !v);
+              }}
               sx={{
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
                 borderRadius: 0.5,
                 p: 0.75,
-                bgcolor: isFilterApplied ? "primary.lighter" : "transparent",
+                bgcolor: (theme) =>
+                  isFilterApplied
+                    ? alpha(theme.palette.primary.main, 0.12)
+                    : "transparent",
               }}
             >
               <SvgColor
@@ -1870,16 +2270,18 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
           page (ObserveToolbar mounts it via `setIsPrimaryFilterOpen`). */}
       {canShowGrid && (
         <TraceFilterPanel
-          anchorEl={filterButtonRef.current}
+          anchorEl={filterAnchorEl || filterButtonRef.current}
           open={filterOpen}
           onClose={() => setFilterOpen(false)}
           projectId={projectId}
           isSimulator={isVoiceProject}
           currentFilters={validatedMainFilters
-            .filter((f) => f?.columnId)
+            .filter((f) => f?.column_id)
             .map(apiFilterToPanel)}
           onApply={(newPanelFilters) => {
-            const apiNext = (newPanelFilters || []).map(panelFilterToApi);
+            const apiNext = (newPanelFilters || [])
+              .map(panelFilterToApi)
+              .filter(apiFilterHasValue);
             setFilters(
               apiNext.length
                 ? apiNext.map((f) => ({ ...f, id: getRandomId() }))
@@ -1893,30 +2295,39 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
           — that's surfaced by the Date pill, not the chip bar) */}
       {canShowGrid && (
         <FilterChips
-          extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
+          extraFilters={(validatedMainFilters || []).filter(
             (f) => f?.column_id && f.column_id !== "created_at",
           )}
-          onAddFilter={() => setFilterOpen(true)}
+          fieldLabelMap={filterChipLabelMap}
+          onAddFilter={(anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
+          onChipClick={(_idx, anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
           onRemoveFilter={(idx) => {
-            // FilterChips indexes into the *snake-case validated* list which
-            // already stripped empty rows. Map back to the original filters
-            // state by matching on columnId + filterConfig.
-            const snakeChips = (
-              objectCamelToSnake(validatedMainFilters) || []
-            ).filter((f) => f?.column_id && f.column_id !== "created_at");
+            setFilterAnchorEl(null);
+            // FilterChips indexes into the validated list which already
+            // stripped empty rows. Map back by column_id + filter_op.
+            const snakeChips = (validatedMainFilters || []).filter(
+              (f) => f?.column_id && f.column_id !== "created_at",
+            );
             const target = snakeChips[idx];
             if (!target) return;
             setFilters((prev) =>
               prev.filter((f) => {
-                const colMatches = f?.columnId === target.column_id;
+                const colMatches = f?.column_id === target.column_id;
                 const opMatches =
-                  f?.filterConfig?.filterOp ===
+                  f?.filter_config?.filter_op ===
                   target?.filter_config?.filter_op;
                 return !(colMatches && opMatches);
               }),
             );
           }}
           onClearAll={() => {
+            setFilterAnchorEl(null);
             setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
             setFilterOpen(false);
           }}
@@ -1925,24 +2336,28 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
 
       {/* Empty state */}
       {!canShowGrid && (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            {!projectId ? "Start by Selecting a Project" : "Select a Version"}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {!projectId
-              ? "Pick a project from the dropdown above to load its traces."
-              : "Pick a version from the dropdown above to load traces."}
-          </Typography>
-        </Box>
+        <SelectorEmptyState
+          loading={!projectId ? isProjectListLoading : isVersionListLoading}
+          loadingLabel={
+            !projectId ? "Loading projects..." : "Loading versions..."
+          }
+          title={!projectId ? "Select a project" : "Select a version"}
+          description={
+            !projectId
+              ? "Choose a project from the dropdown above to load its traces."
+              : "Choose a version from the dropdown above to load traces."
+          }
+          requiredLabel={!projectId ? "Project" : "Version"}
+        />
+      )}
+
+      {canShowGrid && isResolvingProjectKind && (
+        <SelectorEmptyState
+          loading
+          title="Loading project"
+          description="Checking project type before loading rows."
+          loadingLabel="Loading project..."
+        />
       )}
 
       {/* Voice / simulator projects: use the same CallLogsGrid the main
@@ -1954,7 +2369,7 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
           (~25 rows). The SelectAllBanner below surfaces the
           cross-page total so the user can opt into filter-mode bulk
           add (same as LLMTracingView's simulator branch). */}
-      {canShowGrid && isVoiceProject && (
+      {canShowGrid && !isResolvingProjectKind && isVoiceProject && (
         <Box
           sx={{
             flex: 1,
@@ -1987,9 +2402,7 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
             cellHeight="Short"
             params={{
               project_id: projectId,
-              filters: JSON.stringify(
-                objectCamelToSnake(validatedFilters || []),
-              ),
+              filters: JSON.stringify(validatedFilters || []),
             }}
             onSelectionChanged={(traceIds) => {
               onSetSelection(traceIds);
@@ -2000,7 +2413,7 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
       )}
 
       {/* Standard trace AG Grid — non-voice projects */}
-      {canShowGrid && !isVoiceProject && (
+      {canShowGrid && !isResolvingProjectKind && !isVoiceProject && (
         <Box
           sx={{
             flex: 1,
@@ -2027,7 +2440,8 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
             noun="trace"
             onSelectAll={commitFilterModeSelectAll}
           />
-          <Box sx={{ flex: 1 }}>
+          <Box sx={{ flex: 1, position: "relative" }}>
+            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"
@@ -2060,6 +2474,7 @@ function TraceSelector({ onSetSelection, onSelectAll }) {
 TraceSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
   onSelectAll: PropTypes.func.isRequired,
+  onVoiceProjectChange: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------
@@ -2076,15 +2491,21 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     dateFilter: dateFilterForOption("7D"),
     dateOption: "7D",
   }));
-  const [filterDefinition, setFilterDefinition] = useState([]);
+  const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [gridApi, setGridApi] = useState(null);
+  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
   const filtersRef = useRef([]);
 
-  const { data: projects } = useQuery({
+  const {
+    data: projects,
+    isLoading: isProjectsLoading,
+    isFetching: isProjectsFetching,
+  } = useQuery({
     queryKey: ["projects-list-all-for-spans"],
     queryFn: () => axios.get(endpoints.project.listProjects()),
     select: (d) => d.data?.result?.projects || [],
@@ -2098,7 +2519,11 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   const isPrototype = selectedProject?.trace_type === "experiment";
 
   // Fetch versions for prototype projects
-  const { data: versions } = useQuery({
+  const {
+    data: versions,
+    isLoading: isVersionsLoading,
+    isFetching: isVersionsFetching,
+  } = useQuery({
     queryKey: ["project-versions-dropdown-spans", projectId],
     queryFn: () =>
       axios.get(endpoints.project.runListSearch(), {
@@ -2115,8 +2540,24 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   // panels wired after the schema was last updated, causing repeated
   // applies to silently drop filters).
   const validatedMainFilters = useMemo(() => {
-    return filters.filter((f) => f?.columnId);
+    return filters.filter((f) => f?.column_id);
   }, [filters]);
+
+  const hasAnnotatorChip = useMemo(
+    () => hasAppliedAnnotatorFilter(validatedMainFilters),
+    [validatedMainFilters],
+  );
+  const { data: annotatorFilterOptions = [] } = useDashboardFilterValues({
+    metricName: "annotator",
+    metricType: "annotation_metric",
+    projectIds: projectId ? [projectId] : [],
+    source: "traces",
+    enabled: hasAnnotatorChip && !!projectId,
+  });
+  const filterChipLabelMap = useMemo(
+    () => buildAnnotatorFilterChipLabelMap(annotatorFilterOptions),
+    [annotatorFilterOptions],
+  );
 
   const validatedFilters = useMemo(() => {
     const range = dateFilter?.dateFilter;
@@ -2124,11 +2565,11 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     return [
       ...validatedMainFilters,
       {
-        columnId: "created_at",
-        filterConfig: {
-          filterType: "datetime",
-          filterOp: "between",
-          filterValue: [
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: [
             new Date(range[0]).toISOString(),
             new Date(range[1]).toISOString(),
           ],
@@ -2155,12 +2596,13 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: SPAN_ROWS_LIMIT,
-            filters: JSON.stringify(objectCamelToSnake(filtersRef.current)),
+            filters: JSON.stringify(filtersRef.current || []),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
           }
 
+          setIsGridLoading(true);
           const results = await axios.get(
             endpoints.project.getSpansForObserveProject(),
             { params: apiParams },
@@ -2188,6 +2630,8 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           });
         } catch {
           params.fail();
+        } finally {
+          setIsGridLoading(false);
         }
       },
     }),
@@ -2297,7 +2741,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   }, [pageSelectAllMeta, onSelectAll, projectId, versionId]);
 
   const isFilterApplied = useMemo(
-    () => filters.some((f) => f.columnId),
+    () => filters.some((f) => f.column_id),
     [filters],
   );
 
@@ -2306,6 +2750,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     setVersionId("");
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
     setFilterOpen(false);
   };
 
@@ -2313,11 +2758,16 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     setVersionId(e.target.value);
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
     setFilterOpen(false);
   };
 
   // For prototype projects, require a version to be selected before showing grid
   const canShowGrid = projectId && (!isPrototype || versionId);
+  const isProjectListLoading =
+    isProjectsLoading || (isProjectsFetching && !projects);
+  const isVersionListLoading =
+    isVersionsLoading || (isVersionsFetching && !versions);
 
   return (
     <Box
@@ -2341,6 +2791,8 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
       >
         <Autocomplete
           size="small"
+          loading={isProjectListLoading}
+          loadingText="Loading projects..."
           options={projects || []}
           getOptionLabel={(p) => p?.name || ""}
           value={(projects || []).find((p) => p.id === projectId) || null}
@@ -2350,28 +2802,31 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             })
           }
           isOptionEqualToValue={(opt, val) => opt?.id === val?.id}
-          renderOption={(props, option) => (
-            <li {...props} key={option.id}>
-              {option.name}
-              {option.trace_type === "experiment" && (
-                <Chip
-                  label="Prototype"
-                  size="small"
-                  sx={{ ml: 1, height: 20, fontSize: 10 }}
-                />
-              )}
-            </li>
-          )}
+          renderOption={renderProjectAutocompleteOption}
           renderInput={(params) => (
             <TextField
               {...params}
               label="Project"
               placeholder="Choose a project"
               required
+              helperText={
+                !projectId ? "Required. Select a project to continue." : " "
+              }
+              InputProps={{
+                ...params.InputProps,
+                endAdornment: (
+                  <>
+                    {isProjectListLoading && (
+                      <CircularProgress size={16} sx={{ mr: 1 }} />
+                    )}
+                    {params.InputProps.endAdornment}
+                  </>
+                ),
+              }}
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 300 }}
+          sx={{ minWidth: 220, flex: "1 1 280px" }}
         />
 
         {isPrototype && (
@@ -2381,8 +2836,14 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 220 }}
+            sx={{ minWidth: 180, flex: "1 1 220px" }}
             required
+            InputProps={{
+              endAdornment: (
+                <FieldLoadingAdornment loading={isVersionListLoading} />
+              ),
+            }}
+            helperText={!versionId ? "Required for prototype projects." : " "}
             SelectProps={{
               MenuProps: {
                 PaperProps: { style: { maxHeight: 300, overflowY: "auto" } },
@@ -2390,8 +2851,16 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             }}
           >
             <MenuItem value="" disabled>
-              Choose a version
+              {isVersionListLoading
+                ? "Loading versions..."
+                : "Choose a version"}
             </MenuItem>
+            {isVersionListLoading && (
+              <MenuItem disabled>
+                <CircularProgress size={14} sx={{ mr: 1 }} />
+                Loading versions...
+              </MenuItem>
+            )}
             {(versions || []).map((v) => (
               <MenuItem key={v.id} value={v.id}>
                 {v.name}
@@ -2410,13 +2879,19 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             <IconButton
               ref={filterButtonRef}
               size="small"
-              onClick={() => setFilterOpen((v) => !v)}
+              onClick={() => {
+                setFilterAnchorEl(filterButtonRef.current);
+                setFilterOpen((v) => !v);
+              }}
               sx={{
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
                 borderRadius: 0.5,
                 p: 0.75,
-                bgcolor: isFilterApplied ? "primary.lighter" : "transparent",
+                bgcolor: (theme) =>
+                  isFilterApplied
+                    ? alpha(theme.palette.primary.main, 0.12)
+                    : "transparent",
               }}
             >
               <SvgColor
@@ -2434,16 +2909,20 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
 
       {canShowGrid && (
         <TraceFilterPanel
-          anchorEl={filterButtonRef.current}
+          anchorEl={filterAnchorEl || filterButtonRef.current}
           open={filterOpen}
           onClose={() => setFilterOpen(false)}
           projectId={projectId}
           source="traces"
+          tab="spans"
+          isSpansView
           currentFilters={validatedMainFilters
-            .filter((f) => f?.columnId)
+            .filter((f) => f?.column_id)
             .map(apiFilterToPanel)}
           onApply={(newPanelFilters) => {
-            const apiNext = (newPanelFilters || []).map(panelFilterToApi);
+            const apiNext = (newPanelFilters || [])
+              .map(panelFilterToApi)
+              .filter(apiFilterHasValue);
             setFilters(
               apiNext.length
                 ? apiNext.map((f) => ({ ...f, id: getRandomId() }))
@@ -2455,27 +2934,37 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
 
       {canShowGrid && (
         <FilterChips
-          extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
+          extraFilters={(validatedMainFilters || []).filter(
             (f) => f?.column_id && f.column_id !== "created_at",
           )}
-          onAddFilter={() => setFilterOpen(true)}
+          fieldLabelMap={filterChipLabelMap}
+          onAddFilter={(anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
+          onChipClick={(_idx, anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
           onRemoveFilter={(idx) => {
-            const snakeChips = (
-              objectCamelToSnake(validatedMainFilters) || []
-            ).filter((f) => f?.column_id && f.column_id !== "created_at");
+            setFilterAnchorEl(null);
+            const snakeChips = (validatedMainFilters || []).filter(
+              (f) => f?.column_id && f.column_id !== "created_at",
+            );
             const target = snakeChips[idx];
             if (!target) return;
             setFilters((prev) =>
               prev.filter((f) => {
-                const colMatches = f?.columnId === target.column_id;
+                const colMatches = f?.column_id === target.column_id;
                 const opMatches =
-                  f?.filterConfig?.filterOp ===
+                  f?.filter_config?.filter_op ===
                   target?.filter_config?.filter_op;
                 return !(colMatches && opMatches);
               }),
             );
           }}
           onClearAll={() => {
+            setFilterAnchorEl(null);
             setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
             setFilterOpen(false);
           }}
@@ -2484,24 +2973,19 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
 
       {/* Empty state */}
       {!canShowGrid && (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            {!projectId ? "Start by Selecting a Project" : "Select a Version"}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {!projectId
-              ? "Pick a project from the dropdown above to load its spans."
-              : "Pick a version from the dropdown above to load spans."}
-          </Typography>
-        </Box>
+        <SelectorEmptyState
+          loading={!projectId ? isProjectListLoading : isVersionListLoading}
+          loadingLabel={
+            !projectId ? "Loading projects..." : "Loading versions..."
+          }
+          title={!projectId ? "Select a project" : "Select a version"}
+          description={
+            !projectId
+              ? "Choose a project from the dropdown above to load its spans."
+              : "Choose a version from the dropdown above to load spans."
+          }
+          requiredLabel={!projectId ? "Project" : "Version"}
+        />
       )}
 
       {/* AG Grid – same as span view */}
@@ -2532,7 +3016,8 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             noun="span"
             onSelectAll={commitFilterModeSelectAll}
           />
-          <Box sx={{ flex: 1 }}>
+          <Box sx={{ flex: 1, position: "relative" }}>
+            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"
@@ -2572,20 +3057,31 @@ SpanSelector.propTypes = {
 // ---------------------------------------------------------------------------
 const SESSION_ROWS_LIMIT = 30;
 
-function SessionSelector({ onSetSelection }) {
+function SessionSelector({ onSetSelection, onSelectAll }) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [columns, setColumns] = useState([]);
   const [filters, setFilters] = useState([
     { ...sessionDefaultFilterBase, id: getRandomId() },
   ]);
+  const [dateFilter, setDateFilter] = useState(() => ({
+    dateFilter: dateFilterForOption("6M"),
+    dateOption: "6M",
+  }));
   const [filterOpen, setFilterOpen] = useState(false);
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [gridApi, setGridApi] = useState(null);
+  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
+  const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
   const filtersRef = useRef([]);
 
-  const { data: projects } = useQuery({
+  const {
+    data: projects,
+    isLoading: isProjectsLoading,
+    isFetching: isProjectsFetching,
+  } = useQuery({
     queryKey: ["projects-list-all-for-sessions"],
     queryFn: () => axios.get(endpoints.project.listProjects()),
     select: (d) => d.data?.result?.projects || [],
@@ -2599,7 +3095,11 @@ function SessionSelector({ onSetSelection }) {
   const isPrototype = selectedProject?.trace_type === "experiment";
 
   // Fetch versions for prototype projects
-  const { data: versions } = useQuery({
+  const {
+    data: versions,
+    isLoading: isVersionsLoading,
+    isFetching: isVersionsFetching,
+  } = useQuery({
     queryKey: ["project-versions-dropdown-sessions", projectId],
     queryFn: () =>
       axios.get(endpoints.project.runListSearch(), {
@@ -2610,10 +3110,35 @@ function SessionSelector({ onSetSelection }) {
     staleTime: 1000 * 60 * 2,
   });
 
-  // Build validated filters for API calls
+  const sessionFilterFields = useMemo(
+    () => buildSessionSelectorFilterFields(columns),
+    [columns],
+  );
+
+  const validatedMainFilters = useMemo(
+    () => filters.filter(apiFilterHasValue),
+    [filters],
+  );
+
+  const hasAnnotatorChip = useMemo(
+    () => hasAppliedAnnotatorFilter(validatedMainFilters),
+    [validatedMainFilters],
+  );
+  const { data: annotatorFilterOptions = [] } = useDashboardFilterValues({
+    metricName: "annotator",
+    metricType: "annotation_metric",
+    projectIds: projectId ? [projectId] : [],
+    source: "sessions",
+    enabled: hasAnnotatorChip && !!projectId,
+  });
+  const filterChipLabelMap = useMemo(
+    () => buildAnnotatorFilterChipLabelMap(annotatorFilterOptions),
+    [annotatorFilterOptions],
+  );
+
   const validatedFilters = useMemo(() => {
-    return filters.filter((f) => f.columnId && f.filterConfig?.filterValue);
-  }, [filters]);
+    return buildSessionSelectionFilters(validatedMainFilters, dateFilter);
+  }, [validatedMainFilters, dateFilter]);
 
   // Keep filtersRef in sync
   useEffect(() => {
@@ -2626,13 +3151,16 @@ function SessionSelector({ onSetSelection }) {
       getRows: async (params) => {
         try {
           const { request } = params;
-          const pageNumber = Math.floor(request.startRow / 10);
+          const pageSize = request.endRow - request.startRow;
+          const pageNumber = Math.floor(request.startRow / pageSize);
 
+          setIsGridLoading(true);
           const results = await axios.get(
             endpoints.project.projectSessionList(),
             {
               params: {
                 project_id: projectId,
+                ...(versionId ? { project_version_id: versionId } : {}),
                 page_number: pageNumber,
                 page_size: SESSION_ROWS_LIMIT,
                 sort_params: JSON.stringify(
@@ -2641,7 +3169,7 @@ function SessionSelector({ onSetSelection }) {
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(objectCamelToSnake(filtersRef.current)),
+                filters: JSON.stringify(filtersRef.current || []),
               },
             },
           );
@@ -2668,11 +3196,13 @@ function SessionSelector({ onSetSelection }) {
           });
         } catch {
           params.fail();
+        } finally {
+          setIsGridLoading(false);
         }
       },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId, validatedFilters],
+    [projectId, versionId, validatedFilters],
   );
 
   // Build column defs from server config (same as Session-grid)
@@ -2741,22 +3271,42 @@ function SessionSelector({ onSetSelection }) {
     }
   }, [dataSource, gridApi, projectId]);
 
-  // Handle row selection
+  const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+
+  // Handle row selection. Session rows use the backend `session_id` field as
+  // the row id; filter-mode select-all sends the same canonical ids to the API.
   const onSelectionChanged = useCallback(
     (event) => {
-      const ids = [];
-      event.api.forEachNode((node) => {
-        if (node.isSelected() && node.data?.session_id) {
-          ids.push(node.data.session_id);
-        }
-      });
+      const selectionState = event.api.getServerSideSelectionState?.() || {};
+
+      if (selectionState.selectAll) {
+        const selectAllMeta = buildSessionSelectAllMeta(event.api);
+        onSetSelection(selectAllMeta?.visibleRowIds || []);
+        setPageSelectAllMeta(selectAllMeta);
+        return;
+      }
+
+      const ids = selectionState.toggledNodes || [];
       onSetSelection(ids);
+      setPageSelectAllMeta(null);
     },
     [onSetSelection],
   );
 
+  const commitFilterModeSelectAll = useCallback(() => {
+    if (!pageSelectAllMeta) return;
+    onSelectAll({
+      totalCount: pageSelectAllMeta.totalCount,
+      excludedIds: pageSelectAllMeta.excludedIds,
+      projectId,
+      projectVersionId: versionId || undefined,
+      filters: filtersRef.current,
+    });
+    setPageSelectAllMeta(null);
+  }, [pageSelectAllMeta, onSelectAll, projectId, versionId]);
+
   const isFilterApplied = useMemo(
-    () => filters.some((f) => f.columnId),
+    () => filters.some((f) => f.column_id),
     [filters],
   );
 
@@ -2765,18 +3315,28 @@ function SessionSelector({ onSetSelection }) {
     setVersionId("");
     setColumns([]);
     setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
     setFilterOpen(false);
+    setPageSelectAllMeta(null);
+    onSetSelection([]);
   };
 
   const handleVersionChange = (e) => {
     setVersionId(e.target.value);
     setColumns([]);
     setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
     setFilterOpen(false);
+    setPageSelectAllMeta(null);
+    onSetSelection([]);
   };
 
   // For prototype projects, require a version to be selected before showing grid
   const canShowGrid = projectId && (!isPrototype || versionId);
+  const isProjectListLoading =
+    isProjectsLoading || (isProjectsFetching && !projects);
+  const isVersionListLoading =
+    isVersionsLoading || (isVersionsFetching && !versions);
 
   return (
     <Box
@@ -2800,6 +3360,8 @@ function SessionSelector({ onSetSelection }) {
       >
         <Autocomplete
           size="small"
+          loading={isProjectListLoading}
+          loadingText="Loading projects..."
           options={projects || []}
           getOptionLabel={(p) => p?.name || ""}
           value={(projects || []).find((p) => p.id === projectId) || null}
@@ -2809,28 +3371,31 @@ function SessionSelector({ onSetSelection }) {
             })
           }
           isOptionEqualToValue={(opt, val) => opt?.id === val?.id}
-          renderOption={(props, option) => (
-            <li {...props} key={option.id}>
-              {option.name}
-              {option.trace_type === "experiment" && (
-                <Chip
-                  label="Prototype"
-                  size="small"
-                  sx={{ ml: 1, height: 20, fontSize: 10 }}
-                />
-              )}
-            </li>
-          )}
+          renderOption={renderProjectAutocompleteOption}
           renderInput={(params) => (
             <TextField
               {...params}
               label="Project"
               placeholder="Choose a project"
               required
+              helperText={
+                !projectId ? "Required. Select a project to continue." : " "
+              }
+              InputProps={{
+                ...params.InputProps,
+                endAdornment: (
+                  <>
+                    {isProjectListLoading && (
+                      <CircularProgress size={16} sx={{ mr: 1 }} />
+                    )}
+                    {params.InputProps.endAdornment}
+                  </>
+                ),
+              }}
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 300 }}
+          sx={{ minWidth: 220, flex: "1 1 280px" }}
         />
 
         {isPrototype && (
@@ -2840,8 +3405,14 @@ function SessionSelector({ onSetSelection }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 220 }}
+            sx={{ minWidth: 180, flex: "1 1 220px" }}
             required
+            InputProps={{
+              endAdornment: (
+                <FieldLoadingAdornment loading={isVersionListLoading} />
+              ),
+            }}
+            helperText={!versionId ? "Required for prototype projects." : " "}
             SelectProps={{
               MenuProps: {
                 PaperProps: { style: { maxHeight: 300, overflowY: "auto" } },
@@ -2849,8 +3420,16 @@ function SessionSelector({ onSetSelection }) {
             }}
           >
             <MenuItem value="" disabled>
-              Choose a version
+              {isVersionListLoading
+                ? "Loading versions..."
+                : "Choose a version"}
             </MenuItem>
+            {isVersionListLoading && (
+              <MenuItem disabled>
+                <CircularProgress size={14} sx={{ mr: 1 }} />
+                Loading versions...
+              </MenuItem>
+            )}
             {(versions || []).map((v) => (
               <MenuItem key={v.id} value={v.id}>
                 {v.name}
@@ -2860,17 +3439,39 @@ function SessionSelector({ onSetSelection }) {
         )}
 
         {canShowGrid && (
-          <>
-            <Box sx={{ flex: 1 }} />
+          <Box
+            sx={{
+              ml: "auto",
+              pt: 0.5,
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              flexShrink: 0,
+            }}
+          >
+            <DateRangePill
+              dateFilter={dateFilter}
+              setDateFilter={setDateFilter}
+              sx={{ height: 36 }}
+            />
             <IconButton
+              ref={filterButtonRef}
               size="small"
-              onClick={() => setFilterOpen((v) => !v)}
+              onClick={() => {
+                setFilterAnchorEl(filterButtonRef.current);
+                setFilterOpen((v) => !v);
+              }}
               sx={{
+                width: 36,
+                height: 36,
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
                 borderRadius: 0.5,
                 p: 0.75,
-                bgcolor: isFilterApplied ? "primary.lighter" : "transparent",
+                bgcolor: (theme) =>
+                  isFilterApplied
+                    ? alpha(theme.palette.primary.main, 0.12)
+                    : "transparent",
               }}
             >
               <SvgColor
@@ -2882,55 +3483,89 @@ function SessionSelector({ onSetSelection }) {
                 }}
               />
             </IconButton>
-          </>
+          </Box>
         )}
       </Box>
 
-      {/* Filter box – same filter definitions as sessions view */}
-      {canShowGrid && filterOpen && (
-        <Box sx={{ px: 1.5, pb: 1, flexShrink: 0 }}>
-          <Box
-            sx={{
-              p: 1.5,
-            }}
-          >
-            <LLMFilterBox
-              filters={filters}
-              setFilters={setFilters}
-              filterDefinition={sessionFilterDefinition}
-              setFilterDefinition={() => {}}
-              defaultFilter={sessionDefaultFilterBase}
-              resetFiltersAndClose={() => {
-                setFilters([
-                  { ...sessionDefaultFilterBase, id: getRandomId() },
-                ]);
-                setFilterOpen(false);
-              }}
-            />
-          </Box>
-        </Box>
+      {canShowGrid && (
+        <TraceFilterPanel
+          anchorEl={filterAnchorEl || filterButtonRef.current}
+          open={filterOpen}
+          onClose={() => setFilterOpen(false)}
+          projectId={projectId}
+          source="sessions"
+          properties={sessionFilterFields}
+          categories={[]}
+          currentFilters={validatedMainFilters
+            .filter((f) => f?.column_id)
+            .map(apiFilterToPanel)}
+          onApply={(newPanelFilters) => {
+            const apiNext = (newPanelFilters || [])
+              .map(panelFilterToApi)
+              .filter(apiFilterHasValue);
+            setFilters(
+              apiNext.length
+                ? apiNext.map((f) => ({ ...f, id: getRandomId() }))
+                : [{ ...sessionDefaultFilterBase, id: getRandomId() }],
+            );
+          }}
+        />
+      )}
+
+      {canShowGrid && (
+        <FilterChips
+          extraFilters={(validatedMainFilters || []).filter(
+            (f) => f?.column_id && f.column_id !== SESSION_DATE_FILTER_COLUMN,
+          )}
+          fieldLabelMap={filterChipLabelMap}
+          onAddFilter={(anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
+          onChipClick={(_idx, anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
+          onRemoveFilter={(idx) => {
+            setFilterAnchorEl(null);
+            const snakeChips = (validatedMainFilters || []).filter(
+              (f) => f?.column_id && f.column_id !== SESSION_DATE_FILTER_COLUMN,
+            );
+            const target = snakeChips[idx];
+            if (!target) return;
+            setFilters((prev) =>
+              prev.filter((f) => {
+                const colMatches = f?.column_id === target.column_id;
+                const opMatches =
+                  f?.filter_config?.filter_op ===
+                  target?.filter_config?.filter_op;
+                return !(colMatches && opMatches);
+              }),
+            );
+          }}
+          onClearAll={() => {
+            setFilterAnchorEl(null);
+            setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
+            setFilterOpen(false);
+          }}
+        />
       )}
 
       {/* Empty state */}
       {!canShowGrid && (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            {!projectId ? "Start by Selecting a Project" : "Select a Version"}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {!projectId
-              ? "Pick a project from the dropdown above to load its sessions."
-              : "Pick a version from the dropdown above to load sessions."}
-          </Typography>
-        </Box>
+        <SelectorEmptyState
+          loading={!projectId ? isProjectListLoading : isVersionListLoading}
+          loadingLabel={
+            !projectId ? "Loading projects..." : "Loading versions..."
+          }
+          title={!projectId ? "Select a project" : "Select a version"}
+          description={
+            !projectId
+              ? "Choose a project from the dropdown above to load its sessions."
+              : "Choose a version from the dropdown above to load sessions."
+          }
+          requiredLabel={!projectId ? "Project" : "Version"}
+        />
       )}
 
       {/* AG Grid – same as sessions view */}
@@ -2943,7 +3578,26 @@ function SessionSelector({ onSetSelection }) {
             flexDirection: "column",
           }}
         >
-          <Box sx={{ flex: 1 }}>
+          <SelectAllBanner
+            visible={
+              !!pageSelectAllMeta &&
+              pageSelectAllMeta.totalCount > pageSelectAllMeta.visibleCount
+            }
+            visibleCount={pageSelectAllMeta?.visibleCount || 0}
+            totalMatching={
+              pageSelectAllMeta
+                ? Math.max(
+                    pageSelectAllMeta.totalCount -
+                      pageSelectAllMeta.excludedIds.size,
+                    0,
+                  )
+                : 0
+            }
+            noun="session"
+            onSelectAll={commitFilterModeSelectAll}
+          />
+          <Box sx={{ flex: 1, position: "relative" }}>
+            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"
@@ -2975,6 +3629,7 @@ function SessionSelector({ onSetSelection }) {
 
 SessionSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
+  onSelectAll: PropTypes.func.isRequired,
 };
 
 // ---------------------------------------------------------------------------
@@ -2982,9 +3637,202 @@ SessionSelector.propTypes = {
 // ---------------------------------------------------------------------------
 const SIMULATION_ROWS_LIMIT = 20;
 
+function getNestedValue(source, key) {
+  if (!source || !key) return undefined;
+  if (!key.includes(".")) return source[key];
+  return key.split(".").reduce((current, part) => current?.[part], source);
+}
+
+function getCallValue(data, keys) {
+  const latencyMetrics =
+    data?.customer_latency_metrics ||
+    data?.customerLatencyMetrics ||
+    data?.call_details?.customer_latency_metrics ||
+    data?.callDetails?.customerLatencyMetrics;
+  const sources = [
+    data,
+    data?.call_details,
+    data?.callDetails,
+    data?.call_metadata,
+    data?.callMetadata,
+    data?.conversation_metrics_data,
+    data?.conversationMetricsData,
+    latencyMetrics,
+    latencyMetrics?.systemMetrics,
+    latencyMetrics?.system_metrics,
+    latencyMetrics?.detailed_data,
+    latencyMetrics?.detailedData,
+  ].filter(Boolean);
+
+  for (const key of keys) {
+    for (const source of sources) {
+      const value = getNestedValue(source, key);
+      if (value !== undefined && value !== null && value !== "") return value;
+    }
+  }
+  return null;
+}
+
+function formatNumber(value, options = {}) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: options.maximumFractionDigits ?? 2,
+    minimumFractionDigits: options.minimumFractionDigits ?? 0,
+  }).format(numeric);
+}
+
+function formatSeconds(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
+  if (numeric >= 60) {
+    const totalSeconds = Math.round(numeric);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${formatNumber(numeric, { maximumFractionDigits: 2 })}s`;
+}
+
+function formatMilliseconds(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
+  if (numeric >= 1000) {
+    return `${formatNumber(numeric / 1000, { maximumFractionDigits: 2 })}s`;
+  }
+  return `${Math.round(numeric)}ms`;
+}
+
+function formatCurrencyCents(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
+  return `$${formatNumber(numeric / 100, {
+    minimumFractionDigits: numeric ? 2 : 0,
+    maximumFractionDigits: 4,
+  })}`;
+}
+
+function formatCurrencyDollars(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
+  return `$${formatNumber(numeric, {
+    minimumFractionDigits: numeric ? 2 : 0,
+    maximumFractionDigits: 4,
+  })}`;
+}
+
+function formatGenericSimulationValue(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value))
+    return value.map(formatGenericSimulationValue).join(", ");
+  if (typeof value === "object") {
+    if ("value" in value) return formatGenericSimulationValue(value.value);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function formatLatency(data) {
+  return formatMilliseconds(
+    getCallValue(data, [
+      "avg_agent_latency",
+      "avg_agent_latency_ms",
+      "avgAgentLatencyMs",
+      "avg_latency_ms",
+      "average_latency_ms",
+      "latency",
+      "latency_ms",
+      "turnLatencyAverage",
+      "turn_latency_average",
+    ]),
+  );
+}
+
+function formatAgentTalkPercentage(data) {
+  const direct = getCallValue(data, [
+    "agent_talk_percentage",
+    "agentTalkPercentage",
+    "bot_pct",
+    "botPct",
+  ]);
+  if (direct !== null) {
+    return `${formatNumber(direct, { maximumFractionDigits: 1 })}%`;
+  }
+
+  const ratio = getCallValue(data, ["talk_ratio", "talkRatio"]);
+  if (ratio === null) return "-";
+
+  if (ratio && typeof ratio === "object") {
+    const objectValue = ratio.bot_pct ?? ratio.botPct ?? ratio.agent_pct;
+    return objectValue == null
+      ? "-"
+      : `${formatNumber(objectValue, { maximumFractionDigits: 1 })}%`;
+  }
+
+  const numericRatio = Number(ratio);
+  if (Number.isFinite(numericRatio) && numericRatio >= 0) {
+    const denominator = numericRatio + 1;
+    if (denominator > 0) {
+      return `${formatNumber((numericRatio / denominator) * 100, {
+        maximumFractionDigits: 1,
+      })}%`;
+    }
+  }
+
+  return "-";
+}
+
+function formatCost(data) {
+  const cents = getCallValue(data, [
+    "customer_cost_cents",
+    "customerCostCents",
+    "cost_cents",
+    "costCents",
+    "total_cost_cents",
+    "totalCostCents",
+  ]);
+  if (cents !== null) return formatCurrencyCents(cents);
+
+  const dollars = getCallValue(data, [
+    "customer_cost_breakdown.total",
+    "customerCostBreakdown.total",
+    "cost_breakdown.total",
+    "costBreakdown.total",
+    "total_cost",
+    "totalCost",
+    "cost",
+  ]);
+  return dollars !== null ? formatCurrencyDollars(dollars) : "-";
+}
+
+function SimulationTextCellRenderer({ value, valueFormatted }) {
+  const displayValue = valueFormatted ?? value;
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+      <Typography variant="body2" noWrap title={String(displayValue ?? "")}>
+        {formatGenericSimulationValue(displayValue)}
+      </Typography>
+    </Box>
+  );
+}
+
+SimulationTextCellRenderer.propTypes = {
+  value: PropTypes.any,
+  valueFormatted: PropTypes.any,
+};
+
 function CallStatusCellRenderer({ data }) {
   if (!data) return null;
-  const details = data.callDetails || data;
+  const details = data.call_details || data;
   const status = details?.status || data.status;
   if (!status) return null;
   const colorMap = {
@@ -3016,11 +3864,20 @@ CallStatusCellRenderer.propTypes = {
 
 function CallDetailSimpleCellRenderer({ data }) {
   if (!data) return null;
-  const details = data.call_details || {};
-  const name = details.customer_name || details.scenario || "";
+  const details = data.call_details || data;
+  const name =
+    details.customer_name ||
+    details.scenario ||
+    details.call_summary ||
+    details.phone_number ||
+    "";
   const type =
     details.simulation_call_type || details.call_type || data.call_type || "";
-  const startTime = details.start_time || data.timestamp;
+  const startTime =
+    details.start_time ||
+    details.started_at ||
+    data.timestamp ||
+    data.started_at;
   const timeStr = startTime
     ? new Date(startTime).toLocaleString("en-US", {
         month: "2-digit",
@@ -3043,9 +3900,9 @@ function CallDetailSimpleCellRenderer({ data }) {
       <Typography variant="body2" noWrap fontWeight={500}>
         {name || type || "Call"}
       </Typography>
-      {timeStr && (
+      {(timeStr || type) && (
         <Typography variant="caption" color="text.secondary">
-          {timeStr}
+          {[type, timeStr].filter(Boolean).join(" - ")}
         </Typography>
       )}
     </Box>
@@ -3058,7 +3915,7 @@ CallDetailSimpleCellRenderer.propTypes = {
 
 function formatExecutionRunLabel(run) {
   const scenario = run.scenarios || "No scenarios";
-  const startedAt = run.start_time ?? run.startTime;
+  const startedAt = run.start_time;
   const time = startedAt
     ? new Date(startedAt).toLocaleString("en-US", {
         month: "2-digit",
@@ -3072,10 +3929,282 @@ function formatExecutionRunLabel(run) {
   return `${scenario}${time ? ` - ${time}` : ""}${status ? ` (${status})` : ""}`;
 }
 
+const SIMULATION_STATIC_COLUMNS = [
+  {
+    id: "call_details",
+    headerName: "Call Details",
+    flex: 2,
+    minWidth: 260,
+    cellRenderer: CallDetailSimpleCellRenderer,
+  },
+  {
+    id: "status",
+    headerName: "Status",
+    flex: 0.8,
+    minWidth: 120,
+    valueGetter: (params) => getCallValue(params.data, ["status"]),
+    cellRenderer: CallStatusCellRenderer,
+  },
+  {
+    id: "timestamp",
+    headerName: "Timestamp",
+    flex: 1,
+    minWidth: 170,
+    valueGetter: (params) =>
+      getCallValue(params.data, ["timestamp", "started_at", "start_time"]),
+    valueFormatter: (params) => {
+      if (!params.value) return "-";
+      try {
+        return new Date(params.value).toLocaleString("en-US", {
+          month: "2-digit",
+          day: "2-digit",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+      } catch {
+        return "-";
+      }
+    },
+  },
+  {
+    id: "duration",
+    headerName: "Duration",
+    flex: 0.7,
+    minWidth: 115,
+    valueGetter: (params) =>
+      formatSeconds(
+        getCallValue(params.data, ["duration", "duration_seconds"]),
+      ),
+  },
+  {
+    id: "latency",
+    headerName: "Latency",
+    flex: 0.7,
+    minWidth: 115,
+    valueGetter: (params) => formatLatency(params.data),
+  },
+  {
+    id: "turn_count",
+    headerName: "Turn Count",
+    flex: 0.7,
+    minWidth: 115,
+    valueGetter: (params) =>
+      formatGenericSimulationValue(getCallValue(params.data, ["turn_count"])),
+  },
+  {
+    id: "agent_talk_percentage",
+    headerName: "Agent Talk (%)",
+    flex: 0.8,
+    minWidth: 135,
+    valueGetter: (params) => formatAgentTalkPercentage(params.data),
+  },
+  {
+    id: "cost_cents",
+    headerName: "Cost",
+    flex: 0.7,
+    minWidth: 105,
+    valueGetter: (params) => formatCost(params.data),
+  },
+  {
+    id: "ended_reason",
+    headerName: "Ended Reason",
+    flex: 1,
+    minWidth: 150,
+    valueGetter: (params) =>
+      formatGenericSimulationValue(getCallValue(params.data, ["ended_reason"])),
+  },
+  {
+    id: "call_type",
+    headerName: "Type",
+    flex: 0.7,
+    minWidth: 105,
+    valueGetter: (params) =>
+      formatGenericSimulationValue(getCallValue(params.data, ["call_type"])),
+  },
+  {
+    id: "overall_score",
+    headerName: "Overall Score",
+    flex: 0.8,
+    minWidth: 130,
+    valueGetter: (params) =>
+      formatGenericSimulationValue(
+        getCallValue(params.data, ["overall_score"]),
+      ),
+  },
+];
+
+const SIMULATION_COLUMN_ALIASES = {
+  avg_agent_latency: "latency",
+  avg_agent_latency_ms: "latency",
+  avgAgentLatencyMs: "latency",
+  avg_latency_ms: "latency",
+  avgLatencyMs: "latency",
+  average_latency_ms: "latency",
+  latency_ms: "latency",
+  customer_cost_cents: "cost_cents",
+  customerCostCents: "cost_cents",
+  cost: "cost_cents",
+  costCents: "cost_cents",
+  total_cost: "cost_cents",
+  total_cost_cents: "cost_cents",
+  totalCost: "cost_cents",
+  totalCostCents: "cost_cents",
+  responseTime: "response_time",
+  avg_response_time_ms: "response_time",
+  average_response_time_ms: "response_time",
+  response_time_ms: "response_time",
+  responseTimeMs: "response_time",
+  response_time_seconds: "response_time",
+  responseTimeSeconds: "response_time",
+  agentTalkPercentage: "agent_talk_percentage",
+};
+
+function normalizeSimulationColumnId(columnId) {
+  return SIMULATION_COLUMN_ALIASES[columnId] || columnId;
+}
+
+const SIMULATION_HIDDEN_COLUMN_IDS = new Set([
+  // Voice observability keeps Response Time hidden, so do not surface it in the
+  // Add Items picker even when older execution column orders include aliases.
+  "response_time",
+]);
+
+function createDynamicSimulationColumn(col) {
+  const columnId = col.id;
+  const headerName = col.column_name || columnId;
+
+  if (col.type === "scenario_dataset_column") {
+    return {
+      headerName,
+      field: columnId,
+      colId: columnId,
+      flex: 1,
+      minWidth: 160,
+      valueGetter: (params) =>
+        formatGenericSimulationValue(params.data?.scenario_columns?.[columnId]),
+      cellRenderer: SimulationTextCellRenderer,
+    };
+  }
+
+  if (col.type === "evaluation") {
+    return {
+      headerName,
+      field: columnId,
+      colId: columnId,
+      flex: 1,
+      minWidth: 160,
+      valueGetter: (params) =>
+        formatGenericSimulationValue(params.data?.eval_metrics?.[columnId]),
+      cellRenderer: SimulationTextCellRenderer,
+    };
+  }
+
+  if (col.type === "tool_evaluation") {
+    return {
+      headerName,
+      field: columnId,
+      colId: columnId,
+      flex: 1,
+      minWidth: 160,
+      valueGetter: (params) =>
+        formatGenericSimulationValue(
+          params.data?.tool_outputs?.[col.column_name],
+        ),
+      cellRenderer: SimulationTextCellRenderer,
+    };
+  }
+
+  return {
+    headerName,
+    field: columnId,
+    colId: columnId,
+    flex: 1,
+    minWidth: 140,
+    valueGetter: (params) =>
+      formatGenericSimulationValue(getCallValue(params.data, [columnId])),
+    cellRenderer: SimulationTextCellRenderer,
+  };
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildSimulationSelectorColumnDefs(columnOrder = []) {
+  const staticById = new Map(
+    SIMULATION_STATIC_COLUMNS.flatMap((column) => [
+      [column.id, column],
+      [normalizeSimulationColumnId(column.id), column],
+    ]),
+  );
+  const seen = new Set();
+  const columns = [];
+
+  const addColumn = (column) => {
+    const columnId = column.colId || column.field || column.id;
+    const normalizedColumnId = normalizeSimulationColumnId(columnId);
+    if (
+      !columnId ||
+      SIMULATION_HIDDEN_COLUMN_IDS.has(normalizedColumnId) ||
+      seen.has(normalizedColumnId)
+    )
+      return;
+    seen.add(normalizedColumnId);
+    columns.push({
+      cellRenderer: SimulationTextCellRenderer,
+      ...column,
+      field: column.field || column.id,
+      colId: columnId,
+    });
+  };
+
+  SIMULATION_STATIC_COLUMNS.forEach(addColumn);
+
+  columnOrder.forEach((col) => {
+    if (!col?.id) return;
+    const columnId = col.id;
+    const normalizedColumnId = normalizeSimulationColumnId(columnId);
+    if (
+      SIMULATION_HIDDEN_COLUMN_IDS.has(normalizedColumnId) ||
+      seen.has(normalizedColumnId)
+    )
+      return;
+    const staticColumn =
+      staticById.get(columnId) || staticById.get(normalizedColumnId);
+    addColumn(
+      staticColumn
+        ? {
+            ...staticColumn,
+            headerName: col.column_name || staticColumn.headerName,
+          }
+        : createDynamicSimulationColumn({ ...col, id: columnId }),
+    );
+  });
+
+  return columns;
+}
+
+const simulationDefaultFilterBase = {
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
+  },
+};
+
 function SimulationSelector({ onSetSelection }) {
   const [testId, setTestId] = useState("");
   const [executionRunId, setExecutionRunId] = useState("");
   const [gridApi, setGridApi] = useState(null);
+  const [isGridLoading, setIsGridLoading] = useState(false);
+  const [simulationColumnOrder, setSimulationColumnOrder] = useState([]);
+  const [filters, setFilters] = useState([
+    { ...simulationDefaultFilterBase, id: getRandomId() },
+  ]);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
+  const filterButtonRef = useRef(null);
+  const columnOrderSignatureRef = useRef("");
   const gridRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
   const queryClient = useQueryClient();
@@ -3085,6 +4214,7 @@ function SimulationSelector({ onSetSelection }) {
     testsList: tests,
     fetchNextPage: fetchNextTestsPage,
     isFetchingNextPage: isFetchingNextTestsPage,
+    isFetching: isFetchingTests,
   } = useTestRunsList();
 
   const handleTestsMenuScroll = useCallback(
@@ -3101,7 +4231,11 @@ function SimulationSelector({ onSetSelection }) {
   );
 
   // 2. Fetch execution runs for selected test
-  const { data: executionRuns } = useQuery({
+  const {
+    data: executionRuns,
+    isLoading: isExecutionRunsLoading,
+    isFetching: isExecutionRunsFetching,
+  } = useQuery({
     queryKey: ["sim-execution-runs-dropdown", testId],
     queryFn: () =>
       axios.get(endpoints.runTests.detailExecutions(testId), {
@@ -3112,6 +4246,16 @@ function SimulationSelector({ onSetSelection }) {
     staleTime: 1000 * 60 * 2,
   });
 
+  const validatedFilters = useMemo(
+    () => filters.filter(apiFilterHasValue),
+    [filters],
+  );
+
+  const serializedFilters = useMemo(
+    () => JSON.stringify(validatedFilters || []),
+    [validatedFilters],
+  );
+
   // 3. Server-side datasource for call executions within selected run
   const dataSource = useMemo(
     () => ({
@@ -3121,21 +4265,39 @@ function SimulationSelector({ onSetSelection }) {
           const pageSize = request.endRow - request.startRow;
           const pageNumber = Math.floor(request.startRow / pageSize);
 
+          setIsGridLoading(true);
           const { data } = await queryClient.fetchQuery({
             queryKey: [
               "sim-call-executions",
               executionRunId,
               pageNumber,
               pageSize,
+              serializedFilters,
             ],
             queryFn: () =>
               axios.get(endpoints.testExecutions.list(executionRunId), {
-                params: { page: pageNumber + 1, limit: pageSize },
+                params: {
+                  page: pageNumber + 1,
+                  limit: pageSize,
+                  filters: serializedFilters,
+                },
               }),
           });
 
           const rows = data?.results ?? [];
           const totalRows = data?.count ?? rows.length;
+          const nextColumnOrder = data?.column_order ?? [];
+          const nextSignature = JSON.stringify(
+            nextColumnOrder.map((col) => [
+              col?.id,
+              col?.column_name,
+              col?.type,
+            ]),
+          );
+          if (nextSignature !== columnOrderSignatureRef.current) {
+            columnOrderSignatureRef.current = nextSignature;
+            setSimulationColumnOrder(nextColumnOrder);
+          }
 
           params.success({
             rowData: rows,
@@ -3149,72 +4311,32 @@ function SimulationSelector({ onSetSelection }) {
           });
         } catch {
           params.fail();
+        } finally {
+          setIsGridLoading(false);
         }
       },
     }),
-    [executionRunId, queryClient],
+    [executionRunId, queryClient, serializedFilters],
   );
 
   const columnDefs = useMemo(
-    () => [
-      {
-        headerName: "Call Details",
-        field: "callDetails",
-        flex: 2,
-        minWidth: 220,
-        cellRenderer: CallDetailSimpleCellRenderer,
-      },
-      {
-        headerName: "Status",
-        field: "status",
-        flex: 0.8,
-        minWidth: 120,
-        cellRenderer: CallStatusCellRenderer,
-      },
-      {
-        headerName: "Timestamp",
-        field: "timestamp",
-        flex: 1,
-        minWidth: 160,
-        valueFormatter: (p) => {
-          if (!p.value) return "-";
-          try {
-            return new Date(p.value).toLocaleString("en-US", {
-              month: "2-digit",
-              day: "2-digit",
-              year: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-            });
-          } catch {
-            return "-";
-          }
-        },
-      },
-      {
-        headerName: "Response Time",
-        field: "responseTime",
-        flex: 0.7,
-        minWidth: 120,
-        valueFormatter: (p) => (p.value != null ? `${p.value}s` : "-"),
-      },
-      {
-        headerName: "Latency",
-        field: "avgAgentLatency",
-        flex: 0.7,
-        minWidth: 110,
-        valueFormatter: (p) => (p.value != null ? `${p.value}ms` : "-"),
-      },
-    ],
-    [],
+    () => buildSimulationSelectorColumnDefs(simulationColumnOrder),
+    [simulationColumnOrder],
+  );
+  const filterFields = useMemo(
+    () => buildSimulationSelectorFilterFields(simulationColumnOrder),
+    [simulationColumnOrder],
+  );
+  const filterFieldsById = useMemo(
+    () => Object.fromEntries(filterFields.map((field) => [field.id, field])),
+    [filterFields],
   );
 
   const defaultColDef = useMemo(
     () => ({
       lockVisible: true,
       filter: false,
-      resizable: false,
+      resizable: true,
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
       sortable: false,
@@ -3239,6 +4361,11 @@ function SimulationSelector({ onSetSelection }) {
     }
   }, [executionRunId, gridApi, dataSource]);
 
+  const clearSelection = useCallback(() => {
+    gridApi?.deselectAll?.();
+    onSetSelection([]);
+  }, [gridApi, onSetSelection]);
+
   const onSelectionChanged = useCallback(
     (event) => {
       const ids = [];
@@ -3255,13 +4382,25 @@ function SimulationSelector({ onSetSelection }) {
   const handleTestChange = (e) => {
     setTestId(e.target.value);
     setExecutionRunId("");
+    columnOrderSignatureRef.current = "";
+    setSimulationColumnOrder([]);
+    setFilters([{ ...simulationDefaultFilterBase, id: getRandomId() }]);
+    setFilterAnchorEl(null);
+    setFilterOpen(false);
     onSetSelection([]);
   };
 
   const handleExecutionRunChange = (e) => {
     setExecutionRunId(e.target.value);
+    columnOrderSignatureRef.current = "";
+    setSimulationColumnOrder([]);
     onSetSelection([]);
   };
+
+  const isTestsLoading = isFetchingTests && tests.length === 0;
+  const isExecutionListLoading =
+    isExecutionRunsLoading || (isExecutionRunsFetching && !executionRuns);
+  const isFilterApplied = validatedFilters.length > 0;
 
   return (
     <Box
@@ -3286,9 +4425,16 @@ function SimulationSelector({ onSetSelection }) {
         <TextField
           select
           size="small"
+          label="Test"
           value={testId}
           onChange={handleTestChange}
-          sx={{ minWidth: 300 }}
+          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          required
+          InputLabelProps={{ shrink: true }}
+          InputProps={{
+            endAdornment: <FieldLoadingAdornment loading={isTestsLoading} />,
+          }}
+          helperText={!testId ? "Required. Select a test to continue." : " "}
           SelectProps={{
             displayEmpty: true,
             renderValue: (v) => {
@@ -3305,8 +4451,14 @@ function SimulationSelector({ onSetSelection }) {
           }}
         >
           <MenuItem value="" disabled>
-            Choose a test
+            {isTestsLoading ? "Loading tests..." : "Choose a test"}
           </MenuItem>
+          {isTestsLoading && (
+            <MenuItem disabled>
+              <CircularProgress size={14} sx={{ mr: 1 }} />
+              Loading tests...
+            </MenuItem>
+          )}
           {tests.map((t) => (
             <MenuItem key={t.id} value={t.id} sx={{ maxWidth: 300 }}>
               <CustomTooltip
@@ -3342,9 +4494,22 @@ function SimulationSelector({ onSetSelection }) {
           <TextField
             select
             size="small"
+            label="Execution run"
             value={executionRunId}
             onChange={handleExecutionRunChange}
-            sx={{ minWidth: 340 }}
+            sx={{ minWidth: 220, flex: "1 1 320px" }}
+            required
+            InputLabelProps={{ shrink: true }}
+            InputProps={{
+              endAdornment: (
+                <FieldLoadingAdornment loading={isExecutionListLoading} />
+              ),
+            }}
+            helperText={
+              !executionRunId
+                ? "Required. Select an execution run to continue."
+                : " "
+            }
             SelectProps={{
               displayEmpty: true,
               renderValue: (v) => {
@@ -3358,8 +4523,16 @@ function SimulationSelector({ onSetSelection }) {
             }}
           >
             <MenuItem value="" disabled>
-              Choose an execution run
+              {isExecutionListLoading
+                ? "Loading execution runs..."
+                : "Choose an execution run"}
             </MenuItem>
+            {isExecutionListLoading && (
+              <MenuItem disabled>
+                <CircularProgress size={14} sx={{ mr: 1 }} />
+                Loading execution runs...
+              </MenuItem>
+            )}
             {(executionRuns || []).map((run) => {
               const label = formatExecutionRunLabel(run);
               return (
@@ -3389,45 +4562,131 @@ function SimulationSelector({ onSetSelection }) {
             })}
           </TextField>
         )}
+
+        {executionRunId && (
+          <>
+            <Box sx={{ flex: 1 }} />
+            <IconButton
+              ref={filterButtonRef}
+              size="small"
+              aria-label="Open simulation filters"
+              onClick={() => {
+                setFilterAnchorEl(filterButtonRef.current);
+                setFilterOpen((value) => !value);
+              }}
+              sx={{
+                border: "1px solid",
+                borderColor: isFilterApplied ? "primary.main" : "divider",
+                borderRadius: 0.5,
+                p: 0.75,
+                bgcolor: (theme) =>
+                  isFilterApplied
+                    ? alpha(theme.palette.primary.main, 0.12)
+                    : "transparent",
+              }}
+            >
+              <SvgColor
+                src="/assets/icons/action_buttons/ic_filter.svg"
+                sx={{
+                  width: 16,
+                  height: 16,
+                  color: isFilterApplied ? "primary.main" : "text.primary",
+                }}
+              />
+            </IconButton>
+          </>
+        )}
       </Box>
+
+      {executionRunId && (
+        <TraceFilterPanel
+          anchorEl={filterAnchorEl || filterButtonRef.current}
+          open={filterOpen}
+          onClose={() => setFilterOpen(false)}
+          currentFilters={validatedFilters.map((filter) =>
+            apiFilterToPanel(filter, filterFieldsById),
+          )}
+          onApply={(newPanelFilters) => {
+            const nextFilters = (newPanelFilters || [])
+              .map(panelFilterToApi)
+              .filter(apiFilterHasValue);
+            setFilters(
+              nextFilters.length
+                ? nextFilters.map((filter) => ({
+                    ...filter,
+                    id: getRandomId(),
+                  }))
+                : [{ ...simulationDefaultFilterBase, id: getRandomId() }],
+            );
+            clearSelection();
+          }}
+          properties={filterFields}
+          source="simulation"
+          showAi={false}
+          showQueryTab={false}
+          categories={SIMULATION_FILTER_CATEGORIES}
+          panelWidth={560}
+        />
+      )}
+
+      {executionRunId && (
+        <FilterChips
+          extraFilters={validatedFilters || []}
+          onAddFilter={(anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
+          onChipClick={(_index, anchorEl) => {
+            setFilterAnchorEl(anchorEl || filterButtonRef.current);
+            setFilterOpen(true);
+          }}
+          onRemoveFilter={(index) => {
+            setFilterAnchorEl(null);
+            const snakeFilters = validatedFilters || [];
+            const target = snakeFilters[index];
+            if (!target) return;
+            setFilters((prev) => {
+              const nextFilters = prev.filter((filter) => {
+                const colMatches = filter?.column_id === target.column_id;
+                const opMatches =
+                  filter?.filter_config?.filter_op ===
+                  target?.filter_config?.filter_op;
+                return !(colMatches && opMatches);
+              });
+              return nextFilters.length
+                ? nextFilters
+                : [{ ...simulationDefaultFilterBase, id: getRandomId() }];
+            });
+            clearSelection();
+          }}
+          onClearAll={() => {
+            setFilterAnchorEl(null);
+            setFilters([{ ...simulationDefaultFilterBase, id: getRandomId() }]);
+            setFilterOpen(false);
+            clearSelection();
+          }}
+        />
+      )}
 
       {/* Empty state */}
       {!testId && (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            Start by Selecting a Test
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Pick a test from the dropdown above, then select an execution run.
-          </Typography>
-        </Box>
+        <SelectorEmptyState
+          loading={isTestsLoading}
+          loadingLabel="Loading tests..."
+          title="Select a test"
+          description="Choose a test from the dropdown above, then select an execution run."
+          requiredLabel="Test"
+        />
       )}
 
       {testId && !executionRunId && (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            Select an Execution Run
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Pick an execution run to view its calls and chats.
-          </Typography>
-        </Box>
+        <SelectorEmptyState
+          loading={isExecutionListLoading}
+          loadingLabel="Loading execution runs..."
+          title="Select an execution run"
+          description="Choose an execution run to view its calls and chats."
+          requiredLabel="Execution run"
+        />
       )}
 
       {/* AG Grid – call executions within selected run */}
@@ -3440,7 +4699,8 @@ function SimulationSelector({ onSetSelection }) {
             flexDirection: "column",
           }}
         >
-          <Box sx={{ flex: 1 }}>
+          <Box sx={{ flex: 1, position: "relative" }}>
+            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"

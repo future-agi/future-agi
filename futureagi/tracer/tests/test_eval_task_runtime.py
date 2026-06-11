@@ -83,6 +83,29 @@ class TestProcessEvalTaskSpans:
         span_ids = {s.id for s in populated_observe_project["spans"]}
         assert {r.observation_span_id for r in rows} == span_ids
 
+    def test_span_id_filter_limits_dispatch_to_linked_span(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Linked-source span filters dispatch only the selected span."""
+        task = observe_eval_task["task"]
+        target_span = populated_observe_project["spans"][0]
+        task.filters = {
+            "project_id": str(populated_observe_project["project"].id),
+            "span_id": [target_span.id],
+        }
+        task.save(update_fields=["filters"])
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        assert rows.count() == 1
+        assert rows.first().observation_span_id == target_span.id
+
     def test_respects_sampling_rate(
         self,
         populated_observe_project,
@@ -146,6 +169,126 @@ class TestProcessEvalTaskSpans:
 
         assert second_count == first_count
 
+    def test_continuous_run_type_with_sampling_rate(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Continuous tasks must dispatch under sampling_rate without NameError.
+
+        Regression guard for the broken `spans.count()` reference in the
+        is_continuous branch — the queryset was renamed to `pending_entities`
+        but this one call site was missed, so every tick raised NameError
+        and the broad except silently flipped the task to FAILED.
+        """
+        task = observe_eval_task["task"]
+        task.run_type = RunType.CONTINUOUS
+        task.sampling_rate = 50.0
+        task.save()
+
+        process_eval_task._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status != EvalTaskStatus.FAILED
+        count = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False
+        ).count()
+        # 50% of 12 pending spans -> 6 sampled at dispatch
+        assert count == 6
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Voice-call dispatch — literal alias of the spans pipeline. Any
+# observation_type narrowing is the caller's job via ``filters``.
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def voice_call_eval_task(db, populated_observe_project, eval_template):
+    """Historical voiceCalls eval task on the shared 12-span fixture."""
+    from tracer.models.eval_task import RowType
+
+    project = populated_observe_project["project"]
+    config = CustomEvalConfig.objects.create(
+        project=project,
+        eval_template=eval_template,
+        name="Test Voice Eval",
+        config={"output": "Pass/Fail"},
+        mapping={"input": "input", "output": "output"},
+        model="turing_large",
+    )
+    task = EvalTask.objects.create(
+        project=project,
+        name="Test voice calls task",
+        filters={"project_id": str(project.id)},
+        sampling_rate=100.0,
+        run_type=RunType.HISTORICAL,
+        spans_limit=1000,
+        status=EvalTaskStatus.PENDING,
+        row_type=RowType.VOICE_CALLS,
+    )
+    task.evals.add(config)
+    return {"task": task, "config": config, "project": project}
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestProcessEvalTaskVoiceCalls:
+    """Dispatcher must route voiceCalls through the spans flow.
+
+    Regression net for the bug where ``row_type='voiceCalls'`` hit the
+    dispatcher's ``else`` branch (added in fb134ddf) and raised
+    ``ValueError`` — flipping every voiceCalls task in prod to FAILED.
+
+    Behaviour pin: voiceCalls is a literal alias of spans at dispatch.
+    Any observation_type narrowing (e.g. limiting to conversation roots)
+    is the caller's responsibility via ``EvalTask.filters``.
+    """
+
+    def test_dispatches_same_spans_as_spans_path(
+        self,
+        populated_observe_project,
+        voice_call_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """voiceCalls fan-out matches the spans path on the same project."""
+        task = voice_call_eval_task["task"]
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        # populated_observe_project has 2 sessions × 2 traces × 3 spans = 12
+        # spans × 1 eval -> 12 EvalLogger rows (no observation_type narrowing).
+        assert rows.count() == 12
+        expected_ids = {s.id for s in populated_observe_project["spans"]}
+        assert {r.observation_span_id for r in rows} == expected_ids
+
+    def test_status_transitions_match_spans_path(
+        self,
+        populated_observe_project,
+        voice_call_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """voiceCalls inherits the spans drain semantics: PENDING -> RUNNING -> COMPLETED."""
+        task = voice_call_eval_task["task"]
+        assert task.status == EvalTaskStatus.PENDING
+
+        process_eval_task._original_func(str(task.id))
+        task.refresh_from_db()
+        assert task.status == EvalTaskStatus.RUNNING
+
+        process_eval_task._original_func(str(task.id))
+        task.refresh_from_db()
+        assert task.status == EvalTaskStatus.COMPLETED
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -201,23 +344,23 @@ class TestEvalTaskStatusTransitions:
         observe_eval_task,
         track_eval_dispatch,
         monkeypatch,
-        caplog,
     ):
         """Dispatch without execution -> next tick detects stall, logs warning, flips to COMPLETED.
 
-        Note on `failed_spans`: the dispatcher *intends* to surface the stall
-        summary on `EvalTask.failed_spans`, but the current code path
-        (`tracer/utils/eval_tasks.py:282-329`) saves the summary via a
-        `select_for_update`'d ref then immediately calls `eval_task.save()`
-        on the stale local reference WITHOUT `update_fields`, clobbering the
-        just-written list back to []. This is a pre-existing bug — test pins
-        the observable behaviour (status flip + warning log) so future fixes
-        that correctly persist `failed_spans` will surface as a deliberate
-        update to this test, not a silent regression.
+        The warning is emitted through structlog, whose pytest capture can be
+        affected by suite-wide logging configuration. Spy on the logger method
+        directly so this pins the user-visible stall behavior instead of the
+        current stdlib logging adapter state.
         """
-        import logging
-
         monkeypatch.setattr("tracer.utils.eval_tasks._DRAIN_STALL_SECONDS", 0)
+        warning_calls = []
+
+        def _record_warning(event, **kwargs):
+            warning_calls.append((event, kwargs))
+
+        monkeypatch.setattr(
+            "tracer.utils.eval_tasks.logger.warning", _record_warning
+        )
 
         task = observe_eval_task["task"]
         task.spans_limit = 12
@@ -227,17 +370,18 @@ class TestEvalTaskStatusTransitions:
         assert len(track_eval_dispatch) == 12
         assert EvalLogger.objects.filter(eval_task_id=str(task.id)).count() == 0
 
-        with caplog.at_level(logging.WARNING, logger="tracer.utils.eval_tasks"):
-            process_eval_task._original_func(str(task.id))  # tick 2: drain check trips stall
+        process_eval_task._original_func(str(task.id))  # tick 2: drain check trips stall
 
         task.refresh_from_db()
         assert task.status == EvalTaskStatus.COMPLETED
-        # The "eval_task_completed_with_drops" warning is the user-observable
-        # signal that a stall was detected (logged for SRE / Sentry).
         assert any(
-            "eval_task_completed_with_drops" in record.getMessage()
-            for record in caplog.records
+            event == "eval_task_completed_with_drops" and kwargs["dropped"] == 12
+            for event, kwargs in warning_calls
         ), "expected stall-detection warning in logs"
+        assert any(
+            "Drain stall: 12 of 12 dispatched evaluations" in entry.get("error", "")
+            for entry in (task.failed_spans or [])
+        )
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -340,6 +484,29 @@ class TestProcessEvalTaskTraces:
         assert all(r.trace_id is not None for r in rows)
         assert all(r.observation_span_id is not None for r in rows)
         assert all(r.trace_session_id is None for r in rows)
+
+    def test_trace_id_filter_limits_dispatch_to_linked_trace(
+        self,
+        populated_observe_project,
+        observe_trace_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Linked-source trace filters dispatch only the selected trace."""
+        task = observe_trace_task["task"]
+        target_trace = populated_observe_project["traces"][0]
+        task.filters = {
+            "project_id": str(populated_observe_project["project"].id),
+            "trace_id": [str(target_trace.id)],
+        }
+        task.save(update_fields=["filters"])
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        assert rows.count() == 1
+        assert str(rows.first().trace_id) == str(target_trace.id)
 
     def test_anchors_to_root_span(
         self,
@@ -545,6 +712,29 @@ class TestProcessEvalTaskSessions:
             assert row.trace_id is None
             assert row.trace_session_id is not None
 
+    def test_session_id_filter_accepts_ui_list_shape(
+        self,
+        populated_observe_project,
+        observe_session_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Task forms send session_id as a list; dispatcher honors that shape."""
+        task = observe_session_task["task"]
+        target_session = populated_observe_project["sessions"][0]
+        task.filters = {
+            "project_id": str(populated_observe_project["project"].id),
+            "session_id": [str(target_session.id)],
+        }
+        task.save(update_fields=["filters"])
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        assert rows.count() == 1
+        assert str(rows.first().trace_session_id) == str(target_session.id)
+
     def test_dedup_on_second_tick(
         self,
         populated_observe_project,
@@ -622,3 +812,586 @@ class TestRowTypeConflationOnRootSpan:
         )
         assert all(r.target_type == "span" for r in rows_span_only)
         assert len(rows_span_only) < len(rows_default)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Composite evals on trace + session row types (TH-5158)
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def composite_eval_template(db, organization, workspace):
+    """A composite parent with two single children linked via CompositeEvalChild.
+
+    Children expose tiny stub configs; the test stubs out
+    ``execute_composite_children_sync`` so the children never actually run.
+    """
+    from model_hub.models.evals_metric import CompositeEvalChild, EvalTemplate
+
+    parent = EvalTemplate.objects.create(
+        name="Composite Parent",
+        description="Composite for trace/session tests",
+        organization=organization,
+        workspace=workspace,
+        template_type="composite",
+        aggregation_enabled=True,
+        aggregation_function="weighted_avg",
+        pass_threshold=0.5,
+        config={"type": "composite"},
+    )
+    children = [
+        EvalTemplate.objects.create(
+            name=f"Child {i}",
+            description=f"Child eval {i}",
+            organization=organization,
+            workspace=workspace,
+            template_type="single",
+            config={"type": "pass_fail", "criteria": "ok"},
+            pass_threshold=0.5,
+        )
+        for i in range(2)
+    ]
+    for i, child in enumerate(children):
+        CompositeEvalChild.objects.create(
+            parent=parent, child=child, order=i, weight=1.0
+        )
+    return {"parent": parent, "children": children}
+
+
+def _composite_outcome(score=0.8, summary="ok", aggregate_pass=True):
+    """Build a deterministic CompositeRunOutcome for stubbing."""
+    from model_hub.types import CompositeChildResult
+    from model_hub.utils.composite_execution import CompositeRunOutcome
+
+    return CompositeRunOutcome(
+        child_results=[
+            CompositeChildResult(
+                child_id="c0",
+                child_name="Child 0",
+                order=0,
+                score=0.9,
+                output=True,
+                reason="c0 ok",
+                output_type="Pass/Fail",
+                status="completed",
+                weight=1.0,
+            ),
+            CompositeChildResult(
+                child_id="c1",
+                child_name="Child 1",
+                order=1,
+                score=0.7,
+                output=True,
+                reason="c1 ok",
+                output_type="Pass/Fail",
+                status="completed",
+                weight=1.0,
+            ),
+        ],
+        aggregate_score=score,
+        aggregate_pass=aggregate_pass,
+        summary=summary,
+        error_localizer_results=None,
+        log_id=None,
+    )
+
+
+@pytest.fixture
+def stub_composite_children(monkeypatch):
+    """Patch ``execute_composite_children_sync`` with a recorded stub.
+
+    Returns ``calls`` (list of kwargs dicts) and ``set_outcome(outcome)`` /
+    ``set_exception(exc)`` hooks so tests can flip happy/error paths.
+    """
+    state = {"outcome": _composite_outcome(), "exception": None}
+    calls: list[dict] = []
+
+    def _stub(**kwargs):
+        calls.append(kwargs)
+        if state["exception"] is not None:
+            raise state["exception"]
+        return state["outcome"]
+
+    # Patched at the canonical module path; both new helpers do
+    # `from model_hub.utils.composite_execution import execute_composite_children_sync`
+    # at call time, so this catches both.
+    monkeypatch.setattr(
+        "model_hub.utils.composite_execution.execute_composite_children_sync",
+        _stub,
+    )
+
+    class _Hooks:
+        def set_outcome(self, outcome):
+            state["outcome"] = outcome
+
+        def set_exception(self, exc):
+            state["exception"] = exc
+
+        @property
+        def calls(self):
+            return calls
+
+    return _Hooks()
+
+
+@pytest.fixture
+def composite_trace_task(db, populated_observe_project, composite_eval_template):
+    """Trace-level eval task wired to a composite parent template."""
+    from tracer.models.eval_task import RowType
+
+    project = populated_observe_project["project"]
+    config = CustomEvalConfig.objects.create(
+        project=project,
+        eval_template=composite_eval_template["parent"],
+        name="Composite Trace Eval",
+        config={"output": "Pass/Fail"},
+        mapping={"input": "input", "output": "output"},
+        model="turing_large",
+    )
+    task = EvalTask.objects.create(
+        project=project,
+        name="Composite traces task",
+        filters={"project_id": str(project.id)},
+        sampling_rate=100.0,
+        run_type=RunType.HISTORICAL,
+        spans_limit=1000,
+        status=EvalTaskStatus.PENDING,
+        row_type=RowType.TRACES,
+    )
+    task.evals.add(config)
+    return {"task": task, "config": config, "project": project}
+
+
+@pytest.fixture
+def composite_session_task(db, populated_observe_project, composite_eval_template):
+    """Session-level eval task wired to a composite parent template."""
+    from tracer.models.eval_task import RowType
+
+    project = populated_observe_project["project"]
+    config = CustomEvalConfig.objects.create(
+        project=project,
+        eval_template=composite_eval_template["parent"],
+        name="Composite Session Eval",
+        config={"output": "Pass/Fail"},
+        mapping={"input": "traces.0.input", "output": "traces.0.output"},
+        model="turing_large",
+    )
+    task = EvalTask.objects.create(
+        project=project,
+        name="Composite sessions task",
+        filters={"project_id": str(project.id)},
+        sampling_rate=100.0,
+        run_type=RunType.HISTORICAL,
+        spans_limit=1000,
+        status=EvalTaskStatus.PENDING,
+        row_type=RowType.SESSIONS,
+    )
+    task.evals.add(config)
+    return {"task": task, "config": config, "project": project}
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestCompositeEvalOnTrace:
+    """Composite eval fan-out for ``row_type=traces``."""
+
+    def test_creates_one_eval_logger_per_trace(
+        self,
+        populated_observe_project,
+        composite_trace_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """4 traces × 1 composite -> 4 EvalLogger rows, all target_type='trace'."""
+        task = composite_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        assert rows.count() == 4
+        assert all(r.target_type == "trace" for r in rows)
+        assert all(r.trace_id is not None for r in rows)
+        assert all(r.observation_span_id is not None for r in rows)
+        assert all(r.trace_session_id is None for r in rows)
+
+    def test_writes_children_metadata(
+        self,
+        populated_observe_project,
+        composite_trace_task,
+        composite_eval_template,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = composite_trace_task["task"]
+        parent = composite_eval_template["parent"]
+        process_eval_task._original_func(str(task.id))
+
+        row = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False
+        ).first()
+        meta = row.output_metadata
+        assert meta["composite_id"] == str(parent.id)
+        assert meta["aggregation_enabled"] is True
+        assert meta["aggregate_pass"] is True
+        assert isinstance(meta["children"], list)
+        assert [c["order"] for c in meta["children"]] == [0, 1]
+
+    def test_writes_aggregate_score_to_output_float(
+        self,
+        populated_observe_project,
+        composite_trace_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = composite_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        for row in EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False):
+            assert row.output_float == pytest.approx(0.8)
+
+    def test_writes_summary_to_eval_explanation(
+        self,
+        populated_observe_project,
+        composite_trace_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = composite_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        for row in EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False):
+            assert row.eval_explanation == "ok"
+
+    def test_dedup_on_second_tick(
+        self,
+        populated_observe_project,
+        composite_trace_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = composite_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+        first = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False
+        ).count()
+        process_eval_task._original_func(str(task.id))
+        second = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False
+        ).count()
+        assert second == first
+
+    def test_anchors_to_root_span(
+        self,
+        populated_observe_project,
+        composite_trace_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Trace composite row's observation_span = the trace's root span."""
+        task = composite_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False
+        ).select_related("observation_span")
+        for row in rows:
+            assert row.observation_span.parent_span_id is None
+            assert row.observation_span.trace_id == row.trace_id
+
+    def test_skips_zero_span_trace(
+        self,
+        populated_observe_project,
+        composite_trace_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Composite on a zero-span trace short-circuits in the activity, before our branch.
+
+        The anchor-miss path (`evaluate_trace_observe :: _find_anchor_span is None`)
+        runs before the composite delegation, so no EvalLogger row is written
+        and the failure is recorded on EvalTask.failed_spans.
+        """
+        from tracer.models.trace import Trace
+        from tracer.utils.eval import evaluate_trace_observe
+
+        empty_trace = Trace.objects.create(
+            project=populated_observe_project["project"],
+            name="empty composite trace",
+            input={},
+            output={},
+        )
+        task = composite_trace_task["task"]
+        config = composite_trace_task["config"]
+
+        result = evaluate_trace_observe._original_func(
+            trace_id=str(empty_trace.id),
+            custom_eval_config_id=str(config.id),
+            eval_task_id=str(task.id),
+        )
+        assert result is False
+        assert EvalLogger.objects.filter(trace_id=empty_trace.id).count() == 0
+
+        task.refresh_from_db()
+        assert any(
+            entry.get("trace_id") == str(empty_trace.id)
+            for entry in (task.failed_spans or [])
+        )
+
+    def test_forwards_trace_context_to_children(
+        self,
+        populated_observe_project,
+        composite_trace_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """The composite call gets `trace_context` + source='tracer_composite'."""
+        task = composite_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        assert len(stub_composite_children.calls) == 4
+        for call in stub_composite_children.calls:
+            assert call["source"] == "tracer_composite"
+            ctx = call.get("trace_context")
+            assert ctx is not None
+            assert "trace_id" in ctx and "anchor_span_id" in ctx
+
+    def test_writes_error_row_when_children_raise(
+        self,
+        populated_observe_project,
+        composite_trace_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """An exception inside the composite engine still yields one EvalLogger row."""
+        stub_composite_children.set_exception(RuntimeError("boom"))
+        task = composite_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        rows = list(
+            EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        )
+        assert len(rows) == 4
+        for row in rows:
+            assert row.error is True
+            assert row.output_str == "ERROR"
+            assert row.target_type == "trace"
+            assert row.trace_id is not None
+            assert row.observation_span_id is not None
+            assert row.trace_session_id is None
+            assert "boom" in (row.error_message or "")
+
+    def test_skips_parent_cost_log(
+        self,
+        populated_observe_project,
+        composite_trace_task,
+        stub_composite_children,
+        inline_temporal,
+        monkeypatch,
+    ):
+        """The composite path does not call the parent cost-log; children log their own."""
+        calls = []
+
+        def _spy(**kwargs):
+            calls.append(kwargs)
+            return None  # would normally short-circuit downstream; never reached for composite
+
+        monkeypatch.setattr(
+            "tracer.utils.eval.log_and_deduct_cost_for_api_request", _spy
+        )
+        task = composite_trace_task["task"]
+        process_eval_task._original_func(str(task.id))
+        assert calls == []
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestCompositeEvalOnSession:
+    """Composite eval fan-out for ``row_type=sessions``."""
+
+    def test_creates_one_eval_logger_per_session(
+        self,
+        populated_observe_project,
+        composite_session_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """2 sessions × 1 composite -> 2 EvalLogger rows, all target_type='session'."""
+        task = composite_session_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        assert rows.count() == 2
+        assert all(r.target_type == "session" for r in rows)
+
+    def test_eval_logger_has_null_span_and_trace(
+        self,
+        populated_observe_project,
+        composite_session_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = composite_session_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        for row in EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False):
+            assert row.observation_span_id is None
+            assert row.trace_id is None
+            assert row.trace_session_id is not None
+
+    def test_writes_children_metadata(
+        self,
+        populated_observe_project,
+        composite_session_task,
+        composite_eval_template,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = composite_session_task["task"]
+        parent = composite_eval_template["parent"]
+        process_eval_task._original_func(str(task.id))
+
+        row = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False
+        ).first()
+        meta = row.output_metadata
+        assert meta["composite_id"] == str(parent.id)
+        assert meta["aggregation_enabled"] is True
+        assert meta["aggregate_pass"] is True
+        assert [c["order"] for c in meta["children"]] == [0, 1]
+
+    def test_writes_aggregate_score(
+        self,
+        populated_observe_project,
+        composite_session_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = composite_session_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        for row in EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False):
+            assert row.output_float == pytest.approx(0.8)
+
+    def test_dedup_on_second_tick(
+        self,
+        populated_observe_project,
+        composite_session_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = composite_session_task["task"]
+        process_eval_task._original_func(str(task.id))
+        first = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False
+        ).count()
+        process_eval_task._original_func(str(task.id))
+        second = EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False
+        ).count()
+        assert second == first
+
+    def test_forwards_session_context_to_children(
+        self,
+        populated_observe_project,
+        composite_session_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        task = composite_session_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        assert len(stub_composite_children.calls) == 2
+        for call in stub_composite_children.calls:
+            assert call["source"] == "tracer_composite"
+            ctx = call.get("session_context")
+            assert ctx is not None
+            assert "session_id" in ctx
+
+    def test_sets_workspace_context(
+        self,
+        populated_observe_project,
+        composite_session_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+        monkeypatch,
+    ):
+        """Session composite path mirrors the single-eval session path's workspace ContextVar set."""
+        calls = []
+
+        def _spy(*, workspace, organization, **kwargs):
+            calls.append({"workspace": workspace, "organization": organization})
+
+        monkeypatch.setattr(
+            "tfc.middleware.workspace_context.set_workspace_context", _spy
+        )
+        task = composite_session_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        # One call per session evaluated
+        assert len(calls) >= 2
+        project = populated_observe_project["project"]
+        for entry in calls:
+            assert entry["organization"].id == project.organization.id
+
+    def test_writes_error_row_when_children_raise(
+        self,
+        populated_observe_project,
+        composite_session_task,
+        stub_composite_children,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        stub_composite_children.set_exception(RuntimeError("boom"))
+        task = composite_session_task["task"]
+        process_eval_task._original_func(str(task.id))
+
+        rows = list(
+            EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        )
+        assert len(rows) == 2
+        for row in rows:
+            assert row.error is True
+            assert row.output_str == "ERROR"
+            assert row.target_type == "session"
+            assert row.observation_span_id is None
+            assert row.trace_id is None
+            assert row.trace_session_id is not None
+            assert "boom" in (row.error_message or "")
+
+    def test_skips_parent_cost_log(
+        self,
+        populated_observe_project,
+        composite_session_task,
+        stub_composite_children,
+        inline_temporal,
+        monkeypatch,
+    ):
+        calls = []
+
+        def _spy(**kwargs):
+            calls.append(kwargs)
+            return None
+
+        monkeypatch.setattr(
+            "tracer.utils.eval.log_and_deduct_cost_for_api_request", _spy
+        )
+        task = composite_session_task["task"]
+        process_eval_task._original_func(str(task.id))
+        assert calls == []

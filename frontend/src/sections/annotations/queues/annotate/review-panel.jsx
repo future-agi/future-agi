@@ -9,7 +9,36 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+
+function statusTone(theme, color = "warning") {
+  const paletteColor = theme.palette[color] || theme.palette.info;
+  return {
+    border: alpha(
+      paletteColor.main,
+      theme.palette.mode === "dark" ? 0.34 : 0.24,
+    ),
+    bg: alpha(paletteColor.main, theme.palette.mode === "dark" ? 0.13 : 0.055),
+    text:
+      theme.palette.mode === "dark"
+        ? paletteColor.light || paletteColor.main
+        : paletteColor.dark || paletteColor.main,
+  };
+}
+
+function statusChipSx(color) {
+  return (theme) => {
+    const tone = statusTone(theme, color);
+    return {
+      borderColor: tone.border,
+      bgcolor: tone.bg,
+      color: tone.text,
+      fontWeight: 700,
+      "& .MuiChip-label": { px: 0.75 },
+    };
+  };
+}
 
 function formatAnnotationValue(value, labelType, labelSettings) {
   if (value === null || value === undefined) return "No annotation";
@@ -88,15 +117,19 @@ export default function ReviewPanel({
       {reviewStatus && (
         <Chip
           label={reviewStatus.replace("_", " ")}
-          color={
-            reviewStatus === "approved"
-              ? "success"
-              : reviewStatus === "rejected"
-                ? "error"
-                : "warning"
-          }
+          variant="outlined"
           size="small"
-          sx={{ mb: 2, alignSelf: "flex-start" }}
+          sx={(theme) => ({
+            ...statusChipSx(
+              reviewStatus === "approved"
+                ? "success"
+                : reviewStatus === "rejected"
+                  ? "error"
+                  : "warning",
+            )(theme),
+            mb: 2,
+            alignSelf: "flex-start",
+          })}
         />
       )}
 
@@ -156,21 +189,56 @@ export default function ReviewPanel({
       <Stack direction="row" spacing={1}>
         <Button
           variant="contained"
-          color="success"
+          color="inherit"
           fullWidth
           disabled={isPending}
           onClick={() => onApprove(notes)}
           startIcon={<Iconify icon="eva:checkmark-circle-2-fill" width={18} />}
+          sx={{
+            borderRadius: 0.75,
+            fontWeight: 800,
+            bgcolor: (theme) =>
+              theme.palette.mode === "dark"
+                ? theme.palette.common.white
+                : theme.palette.grey[900],
+            color: (theme) =>
+              theme.palette.mode === "dark"
+                ? theme.palette.grey[900]
+                : theme.palette.common.white,
+            boxShadow: "none",
+            "&:hover": {
+              bgcolor: (theme) =>
+                theme.palette.mode === "dark"
+                  ? alpha(theme.palette.common.white, 0.92)
+                  : theme.palette.grey[800],
+              boxShadow: (theme) =>
+                `0 12px 24px ${alpha(theme.palette.text.primary, 0.14)}`,
+            },
+          }}
         >
           Approve
         </Button>
         <Button
-          variant="contained"
-          color="error"
+          variant="outlined"
           fullWidth
           disabled={isPending}
           onClick={() => onReject(notes)}
           startIcon={<Iconify icon="eva:close-circle-fill" width={18} />}
+          sx={{
+            borderRadius: 0.75,
+            borderColor: (theme) => statusTone(theme, "error").border,
+            bgcolor: (theme) => statusTone(theme, "error").bg,
+            color: (theme) => statusTone(theme, "error").text,
+            fontWeight: 800,
+            "&:hover": {
+              borderColor: (theme) => alpha(theme.palette.error.main, 0.42),
+              bgcolor: (theme) =>
+                alpha(
+                  theme.palette.error.main,
+                  theme.palette.mode === "dark" ? 0.16 : 0.085,
+                ),
+            },
+          }}
         >
           Reject
         </Button>

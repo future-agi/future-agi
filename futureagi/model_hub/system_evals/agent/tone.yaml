@@ -1,18 +1,7 @@
 eval_id: 16
 name: tone
 description: Analyzes the tone and sentiment of content
-criteria: "You are evaluating the emotional tone of the output and classifying it using the provided tone labels.\n\n## Criteria\n\
-  \n1. Explicit emotions: Identify direct emotional expressions like \"I'm thrilled,\" \"This is frustrating,\" \"I'm worried.\"\
-  \n   - Example: \"I'm so excited about this!\" -> joy\n\n2. Implicit emotions: Detect emotional cues from word choice, sentence\
-  \ rhythm, sarcasm, or rhetorical questions.\n   - Example: \"Oh great, another delay...\" -> annoyance, sarcasm indicating\
-  \ frustration\n\n3. Multi-tone content: Content can express multiple emotions simultaneously.\n   - Example: \"I can't believe\
-  \ they did that! How wonderful!\" -> surprise, joy\n\n## Anti-bias Rules\n\n- DO NOT classify polite professional language\
-  \ as 'joy' or 'love'; assign 'neutral' when no emotional markers are present.\n- Sarcasm should be classified by its underlying\
-  \ emotion (annoyance, anger) not its surface presentation.\n- Short or ambiguous content should receive fewer labels; avoid\
-  \ over-classification.\n\n## Scoring\n\nSelect every label that reflects a distinct emotional state present in the content.\
-  \ Available labels: neutral, joy, love, fear, surprise, sadness, anger, annoyance, confusion. Assign 'neutral' for calm,\
-  \ factual content with no emotional markers. Only select labels grounded in specific textual evidence.\n\n## Inputs\n\n\
-  <output>{{output}}</output>"
+criteria: "You are evaluating the emotional tone of the output and classifying it using the provided tone labels.\n\n## Criteria\n\n1. Label coverage: Every distinct emotional state present in the text should receive its corresponding label, none missed.\n   - Pass: \"I'm thrilled but worried about the timeline\" -> joy + fear (both selected).\n   - Fail: Selects only joy when fear is also clearly expressed.\n\n2. Label precision: Each selected label must be grounded in specific textual evidence; no false positives.\n   - Pass: Selects 'anger' only when hostile language or angry markers are present.\n   - Fail: Assigns 'joy' to polite professional language that has no emotional markers.\n\n3. Surface vs. intent: Sarcastic or ironic content is classified by its underlying emotion, not its literal wording.\n   - Pass: \"Oh great, another delay...\" -> annoyance (not joy).\n   - Fail: Labels sarcastic praise as 'joy' based on the surface words.\n\n## Anti-bias Rules\n\n- DO NOT classify polite professional language as 'joy' or 'love'; assign 'neutral' when no emotional markers are present.\n- Short or ambiguous content should receive fewer labels; avoid over-classification.\n- Multiple labels are appropriate only when multiple distinct emotional states are simultaneously expressed.\n\n## Scoring\n\nSelect every label that reflects a distinct emotional state present in the content. Available labels: neutral, joy, love, fear, surprise, sadness, anger, annoyance, confusion. Assign 'neutral' for calm, factual content with no emotional markers. Only select labels grounded in specific textual evidence.\n\n## Inputs\n\n<output>{{output}}</output>"
 eval_tags:
 - NLP Metrics
 - Chatbot behaviors
@@ -52,15 +41,4 @@ config:
     - FLOAT
     - ARRAY
     - DATETIME
-  rule_prompt: "You are evaluating the emotional tone of the output and classifying it using the provided tone labels.\n\n\
-    ## Criteria\n\n1. Explicit emotions: Identify direct emotional expressions like \"I'm thrilled,\" \"This is frustrating,\"\
-    \ \"I'm worried.\"\n   - Example: \"I'm so excited about this!\" -> joy\n\n2. Implicit emotions: Detect emotional cues\
-    \ from word choice, sentence rhythm, sarcasm, or rhetorical questions.\n   - Example: \"Oh great, another delay...\" ->\
-    \ annoyance, sarcasm indicating frustration\n\n3. Multi-tone content: Content can express multiple emotions simultaneously.\n\
-    \   - Example: \"I can't believe they did that! How wonderful!\" -> surprise, joy\n\n## Anti-bias Rules\n\n- DO NOT classify\
-    \ polite professional language as 'joy' or 'love'; assign 'neutral' when no emotional markers are present.\n- Sarcasm\
-    \ should be classified by its underlying emotion (annoyance, anger) not its surface presentation.\n- Short or ambiguous\
-    \ content should receive fewer labels; avoid over-classification.\n\n## Scoring\n\nSelect every label that reflects a\
-    \ distinct emotional state present in the content. Available labels: neutral, joy, love, fear, surprise, sadness, anger,\
-    \ annoyance, confusion. Assign 'neutral' for calm, factual content with no emotional markers. Only select labels grounded\
-    \ in specific textual evidence.\n\n## Inputs\n\n<output>{{output}}</output>"
+  rule_prompt: "You are evaluating the emotional tone of the output and classifying it using the provided tone labels.\n\n## Criteria\n\n1. Label coverage: Every distinct emotional state present in the text should receive its corresponding label, none missed.\n   - Pass: \"I'm thrilled but worried about the timeline\" -> joy + fear (both selected).\n   - Fail: Selects only joy when fear is also clearly expressed.\n\n2. Label precision: Each selected label must be grounded in specific textual evidence; no false positives.\n   - Pass: Selects 'anger' only when hostile language or angry markers are present.\n   - Fail: Assigns 'joy' to polite professional language that has no emotional markers.\n\n3. Surface vs. intent: Sarcastic or ironic content is classified by its underlying emotion, not its literal wording.\n   - Pass: \"Oh great, another delay...\" -> annoyance (not joy).\n   - Fail: Labels sarcastic praise as 'joy' based on the surface words.\n\n## Anti-bias Rules\n\n- DO NOT classify polite professional language as 'joy' or 'love'; assign 'neutral' when no emotional markers are present.\n- Short or ambiguous content should receive fewer labels; avoid over-classification.\n- Multiple labels are appropriate only when multiple distinct emotional states are simultaneously expressed.\n\n## Scoring\n\nSelect every label that reflects a distinct emotional state present in the content. Available labels: neutral, joy, love, fear, surprise, sadness, anger, annoyance, confusion. Assign 'neutral' for calm, factual content with no emotional markers. Only select labels grounded in specific textual evidence.\n\n## Inputs\n\n<output>{{output}}</output>"

@@ -10,10 +10,7 @@ from model_hub.models.evaluation import Evaluation, StatusChoices
 from model_hub.tasks.user_evaluation import trigger_error_localization_for_standalone
 from sdk.utils.helpers import _get_api_call_type
 from tracer.utils.inline_evals import trigger_inline_eval
-try:
-    from ee.usage.models.usage import APICallStatusChoices
-except ImportError:
-    APICallStatusChoices = None
+from tfc.constants.api_calls import APICallStatusChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -51,29 +48,32 @@ def _log_and_deduct_cost_for_standalone_eval(
     except ImportError:
         check_usage = None
 
-    usage_check = check_usage(str(user.organization.id), api_call_type)
-    if not usage_check.allowed:
-        raise ValueError(usage_check.reason or "Usage limit exceeded")
+    if check_usage is not None:
+        usage_check = check_usage(str(user.organization.id), api_call_type)
+        if not usage_check.allowed:
+            raise ValueError(usage_check.reason or "Usage limit exceeded")
 
     if model:
         log_config.update({"model": str(model)})
     if kb_id:
         log_config.update({"kb_id": str(kb_id)})
 
-    api_call_log_row = log_and_deduct_cost_for_api_request(
-        organization=user.organization,
-        api_call_type=api_call_type,
-        source="standalone_v2",
-        source_id=eval_template.id,
-        config=log_config,
-        workspace=workspace,
-    )
+    api_call_log_row = None
+    if log_and_deduct_cost_for_api_request is not None:
+        api_call_log_row = log_and_deduct_cost_for_api_request(
+            organization=user.organization,
+            api_call_type=api_call_type,
+            source="standalone_v2",
+            source_id=eval_template.id,
+            config=log_config,
+            workspace=workspace,
+        )
 
-    if not api_call_log_row:
-        raise ValueError("API call not allowed : Error validating the api call.")
+        if not api_call_log_row:
+            raise ValueError("API call not allowed : Error validating the api call.")
 
-    if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-        raise ValueError(f"API call not allowed: {api_call_log_row.status}")
+        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+            raise ValueError(f"API call not allowed: {api_call_log_row.status}")
 
     # NOTE: No pre-eval UsageEvent emission. The cost isn't known until the
     # eval finishes, and UsageEvent.amount defaults to 1 — emitting here
@@ -89,6 +89,17 @@ def _run_evaluation(run_params, eval_model, eval_instance, runner):
     This is a simplified version of _run_evaluation from tracer/utils/eval.py
     It runs the evaluation and returns the result.
     """
+    # Apply the shared empty-input rules so the SDK path is consistent
+    # with dataset/playground/tracing. For custom evals the validator
+    # also fills any missing required_keys with "" so the engine's
+    # "Missing required key" check passes; the eval still runs with a
+    # partial_input warning attached to the response.
+    from model_hub.utils.eval_input_validation import validate_eval_inputs
+
+    partial_input_warning, run_params = validate_eval_inputs(
+        eval_model, run_params
+    )
+
     result = eval_instance.run(**run_params)
     output_type = eval_model.config.get("output", "score")
 
@@ -102,6 +113,8 @@ def _run_evaluation(run_params, eval_model, eval_instance, runner):
         "metadata": result.eval_results[0].get("metadata"),
         "output": output_type,
     }
+    if partial_input_warning:
+        response["warnings"] = [partial_input_warning]
 
     value = runner.format_output(result_data=response, eval_template=eval_model)
     response["value"] = value
@@ -148,6 +161,17 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
         _engine_runtime_config = eval_config
 
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
+
+    # --- Shared empty-input validation (must happen before cost
+    # deduction so an invalid request never charges). For custom evals
+    # the validator backfills missing required_keys with "" and may
+    # return a partial_input warning. For system evals it keeps the
+    # historical per-key strict behaviour.
+    from model_hub.utils.eval_input_validation import validate_eval_inputs
+
+    partial_input_warning, inputs = validate_eval_inputs(
+        eval_template, dict(inputs) if inputs else {}, mapped_keys=(inputs or {}).keys()
+    )
 
     # --- Ground Truth Injection (caller-side, before engine call) ---
     gt_inputs = dict(inputs) if inputs else {}
@@ -238,19 +262,25 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
         "value": result.value,
     }
 
-    config_dict = json.loads(api_call_log_row.config)
-    config_dict.update(
-        {
-            "input": eval_result.get("data", {}),
-            "output": {
-                "output": eval_result.get("value", ""),
-                "reason": eval_result.get("reason", ""),
-            },
-        }
-    )
-    api_call_log_row.config = json.dumps(config_dict)
-    api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-    api_call_log_row.save()
+    output_payload = {
+        "output": eval_result.get("value", ""),
+        "reason": eval_result.get("reason", ""),
+    }
+    if partial_input_warning:
+        output_payload["warnings"] = [partial_input_warning]
+        eval_result["warnings"] = [partial_input_warning]
+
+    if api_call_log_row is not None:
+        config_dict = json.loads(api_call_log_row.config)
+        config_dict.update(
+            {
+                "input": eval_result.get("data", {}),
+                "output": output_payload,
+            }
+        )
+        api_call_log_row.config = json.dumps(config_dict)
+        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+        api_call_log_row.save()
 
     # Dual-write: emit cost-based usage event for new billing system.
     # The pre-eval emit in _log_and_deduct_cost_for_standalone_eval has no
@@ -269,28 +299,39 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
             from ee.usage.services.emitter import emit
         except ImportError:
             emit = None
+        try:
+            from ee.usage.utils.event_properties import token_usage_properties
+        except ImportError:
+            token_usage_properties = lambda token_usage: {}
 
-        billing_config = BillingConfig.get()
-        eval_cost = result.cost or {}
-        llm_cost = eval_cost.get("total_cost", 0)
-        per_run_fee = billing_config.get_eval_per_run_fee()
-        actual_cost = llm_cost + per_run_fee
-        credits = billing_config.calculate_ai_credits(actual_cost)
+        billing_config = None
+        if BillingConfig is not None:
+            billing_config = BillingConfig.get()
+        if billing_config is not None:
+            eval_cost = result.cost or {}
+            token_usage = result.token_usage or {}
+            llm_cost = eval_cost.get("total_cost", 0)
+            per_run_fee = billing_config.get_eval_per_run_fee()
+            actual_cost = llm_cost + per_run_fee
+            credits = billing_config.calculate_ai_credits(actual_cost)
 
-        api_call_type = _get_api_call_type(model)
-        emit(
-            UsageEvent(
-                org_id=str(user.organization.id),
-                event_type=api_call_type,
-                amount=credits,
-                properties={
-                    "source": "standalone_v2",
-                    "source_id": str(eval_template.id),
-                    "raw_cost_usd": str(actual_cost),
-                    "log_id": str(api_call_log_row.log_id),
-                },
-            )
-        )
+            api_call_type = _get_api_call_type(model)
+            if emit is not None and UsageEvent is not None:
+                emit(
+                    UsageEvent(
+                        org_id=str(user.organization.id),
+                        event_type=api_call_type,
+                        amount=credits,
+                        properties={
+                            "source": "standalone_v2",
+                            "source_id": str(eval_template.id),
+                            "raw_cost_usd": str(actual_cost),
+                            "log_id": str(api_call_log_row.log_id) if api_call_log_row else None,
+                            **token_usage_properties(token_usage),
+                        },
+                    )
+                )
+
     except Exception:
         pass  # Metering failure must not break the action
 
@@ -469,15 +510,16 @@ def _run_protect(
         except Exception as e:
             logger.exception(f"Protect Eval | Failed: user: {user.id}, error: {e}")
 
-            api_call_log_row.status = APICallStatusChoices.ERROR.value
-            config_dict = json.loads(api_call_log_row.config)
-            config_dict.update(
-                {
-                    "output": {"output": None, "reason": str(e)},
-                }
-            )
-            api_call_log_row.config = json.dumps(config_dict)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                api_call_log_row.status = APICallStatusChoices.ERROR.value
+                config_dict = json.loads(api_call_log_row.config)
+                config_dict.update(
+                    {
+                        "output": {"output": None, "reason": str(e)},
+                    }
+                )
+                api_call_log_row.config = json.dumps(config_dict)
+                api_call_log_row.save()
 
             raise StandaloneEvaluationError(e)  # noqa: B904
 
@@ -490,19 +532,20 @@ def _run_protect(
             "eval_id": sdk_uuid,
         }
 
-        config_dict = json.loads(api_call_log_row.config)
-        config_dict.update(
-            {
-                "input": result.data or {},
-                "output": {
-                    "output": formatted["output"],
-                    "reason": formatted["reason"],
-                },
-            }
-        )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save()
+        if api_call_log_row is not None:
+            config_dict = json.loads(api_call_log_row.config)
+            config_dict.update(
+                {
+                    "input": result.data or {},
+                    "output": {
+                        "output": formatted["output"],
+                        "reason": formatted["reason"],
+                    },
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save()
 
         # Emit usage event with actual cost after eval completion
         try:
@@ -518,41 +561,56 @@ def _run_protect(
                 from ee.usage.services.emitter import emit
             except ImportError:
                 emit = None
+            try:
+                from ee.usage.utils.event_properties import token_usage_properties
+            except ImportError:
+                token_usage_properties = lambda token_usage: {}
 
-            billing_config = BillingConfig.get()
-            token_usage = (result.metadata or {}).get("token_usage", {})
-            from agentic_eval.core_evals.fi_utils.token_count_helper import (
-                calculate_total_cost,
-            )
-            # Resolve model alias for pricing lookup
-            if protect_flash:
-                protect_model = "protect_flash"
-            else:
-                try:
-                    from ee.protect.helper import ProtectHelper
-                    protect_model = ProtectHelper.resolve_alias(eval_template.name, is_flash=False)
-                except ImportError:
-                    protect_model = f"protect_{eval_template.name}"
-            cost_info = calculate_total_cost(protect_model, token_usage)
-            llm_cost = cost_info.get("total_cost", 0)
-            per_run_fee = billing_config.get_eval_per_run_fee()
-            actual_cost = llm_cost + per_run_fee
-            credits = billing_config.calculate_ai_credits(actual_cost)
+            billing_config = None
+            if BillingConfig is not None:
+                billing_config = BillingConfig.get()
 
-            emit(
-                UsageEvent(
-                    org_id=str(user.organization.id),
-                    event_type=_get_api_call_type(
-                        "protect_flash" if protect_flash else "protect"
-                    ),
-                    amount=credits,
-                    properties={
-                        "source": "standalone_v2",
-                        "source_id": str(eval_template.id),
-                        "raw_cost_usd": str(actual_cost),
-                    },
+            if billing_config is not None:
+                token_usage = (result.metadata or {}).get("token_usage", {})
+                from agentic_eval.core_evals.fi_utils.token_count_helper import (
+                    calculate_total_cost,
                 )
-            )
+
+                # Resolve model alias for pricing lookup
+                if protect_flash:
+                    protect_model = "protect_flash"
+                else:
+                    try:
+                        from ee.protect.helper import ProtectHelper
+
+                        protect_model = ProtectHelper.resolve_alias(
+                            eval_template.name, is_flash=False
+                        )
+                    except ImportError:
+                        protect_model = f"protect_{eval_template.name}"
+                cost_info = calculate_total_cost(protect_model, token_usage)
+                llm_cost = cost_info.get("total_cost", 0)
+                per_run_fee = billing_config.get_eval_per_run_fee()
+                actual_cost = llm_cost + per_run_fee
+                credits = billing_config.calculate_ai_credits(actual_cost)
+
+                if emit is not None and UsageEvent is not None:
+                    emit(
+                        UsageEvent(
+                            org_id=str(user.organization.id),
+                            event_type=_get_api_call_type(
+                                "protect_flash" if protect_flash else "protect"
+                            ),
+                            amount=credits,
+                            properties={
+                                "source": "standalone_v2",
+                                "source_id": str(eval_template.id),
+                                "raw_cost_usd": str(actual_cost),
+                                **token_usage_properties(token_usage),
+                            },
+                        )
+                    )
+
         except Exception:
             pass
 

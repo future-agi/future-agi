@@ -100,6 +100,7 @@ except ImportError:
     ConversationMetricsCalculator = None
     PhoneNumberService = None
     decide_processing_skip = None
+from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import (
     build_skipped_eval_output_payload,
     set_processing_skip_metadata,
@@ -110,10 +111,11 @@ from tfc.temporal.drop_in import temporal_activity
 
 # Note: run_eval_summary_task imported lazily to avoid circular imports
 from tfc.utils.error_codes import get_specific_error_message
+from tfc.constants.api_calls import APICallStatusChoices
+
 try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallType
+    from ee.usage.models.usage import APICallType
 except ImportError:
-    APICallStatusChoices = None
     APICallType = None
 try:
     from ee.usage.services.metering import check_usage
@@ -136,20 +138,24 @@ class TestExecutor:
     """
 
     def __init__(
-        self, monitor_interval: int = 30, system_voice_provider=ProviderChoices.VAPI
+        self,
+        monitor_interval: int = 30,
+        system_voice_provider=ProviderChoices.VAPI,
+        initialize_voice_service: bool = True,
     ):
         """
         Initialize the test executor
 
         Args:
             monitor_interval: How often to check test progress (seconds)
+            initialize_voice_service: Whether to initialize voice-provider services.
         """
         self.monitor_interval = monitor_interval
         self.running = False
         self.monitor_thread = None
         self.voice_service_manager = (
             VoiceServiceManager(system_voice_provider=system_voice_provider)
-            if VoiceServiceManager
+            if initialize_voice_service and VoiceServiceManager
             else None
         )
         self.system_voice_provider = system_voice_provider
@@ -4819,6 +4825,8 @@ class TestExecutor:
                             "error": "error",
                             "name": eval_config.name,
                             "timestamp": timezone.now().isoformat(),
+                            "output": None,
+                            "output_type": derive_kpi_output_type(eval_template),
                         }
                         call_execution.eval_outputs[str(eval_config.id)] = error_result
                         call_execution.eval_outputs[str(eval_config.id)][
@@ -4931,6 +4939,8 @@ class TestExecutor:
                 "error": "error",
                 "name": eval_config.name,
                 "timestamp": timezone.now().isoformat(),
+                "output": None,
+                "output_type": derive_kpi_output_type(eval_config.eval_template),
             }
             call_execution.eval_outputs[str(eval_config.id)] = error_result
             call_execution.eval_outputs[str(eval_config.id)][

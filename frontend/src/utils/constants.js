@@ -53,7 +53,7 @@ export const AdvanceNumberFilterOperators = [
   { label: "Greater Than Or Equal", value: "greater_than_or_equal" },
   { label: "Less Than Or Equal", value: "less_than_or_equal" },
   { label: "Between", value: "between" },
-  { label: "Not In Between", value: "not_in_between" },
+  { label: "Not Between", value: "not_between" },
 ];
 
 export const TextFilterOperators = [
@@ -124,6 +124,17 @@ export const RESPONSE_CODES = {
   TOKEN_INVALID: 498,
   INTERNAL_SERVER: 500,
   MAINTENANCE: 503,
+};
+
+export const LOGIN_ERROR_CODES = {
+  IP_BLOCKED: "LOGIN_IP_BLOCKED",
+  IP_RATE_LIMITED: "LOGIN_IP_RATE_LIMITED",
+  ACCOUNT_BLOCKED: "LOGIN_ACCOUNT_BLOCKED",
+  RECAPTCHA_FAILED: "LOGIN_RECAPTCHA_FAILED",
+  INVALID_CREDENTIALS: "LOGIN_INVALID_CREDENTIALS",
+  ACCOUNT_DEACTIVATED: "LOGIN_ACCOUNT_DEACTIVATED",
+  TOO_MANY_ATTEMPTS: "LOGIN_TOO_MANY_ATTEMPTS",
+  UNEXPECTED_ERROR: "LOGIN_UNEXPECTED_ERROR",
 };
 
 //Prompt Constants

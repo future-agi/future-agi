@@ -6,11 +6,11 @@ Handles: queryset building, eval type derivation, output type derivation,
 """
 
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import timedelta
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
 from django.db.models import Count, Q, QuerySet
-from django.utils import timezone
 
 from agentic_eval.core_evals.fi_evals.eval_type import (
     FunctionEvalTypeId,
@@ -18,12 +18,9 @@ from agentic_eval.core_evals.fi_evals.eval_type import (
     GroundedEvalTypeId,
     LlmEvalTypeId,
 )
-from model_hub.models.choices import EvalOutputType, EvalTemplateType, OwnerChoices
+from model_hub.models.choices import EvalOutputType, OwnerChoices
 from model_hub.types import EvalListFilters, ThirtyDayDataPoint
-try:
-    from ee.usage.models.usage import APICallStatusChoices
-except ImportError:
-    APICallStatusChoices = None
+from tfc.constants.api_calls import APICallStatusChoices
 
 if TYPE_CHECKING:
     from model_hub.models.evals_metric import EvalTemplate
@@ -68,6 +65,15 @@ _OUTPUT_TYPE_MAP = {
     EvalOutputType.REASON.value: "percentage",
     EvalOutputType.CHOICES.value: "deterministic",
     EvalOutputType.EMPTY.value: "percentage",
+}
+
+# Mapping from composite_child_axis to normalized output types
+# (mirrors the axis_map in derive_output_type)
+_COMPOSITE_AXIS_MAP = {
+    "pass_fail": "pass_fail",
+    "percentage": "percentage",
+    "choices": "deterministic",
+    "code": "pass_fail",
 }
 
 
@@ -149,13 +155,10 @@ def derive_output_type(template: "EvalTemplate") -> str:
     # Composite: use the axis as the output type
     if getattr(template, "template_type", "single") == "composite":
         axis = getattr(template, "composite_child_axis", "") or ""
-        axis_map = {
-            "pass_fail": "pass_fail",
-            "percentage": "percentage",
-            "choices": "deterministic",
-            "code": "pass_fail",
-        }
-        return axis_map.get(axis, "percentage")
+        return _COMPOSITE_AXIS_MAP.get(axis, "percentage")
+
+    if getattr(template, "output_type_normalized", None):
+        return template.output_type_normalized
 
     config = template.config or {}
     output = config.get("output", "")
@@ -212,12 +215,19 @@ def get_created_by_name(template: "EvalTemplate") -> str:
     try:
         from model_hub.models.evals_metric import EvalTemplateVersion
 
-        version = (
-            EvalTemplateVersion.objects.filter(eval_template=template)
-            .select_related("created_by")
-            .order_by("version_number")
-            .first()
-        )
+        # Prefer a prefetched, version_number-ordered list when the caller
+        # supplied one (e.g. via Prefetch(..., to_attr="_prefetched_versions"))
+        # so we don't issue a per-row query inside a list loop (N+1).
+        prefetched_versions = getattr(template, "_prefetched_versions", None)
+        if prefetched_versions is not None:
+            version = prefetched_versions[0] if prefetched_versions else None
+        else:
+            version = (
+                EvalTemplateVersion.objects.filter(eval_template=template)
+                .select_related("created_by")
+                .order_by("version_number")
+                .first()
+            )
         if version and version.created_by:
             name = getattr(version.created_by, "name", "") or ""
             if name.strip():
@@ -242,9 +252,7 @@ def build_user_eval_list_items(
         deleted=False,
     )
     if is_experiment_scope:
-        column_qs = column_qs.filter(
-            source=SourceChoices.EXPERIMENT_EVALUATION.value
-        )
+        column_qs = column_qs.filter(source=SourceChoices.EXPERIMENT_EVALUATION.value)
     column_rows = list(column_qs.values("source_id", "id", "status"))
     column_map = {row["source_id"]: row["id"] for row in column_rows}
     column_status_map = {row["source_id"]: row["status"] for row in column_rows}
@@ -270,6 +278,7 @@ def build_user_eval_list_items(
             "eval_required_keys": (template.config or {}).get("required_keys", []),
             "eval_template_tags": template.eval_tags,
             "description": template.description,
+            "config": user_eval.config or {},
             "model": run_config.get("model")
             or (user_eval.config or {}).get("config", {}).get("model", ""),
             "column_id": column_map.get(str(user_eval.id)),
@@ -370,32 +379,60 @@ def build_eval_list_queryset(
     # Advanced filters
     if filters:
         # Support both dict (from DRF serializer) and Pydantic object
-        _f = lambda key: (
-            filters.get(key)
-            if isinstance(filters, dict)
-            else getattr(filters, key, None)
-        )
+        def _f(key):
+            if isinstance(filters, dict):
+                return filters.get(key)
+            return getattr(filters, key, None)
 
         # Output type filter
         if _f("output_type"):
-            reverse_map = {v: k for k, v in _OUTPUT_TYPE_MAP.items()}
-            output_values = [
-                reverse_map.get(ot) for ot in _f("output_type") if ot in reverse_map
+            filter_types = set(_f("output_type"))
+            # Singles: collect ALL raw values that map to requested types
+            include_raw = [
+                raw
+                for raw, normalized in _OUTPUT_TYPE_MAP.items()
+                if normalized in filter_types
             ]
-            if output_values:
-                qs = qs.filter(config__output__in=output_values)
+            # Composites: collect axis values that map to requested types
+            include_axes = [
+                axis
+                for axis, norm in _COMPOSITE_AXIS_MAP.items()
+                if norm in filter_types
+            ]
+            if "percentage" in filter_types:
+                include_axes.append("")  # empty axis defaults to percentage
+            parts = []
+            if include_raw:
+                parts.append(
+                    Q(config__output__in=include_raw) & ~Q(template_type="composite")
+                )
+            if include_axes:
+                parts.append(
+                    Q(template_type="composite", composite_child_axis__in=include_axes)
+                )
+            if parts:
+                combined = parts[0]
+                for p in parts[1:]:
+                    combined |= p
+                qs = qs.filter(combined)
 
         # Tags filter
         if _f("tags"):
             qs = qs.filter(eval_tags__overlap=_f("tags"))
+        if _f("tags_not"):
+            qs = qs.exclude(eval_tags__overlap=_f("tags_not"))
 
         # Template type filter (single/composite)
         if _f("template_type"):
             qs = qs.filter(template_type__in=_f("template_type"))
+        if _f("template_type_not"):
+            qs = qs.exclude(template_type__in=_f("template_type_not"))
 
         # Exact-name multi-select (dropdown picker)
         if _f("names"):
             qs = qs.filter(name__in=_f("names"))
+        if _f("names_not"):
+            qs = qs.exclude(name__in=_f("names_not"))
 
         # Created by filter (user names)
         if _f("created_by"):
@@ -428,6 +465,59 @@ def build_eval_list_queryset(
                     | Q(id__in=version_template_ids_email)
                     | org_q
                 )
+
+        # Output type negation filter
+        if _f("output_type_not"):
+            excluded_types = set(_f("output_type_not"))
+            # Singles: collect raw config.output values to exclude
+            exclude_raw = [
+                raw
+                for raw, normalized in _OUTPUT_TYPE_MAP.items()
+                if normalized in excluded_types
+            ]
+            # Composites: collect axis values to exclude
+            exclude_axes = [
+                axis
+                for axis, norm in _COMPOSITE_AXIS_MAP.items()
+                if norm in excluded_types
+            ]
+            if "percentage" in excluded_types:
+                exclude_axes.append("")  # empty axis defaults to percentage
+            parts = []
+            if exclude_raw:
+                parts.append(
+                    Q(config__output__in=exclude_raw) & ~Q(template_type="composite")
+                )
+            if exclude_axes:
+                parts.append(
+                    Q(template_type="composite", composite_child_axis__in=exclude_axes)
+                )
+            if parts:
+                combined = parts[0]
+                for p in parts[1:]:
+                    combined |= p
+                qs = qs.exclude(combined)
+
+        # Created by exclusion filter
+        if _f("created_by_not"):
+            from model_hub.models.evals_metric import EvalTemplateVersion
+
+            excluded_by_list = _f("created_by_not")
+            exc_ids = (
+                EvalTemplateVersion.all_objects.filter(
+                    is_default=True,
+                    deleted=False,
+                )
+                .filter(
+                    Q(created_by__name__in=excluded_by_list)
+                    | Q(created_by__email__in=excluded_by_list)
+                )
+                .values_list("eval_template_id", flat=True)
+            )
+            org_q = Q(organization__display_name__in=excluded_by_list) | Q(
+                organization__name__in=excluded_by_list
+            )
+            qs = qs.exclude(Q(id__in=exc_ids) | org_q)
 
         # Note: eval_type filter is applied in-memory after fetching because
         # eval_type is derived from multiple fields (config + tags), not a single

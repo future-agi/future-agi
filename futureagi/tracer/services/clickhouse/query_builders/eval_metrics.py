@@ -18,7 +18,7 @@ Supports three eval output types:
   appears in ``output_str_list``, expressed as a percentage of total evals.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
@@ -89,15 +89,23 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         self.eval_output_type = eval_output_type
         self.eval_name = eval_name or "Unknown"
         self.choices = choices or []
-        self.use_preaggregated = use_preaggregated
         self.filters = filters or []
+        # Pre-aggregated eval rows do not carry arbitrary trace/span filter
+        # dimensions. If filters are present, force the raw logger path so the
+        # graph reflects the filtered result set.
+        self.use_preaggregated = use_preaggregated and not self.filters
 
-        # Default time range
+        # Graph endpoints historically default to a compact 7-day window.
+        # BaseQueryBuilder's list-view fallback is intentionally much wider,
+        # so only use parse_time_range here when the caller supplied filters.
         if start_date is None or end_date is None:
-            from datetime import timedelta
-
-            self.end_date = end_date or datetime.utcnow()
-            self.start_date = start_date or (self.end_date - timedelta(days=7))
+            if self.filters:
+                parsed_start, parsed_end = self.parse_time_range(self.filters)
+            else:
+                parsed_end = datetime.utcnow()
+                parsed_start = parsed_end - timedelta(days=7)
+            self.start_date = start_date or parsed_start
+            self.end_date = end_date or parsed_end
         else:
             self.start_date = start_date
             self.end_date = end_date
@@ -114,14 +122,14 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             ClickHouseFilterBuilder,
         )
 
-        fb = ClickHouseFilterBuilder(project_ids=[self.project_id])
-        extra_where = fb.translate(self.filters)
+        fb = ClickHouseFilterBuilder(project_id=self.project_id)
+        extra_where, extra_params = fb.translate(self.filters)
         if extra_where:
-            self.params.update(fb.params)
+            self.params.update(extra_params)
             return (
                 f"AND trace_id IN ("
                 f"SELECT DISTINCT trace_id FROM spans "
-                f"WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0 "
+                f"WHERE project_id = %(project_id)s AND is_deleted = 0 "
                 f"AND {extra_where})"
             )
         return ""
@@ -208,6 +216,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         FROM {self.RAW_TABLE} FINAL
         WHERE project_id = %(project_id)s
           AND _peerdb_is_deleted = 0
+          AND (deleted = 0 OR deleted IS NULL)
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s
@@ -257,6 +266,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         FROM {self.RAW_TABLE} FINAL
         WHERE project_id = %(project_id)s
           AND _peerdb_is_deleted = 0
+          AND (deleted = 0 OR deleted IS NULL)
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s
@@ -282,14 +292,17 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             # No choices defined -- return a simple count query
             return self._build_score_raw()
 
-        # Build per-choice columns:
-        # countIf(has(output_str_list, 'choice_name')) * 100.0 / count()
+        # Build per-choice columns. ClickHouse stores output_str_list as a JSON
+        # string, so parse it before calling has(); output_str is kept as the
+        # single-choice fallback for older rows/imports.
         choice_cols: List[str] = []
+        choice_array_expr = "JSONExtract(output_str_list, 'Array(String)')"
         for i, choice in enumerate(self.choices):
             param_name = f"choice_{i}"
             self.params[param_name] = choice
             choice_cols.append(
-                f"countIf(has(output_str_list, %({param_name})s)) * 100.0 "
+                f"countIf(has({choice_array_expr}, %({param_name})s) "
+                f"OR output_str = %({param_name})s) * 100.0 "
                 f"/ greatest(count(), 1) AS `choice_{i}`"
             )
 
@@ -304,6 +317,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         FROM {self.RAW_TABLE} FINAL
         WHERE project_id = %(project_id)s
           AND _peerdb_is_deleted = 0
+          AND (deleted = 0 OR deleted IS NULL)
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s

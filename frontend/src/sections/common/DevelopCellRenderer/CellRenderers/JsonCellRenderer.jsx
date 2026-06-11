@@ -4,7 +4,6 @@ import PropTypes from "prop-types";
 import CustomTooltip from "src/components/tooltip";
 import RenderMeta from "../RenderMeta";
 import CustomJsonViewer from "./CustomJsonCellViewer";
-import logger from "src/utils/logger";
 
 const JsonCellRenderer = ({
   isHover,
@@ -15,12 +14,21 @@ const JsonCellRenderer = ({
   metadata,
   valueInfos,
 }) => {
+  const isBlankString = typeof value === "string" && value.trim() === "";
+  const hasRenderableValue =
+    value !== null && value !== undefined && !isBlankString;
   let parsedJson = value;
+  let shouldRenderPlainText = false;
+
   if (typeof value === "string") {
-    try {
-      parsedJson = JSON.parse(value);
-    } catch (err) {
-      logger.error("Invalid JSON string:", value);
+    if (isBlankString) {
+      parsedJson = null;
+    } else {
+      try {
+        parsedJson = JSON.parse(value);
+      } catch (err) {
+        shouldRenderPlainText = true;
+      }
     }
   }
 
@@ -56,7 +64,12 @@ const JsonCellRenderer = ({
             },
           }}
         >
-          <CustomJsonViewer object={parsedJson} />
+          {hasRenderableValue &&
+            (shouldRenderPlainText ? (
+              <Box component="span">{value}</Box>
+            ) : (
+              <CustomJsonViewer object={parsedJson} />
+            ))}
         </Box>
 
         {isHover && (
@@ -81,7 +94,7 @@ const JsonCellRenderer = ({
 JsonCellRenderer.propTypes = {
   isHover: PropTypes.bool,
   value: PropTypes.any,
-  valueReason: PropTypes.string,
+  valueReason: PropTypes.array,
   formattedValueReason: PropTypes.func,
   originType: PropTypes.string,
   metadata: PropTypes.object,

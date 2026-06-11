@@ -5,6 +5,8 @@ import {
   MenuItem,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
@@ -43,6 +45,7 @@ export default function AnnotationQueuesView() {
     page: 0,
     limit: 10,
     include_counts: true,
+    archived: false,
   });
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -88,6 +91,15 @@ export default function AnnotationQueuesView() {
     setFilters((prev) => ({ ...prev, limit: newRowsPerPage, page: 0 }));
   }, []);
 
+  const handleArchiveViewChange = useCallback((_, value) => {
+    if (value === null) return;
+    setFilters((prev) => ({
+      ...prev,
+      archived: value === "archived",
+      page: 0,
+    }));
+  }, []);
+
   const handleEdit = useCallback((queue) => {
     setEditQueue(queue);
     setDrawerOpen(true);
@@ -108,23 +120,43 @@ export default function AnnotationQueuesView() {
     setArchiveQueue(queue);
   }, []);
 
+  const handleRestore = useCallback(
+    (queue) => {
+      restoreQueue(queue.id, {
+        onSuccess: () => {
+          enqueueSnackbar("Queue restored.", { variant: "success" });
+        },
+      });
+    },
+    [restoreQueue],
+  );
+
   const handleConfirmDelete = useCallback(() => {
     if (!archiveQueue) return;
     deleteQueue(archiveQueue.id, {
       onSuccess: () => {
         const queueId = archiveQueue.id;
-        enqueueSnackbar("Queue deleted", {
-          variant: "info",
-          action: () => (
-            <Button
-              color="inherit"
-              size="small"
-              onClick={() => restoreQueue(queueId)}
-            >
-              Undo
-            </Button>
-          ),
-        });
+        // Soft archive — explicit Undo button so users who clicked the
+        // wrong queue can recover instantly. The default-queue
+        // restore-on-recreate happens server-side too, but this is the
+        // explicit one-click path.
+        enqueueSnackbar(
+          archiveQueue.is_default
+            ? "Default queue archived. Rules paused; will restore on next visit."
+            : "Queue archived. Rules paused.",
+          {
+            variant: "info",
+            action: () => (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => restoreQueue(queueId)}
+              >
+                Undo
+              </Button>
+            ),
+          },
+        );
         setArchiveQueue(null);
       },
     });
@@ -163,7 +195,11 @@ export default function AnnotationQueuesView() {
   }, []);
 
   const isEmpty =
-    !isLoading && results.length === 0 && !filters.search && !filters.status;
+    !filters.archived &&
+    !isLoading &&
+    results.length === 0 &&
+    !filters.search &&
+    !filters.status;
 
   return (
     <Box
@@ -271,6 +307,24 @@ export default function AnnotationQueuesView() {
                 "& .MuiOutlinedInput-root": { height: "30px" },
               }}
             />
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={filters.archived ? "archived" : "active"}
+              onChange={handleArchiveViewChange}
+              sx={{
+                height: 30,
+                "& .MuiToggleButton-root": {
+                  px: 1.25,
+                  borderRadius: "4px",
+                  typography: "s2",
+                  fontWeight: "fontWeightMedium",
+                },
+              }}
+            >
+              <ToggleButton value="active">Active</ToggleButton>
+              <ToggleButton value="archived">Archived</ToggleButton>
+            </ToggleButtonGroup>
             <TextField
               size="small"
               select
@@ -313,7 +367,9 @@ export default function AnnotationQueuesView() {
             onEdit={handleEdit}
             onDuplicate={handleDuplicate}
             onArchive={handleArchive}
+            onRestore={handleRestore}
             onStatusChange={handleStatusChange}
+            archivedView={filters.archived}
           />
         </Box>
       )}
@@ -327,15 +383,18 @@ export default function AnnotationQueuesView() {
       <ConfirmDialog
         open={!!archiveQueue}
         onClose={() => setArchiveQueue(null)}
-        title="Delete Queue"
+        title="Archive Queue"
         content={
           <>
             <Typography>
-              Are you sure you want to delete{" "}
-              <strong>{archiveQueue?.name}</strong>?
+              Archive <strong>{archiveQueue?.name}</strong>?
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              Deleting will stop all annotation work on this queue.
+              Automation rules will pause and items will be hidden, but
+              everything stays recoverable.
+              {archiveQueue?.is_default
+                ? " Visiting the project page again will restore this queue automatically."
+                : " You can restore from the archived tab any time."}
             </Typography>
           </>
         }
@@ -343,11 +402,11 @@ export default function AnnotationQueuesView() {
           <LoadingButton
             size="small"
             variant="contained"
-            color="error"
+            color="warning"
             loading={isDeleting}
             onClick={handleConfirmDelete}
           >
-            Delete
+            Archive
           </LoadingButton>
         }
       />

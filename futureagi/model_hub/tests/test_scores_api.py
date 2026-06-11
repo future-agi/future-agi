@@ -12,10 +12,8 @@ Tests cover:
 """
 
 import uuid
-from unittest.mock import patch
 
 import pytest
-from django.conf import settings as django_settings
 from rest_framework import status
 
 from model_hub.models.annotation_queues import (
@@ -179,6 +177,36 @@ def numeric_label(db, organization, workspace, observe_project):
     )
 
 
+def create_same_org_other_workspace_trace(user):
+    from accounts.models.workspace import Workspace
+    from model_hub.models.ai_model import AIModel
+    from tracer.models.project import Project
+    from tracer.models.trace import Trace
+
+    hidden_workspace = Workspace.objects.create(
+        name="Hidden Score Workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    hidden_project = Project.objects.create(
+        name="Hidden Score Project",
+        organization=user.organization,
+        workspace=hidden_workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+        user=user,
+    )
+    hidden_trace = Trace.objects.create(
+        project=hidden_project,
+        name="Hidden Score Trace",
+        input={"prompt": "hidden"},
+        output={"response": "hidden"},
+    )
+    return hidden_workspace, hidden_project, hidden_trace
+
+
 # ---------------------------------------------------------------------------
 # 1 – Score CRUD
 # ---------------------------------------------------------------------------
@@ -186,7 +214,6 @@ def numeric_label(db, organization, workspace, observe_project):
 
 @pytest.mark.django_db
 class TestCreateScore:
-
     def test_create_score_on_observation_span(
         self, auth_client, observation_span, star_label
     ):
@@ -259,6 +286,19 @@ class TestCreateScore:
         resp = auth_client.post(SCORE_URL, payload, format="json")
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_create_rejects_legacy_label_alias(
+        self, auth_client, observation_span, star_label
+    ):
+        payload = {
+            "source_type": "observation_span",
+            "source_id": observation_span.id,
+            "labelId": str(star_label.id),
+            "value": {"rating": 3},
+        }
+        resp = auth_client.post(SCORE_URL, payload, format="json")
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "labelId" in str(resp.data)
+
     def test_source_not_found(self, auth_client, star_label):
         """Non-existent source returns 404."""
         payload = {
@@ -281,10 +321,37 @@ class TestCreateScore:
         resp = auth_client.post(SCORE_URL, payload, format="json")
         assert resp.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_create_rejects_same_org_other_workspace_trace(
+        self, auth_client, user, star_label
+    ):
+        """Known trace ids from another same-org workspace cannot be scored."""
+        _, hidden_project, hidden_trace = create_same_org_other_workspace_trace(user)
+
+        resp = auth_client.post(
+            SCORE_URL,
+            {
+                "source_type": "trace",
+                "source_id": str(hidden_trace.id),
+                "label_id": str(star_label.id),
+                "value": {"rating": 4},
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.data
+        assert not Score.no_workspace_objects.filter(
+            trace=hidden_trace,
+            deleted=False,
+        ).exists()
+        assert not AnnotationQueue.no_workspace_objects.filter(
+            project=hidden_project,
+            is_default=True,
+            deleted=False,
+        ).exists()
+
 
 @pytest.mark.django_db
 class TestBulkCreateScores:
-
     def test_bulk_create(self, auth_client, observation_span, star_label, thumbs_label):
         """Bulk create multiple scores on one source."""
         payload = {
@@ -319,10 +386,276 @@ class TestBulkCreateScores:
         assert len(result["scores"]) == 1
         assert len(result["errors"]) == 1
 
+    def test_bulk_create_rejects_legacy_nested_label_alias(
+        self, auth_client, observation_span, star_label
+    ):
+        payload = {
+            "source_type": "observation_span",
+            "source_id": observation_span.id,
+            "scores": [
+                {"labelId": str(star_label.id), "value": {"rating": 4}},
+            ],
+        }
+        resp = auth_client.post(f"{SCORE_URL}bulk/", payload, format="json")
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "labelId" in str(resp.data)
+
+    def test_trace_bulk_create_can_save_notes_on_root_span(
+        self, auth_client, trace, observation_span, thumbs_label, user
+    ):
+        """Call drawer labels save on trace while item notes stay on root span."""
+        from tracer.models.span_notes import SpanNotes
+
+        payload = {
+            "source_type": "trace",
+            "source_id": str(trace.id),
+            "scores": [
+                {"label_id": str(thumbs_label.id), "value": {"value": "up"}},
+            ],
+            "span_notes": "whole call note",
+            "span_notes_source_id": observation_span.id,
+        }
+        resp = auth_client.post(f"{SCORE_URL}bulk/", payload, format="json")
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert Score.objects.filter(
+            trace=trace,
+            label=thumbs_label,
+            annotator=user,
+            deleted=False,
+        ).exists()
+        assert (
+            SpanNotes.objects.get(
+                span=observation_span,
+                created_by_user=user,
+            ).notes
+            == "whole call note"
+        )
+
+        clear_resp = auth_client.post(
+            f"{SCORE_URL}bulk/",
+            {**payload, "span_notes": ""},
+            format="json",
+        )
+
+        assert clear_resp.status_code == status.HTTP_200_OK, clear_resp.data
+        assert not SpanNotes.objects.filter(
+            span=observation_span,
+            created_by_user=user,
+        ).exists()
+
+    def test_for_source_does_not_prefill_orphan_span_notes(
+        self,
+        auth_client,
+        observe_project,
+        trace,
+        observation_span,
+        thumbs_label,
+        user,
+        workspace,
+    ):
+        """A pre-existing SpanNote on the root span must NOT prefill a
+        fresh queue's editable ``existing_notes`` box. The SpanNote
+        belongs to a different (or no) queue context — bleeding it into
+        every queue containing the same span is the leak the per-queue
+        scoping work removes. The note is still surfaced as read-only
+        context in the ``span_notes`` list."""
+        import json
+
+        from tracer.models.span_notes import SpanNotes
+
+        queue = AnnotationQueue.objects.create(
+            name="Trace call queue",
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            project=observe_project,
+            organization=user.organization,
+            workspace=workspace,
+            created_by=user,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=trace,
+            organization=user.organization,
+            workspace=workspace,
+        )
+        SpanNotes.objects.create(
+            span=observation_span,
+            notes="whole call note",
+            created_by_user=user,
+            created_by_annotator=user.email,
+        )
+
+        resp = auth_client.get(
+            "/model-hub/annotation-queues/for-source/",
+            {
+                "sources": json.dumps(
+                    [
+                        {
+                            "source_type": "trace",
+                            "source_id": str(trace.id),
+                            "span_notes_source_id": observation_span.id,
+                        }
+                    ]
+                )
+            },
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert len(result) == 1
+        assert result[0]["item"]["source_id"] == str(trace.id)
+        # Editable existing_notes is empty for this queue — the SpanNote
+        # was not written via this queue's flow.
+        assert result[0]["existing_notes"] == ""
+        # The requester's own SpanNote is filtered out of the read-only
+        # span_notes list to avoid the "you see your note but can't edit
+        # it" UX trap — they'd only see this if a *different* user had
+        # written a SpanNote on the same span.
+        assert not any(
+            note.get("notes") == "whole call note" for note in result[0]["span_notes"]
+        )
+        assert result[0]["span_notes_source_id"] == observation_span.id
+
+    def test_queue_annotate_detail_prefills_and_saves_item_notes(
+        self,
+        auth_client,
+        observe_project,
+        trace,
+        observation_span,
+        thumbs_label,
+        user,
+        workspace,
+    ):
+        """Queue workspace whole-item notes use the trace root span."""
+        from tracer.models.span_notes import SpanNotes
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # The annotate-detail endpoint reads the root span from CH
+        # to resolve span_notes_source_id for trace-source items.
+        seed_ch_span(observation_span)
+
+        queue = AnnotationQueue.objects.create(
+            name="Trace workspace queue",
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            project=observe_project,
+            organization=user.organization,
+            workspace=workspace,
+            created_by=user,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=trace,
+            organization=user.organization,
+            workspace=workspace,
+        )
+        SpanNotes.objects.create(
+            span=observation_span,
+            notes="existing whole item note",
+            created_by_user=user,
+            created_by_annotator=user.email,
+        )
+
+        detail_resp = auth_client.get(
+            f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/annotate-detail/",
+        )
+
+        assert detail_resp.status_code == status.HTTP_200_OK, detail_resp.data
+        detail = detail_resp.data["result"]
+        # Editable existing_notes is strictly per-queue: pre-existing
+        # SpanNote does not prefill this queue's notes box anymore.
+        # The requester's own SpanNote is also filtered from the read-only
+        # span_notes list (would otherwise be a "see-but-can't-edit"
+        # UX trap). It would appear there only if a *different* user
+        # had created the SpanNote on the same span.
+        assert detail["existing_notes"] == ""
+        assert not any(
+            note.get("notes") == "existing whole item note"
+            for note in detail.get("span_notes", [])
+        )
+        assert detail["span_notes_source_id"] == observation_span.id
+
+        submit_resp = auth_client.post(
+            f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/annotations/submit/",
+            {
+                "annotations": [
+                    {
+                        "label_id": str(thumbs_label.id),
+                        "value": {"value": "up"},
+                    }
+                ],
+                "item_notes": "updated whole item note",
+            },
+            format="json",
+        )
+
+        assert submit_resp.status_code == status.HTTP_200_OK, submit_resp.data
+        assert (
+            SpanNotes.objects.get(
+                span=observation_span,
+                created_by_user=user,
+            ).notes
+            == "updated whole item note"
+        )
+
+    def test_for_source_scores_include_queue_target(
+        self,
+        auth_client,
+        observe_project,
+        trace,
+        thumbs_label,
+        user,
+        workspace,
+    ):
+        """Read-only annotation tables can deep-link back to the queue item."""
+        queue = AnnotationQueue.objects.create(
+            name="Trace linked score queue",
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            project=observe_project,
+            organization=user.organization,
+            workspace=workspace,
+            created_by=user,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=trace,
+            organization=user.organization,
+            workspace=workspace,
+        )
+
+        submit_resp = auth_client.post(
+            f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/annotations/submit/",
+            {
+                "annotations": [
+                    {
+                        "label_id": str(thumbs_label.id),
+                        "value": {"value": "up"},
+                    }
+                ]
+            },
+            format="json",
+        )
+        assert submit_resp.status_code == status.HTTP_200_OK, submit_resp.data
+
+        resp = auth_client.get(
+            f"{SCORE_URL}for-source/",
+            {"source_type": "trace", "source_id": str(trace.id)},
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert len(result) == 1
+        assert str(result[0]["queue_item"]) == str(item.id)
+        assert result[0]["queue_id"] == str(queue.id)
+
 
 @pytest.mark.django_db
 class TestListScores:
-
     def test_list_scores_empty(self, auth_client):
         """Empty list returns 200."""
         resp = auth_client.get(SCORE_URL)
@@ -351,10 +684,139 @@ class TestListScores:
         )
         assert resp.status_code == status.HTTP_200_OK
 
+    def test_list_scores_rejects_legacy_source_alias(
+        self, auth_client, observation_span
+    ):
+        resp = auth_client.get(
+            SCORE_URL,
+            {
+                "sourceType": "observation_span",
+                "source_id": observation_span.id,
+            },
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+
+
+@pytest.mark.django_db
+class TestGeneratedScoreRoutes:
+    def test_detail_put_patch_and_list_round_trip(
+        self, auth_client, observation_span, star_label
+    ):
+        created_resp = auth_client.post(
+            SCORE_URL,
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "label_id": str(star_label.id),
+                "value": {"rating": 3},
+                "notes": "initial note",
+            },
+            format="json",
+        )
+        assert created_resp.status_code == status.HTTP_200_OK, created_resp.data
+        score_id = created_resp.data["result"]["id"]
+
+        detail_resp = auth_client.get(f"{SCORE_URL}{score_id}/")
+        assert detail_resp.status_code == status.HTTP_200_OK, detail_resp.data
+        assert detail_resp.data["id"] == score_id
+        assert detail_resp.data["source_type"] == "observation_span"
+
+        list_resp = auth_client.get(
+            SCORE_URL,
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "label_id": str(star_label.id),
+            },
+        )
+        assert list_resp.status_code == status.HTTP_200_OK, list_resp.data
+        assert any(row["id"] == score_id for row in list_resp.data["results"])
+
+        put_resp = auth_client.put(
+            f"{SCORE_URL}{score_id}/",
+            {
+                "value": {"rating": 4},
+                "notes": "put note",
+                "score_source": "human",
+            },
+            format="json",
+        )
+        assert put_resp.status_code == status.HTTP_200_OK, put_resp.data
+        assert put_resp.data["value"] == {"rating": 4}
+        assert put_resp.data["notes"] == "put note"
+        assert put_resp.data["source_type"] == "observation_span"
+
+        patch_resp = auth_client.patch(
+            f"{SCORE_URL}{score_id}/",
+            {"notes": "patched note"},
+            format="json",
+        )
+        assert patch_resp.status_code == status.HTTP_200_OK, patch_resp.data
+        assert patch_resp.data["value"] == {"rating": 4}
+        assert patch_resp.data["notes"] == "patched note"
+
+    def test_put_requires_value_and_patch_rejects_source_changes(
+        self, auth_client, observation_span, star_label
+    ):
+        created_resp = auth_client.post(
+            SCORE_URL,
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "label_id": str(star_label.id),
+                "value": {"rating": 3},
+            },
+            format="json",
+        )
+        score_id = created_resp.data["result"]["id"]
+
+        put_resp = auth_client.put(
+            f"{SCORE_URL}{score_id}/",
+            {"notes": "missing value"},
+            format="json",
+        )
+        assert put_resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "value" in str(put_resp.data)
+
+        patch_resp = auth_client.patch(
+            f"{SCORE_URL}{score_id}/",
+            {"source_type": "trace"},
+            format="json",
+        )
+        assert patch_resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "source_type" in str(patch_resp.data)
+
+    def test_same_org_other_workspace_score_detail_and_update_are_hidden(
+        self, auth_client, user, star_label
+    ):
+        hidden_workspace, _, hidden_trace = create_same_org_other_workspace_trace(user)
+        hidden_score = Score.no_workspace_objects.create(
+            source_type="trace",
+            trace=hidden_trace,
+            label=star_label,
+            value={"rating": 2},
+            annotator=user,
+            organization=user.organization,
+            workspace=hidden_workspace,
+        )
+
+        detail_resp = auth_client.get(f"{SCORE_URL}{hidden_score.id}/")
+        assert detail_resp.status_code == status.HTTP_404_NOT_FOUND
+
+        patch_resp = auth_client.patch(
+            f"{SCORE_URL}{hidden_score.id}/",
+            {"notes": "blocked"},
+            format="json",
+        )
+        assert patch_resp.status_code == status.HTTP_404_NOT_FOUND
+
+        hidden_score.refresh_from_db()
+        assert hidden_score.notes in (None, "")
+
 
 @pytest.mark.django_db
 class TestForSourceEndpoint:
-
     def test_for_source(self, auth_client, observation_span, star_label, thumbs_label):
         """Get all scores for a specific source."""
         for label, val in [
@@ -387,10 +849,23 @@ class TestForSourceEndpoint:
         resp = auth_client.get(f"{SCORE_URL}for-source/")
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_for_source_rejects_legacy_source_alias(
+        self, auth_client, observation_span
+    ):
+        resp = auth_client.get(
+            f"{SCORE_URL}for-source/",
+            {
+                "sourceType": "observation_span",
+                "sourceId": observation_span.id,
+            },
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+        assert "sourceId" in str(resp.data)
+
 
 @pytest.mark.django_db
 class TestDeleteScore:
-
     def test_soft_delete(self, auth_client, observation_span, star_label):
         """Soft-delete a score."""
         resp = auth_client.post(
@@ -420,7 +895,6 @@ class TestDeleteScore:
 
 @pytest.mark.django_db
 class TestObservationSpanAnnotationCreatesScore:
-
     def test_add_annotation_creates_score(
         self, auth_client, observation_span, star_label
     ):
@@ -452,7 +926,6 @@ class TestObservationSpanAnnotationCreatesScore:
 
 @pytest.mark.django_db
 class TestAutoCompleteQueueItems:
-
     @pytest.fixture
     def queue_setup(
         self,
@@ -498,34 +971,55 @@ class TestAutoCompleteQueueItems:
         thumbs_label,
         queue_setup,
     ):
-        """Queue item auto-completes when all required labels are scored."""
+        """Queue item auto-completes when all required labels are scored
+        *in that queue's context*.
+
+        Scores are now per-queue: the caller must pass ``queue_item_id``
+        (or score via the queue's submit endpoint) so the Score lands in
+        the right queue. An "inline" /scores/ POST without queue_item_id
+        attributes the score to the source's default queue, which leaves
+        a non-default test queue's item pending — that's the intended
+        per-queue isolation, exercised by ``test_no_auto_complete_partial_scoring``.
+
+        Auto-complete still runs in ``transaction.on_commit`` (so a
+        side-effect failure can't poison the Score write transaction).
+        Pytest's default ``django_db`` mark wraps the test in a
+        transaction that rolls back, so on_commit hooks never fire. Wrap
+        calls in ``captureOnCommitCallbacks(execute=True)`` to force them.
+        """
+        from django.test import TestCase
+
         queue, item = queue_setup
 
-        # Score first label
-        auth_client.post(
-            SCORE_URL,
-            {
-                "source_type": "observation_span",
-                "source_id": observation_span.id,
-                "label_id": str(star_label.id),
-                "value": {"rating": 4},
-            },
-            format="json",
-        )
+        # Score first label (attribute to the test queue's item explicitly).
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            auth_client.post(
+                SCORE_URL,
+                {
+                    "source_type": "observation_span",
+                    "source_id": observation_span.id,
+                    "label_id": str(star_label.id),
+                    "value": {"rating": 4},
+                    "queue_item_id": str(item.id),
+                },
+                format="json",
+            )
         item.refresh_from_db()
         assert item.status != QueueItemStatus.COMPLETED.value
 
-        # Score second required label → should auto-complete
-        auth_client.post(
-            SCORE_URL,
-            {
-                "source_type": "observation_span",
-                "source_id": observation_span.id,
-                "label_id": str(thumbs_label.id),
-                "value": {"value": "up"},
-            },
-            format="json",
-        )
+        # Score second required label in the same queue → should auto-complete.
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            auth_client.post(
+                SCORE_URL,
+                {
+                    "source_type": "observation_span",
+                    "source_id": observation_span.id,
+                    "label_id": str(thumbs_label.id),
+                    "value": {"value": "up"},
+                    "queue_item_id": str(item.id),
+                },
+                format="json",
+            )
         item.refresh_from_db()
         assert item.status == QueueItemStatus.COMPLETED.value
 
@@ -560,7 +1054,6 @@ class TestAutoCompleteQueueItems:
 
 @pytest.mark.django_db
 class TestSessionScores:
-
     @pytest.fixture
     def session_with_span(self, db, observe_project, trace_session):
         from datetime import timedelta
@@ -578,7 +1071,7 @@ class TestSessionScores:
             output={"response": "hey"},
         )
         span_id = f"session_span_{uuid.uuid4().hex[:10]}"
-        ObservationSpan.objects.create(
+        span = ObservationSpan.objects.create(
             id=span_id,
             project=observe_project,
             trace=t,
@@ -595,7 +1088,7 @@ class TestSessionScores:
             prompt_tokens=10,
             completion_tokens=5,
         )
-        return t
+        return span
 
     def test_session_list_includes_score_columns(
         self,
@@ -606,6 +1099,12 @@ class TestSessionScores:
         session_with_span,
     ):
         """Session list API returns annotation metric columns in config."""
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # list_sessions reads session aggregation data from CH — seed the
+        # span so the session appears in results and triggers config building.
+        seed_ch_span(session_with_span)
+
         # Create a score on the session
         auth_client.post(
             SCORE_URL,
@@ -645,7 +1144,6 @@ class TestSessionScores:
 
 @pytest.mark.django_db
 class TestBackfillCommand:
-
     def test_backfill_trace_annotations(
         self,
         db,

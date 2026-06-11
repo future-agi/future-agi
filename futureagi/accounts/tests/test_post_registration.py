@@ -43,23 +43,17 @@ class TestProcessPostRegistration:
 class TestRunPostRegistration:
     """Tests for _run_post_registration implementation function."""
 
-    @patch("accounts.utils.create_demo_traces_and_spans")
-    @patch("accounts.utils.upload_demo_dataset")
     @patch("accounts.utils.send_slack_notification")
     @patch("accounts.utils.send_hubspot_notification")
     @patch("accounts.utils.send_signup_email")
-    @patch("accounts.utils.get_user_organization")
     @patch("accounts.models.User.objects.get")
     @patch.dict("os.environ", {"ENV_TYPE": "staging"})
     def test_executes_all_post_registration_steps(
         self,
         mock_user_get,
-        mock_get_org,
         mock_send_email,
         mock_hubspot,
         mock_slack,
-        mock_upload_demo,
-        mock_create_demo,
     ):
         """Test that all post-registration steps are executed."""
         from accounts.utils import _run_post_registration
@@ -70,10 +64,6 @@ class TestRunPostRegistration:
         mock_user.name = "Test User"
         mock_user_get.return_value = mock_user
 
-        mock_org = MagicMock()
-        mock_org.id = "org-123"
-        mock_get_org.return_value = mock_org
-
         # send_hubspot_notification returns (updated, err) tuple
         mock_hubspot.return_value = (True, None)
 
@@ -83,8 +73,6 @@ class TestRunPostRegistration:
         mock_send_email.assert_called_once()
         mock_hubspot.assert_called_once()
         mock_slack.assert_called_once()
-        mock_upload_demo.assert_called_once()
-        mock_create_demo.assert_called_once()
 
     @patch("accounts.models.User.objects.get")
     def test_raises_on_user_not_found(self, mock_user_get):
@@ -114,19 +102,13 @@ class TestRunPostRegistration:
         with pytest.raises(Exception, match="SMTP error"):
             _run_post_registration("user-123", "password")
 
-    @patch("accounts.utils.create_demo_traces_and_spans")
-    @patch("accounts.utils.upload_demo_dataset")
     @patch("accounts.utils.send_signup_email")
-    @patch("accounts.utils.get_user_organization")
     @patch("accounts.models.User.objects.get")
     @patch.dict("os.environ", {"ENV_TYPE": "local"})
     def test_skips_hubspot_slack_in_local_env(
         self,
         mock_user_get,
-        mock_get_org,
         mock_send_email,
-        mock_upload_demo,
-        mock_create_demo,
     ):
         """Test that hubspot/slack notifications are skipped in local env."""
         from accounts.utils import _run_post_registration
@@ -136,10 +118,6 @@ class TestRunPostRegistration:
         mock_user.email = "test@example.com"
         mock_user.name = "Test User"
         mock_user_get.return_value = mock_user
-
-        mock_org = MagicMock()
-        mock_org.id = "org-123"
-        mock_get_org.return_value = mock_org
 
         with (
             patch("accounts.utils.send_hubspot_notification") as mock_hubspot,
@@ -151,10 +129,7 @@ class TestRunPostRegistration:
             mock_hubspot.assert_not_called()
             mock_slack.assert_not_called()
 
-        # But these should still be called
         mock_send_email.assert_called_once()
-        mock_upload_demo.assert_called_once()
-        mock_create_demo.assert_called_once()
 
 
 @pytest.mark.django_db

@@ -99,6 +99,19 @@ def _execute_child(
             if version.model:
                 runtime_config["model"] = version.model
 
+        link_config = link.config or {}
+        if link_config:
+            link_params = link_config.get("params")
+            runtime_config.update(
+                {k: v for k, v in link_config.items() if k != "params"}
+            )
+            if isinstance(link_params, dict):
+                existing_params = runtime_config.get("params")
+                runtime_config["params"] = {
+                    **(existing_params if isinstance(existing_params, dict) else {}),
+                    **link_params,
+                }
+
         effective_model = model or child_template.model or None
 
         result = run_eval_func(
@@ -197,15 +210,16 @@ def _log_composite_usage(
     """
     try:
         from sdk.utils.helpers import _get_api_call_type
+        from tfc.constants.api_calls import APICallStatusChoices
         try:
-            from ee.usage.models.usage import APICallLog, APICallStatusChoices, APICallType
+            from ee.usage.models.usage import APICallLog, APICallType
         except ImportError:
             APICallLog = None
-            APICallStatusChoices = None
             APICallType = None
 
         api_call_type_name = _get_api_call_type(model)
-        api_call_type_obj = APICallType.objects.get(name=api_call_type_name)
+        if APICallType is not None:
+            api_call_type_obj = APICallType.objects.get(name=api_call_type_name)
 
         completed = sum(1 for cr in child_results if cr.status == "completed")
         failed = sum(1 for cr in child_results if cr.status == "failed")
@@ -256,6 +270,9 @@ def _log_composite_usage(
 
         # Pass dict directly — config is a JSONField, so Django handles
         # serialization. Using json.dumps() here would double-encode.
+        if APICallLog is None:
+            return None
+
         log_row = APICallLog.objects.create(
             api_call_type=api_call_type_obj,
             organization=org,

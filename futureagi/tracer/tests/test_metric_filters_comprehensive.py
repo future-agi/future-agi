@@ -121,8 +121,8 @@ class TestCHMetricFilters:
 
     def test_errors_filter_generates_status_condition(self):
         where, params = self._builder().translate([_errors_filter()])
-        assert "status" in where
-        assert "ERROR" in params.values()
+        assert "lower(status)" in where
+        assert "error" in params.values()
 
     # --- combinations ---
 
@@ -160,8 +160,8 @@ class TestCHMetricFilters:
         assert "model" in where
         assert "tracer_eval_logger" in where
 
-    def test_camelCase_filter_format(self):
-        """Frontend sends camelCase before objectCamelToSnake — builder handles both."""
+    def test_camel_case_filter_format_is_supported_by_backend_contract(self):
+        """Frontend camelCase payloads are accepted by the CH filter builder."""
         filters = [
             {
                 "columnId": "has_eval",
@@ -172,10 +172,10 @@ class TestCHMetricFilters:
                 },
             }
         ]
-        where, _ = self._builder().translate(filters)
+        where, params = self._builder().translate(filters)
         assert "tracer_eval_logger" in where
 
-    def test_has_annotation_camelCase(self):
+    def test_has_annotation_camel_case_filter_format_is_supported(self):
         filters = [
             {
                 "columnId": "has_annotation",
@@ -186,7 +186,7 @@ class TestCHMetricFilters:
                 },
             }
         ]
-        where, _ = self._builder().translate(filters)
+        where, params = self._builder().translate(filters)
         assert "trace_id NOT IN" in where
 
     def test_empty_filter_list(self):
@@ -214,14 +214,14 @@ class TestCHMetricFilters:
     # --- NULL safety (critical for NOT IN) ---
 
     def test_has_annotation_false_excludes_null_trace_ids(self):
-        """Subquery MUST filter NULL resolved trace_ids via coalesce IS NOT NULL."""
+        """Subquery MUST filter NULL resolved trace_ids."""
         where, _ = self._builder().translate([_has_annotation_filter(False)])
-        assert "IS NOT NULL" in where
+        assert "isNotNull(" in where
 
     def test_has_annotation_true_excludes_null_trace_ids(self):
         """IN subquery should also exclude NULL trace_ids for correctness."""
         where, _ = self._builder().translate([_has_annotation_filter(True)])
-        assert "IS NOT NULL" in where
+        assert "isNotNull(" in where
 
     def test_has_eval_true_excludes_null_trace_ids(self):
         """has_eval subquery should exclude NULL trace_ids."""
@@ -238,14 +238,14 @@ class TestCHMetricFilters:
     def test_has_annotation_joins_through_span(self):
         """Score.trace_id is often NULL — must join via observation_span to resolve trace_id."""
         where, _ = self._builder().translate([_has_annotation_filter(False)])
-        assert "tracer_observation_span" in where
-        assert "coalesce" in where
+        assert "FROM spans WHERE" in where
+        assert "sp.id = s.observation_span_id" in where
 
     def test_has_eval_casts_to_string(self):
         """Subquery must use toString(trace_id) because spans.trace_id is String
         but tracer_eval_logger.trace_id is UUID."""
         where, _ = self._builder().translate([_has_eval_filter(True)])
-        assert "toString(trace_id)" in where
+        assert "toString(el.trace_id)" in where
 
 
 # ============================================================================
@@ -351,6 +351,55 @@ class TestPGMetricFilters:
             filters, observe_type="trace"
         )
         assert q != Q()
+
+    # --- in / not_in on system-metric columns ---
+    # Regression: the PG operator_map was missing "in" / "not_in", so the
+    # Observe toolbar's multi-select filters (node_type, status, model, …)
+    # silently dropped on the PG fallback path.
+
+    @staticmethod
+    def _system_metric_filter(column_id, filter_op, filter_value):
+        return {
+            "column_id": column_id,
+            "filter_config": {
+                "filter_type": "text",
+                "filter_op": filter_op,
+                "filter_value": filter_value,
+                "col_type": "SYSTEM_METRIC",
+            },
+        }
+
+    def test_node_type_in_list_produces_q(self):
+        q = FilterEngine.get_filter_conditions_for_system_metrics(
+            [self._system_metric_filter("node_type", "in", ["llm"])]
+        )
+        assert q != Q()
+        assert "node_type__in" in str(q)
+        assert "llm" in str(q)
+
+    def test_node_type_in_multi_value(self):
+        q = FilterEngine.get_filter_conditions_for_system_metrics(
+            [self._system_metric_filter("node_type", "in", ["llm", "chain"])]
+        )
+        assert q != Q()
+        assert "node_type__in" in str(q)
+
+    def test_node_type_not_in_negates(self):
+        q = FilterEngine.get_filter_conditions_for_system_metrics(
+            [self._system_metric_filter("node_type", "not_in", ["llm"])]
+        )
+        assert q != Q()
+        assert q.negated, "not_in should produce a negated Q"
+        assert "node_type__in" in str(q)
+
+    def test_in_with_scalar_value_coerced_to_list(self):
+        """Mirrors CH builder behaviour: scalar value gets wrapped in a list."""
+        q = FilterEngine.get_filter_conditions_for_system_metrics(
+            [self._system_metric_filter("node_type", "in", "llm")]
+        )
+        assert q != Q()
+        assert "node_type__in" in str(q)
+        assert "llm" in str(q)
 
 
 # ============================================================================

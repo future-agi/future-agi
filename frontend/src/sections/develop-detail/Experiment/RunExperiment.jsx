@@ -348,7 +348,7 @@ const RunExperimentForm = ({
           </Box>
           <Stack direction={"row"} alignItems={"center"} gap={1.5}>
             <Link
-              href="https://docs.futureagi.com/future-agi/get-started/experimentation/how-to"
+              href="https://docs.futureagi.com/docs/dataset/features/experiments"
               underline="always"
               color="primary.main"
               target="_blank"

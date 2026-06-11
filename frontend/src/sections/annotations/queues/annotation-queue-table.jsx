@@ -7,6 +7,7 @@ import {
   Avatar,
   AvatarGroup,
   Box,
+  Chip,
   IconButton,
   LinearProgress,
   MenuItem,
@@ -16,6 +17,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import { AgGridReact } from "ag-grid-react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
@@ -25,6 +27,7 @@ import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { paths } from "src/routes/paths";
 import "src/styles/clean-data-table.css";
+import { QUEUE_ROLES, hasQueueRole, queueRoleList } from "./constants";
 
 // Skeleton cell renderer shown during loading
 const SkeletonCell = () => (
@@ -157,15 +160,146 @@ function LabelsCellRenderer({ data }) {
   );
 }
 
-AnnotatorsCellRenderer.propTypes = {
+const MEMBER_ROLE_GROUPS = [
+  { role: QUEUE_ROLES.MANAGER, label: "Manager", color: "warning" },
+  { role: QUEUE_ROLES.ANNOTATOR, label: "Annotator", color: "neutral" },
+  { role: QUEUE_ROLES.REVIEWER, label: "Reviewer", color: "info" },
+];
+
+function roleTitle(role) {
+  if (!role) return "Annotator";
+  return role.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function memberDisplayName(member) {
+  if (member.name && member.email) return `${member.name} (${member.email})`;
+  return member.name || member.email || "Unnamed";
+}
+
+function roleLabel(role) {
+  return (
+    MEMBER_ROLE_GROUPS.find((group) => group.role === role)?.label ||
+    roleTitle(role)
+  );
+}
+
+function roleSortValue(role) {
+  const index = MEMBER_ROLE_GROUPS.findIndex((group) => group.role === role);
+  return index === -1 ? MEMBER_ROLE_GROUPS.length : index;
+}
+
+function rolePaletteKey(role) {
+  return (
+    MEMBER_ROLE_GROUPS.find((group) => group.role === role)?.color || "neutral"
+  );
+}
+
+function queueMembersByPerson(members) {
+  const seen = new Map();
+  members.forEach((member, index) => {
+    const key =
+      member.user_id ||
+      member.id ||
+      member.email ||
+      member.name ||
+      `member-${index}`;
+    const existing = seen.get(key);
+    const roles = new Set([
+      ...(existing?.roles || []),
+      ...queueRoleList(member).filter(Boolean),
+    ]);
+    seen.set(key, {
+      ...existing,
+      ...member,
+      _memberKey: key,
+      id: member.id || existing?.id,
+      user_id: member.user_id || existing?.user_id,
+      name: member.name || existing?.name,
+      email: member.email || existing?.email,
+      roles: Array.from(roles).sort(
+        (a, b) => roleSortValue(a) - roleSortValue(b),
+      ),
+    });
+  });
+
+  return Array.from(seen.values()).sort((a, b) => {
+    const firstRoleA = a.roles?.[0];
+    const firstRoleB = b.roles?.[0];
+    return roleSortValue(firstRoleA) - roleSortValue(firstRoleB);
+  });
+}
+
+function memberRoleChipSx(role) {
+  return (theme) => {
+    const paletteKey = rolePaletteKey(role);
+    const paletteColor =
+      paletteKey === "neutral" ? null : theme.palette[paletteKey];
+    const roleColor =
+      theme.palette.mode === "dark"
+        ? paletteColor?.light || theme.palette.text.secondary
+        : paletteColor?.dark ||
+          paletteColor?.main ||
+          theme.palette.text.secondary;
+    return {
+      height: 20,
+      fontSize: 11,
+      fontWeight: 700,
+      borderRadius: 0.75,
+      color: roleColor,
+      borderColor: alpha(roleColor, theme.palette.mode === "dark" ? 0.28 : 0.2),
+      bgcolor: alpha(roleColor, theme.palette.mode === "dark" ? 0.12 : 0.06),
+      "& .MuiChip-label": { px: 0.75 },
+    };
+  };
+}
+
+function membersTooltipPaperSx(theme) {
+  return {
+    bgcolor: "background.paper",
+    color: "text.primary",
+    border: `1px solid ${alpha(theme.palette.text.primary, 0.12)}`,
+    boxShadow:
+      theme.palette.mode === "dark"
+        ? `0 18px 42px ${alpha(theme.palette.common.black, 0.48)}`
+        : `0 18px 42px ${alpha(theme.palette.grey[700], 0.16)}`,
+    borderRadius: 1,
+    p: 0,
+    maxWidth: 380,
+  };
+}
+
+function membersTooltipArrowSx(theme) {
+  return {
+    color: theme.palette.background.paper,
+    "&::before": {
+      border: `1px solid ${alpha(theme.palette.text.primary, 0.12)}`,
+    },
+  };
+}
+
+function memberAvatarSx(size = 28) {
+  return (theme) => ({
+    width: size,
+    height: size,
+    fontSize: size <= 26 ? 11 : 12,
+    fontWeight: 700,
+    flexShrink: 0,
+    color: theme.palette.text.primary,
+    bgcolor: alpha(theme.palette.text.primary, 0.08),
+    border: `1px solid ${alpha(theme.palette.text.primary, 0.12)}`,
+  });
+}
+
+MembersCellRenderer.propTypes = {
   data: PropTypes.object,
 };
 
-function AnnotatorsCellRenderer({ data }) {
+function MembersCellRenderer({ data }) {
   if (!data) return null;
-  const annotators = data.annotators || [];
+  const members = data.annotators || [];
+  const memberRows = queueMembersByPerson(members);
 
-  if (annotators.length === 0) {
+  if (members.length === 0) {
     return (
       <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
         <Typography variant="body2" color="text.secondary">
@@ -176,19 +310,106 @@ function AnnotatorsCellRenderer({ data }) {
   }
 
   return (
-    <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+    <Box
+      data-testid={`queue-members-${data.id}`}
+      sx={{ display: "flex", alignItems: "center", height: "100%" }}
+    >
       <Tooltip
         title={
-          <Stack spacing={0.5} sx={{ py: 0.5 }}>
-            {annotators.map((a) => (
-              <Typography key={a.id || a.user_id} variant="caption">
-                {a.name || "Unnamed"} {a.email ? `(${a.email})` : ""}
+          <Stack
+            spacing={1.25}
+            sx={{
+              p: 1.25,
+              minWidth: 340,
+              maxWidth: 420,
+              maxHeight: 420,
+              overflowY: "auto",
+            }}
+          >
+            <Stack direction="row" justifyContent="flex-end">
+              <Typography variant="caption" color="text.secondary">
+                {memberRows.length}{" "}
+                {memberRows.length === 1 ? "person" : "people"}
               </Typography>
-            ))}
+            </Stack>
+            <Stack spacing={0.75}>
+              {memberRows.map((member, index) => (
+                <Stack
+                  key={member._memberKey}
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  sx={{
+                    minWidth: 0,
+                    pb: index === memberRows.length - 1 ? 0 : 0.75,
+                    borderBottom: (theme) =>
+                      index === memberRows.length - 1
+                        ? "none"
+                        : `1px solid ${alpha(
+                            theme.palette.text.primary,
+                            0.06,
+                          )}`,
+                  }}
+                >
+                  <Avatar sx={memberAvatarSx(30)}>
+                    {getInitials(member.name, member.email)}
+                  </Avatar>
+                  <Box
+                    sx={{ minWidth: 0, flex: 1 }}
+                    title={memberDisplayName(member)}
+                  >
+                    <Typography
+                      variant="body2"
+                      color="text.primary"
+                      fontWeight={700}
+                      noWrap
+                      sx={{ display: "block" }}
+                    >
+                      {member.name || member.email || "Unnamed"}
+                    </Typography>
+                    {member.email && member.name && (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        noWrap
+                        sx={{ display: "block" }}
+                      >
+                        {member.email}
+                      </Typography>
+                    )}
+                  </Box>
+                  <Stack
+                    direction="row"
+                    spacing={0.5}
+                    useFlexGap
+                    flexWrap="wrap"
+                    justifyContent="flex-end"
+                    sx={{ maxWidth: 190 }}
+                  >
+                    {member.roles.map((role) => (
+                      <Chip
+                        key={role}
+                        size="small"
+                        variant="outlined"
+                        label={roleLabel(role)}
+                        sx={memberRoleChipSx(role)}
+                      />
+                    ))}
+                  </Stack>
+                </Stack>
+              ))}
+            </Stack>
           </Stack>
         }
         arrow
         placement="top"
+        enterTouchDelay={0}
+        leaveTouchDelay={6000}
+        disableInteractive={false}
+        componentsProps={{
+          tooltip: { sx: membersTooltipPaperSx },
+          arrow: { sx: membersTooltipArrowSx },
+        }}
       >
         <AvatarGroup
           max={4}
@@ -197,23 +418,20 @@ function AnnotatorsCellRenderer({ data }) {
               width: 28,
               height: 28,
               fontSize: 12,
-              fontWeight: 600,
+              fontWeight: 700,
+              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08),
+              color: "text.primary",
               border: "2px solid",
               borderColor: "background.paper",
             },
-            // Surplus avatar (+N)
             "& .MuiAvatar-root:first-of-type": {
-              color: "grey.800",
-            },
-            // All other avatars
-            "& .MuiAvatar-root:not(:first-of-type)": {
-              bgcolor: "secondary.main",
-              color: "secondary.contrastText",
+              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08),
+              color: "text.primary",
             },
           }}
         >
-          {annotators.map((a) => (
-            <Avatar key={a.id || a.user_id}>
+          {memberRows.map((a) => (
+            <Avatar key={a._memberKey} aria-label={memberDisplayName(a)}>
               {getInitials(a.name, a.email)}
             </Avatar>
           ))}
@@ -254,9 +472,14 @@ function ActionsCellRenderer({ data, context }) {
   const myEntry = annotators.find(
     (a) => String(a.user_id) === String(currentUserId),
   );
-  const isQueueManager = myEntry?.role === "manager";
+  const viewerEntry =
+    Array.isArray(data.viewer_roles) && data.viewer_roles.length > 0
+      ? { role: data.viewer_role, roles: data.viewer_roles }
+      : myEntry;
+  const isQueueManager = hasQueueRole(viewerEntry, QUEUE_ROLES.MANAGER);
   // Show menu only for queue managers
   if (!isQueueManager) return null;
+  const title = context?.archivedView ? "Restore queue" : "Queue actions";
   return (
     <Box
       sx={{
@@ -268,6 +491,7 @@ function ActionsCellRenderer({ data, context }) {
     >
       <IconButton
         size="small"
+        aria-label={title}
         onClick={(e) => {
           e.stopPropagation();
           context?.onOpenMenu(e, data);
@@ -293,7 +517,9 @@ AnnotationQueueTable.propTypes = {
   onEdit: PropTypes.func,
   onDuplicate: PropTypes.func,
   onArchive: PropTypes.func,
+  onRestore: PropTypes.func,
   onStatusChange: PropTypes.func,
+  archivedView: PropTypes.bool,
 };
 
 export default function AnnotationQueueTable({
@@ -307,12 +533,18 @@ export default function AnnotationQueueTable({
   onEdit,
   onDuplicate,
   onArchive,
+  onRestore,
   onStatusChange,
+  archivedView = false,
 }) {
   const navigate = useNavigate();
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
   const { user, role } = useAuthContext();
-  const currentUserId = user?.id || user?.pk;
+  const currentUserId =
+    user?.id ||
+    (typeof window !== "undefined"
+      ? window.sessionStorage.getItem("currentUserId")
+      : "");
   const canWrite = RolePermission.DATASETS[PERMISSIONS.CREATE][role];
   const gridRef = useRef(null);
   const [menuAnchor, setMenuAnchor] = useState(null);
@@ -340,6 +572,7 @@ export default function AnnotationQueueTable({
     if (action === "edit") onEdit?.(queue);
     else if (action === "duplicate") onDuplicate?.(queue);
     else if (action === "archive") onArchive?.(queue);
+    else if (action === "restore") onRestore?.(queue);
   };
 
   const getStatusActions = (queue) => {
@@ -399,10 +632,10 @@ export default function AnnotationQueueTable({
       },
       {
         field: "annotators",
-        headerName: "Annotators",
+        headerName: "Members",
         flex: 1,
         minWidth: 130,
-        cellRenderer: loading ? SkeletonCell : AnnotatorsCellRenderer,
+        cellRenderer: loading ? SkeletonCell : MembersCellRenderer,
       },
       {
         field: "created_at",
@@ -436,17 +669,23 @@ export default function AnnotationQueueTable({
   );
 
   const gridContext = useMemo(
-    () => ({ onOpenMenu: handleOpenMenu, currentUserId, canWrite }),
-    [handleOpenMenu, currentUserId, canWrite],
+    () => ({
+      onOpenMenu: handleOpenMenu,
+      currentUserId,
+      canWrite,
+      archivedView,
+    }),
+    [handleOpenMenu, currentUserId, canWrite, archivedView],
   );
 
   const onCellClicked = useCallback(
     (event) => {
       if (!event?.data) return;
       if (event.column?.getColId() === "actions") return;
+      if (archivedView) return;
       navigate(paths.dashboard.annotations.queueDetail(event.data.id));
     },
-    [navigate],
+    [navigate, archivedView],
   );
 
   const getRowId = useCallback((params) => params.data?.id, []);
@@ -481,7 +720,26 @@ export default function AnnotationQueueTable({
           overflow: "hidden",
         }}
       >
-        <Box sx={{ flex: 1 }}>
+        <Box
+          sx={{
+            flex: 1,
+            "& .ag-row": {
+              borderBottom: "1px solid",
+              borderBottomColor: "divider",
+            },
+            "& .ag-cell": {
+              borderRight: "1px solid",
+              borderRightColor: "divider",
+            },
+            "& .ag-cell:last-of-type": {
+              borderRight: 0,
+            },
+            "& .ag-header-cell": {
+              borderRight: "1px solid",
+              borderRightColor: "divider",
+            },
+          }}
+        >
           <AgGridReact
             ref={gridRef}
             theme={agTheme}
@@ -494,7 +752,9 @@ export default function AnnotationQueueTable({
             pagination={false}
             animateRows={false}
             suppressRowClickSelection
-            rowStyle={{ cursor: loading ? "default" : "pointer" }}
+            rowStyle={{
+              cursor: loading || archivedView ? "default" : "pointer",
+            }}
             onCellClicked={loading ? undefined : onCellClicked}
             getRowId={getRowId}
             noRowsOverlayComponent={CustomNoRowsOverlay}
@@ -573,42 +833,55 @@ export default function AnnotationQueueTable({
         transformOrigin={{ vertical: "top", horizontal: "right" }}
       >
         <Box sx={{ py: 0.5 }}>
-          <MenuItem onClick={() => handleAction("edit")}>
-            <SvgColor
-              src="/assets/icons/ic_edit.svg"
-              sx={{ width: 18, height: 18, mr: 1 }}
-            />
-            Edit
-          </MenuItem>
-          <MenuItem onClick={() => handleAction("duplicate")}>
-            <SvgColor
-              src="/assets/icons/ic_duplicate.svg"
-              sx={{ width: 18, height: 18, mr: 1 }}
-            />
-            Duplicate
-          </MenuItem>
-
-          {getStatusActions(menuQueue).map((sa) => (
-            <MenuItem
-              key={sa.value}
-              onClick={() => {
-                const queue = menuQueue;
-                setMenuAnchor(null);
-                onStatusChange?.(queue, sa.value);
-              }}
-            >
-              <Iconify icon={sa.icon} width={18} sx={{ mr: 1 }} />
-              {sa.label}
+          {archivedView ? (
+            <MenuItem onClick={() => handleAction("restore")}>
+              <Iconify icon="solar:archive-up-bold" width={18} sx={{ mr: 1 }} />
+              Restore
             </MenuItem>
-          ))}
+          ) : (
+            <>
+              <MenuItem onClick={() => handleAction("edit")}>
+                <SvgColor
+                  src="/assets/icons/ic_edit.svg"
+                  sx={{ width: 18, height: 18, mr: 1 }}
+                />
+                Edit
+              </MenuItem>
+              <MenuItem onClick={() => handleAction("duplicate")}>
+                <SvgColor
+                  src="/assets/icons/ic_duplicate.svg"
+                  sx={{ width: 18, height: 18, mr: 1 }}
+                />
+                Duplicate
+              </MenuItem>
 
-          <MenuItem
-            onClick={() => handleAction("archive")}
-            sx={{ color: "error.main" }}
-          >
-            <Iconify icon="solar:trash-bin-2-bold" width={18} sx={{ mr: 1 }} />
-            Delete
-          </MenuItem>
+              {getStatusActions(menuQueue).map((sa) => (
+                <MenuItem
+                  key={sa.value}
+                  onClick={() => {
+                    const queue = menuQueue;
+                    setMenuAnchor(null);
+                    onStatusChange?.(queue, sa.value);
+                  }}
+                >
+                  <Iconify icon={sa.icon} width={18} sx={{ mr: 1 }} />
+                  {sa.label}
+                </MenuItem>
+              ))}
+
+              <MenuItem
+                onClick={() => handleAction("archive")}
+                sx={{ color: "warning.main" }}
+              >
+                <Iconify
+                  icon="solar:archive-down-bold"
+                  width={18}
+                  sx={{ mr: 1 }}
+                />
+                Archive
+              </MenuItem>
+            </>
+          )}
         </Box>
       </Popover>
     </>

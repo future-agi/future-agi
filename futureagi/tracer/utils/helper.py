@@ -10,6 +10,13 @@ from rest_framework import serializers
 from model_hub.models.choices import AnnotationTypeChoices, DataTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
+from tracer.utils.constants import (
+    LIST_OPS,
+    NO_VALUE_OPS,
+    RANGE_OPS,
+    SPAN_ATTR_ALLOWED_OPS,
+)
+from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
 
 
 @dataclass
@@ -316,12 +323,76 @@ def update_column_config_based_on_eval_config(
     return column_config
 
 
+def _validate_span_attribute_filter(column_id, filter_config):
+    """Enforce the SPAN_ATTRIBUTE type/op/value contract; raise on mismatch."""
+    ftype = (filter_config.get("filter_type") or "").lower()
+    fop = filter_config.get("filter_op")
+    fval = filter_config.get("filter_value")
+
+    if ftype not in SPAN_ATTR_ALLOWED_OPS:
+        raise serializers.ValidationError(
+            f"Filter {column_id!r}: unsupported filter_type {ftype!r} "
+            f"for SPAN_ATTRIBUTE (expected one of {sorted(SPAN_ATTR_ALLOWED_OPS)})."
+        )
+
+    allowed = SPAN_ATTR_ALLOWED_OPS[ftype]
+    if fop not in allowed:
+        raise serializers.ValidationError(
+            f"Filter {column_id!r}: filter_op {fop!r} is not valid for "
+            f"filter_type {ftype!r}. Allowed: {sorted(allowed)}."
+        )
+
+    if fop in NO_VALUE_OPS:
+        return
+
+    if fop in RANGE_OPS:
+        if not isinstance(fval, list) or len(fval) != 2:
+            raise serializers.ValidationError(
+                f"Filter {column_id!r}: {fop!r} requires a 2-element list, "
+                f"got {fval!r}."
+            )
+        values_to_check = fval
+    elif fop in LIST_OPS:
+        if not isinstance(fval, list) or not fval:
+            raise serializers.ValidationError(
+                f"Filter {column_id!r}: {fop!r} requires a non-empty list, "
+                f"got {fval!r}."
+            )
+        values_to_check = fval
+    else:
+        if fval is None:
+            raise serializers.ValidationError(
+                f"Filter {column_id!r}: {fop!r} requires a value."
+            )
+        values_to_check = [fval]
+
+    if ftype == "number":
+        for v in values_to_check:
+            try:
+                float(v)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    f"Filter {column_id!r}: numeric filter_value must be "
+                    f"coercible to float, got {v!r}."
+                )
+    elif ftype == "boolean":
+        # Strict native bool only.
+        for v in values_to_check:
+            if not isinstance(v, bool):
+                raise serializers.ValidationError(
+                    f"Filter {column_id!r}: boolean filter_value must be a "
+                    f"native true/false, got {v!r}."
+                )
+
+
 def validate_filters_helper(value):
     if not value:
         return []
 
     REQUIRED_FILTER_KEYS = ["column_id", "filter_config"]
-    VALID_CONFIG_KEYS = ["filter_type", "filter_op", "filter_value"]
+    VALID_FILTER_KEYS = {"column_id", "display_name", "filter_config"}
+    REQUIRED_CONFIG_KEYS = ["filter_type", "filter_op"]
+    VALID_CONFIG_KEYS = {"filter_type", "filter_op", "filter_value", "col_type"}
 
     for filter_item in value:
         if not isinstance(filter_item, dict):
@@ -332,16 +403,60 @@ def validate_filters_helper(value):
             raise serializers.ValidationError(
                 f"Missing required filter keys: {', '.join(missing_keys)}"
             )
+        extra_keys = sorted(set(filter_item) - VALID_FILTER_KEYS)
+        if extra_keys:
+            raise serializers.ValidationError(
+                f"Unknown filter keys: {', '.join(extra_keys)}"
+            )
 
         filter_config = filter_item.get("filter_config")
         if not isinstance(filter_config, dict):
             raise serializers.ValidationError("Filter config must be a dictionary.")
 
-        missing_keys = [key for key in VALID_CONFIG_KEYS if key not in filter_config]
+        missing_keys = [key for key in REQUIRED_CONFIG_KEYS if key not in filter_config]
         if missing_keys:
             raise serializers.ValidationError(
                 f"Missing required filter config keys: {', '.join(missing_keys)}"
             )
+        extra_config_keys = sorted(set(filter_config) - VALID_CONFIG_KEYS)
+        if extra_config_keys:
+            raise serializers.ValidationError(
+                f"Unknown filter config keys: {', '.join(extra_config_keys)}"
+            )
+
+        filter_type = filter_config.get("filter_type")
+        filter_op = filter_config.get("filter_op")
+        allowed_ops = FILTER_TYPE_ALLOWED_OPS.get(filter_type)
+        if allowed_ops is None:
+            raise serializers.ValidationError(
+                f"Unsupported filter_type {filter_type!r}."
+            )
+        if filter_op not in allowed_ops:
+            raise serializers.ValidationError(
+                f"Unsupported filter_op {filter_op!r} for filter_type {filter_type!r}."
+            )
+        if filter_op in RANGE_OPS:
+            filter_value = filter_config.get("filter_value")
+            if not isinstance(filter_value, list) or len(filter_value) != 2:
+                raise serializers.ValidationError(
+                    f"Filter {filter_item.get('column_id')!r}: {filter_op!r} "
+                    "requires a 2-element filter_value list."
+                )
+        elif filter_op in LIST_OPS:
+            filter_value = filter_config.get("filter_value")
+            if not isinstance(filter_value, list) or not filter_value:
+                raise serializers.ValidationError(
+                    f"Filter {filter_item.get('column_id')!r}: {filter_op!r} "
+                    "requires a non-empty filter_value list."
+                )
+        elif filter_op not in NO_VALUE_OPS and "filter_value" not in filter_config:
+            raise serializers.ValidationError(
+                f"Filter {filter_item.get('column_id')!r}: {filter_op!r} requires filter_value."
+            )
+
+        col_type = filter_config.get("col_type")
+        if col_type == "SPAN_ATTRIBUTE":
+            _validate_span_attribute_filter(filter_item.get("column_id"), filter_config)
 
     return value
 
@@ -375,11 +490,17 @@ def validate_sort_params_helper(value):
 
 
 def get_annotation_labels_for_project(project_id, organization=None):
-    """Find annotation labels that have at least one annotation/score in a project.
+    """Find annotation labels that have at least one Score in a project.
 
     Labels may not have a direct ``project`` FK set (e.g. org-wide centralized
-    labels), so we look for labels referenced by Score or TraceAnnotation
-    records whose trace or observation_span belongs to the project.
+    labels), so we look for labels referenced by Score records whose trace or
+    observation_span belongs to the project.
+
+    Pre-deprecation this method also union'd in ``TraceAnnotation``-referenced
+    labels. Score is the unified store now (the dual-write mirrors every
+    TraceAnnotation write to Score, so any label in TraceAnnotation is also
+    reachable via Score). Reading both was redundant; reading Score alone
+    is the path forward toward fully retiring TraceAnnotation.
     """
     from django.db.models import Q
 
@@ -396,25 +517,8 @@ def get_annotation_labels_for_project(project_id, organization=None):
         .distinct()
     )
 
-    # Labels with trace annotations for this project
-    try:
-        from tracer.models.trace_annotation import TraceAnnotation
-
-        annotation_label_ids = (
-            TraceAnnotation.objects.filter(
-                Q(observation_span__project_id=project_id)
-                | Q(trace__project_id=project_id),
-            )
-            .values("annotation_label__id")
-            .distinct()
-        )
-    except (ImportError, Exception):
-        annotation_label_ids = Score.objects.none().values("label_id")
-
     return AnnotationsLabels.objects.filter(
-        Q(project_id=project_id)
-        | Q(id__in=score_label_ids)
-        | Q(id__in=annotation_label_ids),
+        Q(project_id=project_id) | Q(id__in=score_label_ids),
         deleted=False,
     ).distinct()
 

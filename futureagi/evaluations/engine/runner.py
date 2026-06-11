@@ -149,6 +149,12 @@ def run_eval(request: EvalRequest) -> EvalResult:
         if "max_tokens" in request.inputs:
             run_params.setdefault("max_tokens", request.inputs["max_tokens"])
 
+    if eval_type_id == "CustomCodeEval" and request.runtime_config:
+        _runtime_params = (request.runtime_config or {}).get("params") or {}
+        if isinstance(_runtime_params, dict):
+            for _k, _v in _runtime_params.items():
+                run_params.setdefault(_k, _v)
+
     # 3.5. Preprocess inputs (e.g., compute embeddings for CLIP/FID)
     from evaluations.engine.preprocessing import preprocess_inputs
 

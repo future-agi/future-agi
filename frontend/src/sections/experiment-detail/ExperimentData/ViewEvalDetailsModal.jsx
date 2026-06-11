@@ -20,6 +20,7 @@ import { ShowComponent } from "src/components/show";
 import {
   getLabel,
   getStatusColor,
+  normalizeEvalCellValue,
 } from "src/sections/develop-detail/DataTab/common";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import { canonicalEntries } from "src/utils/utils";
@@ -34,13 +35,8 @@ export default function ViewDetailsModal({
   const theme = useTheme();
 
   const finalArray = useMemo(() => {
-    if (
-      evalDetail?.cellValue &&
-      evalDetail?.cellValue?.startsWith("[") &&
-      evalDetail?.cellValue?.endsWith("]")
-    ) {
-      return JSON.parse(evalDetail?.cellValue?.replace(/'/g, '"'));
-    }
+    const v = normalizeEvalCellValue(evalDetail?.cellValue);
+    return Array.isArray(v) ? v : undefined;
   }, [evalDetail?.cellValue]);
   const metadataErrorAnalysis =
     evalDetail?.valueInfos?.metadata?.errorAnalysis ||

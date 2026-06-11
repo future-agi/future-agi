@@ -4,7 +4,6 @@ import ChartsGenerator from "../../ChartsView/ChartsGenerator";
 import CustomChartHeader from "./CustomChartHeader";
 import useUsersStore from "../Store/usersStore";
 import axios, { endpoints } from "src/utils/axios";
-import { objectCamelToSnake } from "src/utils/utils";
 import { useQuery } from "@tanstack/react-query";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import {
@@ -42,7 +41,10 @@ const UserMetricsGraphSection = () => {
       return axios
         .post(
           endpoints.project.getUserGraphData(),
-          { filters: objectCamelToSnake(filters), interval: dateInterval },
+          {
+            filters,
+            interval: dateInterval,
+          },
           {
             params: {
               project_id: selectedProjectId,

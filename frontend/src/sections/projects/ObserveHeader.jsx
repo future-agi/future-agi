@@ -24,7 +24,6 @@ import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import { ShareDialog } from "src/components/share-dialog";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { useDebounce } from "src/hooks/use-debounce";
-import { objectCamelToSnake } from "src/utils/utils";
 
 import { useProjectList, DOC_LINKS } from "./LLMTracing/common";
 import { resetTraceGridStore, resetSpanGridStore } from "./LLMTracing/states";
@@ -236,7 +235,7 @@ const ObserveHeader = ({
       return axios.get(url, {
         params: {
           project_id: observeId,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters || []),
         },
       });
     },

@@ -21,6 +21,7 @@ from model_hub.models.ai_model import AIModel
 from model_hub.models.choices import StatusType
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.evals_metric import EvalTemplate
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.utils.storage import upload_audio_to_s3, upload_image_to_s3, upload_video_to_s3
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import ObservationSpan, UserIdType
@@ -36,11 +37,6 @@ from tracer.utils.semantic_conventions import (
     get_attribute,
 )
 
-try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
@@ -1298,7 +1294,7 @@ def get_or_create_project_version(
 
         if project_version_id:
             existing_version = ProjectVersion.objects.filter(
-                id=project_version_id
+                id=project_version_id, project_id=project_id
             ).first()
             if existing_version:
                 return existing_version
@@ -1315,7 +1311,7 @@ def get_or_create_project_version(
 
             if project_version_id:
                 existing_version = ProjectVersion.objects.filter(
-                    id=project_version_id
+                    id=project_version_id, project_id=project_id
                 ).first()
                 if existing_version:
                     return existing_version
@@ -1456,7 +1452,9 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         version_key = (project.id, project_version_name, project_version_id)
         project_version = project_versions.get(version_key)
     else:
-        raise Exception(f"Project not found for version data: {version_key}")
+        raise Exception(
+            f"Project not found for version data: project_name={project_name}, project_type={project_type}"
+        )
 
     # Process Input/Output
     input_val = get_attribute(attributes, "input_value")

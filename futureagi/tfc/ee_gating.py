@@ -110,12 +110,15 @@ class FeatureUnavailable(APIException):
         detail: Optional[str] = None,
         code: Optional[str] = None,
         upgrade_cta: Optional[dict] = None,
+        metadata: Optional[dict] = None,
     ):
         self.feature = _feature_name(feature)
+        self.error_code = code or self.default_code
         self.upgrade_cta = upgrade_cta
+        self.metadata = metadata or {}
         super().__init__(
             detail=detail or f"'{self.feature}' is not available. Upgrade your plan.",
-            code=code or self.default_code,
+            code=self.error_code,
         )
 
 
@@ -249,11 +252,19 @@ def check_ee_can_create(
                     if hasattr(raw_cta, "model_dump")
                     else dict(raw_cta)
                 )
+            metadata = {"resource": resource_str}
+            current_usage = getattr(result, "current_usage", None)
+            limit = getattr(result, "limit", None)
+            if current_usage is not None:
+                metadata["current_usage"] = current_usage
+            if limit is not None:
+                metadata["limit"] = limit
             raise FeatureUnavailable(
                 resource_str,
                 detail=getattr(result, "reason", None),
                 code=getattr(result, "error_code", None),
                 upgrade_cta=cta,
+                metadata=metadata,
             )
     except ImportError:  # pragma: no cover — ee present but entitlements broken
         logger.warning(

@@ -32,7 +32,7 @@ const MetricEmptyState = () => {
   return (
     <EmptyLayout
       title="Add prompt to begin monitoring performance indicators"
-      link="https://docs.futureagi.com/docs/prompt/how-to/linked-traces"
+      link="https://docs.futureagi.com/docs/prompt/features/linked-traces"
       linkText="Check docs"
       icon="/assets/icons/agent/performance_analytics.svg"
       sx={{ mt: 8 }}

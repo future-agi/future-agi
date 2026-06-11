@@ -18,6 +18,8 @@ const CAMEL_TO_SNAKE = {
   cacheHit: "cache_hit",
   guardrailTriggered: "guardrail_triggered",
   statusCode: "status_code",
+  statusCodeMin: "min_status_code",
+  statusCodeMax: "max_status_code",
   userId: "user_id",
   sessionId: "session_id",
   apiKeyId: "api_key_id",

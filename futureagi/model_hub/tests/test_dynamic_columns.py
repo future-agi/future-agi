@@ -16,7 +16,7 @@ Endpoints covered:
 
 import json
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from django.urls import reverse
@@ -26,8 +26,9 @@ from rest_framework.test import APIClient, APITestCase
 from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.models.workspace import Workspace
-from model_hub.models.api_key import ApiKey, SecretModel
+from model_hub.models.api_key import SecretModel
 from model_hub.models.choices import (
+    CellStatus,
     DatasetSourceChoices,
     DataTypeChoices,
     ModelTypes,
@@ -37,15 +38,8 @@ from model_hub.models.choices import (
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.views.dynamic_columns import (
     AddApiColumnView,
-    AddVectorDBColumnView,
-    ClassifyColumnView,
-    ConditionalColumnView,
     ExecutePythonCodeView,
-    ExtractEntitiesView,
     ExtractJsonColumnView,
-    GetOperationConfigView,
-    PreviewDatasetOperationView,
-    RerunOperationView,
 )
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
@@ -318,6 +312,7 @@ class TestExtractJsonColumnView(DynamicColumnsBaseTestCase):
         )
 
         assert response.status_code == status.HTTP_200_OK
+        assert "new_column_id" in response.json()["result"]
         mock_task.assert_called_once()
 
 
@@ -490,6 +485,8 @@ class TestExtractEntitiesView(DynamicColumnsBaseTestCase):
         )
 
         assert response.status_code == status.HTTP_200_OK
+        assert "new_column_id" in response.json()["result"]
+        assert response.json()["result"]["new_column_name"] == "Person Names"
         mock_task.assert_called_once()
 
 
@@ -911,19 +908,150 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_rerun_invalid_operation_type(self):
-        """Test that invalid operation_type returns bad request."""
-        dataset, columns, _ = self.create_test_dataset()
-        columns[0].metadata = {"key": "value"}
-        columns[0].save()
+    def test_rerun_invalid_operation_type_does_not_mutate_column_or_cells(self):
+        """Test invalid operation_type rejects before rerun state mutation."""
+        _, columns, _ = self.create_test_dataset()
+        column = columns[0]
+        column.metadata = {"key": "value"}
+        column.status = StatusType.COMPLETED.value
+        column.save(update_fields=["metadata", "status"])
+        Cell.objects.filter(column=column).update(
+            value="original",
+            value_infos={"reason": "kept"},
+            status=CellStatus.PASS.value,
+        )
 
-        url = reverse("rerun-operation", kwargs={"column_id": str(columns[0].id)})
+        url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
 
         response = self.client.post(
             url, data={"operation_type": "invalid_type", "config": {}}, format="json"
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        column.refresh_from_db()
+        assert column.status == StatusType.COMPLETED.value
+        assert list(
+            Cell.objects.filter(column=column).order_by("row__order").values_list(
+                "value", "value_infos", "status"
+            )
+        ) == [
+            ("original", {"reason": "kept"}, CellStatus.PASS.value),
+            ("original", {"reason": "kept"}, CellStatus.PASS.value),
+            ("original", {"reason": "kept"}, CellStatus.PASS.value),
+        ]
+
+    def test_rerun_invalid_override_does_not_mutate_metadata_or_cells(self):
+        """Test invalid override config rejects before any rerun state mutation."""
+        _, columns, _ = self.create_test_dataset()
+        column = columns[0]
+        original_metadata = {
+            "column_id": str(columns[1].id),
+            "json_key": "name",
+            "concurrency": 5,
+        }
+        column.metadata = original_metadata
+        column.status = StatusType.COMPLETED.value
+        column.save(update_fields=["metadata", "status"])
+        Cell.objects.filter(column=column).update(
+            value="original",
+            value_infos={"reason": "kept"},
+            status=CellStatus.PASS.value,
+        )
+
+        url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
+
+        response = self.client.post(
+            url,
+            data={
+                "operation_type": "extract_json",
+                "config": {"json_key": ""},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        column.refresh_from_db()
+        assert column.metadata == original_metadata
+        assert column.status == StatusType.COMPLETED.value
+        assert list(
+            Cell.objects.filter(column=column).order_by("row__order").values_list(
+                "value", "value_infos", "status"
+            )
+        ) == [
+            ("original", {"reason": "kept"}, CellStatus.PASS.value),
+            ("original", {"reason": "kept"}, CellStatus.PASS.value),
+            ("original", {"reason": "kept"}, CellStatus.PASS.value),
+        ]
+
+    @patch("model_hub.views.dynamic_columns.classify_column_async.delay")
+    def test_rerun_uses_stored_metadata_when_config_is_omitted(self, mock_task):
+        """Test rerun uses stored operation config when no override is sent."""
+        dataset, columns, _ = self.create_test_dataset()
+        column = columns[0]
+        labels = ["positive", "negative"]
+        column.metadata = {
+            "labels": labels,
+            "language_model_id": "gpt-4o",
+            "column_id": str(columns[1].id),
+            "concurrency": 7,
+        }
+        column.status = StatusType.COMPLETED.value
+        column.save(update_fields=["metadata", "status"])
+
+        url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
+
+        response = self.client.post(
+            url, data={"operation_type": "classify"}, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_task.assert_called_once_with(
+            str(columns[1].id),
+            labels,
+            "gpt-4o",
+            7,
+            dataset.id,
+            str(column.id),
+            True,
+        )
+
+    @patch("model_hub.views.dynamic_columns.add_api_column_async.delay")
+    def test_rerun_api_call_uses_flat_stored_metadata(self, mock_task):
+        """Test API-call rerun accepts metadata shape created by add-api-column."""
+        dataset, columns, _ = self.create_test_dataset()
+        column = columns[0]
+        column.metadata = {
+            "url": "https://example.com/data",
+            "method": "GET",
+            "output_type": "string",
+            "params": {"q": "status"},
+            "headers": {},
+            "body": {},
+            "concurrency": 3,
+        }
+        column.save(update_fields=["metadata"])
+
+        url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
+
+        response = self.client.post(
+            url, data={"operation_type": "api_call"}, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_task.assert_called_once_with(
+            {
+                "url": "https://example.com/data",
+                "method": "GET",
+                "output_type": "string",
+                "params": {"q": "status"},
+                "headers": {},
+                "body": {},
+            },
+            dataset.id,
+            3,
+            str(column.id),
+            True,
+        )
 
     @patch("model_hub.views.dynamic_columns.classify_column_async.delay")
     def test_rerun_classification_success(self, mock_task):
@@ -1097,6 +1225,56 @@ class TestAddApiColumnViewHelpers(DynamicColumnsBaseTestCase):
         result = view._replace_variables(f"{{{{{columns[0].id}}}}}", rows[0])
 
         assert result == cell.value
+
+    def test_replace_variables_with_dot_notation(self):
+        """Test _replace_variables resolves nested JSON paths."""
+        view = AddApiColumnView()
+        dataset, column, rows = self.create_json_dataset()
+
+        result = view._replace_variables(f"{{{{{column.id}.name}}}}", rows[0])
+        assert result == "User0"
+
+        result = view._replace_variables(f"{{{{{column.id}.nested.key}}}}", rows[0])
+        assert result == "value0"
+
+    def test_replace_variables_with_missing_path(self):
+        """Test _replace_variables returns empty string for missing JSON path."""
+        view = AddApiColumnView()
+        dataset, column, rows = self.create_json_dataset()
+
+        result = view._replace_variables(f"{{{{{column.id}.nonexistent}}}}", rows[0])
+        assert result == ""
+
+    def test_resolve_cell_value_plain_uuid(self):
+        """Test _resolve_cell_value with a plain column UUID (no path)."""
+        dataset, columns, rows = self.create_test_dataset()
+        cell = Cell.objects.get(row=rows[0], column=columns[0])
+
+        result = AddApiColumnView._resolve_cell_value(str(columns[0].id), rows[0])
+        assert result == cell.value
+
+    def test_resolve_cell_value_with_json_path(self):
+        """Test _resolve_cell_value with UUID.dotted.path."""
+        dataset, column, rows = self.create_json_dataset()
+
+        result = AddApiColumnView._resolve_cell_value(f"{column.id}.age", rows[0])
+        assert result == "20"
+
+    def test_resolve_cell_value_nested_path(self):
+        """Test _resolve_cell_value with deeply nested path."""
+        dataset, column, rows = self.create_json_dataset()
+
+        result = AddApiColumnView._resolve_cell_value(f"{column.id}.nested.key", rows[1])
+        assert result == "value1"
+
+    def test_replace_variables_multiple_in_string(self):
+        """Test _replace_variables with multiple variables in one string."""
+        view = AddApiColumnView()
+        dataset, column, rows = self.create_json_dataset()
+
+        template = f"name={{{{{column.id}.name}}}}&age={{{{{column.id}.age}}}}"
+        result = view._replace_variables(template, rows[0])
+        assert result == "name=User0&age=20"
 
 
 # =============================================================================

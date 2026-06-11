@@ -48,7 +48,7 @@ def check_rate_limit(organization_id: str, tier: str) -> None:
 
     # Per-minute check (sliding window of timestamps)
     minute_key = f"mcp_rl:min:{organization_id}"
-    minute_window = cache.get(minute_key, [])
+    minute_window = cache.get(minute_key, []) or []
     cutoff = now - 60
     minute_window = [ts for ts in minute_window if ts > cutoff]
 
@@ -62,7 +62,7 @@ def check_rate_limit(organization_id: str, tier: str) -> None:
 
     # Per-day check (simple counter with 24h TTL)
     day_key = f"mcp_rl:day:{organization_id}"
-    day_count = cache.get(day_key, 0)
+    day_count = cache.get(day_key, 0) or 0
 
     if day_count >= limits["per_day"]:
         now_dt = datetime.datetime.now(datetime.timezone.utc)

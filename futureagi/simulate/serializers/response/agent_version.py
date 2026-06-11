@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentVersion
 
 
@@ -49,6 +50,8 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
                 if key in snapshot and snapshot[key] is not None:
                     snapshot[key] = str(snapshot[key])
             # Mask sensitive secret so frontend knows it's set but can't read it
+            if "api_key" in snapshot and snapshot["api_key"]:
+                snapshot["api_key"] = mask_key(snapshot["api_key"])
             if "livekit_api_secret" in snapshot and snapshot["livekit_api_secret"]:
                 snapshot["livekit_api_secret"] = "********"
         data["configuration_snapshot"] = snapshot

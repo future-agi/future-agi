@@ -434,8 +434,8 @@ function FeatureMatrix({ plansData }) {
         </TableHead>
         <TableBody>
           {FEATURE_GROUPS.map((group) => (
-            <>
-              <TableRow key={group.name}>
+            <React.Fragment key={group.name}>
+              <TableRow>
                 <TableCell
                   colSpan={6}
                   sx={{
@@ -519,7 +519,7 @@ function FeatureMatrix({ plansData }) {
                   })}
                 </TableRow>
               ))}
-            </>
+            </React.Fragment>
           ))}
         </TableBody>
       </Table>
@@ -700,7 +700,9 @@ export default function PricingPage() {
   }
 
   const currentPlan = data?.current_plan || "free";
-  const isCustomPricing = data?.is_custom_pricing || false;
+  const isCustomPricing =
+    data?.isCustomPricing ?? data?.is_custom_pricing ?? false;
+  const customDetails = data?.customDetails ?? data?.custom_details ?? null;
   const tiers = data?.tiers || [];
   const addons = data?.addons || [];
   const currentAddon = addons.find((a) => a.key === currentPlan);
@@ -750,11 +752,11 @@ export default function PricingPage() {
               <Box>
                 <Typography variant="subtitle1" fontWeight={700}>
                   Custom Pricing
-                  {data?.custom_details?.platform_fee > 0 && (
+                  {customDetails?.platform_fee > 0 && (
                     <Chip
-                      label={`${fCurrency(data.custom_details.per_charge_amount)}/${
+                      label={`${fCurrency(customDetails.per_charge_amount)}/${
                         { 1: "mo", 3: "qtr", 6: "half", 12: "yr" }[
-                          data.custom_details.platform_fee_billing_cycle
+                          customDetails.platform_fee_billing_cycle
                         ] || "mo"
                       }`}
                       size="small"
@@ -771,7 +773,7 @@ export default function PricingPage() {
           </Paper>
 
           {/* Custom plan features */}
-          {data?.custom_details?.features && (
+          {customDetails?.features && (
             <>
               <Typography variant="subtitle1" fontWeight={600} mb={2}>
                 Your plan features
@@ -782,7 +784,7 @@ export default function PricingPage() {
               >
                 <Table size="small">
                   <TableBody>
-                    {Object.entries(data.custom_details.features)
+                    {Object.entries(customDetails.features)
                       .filter(
                         ([key]) =>
                           !SKIP_FEATURE_PREFIXES.some((p) => key.startsWith(p)),
@@ -824,8 +826,8 @@ export default function PricingPage() {
           )}
 
           {/* Custom pricing tiers */}
-          {data?.custom_details?.pricing &&
-            Object.keys(data.custom_details.pricing).length > 0 && (
+          {customDetails?.pricing &&
+            Object.keys(customDetails.pricing).length > 0 && (
               <>
                 <Typography variant="subtitle1" fontWeight={600} mb={1}>
                   Your pricing tiers
@@ -865,7 +867,7 @@ export default function PricingPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {Object.entries(data.custom_details.pricing).flatMap(
+                      {Object.entries(customDetails.pricing).flatMap(
                         ([dimKey, dim]) =>
                           dim.tiers.map((tier, idx) => (
                             <TableRow key={`${dimKey}-${idx}`}>

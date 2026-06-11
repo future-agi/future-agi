@@ -27,6 +27,7 @@ import {
 } from "src/api/annotation-queues/annotation-queues";
 import LabelPicker from "./components/label-picker";
 import AnnotatorPicker from "./components/annotator-picker";
+import { QUEUE_ROLES, isQueueAnnotatorRole, queueRoleList } from "./constants";
 
 const STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
@@ -123,12 +124,23 @@ export default function CreateQueueDrawer({
   const isPending = isCreating || isUpdating;
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  const { control, handleSubmit, reset, setValue, watch } = useForm({
+  const { control, handleSubmit, reset, setValue, watch, trigger } = useForm({
     defaultValues: DEFAULT_VALUES,
   });
 
   const labelIds = watch("label_ids");
   const annotators = watch("annotators");
+  const autoAssign = watch("autoAssign");
+  const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
+
+  // RHF only re-runs field validation on user interaction with that field, so
+  // the "Cannot exceed annotator count" error on `annotations_required` would
+  // stay stale when annotators are added/removed or have their roles changed.
+  // Re-trigger whenever the annotator count shifts so the error clears (or
+  // re-appears) in step with the picker.
+  useEffect(() => {
+    trigger("annotations_required");
+  }, [annotatorCount, trigger]);
 
   useEffect(() => {
     if (open && editQueue) {
@@ -137,6 +149,7 @@ export default function CreateQueueDrawer({
         editQueue.annotators?.map((a) => ({
           userId: a.user_id,
           role: a.role || "annotator",
+          roles: queueRoleList(a),
         })) || [];
       reset({
         name: editQueue.name || "",
@@ -155,11 +168,21 @@ export default function CreateQueueDrawer({
       setAdvancedOpen(false);
     } else if (open) {
       // Pre-select the current user as manager for new queues
-      const currentUserId = user?.id || user?.pk;
+      const currentUserId = user?.id;
       reset({
         ...DEFAULT_VALUES,
         annotators: currentUserId
-          ? [{ userId: String(currentUserId), role: "manager" }]
+          ? [
+              {
+                userId: String(currentUserId),
+                role: QUEUE_ROLES.MANAGER,
+                roles: [
+                  QUEUE_ROLES.MANAGER,
+                  QUEUE_ROLES.REVIEWER,
+                  QUEUE_ROLES.ANNOTATOR,
+                ],
+              },
+            ]
           : [],
       });
       setAdvancedOpen(false);
@@ -179,7 +202,7 @@ export default function CreateQueueDrawer({
       label_ids: formData.label_ids,
       annotator_ids: formData.annotators.map((a) => a.userId),
       annotator_roles: Object.fromEntries(
-        formData.annotators.map((a) => [a.userId, a.role]),
+        formData.annotators.map((a) => [a.userId, a.roles || [a.role]]),
       ),
     };
 
@@ -343,10 +366,9 @@ export default function CreateQueueDrawer({
                   value={annotators}
                   onChange={(a) => setValue("annotators", a)}
                   creatorId={
-                    isEdit
-                      ? editQueue?.created_by
-                      : String(user?.id || user?.pk || "")
+                    isEdit ? editQueue?.created_by : String(user?.id || "")
                   }
+                  highlightAutoAssigned={autoAssign}
                   isManager
                 />
 
@@ -390,8 +412,8 @@ export default function CreateQueueDrawer({
                       const n = Number(value);
                       if (!value && value !== 0) return "Required";
                       if (n < 1) return "Must be at least 1";
-                      if (annotators.length > 0 && n > annotators.length)
-                        return `Cannot exceed annotator count (${annotators.length})`;
+                      if (annotatorCount > 0 && n > annotatorCount)
+                        return `Cannot exceed annotator count (${annotatorCount})`;
                       return true;
                     },
                   }}

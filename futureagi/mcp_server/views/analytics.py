@@ -2,27 +2,44 @@
 
 from datetime import timedelta
 
-from django.conf import settings
-from django.db.models import Avg, Count, F, Q
+from django.db.models import Avg, Count, Q
 from django.db.models.functions import TruncHour
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from mcp_server.models.session import MCPSession
 from mcp_server.models.usage import MCPUsageRecord
+from mcp_server.serializers.contracts import (
+    MCPAnalyticsSummaryResponseSerializer,
+    MCPAnalyticsTimelineResponseSerializer,
+    MCPAnalyticsToolsResponseSerializer,
+    MCPErrorResponseSerializer,
+)
+from tfc.utils.api_errors import build_error_envelope
 
 
 class MCPAnalyticsSummaryView(APIView):
     """Usage summary (total calls, sessions, latency)."""
 
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={
+            200: MCPAnalyticsSummaryResponseSerializer,
+            403: MCPErrorResponseSerializer,
+        },
+    )
     def get(self, request):
         organization = getattr(request, "organization", None) or getattr(
             request.user, "organization", None
         )
         if not organization:
             return Response(
-                {"status": False, "error": "No organization context"}, status=403
+                build_error_envelope("No organization context", status_code=403),
+                status=403,
             )
 
         days = int(request.query_params.get("days", 7))
@@ -69,13 +86,22 @@ class MCPAnalyticsSummaryView(APIView):
 class MCPAnalyticsToolsView(APIView):
     """Per-tool usage breakdown."""
 
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={
+            200: MCPAnalyticsToolsResponseSerializer,
+            403: MCPErrorResponseSerializer,
+        },
+    )
     def get(self, request):
         organization = getattr(request, "organization", None) or getattr(
             request.user, "organization", None
         )
         if not organization:
             return Response(
-                {"status": False, "error": "No organization context"}, status=403
+                build_error_envelope("No organization context", status_code=403),
+                status=403,
             )
 
         days = int(request.query_params.get("days", 7))
@@ -115,13 +141,22 @@ class MCPAnalyticsToolsView(APIView):
 class MCPAnalyticsTimelineView(APIView):
     """Tool calls over time (hourly buckets)."""
 
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={
+            200: MCPAnalyticsTimelineResponseSerializer,
+            403: MCPErrorResponseSerializer,
+        },
+    )
     def get(self, request):
         organization = getattr(request, "organization", None) or getattr(
             request.user, "organization", None
         )
         if not organization:
             return Response(
-                {"status": False, "error": "No organization context"}, status=403
+                build_error_envelope("No organization context", status_code=403),
+                status=403,
             )
 
         days = int(request.query_params.get("days", 7))

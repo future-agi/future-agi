@@ -17,6 +17,7 @@ import { useSearchParams } from "src/routes/hooks";
 import { useHotkeys } from "react-hotkeys-hook";
 import logger from "src/utils/logger";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import { normalizeAnnotationPreviewData } from "./annotationPreviewShape";
 
 const MemoizedAccordion = React.memo(CustomAccordion);
 const MemoizedEditAccordion = React.memo(EditableAccordion);
@@ -87,7 +88,7 @@ export default function PreviewScreen() {
         endpoints.annotation.annotateRow(annotationId),
         {
           params: {
-            rowOrder: rowOrder,
+            row_order: rowOrder,
           },
         },
       );
@@ -96,21 +97,25 @@ export default function PreviewScreen() {
 
     enabled: !!annotationId && rowOrder >= 0,
   });
-  const currentRowNumber = previewData?.result?.data?.currentRowNumber;
-  const totalRows = previewData?.result?.data?.total_rows ?? 1;
-  const firstRowOrder = previewData?.result?.data?.firstRowOrder ?? 0;
-  const lastRowOrder = previewData?.result?.data?.lastRowOrder ?? 0;
-  const labelsArray = previewData?.result?.data?.label;
-  const responseFieldsArray = previewData?.result?.data?.responseFields;
-  const nextRowOrder = previewData?.result?.data?.nextRowOrder;
-  const prevRowOrder = previewData?.result?.data?.previousRowOrder;
+  const annotationData = useMemo(
+    () => normalizeAnnotationPreviewData(previewData?.result?.data),
+    [previewData],
+  );
+  const currentRowNumber = annotationData?.currentRowNumber;
+  const totalRows = annotationData?.totalRows ?? 1;
+  const firstRowOrder = annotationData?.firstRowOrder ?? 0;
+  const lastRowOrder = annotationData?.lastRowOrder ?? 0;
+  const labelsArray = annotationData?.label;
+  const responseFieldsArray = annotationData?.responseFields;
+  const nextRowOrder = annotationData?.nextRowOrder;
+  const prevRowOrder = annotationData?.previousRowOrder;
 
   const toggleAccordion = (sno) => {
     setExpandedAccordion((prev) => (prev === sno ? null : sno));
   };
 
   useHotkeys(
-    previewData?.result?.data?.label
+    annotationData?.label
       ?.map((_, index) => [
         `meta+${index + 1}`,
         `cmd+${index + 1}`,
@@ -123,7 +128,7 @@ export default function PreviewScreen() {
       if (pressedKey) toggleAccordion(Number(pressedKey));
     },
     { preventDefault: true },
-    [previewData],
+    [annotationData],
   );
 
   // Save annotation data
@@ -259,7 +264,7 @@ export default function PreviewScreen() {
 
   // Handle reset action
   const handleResetAnnotation = () => {
-    const rowId = previewData?.result?.data?.label?.[0]?.rowId;
+    const rowId = annotationData?.label?.[0]?.rowId;
     if (rowId) {
       resetAnnotationData({ row_id: rowId });
     } else {
@@ -342,7 +347,7 @@ export default function PreviewScreen() {
             <Box
               sx={{ display: "flex", flexDirection: " column", gap: "16px" }}
             >
-              {previewData?.result?.data?.staticFields?.map((item) => {
+              {annotationData?.staticFields?.map((item) => {
                 return (
                   <MemoizedAccordion
                     key={item?.rowId + item?.columnId}
@@ -352,7 +357,7 @@ export default function PreviewScreen() {
                   />
                 );
               })}
-              {previewData?.result?.data?.responseFields?.map((item) => {
+              {annotationData?.responseFields?.map((item) => {
                 if (item?.edit !== "editable") {
                   return (
                     <MemoizedAccordion
@@ -414,7 +419,7 @@ export default function PreviewScreen() {
               <Box
                 sx={{ display: "flex", flexDirection: " column", gap: "16px" }}
               >
-                {previewData?.result?.data?.label?.map((item, index) => {
+                {annotationData?.label?.map((item, index) => {
                   const error = errors.find(
                     (temp) => temp.labelId === item?.labelId,
                   );

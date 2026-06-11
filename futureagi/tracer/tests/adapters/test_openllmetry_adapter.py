@@ -278,12 +278,12 @@ class TestOpenLLMetryNonLLM:
 class TestOpenLLMetryStripping:
     def test_strips_gen_ai_keys(self, adapter, openllmetry_llm_attrs):
         result = adapter.normalize(openllmetry_llm_attrs)
-        # gen_ai.span.kind is set by the adapter after stripping; all other gen_ai.* keys should be gone
+        # gen_ai.span.kind and gen_ai.trace.source are set by the adapter after stripping.
         remaining_gen_ai = [
             k
             for k in result
             if k.startswith("gen_ai.")
-            and k not in ("gen_ai.span.kind", "gen_ai.trace.source")
+            and k not in {"gen_ai.span.kind", "gen_ai.trace.source"}
         ]
         assert not remaining_gen_ai
 

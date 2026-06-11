@@ -42,6 +42,10 @@ try:
     )
 except ImportError:
     PersonaConfigurator = _ee_stub("PersonaConfigurator")
+try:
+    from ee.usage.utils.event_properties import token_usage_properties
+except ImportError:
+    token_usage_properties = lambda token_usage: {}
 from agentic_eval.core.llm.llm import LLM
 from model_hub.models.choices import (
     CellStatus,
@@ -245,9 +249,7 @@ async def generate_synthetic_data_activity(
                         properties={
                             "source": "simulate_scenario_generation",
                             "raw_cost_usd": str(actual_cost),
-                            "total_tokens": agent.llm.token_usage.get(
-                                "total_tokens", 0
-                            ),
+                            **token_usage_properties(agent.llm.token_usage),
                         },
                     )
                 )
@@ -643,9 +645,7 @@ async def generate_column_data_activity(
                         properties={
                             "source": "simulate_column_generation",
                             "raw_cost_usd": str(actual_cost),
-                            "total_tokens": agent.llm.token_usage.get(
-                                "total_tokens", 0
-                            ),
+                            **token_usage_properties(agent.llm.token_usage),
                         },
                     )
                 )
@@ -1813,9 +1813,6 @@ def _create_dataset_scenario_sync(
                     emit = None
 
                 _total_cost = graph_generator.sda.llm.cost.get("total_cost", 0)
-                _total_tokens = graph_generator.sda.llm.token_usage.get(
-                    "total_tokens", 0
-                )
                 credits = BillingConfig.get().calculate_ai_credits(_total_cost)
                 emit(
                     UsageEvent(
@@ -1826,7 +1823,9 @@ def _create_dataset_scenario_sync(
                             "source": "simulate_dataset_scenario_creation",
                             "source_id": str(scenario_id),
                             "raw_cost_usd": str(_total_cost),
-                            "total_tokens": _total_tokens,
+                            **token_usage_properties(
+                                graph_generator.sda.llm.token_usage
+                            ),
                         },
                     )
                 )
@@ -2038,6 +2037,7 @@ def _create_script_scenario_sync(
                             "source": "simulate_dataset_scenario",
                             "source_id": scenario_id,
                             "raw_cost_usd": str(_cost),
+                            **token_usage_properties(enhanced_agent.llm.token_usage),
                         },
                     )
                 )
@@ -2583,6 +2583,7 @@ def _create_graph_scenario_sync(
                             "source": "simulate_script_scenario",
                             "source_id": scenario_id,
                             "raw_cost_usd": str(_cost),
+                            **token_usage_properties(enhanced_agent.llm.token_usage),
                         },
                     )
                 )
@@ -2991,9 +2992,6 @@ def _setup_graph_scenario_sync(
                     emit = None
 
                 _total_cost = graph_generator.sda.llm.cost.get("total_cost", 0)
-                _total_tokens = graph_generator.sda.llm.token_usage.get(
-                    "total_tokens", 0
-                )
                 credits = BillingConfig.get().calculate_ai_credits(_total_cost)
                 emit(
                     UsageEvent(
@@ -3004,7 +3002,9 @@ def _setup_graph_scenario_sync(
                             "source": "simulate_graph_scenario_setup",
                             "source_id": str(scenario_id),
                             "raw_cost_usd": str(_total_cost),
-                            "total_tokens": _total_tokens,
+                            **token_usage_properties(
+                                graph_generator.sda.llm.token_usage
+                            ),
                         },
                     )
                 )
@@ -3288,7 +3288,6 @@ def _extract_intents_sync(
                                 emit = None
 
                             _total_cost = llm.cost.get("total_cost", 0)
-                            _total_tokens = llm.token_usage.get("total_tokens", 0)
                             credits = BillingConfig.get().calculate_ai_credits(
                                 _total_cost
                             )
@@ -3301,7 +3300,7 @@ def _extract_intents_sync(
                                         "source": "simulate_extract_intents",
                                         "source_id": str(graph_id),
                                         "raw_cost_usd": str(_total_cost),
-                                        "total_tokens": _total_tokens,
+                                        **token_usage_properties(llm.token_usage),
                                     },
                                 )
                             )
@@ -3464,7 +3463,6 @@ def _process_branches_sync(
                     emit = None
 
                 _total_cost = agent.llm.cost.get("total_cost", 0)
-                _total_tokens = agent.llm.token_usage.get("total_tokens", 0)
                 credits = BillingConfig.get().calculate_ai_credits(_total_cost)
                 emit(
                     UsageEvent(
@@ -3475,7 +3473,7 @@ def _process_branches_sync(
                             "source": "simulate_process_branches",
                             "source_id": str(graph_id),
                             "raw_cost_usd": str(_total_cost),
-                            "total_tokens": _total_tokens,
+                            **token_usage_properties(agent.llm.token_usage),
                         },
                     )
                 )
@@ -3737,6 +3735,7 @@ def _generate_cases_for_intent_sync(
                                 "source": "simulate_generate_cases_intent",
                                 "source_id": str(intent_id),
                                 "raw_cost_usd": str(_cost),
+                                **token_usage_properties(agent.llm.token_usage),
                             },
                         )
                     )
@@ -4577,6 +4576,9 @@ def _process_single_branch_sync(
                             "source": "simulate_process_single_branch",
                             "source_id": str(graph_id),
                             "raw_cost_usd": str(_total_cost),
+                            **token_usage_properties(
+                                _branch_llm_cost.get("token_usage")
+                            ),
                         },
                     )
                 )

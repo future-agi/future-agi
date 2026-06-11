@@ -24,13 +24,18 @@ from rest_framework.test import APIClient
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
 from model_hub.models.choices import (
+    CellStatus,
     DatasetSourceChoices,
     DataTypeChoices,
     SourceChoices,
     StatusType,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.models.evals_metric import (
+    CompositeEvalChild,
+    EvalTemplate,
+    UserEvalMetric,
+)
 from tfc.middleware.workspace_context import set_workspace_context
 
 
@@ -140,6 +145,34 @@ def eval_template(db, organization, workspace):
         criteria="Evaluate the following: {{output}}",
         model="gpt-4",
     )
+
+
+@pytest.fixture
+def composite_eval_template(db, organization, workspace):
+    child_output = EvalTemplate.objects.create(
+        name="composite-child-output",
+        organization=organization,
+        workspace=workspace,
+        config={"required_keys": ["output"]},
+        eval_type="code",
+    )
+    child_expected = EvalTemplate.objects.create(
+        name="composite-child-expected",
+        organization=organization,
+        workspace=workspace,
+        config={"required_keys": ["expected"]},
+        eval_type="code",
+    )
+    parent = EvalTemplate.objects.create(
+        name="composite-parent",
+        organization=organization,
+        workspace=workspace,
+        template_type="composite",
+        config={},
+    )
+    CompositeEvalChild.objects.create(parent=parent, child=child_output, order=0)
+    CompositeEvalChild.objects.create(parent=parent, child=child_expected, order=1)
+    return parent
 
 
 @pytest.fixture
@@ -306,6 +339,34 @@ class TestAddUserEvalView:
             status.HTTP_403_FORBIDDEN,
         ]
 
+    def test_add_user_eval_rejects_composite_missing_child_required_mapping(
+        self, auth_client, dataset, composite_eval_template
+    ):
+        """Composite bindings must include required keys from every child eval."""
+        payload = {
+            "name": "composite-missing-mapping",
+            "template_id": str(composite_eval_template.id),
+            "config": {
+                "mapping": {"output": "Output Column"},
+            },
+            "run": False,
+        }
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_user_eval/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "expected" in str(response.data)
+        assert not UserEvalMetric.objects.filter(
+            name="composite-missing-mapping",
+            dataset=dataset,
+            template=composite_eval_template,
+            deleted=False,
+        ).exists()
+
 
 # ==================== StartEvalsProcess Tests ====================
 
@@ -438,6 +499,7 @@ class TestStartEvalsProcess:
         assert response.status_code in [
             status.HTTP_200_OK,  # No matching evals
             status.HTTP_400_BAD_REQUEST,
+            status.HTTP_404_NOT_FOUND,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         ]
 
@@ -530,6 +592,23 @@ class TestGetEvalsListView:
         ]
 
 
+@pytest.mark.django_db
+class TestEvalConfigContracts:
+    def test_get_eval_config_rejects_legacy_eval_id_alias(self, auth_client):
+        response = auth_client.get(f"/model-hub/get-eval-config?evalId={uuid.uuid4()}")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_get_eval_structure_rejects_legacy_eval_type_alias(
+        self, auth_client, dataset
+    ):
+        response = auth_client.get(
+            f"/model-hub/develops/{dataset.id}/get_eval_structure/{uuid.uuid4()}/?evalType=user"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
 # ==================== DeleteEvalsView Tests ====================
 
 
@@ -549,6 +628,7 @@ class TestDeleteEvalsView:
         assert response.status_code == status.HTTP_200_OK
         user_eval_metric.refresh_from_db()
         assert user_eval_metric.deleted is True
+        assert user_eval_metric.deleted_at is not None
 
     def test_delete_user_eval_hide_from_sidebar(
         self, auth_client, dataset, user_eval_metric
@@ -679,11 +759,53 @@ class TestDeleteEvalsView:
         reason_col.refresh_from_db()
         assert eval_col.deleted is True
         assert reason_col.deleted is True
+        assert eval_col.deleted_at is not None
+        assert reason_col.deleted_at is not None
 
         # Both should be removed from column_order
         dataset.refresh_from_db()
         assert str(eval_col.id) not in dataset.column_order
         assert str(reason_col.id) not in dataset.column_order
+
+    def test_delete_eval_with_column_sets_deleted_at_on_cells(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        """Deleting an eval column should stamp deleted_at on dependent cells."""
+        row = Row.objects.create(dataset=dataset, order=0)
+        eval_col = Column.objects.create(
+            name="Test Eval",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(user_eval_metric.id),
+        )
+        reason_col = Column.objects.create(
+            name="Test Eval-reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_col.id}-sourceid-{user_eval_metric.id}",
+        )
+        eval_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=eval_col, value="Passed"
+        )
+        reason_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=reason_col, value="Looks grounded"
+        )
+
+        response = auth_client.delete(
+            f"/model-hub/develops/{dataset.id}/delete_user_eval/{user_eval_metric.id}/",
+            {"delete_column": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        eval_cell.refresh_from_db()
+        reason_cell.refresh_from_db()
+        assert eval_cell.deleted is True
+        assert reason_cell.deleted is True
+        assert eval_cell.deleted_at is not None
+        assert reason_cell.deleted_at is not None
 
     def test_delete_column_of_running_eval_cancels_runner(
         self, auth_client, dataset, user_eval_metric
@@ -783,7 +905,7 @@ class TestStopUserEvalView:
     """Tests for StopUserEvalView - POST /develops/<dataset_id>/stop_user_eval/<eval_id>/"""
 
     def test_stop_user_eval_running(self, auth_client, dataset, user_eval_metric):
-        """Running evals transition to COMPLETED and return the stop message."""
+        """Running evals transition to ERROR and return the stop message."""
         user_eval_metric.status = StatusType.RUNNING.value
         user_eval_metric.save(update_fields=["status"])
 
@@ -797,10 +919,10 @@ class TestStopUserEvalView:
         assert response.json()["result"] == "User evaluation stopped"
 
         user_eval_metric.refresh_from_db()
-        assert user_eval_metric.status == StatusType.COMPLETED.value
+        assert user_eval_metric.status == StatusType.ERROR.value
 
     def test_stop_user_eval_not_started(self, auth_client, dataset, user_eval_metric):
-        """NOT_STARTED evals also transition to COMPLETED."""
+        """NOT_STARTED evals also transition to ERROR."""
         assert user_eval_metric.status == StatusType.NOT_STARTED.value
 
         response = auth_client.post(
@@ -813,7 +935,7 @@ class TestStopUserEvalView:
         assert response.json()["result"] == "User evaluation stopped"
 
         user_eval_metric.refresh_from_db()
-        assert user_eval_metric.status == StatusType.COMPLETED.value
+        assert user_eval_metric.status == StatusType.ERROR.value
 
     def test_stop_user_eval_already_completed_is_noop(
         self, auth_client, dataset, user_eval_metric
@@ -951,6 +1073,39 @@ class TestEditAndRunUserEvalView:
             status.HTTP_403_FORBIDDEN,
         ]
 
+    def test_edit_and_run_user_eval_rejects_composite_missing_child_required_mapping(
+        self, auth_client, dataset, organization, workspace, composite_eval_template
+    ):
+        """Editing a composite metric cannot drop a child-required mapping."""
+        metric = UserEvalMetric.objects.create(
+            name="composite-edit-mapping",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=composite_eval_template,
+            status=StatusType.INACTIVE.value,
+            config={
+                "mapping": {
+                    "output": "Output Column",
+                    "expected": "Expected Column",
+                }
+            },
+        )
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{metric.id}/",
+            {"config": {"mapping": {"output": "Output Column"}}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "expected" in str(response.data)
+        metric.refresh_from_db()
+        assert metric.config["mapping"] == {
+            "output": "Output Column",
+            "expected": "Expected Column",
+        }
+
 
 # ==================== PreviewRunEvalView Tests ====================
 
@@ -1013,6 +1168,78 @@ class TestPreviewRunEvalView:
         # The API returns 400 when mapping is missing
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    @pytest.mark.django_db(transaction=True)
+    def test_preview_code_eval_passes_function_params(
+        self,
+        auth_client,
+        dataset,
+        row,
+        input_column,
+        input_cell,
+        organization,
+        workspace,
+    ):
+        """Preview should pass function params to code eval kwargs."""
+        template = EvalTemplate.objects.create(
+            name="word_count_preview_test",
+            organization=organization,
+            workspace=workspace,
+            eval_type="code",
+            config={
+                "code": """
+def evaluate(input, output, expected, context, **kwargs):
+    text = str(kwargs.get("text", "")).strip()
+    min_words = kwargs.get("min_words")
+    count = len(text.split())
+    passed = min_words is not None and count >= int(min_words)
+    return {"score": 1.0 if passed else 0.0, "reason": f"count={count}, min={min_words}"}
+""",
+                "output": "Pass/Fail",
+                "eval_type_id": "CustomCodeEval",
+                "required_keys": ["text"],
+                "function_params_schema": {
+                    "min_words": {
+                        "type": "integer",
+                        "default": None,
+                        "minimum": 0,
+                        "nullable": True,
+                    },
+                },
+            },
+        )
+        payload = {
+            "template_id": str(template.id),
+            "config": {
+                "mapping": {"text": str(input_column.id)},
+                "params": {"min_words": 2},
+            },
+        }
+        fake_api_call = SimpleNamespace(config="{}", save=lambda: None)
+
+        with (
+            patch(
+                "model_hub.views.utils.evals.EvaluationRunner._handle_api_call",
+                return_value=fake_api_call,
+            ),
+            patch(
+                "model_hub.views.utils.evals.APICallStatusChoices",
+                SimpleNamespace(
+                    SUCCESS=SimpleNamespace(value="success"),
+                    ERROR=SimpleNamespace(value="error"),
+                ),
+            ),
+        ):
+            response = auth_client.post(
+                f"/model-hub/develops/{dataset.id}/preview_run_eval/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        preview = response.data["result"]["responses"][0]
+        assert preview["output"] == "Passed"
+        assert preview["reason"] == "count=3, min=2"
+
     def test_preview_run_eval_unauthenticated(self, dataset):
         """Test that unauthenticated users cannot preview evaluations."""
         client = APIClient()
@@ -1039,6 +1266,22 @@ class TestSingleRowEvaluationView:
         self, auth_client, dataset, row, user_eval_metric
     ):
         """Test successfully evaluating a single row."""
+        eval_column = Column.objects.create(
+            name="Eval Output",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(user_eval_metric.id),
+            status=StatusType.COMPLETED.value,
+        )
+        eval_cell = Cell.objects.create(
+            dataset=dataset,
+            column=eval_column,
+            row=row,
+            value="existing",
+            value_infos={"kept": True},
+            status=CellStatus.PASS.value,
+        )
         payload = {
             "row_ids": [str(row.id)],
             "user_eval_metric_ids": [str(user_eval_metric.id)],
@@ -1054,6 +1297,130 @@ class TestSingleRowEvaluationView:
             )
 
         assert response.status_code == status.HTTP_200_OK
+        mock_task.assert_called_once()
+        eval_cell.refresh_from_db()
+        assert eval_cell.status == CellStatus.RUNNING.value
+        assert eval_cell.value is None
+        assert eval_cell.value_infos == {}
+
+    def test_evaluate_single_row_rejects_row_outside_metric_dataset(
+        self, auth_client, organization, workspace, user_eval_metric
+    ):
+        """Rows must belong to the same active-workspace dataset as the metric."""
+        other_dataset = Dataset.objects.create(
+            name="Other Dataset",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        other_row = Row.objects.create(dataset=other_dataset, order=0)
+        payload = {
+            "row_ids": [str(other_row.id)],
+            "user_eval_metric_ids": [str(user_eval_metric.id)],
+        }
+
+        with patch(
+            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
+        ) as mock_task:
+            response = auth_client.post(
+                "/model-hub/evaluate-rows/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        mock_task.assert_not_called()
+
+    def test_evaluate_single_row_rejects_other_workspace_metric_before_mutation(
+        self, auth_client, organization, user, eval_template
+    ):
+        """Metrics outside the active workspace must not be queued or mutate cells."""
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=organization,
+            created_by=user,
+        )
+        other_dataset = Dataset.objects.create(
+            name="Other Workspace Dataset",
+            organization=organization,
+            workspace=other_workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        other_row = Row.objects.create(dataset=other_dataset, order=0)
+        other_metric = UserEvalMetric.objects.create(
+            name="Other Workspace Evaluation",
+            dataset=other_dataset,
+            organization=organization,
+            workspace=other_workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={"mapping": {}},
+        )
+        eval_column = Column.objects.create(
+            name="Eval Output",
+            dataset=other_dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(other_metric.id),
+            status=StatusType.COMPLETED.value,
+        )
+        eval_cell = Cell.objects.create(
+            dataset=other_dataset,
+            column=eval_column,
+            row=other_row,
+            value="existing",
+            value_infos={"kept": True},
+            status=CellStatus.PASS.value,
+        )
+        payload = {
+            "row_ids": [str(other_row.id)],
+            "user_eval_metric_ids": [str(other_metric.id)],
+        }
+
+        with patch(
+            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
+        ) as mock_task:
+            response = auth_client.post(
+                "/model-hub/evaluate-rows/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        mock_task.assert_not_called()
+        eval_cell.refresh_from_db()
+        assert eval_cell.status == CellStatus.PASS.value
+        assert eval_cell.value == "existing"
+        assert eval_cell.value_infos == {"kept": True}
+
+    def test_evaluate_selected_all_rejects_excluded_row_outside_dataset(
+        self, auth_client, organization, workspace, user_eval_metric
+    ):
+        """selected_all_rows exclusion ids are still scoped to the metric dataset."""
+        other_dataset = Dataset.objects.create(
+            name="Other Dataset",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        other_row = Row.objects.create(dataset=other_dataset, order=0)
+        payload = {
+            "selected_all_rows": True,
+            "row_ids": [str(other_row.id)],
+            "user_eval_metric_ids": [str(user_eval_metric.id)],
+        }
+
+        with patch(
+            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
+        ) as mock_task:
+            response = auth_client.post(
+                "/model-hub/evaluate-rows/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        mock_task.assert_not_called()
 
     def test_evaluate_single_row_missing_row_ids(self, auth_client, user_eval_metric):
         """Test that missing row_ids returns error."""
@@ -1186,6 +1553,257 @@ class TestSingleRowEvaluationView:
         mock_runner_class.assert_not_called()
 
 
+# ==================== Workspace Isolation Tests ====================
+
+
+@pytest.mark.django_db
+class TestDatasetEvalWorkspaceIsolation:
+    """Dataset eval drawer routes must reject same-org other-workspace rows."""
+
+    def _other_workspace_eval_fixture(self, organization, user):
+        other_workspace = Workspace.objects.create(
+            name="Other Dataset Eval Workspace",
+            organization=organization,
+            created_by=user,
+        )
+        other_dataset = Dataset.no_workspace_objects.create(
+            name="Other Dataset Eval Dataset",
+            organization=organization,
+            workspace=other_workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        input_column = Column.no_workspace_objects.create(
+            name="Other Input",
+            dataset=other_dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+        )
+        other_dataset.column_order = [str(input_column.id)]
+        other_dataset.save()
+        row = Row.no_workspace_objects.create(dataset=other_dataset, order=0)
+        Cell.no_workspace_objects.create(
+            dataset=other_dataset,
+            column=input_column,
+            row=row,
+            value="keep input",
+            status=CellStatus.PASS.value,
+        )
+        template = EvalTemplate.no_workspace_objects.create(
+            name="other-workspace-eval-template",
+            organization=organization,
+            workspace=other_workspace,
+            eval_type="code",
+            visible_ui=True,
+            config={
+                "code": "def evaluate(**kwargs): return {'score': 1, 'reason': 'ok'}",
+                "output": "Pass/Fail",
+                "eval_type_id": "CustomCodeEval",
+                "required_keys": ["text"],
+            },
+        )
+        EvalTemplate.no_workspace_objects.filter(id=template.id).update(
+            workspace=other_workspace
+        )
+        template.refresh_from_db()
+        metric = UserEvalMetric.no_workspace_objects.create(
+            name="Other Workspace Eval",
+            dataset=other_dataset,
+            organization=organization,
+            workspace=other_workspace,
+            template=template,
+            status=StatusType.RUNNING.value,
+            config={
+                "mapping": {"text": str(input_column.id)},
+                "reason_column": True,
+            },
+        )
+        UserEvalMetric.no_workspace_objects.filter(id=metric.id).update(
+            workspace=other_workspace
+        )
+        metric.refresh_from_db()
+        eval_column = Column.no_workspace_objects.create(
+            name=metric.name,
+            dataset=other_dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        eval_cell = Cell.no_workspace_objects.create(
+            dataset=other_dataset,
+            column=eval_column,
+            row=row,
+            value="keep eval",
+            status=CellStatus.PASS.value,
+        )
+        return SimpleNamespace(
+            workspace=other_workspace,
+            dataset=other_dataset,
+            input_column=input_column,
+            row=row,
+            template=template,
+            metric=metric,
+            eval_column=eval_column,
+            eval_cell=eval_cell,
+        )
+
+    def test_eval_drawer_routes_reject_other_workspace_before_mutation(
+        self, auth_client, organization, user
+    ):
+        fixture = self._other_workspace_eval_fixture(organization, user)
+
+        list_response = auth_client.get(
+            f"/model-hub/develops/{fixture.dataset.id}/get_evals_list/"
+        )
+        structure_response = auth_client.get(
+            f"/model-hub/develops/{fixture.dataset.id}/"
+            f"get_eval_structure/{fixture.metric.id}/?eval_type=user"
+        )
+        preset_structure_response = auth_client.get(
+            f"/model-hub/develops/{fixture.dataset.id}/"
+            f"get_eval_structure/{fixture.template.id}/?eval_type=preset"
+        )
+        add_response = auth_client.post(
+            f"/model-hub/develops/{fixture.dataset.id}/add_user_eval/",
+            {
+                "name": "should-not-create",
+                "template_id": str(fixture.template.id),
+                "config": {"mapping": {"text": str(fixture.input_column.id)}},
+                "run": False,
+            },
+            format="json",
+        )
+        preview_response = auth_client.post(
+            f"/model-hub/develops/{fixture.dataset.id}/preview_run_eval/",
+            {
+                "template_id": str(fixture.template.id),
+                "config": {"mapping": {"text": str(fixture.input_column.id)}},
+            },
+            format="json",
+        )
+        start_response = auth_client.post(
+            f"/model-hub/develops/{fixture.dataset.id}/start_evals_process/",
+            {"user_eval_ids": [str(fixture.metric.id)]},
+            format="json",
+        )
+        stop_response = auth_client.post(
+            f"/model-hub/develops/{fixture.dataset.id}/"
+            f"stop_user_eval/{fixture.metric.id}/",
+            {},
+            format="json",
+        )
+        edit_response = auth_client.post(
+            f"/model-hub/develops/{fixture.dataset.id}/"
+            f"edit_and_run_user_eval/{fixture.metric.id}/",
+            {
+                "config": {
+                    "mapping": {"text": str(fixture.input_column.id)},
+                    "reason_column": True,
+                }
+            },
+            format="json",
+        )
+        delete_template_response = auth_client.delete(
+            f"/model-hub/develops/{fixture.dataset.id}/"
+            f"delete_template_eval/{fixture.template.id}/",
+        )
+
+        assert list_response.status_code == status.HTTP_404_NOT_FOUND
+        assert structure_response.status_code == status.HTTP_404_NOT_FOUND
+        assert preset_structure_response.status_code == status.HTTP_404_NOT_FOUND
+        assert add_response.status_code == status.HTTP_404_NOT_FOUND
+        assert preview_response.status_code == status.HTTP_404_NOT_FOUND
+        assert start_response.status_code == status.HTTP_404_NOT_FOUND
+        assert stop_response.status_code == status.HTTP_404_NOT_FOUND
+        assert edit_response.status_code == status.HTTP_404_NOT_FOUND
+        assert delete_template_response.status_code == status.HTTP_404_NOT_FOUND
+        fixture.metric.refresh_from_db()
+        fixture.template.refresh_from_db()
+        fixture.eval_cell.refresh_from_db()
+        assert fixture.metric.status == StatusType.RUNNING.value
+        assert fixture.metric.config == {
+            "mapping": {"text": str(fixture.input_column.id)},
+            "reason_column": True,
+        }
+        assert fixture.template.deleted is False
+        assert fixture.template.deleted_at is None
+        assert fixture.eval_cell.value == "keep eval"
+        assert fixture.eval_cell.status == CellStatus.PASS.value
+        assert not UserEvalMetric.no_workspace_objects.filter(
+            name="should-not-create",
+            organization=organization,
+            deleted=False,
+        ).exists()
+
+    def test_template_routes_reject_other_workspace_template_before_mutation(
+        self, auth_client, dataset, organization, user
+    ):
+        fixture = self._other_workspace_eval_fixture(organization, user)
+
+        structure_response = auth_client.get(
+            f"/model-hub/develops/{dataset.id}/"
+            f"get_eval_structure/{fixture.template.id}/?eval_type=preset"
+        )
+        add_response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_user_eval/",
+            {
+                "name": "should-not-create-from-template",
+                "template_id": str(fixture.template.id),
+                "config": {"mapping": {"text": str(fixture.input_column.id)}},
+                "run": False,
+            },
+            format="json",
+        )
+        preview_response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/preview_run_eval/",
+            {
+                "template_id": str(fixture.template.id),
+                "config": {"mapping": {"text": str(fixture.input_column.id)}},
+            },
+            format="json",
+        )
+        delete_response = auth_client.delete(
+            f"/model-hub/develops/{dataset.id}/"
+            f"delete_template_eval/{fixture.template.id}/",
+        )
+
+        assert structure_response.status_code == status.HTTP_404_NOT_FOUND
+        assert add_response.status_code == status.HTTP_404_NOT_FOUND
+        assert preview_response.status_code == status.HTTP_404_NOT_FOUND
+        assert delete_response.status_code == status.HTTP_404_NOT_FOUND
+        fixture.template.refresh_from_db()
+        assert fixture.template.deleted is False
+        assert fixture.template.deleted_at is None
+        assert not UserEvalMetric.no_workspace_objects.filter(
+            name="should-not-create-from-template",
+            dataset=dataset,
+            organization=organization,
+            deleted=False,
+        ).exists()
+
+
+@pytest.mark.django_db
+class TestDeleteTemplateEvalsView:
+    def test_delete_template_eval_sets_deleted_at(
+        self, auth_client, dataset, organization, workspace
+    ):
+        template = EvalTemplate.objects.create(
+            name="delete-template-eval",
+            organization=organization,
+            workspace=workspace,
+            owner="user",
+            visible_ui=True,
+        )
+
+        response = auth_client.delete(
+            f"/model-hub/develops/{dataset.id}/delete_template_eval/{template.id}/",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        template.refresh_from_db()
+        assert template.deleted is True
+        assert template.deleted_at is not None
+
+
 # ==================== Organization Isolation Tests ====================
 
 
@@ -1261,6 +1879,7 @@ class TestEvaluationOrganizationIsolation:
         assert response.status_code in [
             status.HTTP_200_OK,  # No matching evals found (org filter)
             status.HTTP_400_BAD_REQUEST,
+            status.HTTP_404_NOT_FOUND,
             status.HTTP_403_FORBIDDEN,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         ]
@@ -1287,6 +1906,7 @@ class TestEvaluationOrganizationIsolation:
         assert response.status_code in [
             status.HTTP_200_OK,  # Empty list
             status.HTTP_400_BAD_REQUEST,
+            status.HTTP_404_NOT_FOUND,
             status.HTTP_403_FORBIDDEN,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         ]

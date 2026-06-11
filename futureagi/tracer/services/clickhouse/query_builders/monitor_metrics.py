@@ -85,6 +85,15 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         self._filter_params: Dict[str, Any] = {}
         self._translate_filters()
 
+    @staticmethod
+    def _eval_choice_match_expr(param_name: str = "choice_val") -> str:
+        """Return exact choice membership against CH's JSON-string list column."""
+        choice_array = "JSONExtract(output_str_list, 'Array(String)')"
+        return (
+            f"(has({choice_array}, %({param_name})s) "
+            f"OR output_str = %({param_name})s)"
+        )
+
     def _translate_filters(self) -> None:
         """Translate raw monitor filter JSON into CH WHERE clause fragments."""
         ch_conditions: List[str] = []
@@ -95,7 +104,10 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             self._filter_params = {}
             return
 
-        fb = ClickHouseFilterBuilder(table=SPANS_TABLE)
+        # Monitor queries bind start_time/end_time per query method, not
+        # start_date/end_date. Disable score date pruning here so annotation
+        # filters do not emit an unbound ``%(start_date)s`` placeholder.
+        fb = ClickHouseFilterBuilder(table=SPANS_TABLE, score_date_scope=False)
 
         for key, value in self.raw_filters.items():
             if key == "span_attributes_filters" and isinstance(value, list):
@@ -118,7 +130,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                     f"trace_id IN ("
                     f"SELECT DISTINCT id FROM spans "
                     f"WHERE session_id = %({pname})s "
-                    f"AND _peerdb_is_deleted = 0"
+                    f"AND is_deleted = 0"
                     f")"
                 )
             elif key == "date_range" and isinstance(value, list) and len(value) == 2:
@@ -321,9 +333,10 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             if not self.threshold_metric_value:
                 return "SELECT NULL AS value", params
             params["choice_val"] = self.threshold_metric_value
+            choice_match = self._eval_choice_match_expr()
             query = f"""
                 SELECT avg(
-                    CASE WHEN has(output_str_list, %(choice_val)s) THEN 1.0 ELSE 0.0 END
+                    CASE WHEN {choice_match} THEN 1.0 ELSE 0.0 END
                 ) AS value
                 FROM {EVAL_TABLE} FINAL
                 {eval_where}
@@ -493,13 +506,14 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             if not self.threshold_metric_value:
                 return "SELECT NULL AS mean, NULL AS stddev", params
             params["choice_val"] = self.threshold_metric_value
+            choice_match = self._eval_choice_match_expr()
             query = f"""
                 SELECT
                     avg(choice_value) AS mean,
                     stddevSamp(choice_value) AS stddev
                 FROM (
                     SELECT
-                        CASE WHEN has(output_str_list, %(choice_val)s) THEN 1.0 ELSE 0.0 END AS choice_value
+                        CASE WHEN {choice_match} THEN 1.0 ELSE 0.0 END AS choice_value
                     FROM {EVAL_TABLE} FINAL
                     {eval_where}
                       AND created_at BETWEEN %(start_time)s AND %(end_time)s
@@ -685,7 +699,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             if not self.threshold_metric_value:
                 return "SELECT NULL AS timestamp, NULL AS value WHERE 1 = 0", params
             params["choice_val"] = self.threshold_metric_value
-            agg = "avg(CASE WHEN has(output_str_list, %(choice_val)s) THEN 1.0 ELSE 0.0 END)"
+            choice_match = self._eval_choice_match_expr()
+            agg = f"avg(CASE WHEN {choice_match} THEN 1.0 ELSE 0.0 END)"
         else:
             return "SELECT NULL AS timestamp, NULL AS value WHERE 1 = 0", params
 
@@ -725,11 +740,11 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
 
         return (
             f"WHERE custom_eval_config_id = toUUID(%(eval_config_id)s) "
-            f"AND _peerdb_is_deleted = 0 "
+            f"AND is_deleted = 0 "
             f"AND observation_span_id IN ("
             f"  SELECT id FROM {SPANS_TABLE} "
             f"  WHERE project_id = %(project_id)s "
-            f"  AND _peerdb_is_deleted = 0"
+            f"  AND is_deleted = 0"
             f"  {filter_extra}"
             f")"
         )

@@ -88,9 +88,9 @@ export default function ReplayDrawer({ currentTab, projectDetail, gridApi }) {
 }
 
 ReplayDrawer.propTypes = {
-  currentTab: {
+  currentTab: PropTypes.shape({
     id: PropTypes.string.isRequired,
-  },
-  projectDetail: PropTypes.object.isRequired,
-  gridApi: PropTypes.object.isRequired,
+  }),
+  projectDetail: PropTypes.object,
+  gridApi: PropTypes.object,
 };

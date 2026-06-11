@@ -16,6 +16,7 @@ export const WebSocketContext = createContext();
 
 const RECONNECT_INTERVAL = 5000;
 const MAX_RECONNECT_DELAY = 30000; // 30 seconds max delay
+const MAX_RECONNECT_ATTEMPTS = 10; // Give up after this many consecutive failures
 const HEARTBEAT_INTERVAL = 10000;
 
 export const WebSocketProvider = ({ children }) => {
@@ -30,6 +31,7 @@ export const WebSocketProvider = ({ children }) => {
   const heartbeatIntervalRef = useRef(null);
   const accessToken = useRef(null);
   const createWebSocketConnectionRef = useRef(null);
+  const messageListenersRef = useRef(new Set());
 
   // Store event handlers to properly remove them later
   const eventHandlersRef = useRef({
@@ -104,6 +106,18 @@ export const WebSocketProvider = ({ children }) => {
       return;
     }
 
+    // Reconnection permanently exhausted — stop retrying. The single actionable
+    // exception is emitted from errorHandler once this cap is reached; here we
+    // just stop the loop so transient drops don't retry forever.
+    if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
+      logger.addBreadcrumb({
+        category: "websocket",
+        level: "warning",
+        message: `WebSocket reconnection exhausted after ${reconnectAttempts.current} attempts`,
+      });
+      return;
+    }
+
     // Use exponential backoff with a maximum delay
     const backoffTime = Math.min(
       RECONNECT_INTERVAL * Math.pow(2, reconnectAttempts.current),
@@ -151,7 +165,22 @@ export const WebSocketProvider = ({ children }) => {
       startHeartbeat();
     };
 
-    const messageHandler = () => {};
+    const messageHandler = (event) => {
+      let message = event.data;
+      try {
+        message = JSON.parse(event.data);
+      } catch {
+        // Some websocket producers may send plain text. Forward it unchanged.
+      }
+
+      messageListenersRef.current.forEach((listener) => {
+        try {
+          listener(message);
+        } catch (e) {
+          logger.error("WebSocket message listener failed", e);
+        }
+      });
+    };
 
     const errorHandler = () => {
       // WebSocket error events don't provide detailed error information.
@@ -177,7 +206,20 @@ export const WebSocketProvider = ({ children }) => {
       );
       wsError.name = "WebSocketError";
 
-      logger.error("WebSocket error:", wsError, errorContext);
+      // Transient WS drops (network blips, navigation, token expiry, proxy
+      // idle-timeout) are routine and must NOT create Sentry issues. Record a
+      // breadcrumb for context and only capture an exception once reconnection
+      // is permanently exhausted (the final attempt).
+      if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
+        logger.error("WebSocket error:", wsError, errorContext);
+      } else {
+        logger.addBreadcrumb({
+          category: "websocket",
+          level: "warning",
+          message: wsError.message,
+          data: errorContext,
+        });
+      }
       setError("WebSocket connection error");
       setIsConnected(false);
 
@@ -254,6 +296,13 @@ export const WebSocketProvider = ({ children }) => {
     [attemptReconnect],
   );
 
+  const addMessageListener = useCallback((listener) => {
+    messageListenersRef.current.add(listener);
+    return () => {
+      messageListenersRef.current.delete(listener);
+    };
+  }, []);
+
   // Consolidated authentication state handling
   useEffect(() => {
     if (authenticated && user?.accessToken) {
@@ -316,11 +365,12 @@ export const WebSocketProvider = ({ children }) => {
     () => ({
       socket: socketRef.current,
       sendMessage,
+      addMessageListener,
       isConnected,
       error,
       closeConnection,
     }),
-    [sendMessage, isConnected, error, closeConnection],
+    [sendMessage, addMessageListener, isConnected, error, closeConnection],
   );
 
   return (

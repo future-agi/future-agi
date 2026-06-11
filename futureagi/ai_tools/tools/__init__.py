@@ -81,25 +81,32 @@ from ai_tools.tools.docs import get_page  # noqa: F401
 from ai_tools.tools.docs import search_docs  # noqa: F401
 
 # Evaluation tools
+from ai_tools.tools.evaluations import apply_eval_group_to_dataset  # noqa: F401
 from ai_tools.tools.evaluations import compare_evaluations  # noqa: F401
 from ai_tools.tools.evaluations import create_composite_eval  # noqa: F401
+from ai_tools.tools.evaluations import create_eval_group  # noqa: F401
 from ai_tools.tools.evaluations import create_eval_template  # noqa: F401
+from ai_tools.tools.evaluations import delete_eval_group  # noqa: F401
 from ai_tools.tools.evaluations import delete_eval_logs  # noqa: F401
 from ai_tools.tools.evaluations import delete_eval_template  # noqa: F401
 from ai_tools.tools.evaluations import duplicate_eval_template  # noqa: F401
+from ai_tools.tools.evaluations import edit_eval_group_templates  # noqa: F401
 from ai_tools.tools.evaluations import evaluate_with_agent  # noqa: F401
 from ai_tools.tools.evaluations import execute_composite_eval  # noqa: F401
 from ai_tools.tools.evaluations import get_eval_code_snippet  # noqa: F401
+from ai_tools.tools.evaluations import get_eval_group  # noqa: F401
 from ai_tools.tools.evaluations import get_eval_log_detail  # noqa: F401
 from ai_tools.tools.evaluations import get_eval_logs  # noqa: F401
 from ai_tools.tools.evaluations import get_eval_playground  # noqa: F401
 from ai_tools.tools.evaluations import get_eval_template  # noqa: F401
 from ai_tools.tools.evaluations import get_evaluation  # noqa: F401
+from ai_tools.tools.evaluations import list_eval_groups  # noqa: F401
 from ai_tools.tools.evaluations import list_eval_templates  # noqa: F401
 from ai_tools.tools.evaluations import list_evaluations  # noqa: F401
 from ai_tools.tools.evaluations import run_evaluation  # noqa: F401
 from ai_tools.tools.evaluations import submit_eval_feedback  # noqa: F401
 from ai_tools.tools.evaluations import test_eval_template  # noqa: F401
+from ai_tools.tools.evaluations import update_eval_group  # noqa: F401
 from ai_tools.tools.evaluations import update_eval_template  # noqa: F401
 
 # Experiment tools (11)
@@ -207,11 +214,17 @@ from ai_tools.tools.tracing import create_custom_eval_config  # noqa: F401
 from ai_tools.tools.tracing import create_eval_task  # noqa: F401
 from ai_tools.tools.tracing import create_project  # noqa: F401
 from ai_tools.tools.tracing import create_score  # noqa: F401
-from ai_tools.tools.tracing import create_trace_annotation  # noqa: F401
+# Legacy ``create_trace_annotation`` / ``update_trace_annotation`` /
+# ``delete_trace_annotation`` tools were unregistered as part of the
+# unified-Score migration. Their write paths only synced Score for span-level
+# annotations, leaving trace-level Scores stale relative to the legacy
+# TraceAnnotation row — a silent-drift surface that production Score-only
+# readers would expose. Use ``create_score`` / ``submit_trace_scores`` /
+# ``list_trace_scores`` instead. Tool files remain on disk pending Phase 4
+# deletion of the model itself.
 from ai_tools.tools.tracing import delete_alert_monitor  # noqa: F401
 from ai_tools.tools.tracing import delete_eval_tasks  # noqa: F401
 from ai_tools.tools.tracing import delete_project  # noqa: F401
-from ai_tools.tools.tracing import delete_trace_annotation  # noqa: F401
 # tracing/explore_trace.py now registers as ``explore_trace_legacy`` (the
 # Chauffeur read-all-spans + Haiku summary). The short name ``explore_trace``
 # belongs to the eval-context navigator in web/trace_explorer.py.
@@ -253,7 +266,8 @@ from ai_tools.tools.tracing import unpause_eval_task  # noqa: F401
 from ai_tools.tools.tracing import update_alert_monitor  # noqa: F401
 from ai_tools.tools.tracing import update_eval_task  # noqa: F401
 from ai_tools.tools.tracing import update_project  # noqa: F401
-from ai_tools.tools.tracing import update_trace_annotation  # noqa: F401
+# update_trace_annotation: unregistered (see comment above on
+# create_trace_annotation). Use create_score / submit_trace_scores instead.
 
 # Usage tools (1)
 from ai_tools.tools.usage import get_cost_breakdown  # noqa: F401

@@ -1,3 +1,4 @@
+import json
 import traceback
 from datetime import datetime
 
@@ -13,6 +14,10 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.serializers.chat_message import ChatMessageSerializer
+from tracer.serializers.filters import (
+    StrictInputSerializer,
+    filter_list_query_param_field,
+)
 
 try:
     from ee.voice.services.voice_service_manager import VoiceServiceManager
@@ -21,6 +26,37 @@ except ImportError:
 from tracer.models.observability_provider import ProviderChoices
 
 logger = structlog.get_logger(__name__)
+
+
+class JsonArrayQueryParamField(serializers.CharField):
+    """Parse a JSON-encoded list from query params without accepting objects."""
+
+    class Meta:
+        swagger_schema_fields = {
+            "type": "string",
+            "description": "JSON-encoded array.",
+        }
+
+    def to_internal_value(self, data):
+        if data in (None, ""):
+            return []
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError as exc:
+                raise serializers.ValidationError("Value must be valid JSON.") from exc
+        if not isinstance(data, list):
+            raise serializers.ValidationError("Value must be a list.")
+        return data
+
+
+class ExecutionDetailQuerySerializer(StrictInputSerializer):
+    search = serializers.CharField(required=False, allow_blank=True, default="")
+    filters = filter_list_query_param_field(required=False, default=list)
+    row_groups = JsonArrayQueryParamField(required=False, default=list)
+    group_keys = JsonArrayQueryParamField(required=False, default=list)
+    page = serializers.IntegerField(required=False, default=1, min_value=1)
+    limit = serializers.IntegerField(required=False, default=30, min_value=1)
 
 
 class CallTranscriptSerializer(serializers.ModelSerializer):
@@ -57,6 +93,50 @@ class CallTranscriptSerializer(serializers.ModelSerializer):
             offset = self.context.get("recording_offset_ms", 0)
             return round((obj.end_time_ms + offset) / 1000, 3)
         return None
+
+
+class CallTranscriptResponseSerializer(serializers.Serializer):
+    """Response serializer for transcripts under one call execution."""
+
+    call_execution_id = serializers.UUIDField(read_only=True)
+    phone_number = serializers.CharField(read_only=True, allow_null=True)
+    status = serializers.CharField(read_only=True)
+    transcripts = CallTranscriptSerializer(many=True, read_only=True)
+    total_transcripts = serializers.IntegerField(read_only=True)
+
+
+class TestExecutionTranscriptCallSerializer(CallTranscriptResponseSerializer):
+    """Transcript bundle for one call inside a test execution."""
+
+    scenario_name = serializers.CharField(read_only=True, allow_null=True)
+
+
+class TestExecutionTranscriptsResponseSerializer(serializers.Serializer):
+    """Response serializer for all transcripts inside a test execution."""
+
+    test_execution_id = serializers.UUIDField(read_only=True)
+    calls = TestExecutionTranscriptCallSerializer(many=True, read_only=True)
+    total_calls = serializers.IntegerField(read_only=True)
+    total_transcripts = serializers.IntegerField(read_only=True)
+
+
+class CallBranchAnalysisResponseSerializer(serializers.Serializer):
+    """Response serializer for branch-analysis inspection."""
+
+    call_execution_id = serializers.UUIDField(read_only=True)
+    scenario_id = serializers.UUIDField(read_only=True, allow_null=True)
+    scenario_name = serializers.CharField(read_only=True, allow_null=True)
+    analysis = serializers.DictField(read_only=True)
+    analyzed_at = serializers.DateTimeField(read_only=True)
+
+
+class CallBranchDeviationCreateResponseSerializer(serializers.Serializer):
+    """Response serializer for creating branch deviation graph objects."""
+
+    call_execution_id = serializers.UUIDField(read_only=True)
+    scenario_graph_id = serializers.UUIDField(read_only=True)
+    deviation_data = serializers.DictField(read_only=True)
+    message = serializers.CharField(read_only=True)
 
 
 class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
@@ -135,6 +215,7 @@ def _normalize_eval_value(value, output_type):
 class CallExecutionDetailSerializer(serializers.ModelSerializer):
     """Serializer for CallExecution model with new payload structure"""
 
+    test_execution_id = serializers.UUIDField(read_only=True)
     timestamp = serializers.DateTimeField(source="updated_at", read_only=True)
     call_type = serializers.SerializerMethodField()
     duration = serializers.SerializerMethodField()
@@ -175,6 +256,8 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
     # Graph-related field
     scenario_id = serializers.SerializerMethodField()
+    scenario_graph = serializers.SerializerMethodField()
+    scenario_graph_id = serializers.SerializerMethodField()
 
     # Provider used for this call (e.g. "vapi", "retell", "livekit_bridge")
     provider = serializers.SerializerMethodField()
@@ -217,11 +300,13 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "call_type",
             "status",
             "duration",
+            "duration_seconds",
             "start_time",
             "transcript",
             "scenario",
             "overall_score",
             "response_time",
+            "response_time_ms",
             "audio_url",
             "customer_name",
             "eval_outputs",
@@ -234,9 +319,13 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "agent_definition_used_id",
             "call_summary",
             "recordings",
+            "test_execution_id",
             "scenario_id",
+            "scenario_graph",
+            "scenario_graph_id",
             # Conversation metrics fields
             "avg_agent_latency",
+            "avg_agent_latency_ms",
             "user_interruption_count",
             "user_interruption_rate",
             "user_wpm",
@@ -263,6 +352,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "rerun_type",
             "original_call_execution_id",
             "tool_outputs",
+            "cost_cents",
             "customer_cost_cents",
             "customer_cost_breakdown",
             "customer_latency_metrics",
@@ -300,6 +390,13 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         """Return provider recording URLs from stored provider payload (no external API calls).
         Skipped when detail_mode=False (list view) to reduce response size."""
         if not self.context.get("detail_mode", True):
+            return {}
+
+        simulation_call_type = getattr(obj, "simulation_call_type", None)
+        if (
+            simulation_call_type == CallExecution.SimulationCallType.TEXT
+            or self._is_chat_simulation(obj)
+        ):
             return {}
 
         provider_payload = None
@@ -615,9 +712,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             columns_by_dataset = ctx.get("columns_by_dataset")
             cells_by_row = ctx.get("cells_by_row")
 
-            if rows_map is not None:
-                if row_id_str not in rows_map:
-                    return {}
+            if rows_map is not None and row_id_str in rows_map:
                 # Fast path: use prefetched data
                 row = rows_map[row_id_str]
                 ds_id = str(row.dataset.id) if row.dataset else None
@@ -682,7 +777,28 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
     def get_scenario_id(self, obj):
         """Get scenario ID"""
-        return str(obj.scenario.id)
+        return str(obj.scenario.id) if obj.scenario_id else None
+
+    def _get_active_scenario_graph(self, obj):
+        if not obj.scenario_id:
+            return None
+        from simulate.models.scenario_graph import ScenarioGraph
+
+        return (
+            ScenarioGraph.objects.filter(scenario_id=obj.scenario_id, is_active=True)
+            .order_by("-created_at")
+            .first()
+        )
+
+    def get_scenario_graph(self, obj):
+        graph = self._get_active_scenario_graph(obj)
+        if not graph or not isinstance(graph.graph_config, dict):
+            return {}
+        return graph.graph_config.get("graph_data", {}) or {}
+
+    def get_scenario_graph_id(self, obj):
+        graph = self._get_active_scenario_graph(obj)
+        return str(graph.id) if graph else None
 
     # def get_error_localizer_tasks(self, obj):
     #     """Get error localizer tasks for this call execution"""
@@ -945,6 +1061,119 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
     def get_processing_skip_reason(self, obj):
         _, reason = self._get_processing_skip(obj)
         return reason
+
+
+class TestExecutionDetailResponseSerializer(serializers.Serializer):
+    """Paginated response for GET /simulate/test-executions/{id}/."""
+
+    count = serializers.IntegerField(read_only=True)
+    next = serializers.CharField(read_only=True, allow_null=True)
+    previous = serializers.CharField(read_only=True, allow_null=True)
+    results = serializers.ListField(
+        child=serializers.DictField(),
+        read_only=True,
+        help_text="Call execution rows may include dynamic eval/scenario columns.",
+    )
+    total_pages = serializers.IntegerField(read_only=True)
+    current_page = serializers.IntegerField(read_only=True)
+    column_order = serializers.ListField(child=serializers.DictField(), read_only=True)
+    error_messages = serializers.ListField(
+        child=serializers.CharField(), read_only=True
+    )
+    status = serializers.CharField(read_only=True, required=False)
+    provider = serializers.CharField(read_only=True, required=False)
+    agent_type = serializers.CharField(read_only=True, required=False)
+
+
+class RunTestKPIsResponseSerializer(serializers.Serializer):
+    """Response for GET /simulate/test-executions/{id}/kpis/."""
+
+    total_calls = serializers.IntegerField(read_only=True)
+    avg_score = serializers.FloatField(read_only=True)
+    avg_response = serializers.FloatField(read_only=True)
+    calls_attempted = serializers.IntegerField(read_only=True)
+    connected_calls = serializers.IntegerField(read_only=True)
+    calls_connected_percentage = serializers.FloatField(read_only=True)
+    scenario_graphs = serializers.DictField(
+        child=serializers.DictField(child=serializers.JSONField()), read_only=True
+    )
+    agent_type = serializers.CharField(read_only=True)
+    is_inbound = serializers.BooleanField(read_only=True, allow_null=True)
+    avg_agent_latency = serializers.FloatField(read_only=True)
+    avg_user_interruption_count = serializers.FloatField(read_only=True)
+    avg_user_interruption_rate = serializers.FloatField(read_only=True)
+    avg_user_wpm = serializers.FloatField(read_only=True)
+    avg_bot_wpm = serializers.FloatField(read_only=True)
+    avg_talk_ratio = serializers.FloatField(read_only=True)
+    avg_ai_interruption_count = serializers.FloatField(read_only=True)
+    avg_ai_interruption_rate = serializers.FloatField(read_only=True)
+    avg_stop_time_after_interruption = serializers.FloatField(read_only=True)
+    agent_talk_percentage = serializers.FloatField(read_only=True)
+    customer_talk_percentage = serializers.FloatField(read_only=True)
+    avg_total_tokens = serializers.FloatField(read_only=True)
+    avg_input_tokens = serializers.FloatField(read_only=True)
+    avg_output_tokens = serializers.FloatField(read_only=True)
+    avg_chat_latency_ms = serializers.FloatField(read_only=True)
+    avg_turn_count = serializers.FloatField(read_only=True)
+    avg_csat_score = serializers.FloatField(read_only=True)
+    failed_calls = serializers.IntegerField(read_only=True)
+    total_duration = serializers.FloatField(read_only=True)
+
+
+class EvalExplanationClusterSerializer(serializers.Serializer):
+    kind = serializers.CharField(read_only=True, required=False)
+    confidence = serializers.CharField(read_only=True, required=False)
+    theme = serializers.CharField(read_only=True, required=False)
+    guidance = serializers.CharField(read_only=True, required=False)
+    evidenceSummary = serializers.CharField(read_only=True, required=False)
+    eval_config_id = serializers.UUIDField(read_only=True, required=False)
+    eval_template_id = serializers.UUIDField(read_only=True, required=False)
+    eval_name = serializers.CharField(read_only=True, required=False)
+
+
+class EvalExplanationSummaryResultSerializer(serializers.Serializer):
+    response = serializers.DictField(
+        child=serializers.ListField(child=EvalExplanationClusterSerializer()),
+        allow_null=True,
+    )
+    last_updated = serializers.DateTimeField(allow_null=True)
+    status = serializers.CharField()
+
+
+class EvalExplanationSummaryResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalExplanationSummaryResultSerializer()
+
+
+class EvalExplanationSummaryRefreshResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+
+
+class EvalExplanationSummaryRefreshResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalExplanationSummaryRefreshResultSerializer()
+
+
+class OptimiserAnalysisResultPayloadSerializer(serializers.Serializer):
+    response = serializers.DictField(child=serializers.JSONField(), allow_null=True)
+    status = serializers.CharField()
+    last_updated = serializers.DateTimeField(required=False)
+    message = serializers.CharField(required=False, allow_blank=True)
+
+
+class OptimiserAnalysisResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = OptimiserAnalysisResultPayloadSerializer()
+
+
+class OptimiserAnalysisRefreshResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    status = serializers.CharField()
+
+
+class OptimiserAnalysisRefreshResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = OptimiserAnalysisRefreshResultSerializer()
 
 
 class CallExecutionSerializer(serializers.ModelSerializer):
@@ -1316,6 +1545,13 @@ class TestExecutionColumnOrderSerializer(serializers.Serializer):
     column_order = ColumnOrderSerializer(many=True)
 
 
+class TestExecutionColumnOrderResponseSerializer(serializers.Serializer):
+    """Response serializer for persisted test-execution column order."""
+
+    message = serializers.CharField(read_only=True)
+    column_order = ColumnOrderSerializer(many=True, read_only=True)
+
+
 class PerformanceSummarySerializer(serializers.Serializer):
     """Serializer for Performance Summary data"""
 
@@ -1345,6 +1581,24 @@ class TestExecutionAnalyticsSerializer(serializers.Serializer):
     )
 
     metadata = serializers.DictField(help_text="Metadata about the analytics data")
+
+
+class RunTestAnalyticsSerializer(serializers.Serializer):
+    """Serializer for run-test analytics across multiple test executions."""
+
+    run_test_info = serializers.DictField(help_text="Run test metadata")
+    fail_rate_trends = serializers.ListField(
+        child=serializers.DictField(), help_text="Fail-rate trend points"
+    )
+    evaluation_score_trends = serializers.ListField(
+        child=serializers.DictField(), help_text="Evaluation score trend points"
+    )
+    performance_comparison = serializers.ListField(
+        child=serializers.DictField(), help_text="Per-execution performance rows"
+    )
+    summary_stats = serializers.DictField(
+        required=False, help_text="Aggregate performance summary"
+    )
 
 
 class TestExecutionRerunSerializer(serializers.Serializer):
@@ -1401,9 +1655,47 @@ class TestExecutionBulkDeleteSerializer(serializers.Serializer):
         return data
 
 
+class TestExecutionBulkDeleteResponseSerializer(serializers.Serializer):
+    """Response serializer for bulk deleting test executions from a run test."""
+
+    message = serializers.CharField(read_only=True)
+    run_test_id = serializers.UUIDField(read_only=True)
+    deleted_count = serializers.IntegerField(read_only=True)
+    deleted_ids = serializers.ListField(child=serializers.UUIDField(), read_only=True)
+
+
+class TestExecutionRerunResultSerializer(serializers.Serializer):
+    """Per-test-execution result in the bulk rerun response."""
+
+    test_execution_id = serializers.UUIDField(read_only=True)
+    success_count = serializers.IntegerField(read_only=True)
+    failure_count = serializers.IntegerField(read_only=True)
+    successful_reruns = serializers.ListField(
+        child=serializers.UUIDField(), read_only=True
+    )
+    failed_reruns = serializers.ListField(child=serializers.DictField(), read_only=True)
+    dispatch_error = serializers.CharField(
+        required=False, allow_null=True, read_only=True
+    )
+    skipped = serializers.BooleanField(required=False, read_only=True)
+    reason = serializers.CharField(required=False, read_only=True)
+
+
+class TestExecutionRerunResponseSerializer(serializers.Serializer):
+    """Response serializer for bulk rerun of test executions."""
+
+    message = serializers.CharField(read_only=True)
+    run_test_id = serializers.UUIDField(read_only=True)
+    rerun_type = serializers.CharField(read_only=True)
+    total_test_executions = serializers.IntegerField(read_only=True)
+    results = TestExecutionRerunResultSerializer(many=True, read_only=True)
+    overall_success_count = serializers.IntegerField(read_only=True)
+    overall_failure_count = serializers.IntegerField(read_only=True)
+
+
 # Migrated to simulate/serializers/requests/run_test_evals.py
 # Re-exported here for backward compatibility.
-from simulate.serializers.requests.run_test_evals import (
+from simulate.serializers.requests.run_test_evals import (  # noqa: E402
     RunNewEvalsOnTestExecutionSerializer,
 )
 

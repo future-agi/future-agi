@@ -11,11 +11,12 @@ import pytest
 from django.utils import timezone
 
 from tracer.utils.filters import apply_created_at_filters
+from tfc.constants.api_calls import APICallStatusChoices
+
 try:
-    from ee.usage.models.usage import APICallLog, APICallStatusChoices
+    from ee.usage.models.usage import APICallLog
 except ImportError:
     APICallLog = None
-    APICallStatusChoices = None
 
 
 def _make_datetime_filter(filter_op, filter_value, column_id="created_at"):
@@ -120,8 +121,7 @@ class TestApplyCreatedAtFiltersUnit:
 
         assert remaining == [text_filter]
 
-    def test_handles_camel_case_filter_params(self, db, organization):
-        """Should handle camelCase parameter names."""
+    def test_ignores_camel_case_filter_params(self, db, organization):
         now = timezone.now()
         filters = [
             {
@@ -136,7 +136,8 @@ class TestApplyCreatedAtFiltersUnit:
         qs = APICallLog.objects.filter(organization=organization)
         filtered_qs, remaining = apply_created_at_filters(qs, filters)
 
-        assert remaining == []
+        assert filtered_qs is qs
+        assert remaining == filters
 
     def test_handles_none_filter_config(self, db, organization):
         """Should handle None filter_config gracefully."""
@@ -323,13 +324,13 @@ class TestApplyCreatedAtFiltersIntegration:
         assert api_call_logs[0] not in filtered_qs
         assert api_call_logs[4] not in filtered_qs
 
-    def test_not_in_between_filter(self, api_call_logs, organization):
-        """Not in between filter should return logs outside the range."""
+    def test_not_between_filter(self, api_call_logs, organization):
+        """Not between filter should return logs outside the range."""
         start_time = api_call_logs[3].created_at  # 3 days ago
         end_time = api_call_logs[1].created_at  # Yesterday
         filters = [
             _make_datetime_filter(
-                "not_in_between", [start_time.isoformat(), end_time.isoformat()]
+                "not_between", [start_time.isoformat(), end_time.isoformat()]
             ),
         ]
 

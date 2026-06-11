@@ -18,7 +18,9 @@ describe("stripAttributePathPrefix", () => {
 
   it("strips the wrapper for multi-digit indices", () => {
     expect(
-      stripAttributePathPrefix("observation_span.42.span_attributes.transcript"),
+      stripAttributePathPrefix(
+        "observation_span.42.span_attributes.transcript",
+      ),
     ).toBe("transcript");
   });
 

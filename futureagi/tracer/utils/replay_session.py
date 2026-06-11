@@ -1,10 +1,9 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
-from django.db.models import Exists, F, OuterRef, QuerySet, Subquery
-from django.db.models.functions import Coalesce
+from django.db.models import QuerySet
 
 from model_hub.models.choices import StatusType
 from simulate.models import AgentDefinition
@@ -17,10 +16,12 @@ from simulate.utils.session_comparison import (
     parse_voice_span_transcripts,
 )
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
-from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.replay_session import ReplaySession
 from tracer.models.trace import Trace
+from tracer.services.clickhouse.span_attribute_lookups import (
+    trace_ids_with_simulator_call_execution_id,
+)
 from tracer.utils.otel import ConversationAttributes
 from tracer.utils.sql_queries import SQL_query_handler
 
@@ -204,19 +205,16 @@ def get_agent_suggestions(
         # Extract the original Vapi/Retell config from the trace
         original_config = _extract_voice_trace_original_config(trace_query)
 
-        # Extract system prompt from the already-loaded config to avoid a redundant span query
-        agent_description = (
-            _extract_voice_trace_system_prompt(trace_query, _config=original_config)
-            or ""
-        )
-
-        # Fallback: try the project's agent definition
-        if not agent_description:
-            agent_def_from_project = AgentDefinition.objects.filter(
-                observability_provider__project=project,
-            ).first()
-            if agent_def_from_project:
-                agent_description = agent_def_from_project.description or ""
+        # The voice system prompt lives on the external provider (Vapi/Retell)
+        # and is reachable via assistant_id on the AgentDefinition — don't
+        # duplicate it into agent_description. Reuse the existing project
+        # agent definition's description if one exists; otherwise leave blank.
+        agent_description = ""
+        agent_def_from_project = AgentDefinition.objects.filter(
+            observability_provider__project=project,
+        ).first()
+        if agent_def_from_project:
+            agent_description = agent_def_from_project.description or ""
 
         return (
             False,
@@ -231,18 +229,13 @@ def get_agent_suggestions(
             None,
         )
 
-    system_prompt = get_system_prompt(
-        project_id=str(project.id),
-        replay_type=replay_type,
-        ids=ids,
-        select_all=select_all,
-    )
-
+    # Text agent system prompt is captured on AgentVersion.configuration_snapshot
+    # at version-create time, so don't copy it into agent_description here.
     return (
         False,
         {
             "agent_name": agent_name,
-            "agent_description": system_prompt or "",
+            "agent_description": "",
             "agent_type": "text",
             "scenario_name": scenario_name,
             "version_name": None,
@@ -457,29 +450,73 @@ def _get_transcripts_from_trace_query(trace_query: QuerySet) -> dict[str, list[d
     Returns:
         Dictionary with trace IDs as keys and transcript lists as values.
     """
-    # Use span_attributes (canonical) - eval_attributes is deprecated
-    has_simulator_call_execution_id = Exists(
-        ObservationSpan.objects.filter(trace_id=OuterRef("id"))
-        .filter(span_attributes__has_key="fi.simulator.call_execution_id")
-        .exclude(span_attributes__contains={"fi.simulator.call_execution_id": None})
-    )
+    # The has-key check used to run as a Django Exists() subquery against
+    # ``span_attributes`` (PG JSONB). The 77 GB GIN that backed it was
+    # dropped (see migration 0074); the lookup now goes to ClickHouse which
+    # has the same data shredded into ``span_attr_str`` maps.
+    traces = list(trace_query.values("id", "input", "output"))
+    if not traces:
+        return {}
 
-    traces = trace_query.annotate(
-        has_simulator_call_execution_id=has_simulator_call_execution_id
-    ).values("id", "input", "output", "has_simulator_call_execution_id")
+    simulator_trace_ids = trace_ids_with_simulator_call_execution_id(
+        str(t["id"]) for t in traces
+    )
 
     return {
         str(t["id"]): [
             {
                 "input": (
                     parse_trace_input_for_graph_chat_scenario(t["input"])
-                    if t["has_simulator_call_execution_id"]
+                    if str(t["id"]) in simulator_trace_ids
                     else t["input"]
                 ),
                 "output": t["output"],
             }
         ]
         for t in traces
+    }
+
+
+def _chspan_to_legacy_dict(span) -> dict:
+    """Reconstruct the legacy ``{trace_id, span_attributes, eval_attributes}``
+    dict shape from a ``CHSpan`` so existing ``merge_span_attrs`` callers
+    keep working.
+
+    ``span_attributes`` is the merge of the typed maps (attrs_string /
+    attrs_number / attrs_bool) plus the overflow JSON ``attributes_extra``
+    minus the four PG JSONField columns the adapter round-trips into the
+    overflow (model_parameters / input_images / eval_input / eval_attributes
+    — see ``tracer/services/clickhouse/v2/adapter.py:330``). Those four are
+    pulled back out into their original positions.
+    """
+    from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+    extra = CHSpanReader.attributes_extra_as_dict(span)
+    # Defensive: attributes_extra_as_dict can yield a non-dict if the
+    # underlying CH column is a raw String (schema 013) rather than typed
+    # JSON. Treat anything that's not a dict as no overflow data.
+    if not isinstance(extra, dict):
+        extra = {}
+
+    attrs: dict = {}
+    attrs.update(span.attrs_string or {})
+    attrs.update(span.attrs_number or {})
+    attrs.update(span.attrs_bool or {})
+
+    _ROUND_TRIP_COLS = (
+        "model_parameters",
+        "input_images",
+        "eval_input",
+        "eval_attributes",
+    )
+    for k, v in extra.items():
+        if k not in _ROUND_TRIP_COLS:
+            attrs[k] = v
+
+    return {
+        "trace_id": span.trace_id,
+        "span_attributes": attrs,
+        "eval_attributes": extra.get("eval_attributes") or {},
     }
 
 
@@ -490,36 +527,77 @@ def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list
     Returns:
         Dictionary with session IDs as keys and transcript lists as values.
     """
-    root_span_start_time = Subquery(
-        ObservationSpan.objects.filter(
-            trace_id=OuterRef("id"),
-            parent_span_id__isnull=True,
-        ).values("start_time")[:1]
+    # Replaces the prior cross-store Subquery+OuterRef pattern with a
+    # 2-step PG-then-CH join, unlocked by wave-3 reader extension
+    # ``CHSpanReader.per_trace_root_span_start_times`` (commit 93c5c415f).
+    #
+    # Original PG path was:
+    #     trace_query.annotate(
+    #         span_start_time=Coalesce(
+    #             Subquery(ObservationSpan.objects.filter(
+    #                 trace_id=OuterRef("id"), parent_span_id__isnull=True
+    #             ).values("start_time")[:1]),
+    #             F("created_at"),
+    #         )
+    #     ).order_by("span_start_time").values(...)
+    #
+    # Step 1 — pull the trace rows from PG (Trace itself stays in PG, so
+    # this is a single PG read on the existing queryset). We include
+    # ``created_at`` so we can preserve the Coalesce fallback for traces
+    # whose root span hasn't landed in CH yet (or never existed).
+    traces = list(
+        trace_query.values("id", "session_id", "input", "output", "created_at")
     )
 
-    # Use span_attributes (canonical) - eval_attributes is deprecated
-    has_simulator_call_execution_id = Exists(
-        ObservationSpan.objects.filter(trace_id=OuterRef("id"))
-        .filter(span_attributes__has_key="fi.simulator.call_execution_id")
-        .exclude(span_attributes__contains={"fi.simulator.call_execution_id": None})
-    )
+    # Step 2 — bulk root-span start_time lookup in one CH query. Returns
+    # {trace_id: start_time or None} — empty dict iff trace_ids is empty
+    # (per-trace None when the trace has no CH root span yet).
+    from tracer.services.clickhouse.v2 import get_reader
 
-    traces = (
-        trace_query.annotate(
-            span_start_time=Coalesce(root_span_start_time, F("created_at")),
-            has_simulator_call_execution_id=has_simulator_call_execution_id,
-        )
-        .order_by("span_start_time")
-        .values("session_id", "input", "output", "has_simulator_call_execution_id")
+    trace_ids = [str(t["id"]) for t in traces]
+    if trace_ids:
+        with get_reader() as reader:
+            root_starts = reader.per_trace_root_span_start_times(trace_ids)
+    else:
+        root_starts = {}
+
+    # Step 3 — Python-side sort by Coalesce(root_start, created_at).
+    # Matches the prior PG ORDER BY exactly: the Subquery's first row
+    # (LIMIT 1 with no explicit ORDER BY) is implementation-defined in
+    # PG; the CH reader picks min(start_time) for ties, which is the
+    # only deterministic choice. For traces where CH has no root span,
+    # we fall back to ``created_at`` — same Coalesce semantic as before.
+    #
+    # Tz normalization: PG datetimes are tz-aware (USE_TZ=True) but the
+    # CH driver returns DateTime64 as naive UTC. Mixing the two
+    # raises ``TypeError: can't compare offset-naive and offset-aware``
+    # when the trace list is a mix of CH-present and CH-missing rows.
+    # Normalize both sides to tz-aware UTC before sorting.
+    def _as_aware_utc(d):
+        if d is None:
+            return None
+        return d if d.tzinfo is not None else d.replace(tzinfo=timezone.utc)
+
+    def _sort_key(t):
+        rs = root_starts.get(str(t["id"]))
+        ts = rs if rs is not None else t["created_at"]
+        return _as_aware_utc(ts)
+
+    traces.sort(key=_sort_key)
+
+    # The has-key check used to run as a Django Exists() subquery against
+    # ``span_attributes`` (PG JSONB). Now sourced from ClickHouse — see
+    # migration 0074 / span_attribute_lookups.
+    simulator_trace_ids = trace_ids_with_simulator_call_execution_id(
+        str(t["id"]) for t in traces
     )
 
     sessions_map: dict[str, list[dict]] = {}
 
     for trace in traces:
         session_id = str(trace["session_id"])
-        has_simulator_call_execution_id = trace["has_simulator_call_execution_id"]
         trace_input = trace["input"]
-        if has_simulator_call_execution_id:
+        if str(trace["id"]) in simulator_trace_ids:
             trace_input = parse_trace_input_for_graph_chat_scenario(trace_input)
 
         if session_id not in sessions_map:
@@ -539,31 +617,39 @@ def _is_voice_trace_query(trace_query: QuerySet) -> bool:
     NOTE: Only samples the first 10 traces for performance. In mixed
     voice/text projects this may not be fully representative.
     """
-    trace_ids = trace_query.values_list("id", flat=True)[:10]
-    return ObservationSpan.objects.filter(
-        trace_id__in=trace_ids,
-        observation_type="conversation",
-    ).exists()
+    from tracer.services.clickhouse.v2 import get_reader
+
+    trace_ids = list(trace_query.values_list("id", flat=True)[:10])
+    if not trace_ids:
+        return False
+
+    # Single bulk read across all sampled trace_ids, then short-circuit on
+    # the first conversation-typed span. CH-side observation_type filtering
+    # is not exposed on the reader yet (D-027 review queue), so we filter
+    # in Python — sampled set is bounded at 10 traces.
+    with get_reader() as reader:
+        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+    return any(s.observation_type == "conversation" for s in spans)
 
 
 def _get_first_voice_span_raw_log(trace_query: QuerySet) -> dict | None:
     """Fetch the raw_log from the first conversation span in the trace query."""
+    from tracer.services.clickhouse.v2 import get_reader
+
     trace_id = trace_query.values_list("id", flat=True).first()
     if not trace_id:
         return None
 
-    span = (
-        ObservationSpan.objects.filter(
-            trace_id=trace_id,
-            observation_type="conversation",
-        )
-        .values("span_attributes", "eval_attributes")
-        .first()
+    with get_reader() as reader:
+        spans = reader.list_by_trace(str(trace_id))
+
+    conversation_span = next(
+        (s for s in spans if s.observation_type == "conversation"), None
     )
-    if not span:
+    if conversation_span is None:
         return None
 
-    attrs = merge_span_attrs(span)
+    attrs = merge_span_attrs(_chspan_to_legacy_dict(conversation_span))
     raw_log = attrs.get("raw_log")
     return raw_log if isinstance(raw_log, dict) else None
 
@@ -673,16 +759,27 @@ def _extract_voice_trace_system_prompt(
 
 def _load_voice_conversation_spans(trace_query: QuerySet) -> list[dict]:
     """
-    Load conversation-type spans for all traces in the query (single DB hit).
-    Returns a list of dicts with trace_id, span_attributes, and eval_attributes.
+    Load conversation-type spans for all traces in the query.
+    Returns a list of dicts shaped like ``{trace_id, span_attributes, eval_attributes}``
+    so downstream ``merge_span_attrs`` / attribute lookups keep working.
+
+    Backing store is now ClickHouse (CHSpanReader). One bulk query across
+    all trace_ids; observation_type filter applied in Python.
     """
+    from tracer.services.clickhouse.v2 import get_reader
+
     trace_ids = list(trace_query.values_list("id", flat=True))
-    return list(
-        ObservationSpan.objects.filter(
-            trace_id__in=trace_ids,
-            observation_type="conversation",
-        ).values("trace_id", "span_attributes", "eval_attributes")
-    )
+    if not trace_ids:
+        return []
+
+    with get_reader() as reader:
+        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+
+    return [
+        _chspan_to_legacy_dict(s)
+        for s in spans
+        if s.observation_type == "conversation"
+    ]
 
 
 def _extract_recording_urls_from_spans(spans: list[dict]) -> dict[str, str]:

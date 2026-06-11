@@ -18,15 +18,29 @@ from unittest.mock import patch
 import pytest
 from rest_framework import status
 
+from accounts.models.workspace import Workspace
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from simulate.models import AgentDefinition, Scenarios
+from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.simulator_agent import SimulatorAgent
 
 # ============================================================================
 # Fixtures
 # ============================================================================
+
+
+@pytest.fixture
+def allow_ee_feature_checks():
+    """Scenario API tests exercise validation/workflow behavior, not plan gates."""
+    with patch("tfc.ee_gating.check_ee_feature", return_value=None):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _allow_ee_feature_checks_for_scenario_api(allow_ee_feature_checks):
+    yield
 
 
 @pytest.fixture
@@ -254,6 +268,14 @@ def scenario_prompt(
     )
 
 
+def assert_unknown_field_error(response, field_name):
+    """Assert the shared management API envelope rejects an undeclared field."""
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    data = response.json()
+    assert data["status"] is False
+    assert data["details"][field_name] == ["Unknown field."]
+
+
 # ============================================================================
 # ScenariosListView Tests
 # ============================================================================
@@ -304,6 +326,23 @@ class TestScenariosListView:
         data = response.json()
         assert data["count"] == 0
         assert len(data["results"]) == 0
+
+    def test_list_scenarios_rejects_unknown_query_param(self, auth_client, scenario):
+        """Runtime query validation should reject undeclared scenario filters."""
+        response = auth_client.get("/simulate/scenarios/", {"legacyFilter": "voice"})
+
+        assert_unknown_field_error(response, "legacyFilter")
+
+    def test_list_scenarios_rejects_invalid_agent_definition_id(
+        self, auth_client, scenario
+    ):
+        """Invalid UUID filters should return a typed 400 instead of falling through."""
+        response = auth_client.get(
+            "/simulate/scenarios/", {"agent_definition_id": "not-a-uuid"}
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "agent_definition_id" in response.json()["details"]
 
     def test_list_scenarios_excludes_deleted(self, auth_client, scenario):
         """Test that deleted scenarios are not returned."""
@@ -657,6 +696,54 @@ class TestCreateScenarioView:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_create_scenario_missing_agent_definition_id(self, auth_client, dataset):
+        """Agent-definition source scenarios must fail validation before temp row creation."""
+        payload = {
+            "name": "New Scenario",
+            "dataset_id": str(dataset.id),
+            "kind": "dataset",
+        }
+
+        response = auth_client.post(
+            "/simulate/scenarios/create/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "agent_definition_id" in response.json()["details"]
+
+    def test_create_scenario_other_workspace_agent_definition_returns_400(
+        self, auth_client, organization, dataset, user
+    ):
+        """Scenario creation must not resolve agent definitions outside the active workspace."""
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_agent = AgentDefinition.no_workspace_objects.create(
+            agent_name="Other Workspace Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description="Not visible from the active workspace",
+            organization=organization,
+            workspace=other_workspace,
+            languages=["en"],
+        )
+        payload = {
+            "name": "Cross Workspace Scenario",
+            "dataset_id": str(dataset.id),
+            "kind": "dataset",
+            "agent_definition_id": str(other_agent.id),
+        }
+
+        response = auth_client.post(
+            "/simulate/scenarios/create/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "agent_definition_id" in response.json()["details"]
+
     def test_create_scenario_script_missing_script_url(
         self, auth_client, agent_definition
     ):
@@ -801,6 +888,27 @@ class TestCreateScenarioView:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    @patch("simulate.views.scenarios.start_create_dataset_scenario_workflow_sync")
+    def test_create_scenario_rejects_unknown_body_field(
+        self, mock_workflow, auth_client, agent_definition, dataset
+    ):
+        """Runtime body validation should reject undeclared create fields."""
+        payload = {
+            "name": "New Dataset Scenario",
+            "description": "A new scenario from dataset",
+            "dataset_id": str(dataset.id),
+            "kind": "dataset",
+            "agent_definition_id": str(agent_definition.id),
+            "legacy_extra": "ignore me",
+        }
+
+        response = auth_client.post(
+            "/simulate/scenarios/create/", payload, format="json"
+        )
+
+        assert_unknown_field_error(response, "legacy_extra")
+        mock_workflow.assert_not_called()
+
 
 # ============================================================================
 # EditScenarioView Tests
@@ -839,6 +947,59 @@ class TestEditScenarioView:
         assert response.status_code == status.HTTP_200_OK
         scenario.refresh_from_db()
         assert scenario.description == "Updated description"
+
+    def test_edit_scenario_description_to_blank(self, auth_client, scenario):
+        """Blank descriptions are valid updates and should not be ignored."""
+        scenario.description = "Description to clear"
+        scenario.save()
+        payload = {"description": ""}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{scenario.id}/edit/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        scenario.refresh_from_db()
+        assert scenario.description == ""
+
+    def test_edit_scenario_prompt_to_blank(self, auth_client, scenario):
+        """Blank prompts are valid edit payloads when the scenario has a simulator agent."""
+        scenario.simulator_agent.prompt = "Prompt to clear"
+        scenario.simulator_agent.save()
+        payload = {"prompt": ""}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{scenario.id}/edit/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        scenario.simulator_agent.refresh_from_db()
+        assert scenario.simulator_agent.prompt == ""
+
+    def test_edit_scenario_graph_success(self, auth_client, scenario):
+        """Graph edits should create/update ScenarioGraph without invalid model fields."""
+        payload = {"graph": {"nodes": [], "edges": []}}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{scenario.id}/edit/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        graph = ScenarioGraph.objects.get(scenario=scenario, deleted=False)
+        assert graph.graph_config["graph_data"] == {"nodes": [], "edges": []}
+
+    def test_edit_scenario_prompt_without_simulator_agent_returns_400(
+        self, auth_client, scenario_prompt
+    ):
+        """Prompt edits should fail closed for scenarios without a simulator agent."""
+        payload = {"prompt": "Updated prompt"}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{scenario_prompt.id}/edit/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "associated simulator agent" in response.json()["result"]
 
     def test_edit_scenario_name_and_description(self, auth_client, scenario):
         """Test editing both name and description."""
@@ -919,6 +1080,16 @@ class TestEditScenarioView:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_edit_scenario_rejects_unknown_body_field(self, auth_client, scenario):
+        """Runtime body validation should reject undeclared edit fields."""
+        payload = {"name": "Updated Name", "legacy_extra": "ignore me"}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{scenario.id}/edit/", payload, format="json"
+        )
+
+        assert_unknown_field_error(response, "legacy_extra")
+
 
 # ============================================================================
 # DeleteScenarioView Tests
@@ -940,6 +1111,24 @@ class TestDeleteScenarioView:
         # Verify soft delete in database
         scenario.refresh_from_db()
         assert scenario.deleted is True
+        assert scenario.deleted_at is not None
+
+    def test_delete_scenario_soft_deletes_graphs(self, auth_client, scenario):
+        """Deleting a scenario should also hide its active graph rows."""
+        graph = ScenarioGraph.objects.create(
+            scenario=scenario,
+            name="Scenario Graph",
+            description="Graph to delete with scenario",
+            organization=scenario.organization,
+            graph_config={"graph_data": {"nodes": []}},
+        )
+
+        response = auth_client.delete(f"/simulate/scenarios/{scenario.id}/delete/")
+
+        assert response.status_code == status.HTTP_200_OK
+        graph.refresh_from_db()
+        assert graph.deleted is True
+        assert graph.deleted_at is not None
 
     def test_delete_scenario_unauthenticated(self, api_client, scenario):
         """Test deleting scenario without authentication returns 401/403."""
@@ -1036,6 +1225,31 @@ class TestEditScenarioPromptsView:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_edit_prompts_without_simulator_agent_returns_400(
+        self, auth_client, scenario_prompt
+    ):
+        """Prompt route should not 500 when a scenario has no simulator agent."""
+        payload = {"prompts": "Updated prompt"}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{scenario_prompt.id}/prompts/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "associated simulator agent" in response.json()["result"]
+
+    def test_edit_prompts_rejects_unknown_body_field(self, auth_client, scenario):
+        """Runtime body validation should reject undeclared prompt fields."""
+        payload = {"prompts": "Updated prompt", "legacy_extra": "ignore me"}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{scenario.id}/prompts/", payload, format="json"
+        )
+
+        assert_unknown_field_error(response, "legacy_extra")
+
 
 # ============================================================================
 # AddScenarioRowsView Tests
@@ -1055,7 +1269,7 @@ class TestAddScenarioRowsView:
         scenario.dataset = dataset_with_rows
         scenario.save()
 
-        payload = {"num_rows": 5, "description": "Additional test rows"}
+        payload = {"num_rows": 10, "description": "Additional test rows"}
 
         response = auth_client.post(
             f"/simulate/scenarios/{scenario.id}/add-rows/", payload, format="json"
@@ -1063,12 +1277,12 @@ class TestAddScenarioRowsView:
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         data = response.json()
-        assert data["num_rows"] == 5
+        assert data["num_rows"] == 10
         mock_workflow.assert_called_once()
 
     def test_add_rows_unauthenticated(self, api_client, scenario):
         """Test adding rows without authentication returns 401/403."""
-        payload = {"num_rows": 5}
+        payload = {"num_rows": 10}
 
         response = api_client.post(
             f"/simulate/scenarios/{scenario.id}/add-rows/", payload, format="json"
@@ -1082,7 +1296,7 @@ class TestAddScenarioRowsView:
     def test_add_rows_scenario_not_found(self, auth_client):
         """Test adding rows to non-existent scenario returns 404."""
         fake_id = uuid.uuid4()
-        payload = {"num_rows": 5}
+        payload = {"num_rows": 10}
 
         response = auth_client.post(
             f"/simulate/scenarios/{fake_id}/add-rows/", payload, format="json"
@@ -1092,7 +1306,7 @@ class TestAddScenarioRowsView:
 
     def test_add_rows_no_dataset(self, auth_client, scenario_without_dataset):
         """Test adding rows to scenario without dataset returns 400."""
-        payload = {"num_rows": 5}
+        payload = {"num_rows": 10}
 
         response = auth_client.post(
             f"/simulate/scenarios/{scenario_without_dataset.id}/add-rows/",
@@ -1101,7 +1315,7 @@ class TestAddScenarioRowsView:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "does not have an associated dataset" in response.json()["error"]
+        assert "does not have an associated dataset" in response.json()["result"]
 
     def test_add_rows_invalid_num_rows_zero(
         self, auth_client, scenario, dataset_with_rows
@@ -1145,6 +1359,27 @@ class TestAddScenarioRowsView:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @patch("simulate.views.scenarios.start_add_scenario_rows_workflow_sync")
+    def test_add_rows_rejects_unknown_body_field(
+        self, mock_workflow, auth_client, scenario, dataset_with_rows
+    ):
+        """Runtime body validation should reject undeclared add-row fields."""
+        scenario.dataset = dataset_with_rows
+        scenario.save()
+
+        payload = {
+            "num_rows": 10,
+            "description": "Additional test rows",
+            "legacy_extra": "ignore me",
+        }
+
+        response = auth_client.post(
+            f"/simulate/scenarios/{scenario.id}/add-rows/", payload, format="json"
+        )
+
+        assert_unknown_field_error(response, "legacy_extra")
+        mock_workflow.assert_not_called()
 
 
 # ============================================================================
@@ -1335,6 +1570,53 @@ class TestAddScenarioColumnsView:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_add_columns_rejects_unknown_body_field(
+        self, auth_client, scenario, dataset_with_rows
+    ):
+        """Test add-columns rejects request fields outside the contract."""
+        scenario.dataset = dataset_with_rows
+        scenario.save()
+
+        payload = {
+            "columns": [
+                {"name": "col1", "data_type": "text", "description": "Column 1"}
+            ],
+            "legacy_extra": True,
+        }
+
+        response = auth_client.post(
+            f"/simulate/scenarios/{scenario.id}/add-columns/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_add_columns_rejects_unknown_column_field(
+        self, auth_client, scenario, dataset_with_rows
+    ):
+        """Test add-columns rejects nested column fields outside the contract."""
+        scenario.dataset = dataset_with_rows
+        scenario.save()
+
+        payload = {
+            "columns": [
+                {
+                    "name": "col1",
+                    "data_type": "text",
+                    "description": "Column 1",
+                    "legacy_extra": True,
+                }
+            ]
+        }
+
+        response = auth_client.post(
+            f"/simulate/scenarios/{scenario.id}/add-columns/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "legacy_extra" in str(response.json()["details"]["columns"])
+        assert "Unknown field." in str(response.json()["details"]["columns"])
+
     def test_add_columns_duplicate_names_in_request(
         self, auth_client, scenario, dataset_with_rows
     ):
@@ -1447,3 +1729,14 @@ class TestGetMultiDatasetsColumnConfigs:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["column_configs"] == []
+
+    def test_get_columns_rejects_unknown_query_param(self, auth_client):
+        """Runtime query validation should reject undeclared multi-dataset filters."""
+        import json
+
+        response = auth_client.get(
+            "/simulate/scenarios/get-columns/",
+            {"scenarios": json.dumps([]), "legacyFilter": "1"},
+        )
+
+        assert_unknown_field_error(response, "legacyFilter")

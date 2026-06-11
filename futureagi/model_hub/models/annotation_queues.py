@@ -11,6 +11,7 @@ from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
     AnnotatorRole,
     AssignmentStrategy,
+    AutomationRuleTriggerFrequency,
     QueueItemSourceType,
     QueueItemStatus,
 )
@@ -34,6 +35,55 @@ VALID_STATUS_TRANSITIONS = {
         AnnotationQueueStatusChoices.PAUSED.value,
     },
 }
+
+ANNOTATOR_ROLE_PRIORITY = [
+    AnnotatorRole.MANAGER.value,
+    AnnotatorRole.REVIEWER.value,
+    AnnotatorRole.ANNOTATOR.value,
+]
+FULL_ACCESS_QUEUE_ROLES = list(ANNOTATOR_ROLE_PRIORITY)
+
+
+def normalize_annotator_roles(value, default=AnnotatorRole.ANNOTATOR.value):
+    """Return a stable, valid role list from legacy strings or new arrays."""
+    if value is None or value == "":
+        raw_roles = []
+    elif isinstance(value, str):
+        raw_roles = [value]
+    elif isinstance(value, (list, tuple, set)):
+        raw_roles = list(value)
+    else:
+        raw_roles = []
+
+    valid_roles = {role.value for role in AnnotatorRole}
+    roles = []
+    for role in raw_roles:
+        if role in valid_roles and role not in roles:
+            roles.append(role)
+
+    if not roles and default:
+        roles = [default]
+
+    return [role for role in ANNOTATOR_ROLE_PRIORITY if role in roles] + [
+        role for role in roles if role not in ANNOTATOR_ROLE_PRIORITY
+    ]
+
+
+def primary_annotator_role(roles):
+    normalized = normalize_annotator_roles(roles)
+    return normalized[0] if normalized else AnnotatorRole.ANNOTATOR.value
+
+
+def annotation_queue_role_q(*roles):
+    """Match memberships where a role is stored in legacy `role` or new `roles`."""
+    normalized = normalize_annotator_roles(
+        list(roles),
+        default=None,
+    )
+    query = Q(role__in=normalized)
+    for role in normalized:
+        query |= Q(roles__contains=[role])
+    return query
 
 
 class AnnotationQueue(BaseModel):
@@ -161,6 +211,22 @@ class AnnotationQueue(BaseModel):
     def __str__(self):
         return f"AnnotationQueue: {self.name}"
 
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        super().save(*args, **kwargs)
+
+        if not is_new or not self.created_by_id:
+            return
+
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue=self,
+            user_id=self.created_by_id,
+            defaults={
+                "role": AnnotatorRole.MANAGER.value,
+                "roles": FULL_ACCESS_QUEUE_ROLES,
+            },
+        )
+
 
 class AnnotationQueueLabel(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -207,6 +273,11 @@ class AnnotationQueueAnnotator(BaseModel):
         choices=AnnotatorRole.get_choices(),
         default=AnnotatorRole.ANNOTATOR.value,
     )
+    roles = models.JSONField(default=list, blank=True)
+
+    @property
+    def normalized_roles(self):
+        return normalize_annotator_roles(self.roles or self.role)
 
     class Meta:
         constraints = [
@@ -219,6 +290,60 @@ class AnnotationQueueAnnotator(BaseModel):
 
     def __str__(self):
         return f"QueueAnnotator: {self.queue_id} - {self.user_id} ({self.role})"
+
+
+def user_has_annotation_queue_admin_access(queue, user):
+    """Org admins/owners and workspace admins manage queues in their scope."""
+    if not queue or not user or not getattr(user, "is_active", False):
+        return False
+
+    organization = getattr(queue, "organization", None)
+    if organization and user.has_global_workspace_access(organization):
+        return True
+
+    workspace = getattr(queue, "workspace", None)
+    if not workspace:
+        return False
+
+    from accounts.models.workspace import WorkspaceMembership
+    from tfc.constants.levels import Level
+
+    membership = (
+        WorkspaceMembership.no_workspace_objects.filter(
+            workspace=workspace,
+            user=user,
+            is_active=True,
+        )
+        .order_by("-updated_at")
+        .first()
+    )
+    return bool(
+        membership and membership.level_or_legacy >= Level.WORKSPACE_ADMIN
+    )
+
+
+def annotation_queue_effective_roles(queue, user, membership=None):
+    """Return explicit queue roles, or manager-equivalent admin roles."""
+    if not queue or not user or not getattr(user, "is_active", False):
+        return []
+
+    if user_has_annotation_queue_admin_access(queue, user):
+        return list(FULL_ACCESS_QUEUE_ROLES)
+
+    if membership is None:
+        membership = (
+            AnnotationQueueAnnotator.objects.filter(
+                queue=queue,
+                user=user,
+                deleted=False,
+            )
+            .order_by("-updated_at")
+            .first()
+        )
+    if membership:
+        return membership.normalized_roles
+
+    return []
 
 
 # Source FK field name mapping for QueueItem
@@ -303,6 +428,7 @@ class QueueItem(BaseModel):
         null=True,
         blank=True,
         related_name="queue_items",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     observation_span = models.ForeignKey(
         "tracer.ObservationSpan",
@@ -310,6 +436,7 @@ class QueueItem(BaseModel):
         null=True,
         blank=True,
         related_name="queue_items",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     prototype_run = models.ForeignKey(
         "model_hub.RunPrompter",
@@ -331,6 +458,7 @@ class QueueItem(BaseModel):
         null=True,
         blank=True,
         related_name="queue_items",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
 
     organization = models.ForeignKey(
@@ -394,7 +522,7 @@ class QueueItem(BaseModel):
                 f"source_type '{self.source_type}' requires '{fk_field}' to be set."
             )
         # Ensure no other source FK is set
-        for st, field in SOURCE_TYPE_FK_MAP.items():
+        for _st, field in SOURCE_TYPE_FK_MAP.items():
             if field != fk_field and getattr(self, f"{field}_id") is not None:
                 raise ValidationError(
                     f"Only '{fk_field}' should be set for source_type '{self.source_type}', "
@@ -485,6 +613,270 @@ class ItemAnnotation(BaseModel):
         return f"ItemAnnotation: {self.id} (item={self.queue_item_id}, label={self.label_id})"
 
 
+class QueueItemNote(BaseModel):
+    """Stores one whole-item annotation note per item per annotator."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    queue_item = models.ForeignKey(
+        QueueItem,
+        on_delete=models.CASCADE,
+        related_name="item_notes",
+    )
+    annotator = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="annotation_queue_item_notes",
+    )
+    notes = models.TextField(blank=True)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="annotation_queue_item_notes",
+    )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="annotation_queue_item_notes",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["queue_item", "annotator"],
+                condition=Q(deleted=False),
+                name="unique_active_queue_item_note_per_annotator",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["queue_item", "annotator"]),
+            models.Index(fields=["queue_item", "updated_at"]),
+        ]
+
+    def __str__(self):
+        return f"QueueItemNote: {self.id} (item={self.queue_item_id})"
+
+
+class QueueItemReviewThread(BaseModel):
+    """A review issue scoped to an item, label, or one annotator's score."""
+
+    ACTION_COMMENT = "comment"
+    ACTION_APPROVE = "approve"
+    ACTION_REQUEST_CHANGES = "request_changes"
+    ACTION_CHOICES = [
+        (ACTION_COMMENT, "Comment"),
+        (ACTION_APPROVE, "Approve"),
+        (ACTION_REQUEST_CHANGES, "Request Changes"),
+    ]
+
+    SCOPE_ITEM = "item"
+    SCOPE_LABEL = "label"
+    SCOPE_SCORE = "score"
+    SCOPE_CHOICES = [
+        (SCOPE_ITEM, "Item"),
+        (SCOPE_LABEL, "Label"),
+        (SCOPE_SCORE, "Score"),
+    ]
+
+    STATUS_OPEN = "open"
+    STATUS_ADDRESSED = "addressed"
+    STATUS_RESOLVED = "resolved"
+    STATUS_REOPENED = "reopened"
+    STATUS_CHOICES = [
+        (STATUS_OPEN, "Open"),
+        (STATUS_ADDRESSED, "Addressed"),
+        (STATUS_RESOLVED, "Resolved"),
+        (STATUS_REOPENED, "Reopened"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    queue_item = models.ForeignKey(
+        QueueItem,
+        on_delete=models.CASCADE,
+        related_name="review_threads",
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_annotation_review_threads",
+    )
+    label = models.ForeignKey(
+        AnnotationsLabels,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="review_threads",
+    )
+    target_annotator = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="targeted_annotation_review_threads",
+    )
+    action = models.CharField(
+        max_length=30,
+        choices=ACTION_CHOICES,
+        default=ACTION_COMMENT,
+    )
+    scope = models.CharField(
+        max_length=20,
+        choices=SCOPE_CHOICES,
+        default=SCOPE_ITEM,
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_OPEN,
+    )
+    blocking = models.BooleanField(default=False)
+    addressed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="addressed_annotation_review_threads",
+    )
+    addressed_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="resolved_annotation_review_threads",
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    reopened_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reopened_annotation_review_threads",
+    )
+    reopened_at = models.DateTimeField(null=True, blank=True)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="annotation_review_threads",
+    )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="annotation_review_threads",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["queue_item", "status"]),
+            models.Index(fields=["queue_item", "blocking", "status"]),
+            models.Index(fields=["queue_item", "target_annotator"]),
+            models.Index(fields=["queue_item", "label"]),
+        ]
+
+    def __str__(self):
+        return f"QueueItemReviewThread: {self.id} (item={self.queue_item_id})"
+
+
+class QueueItemReviewComment(BaseModel):
+    """Auditable reviewer feedback for a queue item.
+
+    ``QueueItem.review_notes`` is kept as the latest summary for list/export
+    compatibility. This table stores the full review trail, including
+    optional label-level feedback.
+    """
+
+    ACTION_COMMENT = "comment"
+    ACTION_APPROVE = "approve"
+    ACTION_REQUEST_CHANGES = "request_changes"
+    ACTION_ADDRESSED = "addressed"
+    ACTION_RESOLVE = "resolve"
+    ACTION_REOPEN = "reopen"
+    ACTION_CHOICES = [
+        (ACTION_COMMENT, "Comment"),
+        (ACTION_APPROVE, "Approve"),
+        (ACTION_REQUEST_CHANGES, "Request Changes"),
+        (ACTION_ADDRESSED, "Addressed"),
+        (ACTION_RESOLVE, "Resolve"),
+        (ACTION_REOPEN, "Reopen"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    thread = models.ForeignKey(
+        QueueItemReviewThread,
+        on_delete=models.CASCADE,
+        related_name="comments",
+        null=True,
+        blank=True,
+    )
+    queue_item = models.ForeignKey(
+        QueueItem,
+        on_delete=models.CASCADE,
+        related_name="review_comments",
+    )
+    reviewer = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="annotation_review_comments",
+    )
+    label = models.ForeignKey(
+        AnnotationsLabels,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="review_comments",
+    )
+    target_annotator = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="targeted_annotation_review_comments",
+    )
+    mentioned_users = models.ManyToManyField(
+        User,
+        blank=True,
+        related_name="mentioned_annotation_review_comments",
+    )
+    action = models.CharField(
+        max_length=30,
+        choices=ACTION_CHOICES,
+        default=ACTION_COMMENT,
+    )
+    comment = models.TextField()
+    reactions = models.JSONField(default=dict, blank=True)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="annotation_review_comments",
+    )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="annotation_review_comments",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["queue_item", "created_at"]),
+            models.Index(fields=["queue_item", "label"]),
+            models.Index(fields=["queue_item", "target_annotator"]),
+            models.Index(fields=["thread", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"QueueItemReviewComment: {self.id} (item={self.queue_item_id})"
+
+
 class AutomationRule(BaseModel):
     """Rule-based auto-routing of items to annotation queues."""
 
@@ -501,6 +893,11 @@ class AutomationRule(BaseModel):
     )
     conditions = models.JSONField(default=dict)
     enabled = models.BooleanField(default=True)
+    trigger_frequency = models.CharField(
+        max_length=20,
+        choices=AutomationRuleTriggerFrequency.get_choices(),
+        default=AutomationRuleTriggerFrequency.MANUAL.value,
+    )
     organization = models.ForeignKey(
         Organization,
         on_delete=models.CASCADE,
@@ -518,3 +915,38 @@ class AutomationRule(BaseModel):
 
     def __str__(self):
         return f"AutomationRule: {self.name} (queue={self.queue_id})"
+
+
+class AnnotationNotificationState(BaseModel):
+    """Per-user state for the annotation digest emails.
+
+    Tracks two cadences:
+    - **Realtime (every 15min cron):** when ``last_realtime_digest_at`` is
+      older than the 60-minute throttle, eligible to fire if there are new
+      pending items since that timestamp.
+    - **Daily (hourly cron):** when local-time-now matches
+      ``daily_digest_hour_local`` and ``last_daily_digest_at`` is older
+      than ~12h, eligible to fire with a current-state snapshot.
+
+    ``digest_enabled = False`` opts the user out of both tracks
+    (unsubscribe link in the email footer flips this). ``realtime_snoozed_until``
+    pauses just the realtime track for N days when the user clicks Snooze.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="annotation_notification_state",
+    )
+    last_realtime_digest_at = models.DateTimeField(null=True, blank=True)
+    last_daily_digest_at = models.DateTimeField(null=True, blank=True)
+    digest_enabled = models.BooleanField(default=True)
+    realtime_snoozed_until = models.DateTimeField(null=True, blank=True)
+    daily_digest_hour_local = models.IntegerField(
+        default=9,
+        help_text="Hour of day (0-23) to send the daily digest in the user's local TZ.",
+    )
+
+    def __str__(self):
+        return f"AnnotationNotificationState({self.user_id})"
