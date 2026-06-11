@@ -204,7 +204,12 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
                         color="text.disabled"
                         fontSize="13px"
                       >
-                        {format(new Date(updatedAt), "dd/MM/yyyy,HH:mm:ss")}
+                        {/* Children evaluate eagerly even when ShowComponent's
+                            condition is false — a null updatedAt crashed the
+                            whole optimization detail page (RangeError). */}
+                        {updatedAt && isValid(new Date(updatedAt))
+                          ? format(new Date(updatedAt), "dd/MM/yyyy,HH:mm:ss")
+                          : null}
                       </Typography>
                     </ShowComponent>
                   </StepContent>
