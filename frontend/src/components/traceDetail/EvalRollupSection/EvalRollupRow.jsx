@@ -11,15 +11,15 @@ import {
   Annotation,
 } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import BreakdownRow from "./BreakdownRow";
-import { colFromTemplate, NAME_W } from "./utils";
+import { colFromEval, evalToCell, NAME_W } from "./utils";
 
-// Span-level eval rolled up across N spans; expands to the per-span breakdown.
-const TemplateRollupRow = ({ template, rollup, onSelectSpan, onFixWithFalcon }) => {
-  const col = colFromTemplate(template, template.rows[0]);
-  const { chips, notEvaluated } = buildChips(adaptEvalCell(rollup, col), col);
-  const evaluated = rollup?.span_level?.evaluated_count ?? template.rows.length;
-  const isN1 = template.rows.length <= 1;
-  const [open, setOpen] = useState(isN1); // N=1 auto-expands
+// One eval rolled up across its spans (trace scope); expands to the per-span
+// breakdown. The chip is rendered from the backend-computed `aggregate`.
+const EvalRollupRow = ({ ev, onSelectSpan, onFixWithFalcon }) => {
+  const col = colFromEval(ev);
+  const { chips, notEvaluated } = buildChips(adaptEvalCell(evalToCell(ev), col), col);
+  const spans = ev.spans || [];
+  const [open, setOpen] = useState(spans.length <= 1); // N=1 auto-expands
 
   return (
     <>
@@ -46,7 +46,7 @@ const TemplateRollupRow = ({ template, rollup, onSelectSpan, onFixWithFalcon }) 
           />
         </Box>
         <Typography noWrap sx={{ width: NAME_W, fontSize: 11.5, fontWeight: 500 }}>
-          {template.name}
+          {ev.eval_name}
         </Typography>
         <Box
           sx={{
@@ -61,7 +61,7 @@ const TemplateRollupRow = ({ template, rollup, onSelectSpan, onFixWithFalcon }) 
             <ResultChip key={c.label} label={c.label} tone={c.tone} dense />
           ))}
           <Typography sx={{ fontSize: 10.5, color: "text.disabled", ml: 0.5 }}>
-            from {evaluated} span{evaluated === 1 ? "" : "s"}
+            from {spans.length} span{spans.length === 1 ? "" : "s"}
           </Typography>
           {notEvaluated > 0 && (
             <Annotation text={`+ ${notEvaluated} not evaluated`} />
@@ -69,10 +69,13 @@ const TemplateRollupRow = ({ template, rollup, onSelectSpan, onFixWithFalcon }) 
         </Box>
       </Box>
       {open &&
-        template.rows.map((row, i) => (
+        spans.map((span, i) => (
           <BreakdownRow
-            key={row.spanId ? `${row.spanId}-${row.eval_config_id}` : i}
-            row={row}
+            key={span.span_id || i}
+            span={span}
+            outputType={ev.output_type}
+            evalConfigId={ev.eval_config_id}
+            evalName={ev.eval_name}
             onSelectSpan={onSelectSpan}
             onFixWithFalcon={onFixWithFalcon}
           />
@@ -81,11 +84,10 @@ const TemplateRollupRow = ({ template, rollup, onSelectSpan, onFixWithFalcon }) 
   );
 };
 
-TemplateRollupRow.propTypes = {
-  template: PropTypes.object.isRequired,
-  rollup: PropTypes.object,
+EvalRollupRow.propTypes = {
+  ev: PropTypes.object.isRequired,
   onSelectSpan: PropTypes.func,
   onFixWithFalcon: PropTypes.func,
 };
 
-export default TemplateRollupRow;
+export default EvalRollupRow;

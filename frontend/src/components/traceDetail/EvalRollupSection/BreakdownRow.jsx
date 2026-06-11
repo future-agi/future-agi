@@ -4,13 +4,20 @@ import { Box, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import EvalDetailExpansion from "./EvalDetailExpansion";
-import { singleResultChip, hasDetail } from "./utils";
+import { spanResultChip, spanHasDetail } from "./utils";
 
-// One span's result under a rolled-up template; expands to its explanation.
-const BreakdownRow = ({ row, onSelectSpan, onFixWithFalcon }) => {
+// One span's result under a rolled-up eval; expands to its explanation/localizer.
+const BreakdownRow = ({
+  span,
+  outputType,
+  evalConfigId,
+  evalName,
+  onSelectSpan,
+  onFixWithFalcon,
+}) => {
   const [open, setOpen] = useState(false);
-  const chip = singleResultChip(row);
-  const canExpand = hasDetail(row);
+  const chip = spanResultChip(span, outputType);
+  const canExpand = spanHasDetail(span);
 
   return (
     <>
@@ -43,7 +50,7 @@ const BreakdownRow = ({ row, onSelectSpan, onFixWithFalcon }) => {
           noWrap
           sx={{ width: "45%", fontSize: 11, color: "text.secondary" }}
         >
-          {row.spanName || "unnamed"}
+          {span.span_name || "unnamed"}
         </Typography>
         <Box sx={{ width: "30%", display: "flex" }}>
           <ResultChip label={chip.label} tone={chip.tone} dense />
@@ -51,11 +58,11 @@ const BreakdownRow = ({ row, onSelectSpan, onFixWithFalcon }) => {
         <Box
           sx={{ flex: 1, display: "flex", justifyContent: "flex-end", flexShrink: 0 }}
         >
-          {row.spanId && onSelectSpan && (
+          {span.span_id && onSelectSpan && (
             <Box
               onClick={(e) => {
                 e.stopPropagation();
-                onSelectSpan(row.spanId);
+                onSelectSpan(span.span_id);
               }}
               sx={{
                 display: "inline-flex",
@@ -76,14 +83,24 @@ const BreakdownRow = ({ row, onSelectSpan, onFixWithFalcon }) => {
         </Box>
       </Box>
       {open && canExpand && (
-        <EvalDetailExpansion row={row} onFixWithFalcon={onFixWithFalcon} pl={6} />
+        <EvalDetailExpansion
+          span={span}
+          evalConfigId={evalConfigId}
+          evalName={evalName}
+          outputType={outputType}
+          onFixWithFalcon={onFixWithFalcon}
+          pl={6}
+        />
       )}
     </>
   );
 };
 
 BreakdownRow.propTypes = {
-  row: PropTypes.object.isRequired,
+  span: PropTypes.object.isRequired,
+  outputType: PropTypes.string,
+  evalConfigId: PropTypes.string,
+  evalName: PropTypes.string,
   onSelectSpan: PropTypes.func,
   onFixWithFalcon: PropTypes.func,
 };

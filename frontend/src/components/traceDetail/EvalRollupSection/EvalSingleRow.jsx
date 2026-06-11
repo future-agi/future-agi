@@ -2,21 +2,17 @@ import React, { useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import {
-  adaptEvalCell,
-  buildChips,
-} from "src/sections/projects/LLMTracing/evalCellModel";
 import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import EvalDetailExpansion from "./EvalDetailExpansion";
-import { colFromTemplate, hasDetail, NAME_W } from "./utils";
+import { spanResultChip, spanHasDetail, NAME_W } from "./utils";
 
-// Trace-level eval — one verdict (no per-span rollup); expands to its explanation.
-const TraceVerdictRow = ({ template, rollup, onFixWithFalcon }) => {
-  const col = colFromTemplate(template, template.rows[0]);
-  const { chips } = buildChips(adaptEvalCell(rollup, col), col);
-  const row = template.rows[0] || {};
-  const canExpand = hasDetail(row);
+// Span scope: one eval's result for the selected span; expands to the
+// explanation + error localizer.
+const EvalSingleRow = ({ ev, onFixWithFalcon }) => {
+  const span = (ev.spans || [])[0] || {};
+  const canExpand = spanHasDetail(span);
   const [open, setOpen] = useState(false);
+  const chip = spanResultChip(span, ev.output_type);
 
   return (
     <>
@@ -45,25 +41,29 @@ const TraceVerdictRow = ({ template, rollup, onFixWithFalcon }) => {
           )}
         </Box>
         <Typography noWrap sx={{ width: NAME_W, fontSize: 11.5, fontWeight: 500 }}>
-          {template.name}
+          {ev.eval_name}
         </Typography>
         <Box sx={{ flex: 1, display: "flex", gap: 0.5, flexWrap: "wrap" }}>
-          {chips.map((c) => (
-            <ResultChip key={c.label} label={c.label} tone={c.tone} dense />
-          ))}
+          <ResultChip label={chip.label} tone={chip.tone} dense />
         </Box>
       </Box>
       {open && canExpand && (
-        <EvalDetailExpansion row={row} onFixWithFalcon={onFixWithFalcon} pl={4.5} />
+        <EvalDetailExpansion
+          span={span}
+          evalConfigId={ev.eval_config_id}
+          evalName={ev.eval_name}
+          outputType={ev.output_type}
+          onFixWithFalcon={onFixWithFalcon}
+          pl={4.5}
+        />
       )}
     </>
   );
 };
 
-TraceVerdictRow.propTypes = {
-  template: PropTypes.object.isRequired,
-  rollup: PropTypes.object,
+EvalSingleRow.propTypes = {
+  ev: PropTypes.object.isRequired,
   onFixWithFalcon: PropTypes.func,
 };
 
-export default TraceVerdictRow;
+export default EvalSingleRow;

@@ -1,0 +1,2165 @@
+{
+  "__NOTE__": "DUMMY DATA v2 (TH-5629) \u2014 trace/<id>/ response reshaped to Sarthak's backend format. eval_scores is now an OBJECT {scope, eval_tasks[]} per span (root=scope 'trace' rollup across ALL spans; child=scope 'span'). No template tier / eval_results / row_type (matches build_task_grouped_eval_scores). Delete when BE lands.",
+  "status": "success",
+  "result": {
+    "trace": {
+      "id": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+      "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+      "project_version": "None",
+      "name": "None",
+      "metadata": "None",
+      "input": "{'query': \"What's the capital of France?\"}",
+      "output": "{'answer': 'Paris.'}",
+      "error": "None",
+      "session": "None",
+      "external_id": "None",
+      "tags": []
+    },
+    "observation_spans": [
+      {
+        "observation_span": {
+          "id": "b2e1373eb6114b82",
+          "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+          "project_version": "00000000-0000-0000-0000-000000000000",
+          "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+          "parent_span_id": null,
+          "name": "agent_call.wrong_refusal",
+          "observation_type": "agent",
+          "start_time": "2026-05-25T06:13:25.309000",
+          "end_time": "2026-05-25T06:13:28.109000",
+          "input": {},
+          "output": {},
+          "model": "",
+          "model_parameters": "",
+          "latency_ms": 420,
+          "org_id": "None",
+          "org_user_id": "None",
+          "prompt_tokens": 20,
+          "completion_tokens": 30,
+          "total_tokens": 50,
+          "response_time": null,
+          "eval_id": "None",
+          "cost": 0.0001,
+          "status": "OK",
+          "status_message": "",
+          "tags": [],
+          "metadata": {},
+          "span_events": [],
+          "provider": "",
+          "provider_logo": "None",
+          "span_attributes": {},
+          "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+          "eval_status": "None",
+          "prompt_version": "None"
+        },
+        "children": [
+          {
+            "observation_span": {
+              "id": "a1000000000000a1",
+              "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+              "project_version": "00000000-0000-0000-0000-000000000000",
+              "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+              "parent_span_id": "b2e1373eb6114b82",
+              "name": "llm.classify_intent",
+              "observation_type": "llm",
+              "start_time": "2026-05-25T06:13:25.309000",
+              "end_time": "2026-05-25T06:13:28.109000",
+              "input": {},
+              "output": {},
+              "model": "",
+              "model_parameters": "",
+              "latency_ms": 420,
+              "org_id": "None",
+              "org_user_id": "None",
+              "prompt_tokens": 20,
+              "completion_tokens": 30,
+              "total_tokens": 50,
+              "response_time": null,
+              "eval_id": "None",
+              "cost": 0.0001,
+              "status": "OK",
+              "status_message": "",
+              "tags": [],
+              "metadata": {},
+              "span_events": [],
+              "provider": "",
+              "provider_logo": "None",
+              "span_attributes": {},
+              "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+              "eval_status": "None",
+              "prompt_version": "None"
+            },
+            "children": [
+              {
+                "observation_span": {
+                  "id": "a5000000000000a5",
+                  "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+                  "project_version": "00000000-0000-0000-0000-000000000000",
+                  "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+                  "parent_span_id": "a1000000000000a1",
+                  "name": "tool.crm_lookup",
+                  "observation_type": "tool",
+                  "start_time": "2026-05-25T06:13:25.309000",
+                  "end_time": "2026-05-25T06:13:28.109000",
+                  "input": {},
+                  "output": {},
+                  "model": "",
+                  "model_parameters": "",
+                  "latency_ms": 420,
+                  "org_id": "None",
+                  "org_user_id": "None",
+                  "prompt_tokens": 20,
+                  "completion_tokens": 30,
+                  "total_tokens": 50,
+                  "response_time": null,
+                  "eval_id": "None",
+                  "cost": 0.0001,
+                  "status": "OK",
+                  "status_message": "",
+                  "tags": [],
+                  "metadata": {},
+                  "span_events": [],
+                  "provider": "",
+                  "provider_logo": "None",
+                  "span_attributes": {},
+                  "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+                  "eval_status": "None",
+                  "prompt_version": "None"
+                },
+                "children": [],
+                "eval_scores": {
+                  "scope": "span",
+                  "eval_tasks": [
+                    {
+                      "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+                      "eval_task_name": "Response Quality task",
+                      "evals": [
+                        {
+                          "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                          "eval_name": "conversational_naturalness_task",
+                          "output_type": "Pass/Fail",
+                          "aggregate": {
+                            "pass": 1,
+                            "fail": 0
+                          },
+                          "spans": [
+                            {
+                              "span_id": "a5000000000000a5",
+                              "span_name": "tool.crm_lookup",
+                              "value": "pass",
+                              "explanation": "Natural tool-call phrasing.",
+                              "error": false
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "eval_task_id": "t2000000-0000-4000-8000-000000000002",
+                      "eval_task_name": "Safety task",
+                      "evals": [
+                        {
+                          "eval_config_id": "c3000000-0000-4000-8000-000000000003",
+                          "eval_name": "hallucination_task",
+                          "output_type": "Pass/Fail",
+                          "aggregate": {
+                            "pass": 1,
+                            "fail": 0
+                          },
+                          "spans": [
+                            {
+                              "span_id": "a5000000000000a5",
+                              "span_name": "tool.crm_lookup",
+                              "value": "pass",
+                              "explanation": "Tool result is grounded.",
+                              "error": false
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "annotations": []
+              }
+            ],
+            "eval_scores": {
+              "scope": "span",
+              "eval_tasks": [
+                {
+                  "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+                  "eval_task_name": "Response Quality task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                      "eval_name": "conversational_naturalness_task",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 1,
+                        "fail": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a1000000000000a1",
+                          "span_name": "llm.classify_intent",
+                          "value": "pass",
+                          "explanation": "Natural, conversational phrasing.",
+                          "error": false
+                        }
+                      ]
+                    },
+                    {
+                      "eval_config_id": "c2000000-0000-4000-8000-000000000002",
+                      "eval_name": "tone_check_task",
+                      "output_type": "choices",
+                      "aggregate": {
+                        "neutral": 0,
+                        "positive": 1,
+                        "confused": 0,
+                        "negative": 0,
+                        "sarcastic": 0,
+                        "hostile": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a1000000000000a1",
+                          "span_name": "llm.classify_intent",
+                          "value": [
+                            "positive"
+                          ],
+                          "explanation": "Warm, helpful tone.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "eval_task_id": "t2000000-0000-4000-8000-000000000002",
+                  "eval_task_name": "Safety task",
+                  "evals": [
+                    {
+                      "eval_config_id": "fd94dc45-e56d-4955-8ddb-6f0650d77a68",
+                      "eval_name": "pii_task_26_may_2026_13_17",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 1,
+                        "fail": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a1000000000000a1",
+                          "span_name": "llm.classify_intent",
+                          "value": "pass",
+                          "explanation": "No PII.",
+                          "error": false
+                        }
+                      ]
+                    },
+                    {
+                      "eval_config_id": "c3000000-0000-4000-8000-000000000003",
+                      "eval_name": "hallucination_task",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 1,
+                        "fail": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a1000000000000a1",
+                          "span_name": "llm.classify_intent",
+                          "value": "pass",
+                          "explanation": "No unsupported claims.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "eval_task_id": "t3000000-0000-4000-8000-000000000003",
+                  "eval_task_name": "Completeness task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c4000000-0000-4000-8000-000000000004",
+                      "eval_name": "response_completeness_task",
+                      "output_type": "score",
+                      "aggregate": 92.0,
+                      "spans": [
+                        {
+                          "span_id": "a1000000000000a1",
+                          "span_name": "llm.classify_intent",
+                          "value": 92.0,
+                          "explanation": "Covers the user's intent fully.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "annotations": []
+          },
+          {
+            "observation_span": {
+              "id": "a2000000000000a2",
+              "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+              "project_version": "00000000-0000-0000-0000-000000000000",
+              "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+              "parent_span_id": "b2e1373eb6114b82",
+              "name": "retriever.kb_search",
+              "observation_type": "retriever",
+              "start_time": "2026-05-25T06:13:25.309000",
+              "end_time": "2026-05-25T06:13:28.109000",
+              "input": {},
+              "output": {},
+              "model": "",
+              "model_parameters": "",
+              "latency_ms": 420,
+              "org_id": "None",
+              "org_user_id": "None",
+              "prompt_tokens": 20,
+              "completion_tokens": 30,
+              "total_tokens": 50,
+              "response_time": null,
+              "eval_id": "None",
+              "cost": 0.0001,
+              "status": "OK",
+              "status_message": "",
+              "tags": [],
+              "metadata": {},
+              "span_events": [],
+              "provider": "",
+              "provider_logo": "None",
+              "span_attributes": {},
+              "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+              "eval_status": "None",
+              "prompt_version": "None"
+            },
+            "children": [],
+            "eval_scores": {
+              "scope": "span",
+              "eval_tasks": [
+                {
+                  "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+                  "eval_task_name": "Response Quality task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                      "eval_name": "conversational_naturalness_task",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 0,
+                        "fail": 1
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a2000000000000a2",
+                          "span_name": "retriever.kb_search",
+                          "value": "fail",
+                          "explanation": "Reads like raw retrieval output, not conversational.",
+                          "error": false
+                        }
+                      ]
+                    },
+                    {
+                      "eval_config_id": "c2000000-0000-4000-8000-000000000002",
+                      "eval_name": "tone_check_task",
+                      "output_type": "choices",
+                      "aggregate": {
+                        "neutral": 0,
+                        "positive": 0,
+                        "confused": 1,
+                        "negative": 0,
+                        "sarcastic": 0,
+                        "hostile": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a2000000000000a2",
+                          "span_name": "retriever.kb_search",
+                          "value": [
+                            "confused"
+                          ],
+                          "explanation": "Ambiguous phrasing.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "eval_task_id": "t2000000-0000-4000-8000-000000000002",
+                  "eval_task_name": "Safety task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c3000000-0000-4000-8000-000000000003",
+                      "eval_name": "hallucination_task",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 0,
+                        "fail": 1
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a2000000000000a2",
+                          "span_name": "retriever.kb_search",
+                          "value": "fail",
+                          "explanation": "Surfaced a passage not relevant to the query.",
+                          "error": false
+                        }
+                      ]
+                    },
+                    {
+                      "eval_config_id": "c8000000-0000-4000-8000-000000000008",
+                      "eval_name": "pii_strict_task",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 0,
+                        "fail": 1
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a2000000000000a2",
+                          "span_name": "retriever.kb_search",
+                          "value": "fail",
+                          "explanation": "Strict PII check flagged a borderline token.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "eval_task_id": "t3000000-0000-4000-8000-000000000003",
+                  "eval_task_name": "Completeness task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c4000000-0000-4000-8000-000000000004",
+                      "eval_name": "response_completeness_task",
+                      "output_type": "score",
+                      "aggregate": 78.0,
+                      "spans": [
+                        {
+                          "span_id": "a2000000000000a2",
+                          "span_name": "retriever.kb_search",
+                          "value": 78.0,
+                          "explanation": "Partial coverage of the question.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "annotations": []
+          },
+          {
+            "observation_span": {
+              "id": "a3000000000000a3",
+              "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+              "project_version": "00000000-0000-0000-0000-000000000000",
+              "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+              "parent_span_id": "b2e1373eb6114b82",
+              "name": "llm.draft_reply",
+              "observation_type": "llm",
+              "start_time": "2026-05-25T06:13:25.309000",
+              "end_time": "2026-05-25T06:13:28.109000",
+              "input": {},
+              "output": {},
+              "model": "",
+              "model_parameters": "",
+              "latency_ms": 420,
+              "org_id": "None",
+              "org_user_id": "None",
+              "prompt_tokens": 20,
+              "completion_tokens": 30,
+              "total_tokens": 50,
+              "response_time": null,
+              "eval_id": "None",
+              "cost": 0.0001,
+              "status": "OK",
+              "status_message": "",
+              "tags": [],
+              "metadata": {},
+              "span_events": [],
+              "provider": "",
+              "provider_logo": "None",
+              "span_attributes": {},
+              "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+              "eval_status": "None",
+              "prompt_version": "None"
+            },
+            "children": [],
+            "eval_scores": {
+              "scope": "span",
+              "eval_tasks": [
+                {
+                  "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+                  "eval_task_name": "Response Quality task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                      "eval_name": "conversational_naturalness_task",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 1,
+                        "fail": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a3000000000000a3",
+                          "span_name": "llm.draft_reply",
+                          "value": "pass",
+                          "explanation": "Fluent and natural.",
+                          "error": false
+                        }
+                      ]
+                    },
+                    {
+                      "eval_config_id": "c2000000-0000-4000-8000-000000000002",
+                      "eval_name": "tone_check_task",
+                      "output_type": "choices",
+                      "aggregate": {
+                        "neutral": 0,
+                        "positive": 0,
+                        "confused": 0,
+                        "negative": 1,
+                        "sarcastic": 0,
+                        "hostile": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a3000000000000a3",
+                          "span_name": "llm.draft_reply",
+                          "value": [
+                            "negative"
+                          ],
+                          "explanation": "Cold, dismissive tone.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "eval_task_id": "t2000000-0000-4000-8000-000000000002",
+                  "eval_task_name": "Safety task",
+                  "evals": [
+                    {
+                      "eval_config_id": "fd94dc45-e56d-4955-8ddb-6f0650d77a68",
+                      "eval_name": "pii_task_26_may_2026_13_17",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 1,
+                        "fail": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a3000000000000a3",
+                          "span_name": "llm.draft_reply",
+                          "value": "pass",
+                          "explanation": "No PII.",
+                          "error": false
+                        }
+                      ]
+                    },
+                    {
+                      "eval_config_id": "c3000000-0000-4000-8000-000000000003",
+                      "eval_name": "hallucination_task",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 0,
+                        "fail": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a3000000000000a3",
+                          "span_name": "llm.draft_reply",
+                          "value": null,
+                          "explanation": "Error during evaluation: LLM judge returned malformed JSON",
+                          "error": true
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "eval_task_id": "t3000000-0000-4000-8000-000000000003",
+                  "eval_task_name": "Completeness task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c4000000-0000-4000-8000-000000000004",
+                      "eval_name": "response_completeness_task",
+                      "output_type": "score",
+                      "aggregate": 88.0,
+                      "spans": [
+                        {
+                          "span_id": "a3000000000000a3",
+                          "span_name": "llm.draft_reply",
+                          "value": 88.0,
+                          "explanation": "Mostly complete.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "annotations": []
+          },
+          {
+            "observation_span": {
+              "id": "14286b471bde441a",
+              "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+              "project_version": "00000000-0000-0000-0000-000000000000",
+              "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+              "parent_span_id": "b2e1373eb6114b82",
+              "name": "llm.gpt-4o",
+              "observation_type": "llm",
+              "start_time": "2026-05-25T06:13:25.309000",
+              "end_time": "2026-05-25T06:13:28.109000",
+              "input": {},
+              "output": {},
+              "model": "",
+              "model_parameters": "",
+              "latency_ms": 420,
+              "org_id": "None",
+              "org_user_id": "None",
+              "prompt_tokens": 20,
+              "completion_tokens": 30,
+              "total_tokens": 50,
+              "response_time": null,
+              "eval_id": "None",
+              "cost": 0.0001,
+              "status": "OK",
+              "status_message": "",
+              "tags": [],
+              "metadata": {},
+              "span_events": [],
+              "provider": "",
+              "provider_logo": "None",
+              "span_attributes": {},
+              "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+              "eval_status": "None",
+              "prompt_version": "None"
+            },
+            "children": [],
+            "eval_scores": {
+              "scope": "span",
+              "eval_tasks": [
+                {
+                  "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+                  "eval_task_name": "Response Quality task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                      "eval_name": "conversational_naturalness_task",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 0,
+                        "fail": 1
+                      },
+                      "spans": [
+                        {
+                          "span_id": "14286b471bde441a",
+                          "span_name": "llm.gpt-4o",
+                          "value": "fail",
+                          "explanation": "Templated, form-letter phrasing; abrupt closing.",
+                          "error": false
+                        }
+                      ]
+                    },
+                    {
+                      "eval_config_id": "c2000000-0000-4000-8000-000000000002",
+                      "eval_name": "tone_check_task",
+                      "output_type": "choices",
+                      "aggregate": {
+                        "neutral": 0,
+                        "positive": 0,
+                        "confused": 0,
+                        "negative": 0,
+                        "sarcastic": 1,
+                        "hostile": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "14286b471bde441a",
+                          "span_name": "llm.gpt-4o",
+                          "value": [
+                            "sarcastic"
+                          ],
+                          "explanation": "Sarcastic edge.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "eval_task_id": "t3000000-0000-4000-8000-000000000003",
+                  "eval_task_name": "Completeness task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c4000000-0000-4000-8000-000000000004",
+                      "eval_name": "response_completeness_task",
+                      "output_type": "score",
+                      "aggregate": 90.0,
+                      "spans": [
+                        {
+                          "span_id": "14286b471bde441a",
+                          "span_name": "llm.gpt-4o",
+                          "value": 90.0,
+                          "explanation": "Complete answer.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "annotations": []
+          },
+          {
+            "observation_span": {
+              "id": "a4000000000000a4",
+              "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+              "project_version": "00000000-0000-0000-0000-000000000000",
+              "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+              "parent_span_id": "b2e1373eb6114b82",
+              "name": "tts.synthesize",
+              "observation_type": "tts",
+              "start_time": "2026-05-25T06:13:25.309000",
+              "end_time": "2026-05-25T06:13:28.109000",
+              "input": {},
+              "output": {},
+              "model": "",
+              "model_parameters": "",
+              "latency_ms": 420,
+              "org_id": "None",
+              "org_user_id": "None",
+              "prompt_tokens": 20,
+              "completion_tokens": 30,
+              "total_tokens": 50,
+              "response_time": null,
+              "eval_id": "None",
+              "cost": 0.0001,
+              "status": "OK",
+              "status_message": "",
+              "tags": [],
+              "metadata": {},
+              "span_events": [],
+              "provider": "",
+              "provider_logo": "None",
+              "span_attributes": {},
+              "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+              "eval_status": "None",
+              "prompt_version": "None"
+            },
+            "children": [],
+            "eval_scores": {
+              "scope": "span",
+              "eval_tasks": [
+                {
+                  "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+                  "eval_task_name": "Response Quality task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                      "eval_name": "conversational_naturalness_task",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 1,
+                        "fail": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a4000000000000a4",
+                          "span_name": "tts.synthesize",
+                          "value": "pass",
+                          "explanation": "Sounds natural when spoken.",
+                          "error": false
+                        }
+                      ]
+                    },
+                    {
+                      "eval_config_id": "c2000000-0000-4000-8000-000000000002",
+                      "eval_name": "tone_check_task",
+                      "output_type": "choices",
+                      "aggregate": {
+                        "neutral": 0,
+                        "positive": 0,
+                        "confused": 0,
+                        "negative": 0,
+                        "sarcastic": 0,
+                        "hostile": 1
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a4000000000000a4",
+                          "span_name": "tts.synthesize",
+                          "value": [
+                            "hostile"
+                          ],
+                          "explanation": "Hostile delivery.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "eval_task_id": "t2000000-0000-4000-8000-000000000002",
+                  "eval_task_name": "Safety task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c8000000-0000-4000-8000-000000000008",
+                      "eval_name": "pii_strict_task",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 1,
+                        "fail": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a4000000000000a4",
+                          "span_name": "tts.synthesize",
+                          "value": "pass",
+                          "explanation": "Strict PII check passed.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "annotations": []
+          }
+        ],
+        "eval_scores": {
+          "scope": "trace",
+          "eval_tasks": [
+            {
+              "eval_task_id": "t2000000-0000-4000-8000-000000000002",
+              "eval_task_name": "Safety task",
+              "evals": [
+                {
+                  "eval_config_id": "fd94dc45-e56d-4955-8ddb-6f0650d77a68",
+                  "eval_name": "pii_task_26_may_2026_13_17",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 3,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "b2e1373eb6114b82",
+                      "span_name": "agent_call.wrong_refusal",
+                      "value": "pass",
+                      "explanation": "No PII present in the query.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a1000000000000a1",
+                      "span_name": "llm.classify_intent",
+                      "value": "pass",
+                      "explanation": "No PII.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a3000000000000a3",
+                      "span_name": "llm.draft_reply",
+                      "value": "pass",
+                      "explanation": "No PII.",
+                      "error": false
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c3000000-0000-4000-8000-000000000003",
+                  "eval_name": "hallucination_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 2,
+                    "fail": 1
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a1000000000000a1",
+                      "span_name": "llm.classify_intent",
+                      "value": "pass",
+                      "explanation": "No unsupported claims.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a5000000000000a5",
+                      "span_name": "tool.crm_lookup",
+                      "value": "pass",
+                      "explanation": "Tool result is grounded.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a2000000000000a2",
+                      "span_name": "retriever.kb_search",
+                      "value": "fail",
+                      "explanation": "Surfaced a passage not relevant to the query.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a3000000000000a3",
+                      "span_name": "llm.draft_reply",
+                      "value": null,
+                      "explanation": "Error during evaluation: LLM judge returned malformed JSON",
+                      "error": true
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c8000000-0000-4000-8000-000000000008",
+                  "eval_name": "pii_strict_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 1,
+                    "fail": 1
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a2000000000000a2",
+                      "span_name": "retriever.kb_search",
+                      "value": "fail",
+                      "explanation": "Strict PII check flagged a borderline token.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a4000000000000a4",
+                      "span_name": "tts.synthesize",
+                      "value": "pass",
+                      "explanation": "Strict PII check passed.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "eval_task_id": "t3000000-0000-4000-8000-000000000003",
+              "eval_task_name": "Completeness task",
+              "evals": [
+                {
+                  "eval_config_id": "f9c2338f-7824-4877-9583-016d457284d0",
+                  "eval_name": "word_count_in_range_task_26_may_2026_13_36",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 0,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "b2e1373eb6114b82",
+                      "span_name": "agent_call.wrong_refusal",
+                      "value": null,
+                      "explanation": "Error during evaluation: Required attribute 'custom_eval_config' for key 'text' not found for span b2e1373eb6114b82",
+                      "error": true
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c4000000-0000-4000-8000-000000000004",
+                  "eval_name": "response_completeness_task",
+                  "output_type": "score",
+                  "aggregate": 87.0,
+                  "spans": [
+                    {
+                      "span_id": "a1000000000000a1",
+                      "span_name": "llm.classify_intent",
+                      "value": 92.0,
+                      "explanation": "Covers the user's intent fully.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a2000000000000a2",
+                      "span_name": "retriever.kb_search",
+                      "value": 78.0,
+                      "explanation": "Partial coverage of the question.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a3000000000000a3",
+                      "span_name": "llm.draft_reply",
+                      "value": 88.0,
+                      "explanation": "Mostly complete.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "14286b471bde441a",
+                      "span_name": "llm.gpt-4o",
+                      "value": 90.0,
+                      "explanation": "Complete answer.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+              "eval_task_name": "Response Quality task",
+              "evals": [
+                {
+                  "eval_config_id": "c2000000-0000-4000-8000-000000000002",
+                  "eval_name": "tone_check_task",
+                  "output_type": "choices",
+                  "aggregate": {
+                    "neutral": 1,
+                    "positive": 1,
+                    "confused": 1,
+                    "negative": 1,
+                    "sarcastic": 1,
+                    "hostile": 1
+                  },
+                  "spans": [
+                    {
+                      "span_id": "b2e1373eb6114b82",
+                      "span_name": "agent_call.wrong_refusal",
+                      "value": [
+                        "neutral"
+                      ],
+                      "explanation": "Measured, factual tone.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a1000000000000a1",
+                      "span_name": "llm.classify_intent",
+                      "value": [
+                        "positive"
+                      ],
+                      "explanation": "Warm, helpful tone.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a2000000000000a2",
+                      "span_name": "retriever.kb_search",
+                      "value": [
+                        "confused"
+                      ],
+                      "explanation": "Ambiguous phrasing.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a3000000000000a3",
+                      "span_name": "llm.draft_reply",
+                      "value": [
+                        "negative"
+                      ],
+                      "explanation": "Cold, dismissive tone.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "14286b471bde441a",
+                      "span_name": "llm.gpt-4o",
+                      "value": [
+                        "sarcastic"
+                      ],
+                      "explanation": "Sarcastic edge.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a4000000000000a4",
+                      "span_name": "tts.synthesize",
+                      "value": [
+                        "hostile"
+                      ],
+                      "explanation": "Hostile delivery.",
+                      "error": false
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                  "eval_name": "conversational_naturalness_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 4,
+                    "fail": 2
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a1000000000000a1",
+                      "span_name": "llm.classify_intent",
+                      "value": "pass",
+                      "explanation": "Natural, conversational phrasing.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a5000000000000a5",
+                      "span_name": "tool.crm_lookup",
+                      "value": "pass",
+                      "explanation": "Natural tool-call phrasing.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a2000000000000a2",
+                      "span_name": "retriever.kb_search",
+                      "value": "fail",
+                      "explanation": "Reads like raw retrieval output, not conversational.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a3000000000000a3",
+                      "span_name": "llm.draft_reply",
+                      "value": "pass",
+                      "explanation": "Fluent and natural.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "14286b471bde441a",
+                      "span_name": "llm.gpt-4o",
+                      "value": "fail",
+                      "explanation": "Templated, form-letter phrasing; abrupt closing.",
+                      "error": false
+                    },
+                    {
+                      "span_id": "a4000000000000a4",
+                      "span_name": "tts.synthesize",
+                      "value": "pass",
+                      "explanation": "Sounds natural when spoken.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "eval_task_id": "t4000000-0000-4000-8000-000000000004",
+              "eval_task_name": "Overall task",
+              "evals": [
+                {
+                  "eval_config_id": "c5000000-0000-4000-8000-000000000005",
+                  "eval_name": "overall_quality_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 1,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "b2e1373eb6114b82",
+                      "span_name": "agent_call.wrong_refusal",
+                      "value": "pass",
+                      "explanation": "Overall the run resolved the request acceptably.",
+                      "error": false
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c6000000-0000-4000-8000-000000000006",
+                  "eval_name": "groundedness_task",
+                  "output_type": "score",
+                  "aggregate": 91.0,
+                  "spans": [
+                    {
+                      "span_id": "b2e1373eb6114b82",
+                      "span_name": "agent_call.wrong_refusal",
+                      "value": 91.0,
+                      "explanation": "Output is well grounded in retrieved context.",
+                      "error": false
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c7000000-0000-4000-8000-000000000007",
+                  "eval_name": "resolution_check_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 0,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "b2e1373eb6114b82",
+                      "span_name": "agent_call.wrong_refusal",
+                      "value": null,
+                      "explanation": "Error during evaluation: evaluator timed out after 30s",
+                      "error": true
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "annotations": []
+      },
+      {
+        "observation_span": {
+          "id": "a1000000000000a1",
+          "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+          "project_version": "00000000-0000-0000-0000-000000000000",
+          "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+          "parent_span_id": "b2e1373eb6114b82",
+          "name": "llm.classify_intent",
+          "observation_type": "llm",
+          "start_time": "2026-05-25T06:13:25.309000",
+          "end_time": "2026-05-25T06:13:28.109000",
+          "input": {},
+          "output": {},
+          "model": "",
+          "model_parameters": "",
+          "latency_ms": 420,
+          "org_id": "None",
+          "org_user_id": "None",
+          "prompt_tokens": 20,
+          "completion_tokens": 30,
+          "total_tokens": 50,
+          "response_time": null,
+          "eval_id": "None",
+          "cost": 0.0001,
+          "status": "OK",
+          "status_message": "",
+          "tags": [],
+          "metadata": {},
+          "span_events": [],
+          "provider": "",
+          "provider_logo": "None",
+          "span_attributes": {},
+          "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+          "eval_status": "None",
+          "prompt_version": "None"
+        },
+        "children": [
+          {
+            "observation_span": {
+              "id": "a5000000000000a5",
+              "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+              "project_version": "00000000-0000-0000-0000-000000000000",
+              "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+              "parent_span_id": "a1000000000000a1",
+              "name": "tool.crm_lookup",
+              "observation_type": "tool",
+              "start_time": "2026-05-25T06:13:25.309000",
+              "end_time": "2026-05-25T06:13:28.109000",
+              "input": {},
+              "output": {},
+              "model": "",
+              "model_parameters": "",
+              "latency_ms": 420,
+              "org_id": "None",
+              "org_user_id": "None",
+              "prompt_tokens": 20,
+              "completion_tokens": 30,
+              "total_tokens": 50,
+              "response_time": null,
+              "eval_id": "None",
+              "cost": 0.0001,
+              "status": "OK",
+              "status_message": "",
+              "tags": [],
+              "metadata": {},
+              "span_events": [],
+              "provider": "",
+              "provider_logo": "None",
+              "span_attributes": {},
+              "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+              "eval_status": "None",
+              "prompt_version": "None"
+            },
+            "children": [],
+            "eval_scores": {
+              "scope": "span",
+              "eval_tasks": [
+                {
+                  "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+                  "eval_task_name": "Response Quality task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                      "eval_name": "conversational_naturalness_task",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 1,
+                        "fail": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a5000000000000a5",
+                          "span_name": "tool.crm_lookup",
+                          "value": "pass",
+                          "explanation": "Natural tool-call phrasing.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "eval_task_id": "t2000000-0000-4000-8000-000000000002",
+                  "eval_task_name": "Safety task",
+                  "evals": [
+                    {
+                      "eval_config_id": "c3000000-0000-4000-8000-000000000003",
+                      "eval_name": "hallucination_task",
+                      "output_type": "Pass/Fail",
+                      "aggregate": {
+                        "pass": 1,
+                        "fail": 0
+                      },
+                      "spans": [
+                        {
+                          "span_id": "a5000000000000a5",
+                          "span_name": "tool.crm_lookup",
+                          "value": "pass",
+                          "explanation": "Tool result is grounded.",
+                          "error": false
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "annotations": []
+          }
+        ],
+        "eval_scores": {
+          "scope": "span",
+          "eval_tasks": [
+            {
+              "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+              "eval_task_name": "Response Quality task",
+              "evals": [
+                {
+                  "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                  "eval_name": "conversational_naturalness_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 1,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a1000000000000a1",
+                      "span_name": "llm.classify_intent",
+                      "value": "pass",
+                      "explanation": "Natural, conversational phrasing.",
+                      "error": false
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c2000000-0000-4000-8000-000000000002",
+                  "eval_name": "tone_check_task",
+                  "output_type": "choices",
+                  "aggregate": {
+                    "neutral": 0,
+                    "positive": 1,
+                    "confused": 0,
+                    "negative": 0,
+                    "sarcastic": 0,
+                    "hostile": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a1000000000000a1",
+                      "span_name": "llm.classify_intent",
+                      "value": [
+                        "positive"
+                      ],
+                      "explanation": "Warm, helpful tone.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "eval_task_id": "t2000000-0000-4000-8000-000000000002",
+              "eval_task_name": "Safety task",
+              "evals": [
+                {
+                  "eval_config_id": "fd94dc45-e56d-4955-8ddb-6f0650d77a68",
+                  "eval_name": "pii_task_26_may_2026_13_17",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 1,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a1000000000000a1",
+                      "span_name": "llm.classify_intent",
+                      "value": "pass",
+                      "explanation": "No PII.",
+                      "error": false
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c3000000-0000-4000-8000-000000000003",
+                  "eval_name": "hallucination_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 1,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a1000000000000a1",
+                      "span_name": "llm.classify_intent",
+                      "value": "pass",
+                      "explanation": "No unsupported claims.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "eval_task_id": "t3000000-0000-4000-8000-000000000003",
+              "eval_task_name": "Completeness task",
+              "evals": [
+                {
+                  "eval_config_id": "c4000000-0000-4000-8000-000000000004",
+                  "eval_name": "response_completeness_task",
+                  "output_type": "score",
+                  "aggregate": 92.0,
+                  "spans": [
+                    {
+                      "span_id": "a1000000000000a1",
+                      "span_name": "llm.classify_intent",
+                      "value": 92.0,
+                      "explanation": "Covers the user's intent fully.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "annotations": []
+      },
+      {
+        "observation_span": {
+          "id": "a2000000000000a2",
+          "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+          "project_version": "00000000-0000-0000-0000-000000000000",
+          "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+          "parent_span_id": "b2e1373eb6114b82",
+          "name": "retriever.kb_search",
+          "observation_type": "retriever",
+          "start_time": "2026-05-25T06:13:25.309000",
+          "end_time": "2026-05-25T06:13:28.109000",
+          "input": {},
+          "output": {},
+          "model": "",
+          "model_parameters": "",
+          "latency_ms": 420,
+          "org_id": "None",
+          "org_user_id": "None",
+          "prompt_tokens": 20,
+          "completion_tokens": 30,
+          "total_tokens": 50,
+          "response_time": null,
+          "eval_id": "None",
+          "cost": 0.0001,
+          "status": "OK",
+          "status_message": "",
+          "tags": [],
+          "metadata": {},
+          "span_events": [],
+          "provider": "",
+          "provider_logo": "None",
+          "span_attributes": {},
+          "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+          "eval_status": "None",
+          "prompt_version": "None"
+        },
+        "children": [],
+        "eval_scores": {
+          "scope": "span",
+          "eval_tasks": [
+            {
+              "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+              "eval_task_name": "Response Quality task",
+              "evals": [
+                {
+                  "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                  "eval_name": "conversational_naturalness_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 0,
+                    "fail": 1
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a2000000000000a2",
+                      "span_name": "retriever.kb_search",
+                      "value": "fail",
+                      "explanation": "Reads like raw retrieval output, not conversational.",
+                      "error": false
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c2000000-0000-4000-8000-000000000002",
+                  "eval_name": "tone_check_task",
+                  "output_type": "choices",
+                  "aggregate": {
+                    "neutral": 0,
+                    "positive": 0,
+                    "confused": 1,
+                    "negative": 0,
+                    "sarcastic": 0,
+                    "hostile": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a2000000000000a2",
+                      "span_name": "retriever.kb_search",
+                      "value": [
+                        "confused"
+                      ],
+                      "explanation": "Ambiguous phrasing.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "eval_task_id": "t2000000-0000-4000-8000-000000000002",
+              "eval_task_name": "Safety task",
+              "evals": [
+                {
+                  "eval_config_id": "c3000000-0000-4000-8000-000000000003",
+                  "eval_name": "hallucination_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 0,
+                    "fail": 1
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a2000000000000a2",
+                      "span_name": "retriever.kb_search",
+                      "value": "fail",
+                      "explanation": "Surfaced a passage not relevant to the query.",
+                      "error": false
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c8000000-0000-4000-8000-000000000008",
+                  "eval_name": "pii_strict_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 0,
+                    "fail": 1
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a2000000000000a2",
+                      "span_name": "retriever.kb_search",
+                      "value": "fail",
+                      "explanation": "Strict PII check flagged a borderline token.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "eval_task_id": "t3000000-0000-4000-8000-000000000003",
+              "eval_task_name": "Completeness task",
+              "evals": [
+                {
+                  "eval_config_id": "c4000000-0000-4000-8000-000000000004",
+                  "eval_name": "response_completeness_task",
+                  "output_type": "score",
+                  "aggregate": 78.0,
+                  "spans": [
+                    {
+                      "span_id": "a2000000000000a2",
+                      "span_name": "retriever.kb_search",
+                      "value": 78.0,
+                      "explanation": "Partial coverage of the question.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "annotations": []
+      },
+      {
+        "observation_span": {
+          "id": "a3000000000000a3",
+          "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+          "project_version": "00000000-0000-0000-0000-000000000000",
+          "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+          "parent_span_id": "b2e1373eb6114b82",
+          "name": "llm.draft_reply",
+          "observation_type": "llm",
+          "start_time": "2026-05-25T06:13:25.309000",
+          "end_time": "2026-05-25T06:13:28.109000",
+          "input": {},
+          "output": {},
+          "model": "",
+          "model_parameters": "",
+          "latency_ms": 420,
+          "org_id": "None",
+          "org_user_id": "None",
+          "prompt_tokens": 20,
+          "completion_tokens": 30,
+          "total_tokens": 50,
+          "response_time": null,
+          "eval_id": "None",
+          "cost": 0.0001,
+          "status": "OK",
+          "status_message": "",
+          "tags": [],
+          "metadata": {},
+          "span_events": [],
+          "provider": "",
+          "provider_logo": "None",
+          "span_attributes": {},
+          "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+          "eval_status": "None",
+          "prompt_version": "None"
+        },
+        "children": [],
+        "eval_scores": {
+          "scope": "span",
+          "eval_tasks": [
+            {
+              "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+              "eval_task_name": "Response Quality task",
+              "evals": [
+                {
+                  "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                  "eval_name": "conversational_naturalness_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 1,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a3000000000000a3",
+                      "span_name": "llm.draft_reply",
+                      "value": "pass",
+                      "explanation": "Fluent and natural.",
+                      "error": false
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c2000000-0000-4000-8000-000000000002",
+                  "eval_name": "tone_check_task",
+                  "output_type": "choices",
+                  "aggregate": {
+                    "neutral": 0,
+                    "positive": 0,
+                    "confused": 0,
+                    "negative": 1,
+                    "sarcastic": 0,
+                    "hostile": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a3000000000000a3",
+                      "span_name": "llm.draft_reply",
+                      "value": [
+                        "negative"
+                      ],
+                      "explanation": "Cold, dismissive tone.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "eval_task_id": "t2000000-0000-4000-8000-000000000002",
+              "eval_task_name": "Safety task",
+              "evals": [
+                {
+                  "eval_config_id": "fd94dc45-e56d-4955-8ddb-6f0650d77a68",
+                  "eval_name": "pii_task_26_may_2026_13_17",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 1,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a3000000000000a3",
+                      "span_name": "llm.draft_reply",
+                      "value": "pass",
+                      "explanation": "No PII.",
+                      "error": false
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c3000000-0000-4000-8000-000000000003",
+                  "eval_name": "hallucination_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 0,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a3000000000000a3",
+                      "span_name": "llm.draft_reply",
+                      "value": null,
+                      "explanation": "Error during evaluation: LLM judge returned malformed JSON",
+                      "error": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "eval_task_id": "t3000000-0000-4000-8000-000000000003",
+              "eval_task_name": "Completeness task",
+              "evals": [
+                {
+                  "eval_config_id": "c4000000-0000-4000-8000-000000000004",
+                  "eval_name": "response_completeness_task",
+                  "output_type": "score",
+                  "aggregate": 88.0,
+                  "spans": [
+                    {
+                      "span_id": "a3000000000000a3",
+                      "span_name": "llm.draft_reply",
+                      "value": 88.0,
+                      "explanation": "Mostly complete.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "annotations": []
+      },
+      {
+        "observation_span": {
+          "id": "14286b471bde441a",
+          "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+          "project_version": "00000000-0000-0000-0000-000000000000",
+          "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+          "parent_span_id": "b2e1373eb6114b82",
+          "name": "llm.gpt-4o",
+          "observation_type": "llm",
+          "start_time": "2026-05-25T06:13:25.309000",
+          "end_time": "2026-05-25T06:13:28.109000",
+          "input": {},
+          "output": {},
+          "model": "",
+          "model_parameters": "",
+          "latency_ms": 420,
+          "org_id": "None",
+          "org_user_id": "None",
+          "prompt_tokens": 20,
+          "completion_tokens": 30,
+          "total_tokens": 50,
+          "response_time": null,
+          "eval_id": "None",
+          "cost": 0.0001,
+          "status": "OK",
+          "status_message": "",
+          "tags": [],
+          "metadata": {},
+          "span_events": [],
+          "provider": "",
+          "provider_logo": "None",
+          "span_attributes": {},
+          "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+          "eval_status": "None",
+          "prompt_version": "None"
+        },
+        "children": [],
+        "eval_scores": {
+          "scope": "span",
+          "eval_tasks": [
+            {
+              "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+              "eval_task_name": "Response Quality task",
+              "evals": [
+                {
+                  "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                  "eval_name": "conversational_naturalness_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 0,
+                    "fail": 1
+                  },
+                  "spans": [
+                    {
+                      "span_id": "14286b471bde441a",
+                      "span_name": "llm.gpt-4o",
+                      "value": "fail",
+                      "explanation": "Templated, form-letter phrasing; abrupt closing.",
+                      "error": false
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c2000000-0000-4000-8000-000000000002",
+                  "eval_name": "tone_check_task",
+                  "output_type": "choices",
+                  "aggregate": {
+                    "neutral": 0,
+                    "positive": 0,
+                    "confused": 0,
+                    "negative": 0,
+                    "sarcastic": 1,
+                    "hostile": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "14286b471bde441a",
+                      "span_name": "llm.gpt-4o",
+                      "value": [
+                        "sarcastic"
+                      ],
+                      "explanation": "Sarcastic edge.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "eval_task_id": "t3000000-0000-4000-8000-000000000003",
+              "eval_task_name": "Completeness task",
+              "evals": [
+                {
+                  "eval_config_id": "c4000000-0000-4000-8000-000000000004",
+                  "eval_name": "response_completeness_task",
+                  "output_type": "score",
+                  "aggregate": 90.0,
+                  "spans": [
+                    {
+                      "span_id": "14286b471bde441a",
+                      "span_name": "llm.gpt-4o",
+                      "value": 90.0,
+                      "explanation": "Complete answer.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "annotations": []
+      },
+      {
+        "observation_span": {
+          "id": "a4000000000000a4",
+          "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+          "project_version": "00000000-0000-0000-0000-000000000000",
+          "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+          "parent_span_id": "b2e1373eb6114b82",
+          "name": "tts.synthesize",
+          "observation_type": "tts",
+          "start_time": "2026-05-25T06:13:25.309000",
+          "end_time": "2026-05-25T06:13:28.109000",
+          "input": {},
+          "output": {},
+          "model": "",
+          "model_parameters": "",
+          "latency_ms": 420,
+          "org_id": "None",
+          "org_user_id": "None",
+          "prompt_tokens": 20,
+          "completion_tokens": 30,
+          "total_tokens": 50,
+          "response_time": null,
+          "eval_id": "None",
+          "cost": 0.0001,
+          "status": "OK",
+          "status_message": "",
+          "tags": [],
+          "metadata": {},
+          "span_events": [],
+          "provider": "",
+          "provider_logo": "None",
+          "span_attributes": {},
+          "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+          "eval_status": "None",
+          "prompt_version": "None"
+        },
+        "children": [],
+        "eval_scores": {
+          "scope": "span",
+          "eval_tasks": [
+            {
+              "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+              "eval_task_name": "Response Quality task",
+              "evals": [
+                {
+                  "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                  "eval_name": "conversational_naturalness_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 1,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a4000000000000a4",
+                      "span_name": "tts.synthesize",
+                      "value": "pass",
+                      "explanation": "Sounds natural when spoken.",
+                      "error": false
+                    }
+                  ]
+                },
+                {
+                  "eval_config_id": "c2000000-0000-4000-8000-000000000002",
+                  "eval_name": "tone_check_task",
+                  "output_type": "choices",
+                  "aggregate": {
+                    "neutral": 0,
+                    "positive": 0,
+                    "confused": 0,
+                    "negative": 0,
+                    "sarcastic": 0,
+                    "hostile": 1
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a4000000000000a4",
+                      "span_name": "tts.synthesize",
+                      "value": [
+                        "hostile"
+                      ],
+                      "explanation": "Hostile delivery.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "eval_task_id": "t2000000-0000-4000-8000-000000000002",
+              "eval_task_name": "Safety task",
+              "evals": [
+                {
+                  "eval_config_id": "c8000000-0000-4000-8000-000000000008",
+                  "eval_name": "pii_strict_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 1,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a4000000000000a4",
+                      "span_name": "tts.synthesize",
+                      "value": "pass",
+                      "explanation": "Strict PII check passed.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "annotations": []
+      },
+      {
+        "observation_span": {
+          "id": "a5000000000000a5",
+          "project": "aaaea53a-4b72-4fd7-9651-6d36637914b6",
+          "project_version": "00000000-0000-0000-0000-000000000000",
+          "trace": "3baf299d-b496-44e0-8c9b-513a8f31c4a2",
+          "parent_span_id": "a1000000000000a1",
+          "name": "tool.crm_lookup",
+          "observation_type": "tool",
+          "start_time": "2026-05-25T06:13:25.309000",
+          "end_time": "2026-05-25T06:13:28.109000",
+          "input": {},
+          "output": {},
+          "model": "",
+          "model_parameters": "",
+          "latency_ms": 420,
+          "org_id": "None",
+          "org_user_id": "None",
+          "prompt_tokens": 20,
+          "completion_tokens": 30,
+          "total_tokens": 50,
+          "response_time": null,
+          "eval_id": "None",
+          "cost": 0.0001,
+          "status": "OK",
+          "status_message": "",
+          "tags": [],
+          "metadata": {},
+          "span_events": [],
+          "provider": "",
+          "provider_logo": "None",
+          "span_attributes": {},
+          "custom_eval_config": "00000000-0000-0000-0000-000000000000",
+          "eval_status": "None",
+          "prompt_version": "None"
+        },
+        "children": [],
+        "eval_scores": {
+          "scope": "span",
+          "eval_tasks": [
+            {
+              "eval_task_id": "t1000000-0000-4000-8000-000000000001",
+              "eval_task_name": "Response Quality task",
+              "evals": [
+                {
+                  "eval_config_id": "c1000000-0000-4000-8000-000000000001",
+                  "eval_name": "conversational_naturalness_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 1,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a5000000000000a5",
+                      "span_name": "tool.crm_lookup",
+                      "value": "pass",
+                      "explanation": "Natural tool-call phrasing.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "eval_task_id": "t2000000-0000-4000-8000-000000000002",
+              "eval_task_name": "Safety task",
+              "evals": [
+                {
+                  "eval_config_id": "c3000000-0000-4000-8000-000000000003",
+                  "eval_name": "hallucination_task",
+                  "output_type": "Pass/Fail",
+                  "aggregate": {
+                    "pass": 1,
+                    "fail": 0
+                  },
+                  "spans": [
+                    {
+                      "span_id": "a5000000000000a5",
+                      "span_name": "tool.crm_lookup",
+                      "value": "pass",
+                      "explanation": "Tool result is grounded.",
+                      "error": false
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "annotations": []
+      }
+    ],
+    "summary": {
+      "total_spans": 7,
+      "total_duration_ms": 2800,
+      "total_tokens": 250,
+      "total_prompt_tokens": 120,
+      "total_completion_tokens": 130,
+      "total_cost": 0.0021,
+      "error_count": 0,
+      "span_type_counts": {
+        "agent": 1,
+        "llm": 3,
+        "retriever": 1,
+        "tts": 1,
+        "tool": 1
+      }
+    },
+    "graph": {
+      "nodes": [
+        {
+          "id": "b2e1373eb6114b82",
+          "name": "agent_call.wrong_refusal",
+          "type": "agent"
+        },
+        {
+          "id": "a1000000000000a1",
+          "name": "llm.classify_intent",
+          "type": "llm"
+        },
+        {
+          "id": "a2000000000000a2",
+          "name": "retriever.kb_search",
+          "type": "retriever"
+        },
+        {
+          "id": "a3000000000000a3",
+          "name": "llm.draft_reply",
+          "type": "llm"
+        },
+        {
+          "id": "14286b471bde441a",
+          "name": "llm.gpt-4o",
+          "type": "llm"
+        },
+        {
+          "id": "a4000000000000a4",
+          "name": "tts.synthesize",
+          "type": "tts"
+        },
+        {
+          "id": "a5000000000000a5",
+          "name": "tool.crm_lookup",
+          "type": "tool"
+        }
+      ],
+      "edges": [
+        {
+          "source": null,
+          "target": "b2e1373eb6114b82"
+        },
+        {
+          "source": "b2e1373eb6114b82",
+          "target": "a1000000000000a1"
+        },
+        {
+          "source": "b2e1373eb6114b82",
+          "target": "a2000000000000a2"
+        },
+        {
+          "source": "b2e1373eb6114b82",
+          "target": "a3000000000000a3"
+        },
+        {
+          "source": "b2e1373eb6114b82",
+          "target": "14286b471bde441a"
+        },
+        {
+          "source": "b2e1373eb6114b82",
+          "target": "a4000000000000a4"
+        },
+        {
+          "source": "a1000000000000a1",
+          "target": "a5000000000000a5"
+        }
+      ]
+    },
+    "__END_NOTE__": "END OF DUMMY DATA (TH-5629/TH-5690)"
+  }
+}

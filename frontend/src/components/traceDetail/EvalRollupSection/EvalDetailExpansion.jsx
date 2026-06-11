@@ -5,16 +5,19 @@ import { alpha } from "@mui/material/styles";
 import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
 import EvalErrorLocalization from "../EvalErrorLocalization";
-import { isPassed } from "./utils";
+import { spanPassed } from "./utils";
 
-// Expansion content for one eval result — explanation + error localization + Fix with Falcon.
-const EvalDetailExpansion = ({ row, onFixWithFalcon, pl = 4.5 }) => {
-  const explanation = row.explanation || row.eval_explanation;
-  const observationSpanId =
-    row.observation_span_id || row.observationSpanId || row.spanId;
-  const customEvalConfigId =
-    row.custom_eval_config_id || row.eval_config_id || row.evalConfigId;
-  const hasLoc = !!(observationSpanId && customEvalConfigId);
+// Explanation + error localizer (fetched on demand) + Fix with Falcon.
+const EvalDetailExpansion = ({
+  span,
+  evalConfigId,
+  evalName,
+  outputType,
+  onFixWithFalcon,
+  pl = 4.5,
+}) => {
+  const explanation = span.explanation;
+  const hasLoc = !!(span.span_id && evalConfigId);
 
   return (
     <Box
@@ -44,17 +47,27 @@ const EvalDetailExpansion = ({ row, onFixWithFalcon, pl = 4.5 }) => {
       )}
       {hasLoc && (
         <EvalErrorLocalization
-          observationSpanId={observationSpanId}
-          customEvalConfigId={customEvalConfigId}
-          initialAnalysis={row.error_analysis || null}
-          initialStatus={row.error_localizer_status || null}
+          observationSpanId={span.span_id}
+          customEvalConfigId={evalConfigId}
+          initialAnalysis={null}
+          initialStatus={null}
         />
       )}
-      {!isPassed(row) && onFixWithFalcon && (
+      {!spanPassed(span, outputType) && onFixWithFalcon && (
         <Box
           onClick={(e) => {
             e.stopPropagation();
-            onFixWithFalcon({ level: "eval", ev: row });
+            onFixWithFalcon({
+              level: "eval",
+              ev: {
+                eval_config_id: evalConfigId,
+                eval_name: evalName,
+                span_id: span.span_id,
+                span_name: span.span_name,
+                score: typeof span.value === "number" ? span.value : undefined,
+                explanation: span.explanation,
+              },
+            });
           }}
           sx={{
             display: "inline-flex",
@@ -82,7 +95,10 @@ const EvalDetailExpansion = ({ row, onFixWithFalcon, pl = 4.5 }) => {
 };
 
 EvalDetailExpansion.propTypes = {
-  row: PropTypes.object.isRequired,
+  span: PropTypes.object.isRequired,
+  evalConfigId: PropTypes.string,
+  evalName: PropTypes.string,
+  outputType: PropTypes.string,
   onFixWithFalcon: PropTypes.func,
   pl: PropTypes.number,
 };
