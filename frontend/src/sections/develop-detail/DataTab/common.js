@@ -766,8 +766,6 @@ export const getStatusColor = (value, theme) => {
   };
 };
 
-
-
 export const parsePythonReprIfNeeded = (value) => {
   if (typeof value !== "string") return value;
   const isDict = value.startsWith("{") && value.endsWith("}");
@@ -819,13 +817,11 @@ export const normalizeEvalCellValue = (value) => {
   return v;
 };
 
-
 export const cleanChoiceLabel = (value) => {
   const parsed = parsePythonReprIfNeeded(value);
   if (Array.isArray(parsed)) return parsed.map((v) => String(v)).join(", ");
   return String(parsed ?? value);
 };
-
 
 // Map an outputType string (with all its casing/spelling variants) to a canonical
 // kind. Returns null when no type was given or it isn't recognized.
@@ -844,7 +840,12 @@ const inferKindFromValue = (/** @type {any} */ v) => {
   if (typeof v === "string") {
     const trimmed = v.trim();
     const lowered = trimmed.toLowerCase();
-    if (lowered === "passed" || lowered === "failed" || lowered === "pass" || lowered === "fail") {
+    if (
+      lowered === "passed" ||
+      lowered === "failed" ||
+      lowered === "pass" ||
+      lowered === "fail"
+    ) {
       return "passfail";
     }
     // numeric-looking string → score
@@ -906,13 +907,16 @@ export const normalizeEvalResult = (value, outputType) => {
     }
     items = items
       .map((/** @type {any} */ x) =>
-        x && typeof x === "object" ? (x.choice ?? x.label ?? x.value ?? "") : x,
+        x && typeof x === "object" ? x.choice ?? x.label ?? x.value ?? "" : x,
       )
       .map((/** @type {any} */ x) => String(x ?? ""))
       .filter(Boolean);
     if (items.length === 0) return { kind: "empty" };
     const score =
-      v && typeof v === "object" && !Array.isArray(v) && typeof v.score === "number"
+      v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      typeof v.score === "number"
         ? v.score
         : null;
     return { kind: "choices", items, score };

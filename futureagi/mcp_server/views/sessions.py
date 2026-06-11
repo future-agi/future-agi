@@ -2,6 +2,7 @@
 
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -17,6 +18,8 @@ from tfc.utils.api_errors import build_error_envelope
 
 class MCPSessionListView(APIView):
     """List active and recent MCP sessions."""
+
+    permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         responses={
@@ -52,6 +55,8 @@ class MCPSessionListView(APIView):
 
 class MCPSessionDetailView(APIView):
     """Revoke a specific MCP session."""
+
+    permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         responses={

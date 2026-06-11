@@ -1,5 +1,3 @@
-from typing import Optional
-
 import structlog
 
 from tfc.ee_stub import _ee_stub
@@ -11,8 +9,7 @@ try:
 except ImportError:
     SimulationAnalysisAgent = _ee_stub("SimulationAnalysisAgent")
 
-logger = structlog.get_logger(__name__)
-from model_hub.models.develop_dataset import Cell, Column, Row
+from model_hub.models.develop_dataset import Cell, Row
 from simulate.models import (
     AgentDefinition,
     AgentOptimiser,
@@ -22,13 +19,12 @@ from simulate.models import (
     SimulateEvalConfig,
     TestExecution,
 )
-from simulate.models.agent_prompt_optimiser_run_step import (
-    AgentPromptOptimiserRunStep,
-)
 from simulate.utils.eval_explaination_summary import (
     _get_eval_configs,
 )
 from simulate.utils.test_execution import calculate_aggregate_metrics
+
+logger = structlog.get_logger(__name__)
 
 
 def _resolve_simulation_type(
@@ -172,12 +168,6 @@ def _build_fix_your_agent_eval_templates(
             if isinstance(eval_template_config, dict)
             else None
         )
-        eval_template_eval_type_id = (
-            eval_template_config.get("eval_type_id")
-            if isinstance(eval_template_config, dict)
-            else None
-        )
-
         allowed_choices = None
         raw_choices = getattr(eval_template, "choices", None)
         if isinstance(raw_choices, list):
@@ -232,7 +222,7 @@ def _build_fix_your_agent_eval_templates(
     )
 
 
-def prepare_simulation_analysis_input(test_execution_id: str) -> Optional[dict]:
+def prepare_simulation_analysis_input(test_execution_id: str) -> dict | None:
     """
     Prepare input data for simulation analysis agent.
 
@@ -385,9 +375,9 @@ def prepare_simulation_analysis_input(test_execution_id: str) -> Optional[dict]:
 
 def construct_scenarios_from_calls(
     call_executions,
-    allowed_eval_config_ids: Optional[set[str]] = None,
-    eval_config_id_to_template_id: Optional[dict[str, str]] = None,
-    allowed_eval_template_ids: Optional[set[str]] = None,
+    allowed_eval_config_ids: set[str] | None = None,
+    eval_config_id_to_template_id: dict[str, str] | None = None,
+    allowed_eval_template_ids: set[str] | None = None,
 ) -> list[dict]:
     """
     Construct scenario payloads from call execution data.
@@ -536,7 +526,7 @@ def execute_simulation_analysis(input_data: dict) -> dict:
         eval_templates_list = input_data.get("eval_templates", [])
         test_execution_id = input_data.get("test_execution_id")
         simulation_type = str(
-            ((input_data.get("metadata") or {}).get("simulation_type") or "voice")
+            (input_data.get("metadata") or {}).get("simulation_type") or "voice"
         ).lower()
 
         logger.info(
@@ -603,7 +593,7 @@ def get_or_create_optimiser_for_test_execution(
 
     optimiser = AgentOptimiser.objects.create(
         name=f"Optimiser for {test_execution.run_test.name}",
-        description=f"Simulation analysis optimiser for test execution runs",
+        description="Simulation analysis optimiser for test execution runs",
         configuration={"type": "simulation_analysis"},
     )
 
@@ -652,7 +642,7 @@ def get_latest_optimiser_result(
 
 def create_optimiser_run_for_test_execution(
     test_execution: TestExecution, optimiser: AgentOptimiser
-) -> Optional[AgentOptimiserRun]:
+) -> AgentOptimiserRun | None:
     """
     Create a new optimiser run for a test execution.
 
@@ -682,15 +672,24 @@ def create_optimiser_run_for_test_execution(
 
     from simulate.tasks.agent_optimiser_tasks import execute_optimiser_run
 
-    execute_optimiser_run.delay(str(run.id))
+    try:
+        execute_optimiser_run.delay(str(run.id))
+    except Exception as dispatch_error:
+        run.mark_as_failed({"dispatch_error": str(dispatch_error)})
+        logger.exception(
+            "optimiser_run_dispatch_failed",
+            optimiser_run_id=str(run.id),
+            test_execution_id=str(test_execution.id),
+            error=str(dispatch_error),
+        )
 
     return run
 
 
 def get_agent_definition_prompt(
     agent_definition_id: str,
-    agent_version_id: Optional[str] = None,
-) -> Optional[dict]:
+    agent_version_id: str | None = None,
+) -> dict | None:
     """
     Get the agent definition's prompt/description.
 
@@ -759,7 +758,7 @@ def get_agent_definition_prompt(
         return None
 
 
-def get_call_executions_with_details(test_execution_id: str) -> Optional[list[dict]]:
+def get_call_executions_with_details(test_execution_id: str) -> list[dict] | None:
     """
     Get all call executions with transcripts, scenario data, and evaluations.
 
@@ -1038,7 +1037,7 @@ def _get_transcript_text(call: CallExecution) -> str:
     return "\n".join(transcript_lines)
 
 
-def get_full_test_execution_data(test_execution_id: str) -> Optional[dict]:
+def get_full_test_execution_data(test_execution_id: str) -> dict | None:
     """
     Get complete test execution data including agent prompts,
     simulator prompt, and all call executions.

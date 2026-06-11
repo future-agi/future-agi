@@ -23,9 +23,25 @@ async function main() {
   const marker = auth.runId.replace(/[^a-z0-9]/gi, "").slice(0, 18);
   const graphName = `browser agent ${marker}`;
   const sourceNodeName = `browser_source_${marker}`.slice(0, 80);
+  const editedSourceNodeName = `${sourceNodeName}_edited`.slice(0, 80);
   const targetNodeName = `browser_target_${marker}`.slice(0, 80);
+  const connectedNodeName = "llm_prompt_node_1";
+  const sourcePromptText = "Write one test fact about {{topic}}.";
+  const variableInitialValue = `browser variable initial ${auth.runId}`;
+  const variableUpdatedValue = `browser variable updated ${auth.runId}`;
+  const executionInputValue = `browser execution input ${auth.runId}`;
+  const executionOutputValue = `browser execution output ${auth.runId}`;
+  const graphExecutionId = randomUUID();
+  const nodeExecutionId = randomUUID();
+  const inputDataId = randomUUID();
+  const outputDataId = randomUUID();
   const graphNames = [graphName];
-  const promptNames = [sourceNodeName, targetNodeName];
+  const promptNames = [
+    sourceNodeName,
+    editedSourceNodeName,
+    targetNodeName,
+    connectedNodeName,
+  ];
   let graphId = null;
   let publicDeleteStatus = null;
   let cleanupAudit = null;
@@ -36,8 +52,17 @@ async function main() {
       graphName,
       sourceNodeName,
       targetNodeName,
+      sourcePromptText,
     });
     graphId = setup.graphId;
+
+    const variableSetup = await seedGraphVariable({
+      auth,
+      graphId,
+      versionId: setup.draftVersionId,
+      columnName: "topic",
+      value: variableInitialValue,
+    });
 
     const preDeleteAudit = await loadAgentGraphDbAudit({ graphId });
     assertAgentGraphPreDeleteAudit(preDeleteAudit, {
@@ -73,14 +98,17 @@ async function main() {
     const apiFailures = [];
     const pageErrors = [];
     const unexpectedMutations = [];
+    const expectedMutations = [];
     const agentRequests = [];
     const evidence = {
       graph_id: graphId,
       draft_version_id: setup.draftVersionId,
       source_node_id: setup.sourceNode.id,
       target_node_id: setup.targetNode.id,
+      node_connection_id: setup.targetNode.node_connection?.id,
       graph_name: graphName,
       search_result_count: graphRows.length,
+      variable_setup: variableSetup,
       pre_delete_audit: preDeleteAudit,
     };
 
@@ -118,6 +146,33 @@ async function main() {
       if (!isAgentPlaygroundApiUrl(url)) return;
       agentRequests.push(`${request.method()} ${new URL(url).pathname}`);
       if (["POST", "PATCH", "PUT", "DELETE"].includes(request.method())) {
+        if (
+          request.method() === "POST" &&
+          url.includes(
+            `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/nodes/`,
+          )
+        ) {
+          expectedMutations.push(`${request.method()} ${url}`);
+          return;
+        }
+        if (
+          request.method() === "PATCH" &&
+          url.includes(
+            `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/nodes/${setup.sourceNode.id}/`,
+          )
+        ) {
+          expectedMutations.push(`${request.method()} ${url}`);
+          return;
+        }
+        if (
+          request.method() === "PUT" &&
+          url.includes(
+            `/agent-playground/graphs/${graphId}/dataset/cells/${variableSetup.cell_id}/`,
+          )
+        ) {
+          expectedMutations.push(`${request.method()} ${url}`);
+          return;
+        }
         unexpectedMutations.push(`${request.method()} ${url}`);
       }
     });
@@ -127,7 +182,9 @@ async function main() {
         apiFailures.push(`${response.status()} ${url}`);
       }
     });
-    page.on("pageerror", (error) => pageErrors.push(error.message));
+    page.on("pageerror", (error) =>
+      pageErrors.push(error.stack || error.message),
+    );
 
     try {
       logStep("open agents list");
@@ -209,6 +266,204 @@ async function main() {
       await waitForVisibleText(page, sourceNodeName, { exact: true });
       await waitForVisibleText(page, targetNodeName, { exact: true });
       await waitForSelectorWithSize(page, ".react-flow");
+      evidence.rendered_edge_count = await waitForRenderedEdgeCount(page, 1);
+
+      logStep("save source prompt drawer");
+      const sourceNodeDetailResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" &&
+          response
+            .url()
+            .includes(
+              `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/nodes/${setup.sourceNode.id}/`,
+            ) &&
+          response.status() < 400,
+        { timeout: 60000 },
+      );
+      await clickCanvasNode(page, sourceNodeName);
+      const sourceNodeDetail = nodePayloadFromResponse(
+        await sourceNodeDetailResponse.then((response) => response.json()),
+      );
+      const sourcePromptTemplate = promptTemplateFromNode(sourceNodeDetail);
+      assert(
+        sourcePromptTemplate?.model === "gpt-4o-mini",
+        "Prompt node detail did not return the seeded model.",
+      );
+      assert(
+        promptTemplateMessagesInclude(sourcePromptTemplate, sourcePromptText),
+        "Prompt node detail did not return the seeded message.",
+      );
+      await waitForVisibleText(page, "Prompt Name");
+      await waitForInputValue(page, sourceNodeName);
+      await waitForPromptEditorText(page, ["Write one test fact", "topic"]);
+      await waitForVisibleText(page, "gpt-4o-mini");
+      await replaceInputValue(page, sourceNodeName, editedSourceNodeName);
+
+      const sourceNodePatchResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "PATCH" &&
+          response
+            .url()
+            .includes(
+              `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/nodes/${setup.sourceNode.id}/`,
+            ) &&
+          response.status() < 400,
+        { timeout: 60000 },
+      );
+      await waitForEnabledButton(page, "Save prompt");
+      await clickVisibleText(page, "Save prompt", { exact: true });
+      const patchedSourceNode = nodePayloadFromResponse(
+        await sourceNodePatchResponse.then((response) => response.json()),
+      );
+      const patchedPromptTemplate = promptTemplateFromNode(patchedSourceNode);
+      assert(
+        patchedSourceNode?.name === editedSourceNodeName,
+        "Prompt drawer save did not return the edited prompt name.",
+      );
+      assert(
+        patchedPromptTemplate?.model === "gpt-4o-mini",
+        "Prompt drawer save lost the seeded model.",
+      );
+      assert(
+        promptTemplateMessagesInclude(patchedPromptTemplate, sourcePromptText),
+        "Prompt drawer save lost the seeded prompt message.",
+      );
+      await waitForVisibleText(page, editedSourceNodeName, { exact: true });
+      const sourceNodeReadback = await loadAgentNode({
+        auth,
+        graphId,
+        versionId: setup.draftVersionId,
+        nodeId: setup.sourceNode.id,
+      });
+      const readbackPromptTemplate = promptTemplateFromNode(sourceNodeReadback);
+      assert(
+        sourceNodeReadback?.name === editedSourceNodeName,
+        "Prompt drawer save did not persist the edited prompt name.",
+      );
+      assert(
+        readbackPromptTemplate?.model === "gpt-4o-mini",
+        "Prompt drawer readback lost the seeded model.",
+      );
+      assert(
+        promptTemplateMessagesInclude(readbackPromptTemplate, sourcePromptText),
+        "Prompt drawer readback lost the seeded prompt message.",
+      );
+      evidence.prompt_drawer_save = {
+        node_id: setup.sourceNode.id,
+        original_name: sourceNodeName,
+        updated_name: editedSourceNodeName,
+        model: readbackPromptTemplate.model,
+        message_verified: true,
+      };
+
+      logStep("add connected node from builder");
+      const connectedNodeCreateResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response
+            .url()
+            .includes(
+              `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/nodes/`,
+            ) &&
+          response.status() < 400,
+        { timeout: 60000 },
+      );
+      await addConnectedBlankPromptFromNode(page, targetNodeName);
+      const connectedNodePayload = await connectedNodeCreateResponse.then(
+        (response) => response.json(),
+      );
+      const connectedNode = connectedNodePayload?.result;
+      const connectedNodeConnection =
+        connectedNode?.node_connection || connectedNode?.nodeConnection;
+      assert(
+        connectedNode?.name === connectedNodeName,
+        "Builder connected-node add did not create the expected prompt node.",
+      );
+      assert(
+        connectedNodeConnection?.source_node_id === setup.targetNode.id,
+        "Builder connected-node add did not persist the expected source node.",
+      );
+      assert(
+        connectedNodeConnection?.target_node_id === connectedNode.id,
+        "Builder connected-node add did not persist the expected target node.",
+      );
+      await waitForVisibleText(page, connectedNodeName, { exact: true });
+      evidence.rendered_edge_count_after_connected_add =
+        await waitForRenderedEdgeCount(page, 2);
+      const postBuilderMutationAudit = await loadAgentGraphDbAudit({ graphId });
+      assert(
+        postBuilderMutationAudit.node_visible === 3,
+        "Builder connected-node add did not leave three visible nodes.",
+      );
+      assert(
+        postBuilderMutationAudit.node_connection_visible === 2,
+        "Builder connected-node add did not leave two visible node connections.",
+      );
+      assert(
+        postBuilderMutationAudit.prompt_template_node_visible === 3,
+        "Builder connected-node add did not create a visible prompt-template node link.",
+      );
+      evidence.browser_connected_node = {
+        node_id: connectedNode.id,
+        node_name: connectedNode.name,
+        node_connection_id: connectedNodeConnection.id,
+        source_node_id: connectedNodeConnection.source_node_id,
+        target_node_id: connectedNodeConnection.target_node_id,
+        post_mutation_audit: postBuilderMutationAudit,
+      };
+
+      logStep("edit global variable drawer");
+      const graphDatasetResponse = page.waitForResponse(
+        (response) =>
+          response
+            .url()
+            .includes(`/agent-playground/graphs/${graphId}/dataset/`) &&
+          response.status() < 400,
+        { timeout: 60000 },
+      );
+      await clickVisibleText(page, "Add input variables", { exact: true });
+      await graphDatasetResponse;
+      await waitForVisibleText(page, "Variables", { exact: true });
+      await waitForVisibleText(
+        page,
+        "Define values for your prompt variables",
+        {
+          exact: true,
+        },
+      );
+      await waitForVisibleText(page, "{{topic}}", { exact: true });
+      await waitForInputValue(page, variableInitialValue);
+
+      await replaceInputValue(page, variableInitialValue, variableUpdatedValue);
+      await waitForEnabledButton(page, "Save");
+      const variableUpdateResponse = page.waitForResponse(
+        (response) =>
+          response
+            .url()
+            .includes(
+              `/agent-playground/graphs/${graphId}/dataset/cells/${variableSetup.cell_id}/`,
+            ) && response.status() < 400,
+        { timeout: 60000 },
+      );
+      await clickVisibleText(page, "Save", { exact: true });
+      await variableUpdateResponse;
+      await waitForVisibleText(page, "Variables saved successfully");
+
+      const variableReadback = await loadGraphVariable({
+        auth,
+        graphId,
+        versionId: setup.draftVersionId,
+        columnName: "topic",
+      });
+      assert(
+        variableReadback.value === variableUpdatedValue,
+        "Browser variable drawer save did not persist the topic value.",
+      );
+      evidence.variable_drawer = {
+        ...variableReadback,
+        initial_value: variableInitialValue,
+        updated_value: variableUpdatedValue,
+      };
 
       logStep("open changelog");
       const versionsResponse = page.waitForResponse(
@@ -227,7 +482,7 @@ async function main() {
         { timeout: 30000 },
       );
       await waitForVisibleText(page, "Version 1", { exact: true });
-      await waitForVisibleText(page, sourceNodeName, { exact: true });
+      await waitForVisibleText(page, editedSourceNodeName, { exact: true });
       await waitForVisibleText(page, targetNodeName, { exact: true });
 
       logStep("open executions");
@@ -254,6 +509,88 @@ async function main() {
       await waitForNoVisibleText(page, "Invalid Date");
       await waitForNoVisibleText(page, "undefined", { exact: true });
 
+      logStep("seed execution fixture");
+      const inputPort = findPort(setup.sourceNode, {
+        direction: "input",
+        displayName: "topic",
+      });
+      const outputPort = findPort(setup.sourceNode, {
+        direction: "output",
+        displayName: "response",
+      });
+      assert(inputPort?.id, "Source node did not expose topic input.");
+      assert(outputPort?.id, "Source node did not expose response output.");
+
+      const seedAudit = await seedAgentExecutionFixture({
+        graphExecutionId,
+        nodeExecutionId,
+        inputDataId,
+        outputDataId,
+        graphVersionId: setup.draftVersionId,
+        nodeId: setup.sourceNode.id,
+        inputPortId: inputPort.id,
+        outputPortId: outputPort.id,
+        inputValue: executionInputValue,
+        outputValue: executionOutputValue,
+      });
+      assert(
+        seedAudit.graph_execution_visible === 1 &&
+          seedAudit.node_execution_visible === 1 &&
+          seedAudit.execution_data_visible === 2,
+        "Seeded browser execution fixture was not DB-visible.",
+      );
+      evidence.seeded_execution = {
+        graph_execution_id: graphExecutionId,
+        node_execution_id: nodeExecutionId,
+        input_port_id: inputPort.id,
+        output_port_id: outputPort.id,
+        seed_audit: seedAudit,
+      };
+
+      logStep("reload populated executions");
+      const populatedExecutionsResponse = page.waitForResponse(
+        (response) =>
+          response
+            .url()
+            .includes(`/agent-playground/graphs/${graphId}/executions/`) &&
+          response.status() < 400,
+        { timeout: 60000 },
+      );
+      const executionDetailResponse = page.waitForResponse(
+        (response) =>
+          response
+            .url()
+            .includes(
+              `/agent-playground/graphs/${graphId}/executions/${graphExecutionId}/`,
+            ) && response.status() < 400,
+        { timeout: 60000 },
+      );
+      const nodeExecutionDetailResponse = page.waitForResponse(
+        (response) =>
+          response
+            .url()
+            .includes(
+              `/agent-playground/executions/${graphExecutionId}/nodes/${nodeExecutionId}/`,
+            ) && response.status() < 400,
+        { timeout: 60000 },
+      );
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await populatedExecutionsResponse;
+      await executionDetailResponse;
+      await nodeExecutionDetailResponse;
+
+      await waitForNoVisibleText(page, "No executions yet", { exact: true });
+      await waitForVisibleText(page, "Success", { exact: true });
+      await waitForVisibleText(page, "Agent flow results", { exact: true });
+      await waitForVisibleText(page, "Output", { exact: true });
+      await waitForVisibleText(page, executionOutputValue);
+      await waitForNoVisibleText(page, "Invalid Date");
+      await waitForNoVisibleText(page, "undefined", { exact: true });
+
+      await clickVisibleLabelText(page, "Show inputs");
+      await waitForVisibleText(page, "Input", { exact: true });
+      await waitForVisibleText(page, executionInputValue);
+
       logStep("capture screenshot");
       await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
       evidence.screenshot = SCREENSHOT_PATH;
@@ -266,8 +603,13 @@ async function main() {
       assert(pageErrors.length === 0, `Page errors: ${pageErrors.join("; ")}`);
       assert(
         unexpectedMutations.length === 0,
-        `Read-only agent playground smoke fired mutations: ${unexpectedMutations.join("; ")}`,
+        `Agent playground smoke fired unexpected mutations: ${unexpectedMutations.join("; ")}`,
       );
+      assert(
+        expectedMutations.length === 3,
+        `Expected one prompt save, one browser node add mutation, and one variable update mutation, saw ${expectedMutations.length}.`,
+      );
+      evidence.expected_mutation_count = expectedMutations.length;
     } finally {
       await browser.close();
     }
@@ -287,8 +629,20 @@ async function main() {
 
     const postDeleteAudit = await loadAgentGraphDbAudit({ graphId });
     assertAgentGraphPostDeleteAudit(postDeleteAudit);
+    const executionPostDeleteAudit = await loadAgentExecutionDbAudit({
+      graphId,
+      graphExecutionId,
+      nodeExecutionId,
+    });
+    assert(
+      executionPostDeleteAudit.graph_execution_visible === 0 &&
+        executionPostDeleteAudit.node_execution_visible === 0 &&
+        executionPostDeleteAudit.execution_data_visible === 0,
+      "Public graph delete left browser execution rows visible.",
+    );
     evidence.public_delete_status = publicDeleteStatus;
     evidence.post_delete_audit = postDeleteAudit;
+    evidence.execution_post_delete_audit = executionPostDeleteAudit;
 
     cleanupAudit = await hardDeleteAgentGraph({
       graphId,
@@ -350,6 +704,7 @@ async function createDisposableAgentGraph({
   graphName,
   sourceNodeName,
   targetNodeName,
+  sourcePromptText,
 }) {
   const templatePayload = await auth.client.get(
     apiPath("/agent-playground/node-templates/"),
@@ -394,7 +749,7 @@ async function createDisposableAgentGraph({
             content: [
               {
                 type: "text",
-                text: "Write one test fact about {{topic}}.",
+                text: sourcePromptText,
               },
             ],
           },
@@ -447,6 +802,119 @@ async function createDisposableAgentGraph({
   );
 
   return { graphId, draftVersionId, sourceNode, targetNode };
+}
+
+async function seedGraphVariable({
+  auth,
+  graphId,
+  versionId,
+  columnName,
+  value,
+}) {
+  const variable = await loadGraphVariable({
+    auth,
+    graphId,
+    versionId,
+    columnName,
+  });
+  await auth.client.put(
+    apiPath("/agent-playground/graphs/{graph_id}/dataset/cells/{cell_id}/", {
+      graph_id: graphId,
+      cell_id: variable.cell_id,
+    }),
+    { value },
+  );
+  const readback = await loadGraphVariable({
+    auth,
+    graphId,
+    versionId,
+    columnName,
+  });
+  assert(
+    readback.value === value,
+    "Graph variable seed did not persist the requested value.",
+  );
+  return {
+    ...readback,
+    initial_value: value,
+  };
+}
+
+async function loadGraphVariable({ auth, graphId, versionId, columnName }) {
+  const dataset = await auth.client.get(
+    apiPath("/agent-playground/graphs/{graph_id}/dataset/", {
+      graph_id: graphId,
+    }),
+    { query: { version_id: versionId, page: 1, page_size: 10 } },
+  );
+  const column = (dataset.columns || []).find(
+    (item) => item.name === columnName,
+  );
+  assert(column?.id, `Graph dataset did not expose ${columnName} column.`);
+  const row = (dataset.rows || [])[0];
+  assert(row?.id, "Graph dataset did not expose a minimum variable row.");
+  const cell = (row.cells || []).find(
+    (item) => getCellColumnId(item) === column.id,
+  );
+  assert(cell?.id, `Graph dataset did not expose a ${columnName} cell.`);
+  return {
+    dataset_id: dataset.dataset_id,
+    column_id: column.id,
+    row_id: row.id,
+    cell_id: cell.id,
+    value: cell.value,
+  };
+}
+
+async function loadAgentNode({ auth, graphId, versionId, nodeId }) {
+  return nodePayloadFromResponse(
+    await auth.client.get(
+      apiPath(
+        "/agent-playground/graphs/{id}/versions/{version_id}/nodes/{node_id}/",
+        {
+          id: graphId,
+          version_id: versionId,
+          node_id: nodeId,
+        },
+      ),
+    ),
+  );
+}
+
+function nodePayloadFromResponse(payload) {
+  return payload?.result || payload?.node || payload;
+}
+
+function promptTemplateFromNode(node) {
+  return node?.prompt_template || node?.promptTemplate || null;
+}
+
+function promptTemplateMessagesInclude(promptTemplate, expectedText) {
+  const normalizedExpected = String(expectedText).replace(/\s+/g, " ").trim();
+  return (promptTemplate?.messages || []).some((message) => {
+    const content = Array.isArray(message.content)
+      ? message.content
+          .map((block) => block?.text || "")
+          .join("")
+          .replace(/\s+/g, " ")
+          .trim()
+      : String(message.content || "")
+          .replace(/\s+/g, " ")
+          .trim();
+    return content === normalizedExpected;
+  });
+}
+
+function getCellColumnId(cell) {
+  return cell?.columnId || cell?.column_id;
+}
+
+function findPort(node, { direction, displayName }) {
+  return (node.ports || []).find(
+    (port) =>
+      port.direction === direction &&
+      (displayName ? port.display_name === displayName : true),
+  );
 }
 
 async function installRuntimeConfig(page, auth) {
@@ -539,6 +1007,249 @@ async function waitForInputPlaceholder(page, placeholder, timeout = 30000) {
     { timeout },
     placeholder,
   );
+}
+
+async function waitForInputValue(page, value, timeout = 30000) {
+  await page.waitForFunction(
+    (expectedValue) =>
+      Array.from(document.querySelectorAll("input")).some(
+        (input) => input.value === expectedValue,
+      ),
+    { timeout },
+    value,
+  );
+}
+
+async function replaceInputValue(page, currentValue, nextValue) {
+  await waitForInputValue(page, currentValue);
+  await page.evaluate(
+    ({ currentValue: expectedValue, nextValue: replacementValue }) => {
+      const input = Array.from(document.querySelectorAll("input")).find(
+        (candidate) => candidate.value === expectedValue,
+      );
+      if (!input) throw new Error("Input value not found.");
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      valueSetter.call(input, replacementValue);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    { currentValue, nextValue },
+  );
+  await waitForInputValue(page, nextValue);
+}
+
+async function waitForEnabledButton(page, text, timeout = 30000) {
+  await page.waitForFunction(
+    (expectedText) =>
+      Array.from(document.querySelectorAll("button")).some((button) => {
+        if (button.disabled) return false;
+        return String(button.textContent || "").trim() === expectedText;
+      }),
+    { timeout },
+    text,
+  );
+}
+
+async function waitForRenderedEdgeCount(page, minimumCount, timeout = 30000) {
+  await page.waitForFunction(
+    (expectedCount) => {
+      const edges = Array.from(document.querySelectorAll(".react-flow__edge"));
+      const renderedEdges = edges.filter((edge) => {
+        const path = edge.querySelector("path");
+        return path?.getAttribute("d");
+      });
+      return renderedEdges.length >= expectedCount;
+    },
+    { timeout },
+    minimumCount,
+  );
+  return page.evaluate(
+    () =>
+      Array.from(document.querySelectorAll(".react-flow__edge")).filter(
+        (edge) => edge.querySelector("path")?.getAttribute("d"),
+      ).length,
+  );
+}
+
+async function clickCanvasNode(page, nodeLabel) {
+  const point = await page.evaluate((expectedLabel) => {
+    const isVisible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    };
+    const node = Array.from(
+      document.querySelectorAll(".react-flow__node"),
+    ).find(
+      (candidate) =>
+        isVisible(candidate) &&
+        String(candidate.textContent || "").includes(expectedLabel),
+    );
+    if (!node) return null;
+    const rect = node.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    };
+  }, nodeLabel);
+  assert(point, `Could not find canvas node ${nodeLabel}.`);
+  await page.mouse.click(point.x, point.y);
+}
+
+async function waitForPromptEditorText(page, terms, timeout = 30000) {
+  const expectedTerms = Array.isArray(terms) ? terms : [terms];
+  await page.waitForFunction(
+    (termsToFind) => {
+      const isVisible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+      return Array.from(document.querySelectorAll(".ql-editor")).some(
+        (editor) => {
+          if (!isVisible(editor)) return false;
+          const quillText = editor.__quill?.getText?.() || "";
+          const text = `${editor.textContent || ""} ${quillText}`;
+          return termsToFind.every((term) => text.includes(term));
+        },
+      );
+    },
+    { timeout },
+    expectedTerms,
+  );
+}
+
+async function addConnectedBlankPromptFromNode(page, sourceNodeLabel) {
+  await clickCanvasNodeAddButton(page, sourceNodeLabel);
+  await clickNodeTemplateFromOpenPopper(page, "LLM Prompt");
+  await waitForVisibleText(page, "Add Blank Prompt", { exact: true });
+  await clickVisibleText(page, "Add Blank Prompt", { exact: true });
+}
+
+async function clickCanvasNodeAddButton(page, nodeLabel) {
+  const point = await page.evaluate((expectedLabel) => {
+    const isVisible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    };
+    const node = Array.from(
+      document.querySelectorAll(".react-flow__node"),
+    ).find(
+      (candidate) =>
+        isVisible(candidate) &&
+        String(candidate.textContent || "").includes(expectedLabel),
+    );
+    if (!node) return null;
+    const nodeRect = node.getBoundingClientRect();
+    const candidates = Array.from(node.querySelectorAll("*"))
+      .map((element) => ({
+        element,
+        rect: element.getBoundingClientRect(),
+        style: window.getComputedStyle(element),
+      }))
+      .filter(({ rect, style }) => {
+        return (
+          rect.width >= 20 &&
+          rect.width <= 34 &&
+          rect.height >= 20 &&
+          rect.height <= 34 &&
+          rect.left > nodeRect.right - 8 &&
+          rect.top > nodeRect.top - 40 &&
+          rect.top < nodeRect.bottom + 40 &&
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          style.pointerEvents !== "none"
+        );
+      })
+      .sort((a, b) => b.rect.left - a.rect.left);
+    const target = candidates[0];
+    if (!target) return null;
+    return {
+      x: target.rect.left + target.rect.width / 2,
+      y: target.rect.top + target.rect.height / 2,
+    };
+  }, nodeLabel);
+  assert(point, `Could not find Add button for node ${nodeLabel}.`);
+  await page.mouse.click(point.x, point.y);
+  await waitForNodeTemplatePopper(page, "LLM Prompt");
+}
+
+async function waitForNodeTemplatePopper(page, text, timeout = 30000) {
+  await page.waitForFunction(
+    (expectedText) => {
+      const isVisible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+      return Array.from(document.querySelectorAll(".MuiPaper-root")).some(
+        (paper) =>
+          isVisible(paper) &&
+          String(paper.textContent || "").includes(expectedText) &&
+          !String(paper.textContent || "").includes("Add Blank Prompt"),
+      );
+    },
+    { timeout },
+    text,
+  );
+}
+
+async function clickNodeTemplateFromOpenPopper(page, text) {
+  await waitForNodeTemplatePopper(page, text);
+  const clicked = await page.evaluate((expectedText) => {
+    const normalized = (value) => String(value || "").trim();
+    const isVisible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    };
+    const paper = Array.from(document.querySelectorAll(".MuiPaper-root")).find(
+      (candidate) =>
+        isVisible(candidate) &&
+        String(candidate.textContent || "").includes(expectedText) &&
+        !String(candidate.textContent || "").includes("Add Blank Prompt"),
+    );
+    if (!paper) return false;
+    const label = Array.from(paper.querySelectorAll("*")).find(
+      (candidate) =>
+        isVisible(candidate) &&
+        normalized(candidate.textContent) === expectedText,
+    );
+    const clickable = label?.closest(".MuiBox-root") || label;
+    if (!clickable) return false;
+    clickable.click();
+    return true;
+  }, text);
+  assert(clicked, `Could not click node template ${text}.`);
 }
 
 async function waitForSelectorWithSize(page, selector, timeout = 30000) {
@@ -666,6 +1377,52 @@ async function clickVisibleText(page, text, { exact = false } = {}) {
     },
     { text, exact },
   );
+}
+
+async function clickVisibleLabelText(page, text) {
+  await page.waitForFunction(
+    (expectedText) => {
+      const isVisible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+      return Array.from(document.querySelectorAll("label")).some(
+        (element) =>
+          isVisible(element) &&
+          String(element.textContent || "")
+            .trim()
+            .includes(expectedText),
+      );
+    },
+    { timeout: 30000 },
+    text,
+  );
+  await page.evaluate((expectedText) => {
+    const isVisible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    };
+    const element = Array.from(document.querySelectorAll("label")).find(
+      (candidate) =>
+        isVisible(candidate) &&
+        String(candidate.textContent || "")
+          .trim()
+          .includes(expectedText),
+    );
+    element.click();
+  }, text);
 }
 
 async function expectApiError(fn, expectedStatuses, message) {
@@ -826,6 +1583,123 @@ function assertAgentGraphPostDeleteAudit(audit) {
     audit.graph_dataset_visible === 0,
     "Deleted agent graph dataset link remained visible.",
   );
+}
+
+async function seedAgentExecutionFixture({
+  graphExecutionId,
+  nodeExecutionId,
+  inputDataId,
+  outputDataId,
+  graphVersionId,
+  nodeId,
+  inputPortId,
+  outputPortId,
+  inputValue,
+  outputValue,
+}) {
+  const sql = `
+INSERT INTO agent_playground_graph_execution (
+  id, graph_version_id, status, input_payload, output_payload,
+  started_at, completed_at, created_at, updated_at, deleted
+) VALUES (
+  ${sqlUuid(graphExecutionId)},
+  ${sqlUuid(graphVersionId)},
+  'success',
+  jsonb_build_object('topic', ${sqlTextLiteral(inputValue)}),
+  jsonb_build_object('response', ${sqlTextLiteral(outputValue)}),
+  now() - interval '7 seconds',
+  now(),
+  now(),
+  now(),
+  false
+);
+
+INSERT INTO agent_playground_node_execution (
+  id, graph_execution_id, node_id, status,
+  started_at, completed_at, created_at, updated_at, deleted
+) VALUES (
+  ${sqlUuid(nodeExecutionId)},
+  ${sqlUuid(graphExecutionId)},
+  ${sqlUuid(nodeId)},
+  'success',
+  now() - interval '7 seconds',
+  now(),
+  now(),
+  now(),
+  false
+);
+
+INSERT INTO agent_playground_execution_data (
+  id, node_execution_id, node_id, port_id, payload,
+  validation_errors, is_valid, created_at, updated_at, deleted
+) VALUES
+  (
+    ${sqlUuid(inputDataId)},
+    ${sqlUuid(nodeExecutionId)},
+    ${sqlUuid(nodeId)},
+    ${sqlUuid(inputPortId)},
+    to_jsonb(${sqlTextLiteral(inputValue)}::text),
+    NULL,
+    true,
+    now(),
+    now(),
+    false
+  ),
+  (
+    ${sqlUuid(outputDataId)},
+    ${sqlUuid(nodeExecutionId)},
+    ${sqlUuid(nodeId)},
+    ${sqlUuid(outputPortId)},
+    to_jsonb(${sqlTextLiteral(outputValue)}::text),
+    NULL,
+    true,
+    now(),
+    now(),
+    false
+  );
+
+${agentExecutionAuditSql({ graphExecutionId, nodeExecutionId })}
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadAgentExecutionDbAudit({
+  graphId,
+  graphExecutionId,
+  nodeExecutionId,
+}) {
+  const sql = `
+SELECT json_build_object(
+  'graph_visible', (
+    SELECT count(*) FROM agent_playground_graph
+    WHERE id = ${sqlUuid(graphId)} AND deleted = false
+  ),
+  ${agentExecutionAuditFields({ graphExecutionId, nodeExecutionId })}
+);
+`;
+  return runPostgresJson(sql);
+}
+
+function agentExecutionAuditSql({ graphExecutionId, nodeExecutionId }) {
+  return `SELECT json_build_object(
+  ${agentExecutionAuditFields({ graphExecutionId, nodeExecutionId })}
+);`;
+}
+
+function agentExecutionAuditFields({ graphExecutionId, nodeExecutionId }) {
+  return `
+  'graph_execution_visible', (
+    SELECT count(*) FROM agent_playground_graph_execution
+    WHERE id = ${sqlUuid(graphExecutionId)} AND deleted = false
+  ),
+  'node_execution_visible', (
+    SELECT count(*) FROM agent_playground_node_execution
+    WHERE id = ${sqlUuid(nodeExecutionId)} AND deleted = false
+  ),
+  'execution_data_visible', (
+    SELECT count(*) FROM agent_playground_execution_data
+    WHERE node_execution_id = ${sqlUuid(nodeExecutionId)} AND deleted = false
+  )`;
 }
 
 async function hardDeleteAgentGraph({

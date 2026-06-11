@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -17,7 +16,7 @@ from ai_tools.registry import register_tool
 
 
 class AnalyzeErrorsInput(PydanticBaseModel):
-    project_id: Optional[UUID] = Field(default=None, description="Filter by project ID")
+    project_id: UUID | None = Field(default=None, description="Filter by project ID")
     limit: int = Field(default=50, ge=1, le=200, description="Max traces to analyze")
     days: int = Field(default=7, ge=1, le=30, description="Look back N days")
     page_number: int = Field(default=0, ge=0, description="Page number (0-indexed)")
@@ -36,14 +35,14 @@ class AnalyzeErrorsTool(BaseTool):
 
     def execute(self, params: AnalyzeErrorsInput, context: ToolContext) -> ToolResult:
         from collections import Counter
-        from datetime import datetime, timedelta, timezone
+        from datetime import UTC, datetime, timedelta
 
         from django.db.models import Q
 
         from tracer.models.trace import Trace
         from tracer.services.clickhouse.v2 import get_reader
 
-        since = datetime.now(timezone.utc) - timedelta(days=params.days)
+        since = datetime.now(UTC) - timedelta(days=params.days)
 
         from tracer.models.project import Project
 
@@ -93,7 +92,7 @@ class AnalyzeErrorsTool(BaseTool):
             all_trace_spans = reader.list_by_trace_ids(error_trace_ids)
         error_spans = sorted(
             (s for s in all_trace_spans if (s.status or "").lower() == "error"),
-            key=lambda s: s.start_time or datetime.min.replace(tzinfo=timezone.utc),
+            key=lambda s: s.start_time or datetime.min.replace(tzinfo=UTC),
             reverse=True,
         )
 
@@ -131,7 +130,7 @@ class AnalyzeErrorsTool(BaseTool):
                 ("Total Traces", str(total_count)),
                 ("Error Traces", str(error_count)),
                 ("Error Rate", f"{format_number(error_rate)}%"),
-                ("Error Spans", str(error_spans.count())),
+                ("Error Spans", str(len(error_spans))),
             ]
         )
         content = section("Error Analysis", info)

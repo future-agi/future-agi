@@ -118,6 +118,7 @@ from model_hub.utils.function_eval_params import (
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
 from tfc.settings.settings import BASE_URL
 from tfc.telemetry import wrap_for_thread
@@ -137,8 +138,6 @@ except ImportError:
     UsageLimitExceeded = None
 
 logger = structlog.get_logger(__name__)
-
-from tfc.constants.api_calls import APICallStatusChoices  # noqa: E402
 
 try:
     from ee.usage.models.usage import APICallLog
@@ -3544,11 +3543,12 @@ class CompositeEvalDetailView(APIView):
         from model_hub.utils.eval_list import derive_eval_type
 
         try:
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
             try:
-                parent = _get_accessible_composite_template(template_id, organization)
+                parent = _get_accessible_eval_template_for_request(
+                    template_id,
+                    request,
+                    template_type="composite",
+                )
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Composite eval template not found.")
 
@@ -6625,6 +6625,7 @@ class UpdateEvalTemplateView(APIView):
             org = getattr(request, "organization", None) or request.user.organization
 
             validated_data = request.validated_data
+            raw_data = request.data
 
             name = validated_data.get("name", None)
             function_eval = validated_data.get("function_eval", None)
@@ -6651,24 +6652,28 @@ class UpdateEvalTemplateView(APIView):
                 return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
 
             config = eval_template.config
-            eval_template.description = (
-                description if description else eval_template.description
-            )
-            eval_template.criteria = criteria if criteria else eval_template.criteria
-            eval_template.eval_tags = (
-                eval_tags if eval_tags else eval_template.eval_tags
-            )
-            eval_template.multi_choice = (
-                multi_choice if multi_choice else eval_template.multi_choice
-            )
+            if "description" in raw_data:
+                eval_template.description = description
+            if "criteria" in raw_data:
+                eval_template.criteria = criteria
+            if "eval_tags" in raw_data:
+                eval_template.eval_tags = eval_tags
+            if "multi_choice" in raw_data:
+                eval_template.multi_choice = multi_choice
+                config["multi_choice"] = multi_choice
 
             if name is not None:
-                if EvalTemplate.objects.filter(
-                    name=name,
-                    organization=org,
-                    owner=OwnerChoices.USER.value,
-                    deleted=False,
-                ).exists():
+                if (
+                    EvalTemplate.no_workspace_objects.filter(
+                        _request_workspace_filter(request),
+                        name=name,
+                        organization=org,
+                        owner=OwnerChoices.USER.value,
+                        deleted=False,
+                    )
+                    .exclude(id=eval_template.id)
+                    .exists()
+                ):
                     raise Exception(get_error_message("EVAL_TEMPLATE_ALREADY_EXISTS"))
                 else:
                     eval_template.name = name
@@ -6677,15 +6682,16 @@ class UpdateEvalTemplateView(APIView):
                 config["model"] = model
                 eval_template.model = model
 
-            if choices_map is not None and len(list(choices_map.keys())) > 0:
+            if "choices_map" in raw_data:
+                choices_map = choices_map or {}
                 config["choices_map"] = choices_map
                 eval_template.choices = list(choices_map.keys())
 
-            if check_internet is not None:
+            if "check_internet" in raw_data:
                 config["check_internet"] = check_internet
 
-            if required_keys is not None and len(required_keys) > 0:
-                config["required_keys"] = required_keys
+            if "required_keys" in raw_data:
+                config["required_keys"] = required_keys or []
 
             if function_eval:
                 configuration = eval_template.config.copy()
@@ -6693,7 +6699,7 @@ class UpdateEvalTemplateView(APIView):
                 configuration["config"] = validated_data.get("config", {}).get("config")
                 config = configuration
 
-            if eval_type_id:
+            if "eval_type_id" in raw_data:
                 config["eval_type_id"] = eval_type_id
 
             if error_localizer_enabled is not None:

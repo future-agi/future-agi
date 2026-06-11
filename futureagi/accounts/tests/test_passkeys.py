@@ -17,8 +17,13 @@ import pytest
 from django.core.cache import cache
 from rest_framework.test import APIClient
 
+from accounts.models import User
+from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.recovery_code import RecoveryCode
+from accounts.models.workspace import WorkspaceMembership
 from accounts.models.webauthn_credential import WebAuthnCredential
+from tfc.constants.levels import Level
+from tfc.constants.roles import OrganizationRoles
 
 # ---------------------------------------------------------------------------
 # Helpers for mocking py_webauthn responses
@@ -88,6 +93,33 @@ def _assert_unknown_field(response, field_name):
     assert field_name in response.json()["details"]
 
 
+def _create_workspace_viewer(organization, workspace, email):
+    viewer = User.objects.create_user(
+        email=email,
+        password="testpassword123",
+        name="Passkey Viewer",
+        organization=organization,
+        organization_role=OrganizationRoles.MEMBER_VIEW_ONLY,
+        is_active=True,
+    )
+    org_membership = OrganizationMembership.no_workspace_objects.create(
+        user=viewer,
+        organization=organization,
+        role=OrganizationRoles.MEMBER_VIEW_ONLY,
+        level=Level.VIEWER,
+        is_active=True,
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        user=viewer,
+        workspace=workspace,
+        role=OrganizationRoles.WORKSPACE_VIEWER,
+        level=Level.WORKSPACE_VIEWER,
+        organization_membership=org_membership,
+        is_active=True,
+    )
+    return viewer
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -126,6 +158,41 @@ class TestPasskeyRegisterOptions:
         data = response.json()
         assert "challenge" in data
         assert "rp" in data
+
+    @patch(
+        "accounts.services.webauthn_service.options_to_json",
+        side_effect=_fake_options_to_json,
+    )
+    @patch(
+        "accounts.services.webauthn_service.generate_registration_options",
+        return_value=_fake_registration_options(),
+    )
+    def test_register_options_allows_workspace_viewer_user_owned_setup(
+        self, mock_gen, mock_json, api_client, organization, workspace
+    ):
+        """Workspace write restrictions must not block user-owned passkey setup."""
+        viewer = _create_workspace_viewer(
+            organization,
+            workspace,
+            "passkey-viewer@futureagi.com",
+        )
+        login = api_client.post(
+            "/accounts/token/",
+            {"email": viewer.email, "password": "testpassword123"},
+            format="json",
+        )
+        assert login.status_code == 200
+
+        response = api_client.post(
+            "/accounts/passkey/register/options/",
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {login.json()['access']}",
+            HTTP_X_ORGANIZATION_ID=str(organization.id),
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+        assert response.status_code == 200
+        assert "challenge" in response.json()
 
     def test_register_options_unauthenticated(self):
         """Unauthenticated request to register options is rejected."""

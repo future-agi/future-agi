@@ -8,6 +8,7 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from tfc.utils.api_contracts import validated_request
@@ -28,11 +29,18 @@ from tracer.models.monitor import (
 )
 from tracer.models.project import Project
 from tracer.serializers.monitor import (
+    UserAlertMonitorBulkMuteRequestSerializer,
     UserAlertMonitorDetailSerializer,
     UserAlertMonitorDuplicateResponseSerializer,
     UserAlertMonitorDuplicateSerializer,
+    UserAlertMonitorLogResolveRequestSerializer,
+    UserAlertMonitorLogResolveResponseSerializer,
     UserAlertMonitorLogSerializer,
+    UserAlertMonitorLogWriteRequestSerializer,
+    UserAlertMonitorLogWriteResponseSerializer,
+    UserAlertMonitorLogWriteSerializer,
     UserAlertMonitorMetricOptionsResponseSerializer,
+    UserAlertMonitorPreviewGraphSerializer,
     UserAlertMonitorSerializer,
 )
 from tracer.utils.helper import get_sort_query
@@ -47,9 +55,16 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     serializer_class = UserAlertMonitorSerializer
 
     def _current_organization(self):
-        return (
-            getattr(self.request, "organization", None) or self.request.user.organization
-        )
+        # Returns None for unauthenticated requests (e.g. drf-yasg's fake view
+        # during OpenAPI generation) instead of raising on AnonymousUser, which
+        # would otherwise silently drop request bodies from the generated schema.
+        org = getattr(self.request, "organization", None)
+        if org is not None:
+            return org
+        user = getattr(self.request, "user", None)
+        if user is None or not user.is_authenticated:
+            return None
+        return getattr(user, "organization", None)
 
     def _workspace_scope_q(self, field_name="workspace"):
         workspace = getattr(self.request, "workspace", None)
@@ -69,9 +84,12 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         return Q(**{field_name: workspace})
 
     def _visible_observe_projects(self):
+        organization = self._current_organization()
+        if organization is None:
+            return Project.no_workspace_objects.none()
         return Project.no_workspace_objects.filter(
             self._workspace_scope_q("workspace"),
-            organization=self._current_organization(),
+            organization=organization,
             trace_type="observe",
             deleted=False,
         )
@@ -161,9 +179,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         "page_number": page_number,
                         "page_size": page_size,
                         "total_pages": (
-                            math.ceil(total_records / page_size)
-                            if page_size > 0
-                            else 0
+                            math.ceil(total_records / page_size) if page_size > 0 else 0
                         ),
                     },
                 }
@@ -278,15 +294,25 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 f"Error occurred while deleting User Alerts: {str(e)}"
             )
 
-    def partial_update(self, request, *args, **kwargs):
+    def _scope_safe_update_data(self, request, instance, *, partial):
+        data = request.data.copy()
+        data.pop("organization", None)
+        data.pop("workspace", None)
+        data.pop("created_by", None)
+        if not partial:
+            data["organization"] = str(instance.organization_id)
+            if instance.workspace_id:
+                data["workspace"] = str(instance.workspace_id)
+            if instance.created_by_id:
+                data["created_by"] = str(instance.created_by_id)
+        return data
+
+    def _update_monitor(self, request, *, partial):
         try:
             instance = self.get_object()
-            data = request.data.copy()
-            data.pop("organization", None)
-            data.pop("workspace", None)
-            data.pop("created_by", None)
+            data = self._scope_safe_update_data(request, instance, partial=partial)
 
-            serializer = self.get_serializer(instance, data=data, partial=True)
+            serializer = self.get_serializer(instance, data=data, partial=partial)
             if serializer.is_valid():
                 updated_instance = serializer.save()
                 updated_instance.logs.append(
@@ -297,9 +323,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     }
                 )
                 updated_instance.save(update_fields=["logs"])
-                return self._gm.success_response(
-                    f"Successfully updated {updated_instance.name}"
-                )
+                return self._gm.success_response(serializer.data)
             else:
                 return self._gm.bad_request(serializer.errors)
         except Exception as e:
@@ -350,6 +374,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
         return trend_data
 
+    @validated_request(request_serializer=UserAlertMonitorBulkMuteRequestSerializer)
     @action(detail=False, methods=["post"], url_path="bulk-mute")
     def bulk_mute(self, request, *args, **kwargs):
         try:
@@ -454,6 +479,10 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             logger.info(f"Error occurred while fetching monitors list: {str(e)}")
             return self._gm.bad_request(f"error fetching the monitors list {str(e)}")
 
+    @validated_request(
+        request_serializer=UserAlertMonitorSerializer,
+        strict_request_validation=False,
+    )
     def create(self, request, *args, **kwargs):
         from tfc.ee_gating import EEResource, check_ee_can_create
         from tracer.models.monitor import UserAlertMonitor
@@ -497,6 +526,21 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.internal_server_error_response(str(e))
 
     @validated_request(
+        request_serializer=UserAlertMonitorSerializer,
+        strict_request_validation=False,
+    )
+    def update(self, request, *args, **kwargs):
+        return self._update_monitor(request, partial=False)
+
+    @validated_request(
+        request_serializer=UserAlertMonitorSerializer,
+        partial_request_validation=True,
+        strict_request_validation=False,
+    )
+    def partial_update(self, request, *args, **kwargs):
+        return self._update_monitor(request, partial=True)
+
+    @validated_request(
         request_serializer=UserAlertMonitorDuplicateSerializer,
         responses={
             200: UserAlertMonitorDuplicateResponseSerializer,
@@ -518,10 +562,14 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.not_found(get_error_message("MONITOR_NOT_FOUND"))
 
         new_name = data["name"]
-        if self._base_monitor_queryset().filter(
-            project=monitor.project,
-            name=new_name,
-        ).exists():
+        if (
+            self._base_monitor_queryset()
+            .filter(
+                project=monitor.project,
+                name=new_name,
+            )
+            .exists()
+        ):
             return self._gm.bad_request(
                 {"name": f"An alert with the name '{new_name}' already exists."}
             )
@@ -615,6 +663,10 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             logger.error(f"Failed to get monitor metric options: {e}", exc_info=True)
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_MONITOR"))
 
+    @validated_request(
+        request_serializer=UserAlertMonitorPreviewGraphSerializer,
+        strict_request_validation=False,
+    )
     @action(detail=False, methods=["post"], url_path="preview-graph")
     def preview_graph(self, request, *args, **kwargs):
         """
@@ -709,6 +761,12 @@ class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = UserAlertMonitorLogSerializer
 
+    def _current_organization(self):
+        return (
+            getattr(self.request, "organization", None)
+            or self.request.user.organization
+        )
+
     def _workspace_scope_q(self):
         workspace = getattr(self.request, "workspace", None)
         if not workspace:
@@ -724,6 +782,41 @@ class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
             )
         return Q(alert__workspace=workspace)
 
+    def _alert_workspace_scope_q(self):
+        workspace = getattr(self.request, "workspace", None)
+        if not workspace:
+            return Q()
+        if getattr(workspace, "is_default", False):
+            return (
+                Q(workspace=workspace)
+                | Q(
+                    workspace__is_default=True,
+                    workspace__organization=workspace.organization,
+                )
+                | Q(workspace__isnull=True)
+            )
+        return Q(workspace=workspace)
+
+    def _visible_alert_queryset(self):
+        return UserAlertMonitor.objects.filter(
+            self._alert_workspace_scope_q(),
+            organization=self._current_organization(),
+            deleted=False,
+        )
+
+    def get_serializer_class(self):
+        if self.action in {"create", "update", "partial_update"}:
+            return UserAlertMonitorLogWriteSerializer
+        return super().get_serializer_class()
+
+    def get_serializer(self, *args, **kwargs):
+        serializer = super().get_serializer(*args, **kwargs)
+        serializer_obj = getattr(serializer, "child", serializer)
+        fields = getattr(serializer_obj, "fields", None)
+        if fields and "alert" in fields:
+            fields["alert"].queryset = self._visible_alert_queryset()
+        return serializer
+
     def get_queryset(self):
         queryset = (
             super()
@@ -731,11 +824,59 @@ class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
             .select_related("resolved_by", "alert")
             .filter(
                 self._workspace_scope_q(),
-                alert__organization=getattr(self.request, "organization", None)
-                or self.request.user.organization
+                alert__organization=self._current_organization(),
             )
         )
         return queryset
+
+    @validated_request(
+        request_serializer=UserAlertMonitorLogWriteRequestSerializer,
+        responses={
+            201: UserAlertMonitorLogWriteResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+        },
+    )
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
+    @validated_request(
+        request_serializer=UserAlertMonitorLogWriteRequestSerializer,
+        responses={
+            200: UserAlertMonitorLogWriteResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+        },
+    )
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    def _update_log(self, request, *args, partial=False, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=partial,
+        )
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+
+        if getattr(instance, "_prefetched_objects_cache", None):
+            instance._prefetched_objects_cache = {}
+
+        return Response(serializer.data)
+
+    @validated_request(
+        request_serializer=UserAlertMonitorLogWriteRequestSerializer,
+        responses={
+            200: UserAlertMonitorLogWriteResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+        },
+        partial_request_validation=True,
+    )
+    def partial_update(self, request, *args, **kwargs):
+        return self._update_log(request, *args, partial=True, **kwargs)
 
     @action(detail=False, methods=["get"], url_path="all")
     def list_all(self, request, *args, **kwargs):
@@ -755,12 +896,20 @@ class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
         except Exception as e:
             return self._gm.bad_request(f"Error listing logs for alert: {str(e)}")
 
+    @validated_request(
+        request_serializer=UserAlertMonitorLogResolveRequestSerializer,
+        responses={
+            200: UserAlertMonitorLogResolveResponseSerializer,
+            400: ApiErrorResponseSerializer,
+        },
+    )
     @action(detail=False, methods=["post"], url_path="resolve")
     def mark_as_resolved(self, request, *args, **kwargs):
         try:
-            log_ids = request.data.get("log_ids", [])
-            select_all = request.data.get("select_all", False)
-            exclude_ids = request.data.get("exclude_ids", [])
+            validated_data = getattr(request, "validated_data", {})
+            log_ids = validated_data.get("log_ids", [])
+            select_all = validated_data.get("select_all", False)
+            exclude_ids = validated_data.get("exclude_ids", [])
 
             if select_all and log_ids:
                 return self._gm.bad_request(

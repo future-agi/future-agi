@@ -265,7 +265,7 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
       breakdown
         .map((item) => ({
           name: item.name || "Unknown",
-          cost: toNumericCost(item.totalCost ?? item.total_cost),
+          cost: toNumericCost(item.total_cost),
         }))
         .filter((item) => item.cost > 0),
     [breakdown],

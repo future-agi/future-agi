@@ -308,8 +308,16 @@ class UserEvalMetric(ModelBaseModel):
                 organization_id=organization_id, deleted=False, show_in_sidebar=True
             )
 
+        return [
+            metric
+            for metric in metrics
+            if cls.config_uses_column(metric.config or {}, str(column_id))
+        ]
+
+    @staticmethod
+    def config_uses_column(config: dict, column_id: str) -> bool:
         def check_value_in_dict(d: dict, search_value: str) -> bool:
-            """Helper function to check if value exists in dictionary values, including template strings."""
+            """Check whether nested config values reference a column id."""
             for value in d.values():
                 if isinstance(value, str):
                     if search_value in value or f"{{{{{search_value}}}}}" in value:
@@ -319,18 +327,11 @@ class UserEvalMetric(ModelBaseModel):
                         return True
             return False
 
-        return [
-            metric
-            for metric in metrics
-            if (
-                metric.config.get("mapping")
-                and check_value_in_dict(metric.config["mapping"], str(column_id))
-            )
-            or (
-                metric.config.get("config")
-                and check_value_in_dict(metric.config["config"], str(column_id))
-            )
-        ]
+        return bool(
+            config.get("mapping") and check_value_in_dict(config["mapping"], column_id)
+        ) or bool(
+            config.get("config") and check_value_in_dict(config["config"], column_id)
+        )
 
     """
     Stores individual user-specific variable values required to run the metric.
@@ -689,16 +690,14 @@ class EvalTemplateVersion(ModelBaseModel):
         null=True,
         blank=True,
         help_text=(
-            "Pass threshold at this version (0.0-1.0). NULL on pre-snapshot "
-            "versions."
+            "Pass threshold at this version (0.0-1.0). NULL on pre-snapshot versions."
         ),
     )
     choice_scores = models.JSONField(
         null=True,
         blank=True,
         help_text=(
-            "Choice→score mapping at this version. "
-            'NULL on pre-snapshot versions.'
+            "Choice→score mapping at this version. NULL on pre-snapshot versions."
         ),
     )
     error_localizer_enabled = models.BooleanField(

@@ -241,6 +241,7 @@ def _compute_span_aggregation(base_qs):
 
 logger = structlog.get_logger(__name__)
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import EmptyRequestSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -249,6 +250,12 @@ from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, Ru
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.serializers.eval_task import (
+    EvalTaskCreateResponseSerializer,
+    EvalTaskDeleteRequestSerializer,
+    EvalTaskIdQuerySerializer,
+    EvalTaskMessageResponseSerializer,
+    EvalTaskUpdateRequestSerializer,
+    EvalTaskUpdateResponseSerializer,
     EditEvalTaskSerializer,
     EvalTaskListQuerySerializer,
     EvalTaskListWithProjectNameQuerySerializer,
@@ -266,10 +273,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     serializer_class = EvalTaskSerializer
 
     def _get_request_organization(self):
-        return (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        # Returns None for unauthenticated requests (e.g. drf-yasg's fake view
+        # during OpenAPI generation) instead of raising on AnonymousUser, which
+        # would otherwise silently drop request bodies from the generated schema.
+        org = getattr(self.request, "organization", None)
+        if org is not None:
+            return org
+        user = getattr(self.request, "user", None)
+        if user is None or not user.is_authenticated:
+            return None
+        return getattr(user, "organization", None)
 
     def _project_workspace_scope_q(self, organization_id):
         workspace = getattr(self.request, "workspace", None)
@@ -290,14 +303,20 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         return Q(project__workspace=workspace)
 
     def _scope_eval_task_queryset(self, queryset):
-        organization_id = self._get_request_organization().id
+        organization = self._get_request_organization()
+        if organization is None:
+            return queryset.none()
+        organization_id = organization.id
         return queryset.filter(
             project__organization_id=organization_id,
             project__deleted=False,
         ).filter(self._project_workspace_scope_q(organization_id))
 
     def _scope_project_queryset(self, queryset):
-        organization_id = self._get_request_organization().id
+        organization = self._get_request_organization()
+        if organization is None:
+            return queryset.none()
+        organization_id = organization.id
         workspace = getattr(self.request, "workspace", None)
         queryset = queryset.filter(organization_id=organization_id, deleted=False)
         if not workspace:
@@ -314,7 +333,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         return queryset.filter(workspace=workspace)
 
     def _scope_custom_eval_config_queryset(self, queryset, project_id=None):
-        organization_id = self._get_request_organization().id
+        organization = self._get_request_organization()
+        if organization is None:
+            return queryset.none()
+        organization_id = organization.id
         queryset = queryset.filter(
             deleted=False,
             project__organization_id=organization_id,
@@ -376,6 +398,19 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
         return queryset
 
+    @validated_request(request_serializer=EvalTaskSerializer)
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    @validated_request(
+        request_serializer=EvalTaskSerializer,
+        partial_request_validation=True,
+        strict_request_validation=False,
+    )
+    def partial_update(self, request, *args, **kwargs):
+        kwargs["partial"] = True
+        return super().update(request, *args, **kwargs)
+
     def perform_destroy(self, instance):
         # Cascade soft-delete to the task's loggers and eval results so they
         # don't outlive the deleted task (mirrors mark_eval_tasks_deleted).
@@ -388,6 +423,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         )
         instance.delete()
 
+    @validated_request(
+        request_serializer=EvalTaskSerializer,
+        responses={200: EvalTaskCreateResponseSerializer},
+    )
     def create(self, request, *args, **kwargs):
         try:
             data = request.data
@@ -1115,6 +1154,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=EvalTaskDeleteRequestSerializer,
+        responses={200: EvalTaskMessageResponseSerializer},
+    )
     @action(detail=False, methods=["post"])
     def mark_eval_tasks_deleted(self, request, *args, **kwargs):
         try:
@@ -1162,6 +1205,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             traceback.print_exc()
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        query_serializer=EvalTaskIdQuerySerializer,
+        responses={200: EvalTaskMessageResponseSerializer},
+    )
     @action(detail=False, methods=["post"])
     def pause_eval_task(self, request, *args, **kwargs):
         try:
@@ -1193,6 +1241,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             traceback.print_exc()
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        query_serializer=EvalTaskIdQuerySerializer,
+        responses={200: EvalTaskMessageResponseSerializer},
+    )
     @action(detail=False, methods=["post"])
     def unpause_eval_task(self, request, *args, **kwargs):
         try:
@@ -1312,6 +1365,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             traceback.print_exc()
             return self._gm.bad_request(f"error fetching the traces list {str(e)}")
 
+    @validated_request(
+        request_serializer=EvalTaskUpdateRequestSerializer,
+        responses={200: EvalTaskUpdateResponseSerializer},
+    )
     @action(detail=False, methods=["patch"])
     def update_eval_task(self, request, *args, **kwargs):
         """

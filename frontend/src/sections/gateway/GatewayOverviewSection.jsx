@@ -114,7 +114,10 @@ const GatewayOverviewSection = () => {
 
   const healthCheckMutation = useMutation({
     mutationFn: async (id) => {
-      const res = await axiosInstance.post(endpoints.gateway.healthCheck(id));
+      const res = await axiosInstance.post(
+        endpoints.gateway.healthCheck(id),
+        {},
+      );
       return res.data;
     },
     onSuccess: () => {

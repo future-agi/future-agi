@@ -874,6 +874,10 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
   }, [tableData]);
 
   const refreshRowsManual = useCallback(async () => {
+    // The 5s polling interval can fire after the grid has been unmounted
+    // (navigation / tab switch), leaving gridApiRef.current null. Bail out
+    // instead of dereferencing .api -> 'Cannot read properties of null'.
+    if (!gridApiRef.current?.api) return;
     const cacheBlockState = gridApiRef?.current?.api?.getCacheBlockState();
 
     // Get only loaded/active blocks

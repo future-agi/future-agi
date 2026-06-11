@@ -307,6 +307,23 @@ class CreateEvalTemplateTool(BaseTool):
                 filtered_vars.append(v)
         required_keys = list(set(filtered_vars))
 
+        explicit_injection = params.data_injection or {}
+        has_data_injection = bool(
+            explicit_injection
+            and (
+                explicit_injection.get("full_row")
+                or explicit_injection.get("fullRow")
+                or not explicit_injection.get("variables_only", True)
+                or not explicit_injection.get("variablesOnly", True)
+            )
+        )
+        if params.eval_type != "code" and not variables and not has_data_injection:
+            return ToolResult.validation_error(
+                "Criteria must contain at least one template variable using "
+                "double curly braces (e.g. {{variable_name}}), or enable data "
+                "injection to evaluate without mapping."
+            )
+
         # ── 3. Build output values ──
         output_map = {
             "pass_fail": "Pass/Fail",

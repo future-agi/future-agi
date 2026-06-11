@@ -10,7 +10,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.utils import get_request_organization
 from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.serializers.contracts import (
@@ -19,10 +18,16 @@ from model_hub.serializers.contracts import (
     ModelHubStringResultResponseSerializer,
 )
 from model_hub.serializers.develop_optimisation import (
+    get_optimization_link_errors,
     OptimizationDatasetGetSerializer,
     OptimizationDatasetSerializer,
 )
 from model_hub.utils.eval_list import build_user_eval_list_items
+from model_hub.utils.workspace_scope import (
+    scoped_column_queryset,
+    scoped_optimization_queryset,
+    scoped_user_eval_metric_queryset,
+)
 from model_hub.views.develop_optimiser import DevelopOptimizer
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
@@ -30,6 +35,10 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 
 logger = structlog.get_logger(__name__)
+
+
+def _request_serializer_context(request):
+    return {"request": request}
 
 
 class OptimisationCreateView(APIView):
@@ -43,6 +52,7 @@ class OptimisationCreateView(APIView):
             **MODEL_HUB_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
+        serializer_context=_request_serializer_context,
     )
     def post(self, request):
         try:
@@ -52,9 +62,7 @@ class OptimisationCreateView(APIView):
             dataset = validated_data.get("dataset")
             column = validated_data.get("column") or None
             messages = validated_data.get("messages") or []
-            user_eval_template_ids = (
-                validated_data.get("user_eval_template_ids") or []
-            )
+            user_eval_template_ids = validated_data.get("user_eval_template_ids") or []
             model_config = validated_data.get("model_config")
 
             if OptimizationDataset.objects.filter(
@@ -95,10 +103,14 @@ class OptimisationCreateView(APIView):
         },
         partial_request_validation=True,
         reject_unknown_fields=True,
+        serializer_context=_request_serializer_context,
     )
     def put(self, request, pk):
+        optimization_dataset = get_object_or_404(
+            scoped_optimization_queryset(request),
+            pk=pk,
+        )
         try:
-            optimization_dataset = get_object_or_404(OptimizationDataset, pk=pk)
             validated_data = request.validated_data
             dataset = validated_data.get("dataset", optimization_dataset.dataset)
             column = (
@@ -123,6 +135,19 @@ class OptimisationCreateView(APIView):
                 "user_eval_template_mapping",
                 optimization_dataset.user_eval_template_mapping,
             )
+            user_eval_template_ids = (
+                validated_data["user_eval_template_ids"]
+                if "user_eval_template_ids" in validated_data
+                else list(optimization_dataset.user_eval_template_ids.all())
+            )
+
+            link_errors = get_optimization_link_errors(
+                dataset,
+                column,
+                user_eval_template_ids,
+            )
+            if link_errors:
+                return self._gm.bad_request(link_errors)
 
             if (
                 OptimizationDataset.objects.filter(
@@ -146,9 +171,7 @@ class OptimisationCreateView(APIView):
                 user_eval_template_mapping=user_eval_template_mapping,
             )
             if "user_eval_template_ids" in validated_data:
-                optimization_dataset.user_eval_template_ids.set(
-                    validated_data["user_eval_template_ids"]
-                )
+                optimization_dataset.user_eval_template_ids.set(user_eval_template_ids)
 
             return self._gm.success_response("success.")
         except Exception as e:
@@ -161,6 +184,7 @@ class OptimisationCreateView(APIView):
 class OptimizationDatasetListView(generics.ListAPIView):
     queryset = OptimizationDataset.objects.all()
     serializer_class = OptimizationDatasetSerializer
+    permission_classes = [IsAuthenticated]
     pagination_class = ExtendedPageNumberPagination
     filter_backends = [
         DjangoFilterBackend,
@@ -172,12 +196,11 @@ class OptimizationDatasetListView(generics.ListAPIView):
     ordering_fields = ["created_at", "name"]
     ordering = ["-created_at"]
 
+    def get_queryset(self):
+        return scoped_optimization_queryset(self.request)
+
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
-        queryset = queryset.filter(
-            dataset__organization=getattr(request, "organization", None)
-            or request.user.organization
-        )
 
         dataset_id = request.query_params.get("dataset_id")
         if dataset_id:
@@ -202,6 +225,10 @@ class OptimizationDatasetListView(generics.ListAPIView):
 class OptimizationDatasetDetailView(generics.RetrieveAPIView):
     queryset = OptimizationDataset.objects.all()
     serializer_class = OptimizationDatasetGetSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return scoped_optimization_queryset(self.request)
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -227,12 +254,16 @@ def get_metrics_by_column(request):
         return _gm.bad_request(get_error_message("MISSING_COLUMN_ID"))
 
     try:
-        # Get organization from the authenticated user
-        _org = get_request_organization(request)
-        organization_id = _org.id if _org else None
+        column = scoped_column_queryset(request).filter(id=column_id).first()
+        if column is None:
+            return _gm.success_response([])
 
-        metrics = UserEvalMetric.get_metrics_using_column(
-            organization_id=organization_id, column_id=column_id
+        metrics = (
+            metric
+            for metric in scoped_user_eval_metric_queryset(request)
+            .filter(show_in_sidebar=True, dataset=column.dataset)
+            .select_related("template")
+            if UserEvalMetric.config_uses_column(metric.config or {}, str(column.id))
         )
 
         return _gm.success_response(build_user_eval_list_items(metrics))
