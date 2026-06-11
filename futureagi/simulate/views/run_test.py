@@ -777,8 +777,29 @@ class RunTestExecutionView(APIView):
             if gate_response is not None:
                 return gate_response
 
+            # TEXT/chat runs are driven server-side by the chat trigger
+            # (REGISTERED claim -> run_prompt_based_conversation), never by
+            # voice CallExecutionWorkflow children. Routing them through the
+            # Temporal test workflow launched them as SIP calls with no phone
+            # number ("No customer phone number provided for inbound SIP
+            # call"), so chat always takes the legacy executor path.
+            from simulate.services.chat_agent_adapter_factory import (
+                is_external_hosted_chat,
+            )
+
+            is_server_side_chat = (
+                run_test.source_type == RunTest.SourceTypes.PROMPT
+                or (
+                    run_test.source_type == RunTest.SourceTypes.AGENT_DEFINITION
+                    and is_external_hosted_chat(run_test.agent_definition)
+                )
+            )
+
             # Check if Temporal test execution is enabled
-            if getattr(app_settings, "TEMPORAL_TEST_EXECUTION_ENABLED", False):
+            if (
+                getattr(app_settings, "TEMPORAL_TEST_EXECUTION_ENABLED", False)
+                and not is_server_side_chat
+            ):
                 result = self._execute_with_temporal(
                     run_test=run_test,
                     scenario_ids=final_scenario_ids,
