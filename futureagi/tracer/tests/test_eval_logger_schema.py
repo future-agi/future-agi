@@ -401,3 +401,151 @@ class TestEvalTaskViewsExposeRowTypeAndTargetType:
         assert item["detail"]["session_name"] == trace_session.name
         assert item["detail"]["span_id"] is None
         assert item["detail"]["trace_id"] is None
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestGetUsageAggregationBlocks:
+    """``get_usage`` opt-in aggregation outputs.
+
+    ``?eval_aggregation=true`` -> ``{eval_id: {name, output_type, agg_score}}``
+    ``?span_aggregation=true`` -> ``{span_id: {eval_id: {output_type, score}}}``
+
+    The contract: span_aggregation MUST cover every span that has an
+    eval row for this task (none missed) AND MUST NOT include rows whose
+    target is the trace or the session (no bleed). eval_aggregation MUST
+    include one entry per configured eval with its output_type.
+    """
+
+    def test_span_aggregation_covers_every_span_and_excludes_other_targets(
+        self,
+        auth_client,
+        project,
+        trace,
+        multiple_spans,
+        eval_template,
+    ):
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        # Two configs so each span carries two eval cells.
+        cc1 = CustomEvalConfig.objects.create(
+            name="cfg-A", project=project, eval_template=eval_template,
+            config={}, mapping={}, filters={},
+        )
+        cc2 = CustomEvalConfig.objects.create(
+            name="cfg-B", project=project, eval_template=eval_template,
+            config={}, mapping={}, filters={},
+        )
+        task = EvalTask.objects.create(
+            project=project, name="agg test",
+            status=EvalTaskStatus.COMPLETED, run_type=RunType.HISTORICAL,
+            row_type="spans", sampling_rate=100.0,
+        )
+        task.evals.add(cc1, cc2)
+
+        # 10 spans x 2 configs = 20 span-target eval rows.
+        for sp in multiple_spans:
+            for cc in (cc1, cc2):
+                EvalLogger.objects.create(
+                    target_type=EvalTargetType.SPAN,
+                    observation_span=sp, trace=sp.trace,
+                    custom_eval_config=cc, eval_task_id=str(task.id),
+                    output_bool=True, error=False,
+                )
+
+        # Decoy: trace-target row. observation_span is set (per the FK
+        # constraint) but target_type='trace'. span_aggregation MUST
+        # exclude it; otherwise trace-level evals bleed into the per-span
+        # matrix.
+        EvalLogger.objects.create(
+            target_type=EvalTargetType.TRACE,
+            observation_span=multiple_spans[0],
+            trace=multiple_spans[0].trace,
+            custom_eval_config=cc1, eval_task_id=str(task.id),
+            output_bool=True, error=False,
+        )
+
+        resp = auth_client.get(
+            "/tracer/eval-task/get_usage/",
+            {
+                "eval_task_id": str(task.id),
+                "page": 1, "page_size": 5, "period": "30d",
+                "span_aggregation": "true",
+                "eval_aggregation": "true",
+            },
+        )
+        assert resp.status_code == 200, resp.content
+        body = resp.json()["result"]
+
+        # span_aggregation: every span present, both eval cells under each.
+        sa = body["span_aggregation"]
+        expected_span_ids = {str(sp.id) for sp in multiple_spans}
+        assert set(sa.keys()) == expected_span_ids, (
+            f"span_aggregation key set mismatch.\n"
+            f"  missing: {expected_span_ids - set(sa.keys())}\n"
+            f"  extra:   {set(sa.keys()) - expected_span_ids}"
+        )
+        for span_id, evals in sa.items():
+            assert set(evals.keys()) == {str(cc1.id), str(cc2.id)}, (
+                f"span {span_id} missing eval cells: {evals}"
+            )
+            for cc_id, cell in evals.items():
+                assert cell["output_type"] == "bool"
+                # pivot_eval_results returns pass_rate on a 0-100 scale for
+                # pass_fail evals; all 20 seeded rows pass so pass_rate = 100.
+                assert cell["score"] == 100.0
+
+        # eval_aggregation: one entry per config, output_type present.
+        ea = body["eval_aggregation"]
+        assert set(ea.keys()) == {str(cc1.id), str(cc2.id)}
+        for cc_id, agg in ea.items():
+            assert set(agg.keys()) == {"name", "output_type", "agg_score"}, (
+                f"eval_aggregation[{cc_id}] missing fields: {agg}"
+            )
+
+        # Per-eval breakdown on evals[] (default response, always on).
+        for meta in body["evals"]:
+            for k in ("runs_period", "success_count", "error_count", "pass_rate"):
+                assert k in meta, f"evals[] entry missing {k}: {meta}"
+
+    def test_span_attributes_filter_malformed_json_returns_400(
+        self, auth_client, project, eval_template
+    ):
+        """``?span_attributes_filters=`` rejects non-JSON input with a clean 400.
+
+        Pins the contract that malformed filter input fails loudly with an
+        informative error rather than silently no-op'ing (which would let a
+        broken caller think they were filtering when they were not).
+        """
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        cc = CustomEvalConfig.objects.create(
+            name="cfg", project=project, eval_template=eval_template,
+            config={}, mapping={}, filters={},
+        )
+        task = EvalTask.objects.create(
+            project=project, name="malformed-filter test",
+            status=EvalTaskStatus.COMPLETED, run_type=RunType.HISTORICAL,
+            row_type="spans", sampling_rate=100.0,
+        )
+        task.evals.add(cc)
+
+        resp = auth_client.get(
+            "/tracer/eval-task/get_usage/",
+            {
+                "eval_task_id": str(task.id),
+                "page": 1, "page_size": 5, "period": "30d",
+                "span_attributes_filters": "not-valid-json",
+            },
+        )
+        assert resp.status_code == 400, (
+            f"expected 400 for malformed span_attributes_filters, got {resp.status_code}"
+        )
+        body = resp.json()
+        assert body.get("status") is False
+        assert "span_attributes_filters" in str(body.get("result", "")), (
+            f"error message should name the bad field, got {body!r}"
+        )
