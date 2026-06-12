@@ -236,7 +236,12 @@ const getDataSource = (
           search,
           { enabled: true, staleTime: 5 * 1000, pageSize: DATASET_ROWS_LIMIT },
         );
-        const data = await queryClient.fetchQuery({ ...queryOptions });
+        const cachedState = queryClient.getQueryState(queryOptions.queryKey);
+        const servedFromCache =
+          cachedState?.data !== undefined && !cachedState.isInvalidated;
+        const data = servedFromCache
+          ? cachedState.data
+          : await queryClient.fetchQuery({ ...queryOptions });
         const result = data?.data?.result;
         const processingData = getResultIsProcessingData(result);
 
