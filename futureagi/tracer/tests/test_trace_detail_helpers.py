@@ -5,8 +5,6 @@ Tests the summary computation and graph derivation that were added to
 _retrieve_clickhouse() — tested via pure functions extracted for testability.
 """
 
-import pytest
-
 
 class TestTraceSummaryComputation:
     """Test the summary computation logic from Phase 8."""
@@ -21,7 +19,7 @@ class TestTraceSummaryComputation:
         type_counts = {}
         root_latencies = []
 
-        for sid, entry in span_map.items():
+        for _sid, entry in span_map.items():
             sp = entry["observation_span"]
             total_tokens += sp.get("total_tokens") or 0
             total_prompt_tokens += sp.get("prompt_tokens") or 0
@@ -278,3 +276,83 @@ class TestGraphDerivation:
         edge_pairs = [(e["from"], e["to"]) for e in result["edges"]]
         assert ("s1", "s2") in edge_pairs
         assert ("s2", "s3") in edge_pairs
+
+
+class TestDeriveTranscriptFromTurnSpans:
+    """Sim-emitted traces have no raw_log; the voice-call detail endpoint
+    rebuilds the transcript from `<modality>.turn N` llm spans (bug #46).
+
+    Emitter contract (simulate/services/sim_observability.py): each turn span's
+    input is the role-prefixed history so far ("user: ..."/"assistant: ..."
+    lines) and its output is that turn's reply; an opening assistant turn has
+    no history, so its input falls back to the conversation's first user
+    message, unprefixed and chronologically misplaced."""
+
+    @staticmethod
+    def _derive(observation_span):
+        from tracer.views.trace import TraceView
+
+        return TraceView._derive_transcript_from_turn_spans(observation_span)
+
+    def _turn(self, n, input_text, output_text, start="2026-06-12 13:07:29"):
+        return {
+            "name": f"voice.turn {n}",
+            "observation_type": "llm",
+            "input": input_text,
+            "output": output_text,
+            "start_time": start,
+        }
+
+    def test_empty_spans(self):
+        assert self._derive([]) == []
+
+    def test_root_only_no_turns(self):
+        assert (
+            self._derive(
+                [{"name": "voice simulation", "observation_type": "conversation"}]
+            )
+            == []
+        )
+
+    def test_user_first_conversation(self):
+        out = self._derive(
+            [
+                self._turn(1, "user: what are your hours?", "We open at nine AM."),
+                self._turn(
+                    2,
+                    "user: what are your hours?\n"
+                    "assistant: We open at nine AM.\n"
+                    "user: and weekends?",
+                    "Weekends too.",
+                ),
+            ]
+        )
+        assert [(m["role"], m["content"]) for m in out] == [
+            ("user", "what are your hours?"),
+            ("bot", "We open at nine AM."),
+            ("user", "and weekends?"),
+            ("bot", "Weekends too."),
+        ]
+        assert out[0]["time"] == "2026-06-12T13:07:29"
+
+    def test_bot_first_skips_misplaced_first_user_fallback(self):
+        # Real agora sim shape: turn 1 input is the unprefixed first_user
+        # fallback even though the agent spoke first.
+        out = self._derive(
+            [
+                self._turn(2, "assistant: Hello!\nuser: hours?", "Nine to eight."),
+                self._turn(1, "hours?", "Hello!"),
+            ]
+        )
+        assert [(m["role"], m["content"]) for m in out] == [
+            ("bot", "Hello!"),
+            ("user", "hours?"),
+            ("bot", "Nine to eight."),
+        ]
+
+    def test_multiline_content_continues_previous_entry(self):
+        out = self._derive([self._turn(1, "user: line one\nline two", "Got it.")])
+        assert [(m["role"], m["content"]) for m in out] == [
+            ("user", "line one\nline two"),
+            ("bot", "Got it."),
+        ]

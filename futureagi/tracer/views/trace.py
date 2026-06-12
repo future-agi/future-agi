@@ -3,6 +3,7 @@ import io
 import json
 import math
 import traceback
+import uuid as uuid_lib
 from typing import Any
 from uuid import UUID
 
@@ -3025,6 +3026,78 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception("voice_call_detail_error", error=str(e))
             return self._gm.bad_request("error fetching voice call detail")
 
+    @staticmethod
+    def _derive_transcript_from_turn_spans(
+        observation_span: list[dict],
+    ) -> list[dict]:
+        """Rebuild a transcript from sim turn (llm) spans when raw_log is absent.
+
+        Each ``<modality>.turn N`` span's input holds the user history so far
+        as ``user: ...`` lines and its output holds that turn's agent reply
+        (simulate/services/sim_observability.py), so the new input lines since
+        the previous turn plus the output reconstruct the conversation in order.
+        """
+        turns = [
+            s
+            for s in observation_span
+            if s.get("observation_type") == "llm" and ".turn " in (s.get("name") or "")
+        ]
+
+        def _turn_no(span: dict) -> int:
+            try:
+                return int((span.get("name") or "").rsplit(" ", 1)[-1])
+            except ValueError:
+                return 0
+
+        turns.sort(key=_turn_no)
+
+        def _entry(role: str, content: str, time: str) -> dict:
+            return {
+                "id": str(uuid_lib.uuid4()),
+                "role": role,
+                "content": content,
+                "time": time,
+                "duration": None,
+            }
+
+        transcript: list[dict] = []
+        seen_lines = 0
+        for idx, span in enumerate(turns):
+            time = span.get("start_time") or ""
+            if isinstance(time, str):
+                time = time.replace(" ", "T")
+            input_lines = [
+                line for line in (span.get("input") or "").split("\n") if line.strip()
+            ]
+            prefixed = any(
+                line.startswith(("user: ", "assistant: ")) for line in input_lines
+            )
+            if idx == 0 and not prefixed:
+                # An opening assistant turn has no history yet; the emitter
+                # falls back to the conversation's FIRST user message, which
+                # chronologically belongs after this turn's output — it will
+                # arrive prefixed in the next turn's history, so skip it here.
+                pass
+            else:
+                for line in input_lines[seen_lines:]:
+                    if line.startswith("user: "):
+                        transcript.append(_entry("user", line[6:], time))
+                    elif line.startswith("assistant: "):
+                        transcript.append(_entry("bot", line[11:], time))
+                    elif transcript:
+                        # Continuation of a multi-line message.
+                        transcript[-1]["content"] += "\n" + line
+                    else:
+                        transcript.append(_entry("user", line, time))
+                seen_lines = len(input_lines)
+            output = (span.get("output") or "").strip()
+            if output:
+                transcript.append(_entry("bot", output, time))
+                # The emitter appends this reply to history, so it shows up as
+                # one more line in the next turn's input — already represented.
+                seen_lines += 1
+        return transcript
+
     def _voice_call_detail_clickhouse(self, request, trace_id, analytics, project_id):
         """Return heavy voice-call detail fields from ClickHouse."""
         from tracer.services.clickhouse.query_builders.trace_list import (
@@ -3246,6 +3319,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
+        # Sim-emitted traces carry no provider raw_log, so process_raw_logs
+        # returns an empty transcript even though the conversation exists in
+        # the turn (llm) child spans — rebuild it from them.
+        if not processed_log.get("transcript"):
+            derived_transcript = self._derive_transcript_from_turn_spans(
+                observation_span
+            )
+            if derived_transcript:
+                processed_log["transcript"] = derived_transcript
+                processed_log["transcript_available"] = True
+                if not processed_log.get("message_count"):
+                    processed_log["message_count"] = len(derived_transcript)
+
         # Fetch ALL non-deleted eval configs for the project so the drawer
         # renders the same set of evals as the list columns. Missing scores
         # become placeholder entries with `output=None`.
@@ -3358,6 +3444,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "provider_call_id": processed_log.get("call_id"),
             "recording": recording,
             "call_metadata": metadata,
+            "simulation_call_type": (
+                ("voice" if metadata.get("simulation_modality") == "voice" else "text")
+                if metadata.get("simulation_modality")
+                else None
+            ),
             "observation_span": observation_span,
             "eval_outputs": eval_outputs,
             "turn_count": voice_metrics.get("turn_count"),
@@ -4227,7 +4318,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             attrs_result = analytics.execute_ch_query(
                 "SELECT id, provider, "
                 "attributes_extra AS span_attributes, "
-                "attrs_string, attrs_number, attrs_bool "
+                "attrs_string, attrs_number, attrs_bool, "
+                "toJSONString(metadata) AS metadata_json "
                 "FROM spans FINAL "
                 "PREWHERE id IN %(span_ids)s "
                 "WHERE is_deleted = 0",
@@ -4255,6 +4347,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 attrs_map[sid] = {
                     "span_attributes": parsed,
                     "provider": arow.get("provider"),
+                    "metadata": _safe_parse_metadata(arow.get("metadata_json")),
                 }
 
         # Count
@@ -4339,6 +4432,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 # The list's date column binds created_at.
                 if not processed_log.get("created_at"):
                     processed_log["created_at"] = processed_log.get("started_at")
+                # Sim rows have neither call_type nor observation_span in the
+                # list response, so the drawer can't tell they are voice calls
+                # (it gates its voice_call_detail fetch on those fields).
+                # simulation_modality on the root span's metadata is the
+                # authoritative signal — surface it as simulation_call_type
+                # using the simulate AGENT_TYPES values ("voice" / "text").
+                _modality = (attr_row.get("metadata") or {}).get("simulation_modality")
+                if _modality and not processed_log.get("simulation_call_type"):
+                    processed_log["simulation_call_type"] = (
+                        "voice" if _modality == "voice" else "text"
+                    )
 
             entry = {
                 **processed_log,
