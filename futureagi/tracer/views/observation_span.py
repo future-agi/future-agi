@@ -352,12 +352,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             "node_type": span.observation_type,
             "span_name": span.name,
             "user_id": getattr(end_user, "user_id", None) if end_user else None,
-            "user_id_type": getattr(end_user, "user_id_type", None)
-            if end_user
-            else None,
-            "user_id_hash": getattr(end_user, "user_id_hash", None)
-            if end_user
-            else None,
+            "user_id_type": (
+                getattr(end_user, "user_id_type", None) if end_user else None
+            ),
+            "user_id_hash": (
+                getattr(end_user, "user_id_hash", None) if end_user else None
+            ),
             "start_time": self._to_iso(span.start_time),
             "status": span.status,
             "latency_ms": span.latency_ms,

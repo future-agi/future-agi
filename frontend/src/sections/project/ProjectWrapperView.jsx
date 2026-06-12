@@ -348,7 +348,7 @@ const ProjectWrapperView = () => {
             onClose={() => setDeleteModalOpen(false)}
             title="Delete Project"
             content={
-              <Typography color="text.disabled">
+              <Typography color="text.secondary">
                 Are you sure you want to delete{" "}
                 {selectedRowsData.length === 1
                   ? "this project?"

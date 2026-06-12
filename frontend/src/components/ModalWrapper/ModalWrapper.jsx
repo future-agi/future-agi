@@ -78,7 +78,7 @@ export default function ModalWrapper({
         {subTitle && (
           <Typography
             variant="s1"
-            color={"text.disabled"}
+            color={"text.secondary"}
             fontWeight={"fontWeightRegular"}
           >
             {subTitle}

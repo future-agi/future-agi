@@ -22006,7 +22006,6 @@ export type AddonRequestApiPlan = typeof AddonRequestApiPlan[keyof typeof AddonR
 
 
 export const AddonRequestApiPlan = {
-  payg: 'payg',
   boost: 'boost',
   scale: 'scale',
   enterprise: 'enterprise',
@@ -26419,18 +26418,6 @@ month?: number;
 api_call_type?: string;
 };
 
-export type UsageGetCustomerInvoicesListParams = {
-/**
- * @minimum 1
- */
-page?: number;
-/**
- * @minimum 1
- * @maximum 100
- */
-page_size?: number;
-};
-
 export type UsageUsageSummaryListParams = {
 /**
  * @minimum 1
@@ -26451,6 +26438,7 @@ period?: string;
  * @pattern ^\d{4}-\d{2}$
  */
 period_end?: string;
+workspace_id?: string;
 };
 
 export type UsageV2UsageTimeSeriesListParams = {

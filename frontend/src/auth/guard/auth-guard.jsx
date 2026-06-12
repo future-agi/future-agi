@@ -1,6 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 import { paths } from "src/routes/paths";
 import { useRouter } from "src/routes/hooks";
@@ -38,10 +38,11 @@ AuthGuard.propTypes = {
 function Container({ children }) {
   const router = useRouter();
 
-  const { authenticated, method, user } = useAuthContext();
+  const { authenticated, method, user, initialize } = useAuthContext();
   const postLoginPath = usePostLoginPath();
 
   const [checked, setChecked] = useState(false);
+  const hydrateAttempted = useRef(false);
 
   const {
     currentOrganizationName,
@@ -84,6 +85,15 @@ function Container({ children }) {
         // }
         return;
       }
+
+
+      const existingToken = localStorage.getItem("accessToken");
+      if (existingToken && !hydrateAttempted.current) {
+        hydrateAttempted.current = true;
+        initialize();
+        return;
+      }
+
       const parameters = window.location.search;
       const searchParams = new URLSearchParams({
         returnTo: window.location.pathname + parameters,
@@ -97,7 +107,7 @@ function Container({ children }) {
     } else {
       setChecked(true);
     }
-  }, [authenticated, method, router]);
+  }, [authenticated, method, router, initialize]);
 
   useEffect(() => {
     check();
