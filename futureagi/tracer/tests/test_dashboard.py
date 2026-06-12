@@ -799,9 +799,7 @@ class TestMetricsEndpoint:
     # suggestions for Trace Name / Span Name filters.
     # ------------------------------------------------------------------
 
-    @pytest.mark.parametrize(
-        "metric_name", ["name", "span_name", "service_name"]
-    )
+    @pytest.mark.parametrize("metric_name", ["name", "span_name", "service_name"])
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     @patch("tracer.views.dashboard.AnalyticsQueryService")
@@ -2168,7 +2166,7 @@ class TestDashboardMetricSourceNormalization:
 class TestWidgetQueryExecution:
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
-    @patch("tracer.views.dashboard.get_clickhouse_client")
+    @patch("tracer.views.dashboard.get_v2_clickhouse_client")
     def test_execute_query(
         self,
         mock_get_client,
@@ -2210,7 +2208,7 @@ class TestWidgetQueryExecution:
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
-    @patch("tracer.views.dashboard.get_clickhouse_client")
+    @patch("tracer.views.dashboard.get_v2_clickhouse_client")
     def test_execute_query_simulation_custom_attribute_routes_to_trace_builder(
         self,
         mock_get_client,
@@ -2258,7 +2256,7 @@ class TestWidgetQueryExecution:
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
-    @patch("tracer.views.dashboard.get_clickhouse_client")
+    @patch("tracer.views.dashboard.get_v2_clickhouse_client")
     def test_preview_query(
         self, mock_get_client, mock_enabled, auth_client, dashboard, observe_project
     ):
@@ -2293,7 +2291,7 @@ class TestWidgetQueryExecution:
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
-    @patch("tracer.views.dashboard.get_clickhouse_client")
+    @patch("tracer.views.dashboard.get_v2_clickhouse_client")
     def test_preview_query_project_breakdown_uses_longer_timeout(
         self, mock_get_client, mock_enabled, auth_client, dashboard, observe_project
     ):

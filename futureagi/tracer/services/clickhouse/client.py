@@ -465,16 +465,15 @@ class ClickHouseClient:
                 break
 
 
-# Singleton instance
+# Singleton instances
 _clickhouse_client: ClickHouseClient | None = None
+_v2_clickhouse_client: ClickHouseClient | None = None
 
 
 def get_clickhouse_client() -> ClickHouseClient:
-    """
-    Get the singleton ClickHouse client instance.
+    """Legacy singleton — connects to CH_DATABASE (``default``).
 
-    Returns:
-        ClickHouseClient instance
+    Use ``get_v2_clickhouse_client()`` for v2 schema tables.
     """
     global _clickhouse_client
 
@@ -482,6 +481,19 @@ def get_clickhouse_client() -> ClickHouseClient:
         _clickhouse_client = ClickHouseClient()
 
     return _clickhouse_client
+
+
+def get_v2_clickhouse_client() -> ClickHouseClient:
+    """Singleton connected to CH25_DATABASE (``futureagi``)."""
+    global _v2_clickhouse_client
+
+    if _v2_clickhouse_client is None:
+        from tracer.services.clickhouse.v2 import get_v2_config
+
+        cfg = get_v2_config()
+        _v2_clickhouse_client = ClickHouseClient(database=cfg["database"])
+
+    return _v2_clickhouse_client
 
 
 def is_clickhouse_enabled() -> bool:

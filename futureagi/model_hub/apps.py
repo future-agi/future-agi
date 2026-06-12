@@ -178,13 +178,12 @@ class ModelHubConfig(AppConfig):
         OS page cache.  Subsequent user queries hit warm cache (~300ms)
         instead of cold disk (~5s).
         """
+        from tracer.services.clickhouse.client import get_v2_clickhouse_client
         from tracer.services.clickhouse.schema import should_drop_legacy_chain
 
-        warmup_queries = [
-            # Warm spans index + light columns for recent data. The v2
-            # spans table uses `is_deleted`; pre-cutover prod still
-            # carries the `_peerdb_is_deleted` ALIAS column for back-
-            # compat, but the canonical name is what we read.
+        ch_v2 = get_v2_clickhouse_client()
+
+        v2_queries = [
             (
                 "SELECT project_id, count() FROM spans "
                 "WHERE is_deleted = 0 "
@@ -192,26 +191,6 @@ class ModelHubConfig(AppConfig):
                 "GROUP BY project_id",
                 "spans (7d)",
             ),
-            # Warm tracer_trace for recent data
-            (
-                "SELECT project_id, count() FROM tracer_trace "
-                "WHERE _peerdb_is_deleted = 0 "
-                "AND created_at >= now() - INTERVAL 7 DAY "
-                "GROUP BY project_id",
-                "tracer_trace (7d)",
-            ),
-            # Warm usage_apicalllog for eval metrics
-            (
-                "SELECT organization_id, count() FROM usage_apicalllog "
-                "WHERE _peerdb_is_deleted = 0 "
-                "AND created_at >= now() - INTERVAL 7 DAY "
-                "GROUP BY organization_id",
-                "usage_apicalllog (7d)",
-            ),
-            # Warm spans_hourly_rollup (v2 dashboard aggregate). Replaces
-            # span_metrics_hourly post-CH25 cutover; see
-            # docs/CH25_MIGRATION.md. countMerge collapses the aggregate
-            # state column.
             (
                 "SELECT countMerge(n) FROM spans_hourly_rollup "
                 "WHERE hour >= now() - INTERVAL 7 DAY",
@@ -219,22 +198,39 @@ class ModelHubConfig(AppConfig):
             ),
         ]
 
-        # When the legacy chain is retained (prod default), also warm
-        # the legacy aggregate so it stays hot until the cutover.
+        legacy_queries = [
+            (
+                "SELECT project_id, count() FROM tracer_trace "
+                "WHERE _peerdb_is_deleted = 0 "
+                "AND created_at >= now() - INTERVAL 7 DAY "
+                "GROUP BY project_id",
+                "tracer_trace (7d)",
+            ),
+            (
+                "SELECT organization_id, count() FROM usage_apicalllog "
+                "WHERE _peerdb_is_deleted = 0 "
+                "AND created_at >= now() - INTERVAL 7 DAY "
+                "GROUP BY organization_id",
+                "usage_apicalllog (7d)",
+            ),
+        ]
+
         if not should_drop_legacy_chain():
-            warmup_queries.append(
+            legacy_queries.append(
                 (
                     "SELECT count() FROM span_metrics_hourly "
                     "WHERE hour >= now() - INTERVAL 7 DAY",
                     "span_metrics_hourly (7d, legacy)",
                 )
             )
-        for query, label in warmup_queries:
-            try:
-                ch.execute_read(query, timeout_ms=30000)
-                logger.info(f"CH cache warmed: {label}")
-            except Exception as e:
-                logger.warning(f"CH cache warm failed for {label}: {e}")
+
+        for client, queries in [(ch_v2, v2_queries), (ch, legacy_queries)]:
+            for query, label in queries:
+                try:
+                    client.execute_read(query, timeout_ms=30000)
+                    logger.info(f"CH cache warmed: {label}")
+                except Exception as e:
+                    logger.warning(f"CH cache warm failed for {label}: {e}")
 
     def check_and_create_clickhouse_tables(self):
         from agentic_eval.core.embeddings.embedding_manager import FEEDBACK_TABLE_NAME
