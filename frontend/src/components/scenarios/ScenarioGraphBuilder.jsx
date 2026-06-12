@@ -35,7 +35,7 @@ const ScenarioGraphBuilder = () => {
         <Typography typography="s1" fontWeight="fontWeightSemiBold">
           Graph Builder
         </Typography>
-        <Typography typography="s2" color="text.disabled">
+        <Typography typography="s2" color="text.secondary">
           Use our visual graph builder to create conversation flows
         </Typography>
       </Box>

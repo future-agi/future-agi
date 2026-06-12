@@ -186,7 +186,7 @@ const TestDetailSystemMetrics = ({ latencies }) => {
         <Typography typography="s1_2" fontWeight="fontWeightMedium">
           System Metrics
         </Typography>
-        <Typography typography="s1" color="text.disabled">
+        <Typography typography="s1" color="text.secondary">
           Average latency metrics of the call
         </Typography>
       </Box>

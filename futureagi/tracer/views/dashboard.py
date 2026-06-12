@@ -16,7 +16,7 @@ from tfc.utils.general_methods import GeneralMethods
 from tracer.db_routing import DATABASE_FOR_DASHBOARD_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.dashboard import Dashboard, DashboardWidget
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
 from tracer.serializers.dashboard import (
     DashboardCreateUpdateSerializer,
     DashboardDetailSerializer,
@@ -841,7 +841,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     },
                     {
                         "name": "service_name",
-                        "display_name": "Service / Trace Name",
+                        "display_name": "Service Name",
                         "category": "system_metric",
                         "source": "traces",
                         "type": "string",
@@ -1040,6 +1040,27 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             filter_by_project = bool(req_project_ids and project_ids)
 
+            if (
+                filter_by_project
+                and not Project.objects.filter(
+                    id__in=project_ids,
+                )
+                .exclude(
+                    source=ProjectSourceChoices.SIMULATOR.value,
+                )
+                .exists()
+            ):
+                metrics.append(
+                    {
+                        "name": "agent_talk_percentage",
+                        "display_name": "Agent Talk %",
+                        "category": "system_metric",
+                        "source": "traces",
+                        "type": "number",
+                        "unit": "%",
+                    }
+                )
+
             # 3. Eval metrics — scoped to project(s) when project_ids provided
             try:
                 from model_hub.models.evals_metric import EvalTemplate
@@ -1156,10 +1177,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 from model_hub.models.develop_annotations import AnnotationsLabels
 
                 if filter_by_project:
-                    # Find annotation labels used in the given project(s) via
-                    # the Score model (the current write target for annotations).
-                    # Score.project_id may be NULL — scores are linked to traces,
-                    # so also look up via trace__project_id.
+
                     from model_hub.models.score import Score
 
                     used_label_ids = list(
@@ -2131,6 +2149,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "observation_type": "observation_type",
                     "span_kind": "observation_type",  # span_kind maps to observation_type in CH
                     "service_name": "name",  # service_name maps to span name
+                    "name": "name",
+                    "span_name": "name",
                     "session": "toString(trace_session_id)",
                     "tag": "arrayJoin(trace_tags)",
                     "prompt_name": "dictGet('prompt_dict', 'prompt_name', prompt_version_id)",
@@ -2192,6 +2212,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     # type is non-nullable by default — the Nullable
                     # wrapper isn't always preserved through the MV chain.
                     null_uuid = "00000000-0000-0000-0000-000000000000"
+                    # Trace Name = root span name; restrict to root spans.
+                    root_only_clause = (
+                        "AND parent_span_id IS NULL " if metric_name == "name" else ""
+                    )
+
                     if metric_name == "session":
                         ts_remap_join = remap_left_join(
                             "sp.trace_session_id",
@@ -2219,6 +2244,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             f"WHERE project_id IN %(project_ids)s "
                             f"AND is_deleted = 0 "
                             f"AND {col_expr} NOT IN ('', '{null_uuid}') "
+                            f"{root_only_clause}"
                             f"ORDER BY val "
                             f"LIMIT 500"
                         )

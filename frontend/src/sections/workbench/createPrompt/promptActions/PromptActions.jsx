@@ -494,7 +494,7 @@ const PromptActions = () => {
                           height: 24,
                           "&:hover": {
                             backgroundColor: getTagColorMap(label?.name, theme)
-                              ?.backgroundColor,
+                              ?.hoverBackgroundColor,
                             cursor: "default",
                           },
                         }}

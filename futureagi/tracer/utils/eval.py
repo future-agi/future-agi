@@ -518,6 +518,21 @@ def build_session_context(session) -> dict | None:
         return None
 
 
+class EvalSkippedMissingAttribute(ValueError):
+    """A mapped span attribute the eval needs is absent, so the eval is skipped.
+
+    There was no input to evaluate — this is a skip, not a failure. Subclasses
+    ValueError so existing ``except ValueError`` handlers still catch it, while
+    carrying the structured reason the eval logger persists.
+    """
+
+    def __init__(self, attribute: str, key: str, span_id):
+        self.skipped_reason = f"missing_required_attribute: {attribute}"
+        super().__init__(
+            f"Required attribute '{attribute}' for key '{key}' not found for span {span_id}"
+        )
+
+
 def _process_mapping(
     mapping: dict | None, span: ObservationSpan, eval_template_id: int
 ) -> dict:
@@ -619,9 +634,7 @@ def _process_mapping(
             logger.warning(
                 f"Required attribute '{attribute}' for key '{key}' not found for span {span.id}"
             )
-            raise ValueError(
-                f"Required attribute '{attribute}' for key '{key}' not found for span {span.id}"
-            )
+            raise EvalSkippedMissingAttribute(attribute, key, span.id)
 
     return parsed_mapping
 
@@ -1821,22 +1834,33 @@ def _create_error_eval_logger(
     observation_span: ObservationSpan,
     custom_eval_config: CustomEvalConfig,
     eval_task_id: str,
-    error_message: str,
+    error: Exception,
 ):
     """
-    Create an error eval logger for the given observation span, custom eval config, and eval task id.
+    Persist the outcome when an eval could not run for an observation span.
+
+    A missing required span attribute is a skip — the eval never ran because
+    there was no input — so the row is written with ``skipped_reason`` set and
+    ``error=False``. Read paths key off ``skipped_reason`` to render "Skipped"
+    and exclude these rows from failure-rate metrics. Genuine failures keep the
+    ``error=True`` / ``output_str="ERROR"`` shape.
     """
+    skipped_reason = getattr(error, "skipped_reason", None)
+    message = str(error)
     EvalLogger.objects.create(
         trace=observation_span.trace,
         observation_span=observation_span,
-        output_metadata={"error": error_message},
-        eval_explanation=f"Error during evaluation: {error_message}",
-        results_explanation={"reason": error_message},
+        output_metadata=None if skipped_reason else {"error": message},
+        eval_explanation=(
+            None if skipped_reason else f"Error during evaluation: {message}"
+        ),
+        results_explanation={} if skipped_reason else {"reason": message},
         eval_task_id=eval_task_id,
         custom_eval_config=custom_eval_config,
-        error=True,
-        error_message=f"Error during evaluation: {error_message}",
-        output_str="ERROR",
+        error=skipped_reason is None,
+        error_message=None if skipped_reason else f"Error during evaluation: {message}",
+        output_str=None if skipped_reason else "ERROR",
+        skipped_reason=skipped_reason,
     )
 
 
@@ -2072,9 +2096,7 @@ def evaluate_observation_span_observe(
                 logger.error(
                     f"Error during updating failed spans in exception handling evaluate_observation_span_observe: {e}"
                 )
-        _create_error_eval_logger(
-            observation_span, custom_eval_config, eval_task_id, str(e)
-        )
+        _create_error_eval_logger(observation_span, custom_eval_config, eval_task_id, e)
 
         return False
     except Exception as e:

@@ -184,7 +184,7 @@ const SimulationTestMode = React.forwardRef(
       initialRunTestId = "",
       isComposite = false,
       compositeAdhocConfig = null,
-      initialExecutionId=null
+      initialExecutionId = null,
     },
     ref,
   ) => {
@@ -356,7 +356,6 @@ const SimulationTestMode = React.forwardRef(
           setExecutions(items);
           setExecutionsFetched(true);
           if (items.length > 0) {
-
             const preferred =
               initialExecutionId &&
               items.some((it) => it.id === initialExecutionId)
@@ -1197,7 +1196,7 @@ const SimulationTestMode = React.forwardRef(
             <Typography variant="body2" fontWeight={600} color="text.secondary">
               This simulation has no data
             </Typography>
-            <Typography variant="caption" color="text.disabled">
+            <Typography variant="caption" color="text.secondary">
               Run the simulation first to generate call data for testing
             </Typography>
           </Box>
@@ -1232,7 +1231,7 @@ const SimulationTestMode = React.forwardRef(
               >
                 No calls in this simulation
               </Typography>
-              <Typography variant="caption" color="text.disabled">
+              <Typography variant="caption" color="text.secondary">
                 Add calls to the simulation before running a test
               </Typography>
             </Box>
@@ -1860,7 +1859,7 @@ SimulationTestMode.propTypes = {
   initialRunTestId: PropTypes.string,
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,
-  initialExecutionId :PropTypes.string
+  initialExecutionId: PropTypes.string,
 };
 
 export default SimulationTestMode;

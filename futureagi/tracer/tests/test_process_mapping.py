@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from tracer.utils.eval import _process_mapping
+from tracer.utils.eval import EvalSkippedMissingAttribute, _process_mapping
 
 
 @pytest.fixture
@@ -89,7 +89,9 @@ def test_provider_transcript_alias_resolves(_span_with_attrs, missing_eval_templ
     assert out == {"text": "hello world"}
 
 
-def test_missing_attribute_raises(_span_with_attrs, missing_eval_template_id):
+def test_missing_attribute_raises_typed_skip(
+    _span_with_attrs, missing_eval_template_id
+):
     span = _span_with_attrs({"unrelated": "value"})
     with pytest.raises(ValueError, match="Required attribute 'nonexistent_field'"):
         _process_mapping(
@@ -97,6 +99,8 @@ def test_missing_attribute_raises(_span_with_attrs, missing_eval_template_id):
             span,
             eval_template_id=missing_eval_template_id,
         )
+    assert isinstance(exc.value, EvalSkippedMissingAttribute)
+    assert exc.value.skipped_reason == "missing_required_attribute: input"
 
 
 # ───────────────────────────────────────────────────────────────────────────

@@ -110,6 +110,34 @@ class TestTokenBasedPricing:
         assert result["prompt_cost"] == 0.0
         assert result["completion_cost"] == 0.0
 
+    def test_turing_alias_pricing_lookup(self):
+        """Test that evaluator aliases use catalog pricing instead of fallback."""
+        expected_pricing = {
+            "turing_large": {"input_per_1M_tokens": 5.5, "output_per_1M_tokens": 27.5},
+            "turing_large_xl": {"input_per_1M_tokens": 1.25, "output_per_1M_tokens": 10},
+            "turing_small": {"input_per_1M_tokens": 3.3, "output_per_1M_tokens": 16.5},
+            "turing_flash": {"input_per_1M_tokens": 1.1, "output_per_1M_tokens": 5.5},
+        }
+
+        for model_name, pricing in expected_pricing.items():
+            assert get_model_pricing(model_name) == pricing
+
+    def test_calculate_cost_turing_alias(self):
+        token_usage = {
+            "prompt_tokens": 1000,
+            "completion_tokens": 500,
+        }
+
+        result = calculate_total_cost("turing_large", token_usage)
+
+        expected_prompt = round((1000 / 1_000_000) * 5.5, 6)
+        expected_completion = round((500 / 1_000_000) * 27.5, 6)
+
+        assert result["prompt_cost"] == expected_prompt
+        assert result["completion_cost"] == expected_completion
+        assert result["total_cost"] == round(expected_prompt + expected_completion, 6)
+        assert result["pricing_source"] == "available_models"
+
 
 # =============================================================================
 # Unit Tests - Character-Based Pricing (TTS Models)
@@ -322,9 +350,9 @@ class TestQualityBasedImagePricing:
         assert "low_quality_per_image" in pricing
         assert "medium_quality_per_image" in pricing
         assert "high_quality_per_image" in pricing
-        assert pricing["low_quality_per_image"] == 0.02
-        assert pricing["medium_quality_per_image"] == 0.07
-        assert pricing["high_quality_per_image"] == 0.19
+        assert pricing["low_quality_per_image"] == 0.009
+        assert pricing["medium_quality_per_image"] == 0.034
+        assert pricing["high_quality_per_image"] == 0.133
 
     def test_calculate_cost_gpt_image_low_quality(self):
         """Test cost calculation for GPT-Image-1 with low quality."""
