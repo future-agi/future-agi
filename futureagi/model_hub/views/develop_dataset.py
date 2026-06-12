@@ -8011,7 +8011,7 @@ class EditAndRunUserEvalView(APIView):
                 eval_metric,
                 request_data,
                 user=request.user,
-                organization=organization,
+                organization=getattr(request, "organization", None) or request.user.organization,
                 workspace=getattr(request, "workspace", None),
             )
 
