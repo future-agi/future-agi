@@ -7998,9 +7998,11 @@ class EditAndRunUserEvalView(APIView):
                         f"Missing required mapping keys: {', '.join(missing_keys)}"
                     )
 
-            # --- Version creation on edit ---
+            # --- Version creation on edit (atomic) ---
             # Only create a version when the request has actual config changes.
             # A bare {"run": true} rerun should not snapshot stale template config.
+            # Wrapped in transaction.atomic so a failure between create_version
+            # and eval_metric.save() doesn't leave orphaned versions.
             _has_config_changes = bool(
                 request_data.get("config")
                 or request_data.get("composite_weight_overrides") is not None
@@ -8038,17 +8040,27 @@ class EditAndRunUserEvalView(APIView):
                     _snap, criteria=_criteria,
                     eval_type_id=_snap.get("eval_type_id"),
                 )
-                _ver = EvalTemplateVersion.objects.create_version(
-                    eval_template=_tpl,
-                    prompt_messages=_pm,
-                    config_snapshot=_snap,
-                    criteria=_criteria,
-                    model=_resolved_model,
-                    user=request.user,
-                    organization=organization,
-                    workspace=getattr(request, "workspace", None),
-                )
-                eval_metric.pinned_version = _ver
+
+                # Dedup: skip version creation if snapshot matches the
+                # currently pinned version's config.
+                _current_pinned = eval_metric.pinned_version
+                _snap_changed = True
+                if _current_pinned and _current_pinned.config_snapshot:
+                    _snap_changed = _snap != _current_pinned.config_snapshot
+
+                if _snap_changed:
+                    with transaction.atomic():
+                        _ver = EvalTemplateVersion.objects.create_version(
+                            eval_template=_tpl,
+                            prompt_messages=_pm,
+                            config_snapshot=_snap,
+                            criteria=_criteria,
+                            model=_resolved_model,
+                            user=request.user,
+                            organization=organization,
+                            workspace=getattr(request, "workspace", None),
+                        )
+                        eval_metric.pinned_version = _ver
 
             # Update the config (already validated above)
             if new_config:

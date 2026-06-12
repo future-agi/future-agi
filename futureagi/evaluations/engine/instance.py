@@ -65,6 +65,7 @@ def resolve_version(eval_template, version_number=None, organization=None):
     """
     try:
         from django.db import models
+        from django.db.utils import DatabaseError, ProgrammingError
 
         from model_hub.models.evals_metric import EvalTemplateVersion
 
@@ -92,8 +93,8 @@ def resolve_version(eval_template, version_number=None, organization=None):
                 EvalTemplateVersion.all_objects.filter(id=resolved.id).update(
                     usage_count=models.F("usage_count") + 1
                 )
-            except Exception:
-                logger.debug("usage_count_update_skipped")
+            except (DatabaseError, ProgrammingError):
+                logger.warning("usage_count_update_failed", version_id=str(resolved.id), exc_info=True)
 
         return resolved
 
