@@ -21,6 +21,12 @@ from .cartesia_response import (
     validate_cartesia_voice,
 )
 from .lmnt_response import lmnt_speech_response, get_lmnt_tts_parameters
+from .smallest_ai_response import (
+    smallest_ai_speech_response,
+    smallest_ai_transcription_response,
+    get_smallest_ai_tts_parameters,
+    get_smallest_ai_stt_parameters,
+)
 from agentic_eval.core_evals.run_prompt.error_handler import (
     ErrorContext,
     handle_api_error,
@@ -86,6 +92,9 @@ class OtherServicesManager:
                 cartesia_speech_response, "Cartesia"
             ),
             "lmnt": wrap_handler_with_error_handling(lmnt_speech_response, "LMNT"),
+            "smallest_ai": wrap_handler_with_error_handling(
+                smallest_ai_speech_response, "Smallest AI"
+            ),
         }
         self.transcription_handlers = {
             "elevenlabs": wrap_handler_with_error_handling(
@@ -93,6 +102,9 @@ class OtherServicesManager:
             ),
             "deepgram": wrap_handler_with_error_handling(
                 deepgram_transcription_response, "Deepgram"
+            ),
+            "smallest_ai": wrap_handler_with_error_handling(
+                smallest_ai_transcription_response, "Smallest AI"
             ),
         }
         self.voice_validators = {
@@ -236,6 +248,7 @@ TTS_PARAMETER_HANDLERS = {
     "hume": get_hume_tts_parameters,
     "cartesia": get_cartesia_tts_parameters,
     "lmnt": get_lmnt_tts_parameters,
+    "smallest_ai": get_smallest_ai_tts_parameters,
     "default": get_default_tts_parameters,
 }
 
@@ -257,6 +270,7 @@ def get_default_stt_parameters(model_name: str):
 
 STT_PARAMETER_HANDLERS = {
     "elevenlabs": get_elevenlabs_stt_parameters,
+    "smallest_ai": get_smallest_ai_stt_parameters,
     "default": get_default_stt_parameters,
 }
 
