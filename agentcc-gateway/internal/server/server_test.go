@@ -1592,7 +1592,7 @@ func TestShouldApplyOrgProviderOverride(t *testing.T) {
 	}
 }
 
-func TestListModels_MergesGlobalAndOrgModelsForRequestingOrg(t *testing.T) {
+func TestListModels_ReturnsOnlyOrgModelsForRequestingOrg(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
 
@@ -1612,15 +1612,15 @@ func TestListModels_MergesGlobalAndOrgModelsForRequestingOrg(t *testing.T) {
 		t.Fatalf("parsing response: %v", err)
 	}
 
-	if len(resp.Data) != 3 {
-		t.Fatalf("model count = %d, want 3; body=%s", len(resp.Data), w.Body.String())
+	if len(resp.Data) != 2 {
+		t.Fatalf("model count = %d, want 2; body=%s", len(resp.Data), w.Body.String())
 	}
 	ids := map[string]bool{}
 	for _, m := range resp.Data {
 		ids[m.ID] = true
 	}
-	if !ids["gpt-4o"] || !ids["claude-sonnet-4-6"] || !ids["gpt-4o-mini"] {
-		t.Fatalf("returned model ids = %#v, want gpt-4o, gpt-4o-mini, and claude-sonnet-4-6", ids)
+	if !ids["gpt-4o"] || !ids["claude-sonnet-4-6"] {
+		t.Fatalf("returned model ids = %#v, want gpt-4o and claude-sonnet-4-6", ids)
 	}
 }
 

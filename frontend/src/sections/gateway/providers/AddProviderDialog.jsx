@@ -195,7 +195,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       setApiKey("");
       setApiFormat(c.api_format ?? c.apiFormat ?? "openai");
       setModels(Array.isArray(c.models) ? c.models : []);
-      setTimeoutVal(c.default_timeout ?? c.defaultTimeout ?? "");
+      setTimeoutVal(c.timeout ?? c.default_timeout ?? "");
       setMaxConcurrent(
         c.max_concurrent != null
           ? String(c.max_concurrent ?? c.maxConcurrent ?? "")
@@ -347,7 +347,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       newErrors.models = "Select at least one model";
     }
 
-    if (timeoutVal.trim() && parseTimeoutSeconds(timeoutVal) === null) {
+    if (String(timeoutVal).trim() && parseTimeoutSeconds(timeoutVal) === null) {
       newErrors.timeout = "Use seconds, e.g. 30 or 30s";
     }
 
@@ -369,7 +369,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     }
     if (models.length > 0) config.models = models;
     const timeoutSeconds = parseTimeoutSeconds(timeoutVal);
-    if (timeoutSeconds !== null) config.default_timeout = timeoutSeconds;
+    if (timeoutSeconds !== null) config.timeout = timeoutSeconds;
     if (maxConcurrent) config.max_concurrent = Number(maxConcurrent);
 
     updateProvider.mutate(

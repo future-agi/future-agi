@@ -115,6 +115,9 @@ func (r *Registry) hasMultiProviderModels() bool {
 func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 	switch cfg.APIFormat {
 	case "openai":
+		if isGeminiNativeURL(cfg.BaseURL) {
+			cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/") + "/v1beta/openai"
+		}
 		return openai.New(name, cfg)
 	case "anthropic":
 		return anthropic.New(name, cfg)
@@ -392,6 +395,13 @@ func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
 			"provider", name, "count", len(modelIDs), "models", modelIDs)
 	}
 	return modelIDs
+}
+
+func isGeminiNativeURL(baseURL string) bool {
+	u := strings.ToLower(strings.TrimRight(baseURL, "/"))
+	return (strings.Contains(u, "generativelanguage.googleapis.com") ||
+		strings.Contains(u, "aiplatform.googleapis.com")) &&
+		!strings.Contains(u, "/openai")
 }
 
 // connectivityCheck performs a non-blocking health check against a provider.

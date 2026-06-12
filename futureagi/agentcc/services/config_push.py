@@ -86,8 +86,8 @@ def _inject_guardrail_credentials(checks):
     "__encrypted__" sentinel values with actual secrets from the policy's
     encrypted_check_configs blob.
     """
-    from integrations.services.credentials import CredentialManager
     from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+    from integrations.services.credentials import CredentialManager
 
     ENCRYPTED_SENTINEL = "__encrypted__"
 
@@ -330,8 +330,8 @@ def _inject_fi_credentials(checks, org_id):
 
 def _assemble_providers(org_id):
     """Build providers dict from AgentccProviderCredential rows for an org."""
-    from integrations.services.credentials import CredentialManager
     from agentcc.models.provider_credential import AgentccProviderCredential
+    from integrations.services.credentials import CredentialManager
 
     credentials = AgentccProviderCredential.no_workspace_objects.filter(
         organization_id=org_id,
@@ -357,7 +357,7 @@ def _assemble_providers(org_id):
             "api_format": cred.api_format,
             "models": cred.models_list,
             "enabled": True,
-            "default_timeout": f"{cred.default_timeout_seconds}s",
+            "timeout": cred.default_timeout_seconds,
             "max_concurrent": cred.max_concurrent,
             "conn_pool_size": cred.conn_pool_size,
         }

@@ -2495,7 +2495,7 @@ export interface GatewayConfigProviderApi {
   api_format: string;
   models: GatewayConfigProviderApiModelsItem[];
   is_active: boolean;
-  default_timeout: number;
+  timeout: number;
   max_concurrent: number;
   conn_pool_size: number;
 }

@@ -205,12 +205,21 @@
       "properties": {
         "strategy": { "type": "string" },
         "fallback_enabled": { "type": "boolean" },
-        "fallback_on_status_codes": { "type": "array", "items": { "type": "integer" } },
+        "fallback_on_status_codes": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
         "model_fallbacks": {
           "type": "object",
-          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
         },
-        "conditional_routes": { "type": "array", "items": { "$ref": "#/$defs/ConditionalRoute" } },
+        "conditional_routes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConditionalRoute" }
+        },
         "default_model": { "type": "string" },
         "complexity": { "$ref": "#/$defs/ComplexityRoutingConfig" },
         "fastest": { "$ref": "#/$defs/FastestResponseConfig" },
@@ -458,7 +467,9 @@
         "threshold": { "type": "number" },
         "window": { "type": "string" },
         "cooldown": { "type": "string" },
-        "channels": { "type": "array", "items": { "type": "string" } }
+        "channels": { "type": "array", "items": { "type": "string" } },
+        "severity": { "type": "string" },
+        "enabled": { "type": "boolean" }
       }
     },
     "AlertChannelConfig": {
@@ -471,7 +482,8 @@
         "headers": {
           "type": "object",
           "additionalProperties": { "type": "string" }
-        }
+        },
+        "enabled": { "type": "boolean" }
       }
     },
     "AlertingConfig": {
@@ -479,8 +491,14 @@
       "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean" },
-        "rules": { "type": "array", "items": { "$ref": "#/$defs/AlertRuleConfig" } },
-        "channels": { "type": "array", "items": { "$ref": "#/$defs/AlertChannelConfig" } }
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AlertRuleConfig" }
+        },
+        "channels": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AlertChannelConfig" }
+        }
       }
     },
     "RedactPatternConfig": {
@@ -497,7 +515,10 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "mode": { "type": "string" },
-        "redact_patterns": { "type": "array", "items": { "$ref": "#/$defs/RedactPatternConfig" } }
+        "redact_patterns": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RedactPatternConfig" }
+        }
       }
     },
     "ToolPolicyConfig": {
@@ -578,7 +599,10 @@
         "enabled": { "type": "boolean" },
         "min_severity": { "type": "string" },
         "categories": { "type": "array", "items": { "type": "string" } },
-        "sinks": { "type": "array", "items": { "$ref": "#/$defs/AuditSinkConfig" } }
+        "sinks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AuditSinkConfig" }
+        }
       }
     },
     "A2ACardConfig": {
@@ -615,7 +639,10 @@
         "url": { "type": "string" },
         "auth": { "$ref": "#/$defs/A2AAuthConfig" },
         "description": { "type": "string" },
-        "skills": { "type": "array", "items": { "$ref": "#/$defs/A2ASkillConfig" } }
+        "skills": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/A2ASkillConfig" }
+        }
       }
     },
     "A2AOrgConfig": {

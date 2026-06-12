@@ -354,7 +354,7 @@ class AgentccGatewayViewSet(ViewSet):
                     "api_format": p["api_format"],
                     "models": p["models_list"] or [],
                     "is_active": p["is_active"],
-                    "default_timeout": p["default_timeout_seconds"],
+                    "timeout": p["default_timeout_seconds"],
                     "max_concurrent": p["max_concurrent"],
                     "conn_pool_size": p["conn_pool_size"],
                 }
@@ -520,7 +520,7 @@ class AgentccGatewayViewSet(ViewSet):
                 "models_list": provider_config.get("models", []),
                 "default_timeout_seconds": provider_config.get(
                     "default_timeout_seconds",
-                    provider_config.get("default_timeout", 60),
+                    provider_config.get("timeout", 60),
                 ),
                 "max_concurrent": provider_config.get("max_concurrent", 100),
                 "conn_pool_size": provider_config.get("conn_pool_size", 100),
@@ -541,7 +541,7 @@ class AgentccGatewayViewSet(ViewSet):
                         "base_url",
                         "api_format",
                         "models",
-                        "default_timeout",
+                        "timeout",
                         "default_timeout_seconds",
                         "max_concurrent",
                         "conn_pool_size",
