@@ -1890,3 +1890,4 @@ TestPlayground.propTypes = {
 };
 
 export default TestPlayground;
+export { CustomJsonInput };

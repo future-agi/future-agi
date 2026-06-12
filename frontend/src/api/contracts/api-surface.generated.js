@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 976,
+  "endpointCount": 977,
   "groups": {
     "accounts": {
       "/accounts/2fa/recovery-codes/": [
@@ -1531,6 +1531,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/eval-templates/{template_id}/ground-truth/upload/": [
         "post"
       ],
+      "/model-hub/eval-templates/{template_id}/ground-truth/validate-output/": [
+        "post"
+      ],
       "/model-hub/eval-templates/{template_id}/update/": [
         "put"
       ],
@@ -1727,11 +1730,11 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/ground-truth/{ground_truth_id}/mapping/": [
         "put"
       ],
-      "/model-hub/ground-truth/{ground_truth_id}/role-mapping/": [
-        "put"
-      ],
       "/model-hub/ground-truth/{ground_truth_id}/search/": [
         "post"
+      ],
+      "/model-hub/ground-truth/{ground_truth_id}/setup/": [
+        "put"
       ],
       "/model-hub/ground-truth/{ground_truth_id}/status/": [
         "get"
@@ -4823,6 +4826,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/eval-templates/{template_id}/ground-truth/upload/": [
     "post"
   ],
+  "/model-hub/eval-templates/{template_id}/ground-truth/validate-output/": [
+    "post"
+  ],
   "/model-hub/eval-templates/{template_id}/update/": [
     "put"
   ],
@@ -5019,11 +5025,11 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/ground-truth/{ground_truth_id}/mapping/": [
     "put"
   ],
-  "/model-hub/ground-truth/{ground_truth_id}/role-mapping/": [
-    "put"
-  ],
   "/model-hub/ground-truth/{ground_truth_id}/search/": [
     "post"
+  ],
+  "/model-hub/ground-truth/{ground_truth_id}/setup/": [
+    "put"
   ],
   "/model-hub/ground-truth/{ground_truth_id}/status/": [
     "get"

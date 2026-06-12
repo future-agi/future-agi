@@ -33,6 +33,12 @@ from tfc.utils.storage import (
 # Thread-local storage for models
 _thread_local = threading.local()
 FEEDBACK_TABLE_NAME = "feedbacks"
+# Ground truth datasets live in their own CH table with the same generic
+# schema as feedbacks. Both share the writer / reader plumbing in this
+# module so the multimodal embedding routing and per-input-column
+# intersection logic apply uniformly.
+GROUND_TRUTH_TABLE_NAME = "ground_truths"
+_TENANT_SCOPED_TABLES = (FEEDBACK_TABLE_NAME, GROUND_TRUTH_TABLE_NAME)
 
 def log_performance(func):
     @wraps(func)
@@ -473,8 +479,10 @@ class EmbeddingManager:
         workspace_id=None,
     ):
         try:
-            if table_name == FEEDBACK_TABLE_NAME and not organization_id:
-                raise ValueError("organization_id is required for feedback embeddings")
+            if table_name in _TENANT_SCOPED_TABLES and not organization_id:
+                raise ValueError(
+                    f"organization_id is required for {table_name} embeddings"
+                )
 
             # Check inputs using input_checker
             input_dict = self.input_checker(row_dict)
@@ -525,7 +533,7 @@ class EmbeddingManager:
                         f"Warning: {inp} not in input_dict, skipping index_col_type append"
                     )
 
-                if table_name == FEEDBACK_TABLE_NAME:
+                if table_name in _TENANT_SCOPED_TABLES:
                     if organization_id:
                         row_dict["organization_id"] = str(organization_id)
                     if workspace_id:
@@ -534,7 +542,10 @@ class EmbeddingManager:
                 mod_dict = row_dict.copy()
 
                 for inp2 in inputs_formater:
-                    if "http" in mod_dict[str(inp2)] and table_name == FEEDBACK_TABLE_NAME:
+                    if (
+                        "http" in mod_dict[str(inp2)]
+                        and table_name in _TENANT_SCOPED_TABLES
+                    ):
                         mod_dict[inp2] = self.encode_path(mod_dict[str(inp2)])
 
                 mod_dict["input_type"] = input_dict[inp]
@@ -635,6 +646,9 @@ class EmbeddingManager:
                             row_dict=metadata,
                             inputs_formater=inputs_formater,
                             table_name=table_name,
+                            eval_id=eval_id,
+                            organization_id=organization_id,
+                            workspace_id=workspace_id,
                         )
                         if vectors and metadata_list:
                             vectors_batch.extend(vectors)
@@ -869,7 +883,7 @@ class EmbeddingManager:
             db_client = self.db_client
             filter_by["input_type"] = input_type
 
-            if table_name == FEEDBACK_TABLE_NAME:
+            if table_name in _TENANT_SCOPED_TABLES:
                 if organization_id:
                     filter_by["organization_id"] = str(organization_id)
                 if workspace_id:
@@ -988,7 +1002,7 @@ class EmbeddingManager:
         else:
             top_results = (
                 self.get_top_common_items(results, top_k)
-                if table_name == FEEDBACK_TABLE_NAME
+                if table_name in _TENANT_SCOPED_TABLES
                 else self.get_top_union_items(results, top_k)
             )
         end_time = datetime.now()

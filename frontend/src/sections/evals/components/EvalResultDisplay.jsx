@@ -3,6 +3,7 @@ import {
   Box,
   Chip,
   CircularProgress,
+  Divider,
   Typography,
   useTheme,
 } from "@mui/material";
@@ -41,6 +42,13 @@ const EvalResultDisplay = ({ result }) => {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {/* Retrieved ground-truth few-shot examples. Shown above the
+          verdict so users read calibration before result. Hidden when
+          no GT was used on this run. */}
+      <GroundTruthExamplesPanel
+        examples={result.ground_truth_examples}
+      />
+
       {/* View toggle */}
       <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
         <Box
@@ -685,6 +693,164 @@ const JsonView = ({ data }) => {
           domReadOnly: true,
         }}
       />
+    </Box>
+  );
+};
+
+// Retrieved GT few-shot examples panel, shown above the verdict.
+// Tri-state: null/undefined hides; [] renders empty state; [...]
+// renders cards. Unmapped row columns are suppressed.
+const GroundTruthExamplesPanel = ({ examples }) => {
+  const [open, setOpen] = useState(true);
+  if (!Array.isArray(examples)) return null;
+  const isEmpty = examples.length === 0;
+
+  return (
+    <Box
+      sx={{
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 1,
+        bgcolor: "background.neutral",
+        p: 1,
+      }}
+    >
+      <Box
+        onClick={() => setOpen((s) => !s)}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          cursor: "pointer",
+          userSelect: "none",
+        }}
+      >
+        <Typography variant="caption" sx={{ fontWeight: 600 }}>
+          {isEmpty
+            ? "No ground truth matched"
+            : `Retrieved ground truth (${examples.length})`}
+        </Typography>
+        <Typography
+          variant="caption"
+          sx={{ color: "text.secondary", ml: "auto" }}
+        >
+          {open ? "Hide" : "Show"}
+        </Typography>
+      </Box>
+      {open && (
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mt: 1 }}>
+          {isEmpty ? (
+            <Typography
+              variant="caption"
+              sx={{ color: "text.secondary", fontSize: "11px" }}
+            >
+              No rows in your ground truth dataset were close enough to this
+              input to be retrieved. Lower Match strictness, or test with
+              input semantically closer to your dataset.
+            </Typography>
+          ) : (
+            examples.map((entry, idx) => (
+              <GroundTruthExampleCard
+                key={idx}
+                index={idx + 1}
+                entry={entry}
+              />
+            ))
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+};
+
+const GroundTruthExampleCard = ({ index, entry }) => {
+  const row = entry?.row || {};
+  const variableMapping = entry?.variable_mapping || {};
+  const roleMapping = entry?.role_mapping || {};
+
+  const outputCol =
+    roleMapping.output || roleMapping.expected_output || "";
+  const explanationCol =
+    roleMapping.explanation ||
+    roleMapping.reasoning ||
+    roleMapping.reason ||
+    "";
+
+  const inputPairs = Object.entries(variableMapping).flatMap(
+    ([tmplVar, value]) => {
+      const cols = Array.isArray(value) ? value : [value];
+      return cols.filter(Boolean).map((col) => ({ tmplVar, col }));
+    },
+  );
+
+  const renderField = (label, value) => (
+    <Typography
+      variant="caption"
+      component="div"
+      sx={{ fontSize: "11px", wordBreak: "break-word", lineHeight: 1.5 }}
+    >
+      <Box
+        component="span"
+        sx={{ fontWeight: 600, color: "text.secondary", mr: 0.75 }}
+      >
+        {label}:
+      </Box>
+      {String(value)}
+    </Typography>
+  );
+
+  return (
+    <Box
+      sx={{
+        p: 1.25,
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 1,
+        bgcolor: "background.paper",
+        display: "flex",
+        flexDirection: "column",
+        gap: 0.5,
+      }}
+    >
+      <Typography
+        variant="caption"
+        sx={{
+          fontWeight: 700,
+          fontSize: "11px",
+          color: "text.primary",
+          mb: 0.25,
+        }}
+      >
+        Match {index}
+      </Typography>
+      {(() => {
+        const renderedInputs = inputPairs
+          .map(({ tmplVar, col }) => {
+            const v = row[col];
+            if (v === undefined || v === null || v === "") return null;
+            return (
+              <React.Fragment key={`${tmplVar}-${col}`}>
+                {renderField(tmplVar, v)}
+              </React.Fragment>
+            );
+          })
+          .filter(Boolean);
+
+        const hasReferenceOutput = outputCol && row[outputCol] != null;
+        const hasExplanation = explanationCol && row[explanationCol] != null;
+        const showDivider =
+          renderedInputs.length > 0 && (hasReferenceOutput || hasExplanation);
+
+        return (
+          <>
+            {renderedInputs}
+            {showDivider && <Divider sx={{ my: 0.25 }} />}
+            {hasReferenceOutput &&
+              renderField("Reference output", row[outputCol])}
+            {hasExplanation && renderField("Explanation", row[explanationCol])}
+          </>
+        );
+      })()}
     </Box>
   );
 };

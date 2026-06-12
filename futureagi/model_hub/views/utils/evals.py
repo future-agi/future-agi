@@ -290,50 +290,14 @@ def run_eval_func(
             if isinstance(code_eval_params, dict):
                 _run_kwargs.update(code_eval_params)
 
-        # Inject ground truth config if enabled on the template
-        gt_config_in_template = (
-            template.config.get("ground_truth") if template.config else None
+        # Inject ground truth context (centralised — handles both
+        # CustomPromptEvaluator few-shot injection and Agent
+        # ``ground_truth_config`` passthrough).
+        from model_hub.utils.ground_truth_retrieval import (
+            inject_ground_truth_context,
         )
-        if gt_config_in_template and gt_config_in_template.get("enabled"):
-            from model_hub.utils.ground_truth_retrieval import (
-                format_few_shot_examples,
-                get_ground_truth_few_shot_examples,
-                load_ground_truth_config,
-            )
 
-            gt_config = load_ground_truth_config(template)
-            if gt_config:
-                # Enrich with embedding_status from the GT model
-                gt_obj = None
-                try:
-                    from model_hub.models.evals_metric import EvalGroundTruth
-
-                    gt_obj = EvalGroundTruth.objects.filter(
-                        id=gt_config["ground_truth_id"], deleted=False
-                    ).first()
-                    if gt_obj:
-                        gt_config["embedding_status"] = gt_obj.embedding_status
-                except Exception:
-                    pass
-
-                if (
-                    eval_id == "CustomPromptEvaluator"
-                    and gt_obj
-                    and gt_obj.embedding_status == "completed"
-                ):
-                    gt_examples = get_ground_truth_few_shot_examples(
-                        gt_config, _run_kwargs
-                    )
-                    if gt_examples:
-                        injection_format = gt_config.get(
-                            "injection_format", "structured"
-                        )
-                        formatted = format_few_shot_examples(
-                            gt_examples, gt_obj.role_mapping, injection_format
-                        )
-                        _run_kwargs["ground_truth_few_shot"] = formatted
-                else:
-                    _run_kwargs["ground_truth_config"] = gt_config
+        inject_ground_truth_context(_run_kwargs, template, eval_type_id=eval_id)
 
         # Preprocess inputs for code evals that need external data (e.g. CLIP embeddings)
         if _is_code_eval:
@@ -373,7 +337,12 @@ def run_eval_func(
         }
         if partial_input_warning:
             response["warnings"] = [partial_input_warning]
-        # logger.info(f"response*******: {response}")
+
+        from model_hub.services.ground_truth_service import GroundTruthService
+
+        response["ground_truth_examples"] = GroundTruthService.resolve_preview_examples(
+            eval_template=template, eval_inputs=_run_kwargs
+        )
 
         metadata = response.get("metadata")
         # Format the result based on output type
@@ -523,6 +492,7 @@ def run_eval_func(
         output["metadata"] = response.get("metadata")
         output["output_type"] = template.config.get("output")
         output["log_id"] = str(api_call_log_row.log_id)
+        output["ground_truth_examples"] = response.get("ground_truth_examples")
         # Pass partial-input warning through to the playground UI so the
         # yellow ⚠ badge can render alongside the result.
         if response.get("warnings"):
@@ -704,6 +674,14 @@ def process_eval_for_single_row(
         output["metadata"] = response.get("metadata")
         output["output_type"] = eval_template.config.get("output")
         output["runtime"] = response.get("runtime")
+
+        # Surface retrieved GT rows in the playground response so the FE
+        # can render them above the verdict.
+        from model_hub.services.ground_truth_service import GroundTruthService
+
+        output["ground_truth_examples"] = GroundTruthService.resolve_preview_examples(
+            eval_template=eval_template, eval_inputs=eval_inputs
+        )
 
         # if source == DatasetSourceChoices.SDK.value:
         #     response["output_type"] = eval_template.config.get("output")

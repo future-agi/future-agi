@@ -467,6 +467,9 @@ class CompositeExecuteResponse(BaseModel):
 # =============================================================================
 
 
+MappingValue = str | list[str]
+
+
 class GroundTruthUploadRequest(BaseModel):
     """Request for POST /model-hub/eval-templates/{id}/ground-truth/upload/ (JSON body)"""
 
@@ -475,8 +478,8 @@ class GroundTruthUploadRequest(BaseModel):
     file_name: str = ""
     columns: list[str]
     data: list[dict]
-    variable_mapping: dict[str, str] | None = None
-    role_mapping: dict[str, str] | None = None
+    variable_mapping: dict[str, MappingValue] | None = None
+    role_mapping: dict[str, MappingValue] | None = None
 
 
 class GroundTruthItem(BaseModel):
@@ -488,12 +491,13 @@ class GroundTruthItem(BaseModel):
     file_name: str = ""
     columns: list[str]
     row_count: int
-    variable_mapping: dict[str, str] | None = None
-    role_mapping: dict[str, str] | None = None
+    variable_mapping: dict[str, MappingValue] | None = None
+    role_mapping: dict[str, MappingValue] | None = None
     embedding_status: str = "pending"
     embedded_row_count: int = 0
     storage_type: str = "db"
     created_at: str = ""
+    embeddings_stale: bool = False
 
 
 class GroundTruthListResponse(BaseModel):
@@ -515,15 +519,26 @@ class GroundTruthUploadResponse(BaseModel):
 
 
 class VariableMappingRequest(BaseModel):
-    """Request for PUT /model-hub/ground-truth/{id}/mapping/"""
+    """Request for PUT /model-hub/ground-truth/{id}/mapping/
 
-    variable_mapping: dict[str, str]
+    Maps a rule prompt's ``{{template_variable}}`` placeholders to the
+    GT column whose value should fill each placeholder at retrieval and
+    few-shot rendering time. Values may be either a single column name
+    or a list of column names (the latter for multi-column inputs).
+    """
+
+    variable_mapping: dict[str, MappingValue]
 
 
 class RoleMappingRequest(BaseModel):
-    """Request for PUT /model-hub/ground-truth/{id}/role-mapping/"""
+    """Request for PUT /model-hub/ground-truth/{id}/role-mapping/
 
-    role_mapping: dict[str, str]
+    ``role_mapping`` values may be either a single GT column name or a
+    list of GT column names — the latter is used for multi-variable
+    input prompts where several columns together form the embedded text.
+    """
+
+    role_mapping: dict[str, MappingValue]
 
 
 class GroundTruthDataResponse(BaseModel):
@@ -546,6 +561,7 @@ class GroundTruthStatusResponse(BaseModel):
     embedded_row_count: int
     total_rows: int
     progress_percent: float
+    embeddings_stale: bool = False
 
 
 class GroundTruthConfigRequest(BaseModel):
@@ -560,10 +576,30 @@ class GroundTruthConfigRequest(BaseModel):
 
 
 class GroundTruthSearchRequest(BaseModel):
-    """Request for POST /model-hub/ground-truth/{id}/search/"""
+    """Request for POST /model-hub/ground-truth/{id}/search/
 
-    query: str = Field(min_length=1)
+    Supports both legacy single-text-box callers (``query``) and the
+    multi-variable Test Retrieval flow (``inputs`` dict). One of the two
+    must be provided.
+    """
+
+    query: str = ""
+    inputs: dict[str, object] | None = None
     max_results: int = Field(default=3, ge=1, le=20)
+    similarity_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class GroundTruthValidateOutputRequest(BaseModel):
+    """Request for POST /model-hub/eval-templates/{id}/ground-truth/validate-output/"""
+
+    value: object
+
+
+class GroundTruthValidateOutputResponse(BaseModel):
+    """Response for POST /model-hub/eval-templates/{id}/ground-truth/validate-output/"""
+
+    ok: bool
+    error: str | None = None
 
 
 # =============================================================================

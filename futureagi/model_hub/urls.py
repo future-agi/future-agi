@@ -224,11 +224,12 @@ from model_hub.views.separate_evals import (
     GroundTruthDeleteView,
     GroundTruthListView,
     GroundTruthMappingView,
-    GroundTruthRoleMappingView,
     GroundTruthSearchView,
+    GroundTruthSetupView,
     GroundTruthStatusView,
     GroundTruthTriggerEmbeddingView,
     GroundTruthUploadView,
+    GroundTruthValidateOutputView,
     RestoreVersionView,
     SetDefaultVersionView,
     TestEvaluationTemplateAPIView,
@@ -1184,9 +1185,9 @@ urlpatterns = [
         name="ground-truth-mapping",
     ),
     path(
-        "ground-truth/<uuid:ground_truth_id>/role-mapping/",
-        GroundTruthRoleMappingView.as_view(),
-        name="ground-truth-role-mapping",
+        "ground-truth/<uuid:ground_truth_id>/setup/",
+        GroundTruthSetupView.as_view(),
+        name="ground-truth-setup",
     ),
     path(
         "ground-truth/<uuid:ground_truth_id>/data/",
@@ -1207,6 +1208,11 @@ urlpatterns = [
         "ground-truth/<uuid:ground_truth_id>/embed/",
         GroundTruthTriggerEmbeddingView.as_view(),
         name="ground-truth-embed",
+    ),
+    path(
+        "eval-templates/<uuid:template_id>/ground-truth/validate-output/",
+        GroundTruthValidateOutputView.as_view(),
+        name="eval-template-ground-truth-validate-output",
     ),
     path(
         "ground-truth/<uuid:ground_truth_id>/",

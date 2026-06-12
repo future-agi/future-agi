@@ -83,13 +83,15 @@ from model_hub.serializers.contracts import (
     GroundTruthListResponseSerializer,
     GroundTruthMappingRequestSerializer,
     GroundTruthMappingResponseSerializer,
-    GroundTruthRoleMappingRequestSerializer,
-    GroundTruthRoleMappingResponseSerializer,
     GroundTruthSearchRequestSerializer,
     GroundTruthSearchResponseSerializer,
+    GroundTruthSetupRequestSerializer,
+    GroundTruthSetupResponseSerializer,
     GroundTruthStatusResponseSerializer,
     GroundTruthUploadRequestSerializer,
     GroundTruthUploadResponseSerializer,
+    GroundTruthValidateOutputRequestSerializer,
+    GroundTruthValidateOutputResponseSerializer,
     LegacyEvalTemplatesRequestSerializer,
     LegacyEvalTemplatesResponseSerializer,
     LegacyEvalTemplateUpdateResponseSerializer,
@@ -4410,23 +4412,29 @@ class GroundTruthListView(APIView):
                 .order_by("-created_at")
             )
 
-            items = [
-                GroundTruthItem(
-                    id=str(gt.id),
-                    name=gt.name,
-                    description=gt.description or "",
-                    file_name=gt.file_name or "",
-                    columns=gt.columns or [],
-                    row_count=gt.row_count,
-                    variable_mapping=gt.variable_mapping,
-                    role_mapping=gt.role_mapping,
-                    embedding_status=gt.embedding_status,
-                    embedded_row_count=gt.embedded_row_count,
-                    storage_type=gt.storage_type,
-                    created_at=gt.created_at.isoformat() if gt.created_at else "",
+            items = []
+            for gt in gts:
+                stale = bool(
+                    gt.embedded_row_count > 0
+                    and gt.embedding_status != "completed"
                 )
-                for gt in gts
-            ]
+                items.append(
+                    GroundTruthItem(
+                        id=str(gt.id),
+                        name=gt.name,
+                        description=gt.description or "",
+                        file_name=gt.file_name or "",
+                        columns=gt.columns or [],
+                        row_count=gt.row_count,
+                        variable_mapping=gt.variable_mapping,
+                        role_mapping=gt.role_mapping,
+                        embedding_status=gt.embedding_status,
+                        embedded_row_count=gt.embedded_row_count,
+                        storage_type=gt.storage_type,
+                        created_at=gt.created_at.isoformat() if gt.created_at else "",
+                        embeddings_stale=stale,
+                    )
+                )
 
             response = GroundTruthListResponse(
                 template_id=str(template_id),
@@ -4556,7 +4564,12 @@ class GroundTruthUploadView(APIView):
 
 
 class GroundTruthMappingView(APIView):
-    """PUT /model-hub/ground-truth/<id>/mapping/"""
+    """PUT /model-hub/ground-truth/<id>/mapping/
+
+    Legacy single-purpose endpoint. Superseded by
+    :class:`GroundTruthSetupView`, which writes variable mapping
+    alongside role mapping and injection config in one atomic call.
+    """
 
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -4571,96 +4584,77 @@ class GroundTruthMappingView(APIView):
     )
     def put(self, request, ground_truth_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalGroundTruth
+        from model_hub.services.ground_truth_service import (
+            GroundTruthService,
+            ServiceError,
+        )
         from model_hub.types import VariableMappingRequest
 
         try:
-            try:
-                req = VariableMappingRequest(**request.validated_data)
-            except Exception as e:
-                from tfc.utils.errors import format_request_error
-
-                return self._gm.bad_request(format_request_error(e))
-
-            try:
-                gt = _get_accessible_ground_truth(ground_truth_id, request)
-            except EvalGroundTruth.DoesNotExist:
-                return self._gm.not_found("Ground truth not found.")
-
-            gt.variable_mapping = req.variable_mapping
-            gt.save(update_fields=["variable_mapping", "updated_at"])
-
-            return self._gm.success_response(
-                {"id": str(gt.id), "variable_mapping": gt.variable_mapping}
-            )
-
+            req = VariableMappingRequest(**request.validated_data)
         except Exception as e:
-            logger.error(
-                f"Error in GroundTruthMappingView: {str(e)}\n{traceback.format_exc()}"
-            )
-            return self._gm.bad_request(str(e))
+            from tfc.utils.errors import format_request_error
+
+            return self._gm.bad_request(format_request_error(e))
+
+        try:
+            gt = _get_accessible_ground_truth(ground_truth_id, request)
+        except EvalGroundTruth.DoesNotExist:
+            return self._gm.not_found("Ground truth not found.")
+
+        result = GroundTruthService.update_variable_mapping(
+            gt=gt, variable_mapping=req.variable_mapping
+        )
+        if isinstance(result, ServiceError):
+            return self._gm.bad_request(result.message)
+        return self._gm.success_response(result)
 
 
-class GroundTruthRoleMappingView(APIView):
-    """PUT /model-hub/ground-truth/<id>/role-mapping/"""
+class GroundTruthSetupView(APIView):
+    """PUT /model-hub/ground-truth/<id>/setup/
+
+    Atomic save of variable mapping, role mapping, and injection config
+    (max_examples, similarity_threshold, injection_format, enabled).
+    ``role_mapping["output"]`` is mandatory.
+    """
 
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
     @validated_request(
-        request_serializer=GroundTruthRoleMappingRequestSerializer,
+        request_serializer=GroundTruthSetupRequestSerializer,
         responses={
-            200: GroundTruthRoleMappingResponseSerializer,
+            200: GroundTruthSetupResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
     )
     def put(self, request, ground_truth_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalGroundTruth
-        from model_hub.types import RoleMappingRequest
+        from model_hub.services.ground_truth_service import (
+            GroundTruthService,
+            ServiceError,
+        )
 
         try:
-            try:
-                req = RoleMappingRequest(**request.validated_data)
-            except Exception as e:
-                from tfc.utils.errors import format_request_error
+            gt = _get_accessible_ground_truth(ground_truth_id, request)
+        except EvalGroundTruth.DoesNotExist:
+            return self._gm.not_found("Ground truth not found.")
 
-                return self._gm.bad_request(format_request_error(e))
-
-            valid_roles = {"input", "expected_output", "score", "reasoning"}
-            invalid = set(req.role_mapping.keys()) - valid_roles
-            if invalid:
-                return self._gm.bad_request(
-                    f"Invalid roles: {invalid}. Valid roles: {valid_roles}"
-                )
-
-            try:
-                gt = _get_accessible_ground_truth(ground_truth_id, request)
-            except EvalGroundTruth.DoesNotExist:
-                return self._gm.not_found("Ground truth not found.")
-
-            # Validate that mapped columns exist in the dataset
-            for role, col in req.role_mapping.items():
-                if col not in (gt.columns or []):
-                    return self._gm.bad_request(
-                        f"Column '{col}' (mapped to role '{role}') not found in dataset columns: {gt.columns}"
-                    )
-
-            gt.role_mapping = req.role_mapping
-            gt.save(update_fields=["role_mapping", "updated_at"])
-
-            return self._gm.success_response(
-                {
-                    "id": str(gt.id),
-                    "role_mapping": gt.role_mapping,
-                    "embedding_status": gt.embedding_status,
-                }
-            )
-
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthRoleMappingView: {str(e)}\n{traceback.format_exc()}"
-            )
-            return self._gm.bad_request(str(e))
+        data = request.validated_data
+        result = GroundTruthService.update_setup(
+            gt=gt,
+            eval_template=gt.eval_template,
+            variable_mapping=data.get("variable_mapping") or {},
+            role_mapping=data.get("role_mapping") or {},
+            max_examples=int(data.get("max_examples")),
+            similarity_threshold=float(data.get("similarity_threshold")),
+            injection_format=data.get("injection_format", "structured"),
+            enabled=bool(data.get("enabled", True)),
+        )
+        if isinstance(result, ServiceError):
+            return self._gm.bad_request(result.message)
+        return self._gm.success_response(result)
 
 
 class GroundTruthDataView(APIView):
@@ -4734,6 +4728,7 @@ class GroundTruthStatusView(APIView):
             total = gt.row_count or 0
             embedded = gt.embedded_row_count or 0
             progress = (embedded / total * 100) if total > 0 else 0.0
+            stale = bool(embedded > 0 and gt.embedding_status != "completed")
 
             response = GroundTruthStatusResponse(
                 id=str(gt.id),
@@ -4741,6 +4736,7 @@ class GroundTruthStatusView(APIView):
                 embedded_row_count=embedded,
                 total_rows=total,
                 progress_percent=round(progress, 1),
+                embeddings_stale=stale,
             )
             return self._gm.success_response(response.model_dump())
 
@@ -4919,53 +4915,71 @@ class GroundTruthSearchView(APIView):
     )
     def post(self, request, ground_truth_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalGroundTruth
-        from model_hub.types import GroundTruthSearchRequest
-        from model_hub.utils.ground_truth_retrieval import (
-            generate_embedding,
-            retrieve_similar_examples,
+        from model_hub.services.ground_truth_service import (
+            GroundTruthService,
+            ServiceError,
         )
+        from model_hub.types import GroundTruthSearchRequest
 
         try:
-            try:
-                req = GroundTruthSearchRequest(**request.validated_data)
-            except Exception as e:
-                from tfc.utils.errors import format_request_error
-
-                return self._gm.bad_request(format_request_error(e))
-
-            try:
-                gt = _get_accessible_ground_truth(ground_truth_id, request)
-            except EvalGroundTruth.DoesNotExist:
-                return self._gm.not_found("Ground truth not found.")
-
-            if gt.embedding_status != "completed":
-                return self._gm.bad_request(
-                    f"Embeddings not ready. Status: {gt.embedding_status}. "
-                    "Wait for embedding generation to complete."
-                )
-
-            query_embedding = generate_embedding(req.query)
-
-            results = retrieve_similar_examples(
-                ground_truth_id=str(gt.id),
-                query_embedding=query_embedding,
-                max_examples=req.max_results,
-                similarity_threshold=0.0,  # Return all for testing, let user see scores
-            )
-
-            return self._gm.success_response(
-                {
-                    "query": req.query,
-                    "results": results,
-                    "total": len(results),
-                }
-            )
-
+            req = GroundTruthSearchRequest(**request.validated_data)
         except Exception as e:
-            logger.error(
-                f"Error in GroundTruthSearchView: {str(e)}\n{traceback.format_exc()}"
+            from tfc.utils.errors import format_request_error
+
+            return self._gm.bad_request(format_request_error(e))
+
+        try:
+            gt = _get_accessible_ground_truth(ground_truth_id, request)
+        except EvalGroundTruth.DoesNotExist:
+            return self._gm.not_found("Ground truth not found.")
+
+        result = GroundTruthService.search(
+            gt=gt,
+            inputs=req.inputs,
+            query=req.query,
+            max_results=req.max_results,
+            similarity_threshold=req.similarity_threshold,
+        )
+        if isinstance(result, ServiceError):
+            return self._gm.bad_request(result.message)
+        return self._gm.success_response(result)
+
+
+class GroundTruthValidateOutputView(APIView):
+    """POST /model-hub/eval-templates/<id>/ground-truth/validate-output/
+
+    Validates a candidate eval-output value against the template's
+    configured output type. Used by the FE when previewing/importing
+    rows so the user gets immediate feedback if their mapped output
+    column contains values that won't be accepted at eval time.
+    """
+
+    _gm = GeneralMethods()
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        request_serializer=GroundTruthValidateOutputRequestSerializer,
+        responses={
+            200: GroundTruthValidateOutputResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
+    def post(self, request, template_id, *args, **kwargs):
+        from model_hub.services.ground_truth_service import GroundTruthService
+
+        try:
+            template = _get_accessible_eval_template_for_request(
+                template_id, request
             )
-            return self._gm.bad_request(str(e))
+        except EvalTemplate.DoesNotExist:
+            return self._gm.not_found("Eval template not found.")
+
+        return self._gm.success_response(
+            GroundTruthService.validate_output(
+                template=template, value=request.validated_data.get("value")
+            )
+        )
 
 
 class GroundTruthTriggerEmbeddingView(APIView):

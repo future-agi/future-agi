@@ -10034,6 +10034,7 @@ export interface GroundTruthItemApi {
   /** @minLength 1 */
   storage_type?: string;
   created_at?: string;
+  embeddings_stale?: boolean;
 }
 
 export interface GroundTruthListResponseResultApi {
@@ -10078,6 +10079,22 @@ export interface GroundTruthUploadResponseResultApi {
 export interface GroundTruthUploadResponseApi {
   status: boolean;
   result: GroundTruthUploadResponseResultApi;
+}
+
+export type GroundTruthValidateOutputRequestApiValue = { [key: string]: unknown };
+
+export interface GroundTruthValidateOutputRequestApi {
+  value: GroundTruthValidateOutputRequestApiValue;
+}
+
+export interface GroundTruthValidateOutputResponseResultApi {
+  ok: boolean;
+  error?: string;
+}
+
+export interface GroundTruthValidateOutputResponseApi {
+  status: boolean;
+  result: GroundTruthValidateOutputResponseResultApi;
 }
 
 export type EvalTemplateUpdateV2RequestApiEvalType = typeof EvalTemplateUpdateV2RequestApiEvalType[keyof typeof EvalTemplateUpdateV2RequestApiEvalType];
@@ -11413,41 +11430,35 @@ export interface GroundTruthMappingResponseApi {
   result: GroundTruthMappingResponseResultApi;
 }
 
-export type GroundTruthRoleMappingRequestApiRoleMapping = { [key: string]: unknown };
-
-export interface GroundTruthRoleMappingRequestApi {
-  role_mapping: GroundTruthRoleMappingRequestApiRoleMapping;
-}
-
-export type GroundTruthRoleMappingResponseResultApiRoleMapping = { [key: string]: unknown };
-
-export interface GroundTruthRoleMappingResponseResultApi {
-  id: string;
-  role_mapping?: GroundTruthRoleMappingResponseResultApiRoleMapping;
-  /** @minLength 1 */
-  embedding_status: string;
-}
-
-export interface GroundTruthRoleMappingResponseApi {
-  status: boolean;
-  result: GroundTruthRoleMappingResponseResultApi;
-}
+/**
+ * Multi-variable runtime inputs: {"variable_name": "value", ...}
+ */
+export type GroundTruthSearchRequestApiInputs = { [key: string]: unknown };
 
 export interface GroundTruthSearchRequestApi {
-  /** @minLength 1 */
-  query: string;
+  /** Legacy single-text query. Prefer `inputs` for multi-variable. */
+  query?: string;
+  /** Multi-variable runtime inputs: {"variable_name": "value", ...} */
+  inputs?: GroundTruthSearchRequestApiInputs;
   /**
      * @minimum 1
      * @maximum 20
      */
   max_results?: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  similarity_threshold?: number;
 }
+
+export type GroundTruthSearchResponseResultApiInputs = { [key: string]: unknown };
 
 export type GroundTruthSearchResponseResultApiResultsItem = { [key: string]: unknown };
 
 export interface GroundTruthSearchResponseResultApi {
-  /** @minLength 1 */
   query: string;
+  inputs?: GroundTruthSearchResponseResultApiInputs;
   results: GroundTruthSearchResponseResultApiResultsItem[];
   total: number;
 }
@@ -11457,6 +11468,59 @@ export interface GroundTruthSearchResponseApi {
   result: GroundTruthSearchResponseResultApi;
 }
 
+export type GroundTruthSetupRequestApiVariableMapping = { [key: string]: unknown };
+
+export type GroundTruthSetupRequestApiRoleMapping = { [key: string]: unknown };
+
+export type GroundTruthSetupRequestApiInjectionFormat = typeof GroundTruthSetupRequestApiInjectionFormat[keyof typeof GroundTruthSetupRequestApiInjectionFormat];
+
+
+export const GroundTruthSetupRequestApiInjectionFormat = {
+  structured: 'structured',
+  conversational: 'conversational',
+  xml: 'xml',
+} as const;
+
+export interface GroundTruthSetupRequestApi {
+  variable_mapping: GroundTruthSetupRequestApiVariableMapping;
+  role_mapping: GroundTruthSetupRequestApiRoleMapping;
+  /**
+     * @minimum 1
+     * @maximum 20
+     */
+  max_examples: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  similarity_threshold: number;
+  injection_format?: GroundTruthSetupRequestApiInjectionFormat;
+  /** Whether this template should inject GT few-shot examples at run time. Default True for back-compat with older FE clients; current FE always sends explicitly. */
+  enabled?: boolean;
+}
+
+export type GroundTruthSetupResponseResultApiVariableMapping = { [key: string]: unknown };
+
+export type GroundTruthSetupResponseResultApiRoleMapping = { [key: string]: unknown };
+
+export type GroundTruthSetupResponseResultApiConfig = { [key: string]: unknown };
+
+export interface GroundTruthSetupResponseResultApi {
+  id: string;
+  template_id: string;
+  variable_mapping?: GroundTruthSetupResponseResultApiVariableMapping;
+  role_mapping?: GroundTruthSetupResponseResultApiRoleMapping;
+  /** @minLength 1 */
+  embedding_status: string;
+  embeddings_stale?: boolean;
+  config?: GroundTruthSetupResponseResultApiConfig;
+}
+
+export interface GroundTruthSetupResponseApi {
+  status: boolean;
+  result: GroundTruthSetupResponseResultApi;
+}
+
 export interface GroundTruthStatusResponseResultApi {
   id: string;
   /** @minLength 1 */
@@ -11464,6 +11528,7 @@ export interface GroundTruthStatusResponseResultApi {
   embedded_row_count: number;
   total_rows: number;
   progress_percent: number;
+  embeddings_stale?: boolean;
 }
 
 export interface GroundTruthStatusResponseApi {

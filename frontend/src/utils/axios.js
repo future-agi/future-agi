@@ -929,8 +929,8 @@ export const endpoints = {
         apiPath("/model-hub/ground-truth/{ground_truth_id}/mapping/", {
           ground_truth_id: id,
         }),
-      groundTruthRoleMapping: (id) =>
-        apiPath("/model-hub/ground-truth/{ground_truth_id}/role-mapping/", {
+      groundTruthSetup: (id) =>
+        apiPath("/model-hub/ground-truth/{ground_truth_id}/setup/", {
           ground_truth_id: id,
         }),
       groundTruthData: (id) =>
@@ -953,6 +953,11 @@ export const endpoints = {
         apiPath("/model-hub/ground-truth/{ground_truth_id}/", {
           ground_truth_id: id,
         }),
+      groundTruthValidateOutput: (id) =>
+        apiPath(
+          "/model-hub/eval-templates/{template_id}/ground-truth/validate-output/",
+          { template_id: id },
+        ),
       runEval: apiPath("/model-hub/test-evaluation/"),
       getEvalConfigs: apiPath("/model-hub/get-eval-config"),
       getEvalNames: apiPath("/model-hub/get-eval-template-names"),
