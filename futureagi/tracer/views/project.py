@@ -250,7 +250,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 scan_config = TraceScanConfig.objects.get(project=instance)
                 data["sampling_rate"] = scan_config.sampling_rate
             except TraceScanConfig.DoesNotExist:
-                data["sampling_rate"] = 0.1
+                data["sampling_rate"] = 0
 
             return self._gm.success_response(data)
 

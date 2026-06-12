@@ -40,7 +40,7 @@ const EvaluationTest = () => {
             color="text.disabled"
             width={18}
           />
-          <Typography fontSize="13px" color="text.disabled">
+          <Typography fontSize="13px" color="text.secondary">
             Run a sample evals to see how it works
           </Typography>
         </Box>

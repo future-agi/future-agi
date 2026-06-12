@@ -76,7 +76,7 @@ function HelpCard({ title, description, imageSrc }) {
         <Typography
           typography={"s1"}
           fontWeight={"fontWeightRegular"}
-          color={"text.disabled"}
+          color={"text.secondary"}
         >
           {description}
         </Typography>
@@ -136,7 +136,7 @@ export default function CreateAgentScenarioHelp({ open, onClose }) {
           </Typography>
           <Typography
             typography={"s1_2"}
-            color={"text.disabled"}
+            color={"text.secondary"}
             fontWeight={"fontWeightRegular"}
           >
             Use your agent definition to create scenarios and run tests

@@ -719,7 +719,7 @@ const TaskConfigPanel = ({
           {!isProjectSelected && (
             <Typography
               variant="caption"
-              color="text.disabled"
+              color="text.secondary"
               sx={{ fontSize: "11px", display: "block", fontStyle: "italic" }}
             >
               Select a project to configure filters, scheduling, and
