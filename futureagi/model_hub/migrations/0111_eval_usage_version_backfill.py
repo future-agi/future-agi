@@ -96,8 +96,8 @@ def backfill_apicalllog_version_info(apps, schema_editor):
             total_updated += len(batch)
 
     if total_updated:
-        print(
-            f"\n  Backfilled version info on {total_updated} APICallLog entries."
+        logger.info(
+            f"Backfilled version info on {total_updated} APICallLog entries."
         )
 
 
