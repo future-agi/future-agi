@@ -460,6 +460,157 @@ class TestGroundTruthRoleMappingAPI:
 
 
 # =========================================================================
+# Setup API: atomic save of variable mapping, role mapping, injection
+# config, and the enable toggle. Backs the FE single-Save button.
+# =========================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db
+class TestGroundTruthSetupAPI:
+    """Contract tests for PUT /model-hub/ground-truth/<id>/setup/.
+
+    Covers the baseline gates: happy path, missing required field,
+    unknown field, invalid type, auth, response shape. Adds focused
+    coverage of the ``enabled`` toggle and its persistence on
+    ``EvalTemplate.config["ground_truth"]``.
+    """
+
+    def _setup_url(self, gt_id):
+        return f"/model-hub/ground-truth/{gt_id}/setup/"
+
+    def _valid_payload(self, *, enabled=True):
+        return {
+            "variable_mapping": {"input": "input"},
+            "role_mapping": {"output": "score", "explanation": "notes"},
+            "max_examples": 3,
+            "similarity_threshold": 0.7,
+            "enabled": enabled,
+        }
+
+    def test_setup_persists_all_fields_when_enabled_true(
+        self, auth_client, ground_truth
+    ):
+        response = auth_client.put(
+            self._setup_url(ground_truth.id),
+            self._valid_payload(enabled=True),
+            format="json",
+        )
+        assert response.status_code == 200
+
+        ground_truth.refresh_from_db()
+        ground_truth.eval_template.refresh_from_db()
+        assert ground_truth.variable_mapping == {"input": "input"}
+        assert ground_truth.role_mapping == {
+            "output": "score",
+            "explanation": "notes",
+        }
+        template_gt_config = (ground_truth.eval_template.config or {}).get(
+            "ground_truth"
+        )
+        assert template_gt_config is not None
+        assert template_gt_config["enabled"] is True
+        assert template_gt_config["ground_truth_id"] == str(ground_truth.id)
+        assert template_gt_config["max_examples"] == 3
+        assert template_gt_config["similarity_threshold"] == 0.7
+
+    def test_setup_persists_enabled_false_for_pause_without_delete(
+        self, auth_client, ground_truth
+    ):
+        """Toggling GT off keeps the dataset and embeddings; the
+        runtime skips injection because config.enabled is False."""
+        response = auth_client.put(
+            self._setup_url(ground_truth.id),
+            self._valid_payload(enabled=False),
+            format="json",
+        )
+        assert response.status_code == 200
+
+        ground_truth.eval_template.refresh_from_db()
+        template_gt_config = (ground_truth.eval_template.config or {}).get(
+            "ground_truth"
+        )
+        assert template_gt_config["enabled"] is False
+
+    def test_setup_defaults_enabled_to_true_when_field_omitted(
+        self, auth_client, ground_truth
+    ):
+        """Back-compat: older FE clients omit `enabled`. Default is
+        True so saving the setup turns GT on."""
+        payload = self._valid_payload()
+        payload.pop("enabled")
+        response = auth_client.put(
+            self._setup_url(ground_truth.id), payload, format="json"
+        )
+        assert response.status_code == 200
+
+        ground_truth.eval_template.refresh_from_db()
+        template_gt_config = (ground_truth.eval_template.config or {}).get(
+            "ground_truth"
+        )
+        assert template_gt_config["enabled"] is True
+
+    def test_setup_rejects_unknown_field(self, auth_client, ground_truth):
+        payload = self._valid_payload()
+        payload["mystery_field"] = "should-fail"
+        response = auth_client.put(
+            self._setup_url(ground_truth.id), payload, format="json"
+        )
+        assert response.status_code == 400
+
+    def test_setup_rejects_non_boolean_enabled(self, auth_client, ground_truth):
+        payload = self._valid_payload()
+        payload["enabled"] = "yes-please"
+        response = auth_client.put(
+            self._setup_url(ground_truth.id), payload, format="json"
+        )
+        assert response.status_code == 400
+
+    def test_setup_rejects_missing_required_field(
+        self, auth_client, ground_truth
+    ):
+        payload = self._valid_payload()
+        payload.pop("max_examples")
+        response = auth_client.put(
+            self._setup_url(ground_truth.id), payload, format="json"
+        )
+        assert response.status_code == 400
+
+    def test_setup_rejects_unauthenticated_request(
+        self, api_client, ground_truth
+    ):
+        response = api_client.put(
+            self._setup_url(ground_truth.id),
+            self._valid_payload(),
+            format="json",
+        )
+        assert response.status_code in (401, 403)
+
+    def test_setup_returns_response_with_post_save_snapshot(
+        self, auth_client, ground_truth
+    ):
+        """Response carries the post-save snapshot the FE needs to clear
+        its dirty state without an extra refetch round-trip."""
+        response = auth_client.put(
+            self._setup_url(ground_truth.id),
+            self._valid_payload(enabled=False),
+            format="json",
+        )
+        assert response.status_code == 200
+        result = response.data["result"]
+        for required_key in (
+            "id",
+            "template_id",
+            "variable_mapping",
+            "role_mapping",
+            "config",
+            "embeddings_stale",
+        ):
+            assert required_key in result
+        assert result["config"]["enabled"] is False
+
+
+# =========================================================================
 # Data Preview API
 # =========================================================================
 

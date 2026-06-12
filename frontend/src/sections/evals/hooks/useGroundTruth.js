@@ -161,13 +161,69 @@ export function useUpdateRoleMapping() {
       queryClient.invalidateQueries({ queryKey: ["evals", "ground-truth"] });
       enqueueSnackbar(
         result?.embeddings_stale
-          ? "Role mapping saved. Embeddings are stale — re-embed when ready."
+          ? "Role mapping saved. Embeddings are stale. Re-embed when ready."
           : "Role mapping saved",
         { variant: result?.embeddings_stale ? "warning" : "success" },
       );
     },
     onError: (err) =>
       enqueueSnackbar(toastFromError(err, "Failed to save mapping"), {
+        variant: "error",
+      }),
+  });
+}
+
+// ── Atomic save of the whole GT tab (variable mapping + role mapping +
+// injection config). Backs the single Save button on the FE GT tab.
+// One PUT, one notification. The BE service refuses without a real
+// `output` column in `role_mapping` and rejects unknown columns.
+export function useSaveGroundTruthSetup(templateId) {
+  const queryClient = useQueryClient();
+  const { enqueueSnackbar } = useSnackbar();
+  return useMutation({
+    mutationFn: async ({
+      gtId,
+      variableMapping,
+      roleMapping,
+      maxExamples,
+      similarityThreshold,
+      injectionFormat = "structured",
+      enabled,
+    }) => {
+      const { data } = await axios.put(
+        endpoints.develop.eval.groundTruthSetup(gtId),
+        {
+          variable_mapping: variableMapping,
+          role_mapping: roleMapping,
+          max_examples: maxExamples,
+          similarity_threshold: similarityThreshold,
+          injection_format: injectionFormat,
+          enabled,
+        },
+      );
+      return data?.result;
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["evals", "ground-truth"] });
+      if (templateId) {
+        queryClient.invalidateQueries({
+          queryKey: ["evals", "ground-truth-config", templateId],
+        });
+        // Setup writes template.config.ground_truth; without this the
+        // dirty check stays true until the next page visit.
+        queryClient.invalidateQueries({
+          queryKey: ["evals", "detail", templateId],
+        });
+      }
+      enqueueSnackbar(
+        result?.embeddings_stale
+          ? "Saved. Variable mapping changed. Re-embed when ready."
+          : "Saved",
+        { variant: result?.embeddings_stale ? "warning" : "success" },
+      );
+    },
+    onError: (err) =>
+      enqueueSnackbar(toastFromError(err, "Failed to save"), {
         variant: "error",
       }),
   });
@@ -191,7 +247,7 @@ export function useUpdateVariableMapping() {
       queryClient.invalidateQueries({ queryKey: ["evals", "ground-truth"] });
       enqueueSnackbar(
         result?.embeddings_stale
-          ? "Variable mapping saved. Embeddings are stale — re-embed when ready."
+          ? "Variable mapping saved. Embeddings are stale. Re-embed when ready."
           : "Variable mapping saved",
         { variant: result?.embeddings_stale ? "warning" : "success" },
       );

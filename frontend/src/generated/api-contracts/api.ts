@@ -533,6 +533,7 @@ import type {
   GroundTruthRoleMappingResponseApi,
   GroundTruthSearchRequestApi,
   GroundTruthSearchResponseApi,
+  GroundTruthSetupRequestApi,
   GroundTruthStatusResponseApi,
   GroundTruthUploadRequestApi,
   GroundTruthUploadResponseApi,
@@ -40563,6 +40564,80 @@ export const modelHubGroundTruthSearchCreate = async (groundTruthId: string,
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
       groundTruthSearchRequestApi,)
+  }
+);}
+
+
+
+export type modelHubGroundTruthSetupUpdateResponse200 = {
+  data: GroundTruthRoleMappingResponseApi
+  status: 200
+}
+
+export type modelHubGroundTruthSetupUpdateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubGroundTruthSetupUpdateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubGroundTruthSetupUpdateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubGroundTruthSetupUpdateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubGroundTruthSetupUpdateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubGroundTruthSetupUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
+}
+
+export type modelHubGroundTruthSetupUpdateResponseSuccess = (modelHubGroundTruthSetupUpdateResponse200) & {
+  headers: Headers;
+};
+export type modelHubGroundTruthSetupUpdateResponseError = (modelHubGroundTruthSetupUpdateResponse400 | modelHubGroundTruthSetupUpdateResponse403 | modelHubGroundTruthSetupUpdateResponse404 | modelHubGroundTruthSetupUpdateResponse409 | modelHubGroundTruthSetupUpdateResponse500 | modelHubGroundTruthSetupUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type modelHubGroundTruthSetupUpdateResponse = (modelHubGroundTruthSetupUpdateResponseSuccess | modelHubGroundTruthSetupUpdateResponseError)
+
+export const getModelHubGroundTruthSetupUpdateUrl = (groundTruthId: string,) => {
+
+
+
+
+  return `/model-hub/ground-truth/${groundTruthId}/setup/`
+}
+
+/**
+ * Atomic write of variable mapping, role mapping, and injection config
+(max_examples, similarity_threshold, injection_format, enabled).
+``role_mapping["output"]`` is mandatory; the service rejects the
+write without it.
+ * @summary PUT /model-hub/ground-truth/<id>/setup/
+ */
+export const modelHubGroundTruthSetupUpdate = async (groundTruthId: string,
+    groundTruthSetupRequestApi: GroundTruthSetupRequestApi, options?: RequestInit): Promise<modelHubGroundTruthSetupUpdateResponse> => {
+
+  return apiMutator<modelHubGroundTruthSetupUpdateResponse>(getModelHubGroundTruthSetupUpdateUrl(groundTruthId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      groundTruthSetupRequestApi,)
   }
 );}
 

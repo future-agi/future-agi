@@ -22164,6 +22164,54 @@ export const ModelHubGroundTruthSearchCreateResponse = zod.object({
 
 
 /**
+ * Atomic write of variable mapping, role mapping, and injection config
+(max_examples, similarity_threshold, injection_format, enabled).
+``role_mapping["output"]`` is mandatory; the service rejects the
+write without it.
+ * @summary PUT /model-hub/ground-truth/<id>/setup/
+ */
+export const ModelHubGroundTruthSetupUpdateParams = zod.object({
+  "ground_truth_id": zod.string()
+})
+
+export const modelHubGroundTruthSetupUpdateBodyMaxExamplesMax = 20;
+
+export const modelHubGroundTruthSetupUpdateBodySimilarityThresholdMin = 0;
+export const modelHubGroundTruthSetupUpdateBodySimilarityThresholdMax = 1;
+
+export const modelHubGroundTruthSetupUpdateBodyInjectionFormatDefault = `structured`;
+export const modelHubGroundTruthSetupUpdateBodyEnabledDefault = true;
+
+export const ModelHubGroundTruthSetupUpdateBody = zod.object({
+  "variable_mapping": zod.object({
+
+}).passthrough(),
+  "role_mapping": zod.object({
+
+}).passthrough(),
+  "max_examples": zod.number().min(1).max(modelHubGroundTruthSetupUpdateBodyMaxExamplesMax),
+  "similarity_threshold": zod.number().min(modelHubGroundTruthSetupUpdateBodySimilarityThresholdMin).max(modelHubGroundTruthSetupUpdateBodySimilarityThresholdMax),
+  "injection_format": zod.enum(['structured', 'conversational', 'xml']).default(modelHubGroundTruthSetupUpdateBodyInjectionFormatDefault),
+  "enabled": zod.boolean().default(modelHubGroundTruthSetupUpdateBodyEnabledDefault).describe('Whether this template should inject GT few-shot examples at run time. Default True for back-compat with older FE clients; current FE always sends explicitly.')
+})
+
+
+export const modelHubGroundTruthSetupUpdateResponseResultEmbeddingsStaleDefault = false;
+
+export const ModelHubGroundTruthSetupUpdateResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "id": zod.string().uuid(),
+  "role_mapping": zod.object({
+
+}).passthrough().optional(),
+  "embedding_status": zod.string().min(1),
+  "embeddings_stale": zod.boolean().default(modelHubGroundTruthSetupUpdateResponseResultEmbeddingsStaleDefault)
+})
+})
+
+
+/**
  * GET /model-hub/ground-truth/<id>/status/
  */
 export const ModelHubGroundTruthStatusListParams = zod.object({

@@ -159,6 +159,172 @@ class GroundTruthService:
             ),
         }
 
+    # ── atomic setup write (FE single-save button) ────────────────
+
+    @staticmethod
+    def update_setup(
+        *,
+        gt: EvalGroundTruth,
+        eval_template: EvalTemplate,
+        variable_mapping: dict[str, Any],
+        role_mapping: dict[str, Any],
+        max_examples: int,
+        similarity_threshold: float,
+        injection_format: str = "structured",
+        enabled: bool = True,
+    ) -> dict[str, Any] | ServiceError:
+        """Persist mappings + injection config atomically.
+
+        Rules:
+        * ``role_mapping["output"]`` (or legacy ``expected_output``) is
+          mandatory and must point at a real GT column.
+        * ``role_mapping["explanation"]`` (or legacy ``reasoning`` /
+          ``reason``) is optional; when set must be a real column.
+        * Every ``variable_mapping`` value must be a real GT column.
+        * ``max_examples`` in [1, 20], ``similarity_threshold`` in [0, 1].
+        """
+        from django.db import transaction
+
+        if not _has_value(role_mapping.get("output")) and not _has_value(
+            role_mapping.get("expected_output")
+        ):
+            return ServiceError(
+                "Expected output column is required. Pick a ground truth "
+                "column that carries the labelled eval verdict.",
+                code="EXPECTED_OUTPUT_REQUIRED",
+            )
+
+        if not (1 <= int(max_examples) <= 20):
+            return ServiceError(
+                "max_examples must be between 1 and 20.",
+                code="INVALID_MAX_EXAMPLES",
+            )
+        if not (0.0 <= float(similarity_threshold) <= 1.0):
+            return ServiceError(
+                "similarity_threshold must be between 0 and 1.",
+                code="INVALID_SIMILARITY_THRESHOLD",
+            )
+
+        invalid_roles = {
+            r for r in role_mapping if r not in GroundTruthService.ALLOWED_ROLE_KEYS
+        }
+        if invalid_roles:
+            return ServiceError(
+                f"Invalid role keys: {sorted(invalid_roles)}. "
+                "Allowed keys: output, explanation.",
+                code="INVALID_ROLE_KEY",
+            )
+        for source_mapping, label in (
+            (variable_mapping, "variable"),
+            (role_mapping, "role"),
+        ):
+            bad = _first_missing_column(source_mapping, gt.columns or [], label=label)
+            if bad is not None:
+                col, key = bad
+                return ServiceError(
+                    f"Column '{col}' (mapped to {label} '{key}') not found "
+                    f"in dataset columns: {gt.columns}",
+                    code="INVALID_COLUMN",
+                )
+
+        variable_mapping_changed = (gt.variable_mapping or {}) != (
+            variable_mapping or {}
+        )
+        embeddings_stale = False
+
+        with transaction.atomic():
+            gt.variable_mapping = variable_mapping
+            gt.role_mapping = role_mapping
+            gt_update_fields = ["variable_mapping", "role_mapping", "updated_at"]
+            if variable_mapping_changed and gt.embedding_status == "completed":
+                gt.embedding_status = "pending"
+                gt_update_fields.append("embedding_status")
+                embeddings_stale = True
+            gt.save(update_fields=gt_update_fields)
+
+            template_config = dict(eval_template.config or {})
+            template_config["ground_truth"] = {
+                "enabled": bool(enabled),
+                "ground_truth_id": str(gt.id),
+                "max_examples": int(max_examples),
+                "similarity_threshold": float(similarity_threshold),
+                "injection_format": injection_format,
+            }
+            eval_template.config = template_config
+            eval_template.save(update_fields=["config", "updated_at"])
+
+        logger.info(
+            "ground_truth_setup_updated",
+            ground_truth_id=str(gt.id),
+            template_id=str(eval_template.id),
+            embeddings_stale=embeddings_stale,
+            variable_mapping_changed=variable_mapping_changed,
+        )
+        return {
+            "id": str(gt.id),
+            "template_id": str(eval_template.id),
+            "variable_mapping": gt.variable_mapping,
+            "role_mapping": gt.role_mapping,
+            "embedding_status": gt.embedding_status,
+            "embeddings_stale": embeddings_stale,
+            "config": template_config["ground_truth"],
+        }
+
+    # ── preview-time enrichment for the FE playground ─────────────
+
+    @staticmethod
+    def resolve_preview_examples(
+        *, eval_template: EvalTemplate, eval_inputs: dict[str, Any]
+    ) -> list[dict[str, Any]] | None:
+        """Return retrieved GT rows for the playground response.
+
+        Tri-state contract for the FE panel: ``None`` when GT is off or
+        unconfigured (panel hides); ``[]`` when enabled with zero
+        matches (panel renders empty state); ``[...]`` with matches.
+        Falls back to ``None`` on internal errors so the eval verdict
+        is not blocked.
+        """
+        try:
+            from model_hub.utils.ground_truth_retrieval import (
+                get_ground_truth_few_shot_examples,
+                load_ground_truth_config,
+            )
+
+            gt_config = load_ground_truth_config(eval_template)
+            if not gt_config:
+                return None
+            if not isinstance(eval_inputs, dict) or not eval_inputs:
+                return None
+
+            rows = get_ground_truth_few_shot_examples(gt_config, eval_inputs) or []
+
+            gt = (
+                EvalGroundTruth.objects.filter(
+                    eval_template=eval_template,
+                    id=gt_config.get("ground_truth_id"),
+                    deleted=False,
+                )
+                .only("variable_mapping", "role_mapping")
+                .first()
+            )
+            variable_mapping = (gt.variable_mapping if gt else {}) or {}
+            role_mapping = (gt.role_mapping if gt else {}) or {}
+            return [
+                {
+                    "row": row,
+                    "variable_mapping": variable_mapping,
+                    "role_mapping": role_mapping,
+                }
+                for row in rows
+            ]
+        except Exception as exc:
+            logger.warning(
+                "preview_ground_truth_examples_lookup_failed",
+                template_id=str(getattr(eval_template, "id", "") or ""),
+                error=str(exc),
+            )
+            return None
+
     # ── CH embedding write (full-dataset pass) ────────────────────
 
     @staticmethod
@@ -379,6 +545,17 @@ class GroundTruthService:
             pass_threshold=getattr(template, "pass_threshold", None),
         )
         return {"ok": ok, "error": error or ""}
+
+
+def _has_value(value: Any) -> bool:
+    """Treat blank strings, None and empty containers as unset."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) > 0
+    return True
 
 
 def _first_missing_column(

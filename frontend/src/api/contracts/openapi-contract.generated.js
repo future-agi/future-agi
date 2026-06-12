@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 977,
+  "endpointCount": 978,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -20491,6 +20491,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/GroundTruthSearchResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/model-hub/ground-truth/{ground_truth_id}/setup/": {
+      "put": {
+        "operationId": "model-hub_ground-truth_setup_update",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/GroundTruthSetupRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/GroundTruthRoleMappingResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -57218,6 +57252,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/GroundTruthSearchResponseResult"
+        }
+      }
+    },
+    "GroundTruthSetupRequest": {
+      "required": [
+        "variable_mapping",
+        "role_mapping",
+        "max_examples",
+        "similarity_threshold"
+      ],
+      "type": "object",
+      "properties": {
+        "variable_mapping": {
+          "title": "Variable mapping",
+          "type": "object"
+        },
+        "role_mapping": {
+          "title": "Role mapping",
+          "type": "object"
+        },
+        "max_examples": {
+          "title": "Max examples",
+          "type": "integer",
+          "maximum": 20,
+          "minimum": 1
+        },
+        "similarity_threshold": {
+          "title": "Similarity threshold",
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0
+        },
+        "injection_format": {
+          "title": "Injection format",
+          "type": "string",
+          "enum": [
+            "structured",
+            "conversational",
+            "xml"
+          ],
+          "default": "structured"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "description": "Whether this template should inject GT few-shot examples at run time. Default True for back-compat with older FE clients; current FE always sends explicitly.",
+          "type": "boolean",
+          "default": true
         }
       }
     },

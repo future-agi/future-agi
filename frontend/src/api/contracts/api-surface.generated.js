@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 977,
+  "endpointCount": 978,
   "groups": {
     "accounts": {
       "/accounts/2fa/recovery-codes/": [
@@ -1735,6 +1735,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/model-hub/ground-truth/{ground_truth_id}/search/": [
         "post"
+      ],
+      "/model-hub/ground-truth/{ground_truth_id}/setup/": [
+        "put"
       ],
       "/model-hub/ground-truth/{ground_truth_id}/status/": [
         "get"
@@ -5030,6 +5033,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/model-hub/ground-truth/{ground_truth_id}/search/": [
     "post"
+  ],
+  "/model-hub/ground-truth/{ground_truth_id}/setup/": [
+    "put"
   ],
   "/model-hub/ground-truth/{ground_truth_id}/status/": [
     "get"

@@ -2444,6 +2444,35 @@ class GroundTruthConfigRequestSerializer(serializers.Serializer):
     )
 
 
+class GroundTruthSetupRequestSerializer(serializers.Serializer):
+    """Single atomic write covering variable mapping, role mapping, and
+    injection config. Backs the FE single-Save UX on the GT tab.
+
+    ``role_mapping`` MUST carry a non-empty ``output`` (or legacy
+    ``expected_output``) column. ``explanation`` is optional. The
+    service layer rejects any other keys.
+    """
+
+    variable_mapping = serializers.JSONField()
+    role_mapping = serializers.JSONField()
+    max_examples = serializers.IntegerField(min_value=1, max_value=20)
+    similarity_threshold = serializers.FloatField(min_value=0, max_value=1)
+    injection_format = serializers.ChoiceField(
+        choices=["structured", "conversational", "xml"],
+        required=False,
+        default="structured",
+    )
+    enabled = serializers.BooleanField(
+        required=False,
+        default=True,
+        help_text=(
+            "Whether this template should inject GT few-shot examples at "
+            "run time. Default True for back-compat with older FE clients; "
+            "current FE always sends explicitly."
+        ),
+    )
+
+
 class GroundTruthSearchRequestSerializer(serializers.Serializer):
     query = serializers.CharField(
         required=False,

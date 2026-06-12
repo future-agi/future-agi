@@ -933,6 +933,10 @@ export const endpoints = {
         apiPath("/model-hub/ground-truth/{ground_truth_id}/role-mapping/", {
           ground_truth_id: id,
         }),
+      groundTruthSetup: (id) =>
+        apiPath("/model-hub/ground-truth/{ground_truth_id}/setup/", {
+          ground_truth_id: id,
+        }),
       groundTruthData: (id) =>
         apiPath("/model-hub/ground-truth/{ground_truth_id}/data/", {
           ground_truth_id: id,

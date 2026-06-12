@@ -405,3 +405,134 @@ def test_search_legacy_query_fans_out_to_all_mapped_vars():
     call_inputs = mock.call_args.kwargs["inputs"]
     assert call_inputs == {"q": "hi", "a": "hi"}
     assert result["query"] == "hi"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# resolve_preview_examples: pure helper, no DB / DRF / Temporal.
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_resolve_preview_examples_returns_none_when_gt_config_missing():
+    """No GT config: returns None so the FE panel hides."""
+    template = _FakeTemplate()
+    with patch(
+        "model_hub.utils.ground_truth_retrieval.load_ground_truth_config",
+        return_value=None,
+    ):
+        result = GroundTruthService.resolve_preview_examples(
+            eval_template=template, eval_inputs={"q": "hi"}
+        )
+    assert result is None
+
+
+def test_resolve_preview_examples_returns_none_when_inputs_blank():
+    """No usable inputs: returns None so the FE panel hides."""
+    template = _FakeTemplate()
+    with patch(
+        "model_hub.utils.ground_truth_retrieval.load_ground_truth_config",
+        return_value={"ground_truth_id": "gt-fake", "enabled": True},
+    ):
+        result = GroundTruthService.resolve_preview_examples(
+            eval_template=template, eval_inputs={}
+        )
+    assert result is None
+
+
+def test_resolve_preview_examples_returns_empty_list_when_enabled_but_no_matches():
+    """GT enabled with zero matches: returns [] so the FE panel
+    renders the empty-state row."""
+    template = _FakeTemplate()
+
+    class _FakeQuerySet:
+        def only(self, *_a, **_kw):
+            return self
+
+        def first(self):
+            return type(
+                "GT", (), {"variable_mapping": {"q": "question"}, "role_mapping": {}}
+            )()
+
+    class _FakeManager:
+        def filter(self, **_kw):
+            return _FakeQuerySet()
+
+    with patch(
+        "model_hub.utils.ground_truth_retrieval.load_ground_truth_config",
+        return_value={"ground_truth_id": "gt-fake", "enabled": True},
+    ), patch(
+        "model_hub.utils.ground_truth_retrieval.get_ground_truth_few_shot_examples",
+        return_value=[],
+    ), patch(
+        "model_hub.services.ground_truth_service.EvalGroundTruth"
+    ) as mock_gt_model:
+        mock_gt_model.objects = _FakeManager()
+        result = GroundTruthService.resolve_preview_examples(
+            eval_template=template, eval_inputs={"q": "hi"}
+        )
+    assert result == []
+
+
+def test_resolve_preview_examples_swallows_exceptions_returning_none():
+    """Retrieval failures do not bubble up to the eval verdict."""
+    template = _FakeTemplate()
+    with patch(
+        "model_hub.utils.ground_truth_retrieval.load_ground_truth_config",
+        side_effect=RuntimeError("boom"),
+    ):
+        result = GroundTruthService.resolve_preview_examples(
+            eval_template=template, eval_inputs={"q": "hi"}
+        )
+    assert result is None
+
+
+def test_resolve_preview_examples_enriches_rows_with_mappings():
+    """Happy path: each retrieved row is enriched with the GT's
+    variable_mapping and role_mapping so the FE can render the card
+    without a follow-up fetch."""
+    template = _FakeTemplate()
+    retrieved_rows = [
+        {"question": "What is 2+2?", "answer": "4", "notes": "trivial"},
+        {"question": "Capital of France?", "answer": "Paris", "notes": "easy"},
+    ]
+    fake_gt = type(
+        "FakeGTRow",
+        (),
+        {
+            "variable_mapping": {"q": "question"},
+            "role_mapping": {"output": "answer", "explanation": "notes"},
+        },
+    )()
+
+    class _FakeQuerySet:
+        def only(self, *_args, **_kwargs):
+            return self
+
+        def first(self):
+            return fake_gt
+
+    class _FakeManager:
+        def filter(self, **_kwargs):
+            return _FakeQuerySet()
+
+    with patch(
+        "model_hub.utils.ground_truth_retrieval.load_ground_truth_config",
+        return_value={"ground_truth_id": "gt-fake", "enabled": True},
+    ), patch(
+        "model_hub.utils.ground_truth_retrieval.get_ground_truth_few_shot_examples",
+        return_value=retrieved_rows,
+    ), patch(
+        "model_hub.services.ground_truth_service.EvalGroundTruth"
+    ) as mock_gt_model:
+        mock_gt_model.objects = _FakeManager()
+        result = GroundTruthService.resolve_preview_examples(
+            eval_template=template, eval_inputs={"q": "hi"}
+        )
+
+    assert len(result) == 2
+    for enriched, original in zip(result, retrieved_rows, strict=True):
+        assert enriched["row"] == original
+        assert enriched["variable_mapping"] == {"q": "question"}
+        assert enriched["role_mapping"] == {
+            "output": "answer",
+            "explanation": "notes",
+        }

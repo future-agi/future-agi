@@ -6,6 +6,7 @@ import {
   CircularProgress,
   Divider,
   Drawer,
+  FormControlLabel,
   IconButton,
   LinearProgress,
   MenuItem,
@@ -13,6 +14,7 @@ import {
   Step,
   StepLabel,
   Stepper,
+  Switch,
   TextField,
   Tooltip,
   Typography,
@@ -35,18 +37,14 @@ import {
 import { useEvalDetail } from "../hooks/useEvalDetail";
 import {
   useDeleteGroundTruth,
-  useGroundTruthConfig,
   useGroundTruthData,
   useGroundTruthList,
   useGroundTruthStatus,
+  useSaveGroundTruthSetup,
   useTriggerEmbedding,
-  useUpdateGroundTruthConfig,
-  useUpdateRoleMapping,
-  useUpdateVariableMapping,
   useUploadGroundTruth,
 } from "../hooks/useGroundTruth";
-import SwitchComponent from "src/components/Switch/SwitchComponent";
-import TestRetrievalPanel from "./TestRetrievalPanel";
+import { extractJinjaVariables } from "src/utils/jinjaVariables";
 
 // ═══════════════════════════════════════════════════════════════
 // Status Badge
@@ -463,7 +461,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                 color="text.secondary"
                 textAlign="center"
               >
-                CSV, Excel (.xls, .xlsx), or JSON — up to 50 MB
+                CSV, Excel (.xls, .xlsx), or JSON. Up to 50 MB.
               </Typography>
               <Button
                 variant="outlined"
@@ -822,7 +820,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                         sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
                       >
                         <MenuItem value="">
-                          <em>— skip —</em>
+                          <em>Skip</em>
                         </MenuItem>
                         {activeColumns.map((col) => (
                           <MenuItem
@@ -979,360 +977,482 @@ const EmptyState = ({ onUpload }) => (
   </Box>
 );
 
-// ═══════════════════════════════════════════════════════════════
-// Variable Mapping Section — maps eval {{variables}} to GT columns
-// ═══════════════════════════════════════════════════════════════
-const VariableMappingSection = ({ gt, evalVariables, onUpdate }) => {
-  const persisted = useMemo(
+
+// Flat single-save form for the GT tab. Posts to
+// /ground-truth/<id>/setup/, which rejects when the mandatory `output`
+// column is missing. The output-type hint reads
+// `template.output_type_normalized` + `choice_scores`; column content
+// is not validated against the type.
+
+const OUTPUT_TYPE_HINTS = {
+  pass_fail: "Use Pass / Fail / True / False / Yes / No.",
+  percentage: "Use a number between 0 and 1.",
+};
+
+function describeReferenceOutputColumn(evalConfig) {
+  if (!evalConfig) {
+    return "The correct answer for each row.";
+  }
+  const outputType =
+    evalConfig.output_type_normalized ||
+    evalConfig.outputTypeNormalized ||
+    (evalConfig.output || "").toLowerCase();
+  const choiceScores =
+    evalConfig.choice_scores || evalConfig.choiceScores || null;
+  const choiceLabels =
+    choiceScores && typeof choiceScores === "object"
+      ? Object.keys(choiceScores)
+      : null;
+
+  if (choiceLabels && choiceLabels.length > 0) {
+    return `Use one of: ${choiceLabels.join(", ")}.`;
+  }
+  if (outputType && OUTPUT_TYPE_HINTS[outputType]) {
+    return OUTPUT_TYPE_HINTS[outputType];
+  }
+  if (outputType === "deterministic") {
+    return "Use one of the eval's configured choices.";
+  }
+  return "Match the format of your eval's output.";
+}
+
+const GroundTruthSetupForm = ({
+  gt,
+  template,
+  evalVariables,
+  rulePrompt,
+}) => {
+  // Always derive Jinja variables from the live rule prompt so removing
+  // a variable from the prompt also drops its row from the mapping UI
+  // even before the eval config field is repopulated.
+  const liveVariables = useMemo(() => {
+    if (evalVariables && evalVariables.length > 0) return evalVariables;
+    return extractJinjaVariables(rulePrompt || "");
+  }, [evalVariables, rulePrompt]);
+
+  const persistedVarMapping = useMemo(
     () => normalizeMapping(gt.variable_mapping || gt.variableMapping || {}),
     [gt.variable_mapping, gt.variableMapping],
   );
-  const [mapping, setMapping] = useState(persisted);
-  // Resync when the server-side value changes (after a successful save
-  // triggers a list refetch → new gt prop).
-  useEffect(() => setMapping(persisted), [persisted]);
+  const persistedRoleMapping = useMemo(
+    () => gt.role_mapping || gt.roleMapping || {},
+    [gt.role_mapping, gt.roleMapping],
+  );
 
-  const updateMapping = useUpdateVariableMapping();
+  const initialOutputColumn =
+    persistedRoleMapping.output ||
+    persistedRoleMapping.expected_output ||
+    "";
+  const initialExplanationColumn =
+    persistedRoleMapping.explanation ||
+    persistedRoleMapping.reasoning ||
+    persistedRoleMapping.reason ||
+    "";
 
-  const isDirty = !shallowEqual(normalizeMapping(mapping), persisted);
+  const templateConfig = template?.config || {};
+  const persistedConfig = templateConfig.ground_truth || {};
+  const persistedMaxExamples =
+    persistedConfig.maxExamples ?? persistedConfig.max_examples ?? 3;
+  const persistedSimilarity =
+    persistedConfig.similarityThreshold ??
+    persistedConfig.similarity_threshold ??
+    0.7;
+  // Default to disabled until the user opts in; only flip on once a valid
+  // setup has been saved at least once. ``enabled === undefined`` (legacy
+  // configs) reads as off.
+  const persistedEnabled = Boolean(persistedConfig.enabled);
 
-  // Success / error feedback is owned by the mutation hook so it
-  // fires reliably even mid-resync. We just trigger the request here.
-  const handleSave = useCallback(() => {
-    updateMapping.mutate({
+  const [varMapping, setVarMapping] = useState(persistedVarMapping);
+  const [outputColumn, setOutputColumn] = useState(initialOutputColumn);
+  const [explanationColumn, setExplanationColumn] = useState(
+    initialExplanationColumn,
+  );
+  const [maxExamples, setMaxExamples] = useState(persistedMaxExamples);
+  const [similarity, setSimilarity] = useState(persistedSimilarity);
+  const [enabled, setEnabled] = useState(persistedEnabled);
+
+  // Resync local state whenever the persisted snapshot changes (post-save
+  // refetch). This keeps the dirty indicator honest.
+  useEffect(() => setVarMapping(persistedVarMapping), [persistedVarMapping]);
+  useEffect(() => setOutputColumn(initialOutputColumn), [initialOutputColumn]);
+  useEffect(
+    () => setExplanationColumn(initialExplanationColumn),
+    [initialExplanationColumn],
+  );
+  useEffect(() => setMaxExamples(persistedMaxExamples), [persistedMaxExamples]);
+  useEffect(() => setSimilarity(persistedSimilarity), [persistedSimilarity]);
+  useEffect(() => setEnabled(persistedEnabled), [persistedEnabled]);
+
+  const save = useSaveGroundTruthSetup(template?.id);
+
+  const isDirty =
+    !shallowEqual(normalizeMapping(varMapping), persistedVarMapping) ||
+    outputColumn !== initialOutputColumn ||
+    explanationColumn !== initialExplanationColumn ||
+    Number(maxExamples) !== Number(persistedMaxExamples) ||
+    Number(similarity) !== Number(persistedSimilarity) ||
+    enabled !== persistedEnabled;
+
+  const canSave = Boolean(outputColumn) && !save.isPending;
+
+  const handleSave = () => {
+    const role = { output: outputColumn };
+    if (explanationColumn) role.explanation = explanationColumn;
+    save.mutate({
       gtId: gt.id,
-      variableMapping: normalizeMapping(mapping),
+      variableMapping: normalizeMapping(varMapping),
+      roleMapping: role,
+      maxExamples: Number(maxExamples),
+      similarityThreshold: Number(similarity),
+      enabled,
     });
-    onUpdate?.();
-  }, [mapping, gt.id, updateMapping, onUpdate]);
+  };
 
-  if (!evalVariables.length) return null;
+  const columns = gt.columns || [];
+  const referenceHint = describeReferenceOutputColumn(templateConfig);
 
-  return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-      <Typography variant="body2" fontWeight={600} sx={{ fontSize: "12px" }}>
-        Variable Mapping
-      </Typography>
-      <Typography variant="caption" color="text.secondary">
-        Map eval template variables to ground truth columns. These are
-        substituted into the eval prompt at runtime.
-      </Typography>
-      {evalVariables.map((varName) => (
-        <Box
-          key={varName}
-          sx={{ display: "flex", alignItems: "center", gap: 1 }}
-        >
-          <Chip
-            label={`{{${varName}}}`}
-            size="small"
-            variant="outlined"
-            sx={{
-              fontSize: "11px",
-              height: 24,
-              minWidth: 100,
-              fontFamily: "monospace",
-            }}
-          />
-          <Iconify
-            icon="mdi:arrow-right"
-            width={14}
-            sx={{ color: "text.disabled", flexShrink: 0 }}
-          />
-          <TextField
-            select
-            size="small"
-            fullWidth
-            value={mapping[varName] || ""}
-            onChange={(e) =>
-              setMapping((prev) => ({ ...prev, [varName]: e.target.value }))
-            }
-            sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
-          >
-            <MenuItem value="">
-              <em>None</em>
-            </MenuItem>
-            {(gt.columns || []).map((col) => (
-              <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
-                {col}
-              </MenuItem>
-            ))}
-          </TextField>
-        </Box>
-      ))}
-      <DirtySaveBar
-        isDirty={isDirty}
-        isSaving={updateMapping.isPending}
-        onSave={handleSave}
-        labelClean="Mapping saved"
-        labelDirty="Save Mapping"
-      />
-    </Box>
-  );
-};
-
-// ── Save bar — shared dirty-state indicator ───────────────────────
-// Visual contract:
-//   • Clean → outlined disabled button with "Mapping saved" / "Config
-//     saved" label (no caption). User knows nothing is pending.
-//   • Dirty → contained "Save …" button + small "Unsaved changes"
-//     caption next to it so the user can't miss it.
-//   • Saving → button shows "Saving…" + disabled.
-const DirtySaveBar = ({
-  isDirty,
-  isSaving,
-  onSave,
-  labelClean,
-  labelDirty,
-  disabled = false,
-}) => (
-  <Box
-    sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}
-  >
-    <Button
-      size="small"
-      variant={isDirty ? "contained" : "outlined"}
-      onClick={onSave}
-      disabled={isSaving || disabled || !isDirty}
-      sx={{ alignSelf: "flex-start" }}
-    >
-      {isSaving ? "Saving..." : isDirty ? labelDirty : labelClean}
-    </Button>
-    {isDirty && !isSaving && (
-      <Typography variant="caption" sx={{ color: "warning.main" }}>
-        Unsaved changes
-      </Typography>
-    )}
-  </Box>
-);
-
-// ═══════════════════════════════════════════════════════════════
-// Role Mapping Section — labels the eval-output side of each GT row.
-// Two columns surface here: the labelled eval output (validated against
-// the template's output type) and an optional human-written explanation.
-// Inputs are handled separately by the variable_mapping section above.
-// ═══════════════════════════════════════════════════════════════
-const RoleMappingSection = ({ gt, onUpdate }) => {
-  const initial = useMemo(
-    () => gt.roleMapping || gt.role_mapping || {},
-    [gt.roleMapping, gt.role_mapping],
-  );
-  const persistedOutput =
-    initial.output || initial.expected_output || "";
-  const persistedExplanation =
-    initial.explanation || initial.reasoning || initial.reason || "";
-
-  const [outputColumn, setOutputColumn] = useState(persistedOutput);
-  const [explanationColumn, setExplanationColumn] = useState(persistedExplanation);
-  // Resync local state when persisted value changes (post-save refetch).
-  useEffect(() => {
-    setOutputColumn(persistedOutput);
-    setExplanationColumn(persistedExplanation);
-  }, [persistedOutput, persistedExplanation]);
-  const updateRole = useUpdateRoleMapping();
-
-  const isDirty =
-    outputColumn !== persistedOutput ||
-    explanationColumn !== persistedExplanation;
-
-  const handleSave = useCallback(() => {
-    const payload = {};
-    if (outputColumn) payload.output = outputColumn;
-    if (explanationColumn) payload.explanation = explanationColumn;
-    updateRole.mutate({ gtId: gt.id, roleMapping: payload });
-    onUpdate?.();
-  }, [outputColumn, explanationColumn, gt.id, updateRole, onUpdate]);
-
-  const fields = [
-    {
-      key: "output",
-      label: "Eval Output",
-      required: true,
-      desc: "The GT column carrying each row's labelled eval output (pass/fail / score / choice).",
-      value: outputColumn,
-      setter: setOutputColumn,
-    },
-    {
-      key: "explanation",
-      label: "Eval Explanation",
-      required: false,
-      desc: "Optional — the GT column carrying the human-written reason for the labelled output.",
-      value: explanationColumn,
-      setter: setExplanationColumn,
-    },
-  ];
+  // Small reusable card surface so every section reads as a distinct
+  // group instead of one undifferentiated stack of rows.
+  const sectionCardSx = {
+    border: 1,
+    borderColor: "divider",
+    borderRadius: 1,
+    p: 1.5,
+    display: "flex",
+    flexDirection: "column",
+    gap: 1.25,
+    bgcolor: "background.paper",
+  };
+  const sectionTitleSx = {
+    fontSize: "12px",
+    fontWeight: 600,
+    color: "text.primary",
+  };
+  const labelColSx = {
+    width: 130,
+    flexShrink: 0,
+    color: "text.secondary",
+    fontSize: "12px",
+  };
+  const fieldFontSx = { "& .MuiInputBase-input": { fontSize: "12px" } };
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-      <Typography variant="body2" fontWeight={600} sx={{ fontSize: "12px" }}>
-        Role Mapping{" "}
-        <Typography component="span" variant="caption" color="text.secondary">
-          (the labelled side of each example)
-        </Typography>
-      </Typography>
-      {fields.map(({ key, label, required, desc, value, setter }) => (
-        <Box key={key} sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <Tooltip title={desc} placement="left">
-            <Typography
-              variant="caption"
-              sx={{ width: 130, flexShrink: 0, color: "text.secondary" }}
-            >
-              {label}
-              {required ? " *" : ""}
-            </Typography>
-          </Tooltip>
-          <Iconify
-            icon="mdi:arrow-right"
-            width={14}
-            sx={{ color: "text.disabled", flexShrink: 0 }}
-          />
-          <TextField
-            select
-            size="small"
-            fullWidth
-            value={value || ""}
-            onChange={(e) => setter(e.target.value)}
-            sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
-          >
-            <MenuItem value="">
-              <em>{required ? "— pick a column —" : "None"}</em>
-            </MenuItem>
-            {(gt.columns || []).map((col) => (
-              <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
-                {col}
-              </MenuItem>
-            ))}
-          </TextField>
-        </Box>
-      ))}
-      <DirtySaveBar
-        isDirty={isDirty}
-        isSaving={updateRole.isPending}
-        onSave={handleSave}
-        disabled={!outputColumn}
-        labelClean="Mapping saved"
-        labelDirty="Save Mapping"
-      />
-    </Box>
-  );
-};
-
-// ═══════════════════════════════════════════════════════════════
-// Injection Config
-// ═══════════════════════════════════════════════════════════════
-const ConfigPanel = ({ templateId, gtId }) => {
-  const { data: config } = useGroundTruthConfig(templateId);
-  const updateConfig = useUpdateGroundTruthConfig(templateId);
-  const persistedMax = config?.maxExamples ?? config?.max_examples ?? 3;
-  const persistedThreshold =
-    config?.similarityThreshold ?? config?.similarity_threshold ?? 0.7;
-  const [maxExamples, setMaxExamples] = useState(persistedMax);
-  const theme = useTheme()
-  const [threshold, setThreshold] = useState(persistedThreshold);
-  // Resync local state when persisted values arrive (initial load) or
-  // change post-save.
-  useEffect(() => setMaxExamples(persistedMax), [persistedMax]);
-  useEffect(() => setThreshold(persistedThreshold), [persistedThreshold]);
-  const enabled = config?.enabled ?? false;
-
-  const isDirty =
-    maxExamples !== persistedMax || threshold !== persistedThreshold;
-
-  const saveConfig = useCallback(
-    (patch) =>
-      updateConfig.mutate({
-        enabled,
-        ground_truth_id: gtId,
-        max_examples: maxExamples,
-        similarity_threshold: threshold,
-        ...patch,
-      }),
-    [enabled, gtId, maxExamples, threshold, updateConfig],
-  );
-
-  const handleToggle = useCallback(
-    () => saveConfig({ enabled: !enabled }),
-    [enabled, saveConfig],
-  );
-
-  const handleSave = useCallback(() => saveConfig({}), [saveConfig]);
-
-  return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      {/* Header toggle. Drives template.config.ground_truth.enabled,
+          which the runtime checks before injecting GT context. */}
       <Box
         sx={{
           display: "flex",
-          justifyContent: "space-between",
           alignItems: "center",
+          gap: 1,
+          p: 1.25,
+          border: 1,
+          borderColor: enabled ? "primary.main" : "divider",
+          borderRadius: 1,
+          bgcolor: enabled ? "action.hover" : "background.paper",
+          width: "100%",
+          minWidth: 0,
+          boxSizing: "border-box",
+          overflow: "hidden",
         }}
       >
-        <Typography variant="body2" fontWeight={600} sx={{ fontSize: "12px" }}>
-          Injection Settings
-        </Typography>
-
-        <SwitchComponent
-          label={enabled ? "Enabled" : "Disabled"}
-          labelPlacement={"start"}
-          labelStyle={{
-            fontSize: theme.spacing(1.5),
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            flex: 1,
+            minWidth: 0,
           }}
-          size={"small"}
+        >
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: 600,
+              fontSize: "12px",
+              lineHeight: 1.3,
+              wordBreak: "break-word",
+            }}
+          >
+            Use ground truth
+          </Typography>
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+              fontSize: "11px",
+              lineHeight: 1.3,
+              wordBreak: "break-word",
+            }}
+          >
+            {enabled
+              ? "On. Retrieved examples are injected into the evaluator prompt."
+              : "Off. The evaluator runs without ground truth context."}
+          </Typography>
+        </Box>
+        <Switch
+          size="small"
           checked={enabled}
-          disableRipple
-          onChange={handleToggle}
+          onChange={(_, v) => setEnabled(v)}
+          sx={{ flexShrink: 0, ml: 1 }}
         />
+      </Box>
 
-      </Box>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+      {/* One row per template variable. */}
+      <Box sx={sectionCardSx}>
+        <Typography sx={sectionTitleSx}>Inputs</Typography>
         <Typography
           variant="caption"
-          color="text.secondary"
-          sx={{ width: 110, flexShrink: 0 }}
+          sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
         >
-          Few-shot examples
+          Map each template variable to a ground truth column.
         </Typography>
-        <Slider
-          size="small"
-          value={maxExamples}
-          onChange={(_, v) => setMaxExamples(v)}
-          min={1}
-          max={10}
-          step={1}
-          valueLabelDisplay="auto"
-          sx={{ flex: 1 }}
-        />
-        <Typography variant="caption" sx={{ width: 20, textAlign: "right" }}>
-          {maxExamples}
-        </Typography>
+        {liveVariables.length === 0 ? (
+          <Typography variant="caption" color="text.secondary">
+            This rule prompt has no <code>{"{{variables}}"}</code> to map.
+          </Typography>
+        ) : (
+          liveVariables.map((varName) => (
+            <Box
+              key={varName}
+              sx={{ display: "flex", alignItems: "center", gap: 1 }}
+            >
+              <Chip
+                label={varName}
+                size="small"
+                variant="outlined"
+                sx={{
+                  fontSize: "11px",
+                  height: 24,
+                  maxWidth: 160,
+                  "& .MuiChip-label": {
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  },
+                }}
+              />
+              <Iconify
+                icon="mdi:arrow-right"
+                width={14}
+                sx={{ color: "text.disabled", flexShrink: 0 }}
+              />
+              <TextField
+                select
+                size="small"
+                fullWidth
+                value={varMapping[varName] || ""}
+                onChange={(e) =>
+                  setVarMapping((prev) => ({
+                    ...prev,
+                    [varName]: e.target.value,
+                  }))
+                }
+                sx={fieldFontSx}
+              >
+                <MenuItem value="">
+                  <em>None</em>
+                </MenuItem>
+                {columns.map((col) => (
+                  <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
+                    {col}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Box>
+          ))
+        )}
       </Box>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+
+      {/* Reference Output (required) + Eval Explanation (optional) */}
+      <Box sx={sectionCardSx}>
+        <Typography sx={sectionTitleSx}>Reference output</Typography>
         <Typography
           variant="caption"
-          color="text.secondary"
-          sx={{ width: 110, flexShrink: 0 }}
+          sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
         >
-          Min similarity
+          The labeled answer the evaluator compares its result against.
         </Typography>
-        <Slider
-          size="small"
-          value={threshold}
-          onChange={(_, v) => setThreshold(v)}
-          min={0}
-          max={1}
-          step={0.05}
-          valueLabelDisplay="auto"
-          sx={{ flex: 1 }}
-        />
-        <Typography variant="caption" sx={{ width: 30, textAlign: "right" }}>
-          {threshold}
-        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Typography variant="caption" sx={labelColSx}>
+            Output column *
+          </Typography>
+          <Iconify
+            icon="mdi:arrow-right"
+            width={14}
+            sx={{ color: "text.disabled", flexShrink: 0 }}
+          />
+          <TextField
+            select
+            size="small"
+            fullWidth
+            value={outputColumn}
+            onChange={(e) => setOutputColumn(e.target.value)}
+            sx={fieldFontSx}
+            error={!outputColumn}
+          >
+            <MenuItem value="">
+              <em>Pick a column</em>
+            </MenuItem>
+            {columns.map((col) => (
+              <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
+                {col}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
+        {referenceHint && (
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+              fontSize: "11px",
+              lineHeight: 1.4,
+              pl: "138px",
+            }}
+          >
+            {referenceHint}
+          </Typography>
+        )}
+
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Typography variant="caption" sx={labelColSx}>
+            Explanation (optional)
+          </Typography>
+          <Iconify
+            icon="mdi:arrow-right"
+            width={14}
+            sx={{ color: "text.disabled", flexShrink: 0 }}
+          />
+          <TextField
+            select
+            size="small"
+            fullWidth
+            value={explanationColumn}
+            onChange={(e) => setExplanationColumn(e.target.value)}
+            sx={fieldFontSx}
+          >
+            <MenuItem value="">
+              <em>None (optional)</em>
+            </MenuItem>
+            {columns.map((col) => (
+              <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
+                {col}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
       </Box>
-      <DirtySaveBar
-        isDirty={isDirty}
-        isSaving={updateConfig.isPending}
-        onSave={handleSave}
-        labelClean="Config saved"
-        labelDirty="Save Config"
-      />
+
+      {/* Retrieval knobs. */}
+      <Box sx={sectionCardSx}>
+        <Typography sx={sectionTitleSx}>Retrieval</Typography>
+        <Typography
+          variant="caption"
+          sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
+        >
+          At eval time, the closest matching rows are injected as few-shot
+          calibration.
+        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <Tooltip
+            placement="top"
+            arrow
+            title="How many examples to show the judge. More = better calibration, slower runs."
+          >
+            <Typography variant="caption" sx={labelColSx}>
+              Examples shown ⓘ
+            </Typography>
+          </Tooltip>
+          <Slider
+            size="small"
+            value={Number(maxExamples)}
+            onChange={(_, v) => setMaxExamples(v)}
+            min={1}
+            max={10}
+            step={1}
+            marks
+            valueLabelDisplay="auto"
+            sx={{ flex: 1 }}
+          />
+          <Chip
+            size="small"
+            label={maxExamples}
+            sx={{ minWidth: 36, height: 22, fontSize: "11px" }}
+          />
+        </Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <Tooltip
+            placement="top"
+            arrow
+            title="How close an example must be to count. Higher = stricter match."
+          >
+            <Typography variant="caption" sx={labelColSx}>
+              Match strictness ⓘ
+            </Typography>
+          </Tooltip>
+          <Slider
+            size="small"
+            value={Number(similarity)}
+            onChange={(_, v) => setSimilarity(v)}
+            min={0}
+            max={1}
+            step={0.05}
+            valueLabelDisplay="auto"
+            sx={{ flex: 1 }}
+          />
+          <Chip
+            size="small"
+            label={Number(similarity).toFixed(2)}
+            sx={{ minWidth: 44, height: 22, fontSize: "11px" }}
+          />
+        </Box>
+      </Box>
+
+      {/* Single Save, anchored at the bottom of the form. */}
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 0.75,
+          mt: 0.5,
+        }}
+      >
+        {!outputColumn && (
+          <Typography
+            variant="caption"
+            sx={{
+              color: "error.main",
+              display: "flex",
+              alignItems: "center",
+              gap: 0.5,
+            }}
+          >
+            <Iconify icon="mdi:alert-circle-outline" width={14} />
+            Pick the column that holds the reference output.
+          </Typography>
+        )}
+        <Button
+          fullWidth
+          variant={isDirty ? "contained" : "outlined"}
+          onClick={handleSave}
+          disabled={!canSave || !isDirty}
+          startIcon={
+            save.isPending ? (
+              <CircularProgress size={14} />
+            ) : (
+              <Iconify
+                icon={isDirty ? "mdi:content-save" : "mdi:check"}
+                width={16}
+              />
+            )
+          }
+        >
+          {save.isPending
+            ? "Saving..."
+            : isDirty
+              ? "Save changes"
+              : "All changes saved"}
+        </Button>
+      </Box>
     </Box>
   );
 };
@@ -1546,7 +1666,7 @@ const EvalGroundTruthTab = ({ templateId }) => {
                 title={
                   activeDataset?.embeddings_stale ||
                   activeDataset?.embeddingsStale
-                    ? "Variable mapping changed — re-embed to refresh vectors"
+                    ? "Variable mapping changed. Re-embed to refresh vectors."
                     : "Generate embeddings for similarity search"
                 }
               >
@@ -1588,41 +1708,20 @@ const EvalGroundTruthTab = ({ templateId }) => {
             {/* Left: settings */}
             <Box
               sx={{
-                width: 320,
+                width: 420,
                 flexShrink: 0,
                 display: "flex",
                 flexDirection: "column",
-                gap: 2.5,
+                gap: 2,
                 overflow: "auto",
                 pr: 1,
               }}
             >
-              <VariableMappingSection
+              <GroundTruthSetupForm
                 gt={activeDataset}
+                template={evalData}
                 evalVariables={evalVariables}
-                onUpdate={() => {}}
-              />
-              {evalVariables.length > 0 && <Divider />}
-              <RoleMappingSection gt={activeDataset} onUpdate={() => {}} />
-              <Divider />
-              <ConfigPanel templateId={templateId} gtId={activeDataset.id} />
-              <Divider />
-              <TestRetrievalPanel
-                groundTruthId={activeDataset.id}
                 rulePrompt={rulePrompt}
-                variableMapping={
-                  activeDataset.variable_mapping ||
-                  activeDataset.variableMapping
-                }
-                roleMapping={
-                  activeDataset.role_mapping ||
-                  activeDataset.roleMapping
-                }
-                embeddingStatus={embeddingStatus}
-                embeddingsStale={
-                  activeDataset.embeddings_stale ||
-                  activeDataset.embeddingsStale
-                }
               />
             </Box>
             {/* Right: data preview — AG Grid spreadsheet */}

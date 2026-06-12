@@ -87,6 +87,7 @@ from model_hub.serializers.contracts import (
     GroundTruthRoleMappingResponseSerializer,
     GroundTruthSearchRequestSerializer,
     GroundTruthSearchResponseSerializer,
+    GroundTruthSetupRequestSerializer,
     GroundTruthStatusResponseSerializer,
     GroundTruthUploadRequestSerializer,
     GroundTruthUploadResponseSerializer,
@@ -4649,6 +4650,54 @@ class GroundTruthRoleMappingView(APIView):
 
         result = GroundTruthService.update_role_mapping(
             gt=gt, role_mapping=req.role_mapping
+        )
+        if isinstance(result, ServiceError):
+            return self._gm.bad_request(result.message)
+        return self._gm.success_response(result)
+
+
+class GroundTruthSetupView(APIView):
+    """PUT /model-hub/ground-truth/<id>/setup/
+
+    Atomic write of variable mapping, role mapping, and injection config
+    (max_examples, similarity_threshold, injection_format, enabled).
+    ``role_mapping["output"]`` is mandatory; the service rejects the
+    write without it.
+    """
+
+    _gm = GeneralMethods()
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        request_serializer=GroundTruthSetupRequestSerializer,
+        responses={
+            200: GroundTruthRoleMappingResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
+    def put(self, request, ground_truth_id, *args, **kwargs):
+        from model_hub.models.evals_metric import EvalGroundTruth
+        from model_hub.services.ground_truth_service import (
+            GroundTruthService,
+            ServiceError,
+        )
+
+        try:
+            gt = _get_accessible_ground_truth(ground_truth_id, request)
+        except EvalGroundTruth.DoesNotExist:
+            return self._gm.not_found("Ground truth not found.")
+
+        data = request.validated_data
+        result = GroundTruthService.update_setup(
+            gt=gt,
+            eval_template=gt.eval_template,
+            variable_mapping=data.get("variable_mapping") or {},
+            role_mapping=data.get("role_mapping") or {},
+            max_examples=int(data.get("max_examples")),
+            similarity_threshold=float(data.get("similarity_threshold")),
+            injection_format=data.get("injection_format", "structured"),
+            enabled=bool(data.get("enabled", True)),
         )
         if isinstance(result, ServiceError):
             return self._gm.bad_request(result.message)

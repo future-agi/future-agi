@@ -337,7 +337,12 @@ def run_eval_func(
         }
         if partial_input_warning:
             response["warnings"] = [partial_input_warning]
-        # logger.info(f"response*******: {response}")
+
+        from model_hub.services.ground_truth_service import GroundTruthService
+
+        response["ground_truth_examples"] = GroundTruthService.resolve_preview_examples(
+            eval_template=template, eval_inputs=_run_kwargs
+        )
 
         metadata = response.get("metadata")
         # Format the result based on output type
@@ -487,6 +492,7 @@ def run_eval_func(
         output["metadata"] = response.get("metadata")
         output["output_type"] = template.config.get("output")
         output["log_id"] = str(api_call_log_row.log_id)
+        output["ground_truth_examples"] = response.get("ground_truth_examples")
         # Pass partial-input warning through to the playground UI so the
         # yellow ⚠ badge can render alongside the result.
         if response.get("warnings"):
@@ -668,6 +674,14 @@ def process_eval_for_single_row(
         output["metadata"] = response.get("metadata")
         output["output_type"] = eval_template.config.get("output")
         output["runtime"] = response.get("runtime")
+
+        # Surface retrieved GT rows in the playground response so the FE
+        # can render them above the verdict.
+        from model_hub.services.ground_truth_service import GroundTruthService
+
+        output["ground_truth_examples"] = GroundTruthService.resolve_preview_examples(
+            eval_template=eval_template, eval_inputs=eval_inputs
+        )
 
         # if source == DatasetSourceChoices.SDK.value:
         #     response["output_type"] = eval_template.config.get("output")

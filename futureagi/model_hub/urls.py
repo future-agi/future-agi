@@ -225,6 +225,7 @@ from model_hub.views.separate_evals import (
     GroundTruthListView,
     GroundTruthMappingView,
     GroundTruthRoleMappingView,
+    GroundTruthSetupView,
     GroundTruthSearchView,
     GroundTruthStatusView,
     GroundTruthTriggerEmbeddingView,
@@ -1188,6 +1189,11 @@ urlpatterns = [
         "ground-truth/<uuid:ground_truth_id>/role-mapping/",
         GroundTruthRoleMappingView.as_view(),
         name="ground-truth-role-mapping",
+    ),
+    path(
+        "ground-truth/<uuid:ground_truth_id>/setup/",
+        GroundTruthSetupView.as_view(),
+        name="ground-truth-setup",
     ),
     path(
         "ground-truth/<uuid:ground_truth_id>/data/",
