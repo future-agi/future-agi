@@ -1156,6 +1156,8 @@ export default function WidgetEditorView() {
   const customDateAnchorRef = useRef(null);
   const pieChartRef = useRef(null);
   const lineChartRef = useRef(null);
+  const saveNavTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(saveNavTimerRef.current), []);
   const [pieConnectors, setPieConnectors] = useState([]);
 
   // Auto-set granularity when time preset changes
@@ -2079,7 +2081,10 @@ export default function WidgetEditorView() {
         }
       }
       setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 2000);
+      clearTimeout(saveNavTimerRef.current);
+      saveNavTimerRef.current = setTimeout(() => {
+        navigate(paths.dashboard.dashboards.detail(dashboardId));
+      }, 400);
     } catch {
       setSaveStatus("idle");
       enqueueSnackbar(`Failed to ${isEditing ? "update" : "create"} widget`, {
@@ -3130,7 +3135,7 @@ export default function WidgetEditorView() {
         <Button
           variant="contained"
           onClick={handleSave}
-          disabled={saveStatus === "saving"}
+          disabled={saveStatus !== "idle"}
           color={saveStatus === "saved" ? "success" : "primary"}
           startIcon={
             saveStatus === "saved" ? (
