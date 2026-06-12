@@ -919,9 +919,9 @@ const DatapointDrawerChild = () => {
                         prev
                           ? {
                               ...prev,
-                              valueInfos: {
-                                ...(prev.valueInfos || {}),
-                                errorAnalysis: details?.error_analysis,
+                              value_infos: {
+                                ...(prev.value_infos || {}),
+                                error_analysis: details?.error_analysis,
                                 input_data: details?.input_data,
                                 input_types: details?.input_types,
                                 selected_input_key: details?.selected_input_key,
