@@ -37,6 +37,16 @@ from tracer.models.observability_provider import ProviderChoices
 logger = structlog.get_logger(__name__)
 
 
+def build_eval_configs_map(call_execution) -> dict[str, "SimulateEvalConfig"]:
+    eval_config_ids = list((call_execution.eval_outputs or {}).keys())
+    if not eval_config_ids:
+        return {}
+    return {
+        str(c.id): c
+        for c in SimulateEvalConfig.objects.filter(id__in=eval_config_ids)
+    }
+
+
 def _empty_call_log_summary(reason: str) -> dict:
     return {
         "total_entries": 0,
@@ -4891,33 +4901,20 @@ class TestExecutor:
                 }
                 call_execution.save(update_fields=["eval_outputs"])
 
-                # Trigger error localization if enabled
-                if eval_config.error_localizer and eval_output is not None:
+                el_enabled = bool(eval_config.error_localizer) or bool(
+                    (eval_config.config or {}).get("error_localizer_enabled")
+                )
+                if el_enabled and eval_output is not None:
                     try:
-                        # Determine if evaluation failed (assuming boolean or numeric output)
-                        eval_failed = False
-                        if isinstance(eval_output, bool):
-                            eval_failed = not eval_output
-                        elif isinstance(eval_output, int | float):
-                            # Consider it failed if score is less than 0.5 (assuming 0-1 scale)
-                            eval_failed = eval_output < 0.8
-                        else:
-                            # For string outputs, check if it contains failure indicators
-                            eval_failed = True
-
-                        if eval_failed:
-                            trigger_error_localization_for_simulate(
-                                eval_template=eval_template,
-                                call_execution=call_execution,
-                                eval_config=eval_config,
-                                value=eval_output,
-                                mapping=updated_mapping,
-                                eval_explanation=eval_reason,
-                                log_id=None,  # You can add log_id if available
-                            )
-                            logger.info(
-                                f"Triggered error localization for failed evaluation {eval_config.id}"
-                            )
+                        trigger_error_localization_for_simulate(
+                            eval_template=eval_template,
+                            call_execution=call_execution,
+                            eval_config=eval_config,
+                            value=eval_output,
+                            mapping=updated_mapping,
+                            eval_explanation=eval_reason,
+                            log_id=None,
+                        )
                     except Exception as e:
                         logger.error(
                             f"Error triggering error localization for evaluation {eval_config.id}: {str(e)}"

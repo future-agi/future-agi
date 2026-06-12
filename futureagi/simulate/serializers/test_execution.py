@@ -4,6 +4,7 @@ from datetime import datetime
 
 import structlog
 from django.db.models import Count, Q
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from model_hub.models.develop_dataset import Cell, Column, Row
@@ -196,6 +197,33 @@ class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
             "conversation_metrics_data",
         ]
         read_only_fields = ["id", "snapshot_timestamp"]
+
+
+class CallExecutionEvalMetricSerializer(serializers.Serializer):
+    """One per-eval entry of the ``eval_metrics`` map on the call-execution detail response."""
+
+    id = serializers.CharField()
+    name = serializers.CharField(allow_blank=True)
+    value = serializers.JSONField(allow_null=True)
+    reason = serializers.CharField(allow_blank=True, required=False)
+    type = serializers.CharField(allow_blank=True, required=False)
+    template_type = serializers.CharField(
+        allow_blank=True, allow_null=True, required=False
+    )
+    visible = serializers.BooleanField(required=False)
+    error = serializers.BooleanField(required=False)
+    status = serializers.CharField(allow_blank=True, required=False)
+    skipped = serializers.BooleanField(required=False)
+    error_localizer = serializers.BooleanField(required=False)
+    error_analysis = serializers.JSONField(required=False, allow_null=True)
+    error_localizer_status = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    selected_input_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    input_data = serializers.JSONField(required=False, allow_null=True)
+    input_types = serializers.JSONField(required=False, allow_null=True)
 
 
 def _normalize_eval_value(value, output_type):
@@ -632,6 +660,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
         return structured_outputs
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.DictField(
+            child=CallExecutionEvalMetricSerializer()
+        )
+    )
     def get_eval_metrics(self, obj):
         """Get evaluation metrics in a format suitable for the UI"""
         # Handle both model instances and dictionaries (from grouping)
@@ -676,6 +709,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "reason": eval_data.get("reason", ""),
                     "type": eval_data.get("output_type", ""),
+                    "template_type": (
+                        getattr(eval_config.eval_template, "template_type", None)
+                        if eval_config and getattr(eval_config, "eval_template", None)
+                        else None
+                    ),
                     "visible": True,  # Default to visible
                     "error": is_error,
                     "status": eval_data.get(
@@ -683,10 +721,33 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
-                    "error_localizer": (
-                        eval_config.error_localizer if eval_config else False
+                    "error_localizer": bool(
+                        eval_config
+                        and (
+                            eval_config.error_localizer
+                            or (eval_config.config or {}).get("error_localizer_enabled")
+                        )
                     ),
                 }
+
+        call_execution_id = getattr(obj, "id", None)
+        enabled_eval_config_ids = [
+            k for k, m in metrics.items() if m.get("error_localizer")
+        ]
+        if call_execution_id and enabled_eval_config_ids:
+            from model_hub.selectors.error_localizer import (
+                get_error_localizer_state_by_eval_config,
+            )
+
+            request = (self.context or {}).get("request")
+            workspace = getattr(request, "workspace", None) if request else None
+            state_by_eval_config = get_error_localizer_state_by_eval_config(
+                call_execution_id, enabled_eval_config_ids, workspace
+            )
+            for eval_config_id, el_state in state_by_eval_config.items():
+                metric = metrics.get(eval_config_id)
+                if metric:
+                    metric.update(el_state)
 
         return metrics
 
@@ -1290,11 +1351,14 @@ class CallExecutionSerializer(serializers.ModelSerializer):
             if not obj_id:
                 return []
 
-            # Find error localizer tasks for this call execution
-            # The source_id format is "call_execution_id_eval_config_id"
+            request = (self.context or {}).get("request")
+            workspace = getattr(request, "workspace", None) if request else None
             call_execution_tasks = ErrorLocalizerTask.objects.filter(
-                source=ErrorLocalizerSource.SIMULATE.value, source_id=str(obj_id)
+                source=ErrorLocalizerSource.SIMULATE.value,
+                metadata__call_execution_id=str(obj_id),
             )
+            if workspace is not None:
+                call_execution_tasks = call_execution_tasks.filter(workspace=workspace)
 
             error_localizer_data = []
             for task in call_execution_tasks:

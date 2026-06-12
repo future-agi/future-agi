@@ -800,27 +800,20 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             }
             call_execution.save(update_fields=["eval_outputs"])
 
-            # Trigger error localization if enabled
-            if eval_config.error_localizer and eval_output is not None:
+            el_enabled = bool(eval_config.error_localizer) or bool(
+                (eval_config.config or {}).get("error_localizer_enabled")
+            )
+            if el_enabled and eval_output is not None:
                 try:
-                    eval_failed = False
-                    if isinstance(eval_output, bool):
-                        eval_failed = not eval_output
-                    elif isinstance(eval_output, int | float):
-                        eval_failed = eval_output < 0.8
-                    else:
-                        eval_failed = True
-
-                    if eval_failed:
-                        trigger_error_localization_for_simulate(
-                            eval_template=eval_template,
-                            call_execution=call_execution,
-                            eval_config=eval_config,
-                            value=eval_output,
-                            mapping=updated_mapping,
-                            eval_explanation=eval_reason,
-                            log_id=None,
-                        )
+                    trigger_error_localization_for_simulate(
+                        eval_template=eval_template,
+                        call_execution=call_execution,
+                        eval_config=eval_config,
+                        value=eval_output,
+                        mapping=updated_mapping,
+                        eval_explanation=eval_reason,
+                        log_id=None,
+                    )
                 except Exception as e:
                     logger.error(
                         f"Error triggering error localization for evaluation {eval_config.id}: {str(e)}"
