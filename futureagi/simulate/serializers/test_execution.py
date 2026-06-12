@@ -4,6 +4,7 @@ from datetime import datetime
 
 import structlog
 from django.db.models import Count, Q
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from model_hub.models.develop_dataset import Cell, Column, Row
@@ -196,6 +197,33 @@ class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
             "conversation_metrics_data",
         ]
         read_only_fields = ["id", "snapshot_timestamp"]
+
+
+class CallExecutionEvalMetricSerializer(serializers.Serializer):
+    """One per-eval entry of the ``eval_metrics`` map on the call-execution detail response."""
+
+    id = serializers.CharField()
+    name = serializers.CharField(allow_blank=True)
+    value = serializers.JSONField(allow_null=True)
+    reason = serializers.CharField(allow_blank=True, required=False)
+    type = serializers.CharField(allow_blank=True, required=False)
+    template_type = serializers.CharField(
+        allow_blank=True, allow_null=True, required=False
+    )
+    visible = serializers.BooleanField(required=False)
+    error = serializers.BooleanField(required=False)
+    status = serializers.CharField(allow_blank=True, required=False)
+    skipped = serializers.BooleanField(required=False)
+    error_localizer = serializers.BooleanField(required=False)
+    error_analysis = serializers.JSONField(required=False, allow_null=True)
+    error_localizer_status = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    selected_input_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    input_data = serializers.JSONField(required=False, allow_null=True)
+    input_types = serializers.JSONField(required=False, allow_null=True)
 
 
 def _normalize_eval_value(value, output_type):
@@ -632,6 +660,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
         return structured_outputs
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.DictField(
+            child=CallExecutionEvalMetricSerializer()
+        )
+    )
     def get_eval_metrics(self, obj):
         """Get evaluation metrics in a format suitable for the UI"""
         # Handle both model instances and dictionaries (from grouping)
@@ -692,48 +725,29 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                         eval_config
                         and (
                             eval_config.error_localizer
-                            or (eval_config.config or {}).get(
-                                "error_localizer_enabled"
-                            )
+                            or (eval_config.config or {}).get("error_localizer_enabled")
                         )
                     ),
                 }
 
-        ce_id = getattr(obj, "id", None)
-        enabled_ids = [k for k, m in metrics.items() if m.get("error_localizer")]
-        if ce_id and enabled_ids:
-            from model_hub.models.error_localizer_model import (
-                ErrorLocalizerSource,
-                ErrorLocalizerTask,
+        call_execution_id = getattr(obj, "id", None)
+        enabled_eval_config_ids = [
+            k for k, m in metrics.items() if m.get("error_localizer")
+        ]
+        if call_execution_id and enabled_eval_config_ids:
+            from model_hub.selectors.error_localizer import (
+                get_error_localizer_state_by_eval_config,
             )
 
             request = (self.context or {}).get("request")
             workspace = getattr(request, "workspace", None) if request else None
-            el_qs = ErrorLocalizerTask.objects.filter(
-                source=ErrorLocalizerSource.SIMULATE,
-                metadata__call_execution_id=str(ce_id),
-                metadata__eval_config_id__in=enabled_ids,
+            state_by_eval_config = get_error_localizer_state_by_eval_config(
+                call_execution_id, enabled_eval_config_ids, workspace
             )
-            if workspace is not None:
-                el_qs = el_qs.filter(workspace=workspace)
-            el_tasks = el_qs.only(
-                "metadata",
-                "status",
-                "error_analysis",
-                "selected_input_key",
-                "input_data",
-                "input_types",
-            )
-            for task in el_tasks:
-                cfg_id = (task.metadata or {}).get("eval_config_id")
-                metric = metrics.get(cfg_id)
-                if not metric:
-                    continue
-                metric["error_analysis"] = task.error_analysis or None
-                metric["error_localizer_status"] = task.status
-                metric["selected_input_key"] = task.selected_input_key
-                metric["input_data"] = task.input_data
-                metric["input_types"] = task.input_types
+            for eval_config_id, el_state in state_by_eval_config.items():
+                metric = metrics.get(eval_config_id)
+                if metric:
+                    metric.update(el_state)
 
         return metrics
 

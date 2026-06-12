@@ -16058,6 +16058,39 @@ export const CallExecutionDetailApiStatus = {
   cancelled: 'cancelled',
 } as const;
 
+export type CallExecutionEvalMetricApiValue = { [key: string]: unknown };
+
+export type CallExecutionEvalMetricApiErrorAnalysis = { [key: string]: unknown };
+
+export type CallExecutionEvalMetricApiInputData = { [key: string]: unknown };
+
+export type CallExecutionEvalMetricApiInputTypes = { [key: string]: unknown };
+
+export interface CallExecutionEvalMetricApi {
+  /** @minLength 1 */
+  id: string;
+  name: string;
+  value: CallExecutionEvalMetricApiValue;
+  reason?: string;
+  type?: string;
+  template_type?: string;
+  visible?: boolean;
+  error?: boolean;
+  status?: string;
+  skipped?: boolean;
+  error_localizer?: boolean;
+  error_analysis?: CallExecutionEvalMetricApiErrorAnalysis;
+  error_localizer_status?: string;
+  selected_input_key?: string;
+  input_data?: CallExecutionEvalMetricApiInputData;
+  input_types?: CallExecutionEvalMetricApiInputTypes;
+}
+
+/**
+ * Get evaluation metrics in a format suitable for the UI
+ */
+export type CallExecutionDetailApiEvalMetrics = {[key: string]: CallExecutionEvalMetricApi};
+
 /**
  * Tool evaluation output - separate from standard evaluations
  */
@@ -16117,7 +16150,8 @@ export interface CallExecutionDetailApi {
   /** @minLength 1 */
   readonly customer_name?: string;
   readonly eval_outputs?: string;
-  readonly eval_metrics?: string;
+  /** Get evaluation metrics in a format suitable for the UI */
+  readonly eval_metrics?: CallExecutionDetailApiEvalMetrics;
   readonly scenario_columns?: string;
   /**
      * Reason why the call ended

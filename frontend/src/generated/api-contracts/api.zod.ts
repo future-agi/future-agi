@@ -30107,6 +30107,7 @@ export const simulateCallExecutionsReadResponseResponseTimeMsMax = 2147483647;
 
 
 
+
 export const simulateCallExecutionsReadResponseEndedReasonMax = 10000;
 
 
@@ -30150,7 +30151,32 @@ export const SimulateCallExecutionsReadResponse = zod.object({
   "audio_url": zod.string().url().min(1).optional(),
   "customer_name": zod.string().min(1).optional(),
   "eval_outputs": zod.string().optional(),
-  "eval_metrics": zod.string().optional(),
+  "eval_metrics": zod.record(zod.string(), zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string(),
+  "value": zod.object({
+
+}).passthrough(),
+  "reason": zod.string().optional(),
+  "type": zod.string().optional(),
+  "template_type": zod.string().optional(),
+  "visible": zod.boolean().optional(),
+  "error": zod.boolean().optional(),
+  "status": zod.string().optional(),
+  "skipped": zod.boolean().optional(),
+  "error_localizer": zod.boolean().optional(),
+  "error_analysis": zod.object({
+
+}).passthrough().optional(),
+  "error_localizer_status": zod.string().optional(),
+  "selected_input_key": zod.string().optional(),
+  "input_data": zod.object({
+
+}).passthrough().optional(),
+  "input_types": zod.object({
+
+}).passthrough().optional()
+})).optional().describe('Get evaluation metrics in a format suitable for the UI'),
   "scenario_columns": zod.string().optional(),
   "ended_reason": zod.string().max(simulateCallExecutionsReadResponseEndedReasonMax).optional().describe('Reason why the call ended'),
   "simulator_agent_name": zod.string().min(1).optional(),

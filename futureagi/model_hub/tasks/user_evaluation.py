@@ -1,6 +1,5 @@
 import json
 import uuid
-from typing import Any
 
 import structlog
 from django.db import close_old_connections
@@ -15,6 +14,7 @@ try:
 except ImportError:
     # Activity-aware stub: runs inside Temporal evaluation activities.
     from tfc.ee_stub import _ee_activity_stub
+
     ErrorLocalizer = _ee_activity_stub("ErrorLocalizer")
 from analytics.utils import (
     MixpanelEvents,
@@ -29,9 +29,10 @@ from model_hub.models.error_localizer_model import (
     ErrorLocalizerStatus,
     ErrorLocalizerTask,
 )
-from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.evaluation import Evaluation
 from model_hub.models.run_prompt import RunPrompter
+from model_hub.services.error_localizer_service import should_run_error_localizer
 from model_hub.views.develop_optimiser import DevelopOptimizer
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.experiment_runner import ExperimentRunner
@@ -50,7 +51,10 @@ try:
 except ImportError:
     APICallLog = None
 try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
+    from ee.usage.utils.usage_entries import (
+        log_and_deduct_cost_for_api_request,
+        refund_cost_for_api_call,
+    )
 except ImportError:
     log_and_deduct_cost_for_api_request = None
     refund_cost_for_api_call = None
@@ -179,6 +183,7 @@ def process_single_evaluation(user_eval_metric):
     # Block agent-type evals when ee is absent.
     if getattr(user_eval_metric.template, "eval_type", "") == "agent":
         from tfc.ee_gating import is_oss
+
         if is_oss():
             user_eval_metric.status = StatusType.FAILED.value
             user_eval_metric.save(update_fields=["status"])
@@ -186,6 +191,7 @@ def process_single_evaluation(user_eval_metric):
                 "Agent evaluations are not available on your plan. "
                 "Use LLM-as-a-Judge or Code evaluations instead."
             )
+
             # Mark cells as error so the UI doesn't stay stuck on loading
             class _ErrInfo:
                 error_code = "ENTITLEMENT_DENIED"
@@ -194,6 +200,7 @@ def process_single_evaluation(user_eval_metric):
                 current_usage = 0
                 limit = 0
                 upgrade_cta = None
+
             _mark_cells_usage_limit_error(user_eval_metric, _ErrInfo())
             raise ValueError(_err_msg)
 
@@ -686,49 +693,6 @@ def _has_localized_segments(error_analysis: dict | list | None) -> bool:
     return True
 
 
-def _extract_eval_value(value: Any) -> Any:
-    if not isinstance(value, dict):
-        return value
-    if isinstance(value.get("failure"), bool):
-        return not value["failure"]
-    for key in ("score", "result", "output", "choice"):
-        if value.get(key) is not None:
-            return value[key]
-    return value
-
-
-def should_run_error_localizer(value: Any, eval_template: EvalTemplate | None) -> tuple[bool, str]:
-    if eval_template is None:
-        return False, "Error localization skipped — no eval template is attached to this evaluation."
-    if getattr(eval_template, "eval_type", "") == "code":
-        return False, "Error localization skipped — not applicable to code-type evals."
-    if getattr(eval_template, "template_type", "single") == "composite":
-        return False, "Error localization skipped — composite evals are not yet supported."
-
-    from model_hub.utils.scoring import determine_pass_fail, normalize_score
-
-    output_type = getattr(eval_template, "output_type_normalized", None) or "percentage"
-    choice_scores = getattr(eval_template, "choice_scores", None) or {}
-    score = normalize_score(_extract_eval_value(value), output_type, choice_scores)
-
-    threshold = getattr(eval_template, "pass_threshold", None)
-    threshold = float(threshold) if threshold is not None else 0.5
-
-    decision = determine_pass_fail(score, threshold)
-    if output_type == "pass_fail":
-        if decision:
-            return False, "Error localization skipped — the evaluation passed."
-        return True, "The evaluation failed."
-    if decision:
-        return False, (
-            f"Error localization skipped — the evaluation passed "
-            f"(score {score:.2f}, threshold {threshold:.2f})."
-        )
-    return True, (
-        f"The evaluation failed (score {score:.2f}, threshold {threshold:.2f})."
-    )
-
-
 def trigger_error_localization_for_column(
     eval_template,
     config,
@@ -1171,8 +1135,12 @@ def process_single_error_localization(task_id):
 
             if not api_call_log_row:
                 logger.error("API call not allowed : Error validating the api call.")
-                task.mark_as_failed("API call not allowed : Error validating the api call.")
-                raise ValueError("API call not allowed : Error validating the api call.")
+                task.mark_as_failed(
+                    "API call not allowed : Error validating the api call."
+                )
+                raise ValueError(
+                    "API call not allowed : Error validating the api call."
+                )
 
             if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                 error_message = get_error_for_api_status(api_call_log_row.status)
@@ -1256,28 +1224,30 @@ def process_single_error_localization(task_id):
             if not actual_cost:
                 error_agent = getattr(localizer, "error_agent", None)
                 error_llm = getattr(error_agent, "llm", None)
-                actual_cost = getattr(error_llm, "cost", {}).get(
-                    "total_cost", 0
-                )
+                actual_cost = getattr(error_llm, "cost", {}).get("total_cost", 0)
             if BillingConfig is not None:
                 credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
                 emit(
-                UsageEvent(
-                    org_id=str(task.organization.id),
-                    event_type=BillingEventType.ERROR_LOCALIZER,
-                    amount=credits,
-                    properties={
-                        "source": "error_localizer",
-                        "source_id": str(task.id),
-                        "raw_cost_usd": str(actual_cost),
-                        **llm_usage_properties(
-                            getattr(localizer, "error_agent", None)
-                        ),
-                    },
+                    UsageEvent(
+                        org_id=str(task.organization.id),
+                        event_type=BillingEventType.ERROR_LOCALIZER,
+                        amount=credits,
+                        properties={
+                            "source": "error_localizer",
+                            "source_id": str(task.id),
+                            "raw_cost_usd": str(actual_cost),
+                            **llm_usage_properties(
+                                getattr(localizer, "error_agent", None)
+                            ),
+                        },
+                    )
                 )
-            )
         except Exception:
             pass  # Metering failure must not break the action
 
