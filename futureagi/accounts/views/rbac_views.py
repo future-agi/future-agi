@@ -923,6 +923,12 @@ class MemberRoleUpdateAPIView(APIView):
                         )
                 else:
                     # Below Admin — use workspace_access to grant explicit memberships.
+                    # ``workspace_access`` is the *complete* desired list. Anything
+                    # not in it must be revoked so the user can't keep stale
+                    # access from a prior higher role.
+                    # Only fires when the caller actually sent the key; a request
+                    # that omits ``workspace_access`` (e.g. only adjusts ws_level
+                    # for a single workspace below) must not mass-revoke.
                     ws_access = data.get("workspace_access") or []
                     default_ws_level = (
                         Level.WORKSPACE_MEMBER
@@ -946,6 +952,44 @@ class MemberRoleUpdateAPIView(APIView):
                                     "deleted_at": None,
                                 },
                             )
+
+                    # The serializer fills ``workspace_access`` with [] by
+                    # default, so we can't tell from ``data`` whether the caller
+                    # sent the key. Check the raw request body to distinguish
+                    # "omitted" (don't touch other workspaces) from "sent empty
+                    # list" (revoke all explicit memberships).
+                    if "workspace_access" in request.data:
+                        desired_ws_ids = {
+                            entry.get("workspace_id")
+                            for entry in ws_access
+                            if entry.get("workspace_id")
+                        }
+                        # If the caller is also targeting a workspace via the
+                        # ws_level/workspace_id pair below, treat it as part of
+                        # the desired set — Block 2 will re-activate it anyway,
+                        # and revoking + resurrecting in the same transaction
+                        # produces inconsistent state (audit noise, no net
+                        # change). Callers who genuinely want to drop a
+                        # workspace should leave it out of both fields.
+                        if data.get("ws_level") is not None and data.get(
+                            "workspace_id"
+                        ):
+                            desired_ws_ids.add(data["workspace_id"])
+                        revoked = (
+                            WorkspaceMembership._base_manager.filter(
+                                user_id=user_id,
+                                workspace__organization=organization,
+                                is_active=True,
+                            )
+                            .exclude(workspace_id__in=desired_ws_ids)
+                            .update(
+                                is_active=False,
+                                deleted=True,
+                                deleted_at=timezone.now(),
+                            )
+                        )
+                        if revoked:
+                            changes["revoked_workspaces"] = revoked
 
                 # Also update User.organization_role for backward compat
                 User.objects.filter(id=user_id).update(
@@ -1019,7 +1063,10 @@ class MemberRemoveAPIView(APIView):
 
     @validated_request(
         request_serializer=MemberRemoveSerializer,
-        responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: MemberUserMutationResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def delete(self, request):
@@ -1129,7 +1176,10 @@ class MemberReactivateAPIView(APIView):
 
     @validated_request(
         request_serializer=MemberRemoveSerializer,
-        responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: MemberUserMutationResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request):
@@ -1579,7 +1629,10 @@ class WorkspaceMemberRemoveAPIView(APIView):
 
     @validated_request(
         request_serializer=WorkspaceMemberRemoveSerializer,
-        responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: MemberUserMutationResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def delete(self, request, workspace_id):

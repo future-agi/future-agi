@@ -916,3 +916,268 @@ class TestWorkspaceMemberRemoval:
     def test_cannot_remove_self_from_ws(self, auth_client, user, workspace):
         resp = self._ws_remove(auth_client, workspace, user)
         assert resp.status_code == status.HTTP_400_BAD_REQUEST, resp.json()
+
+
+# ===================================================================
+# TestOrgRoleUpdateWorkspaceAccess
+# ===================================================================
+#
+# Org-level role update endpoint takes a ``workspace_access`` list that
+# describes the *complete* desired set of workspaces for the target user.
+# Anything not in the list must be revoked — otherwise a downgrade leaves
+# stale memberships behind and the user retains access they shouldn't.
+#
+# Reported repro: a Viewer with access to ws1+ws2 got a role update with
+# ``workspace_access=[ws1]`` and a 200 response, but ws2 access stuck around
+# because the revoke step never happened. These tests pin the contract.
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestOrgRoleUpdateWorkspaceAccess:
+    """Workspace revocation semantics on ``MemberRoleUpdateAPIView``."""
+
+    @pytest.fixture
+    def second_workspace(self, organization, user):
+        return Workspace.objects.create(
+            name="WS Access Second",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+
+    def _update_role(self, client, payload):
+        return client.post(ORG_ROLE_URL, payload, format="json")
+
+    def _ws_member_ids(self, target_user, organization, only_active=True):
+        qs = WorkspaceMembership.all_objects.filter(
+            user=target_user,
+            workspace__organization=organization,
+        )
+        if only_active:
+            qs = qs.filter(is_active=True, deleted=False)
+        return set(qs.values_list("workspace_id", flat=True))
+
+    # The headline bug: workspace_access list excludes ws2 → ws2 must be revoked.
+
+    def test_role_update_revokes_workspaces_not_in_access_list(
+        self, auth_client, organization, workspace, second_workspace
+    ):
+        target = _make_user(
+            organization, "wsacc-revoke@futureagi.com", "Member", Level.MEMBER
+        )
+        _add_ws_membership(target, workspace, organization, Level.WORKSPACE_MEMBER)
+        _add_ws_membership(
+            target, second_workspace, organization, Level.WORKSPACE_MEMBER
+        )
+
+        resp = self._update_role(
+            auth_client,
+            {
+                "user_id": str(target.id),
+                "org_level": Level.VIEWER,
+                "workspace_access": [
+                    {"workspace_id": str(workspace.id), "level": Level.WORKSPACE_VIEWER}
+                ],
+            },
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.json()
+        active = self._ws_member_ids(target, organization)
+        assert workspace.id in active
+        assert second_workspace.id not in active
+
+        # Granted workspace is at the new level.
+        ws1_mem = WorkspaceMembership.all_objects.get(
+            user=target, workspace=workspace, is_active=True
+        )
+        assert ws1_mem.level == Level.WORKSPACE_VIEWER
+
+        # Revoked workspace is soft-deleted, not hard-deleted (audit trail intact).
+        ws2_mem = WorkspaceMembership.all_objects.get(
+            user=target, workspace=second_workspace
+        )
+        assert ws2_mem.is_active is False
+        assert ws2_mem.deleted is True
+
+    # Empty workspace_access list → revoke everything.
+
+    def test_empty_workspace_access_revokes_all_explicit_memberships(
+        self, auth_client, organization, workspace, second_workspace
+    ):
+        target = _make_user(
+            organization, "wsacc-empty@futureagi.com", "Member", Level.MEMBER
+        )
+        _add_ws_membership(target, workspace, organization, Level.WORKSPACE_MEMBER)
+        _add_ws_membership(
+            target, second_workspace, organization, Level.WORKSPACE_MEMBER
+        )
+
+        resp = self._update_role(
+            auth_client,
+            {
+                "user_id": str(target.id),
+                "org_level": Level.VIEWER,
+                "workspace_access": [],
+            },
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.json()
+        active = self._ws_member_ids(target, organization)
+        assert active == set()
+
+    # Omitting the key entirely must NOT mass-revoke — only the targeted
+    # workspace gets touched. This is the "old behavior must still work" case.
+
+    def test_omitting_workspace_access_does_not_revoke_other_memberships(
+        self, auth_client, organization, workspace, second_workspace
+    ):
+        target = _make_user(
+            organization, "wsacc-omit@futureagi.com", "Member", Level.MEMBER
+        )
+        _add_ws_membership(target, workspace, organization, Level.WORKSPACE_MEMBER)
+        _add_ws_membership(
+            target, second_workspace, organization, Level.WORKSPACE_MEMBER
+        )
+
+        # Use only the single-workspace path: ws_level + workspace_id, no
+        # workspace_access key, no org_level.
+        resp = self._update_role(
+            auth_client,
+            {
+                "user_id": str(target.id),
+                "ws_level": Level.WORKSPACE_VIEWER,
+                "workspace_id": str(workspace.id),
+            },
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.json()
+        active = self._ws_member_ids(target, organization)
+        # Both workspaces still active. Only the level of the targeted
+        # workspace changed; ws2 untouched.
+        assert workspace.id in active
+        assert second_workspace.id in active
+        ws1_mem = WorkspaceMembership.all_objects.get(user=target, workspace=workspace)
+        assert ws1_mem.level == Level.WORKSPACE_VIEWER
+
+    # Downgrade from Admin (auto-access in every workspace) to Member with a
+    # narrowed workspace_access list — implicit memberships in the omitted
+    # workspaces must be revoked.
+
+    def test_demote_admin_to_member_revokes_implicit_workspaces(
+        self, auth_client, organization, workspace, second_workspace
+    ):
+        target = _make_user(
+            organization, "wsacc-demote@futureagi.com", "Admin", Level.ADMIN
+        )
+        # Admins get explicit memberships in every workspace via the
+        # promotion path; simulate that state.
+        _add_ws_membership(target, workspace, organization, Level.WORKSPACE_ADMIN)
+        _add_ws_membership(
+            target, second_workspace, organization, Level.WORKSPACE_ADMIN
+        )
+
+        resp = self._update_role(
+            auth_client,
+            {
+                "user_id": str(target.id),
+                "org_level": Level.MEMBER,
+                "workspace_access": [
+                    {"workspace_id": str(workspace.id), "level": Level.WORKSPACE_MEMBER}
+                ],
+            },
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.json()
+        active = self._ws_member_ids(target, organization)
+        assert workspace.id in active
+        assert second_workspace.id not in active
+        ws1_mem = WorkspaceMembership.all_objects.get(
+            user=target, workspace=workspace, is_active=True
+        )
+        assert ws1_mem.level == Level.WORKSPACE_MEMBER
+
+    # When the request targets one workspace via ws_level/workspace_id AND
+    # lists a *different* workspace in workspace_access, Block 1's revoke step
+    # would naively kill the ws_level target, only for Block 2 to resurrect it
+    # on the same transaction. The fix treats the ws_level target as part of
+    # the desired set so both end up active (no spurious revoke + resurrect).
+    # Callers who genuinely want to drop a workspace must leave it out of both
+    # fields.
+
+    def test_ws_level_target_outside_workspace_access_is_preserved(
+        self, auth_client, organization, workspace, second_workspace
+    ):
+        target = _make_user(
+            organization, "wsacc-overlap@futureagi.com", "Member", Level.MEMBER
+        )
+        _add_ws_membership(target, workspace, organization, Level.WORKSPACE_MEMBER)
+        _add_ws_membership(
+            target, second_workspace, organization, Level.WORKSPACE_MEMBER
+        )
+
+        resp = self._update_role(
+            auth_client,
+            {
+                "user_id": str(target.id),
+                "org_level": Level.VIEWER,
+                # Block 2 targets ``workspace`` …
+                "ws_level": Level.WORKSPACE_MEMBER,
+                "workspace_id": str(workspace.id),
+                # … but only ``second_workspace`` is listed in workspace_access.
+                "workspace_access": [
+                    {
+                        "workspace_id": str(second_workspace.id),
+                        "level": Level.WORKSPACE_MEMBER,
+                    }
+                ],
+            },
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.json()
+        active = self._ws_member_ids(target, organization)
+        # Both stay active: the ws_level target is implicitly part of the
+        # desired set, so the revoke step skips it.
+        assert workspace.id in active
+        assert second_workspace.id in active
+        # Revoke counter should not report a kill on the ws_level target.
+        assert resp.json()["result"]["changes"].get("revoked_workspaces", 0) == 0
+
+    # End-to-end: after a role update that revokes a workspace, that workspace
+    # must not appear in the user's ``workspaces[]`` array in the org member
+    # list response. This is the exact symptom that triggered the bug report.
+
+    def test_revoked_workspace_disappears_from_member_list(
+        self, auth_client, organization, workspace, second_workspace
+    ):
+        target = _make_user(
+            organization, "wsacc-list@futureagi.com", "Member", Level.MEMBER
+        )
+        _add_ws_membership(target, workspace, organization, Level.WORKSPACE_MEMBER)
+        _add_ws_membership(
+            target, second_workspace, organization, Level.WORKSPACE_MEMBER
+        )
+
+        update = self._update_role(
+            auth_client,
+            {
+                "user_id": str(target.id),
+                "org_level": Level.VIEWER,
+                "workspace_access": [
+                    {"workspace_id": str(workspace.id), "level": Level.WORKSPACE_VIEWER}
+                ],
+            },
+        )
+        assert update.status_code == status.HTTP_200_OK, update.json()
+
+        listing = auth_client.get(
+            "/accounts/organization/members/?page=1&limit=20",
+            format="json",
+        )
+        assert listing.status_code == status.HTTP_200_OK, listing.json()
+        results = listing.json()["result"]["results"]
+        entry = next((r for r in results if r["email"] == target.email), None)
+        assert entry is not None
+        ws_ids = {ws["workspace_id"] for ws in entry.get("workspaces", [])}
+        assert str(workspace.id) in ws_ids
+        assert str(second_workspace.id) not in ws_ids
