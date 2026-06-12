@@ -307,6 +307,9 @@ def build_user_eval_list_items(
                 "tools": run_config.get("tools", {}),
             },
             "output_type": template.output_type_normalized or "pass_fail",
+            "pinned_version_id": str(user_eval.pinned_version_id)
+            if user_eval.pinned_version_id
+            else None,
         }
 
         if template.template_type == "composite":
@@ -317,6 +320,7 @@ def build_user_eval_list_items(
                     "children_count": template.composite_children.filter(
                         deleted=False
                     ).count(),
+                    "composite_weight_overrides": user_eval.composite_weight_overrides,
                 }
             )
 

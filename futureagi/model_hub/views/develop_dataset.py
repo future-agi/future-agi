@@ -7509,6 +7509,7 @@ class GetEvalStructureView(APIView):
                 template.config.get("config_params_option", {})
             ),
             "run_config": eval.config.get("run_config", {}),
+            "pinned_version_id": str(eval.pinned_version_id) if eval.pinned_version_id else None,
         }
 
         return self._gm.success_response({"eval": eval_data})
@@ -7984,7 +7985,7 @@ class EditAndRunUserEvalView(APIView):
                 eval_metric.template_id = new_template.id
                 eval_metric.save()
 
-            # Update the config if provided in request
+            # Validate config before creating a version to avoid orphans
             new_config = request_data.get("config")
             if new_config:
                 new_config = normalize_eval_runtime_config(
@@ -7994,7 +7995,6 @@ class EditAndRunUserEvalView(APIView):
                     get_required_mapping_keys_for_template,
                     validate_required_key_mapping,
                 )
-
                 missing_keys = validate_required_key_mapping(
                     new_config.get("mapping", {}),
                     get_required_mapping_keys_for_template(eval_metric.template),
@@ -8003,8 +8003,20 @@ class EditAndRunUserEvalView(APIView):
                     return self._gm.bad_request(
                         f"Missing required mapping keys: {', '.join(missing_keys)}"
                     )
-                # Default reason_column to True if not specified by caller, so
-                # editing an eval never silently strips the reason column.
+
+            # Version creation on edit — business logic lives in the service.
+            from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+            maybe_pin_new_version(
+                eval_metric,
+                request_data,
+                user=request.user,
+                organization=getattr(request, "organization", None) or request.user.organization,
+                workspace=getattr(request, "workspace", None),
+            )
+
+            # Update the config (already validated above)
+            if new_config:
                 if "reason_column" not in new_config:
                     new_config["reason_column"] = True
                 eval_metric.config = new_config
@@ -8027,6 +8039,11 @@ class EditAndRunUserEvalView(APIView):
                     request_data["config"]["run_config"]["error_localizer_enabled"]
                 )
             eval_metric.model = request_data.get("model") or eval_metric.model
+            # Persist composite weight overrides when provided
+            if request_data.get("composite_weight_overrides") is not None:
+                eval_metric.composite_weight_overrides = request_data[
+                    "composite_weight_overrides"
+                ]
 
             # Reason-column reconciliation differs by scope:
             #  * dataset: exactly one EVALUATION column (source_id == eval_metric.id)

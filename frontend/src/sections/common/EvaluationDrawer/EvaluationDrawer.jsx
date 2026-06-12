@@ -120,6 +120,7 @@ const EvaluationDrawerChild = ({
         // The column-menu path matches via user_eval_id/userEvalId, so
         // evalItem.id may not be the user-eval id — normalize here.
         userEvalId: evalItem.user_eval_id ?? evalItem.userEvalId ?? evalItem.id,
+        pinned_version_id: evalItem.pinned_version_id ?? evalItem.pinnedVersionId ?? null,
       });
       setEvalPickerOpen(true);
     },
@@ -722,6 +723,12 @@ const EvaluationDrawerChild = ({
               queryClient.invalidateQueries({
                 queryKey: getUserEvalListKey(module, id),
               });
+              // Invalidate version cache so reopening shows the new version
+              if (evalConfig.templateId) {
+                queryClient.invalidateQueries({
+                  queryKey: ["evals", "versions", evalConfig.templateId],
+                });
+              }
               if (effectiveModule === "run-optimization") {
                 queryClient.invalidateQueries({
                   queryKey: ["optimize-develop-column-info"],

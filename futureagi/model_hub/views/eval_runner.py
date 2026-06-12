@@ -912,7 +912,9 @@ class EvaluationRunner:
 
     def _initialize_eval_metric(self):
         """Initialize and set status of user eval metric"""
-        self.user_eval_metric = UserEvalMetric.objects.get(id=self.user_eval_metric_id)
+        self.user_eval_metric = UserEvalMetric.objects.select_related(
+            "pinned_version",
+        ).get(id=self.user_eval_metric_id)
         self.dataset = self.user_eval_metric.dataset
 
         if not self.organization_id and self.dataset:
@@ -920,6 +922,9 @@ class EvaluationRunner:
             self.workspace_id = (
                 self.dataset.workspace.id if self.dataset.workspace else None
             )
+
+        if self.version_number is None and self.user_eval_metric.pinned_version_id:
+            self.version_number = self.user_eval_metric.pinned_version.version_number
 
         self.user_eval_metric.status = StatusType.RUNNING.value
         self.user_eval_metric.save(update_fields=["status"])
@@ -2396,87 +2401,6 @@ class EvaluationRunner:
             else 0
         )
         return input_token_count
-
-    def _resolve_version(self):
-        """Resolve the eval template version to use. Sets self._resolved_version."""
-        if self._resolved_version is not None or not self.eval_template:
-            return
-
-        try:
-            from model_hub.models.evals_metric import EvalTemplateVersion
-
-            organization = None
-            if self.organization_id:
-                organization = Organization.objects.filter(
-                    id=self.organization_id
-                ).first()
-            elif self.user_eval_metric and self.user_eval_metric.organization:
-                organization = self.user_eval_metric.organization
-            elif self.eval_template and self.eval_template.organization:
-                organization = self.eval_template.organization
-
-            if self.version_number is not None:
-                # Look up specific version
-                self._resolved_version = (
-                    EvalTemplateVersion.all_objects.filter(
-                        eval_template=self.eval_template,
-                        version_number=self.version_number,
-                        deleted=False,
-                    )
-                    .filter(
-                        models.Q(organization__isnull=True)
-                        | models.Q(organization=organization)
-                    )
-                    .first()
-                )
-            else:
-                # Use default version
-                self._resolved_version = EvalTemplateVersion.objects.get_default(
-                    self.eval_template, organization
-                )
-
-            # Increment usage count
-            if self._resolved_version:
-                EvalTemplateVersion.all_objects.filter(
-                    id=self._resolved_version.id
-                ).update(usage_count=models.F("usage_count") + 1)
-        except Exception:
-            # Backward compatibility — don't break if versions don't exist yet
-            logger.debug("Version resolution skipped — no versions found")
-            self._resolved_version = None
-
-    def _apply_version_overrides(self, config):
-        """Apply prompt overrides from the resolved version to the config."""
-        if not self._resolved_version:
-            return config
-
-        from model_hub.utils.prompt_migration import prompt_messages_to_flat_config
-
-        flat = prompt_messages_to_flat_config(
-            self._resolved_version.prompt_messages or []
-        )
-
-        # Override prompt fields if version has them
-        if flat.get("system_prompt") is not None:
-            config["system_prompt"] = flat["system_prompt"]
-        if flat.get("rule_prompt") is not None:
-            config["rule_prompt"] = flat["rule_prompt"]
-        if flat.get("criteria") is not None and self.criteria is None:
-            criteria_text = flat["criteria"]
-            # Convert named variables ({{input}}, {{output}}) back to
-            # {{variable_N}} format expected by the deterministic evaluator.
-            required_keys = config.get("required_keys", [])
-            for i, key in enumerate(required_keys):
-                criteria_text = criteria_text.replace(
-                    f"{{{{{key}}}}}", f"{{{{variable_{i + 1}}}}}"
-                )
-            self.criteria = criteria_text
-
-        # Override model if version specifies one
-        if self._resolved_version.model:
-            config["model"] = self._resolved_version.model
-
-        return config
 
     def _create_eval_instance(
         self,
