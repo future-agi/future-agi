@@ -13,9 +13,9 @@ from django.utils import timezone
 from rest_framework import status
 
 from accounts.models.workspace import Workspace
+from model_hub.models.ai_model import AIModel
 from model_hub.models.choices import AnnotationTypeChoices, FeedbackSourceChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
-from model_hub.models.ai_model import AIModel
 from model_hub.models.evals_metric import Feedback
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
@@ -76,7 +76,13 @@ def make_same_org_other_workspace_span(organization, user, trace_type="observe")
         latency_ms=250,
         status="OK",
     )
-    return other_workspace, other_project, other_project_version, other_trace, other_span
+    return (
+        other_workspace,
+        other_project,
+        other_project_version,
+        other_trace,
+        other_span,
+    )
 
 
 @pytest.mark.integration
@@ -193,10 +199,8 @@ class TestObservationSpanWorkspaceScopeAPI:
     def test_list_and_index_reject_same_org_other_workspace_project_version(
         self, auth_client, organization, user
     ):
-        _, _, other_project_version, _, other_span = (
-            make_same_org_other_workspace_span(
-                organization, user, trace_type="experiment"
-            )
+        _, _, other_project_version, _, other_span = make_same_org_other_workspace_span(
+            organization, user, trace_type="experiment"
         )
 
         list_response = auth_client.get(
@@ -591,7 +595,12 @@ class TestObservationSpanListSpansAPI:
         )
 
         def fail_clickhouse(
-            self, request, project_version_id, project_version, analytics, validated_data
+            self,
+            request,
+            project_version_id,
+            project_version,
+            analytics,
+            validated_data,
         ):
             raise RuntimeError("clickhouse unavailable")
 
@@ -1025,9 +1034,7 @@ class TestObservationSpanCreateOtelSpanAPI:
         self, auth_client, observe_project, organization, user
     ):
         """OTEL create must not attach spans to an existing trace from another project."""
-        _, _, _, other_trace, _ = make_same_org_other_workspace_span(
-            organization, user
-        )
+        _, _, _, other_trace, _ = make_same_org_other_workspace_span(organization, user)
         span_id = f"otel_cross_workspace_{uuid.uuid4().hex[:8]}"
         now_ns = int(timezone.now().timestamp() * 1_000_000_000)
 

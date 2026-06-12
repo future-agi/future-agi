@@ -489,12 +489,16 @@ def validate_sort_params_helper(value):
     return value
 
 
-def get_annotation_labels_for_project(project_id, organization=None):
+def get_annotation_labels_for_project(project_id, organization=None, project_ids=None):
     """Find annotation labels that have at least one Score in a project.
 
     Labels may not have a direct ``project`` FK set (e.g. org-wide centralized
     labels), so we look for labels referenced by Score records whose trace or
     observation_span belongs to the project.
+
+    Pass ``project_ids`` (a list) instead of ``project_id`` to scope across
+    multiple projects (org-scoped span listing) — labels are then those scored
+    on, or owned by, any of those projects.
 
     Pre-deprecation this method also union'd in ``TraceAnnotation``-referenced
     labels. Score is the unified store now (the dual-write mirrors every
@@ -506,19 +510,24 @@ def get_annotation_labels_for_project(project_id, organization=None):
 
     from model_hub.models.score import Score
 
-    # Labels with scores for this project
-    score_label_ids = (
-        Score.objects.filter(
-            Q(trace__project_id=project_id)
-            | Q(observation_span__project_id=project_id),
-            deleted=False,
+    if project_ids is not None:
+        score_q = Q(trace__project_id__in=project_ids) | Q(
+            observation_span__project_id__in=project_ids
         )
-        .values("label_id")
-        .distinct()
+        owner_q = Q(project_id__in=project_ids)
+    else:
+        score_q = Q(trace__project_id=project_id) | Q(
+            observation_span__project_id=project_id
+        )
+        owner_q = Q(project_id=project_id)
+
+    # Labels with scores for this project (or any of project_ids)
+    score_label_ids = (
+        Score.objects.filter(score_q, deleted=False).values("label_id").distinct()
     )
 
     return AnnotationsLabels.objects.filter(
-        Q(project_id=project_id) | Q(id__in=score_label_ids),
+        owner_q | Q(id__in=score_label_ids),
         deleted=False,
     ).distinct()
 

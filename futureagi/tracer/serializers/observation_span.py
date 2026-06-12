@@ -127,7 +127,9 @@ class ObservationSpanSerializer(serializers.ModelSerializer):
             if getattr(workspace, "is_default", False):
                 project_workspace_scope = (
                     Q(workspace=workspace)
-                    | Q(workspace__is_default=True, workspace__organization=organization)
+                    | Q(
+                        workspace__is_default=True, workspace__organization=organization
+                    )
                     | Q(workspace__isnull=True)
                 )
                 related_workspace_scope = (
@@ -217,7 +219,9 @@ class SpanListQuerySerializer(StrictInputSerializer):
 
 
 class SpanObserveListQuerySerializer(StrictInputSerializer):
-    project_id = serializers.UUIDField()
+    # Optional: when omitted the endpoint runs org-scoped (spans across every
+    # project in the org) for the cross-project user-detail page.
+    project_id = serializers.UUIDField(required=False, allow_null=True)
     user_id = serializers.CharField(required=False, allow_blank=True)
     filters = filter_list_query_param_field(required=False, default=list)
     page_number = serializers.IntegerField(required=False, default=0, min_value=0)
