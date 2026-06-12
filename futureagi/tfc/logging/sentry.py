@@ -175,6 +175,18 @@ def _event_message(event: dict) -> str:
     return " ".join(p for p in parts if p)
 
 
+def _scrub_deployment_telemetry_event(event: dict) -> dict:
+    request = event.get("request") or {}
+    if "/telemetry/" not in str(request.get("url") or ""):
+        return event
+
+    request.pop("data", None)
+    for exception in (event.get("exception") or {}).get("values", []):
+        for frame in (exception.get("stacktrace") or {}).get("frames", []):
+            frame.pop("vars", None)
+    return event
+
+
 def _get_before_send() -> Callable:
     """
     Create the before_send hook that runs on every error event.
@@ -187,6 +199,8 @@ def _get_before_send() -> Callable:
     """
 
     def before_send(event: dict, hint: dict) -> dict | None:
+        event = _scrub_deployment_telemetry_event(event)
+
         # 1. Infrastructure logger noise - never actionable as an issue.
         logger_name = event.get("logger") or ""
         if isinstance(logger_name, str) and any(
@@ -407,6 +421,9 @@ def init_sentry(
             in_app_exclude=["celery", "kombu", "temporalio", "django"],
             # Hooks
             before_send=_get_before_send(),
+            before_send_transaction=lambda event, hint: (
+                _scrub_deployment_telemetry_event(event)
+            ),
             # Debug mode in staging for troubleshooting
             debug=IS_STAGING,
             # Session tracking
