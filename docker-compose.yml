@@ -10,9 +10,9 @@
 #   • light (default, COMPOSE_PROFILES unset)
 #       Everything you need to run the app: frontend, backend, worker,
 #       agentcc-gateway, serving, code-executor, postgres, clickhouse, redis,
-#       minio, temporal. ~12 containers. Analytics views (Observe / Trace
-#       drilldowns) will show empty data — they're fed by PeerDB, which is
-#       only on in `full` mode.
+#       rabbitmq, minio, temporal, fi-collector. ~13 containers. Analytics
+#       views (Observe / Trace drilldowns) will show empty data — they're
+#       fed by PeerDB, which is only on in `full` mode.
 #
 #   • full (COMPOSE_PROFILES=full)
 #       Adds the PeerDB CDC stack (10 containers) so transactional Postgres

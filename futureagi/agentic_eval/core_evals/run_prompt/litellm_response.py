@@ -20,8 +20,11 @@ from model_hub.utils.websocket_manager import get_websocket_manager
 from channels.db import sync_to_async
 
 import litellm
-import av
 import requests
+
+# `av` (PyAV) lives in the `audio` extra (OSS-light skips it). Reuse the
+# proxy from tfc.utils.storage so any call site raises a clear ImportError.
+from tfc.utils.storage import av  # noqa: F401
 import base64
 import copy
 import io

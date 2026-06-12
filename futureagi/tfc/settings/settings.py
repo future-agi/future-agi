@@ -721,6 +721,13 @@ if not INTEGRATION_ENCRYPTION_KEY and env_type == "local":
     ).decode()
 ENABLE_INTEGRATIONS = os.getenv("ENABLE_INTEGRATIONS", "false").lower() == "true"
 
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# Channels layer — kept on RabbitMQ. Initial OSS-slimming attempt routed
+# this through channels-redis to drop the rabbitmq container, but that
+# combo (channels-redis 4.3 + Granian) raises spurious "Transport not
+# initialized or closed" on every WS consumer dispatch. Revisit when
+# either side fixes the lifecycle interaction.
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_rabbitmq.core.RabbitmqChannelLayer",
@@ -734,7 +741,6 @@ CHANNEL_LAYERS = {
         },
     },
 }
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 if os.getenv("DJANGO_CACHE_BACKEND") == "locmem":
     CACHES = {
