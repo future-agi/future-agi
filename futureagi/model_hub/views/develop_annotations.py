@@ -37,6 +37,8 @@ from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.annotation import AnnotationTaskSerializer
 from model_hub.serializers.develop_annotations import (
+    AnnotationLabelCreateRequestSerializer,
+    AnnotationLabelCreateResponseSerializer,
     AnnotationLabelRestoreResponseSerializer,
     AnnotationLabelsListQuerySerializer,
     AnnotationActionMessageResponseSerializer,
@@ -402,6 +404,10 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
                 "Failed to list annotation labels"
             )
 
+    @validated_request(
+        request_serializer=AnnotationLabelCreateRequestSerializer,
+        responses={200: AnnotationLabelCreateResponseSerializer, **ERROR_RESPONSES},
+    )
     def create(self, request, *args, **kwargs):
         """Custom create to provide clearer error responses in GM format."""
         serializer = self.get_serializer(data=request.data)
@@ -430,7 +436,7 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
             logger.warning(f"Annotation label save failed (model validation): {detail}")
             return self._gm.bad_request(f"Annotation label creation failed: {detail}")
 
-        return self._gm.success_response("Annotation label created successfully")
+        return self._gm.success_response(serializer.data)
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,

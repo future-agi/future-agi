@@ -12308,15 +12308,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "post": {
         "operationId": "model-hub_annotations-labels_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/AnnotationsLabels"
+          "$ref": "#/definitions/AnnotationLabelCreateRequest"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/AnnotationsLabels"
+          "200": {
+            "$ref": "#/definitions/AnnotationLabelCreateResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -46023,6 +46032,70 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/AnnotationActionMessageResult"
+        }
+      }
+    },
+    "AnnotationLabelCreateRequest": {
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "text",
+            "numeric",
+            "categorical",
+            "star",
+            "thumbs_up_down"
+          ]
+        },
+        "settings": {
+          "title": "Settings",
+          "type": "object",
+          "default": {}
+        },
+        "project": {
+          "title": "Project",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "default": "",
+          "x-nullable": true
+        },
+        "allow_notes": {
+          "title": "Allow notes",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "AnnotationLabelCreateResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/AnnotationsLabels"
         }
       }
     },
