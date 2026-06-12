@@ -53,11 +53,6 @@ def maybe_pin_new_version(eval_metric, request_data, user, organization, workspa
     if rule_prompt:
         snap["messages"] = [{"role": "system", "content": rule_prompt}]
 
-    # Dedup: skip if snapshot matches the currently pinned version
-    current_pinned = eval_metric.pinned_version
-    if current_pinned and current_pinned.config_snapshot == snap:
-        return None
-
     prompt_messages = config_to_prompt_messages(
         snap, criteria=criteria,
         eval_type_id=snap.get("eval_type_id"),
