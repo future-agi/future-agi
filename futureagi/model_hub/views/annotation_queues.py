@@ -120,6 +120,7 @@ from model_hub.utils.annotation_queue_helpers import (
     evaluate_rule,
     filter_available_source_ids_for_annotation,
     get_fk_field_name,
+    is_clickhouse_memory_error,
     is_source_available_for_annotation,
     resolve_source_content,
     resolve_source_object,
@@ -1254,20 +1255,27 @@ def _span_notes_target_for_queue_item(item):
     #       deleted=False).filter(Q(parent_span_id__isnull=True) |
     #       Q(parent_span_id=""))
     #   conversation root → start_time root → None
-    # CHSpanReader.list_by_trace already filters is_deleted=0 and orders by
-    # (start_time, id). Root spans have empty parent_span_id (CH stores it
-    # as a non-nullable String — see schema 001), so we filter in Python.
+    # F3: this used to call list_by_trace() and filter root spans in Python —
+    # which materialized EVERY span (with its wide input/output/metadata JSON
+    # blobs) and OOM'd ClickHouse (code 241) on big traces, 500-ing the whole
+    # annotate-detail step. get_root_span_for_trace selects only the three
+    # id/type columns with a LIMIT 1, doing the conversation-root preference in
+    # SQL. A CH memory error (or any reader failure) degrades to "no span-notes
+    # target" rather than failing the annotator workspace.
     from tracer.services.clickhouse.v2 import get_reader
 
-    with get_reader() as reader:
-        spans = reader.list_by_trace(str(item.trace_id))
-    root_spans = [s for s in spans if not s.parent_span_id]
-    if not root_spans:
-        return None
-    for s in root_spans:
-        if s.observation_type == "conversation":
-            return s
-    return root_spans[0]
+    try:
+        with get_reader() as reader:
+            return reader.get_root_span_for_trace(str(item.trace_id))
+    except Exception as exc:
+        if is_clickhouse_memory_error(exc):
+            logger.warning(
+                "span_notes_target_ch_memory_error",
+                trace_id=str(item.trace_id),
+                error=str(exc),
+            )
+            return None
+        raise
 
 
 def _serialize_queue_item_note(note):

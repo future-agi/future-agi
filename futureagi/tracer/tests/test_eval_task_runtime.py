@@ -201,6 +201,152 @@ class TestProcessEvalTaskSpans:
 
 
 # ────────────────────────────────────────────────────────────────────────
+# TH-5410 — status must reach COMPLETED once every matching entity is
+# processed, even when the dispatch-quota gate (offset >= sample_size /
+# span_limit) can never trip. Covers compute_drain_state and the
+# residual-completion guard.
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestEvalTaskCompletionTH5410:
+    def _make_eval_logger_rows(self, task, config, spans, n):
+        """Create ``n`` span-target EvalLogger rows.
+
+        EvalLogger enforces (span+trace both set) for non-session targets, so
+        we attach real spans from the fixture (each carries its trace).
+        """
+        from tracer.models.observation_span import EvalLogger
+
+        for i in range(n):
+            span = spans[i % len(spans)]
+            EvalLogger.objects.create(
+                eval_task_id=str(task.id),
+                custom_eval_config=config,
+                observation_span=span,
+                trace=span.trace,
+            )
+
+    def test_compute_drain_state_fully_drained(
+        self, populated_observe_project, observe_eval_task
+    ):
+        """completed >= dispatched -> is_fully_drained, missing == 0."""
+        from tracer.models.eval_task import EvalTaskLogger
+        from tracer.utils.eval_tasks import compute_drain_state
+
+        task = observe_eval_task["task"]
+        config = observe_eval_task["config"]
+        logger = EvalTaskLogger.objects.create(eval_task=task, offset=3)
+        self._make_eval_logger_rows(
+            task, config, populated_observe_project["spans"], 3
+        )
+
+        state = compute_drain_state(task, logger)
+        # dispatched = offset(3) * eval_count(1) = 3; completed = 3.
+        assert state["dispatched"] == 3
+        assert state["completed"] == 3
+        assert state["missing"] == 0
+        assert state["is_fully_drained"] is True
+
+    def test_compute_drain_state_partial(
+        self, populated_observe_project, observe_eval_task
+    ):
+        """completed < dispatched -> not fully drained, missing reported."""
+        from tracer.models.eval_task import EvalTaskLogger
+        from tracer.utils.eval_tasks import compute_drain_state
+
+        task = observe_eval_task["task"]
+        config = observe_eval_task["config"]
+        logger = EvalTaskLogger.objects.create(eval_task=task, offset=5)
+        self._make_eval_logger_rows(
+            task, config, populated_observe_project["spans"], 2
+        )
+
+        state = compute_drain_state(task, logger)
+        assert state["dispatched"] == 5
+        assert state["completed"] == 2
+        assert state["missing"] == 3
+        assert state["is_fully_drained"] is False
+
+    def test_stuck_running_completes_when_all_processed(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """TH-5410: a task that processed every span but whose offset undershoots
+        ``sample_size`` must still reach COMPLETED via the residual guard.
+
+        Tick 1 dispatches all 12 spans inline (12 EvalLogger rows, offset=12).
+        We then drop the logger ``offset`` below ``sample_size`` (the documented
+        set-dedup-collapse / shrunk-universe undershoot) and reset status to
+        RUNNING. On tick 2 the dispatch-quota gate can't trip
+        (offset < sample_size and < span_limit) and nothing is left to dispatch
+        — pre-fix the task stayed RUNNING forever. The residual-completion guard
+        must observe "all dispatched work drained, nothing pending" and flip it
+        to COMPLETED.
+        """
+        from tracer.models.eval_task import EvalTaskLogger
+
+        task = observe_eval_task["task"]
+
+        # Tick 1: process all 12 spans inline.
+        process_eval_task._original_func(str(task.id))
+        assert (
+            EvalLogger.objects.filter(
+                eval_task_id=str(task.id), deleted=False
+            ).count()
+            == 12
+        )
+
+        # Force the stuck precondition: offset below sample_size (12), status
+        # back to RUNNING — but spanids_processed still covers every span, so
+        # tick 2 finds nothing pending.
+        logger = EvalTaskLogger.objects.get(eval_task=task)
+        logger.offset = 4
+        logger.save(update_fields=["offset"])
+        task.status = EvalTaskStatus.RUNNING
+        task.save(update_fields=["status"])
+
+        # Tick 2: dispatch nothing; residual guard must complete the task.
+        process_eval_task._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == EvalTaskStatus.COMPLETED
+        logger.refresh_from_db()
+        assert logger.status == EvalTaskStatus.COMPLETED
+
+    def test_continuous_task_not_force_completed(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """The residual guard is HISTORICAL-only — continuous tasks run forever.
+
+        A continuous task with nothing left to dispatch this tick must NOT be
+        flipped to COMPLETED by the guard (new spans may still arrive).
+        """
+        task = observe_eval_task["task"]
+        task.run_type = RunType.CONTINUOUS
+        task.save(update_fields=["run_type"])
+
+        # First tick processes the current spans.
+        process_eval_task._original_func(str(task.id))
+        # Second tick: no new spans -> nothing pending.
+        process_eval_task._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status != EvalTaskStatus.COMPLETED
+
+
+# ────────────────────────────────────────────────────────────────────────
 # Voice-call dispatch — literal alias of the spans pipeline. Any
 # observation_type narrowing is the caller's job via ``filters``.
 # ────────────────────────────────────────────────────────────────────────

@@ -60,11 +60,52 @@ from tracer.utils.helper import get_default_project_version_config, get_sort_que
 logger = structlog.get_logger(__name__)
 
 
+def _project_list_scope_label(params, data):
+    """F1 scope-honesty label for ``list_trace_projects``.
+
+    The view's ``total_count`` reflects (a) the active workspace and (b)
+    whichever ``project_type`` the model passed — or BOTH types when it
+    passed none. Without this label the model reads "Showing N of 47" and
+    echoes "47 observe projects", conflating a cross-type, all-workspace
+    feel with a scoped observe count. Stating the exact scope inline makes
+    that conflation impossible.
+    """
+    total = None
+    if isinstance(data, dict):
+        total = data.get("total_count")
+        if total is None:
+            projects = data.get("projects")
+            if isinstance(projects, list):
+                total = len(projects)
+
+    ptype = (params or {}).get("project_type")
+    if ptype == "observe":
+        type_phrase = "observe (live tracing) projects"
+    elif ptype == "experiment":
+        type_phrase = "experiment (offline eval) projects"
+    else:
+        type_phrase = (
+            "projects of BOTH types (observe + experiment) — pass "
+            "project_type='observe' or 'experiment' to count one type"
+        )
+
+    name_filter = (params or {}).get("name")
+    name_phrase = f", name contains '{name_filter}'" if name_filter else ""
+
+    count_phrase = f"{total} " if total is not None else ""
+    return (
+        f"Scope: {count_phrase}{type_phrase} in the current workspace"
+        f"{name_phrase}. This count is workspace- and type-scoped; do not "
+        f"present it as an org-wide or cross-type total."
+    )
+
+
 @expose_to_mcp(
     category="tracing",
     tools={
         "list": {
             "name": "list_trace_projects",
+            "result_scope": _project_list_scope_label,
             "query_params": {
                 "name": {
                     "type": str,

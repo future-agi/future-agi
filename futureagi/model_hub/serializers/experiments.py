@@ -510,6 +510,9 @@ class ExperimentCreateV2Serializer(serializers.Serializer):
         help_text=(
             "Variant entries (min 1). LLM prompt entry: {'name', "
             "'prompt_id', 'prompt_version', 'model', 'configuration'}. "
+            "prompt_version must be a COMMITTED version (drafts are rejected "
+            "with 'is in draft state and cannot be used in experiments' — "
+            "commit one first), and it must belong to prompt_id. "
             "Agent entry: {'name', 'agent_id', 'agent_version'}. tts/stt/"
             "image entries use inline 'messages' instead of prompt refs."
         ),
@@ -518,8 +521,14 @@ class ExperimentCreateV2Serializer(serializers.Serializer):
         many=True,
         help_text=(
             "Evaluations to attach (min 1). Each entry: {'template_id' "
-            "(from list_eval_templates), 'name' (unique), 'config' "
-            "(mapping/params for the eval)}."
+            "(from list_eval_templates), 'name' (unique), 'config'}. "
+            "config MUST contain a 'mapping' dict that supplies EVERY required "
+            "input key of the chosen eval template (see the template's "
+            "required_keys via get_eval_template) — common keys are 'input', "
+            "'output', 'context'. Map each key to a dataset column NAME, e.g. "
+            "config={'mapping': {'input': 'question', 'output': 'answer', "
+            "'context': 'docs'}}. A missing key fails with 'Missing required "
+            "mapping keys: <key>'."
         ),
     )
 

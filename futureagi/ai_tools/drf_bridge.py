@@ -32,6 +32,7 @@ import inspect
 import logging
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -296,6 +297,14 @@ class ViewSetBinding:
     # actually honors (e.g. {"search": "name", "page_size": "limit"}). Params
     # absent from the map are NOT advertised. None on every other tool shape.
     collection_param_map: dict | None = None
+    # F1 scope-honesty: optional callable ``(params: dict, data: Any) -> str | None``
+    # that returns a one-line SCOPE LABEL prepended to the result content. Used so
+    # a list/count tool whose total reflects the *applied* filters (or lack of
+    # them) cannot be misread by the model — e.g. ``list_trace_projects`` labels
+    # whether its count is observe-only / experiment-only / both, and that it is
+    # always scoped to the active workspace. ``params`` is the (exclude_none)
+    # dict the model actually sent; ``data`` is the unwrapped response.
+    result_scope: Callable | None = None
 
 
 def _resolve_class(dotted_path: str):
@@ -943,6 +952,20 @@ class DRFBridgeTool(BaseTool):
             )
 
         content = _format_result_for_llm(result_data, self.binding.action)
+
+        # F1 scope-honesty: a list/count tool can attach a SCOPE LABEL that
+        # states exactly what its total reflects (which filters were applied,
+        # and that it is workspace-scoped), so the model can't echo a
+        # cross-scope number (e.g. "47 total" -> "47 observe projects").
+        if self.binding.result_scope is not None:
+            try:
+                scope_label = self.binding.result_scope(param_dict, result_data)
+            except Exception:
+                logger.exception("result_scope_label_failed", tool=self.name)
+                scope_label = None
+            if scope_label:
+                content = f"{scope_label}\n\n{content}"
+
         return ToolResult(
             content=section(self.description, content),
             data=result_data
@@ -1456,6 +1479,7 @@ def _register_bridge_tool(
         path_kwargs=path_kwargs,
         id_source=id_source,
         collection_param_map=collection_param_map,
+        result_scope=tool_config.get("result_scope"),
     )
 
     # Phase 3A: classify the tool read|mutate|destructive. Config override

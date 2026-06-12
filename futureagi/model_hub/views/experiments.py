@@ -4520,12 +4520,19 @@ def _validate_eval_metric_mapping(template, config):
         validate_required_key_mapping,
     )
 
+    required_keys = get_required_mapping_keys_for_template(template)
     missing_keys = validate_required_key_mapping(
         (config or {}).get("mapping", {}),
-        get_required_mapping_keys_for_template(template),
+        required_keys,
     )
     if missing_keys:
-        raise ValueError(f"Missing required mapping keys: {', '.join(missing_keys)}")
+        raise ValueError(
+            f"Missing required mapping keys: {', '.join(missing_keys)}. "
+            f"Eval template '{getattr(template, 'name', '')}' requires mapping "
+            f"keys {required_keys}; set config.mapping for each (map every key "
+            f"to a dataset column name), e.g. "
+            f"config={{'mapping': {{{', '.join(repr(k) + ': <column_name>' for k in required_keys)}}}}}."
+        )
 
 
 def _with_default_reason_column(config):

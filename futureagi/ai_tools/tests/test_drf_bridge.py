@@ -281,6 +281,58 @@ class TestDRFBridgeToolExecution:
         assert not result.is_error
         mock_view.list.assert_called_once()
 
+    def test_result_scope_label_is_prepended(self, tool_context):
+        """F1: a binding's result_scope hook prepends a scope label to content."""
+
+        def scope(params, data):
+            total = (data or {}).get("total_count")
+            return f"Scope: {total} observe projects in the current workspace."
+
+        tool = self._make_tool("list", "GET")
+        tool.binding.result_scope = scope
+        mock_viewset_cls = MagicMock()
+        mock_view = MagicMock()
+        mock_viewset_cls.return_value = mock_view
+        mock_view.default_response_headers = {}
+        mock_view.list.return_value = MagicMock(
+            status_code=200,
+            data={
+                "status": True,
+                "result": {
+                    "projects": [{"name": "p1", "id": "a", "trace_type": "observe"}],
+                    "total_count": 47,
+                },
+            },
+        )
+
+        with patch("ai_tools.drf_bridge._resolve_class", return_value=mock_viewset_cls):
+            result = tool.execute(tool.input_model(page=0), tool_context)
+
+        assert not result.is_error
+        assert "Scope: 47 observe projects in the current workspace." in result.content
+
+    def test_result_scope_failure_does_not_break_execute(self, tool_context):
+        """A throwing result_scope hook is swallowed — the result still returns."""
+
+        def boom(params, data):
+            raise ValueError("scope hook bug")
+
+        tool = self._make_tool("list", "GET")
+        tool.binding.result_scope = boom
+        mock_viewset_cls = MagicMock()
+        mock_view = MagicMock()
+        mock_viewset_cls.return_value = mock_view
+        mock_view.default_response_headers = {}
+        mock_view.list.return_value = MagicMock(
+            status_code=200,
+            data={"status": True, "result": {"projects": [], "total_count": 0}},
+        )
+
+        with patch("ai_tools.drf_bridge._resolve_class", return_value=mock_viewset_cls):
+            result = tool.execute(tool.input_model(page=0), tool_context)
+
+        assert not result.is_error
+
     def test_detail_action_sets_pk(self, tool_context):
         tool = self._make_tool("retrieve", "GET", detail=True, pk_field="id")
         mock_viewset_cls = MagicMock()

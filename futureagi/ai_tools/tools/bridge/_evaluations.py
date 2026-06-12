@@ -129,7 +129,11 @@ expose_to_mcp(
             "id_source": "list_eval_templates",
             "description": (
                 "Get one eval template with all fields (instructions/criteria, "
-                "model, output type, scoring config, tags, version info)."
+                "model, output type, scoring config, tags, version info). The "
+                "`required_keys` field lists the mapping keys this eval needs "
+                "(e.g. input, output, context) — use it to build the "
+                "config.mapping when attaching the eval to an experiment "
+                "(create_experiment) or a dataset; map each key to a column."
             ),
         }
     },

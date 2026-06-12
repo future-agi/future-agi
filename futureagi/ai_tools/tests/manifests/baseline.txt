@@ -190,6 +190,7 @@ get_dashboard
 get_dashboard_widget
 get_dataset
 get_dataset_optimization
+get_dataset_rows
 get_docs_page
 get_error_cluster_detail
 get_eval_code_snippet
