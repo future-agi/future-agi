@@ -844,6 +844,149 @@ class TestDeleteEvalsView:
         user_eval_metric.refresh_from_db()
         assert user_eval_metric.deleted is True
 
+    def test_delete_eval_full_behavioral(
+        self, auth_client, dataset, organization, workspace, eval_template
+    ):
+        """Full behavioral test for the optimized delete path.
+
+        Covers:
+        - Cells under eval + reason columns are soft-deleted
+        - column_order is pruned
+        - Other metrics referencing the same column get column_deleted=True
+        - The deleted metric itself does NOT get column_deleted=True
+        - Cells under unrelated columns are untouched
+        """
+        # ── Setup: two eval metrics sharing the same input column ──
+        input_col = Column.objects.create(
+            name="Input",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+        )
+
+        metric_to_delete = UserEvalMetric.objects.create(
+            name="Eval A",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={"mapping": {"output": str(input_col.id)}},
+        )
+        other_metric = UserEvalMetric.objects.create(
+            name="Eval B",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={"mapping": {"output": str(input_col.id)}},
+        )
+
+        # Eval column + reason column for the metric we'll delete
+        eval_col = Column.objects.create(
+            name="Eval A",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric_to_delete.id),
+        )
+        reason_col = Column.objects.create(
+            name="Eval A-reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_col.id}-sourceid-{metric_to_delete.id}",
+        )
+
+        # Eval column for the other metric (should NOT be deleted)
+        other_eval_col = Column.objects.create(
+            name="Eval B",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(other_metric.id),
+        )
+
+        dataset.column_order = [
+            str(input_col.id),
+            str(eval_col.id),
+            str(reason_col.id),
+            str(other_eval_col.id),
+        ]
+        dataset.save()
+
+        # Create rows + cells
+        row = Row.objects.create(dataset=dataset, order=0)
+        eval_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=eval_col, value="Pass",
+        )
+        reason_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=reason_col, value="Looks good",
+        )
+        input_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=input_col, value="Hello world",
+        )
+        other_eval_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=other_eval_col, value="Fail",
+        )
+
+        # ── Act ──
+        # The other_metric references the eval_col via its config mapping,
+        # so get_metrics_using_column should find it.
+        # We reference eval_col.id in other_metric's config so it gets flagged.
+        other_metric.config = {"mapping": {"output": str(eval_col.id)}}
+        other_metric.save(update_fields=["config"])
+
+        response = auth_client.delete(
+            f"/model-hub/develops/{dataset.id}/delete_user_eval/{metric_to_delete.id}/",
+            {"delete_column": True},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        # ── Assert: cells under deleted columns are soft-deleted ──
+        eval_cell.refresh_from_db()
+        reason_cell.refresh_from_db()
+        assert eval_cell.deleted is True
+        assert eval_cell.deleted_at is not None
+        assert reason_cell.deleted is True
+        assert reason_cell.deleted_at is not None
+
+        # ── Assert: cells under unrelated columns are untouched ──
+        input_cell.refresh_from_db()
+        other_eval_cell.refresh_from_db()
+        assert input_cell.deleted is False
+        assert other_eval_cell.deleted is False
+
+        # ── Assert: column_order is pruned ──
+        dataset.refresh_from_db()
+        assert str(eval_col.id) not in dataset.column_order
+        assert str(reason_col.id) not in dataset.column_order
+        # Input and other eval columns still in order
+        assert str(input_col.id) in dataset.column_order
+        assert str(other_eval_col.id) in dataset.column_order
+
+        # ── Assert: columns are soft-deleted ──
+        eval_col.refresh_from_db()
+        reason_col.refresh_from_db()
+        assert eval_col.deleted is True
+        assert reason_col.deleted is True
+
+        # ── Assert: other eval column is NOT deleted ──
+        other_eval_col.refresh_from_db()
+        assert other_eval_col.deleted is False
+
+        # ── Assert: other metric gets column_deleted=True ──
+        other_metric.refresh_from_db()
+        assert other_metric.column_deleted is True
+
+        # ── Assert: deleted metric does NOT have column_deleted ──
+        # It gets deleted=True directly; column_deleted is skipped.
+        metric_to_delete.refresh_from_db()
+        assert metric_to_delete.deleted is True
+        assert metric_to_delete.column_deleted is False
+
 
 # ==================== is_user_eval_stopped Tests ====================
 
