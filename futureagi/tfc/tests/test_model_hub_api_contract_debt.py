@@ -1065,9 +1065,6 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/eval-templates/{template_id}/composite/execute/"): (
             "CompositeEvalExecuteRequest"
         ),
-        ("PUT", "/model-hub/eval-templates/{template_id}/ground-truth-config/"): (
-            "GroundTruthConfigRequest"
-        ),
         ("POST", "/model-hub/eval-templates/{template_id}/ground-truth/upload/"): (
             "GroundTruthUploadRequest"
         ),
@@ -1140,12 +1137,6 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/get-eval-templates"): "LegacyEvalTemplatesRequest",
         ("POST", "/model-hub/ground-truth/{ground_truth_id}/embed/"): (
             "ModelHubEmptyRequest"
-        ),
-        ("PUT", "/model-hub/ground-truth/{ground_truth_id}/mapping/"): (
-            "GroundTruthMappingRequest"
-        ),
-        ("PUT", "/model-hub/ground-truth/{ground_truth_id}/role-mapping/"): (
-            "GroundTruthRoleMappingRequest"
         ),
         ("POST", "/model-hub/ground-truth/{ground_truth_id}/search/"): (
             "GroundTruthSearchRequest"
@@ -1434,12 +1425,6 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("POST", "/model-hub/eval-templates/{template_id}/ground-truth/upload/"): (
             "GroundTruthUploadResponse"
         ),
-        ("GET", "/model-hub/eval-templates/{template_id}/ground-truth-config/"): (
-            "GroundTruthConfigResponse"
-        ),
-        ("PUT", "/model-hub/eval-templates/{template_id}/ground-truth-config/"): (
-            "GroundTruthConfigResponse"
-        ),
         ("PUT", "/model-hub/eval-templates/{template_id}/update/"): (
             "EvalTemplateUpdateResponse"
         ),
@@ -1504,12 +1489,6 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ),
         ("POST", "/model-hub/ground-truth/{ground_truth_id}/embed/"): (
             "GroundTruthEmbedResponse"
-        ),
-        ("PUT", "/model-hub/ground-truth/{ground_truth_id}/mapping/"): (
-            "GroundTruthMappingResponse"
-        ),
-        ("PUT", "/model-hub/ground-truth/{ground_truth_id}/role-mapping/"): (
-            "GroundTruthRoleMappingResponse"
         ),
         ("POST", "/model-hub/ground-truth/{ground_truth_id}/search/"): (
             "GroundTruthSearchResponse"

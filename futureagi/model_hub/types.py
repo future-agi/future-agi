@@ -518,29 +518,6 @@ class GroundTruthUploadResponse(BaseModel):
     embedding_status: str = "pending"
 
 
-class VariableMappingRequest(BaseModel):
-    """Request for PUT /model-hub/ground-truth/{id}/mapping/
-
-    Maps a rule prompt's ``{{template_variable}}`` placeholders to the
-    GT column whose value should fill each placeholder at retrieval and
-    few-shot rendering time. Values may be either a single column name
-    or a list of column names (the latter for multi-column inputs).
-    """
-
-    variable_mapping: dict[str, MappingValue]
-
-
-class RoleMappingRequest(BaseModel):
-    """Request for PUT /model-hub/ground-truth/{id}/role-mapping/
-
-    ``role_mapping`` values may be either a single GT column name or a
-    list of GT column names — the latter is used for multi-variable
-    input prompts where several columns together form the embedded text.
-    """
-
-    role_mapping: dict[str, MappingValue]
-
-
 class GroundTruthDataResponse(BaseModel):
     """Response for GET /model-hub/ground-truth/{id}/data/"""
 
@@ -562,17 +539,6 @@ class GroundTruthStatusResponse(BaseModel):
     total_rows: int
     progress_percent: float
     embeddings_stale: bool = False
-
-
-class GroundTruthConfigRequest(BaseModel):
-    """Request for PUT /model-hub/eval-templates/{id}/ground-truth-config/"""
-
-    enabled: bool = True
-    ground_truth_id: str | None = None
-    mode: str = "auto"  # auto | manual | disabled
-    max_examples: int = Field(default=3, ge=1, le=10)
-    similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
-    injection_format: str = "structured"  # structured | conversational | xml
 
 
 class GroundTruthSearchRequest(BaseModel):

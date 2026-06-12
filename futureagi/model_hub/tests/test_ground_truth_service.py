@@ -1,27 +1,24 @@
-"""Unit tests for :class:`GroundTruthService` with a mocked EmbeddingManager.
+"""Unit tests for :class:`GroundTruthService` with mocked EmbeddingManager.
 
-These exercise the business rules in
-``model_hub/services/ground_truth_service.py`` against lightweight
-stand-ins for the Django models so the test suite stays pure unit (no
-DB, no CH, no embedding service). The live CH round-trip is covered by
-``manage.py gt_roundtrip_test`` separately — and by the integration
-tests in ``test_ground_truth.py`` which use real DB fixtures.
+Pure unit (no DB, no CH, no embedding service). The live CH round-trip
+is covered by ``manage.py gt_roundtrip_test`` and the integration tests
+in ``test_ground_truth.py``.
 
-Key behaviours tested here:
+Coverage:
 
-* ``update_variable_mapping`` flips ``embedding_status`` back to
-  ``pending`` only when the mapping actually changed AND the dataset
-  had previously been embedded — never on the first save of an empty
-  mapping, never on idempotent re-save.
-* ``update_role_mapping`` does NOT touch ``embedding_status`` because
-  role-mapped columns are rendered as labels at prompt-build time,
-  not embedded.
-* ``embed_dataset`` short-circuits with a typed failure when the GT
-  has no rows / no mapped columns, marks ``failed`` on EmbeddingManager
-  errors, and stamps ``completed`` + the row count on success.
+* ``update_setup`` validates the payload (output column required,
+  variable mapping columns real, numeric bounds), persists atomically,
+  flips ``embedding_status`` to ``pending`` when the variable mapping
+  changed and the dataset was previously embedded, and writes the
+  injection config onto ``EvalTemplate.config["ground_truth"]``.
+* ``embed_dataset`` short-circuits with a typed failure on empty data
+  or empty mapping, marks ``failed`` on EmbeddingManager errors, and
+  stamps ``completed`` + the row count on success.
 * ``retrieve_few_shot`` honours the ``embedding_status != completed``
   short-circuit, the empty-mapping skip, and delegates to the shared
   helper otherwise.
+* ``resolve_preview_examples`` returns the tri-state contract the FE
+  panel depends on.
 """
 
 from __future__ import annotations
@@ -82,148 +79,6 @@ class _FakeGT:
 
     def save(self, update_fields=None):
         self.save_calls.append(list(update_fields or []))
-
-
-# ─────────────────────────────────────────────────────────────────────
-# update_variable_mapping
-# ─────────────────────────────────────────────────────────────────────
-
-
-def test_update_variable_mapping_persists_with_no_stale_when_never_embedded():
-    gt = _FakeGT(columns=["question", "answer"], embedding_status="pending")
-
-    result = GroundTruthService.update_variable_mapping(
-        gt=gt, variable_mapping={"q": "question"}
-    )
-
-    assert result == {
-        "id": "gt-fake",
-        "variable_mapping": {"q": "question"},
-        "embedding_status": "pending",
-        "embeddings_stale": False,
-    }
-    assert gt.variable_mapping == {"q": "question"}
-    # The single save call must not include embedding_status — the
-    # status flip only fires when an already-completed dataset gets
-    # remapped.
-    assert "embedding_status" not in gt.save_calls[0]
-
-
-def test_update_variable_mapping_flips_completed_to_pending_on_change():
-    gt = _FakeGT(
-        columns=["a", "b"],
-        variable_mapping={"x": "a"},
-        embedding_status="completed",
-    )
-
-    result = GroundTruthService.update_variable_mapping(
-        gt=gt, variable_mapping={"x": "b"}
-    )
-
-    assert result["embeddings_stale"] is True
-    assert gt.embedding_status == "pending"
-    assert "embedding_status" in gt.save_calls[0]
-
-
-def test_update_variable_mapping_idempotent_save_keeps_status():
-    gt = _FakeGT(
-        columns=["a"],
-        variable_mapping={"x": "a"},
-        embedding_status="completed",
-    )
-
-    result = GroundTruthService.update_variable_mapping(
-        gt=gt, variable_mapping={"x": "a"}
-    )
-
-    assert result["embeddings_stale"] is False
-    assert gt.embedding_status == "completed"
-
-
-def test_update_variable_mapping_rejects_unknown_column():
-    gt = _FakeGT(columns=["question", "answer"])
-
-    result = GroundTruthService.update_variable_mapping(
-        gt=gt, variable_mapping={"q": "nope"}
-    )
-
-    assert isinstance(result, ServiceError)
-    assert "nope" in result.message
-    assert result.code == "INVALID_COLUMN"
-    # Nothing must persist on the failure path — no save calls.
-    assert not gt.save_calls
-
-
-def test_update_variable_mapping_supports_list_of_columns():
-    gt = _FakeGT(columns=["a", "b", "c"])
-    result = GroundTruthService.update_variable_mapping(
-        gt=gt, variable_mapping={"x": ["a", "b"]}
-    )
-    assert result["variable_mapping"] == {"x": ["a", "b"]}
-
-
-def test_update_variable_mapping_rejects_missing_inside_list():
-    gt = _FakeGT(columns=["a"])
-    result = GroundTruthService.update_variable_mapping(
-        gt=gt, variable_mapping={"x": ["a", "missing"]}
-    )
-    assert isinstance(result, ServiceError)
-    assert "missing" in result.message
-
-
-# ─────────────────────────────────────────────────────────────────────
-# update_role_mapping
-# ─────────────────────────────────────────────────────────────────────
-
-
-def test_role_mapping_canonical_keys_persist():
-    gt = _FakeGT(columns=["label", "why"])
-    result = GroundTruthService.update_role_mapping(
-        gt=gt, role_mapping={"output": "label", "explanation": "why"}
-    )
-    assert result["role_mapping"] == {"output": "label", "explanation": "why"}
-    assert result["embeddings_stale"] is False
-
-
-def test_role_mapping_legacy_keys_accepted():
-    gt = _FakeGT(columns=["truth", "reason"])
-    result = GroundTruthService.update_role_mapping(
-        gt=gt, role_mapping={"expected_output": "truth", "reasoning": "reason"}
-    )
-    assert not isinstance(result, ServiceError)
-
-
-def test_role_mapping_rejects_unknown_role_key():
-    gt = _FakeGT(columns=["a"])
-    result = GroundTruthService.update_role_mapping(
-        gt=gt, role_mapping={"score": "a"}
-    )
-    assert isinstance(result, ServiceError)
-    assert result.code == "INVALID_ROLE_KEY"
-
-
-def test_role_mapping_rejects_unknown_column():
-    gt = _FakeGT(columns=["truth"])
-    result = GroundTruthService.update_role_mapping(
-        gt=gt, role_mapping={"output": "missing"}
-    )
-    assert isinstance(result, ServiceError)
-    assert result.code == "INVALID_COLUMN"
-
-
-def test_role_mapping_does_not_invalidate_embeddings():
-    """Role-mapped columns feed the prompt as labels, not embedded text.
-    Swapping which column supplies the label leaves vectors valid."""
-    gt = _FakeGT(
-        columns=["a", "b"],
-        role_mapping={"output": "a"},
-        embedding_status="completed",
-    )
-    result = GroundTruthService.update_role_mapping(
-        gt=gt, role_mapping={"output": "b"}
-    )
-    assert result["embeddings_stale"] is False
-    assert gt.embedding_status == "completed"
 
 
 # ─────────────────────────────────────────────────────────────────────
