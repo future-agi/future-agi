@@ -76,6 +76,7 @@ const ScenarioPopoverChild = ({ simulationType, testId: testIdProp }) => {
       scenarios: newSelectedScenarios,
     });
   };
+
   return (
     <Box>
       <Box>
@@ -110,7 +111,7 @@ const ScenarioPopoverChild = ({ simulationType, testId: testIdProp }) => {
           <ScenarioSkeletonItem />
         </ShowComponent>
         <ShowComponent condition={!isPending}>
-          {scenarios?.map(({ id, name, datasetRows }) => {
+          {scenarios?.map(({ id, name, dataset_rows:datasetRows }) => {
             const labelId = `checkbox-list-label-${id}`;
             const isSelected = selectedScenarios?.includes(id);
 

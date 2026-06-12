@@ -114,7 +114,7 @@ const CriticalIssues = ({ mode = "develop" }) => {
 
   const isCriticalIssueFetchingAllowed =
     mode === "simulate"
-      ? kpis?.totalCalls >= MinimumTotalCallsForCriticalIssue
+      ? kpis?.total_calls >= MinimumTotalCallsForCriticalIssue
       : true;
 
   const { data, isLoading, refetch, isRefetching } = useQuery({

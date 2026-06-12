@@ -159,7 +159,7 @@ const CreateScenarioView = () => {
     return agentDefVersions?.pages?.reduce((acc, curr) => {
       const newOptions =
         curr.results?.map((result) => ({
-          label: result.versionNameDisplay,
+          label: result.version_name_display,
           value: result.id,
         })) ?? [];
       return [...acc, ...newOptions];
@@ -274,10 +274,10 @@ const CreateScenarioView = () => {
     const agentOptions = agentDefinitionsLoading
       ? []
       : agentDefinitions?.map((agent) => ({
-          label: agent?.agentName,
+          label: agent?.agent_name,
           value: agent?.id,
           sourceType: SourceType.AGENT_DEFINITION,
-          agentType: agent?.agentType,
+          agentType: agent?.agent_type,
         })) ?? [];
 
     const promptOptions = isLoadingPrompts

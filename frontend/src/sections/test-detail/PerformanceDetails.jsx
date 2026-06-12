@@ -102,7 +102,7 @@ const PerformanceDetails = () => {
                 />
               }
               caption="Pass Rate"
-              value={`${data?.testRunPerformanceMetrics?.passRate}%`}
+              value={`${data?.test_run_performance_metrics?.pass_rate}%`}
             />
             <PerformanceCard
               icon={
@@ -114,7 +114,7 @@ const PerformanceDetails = () => {
                 />
               }
               caption="Total Test Runs"
-              value={data?.testRunPerformanceMetrics?.totalTestRuns}
+              value={data?.test_run_performance_metrics?.total_test_runs}
             />
             <PerformanceCard
               icon={
@@ -126,7 +126,7 @@ const PerformanceDetails = () => {
                 />
               }
               caption="Latest Fail Rate"
-              value={data?.testRunPerformanceMetrics?.latestFailRate}
+              value={data?.test_run_performance_metrics?.latest_fail_rate}
             />
           </Box>
           <Typography typography="s1" fontWeight={500}>
@@ -139,9 +139,9 @@ const PerformanceDetails = () => {
               gap: "1px",
             }}
           >
-            {data?.topPerformingScenarios?.map((scenario) => (
+            {data?.top_performing_scenarios?.map((scenario) => (
               <Box
-                key={scenario.scenarioName}
+                key={scenario.scenario_name}
                 sx={{
                   backgroundColor: "background.default",
                   borderRadius: 1,
@@ -154,16 +154,16 @@ const PerformanceDetails = () => {
               >
                 <Box sx={{ display: "flex", flexDirection: "column" }}>
                   <Typography typography="s1" fontWeight={500}>
-                    {scenario.scenarioName}
+                    {scenario.scenario_name}
                   </Typography>
                   <Typography typography="s2" color="text.disabled">
-                    {scenario.testCount} Tests
+                    {scenario.test_count} Tests
                   </Typography>
                 </Box>
                 <ShowComponent
                   condition={
-                    scenario.performanceScore !== null ||
-                    scenario.performanceScore !== undefined
+                    scenario.performance_score !== null ||
+                    scenario.performance_score !== undefined
                   }
                 >
                   <Box>
@@ -173,13 +173,13 @@ const PerformanceDetails = () => {
                         borderRadius: 1,
                         paddingX: 1,
                         paddingY: 0.2,
-                        backgroundColor: `${colorMap(parseFloat(scenario.performanceScore))}.50`,
-                        color: `${colorMap(parseFloat(scenario.performanceScore))}.500`,
-                        borderColor: `${colorMap(parseFloat(scenario.performanceScore))}.10`,
+                        backgroundColor: `${colorMap(parseFloat(scenario.performance_score))}.50`,
+                        color: `${colorMap(parseFloat(scenario.performance_score))}.500`,
+                        borderColor: `${colorMap(parseFloat(scenario.performance_score))}.10`,
                       }}
                     >
                       <Typography typography="s2">
-                        {scenario.performanceScore}
+                        {scenario.performance_score}
                       </Typography>
                     </Box>
                   </Box>

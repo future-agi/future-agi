@@ -488,7 +488,9 @@ const SkeletonRows = (
 // ── Main Component ──
 
 const EvalPickerList = ({ onSelectEval }) => {
-  const { existingEvals, sourceId, lockedFilters } = useEvalPickerContext();
+  const { existingEvals, source, sourceId, lockedFilters } =
+    useEvalPickerContext();
+  const useScopedEvals = source === "dataset" || source === "experiment";
   const {
     items,
     total,
@@ -504,7 +506,11 @@ const EvalPickerList = ({ onSelectEval }) => {
     setSorting,
     filters,
     setFilters,
-  } = useEvalPickerData({ sourceId, lockedFilters });
+  } = useEvalPickerData({
+    sourceId: useScopedEvals ? sourceId : null,
+    enabled: true,
+    lockedFilters,
+  });
 
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [expandedEvalId, setExpandedEvalId] = useState(null);
