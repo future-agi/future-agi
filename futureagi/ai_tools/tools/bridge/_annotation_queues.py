@@ -237,11 +237,17 @@ expose_to_mcp(
             "id_source": "list_queue_items",
             "path_kwargs": _QUEUE_ID_KWARG,
             "description": (
-                "Submit or update annotations for a queue item. `annotations` "
-                "is a list of {label_id, value} objects (value type must match "
-                "the label type: number, text, categorical choice(s), star "
-                "1-5, or thumbs up/down). Optional notes/item_notes. The "
-                "queue must be active."
+                "Submit or update annotations for a queue item — REQUIRED "
+                "before complete_queue_item. `annotations` is a list of "
+                "{label_id, value} objects. Get each label_id from "
+                "get_queue_item_annotate_detail and use the label's `label_id` "
+                "field (the underlying label id), NOT the queue-label row "
+                "`id`. The value type must match the label type: number, text, "
+                "categorical choice(s), star 1-5, or thumbs up/down. Optional "
+                "notes/item_notes. The queue must be active. (If none of the "
+                "submitted ids match a queue label the call is rejected with "
+                "the list of valid label_id values — resubmit with one of "
+                "those.)"
             ),
         },
         "complete_item": {
@@ -251,10 +257,15 @@ expose_to_mcp(
             "id_source": "list_queue_items",
             "path_kwargs": _QUEUE_ID_KWARG,
             "description": (
-                "Mark a queue item as completed (after submitting annotations "
-                "via submit_queue_annotations) and get the next pending item "
-                "back. Items in queues that require review move to "
-                "pending_review instead. Optional exclude_review_status / "
+                "Mark a queue item as completed and get the next pending "
+                "item back. PREREQUISITE: you MUST first submit this item's "
+                "annotations with submit_queue_annotations — completing an "
+                "item you have not annotated is rejected ('You must submit "
+                "annotations before completing'). The correct sequence is "
+                "get_next_queue_item -> get_queue_item_annotate_detail (read "
+                "the labels) -> submit_queue_annotations -> complete_queue_item. "
+                "Items in queues that require review move to pending_review "
+                "instead of completed. Optional exclude_review_status / "
                 "include_completed tune which item comes back next."
             ),
         },

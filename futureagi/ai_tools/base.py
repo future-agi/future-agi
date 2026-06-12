@@ -144,6 +144,14 @@ class BaseTool(ABC):
     # onto the EXECUTED destructive leg as data["undo"] = {"prompt", "note"} —
     # one-click Undo sends it as a normal chat message (design §1.10).
     undo_prompt: ClassVar[str | None] = None
+    # Optional per-tool execution timeout (seconds) honored by the Falcon
+    # agent's tool dispatcher. ``None`` means "use the default budget".
+    # A few tools do legitimately-slow synchronous work BEFORE handing the
+    # rest off to an async worker (e.g. create_experiment snapshots the
+    # dataset + starts a Temporal workflow synchronously); they would
+    # otherwise trip the 30s default and surface a spurious timeout to the
+    # model even though the experiment was, in fact, created (F4 / TH-5467).
+    exec_timeout: ClassVar[float | None] = None
 
     CONFIRM_PARAM_DESCRIPTION: ClassVar[str] = (
         "Destructive action. Omit on the first call to get a preview. "

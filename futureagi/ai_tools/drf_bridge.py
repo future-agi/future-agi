@@ -1505,6 +1505,7 @@ def _register_bridge_tool(
             "execution_policy": execution_policy,
             "undo_note": tool_config.get("undo_note"),
             "undo_prompt": tool_config.get("undo_prompt"),
+            "exec_timeout": tool_config.get("exec_timeout"),
         },
     )
 

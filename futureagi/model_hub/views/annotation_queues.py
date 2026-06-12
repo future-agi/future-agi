@@ -5282,17 +5282,31 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         else:
             label_notes_fallback = legacy_notes
 
-        # Pre-fetch valid label IDs for this queue
-        queue_label_ids = set(
-            item.queue.queue_labels.filter(deleted=False).values_list(
-                "label_id", flat=True
-            )
-        )
+        # Pre-fetch valid label IDs for this queue. Build BOTH a set of the
+        # real AnnotationsLabels ids AND a map from the queue-label junction-row
+        # id (AnnotationQueueLabel.id) to that real label id. The annotate
+        # workspace surfaces a queue label by BOTH ids (QueueLabelNestedSerializer
+        # emits `id` = the junction row + `label_id` = the underlying label);
+        # callers that pick up the junction `id` (notably the MCP
+        # get_queue_item_annotate_detail tool, whose table renders that `id`
+        # column) would otherwise have their annotation SILENTLY dropped here
+        # and then be unable to complete the item (F3 / TH-5467). Accept the
+        # junction id as an alias so the submitted label always resolves.
+        queue_label_ids = set()
+        junction_to_label_id = {}
+        for ql_id, lbl_id in item.queue.queue_labels.filter(
+            deleted=False
+        ).values_list("id", "label_id"):
+            queue_label_ids.add(lbl_id)
+            junction_to_label_id[ql_id] = lbl_id
 
         annotations_to_save = []
         for ann_data in annotations_data:
             label_id = ann_data["label_id"]
             value = ann_data["value"]
+
+            # Resolve a queue-label junction id to its underlying label id.
+            label_id = junction_to_label_id.get(label_id, label_id)
 
             try:
                 label = AnnotationsLabels.objects.get(pk=label_id, deleted=False)
@@ -5310,6 +5324,21 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             except ValueError as exc:
                 return self._gm.bad_request(str(exc))
             annotations_to_save.append((ann_data, label, value))
+
+        # A non-empty submission that matched NO queue label is almost always a
+        # wrong-id submission (e.g. an AnnotationsLabels id from another queue,
+        # or a stale id). Returning success with "submitted: 0" silently strands
+        # the caller — the item never gets a Score and complete_queue_item then
+        # rejects it. Surface a recoverable error naming the valid label ids
+        # instead (F3 / TH-5467).
+        if annotations_data and not annotations_to_save:
+            valid_ids = ", ".join(str(lid) for lid in sorted(map(str, queue_label_ids)))
+            return self._gm.bad_request(
+                "None of the submitted annotations matched a label on this "
+                f"queue. Use one of this queue's label_id values: [{valid_ids}] "
+                "(get them from get_queue_item_annotate_detail — submit the "
+                "`label_id` field, not the queue-label row `id`)."
+            )
 
         for ann_data, label, value in annotations_to_save:
             per_label_notes = (
@@ -5416,6 +5445,26 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     created_by_user=request.user,
                 ).delete()
 
+        # F3 (TH-5467): a submission that persisted NO score is a silent
+        # no-op that traps an MCP/agent caller — it then calls
+        # complete_queue_item and is rejected with "You must submit
+        # annotations before completing", with no signal that the submit
+        # itself did nothing. Reject an empty/all-blank/all-invalid
+        # submission with an actionable message instead, UNLESS the caller
+        # was only (re)setting item-level notes.
+        if submitted == 0 and item_notes is None:
+            valid_labels = ", ".join(str(lid) for lid in sorted(queue_label_ids)) or (
+                "none configured — add labels to the queue first"
+            )
+            return self._gm.bad_request(
+                "No annotations were saved: `annotations` must contain at "
+                "least one {label_id, value} with a non-blank value, where "
+                "label_id is one of this queue's labels and value matches the "
+                "label's type. Read the queue's labels (and their types) with "
+                "get_queue_item_annotate_detail, then resubmit. "
+                f"Valid label_id(s) for this queue: {valid_labels}."
+            )
+
         # Update item status to in_progress if pending
         if item.status == QueueItemStatus.PENDING.value:
             item.status = QueueItemStatus.IN_PROGRESS.value
@@ -5495,7 +5544,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         user_has_annotated = item_scores.filter(annotator=request.user).exists()
         if not user_has_annotated:
             return self._gm.bad_request(
-                "You must submit annotations before completing."
+                "You must submit annotations before completing this item. "
+                "Call submit_queue_annotations for this item (queue_id="
+                f"{queue_id}, item_id={pk}) with the queue's labels, then "
+                "retry complete_queue_item."
             )
 
         # Multi-annotator: every required label must have enough annotator

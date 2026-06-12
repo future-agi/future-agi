@@ -153,6 +153,15 @@ expose_to_mcp(
             "name": "create_experiment",
             "method": "POST",
             "entity": "experiment",
+            # F4 (TH-5467): the create does slow SYNCHRONOUS work — it snapshots
+            # the dataset and starts a Temporal workflow — before returning the
+            # experiment id; the eval/variant rows then run asynchronously in the
+            # workflow. On a non-trivial dataset that synchronous leg can exceed
+            # the agent's 30s default tool budget and surface a spurious timeout
+            # even though the experiment WAS created. Raise this one tool's
+            # budget so the agent gets the real "created" result back and can
+            # poll list_experiments / get_experiment_results for run status.
+            "exec_timeout": 90,
             "description": (
                 "Create and start a V2 experiment comparing prompt/model or "
                 "agent variants on a dataset, then auto-run an eval over the "
