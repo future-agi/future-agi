@@ -373,7 +373,7 @@ const EditTool = ({ onCancel, editTool }) => {
           color="primary"
           type="submit"
           sx={{
-            width: editTool ? "90px" : "95px",
+            minWidth: "90px",
             height: "30px",
             ...theme.typography["s2"],
             fontWeight: (theme) => theme.typography["fontWeightSemiBold"],

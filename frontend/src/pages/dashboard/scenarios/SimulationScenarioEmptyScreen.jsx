@@ -192,7 +192,7 @@ const SimulationScenarioEmptyScreen = () => {
               <Typography
                 variant="s1"
                 fontWeight={"fontWeightMedium"}
-                color="text.disabled"
+                color="text.secondary"
               >
                 For more instructions, check out our{" "}
                 <Link

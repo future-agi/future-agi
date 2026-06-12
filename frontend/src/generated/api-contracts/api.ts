@@ -1260,7 +1260,6 @@ import type {
   UsageBudgetMutationResponseApi,
   UsageEmptyRequestApi,
   UsageErrorResponseApi,
-  UsageGetCustomerInvoicesListParams,
   UsageInvoiceDetailResponseApi,
   UsageInvoiceListResponseApi,
   UsageMessageResponseApi,
@@ -18829,11 +18828,6 @@ export type falconAiQuickAnalysisCreateResponse200 = {
   status: 200
 }
 
-export type falconAiQuickAnalysisCreateResponse400 = {
-  data: FalconErrorResponseApi
-  status: 400
-}
-
 export type falconAiQuickAnalysisCreateResponse429 = {
   data: FalconErrorResponseApi
   status: 429
@@ -18851,13 +18845,13 @@ export type falconAiQuickAnalysisCreateResponse504 = {
 
 export type falconAiQuickAnalysisCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 429 | 502 | 504>
+  status: Exclude<HTTPStatusCodes, 200 | 429 | 502 | 504>
 }
 
 export type falconAiQuickAnalysisCreateResponseSuccess = (falconAiQuickAnalysisCreateResponse200) & {
   headers: Headers;
 };
-export type falconAiQuickAnalysisCreateResponseError = (falconAiQuickAnalysisCreateResponse400 | falconAiQuickAnalysisCreateResponse429 | falconAiQuickAnalysisCreateResponse502 | falconAiQuickAnalysisCreateResponse504 | falconAiQuickAnalysisCreateResponseDefault) & {
+export type falconAiQuickAnalysisCreateResponseError = (falconAiQuickAnalysisCreateResponse429 | falconAiQuickAnalysisCreateResponse502 | falconAiQuickAnalysisCreateResponse504 | falconAiQuickAnalysisCreateResponseDefault) & {
   headers: Headers;
 };
 
@@ -70453,28 +70447,17 @@ export type usageGetCustomerInvoicesListResponseError = (usageGetCustomerInvoice
 
 export type usageGetCustomerInvoicesListResponse = (usageGetCustomerInvoicesListResponseSuccess | usageGetCustomerInvoicesListResponseError)
 
-export const getUsageGetCustomerInvoicesListUrl = (params?: UsageGetCustomerInvoicesListParams,) => {
-  const normalizedParams = new URLSearchParams();
+export const getUsageGetCustomerInvoicesListUrl = () => {
 
-  Object.entries(params || {}).forEach(([key, value]) => {
 
-    if (Array.isArray(value)) {
-      value
-        .filter((item) => item !== undefined && item !== null)
-        .forEach((item) => normalizedParams.append(key, item.toString()))
-    } else if (value !== undefined && value !== null) {
-      normalizedParams.append(key, value.toString())
-    }
-  });
 
-  const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/usage/get-customer-invoices/?${stringifiedParams}` : `/usage/get-customer-invoices/`
+  return `/usage/get-customer-invoices/`
 }
 
-export const usageGetCustomerInvoicesList = async (params?: UsageGetCustomerInvoicesListParams, options?: RequestInit): Promise<usageGetCustomerInvoicesListResponse> => {
+export const usageGetCustomerInvoicesList = async ( options?: RequestInit): Promise<usageGetCustomerInvoicesListResponse> => {
 
-  return apiMutator<usageGetCustomerInvoicesListResponse>(getUsageGetCustomerInvoicesListUrl(params),
+  return apiMutator<usageGetCustomerInvoicesListResponse>(getUsageGetCustomerInvoicesListUrl(),
   {
     ...options,
     method: 'GET'
@@ -73529,15 +73512,14 @@ export const getUsageV2AddAddonDeleteUrl = () => {
 /**
  * Add or remove an add-on subscription.
  */
-export const usageV2AddAddonDelete = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2AddAddonDeleteResponse> => {
+export const usageV2AddAddonDelete = async ( options?: RequestInit): Promise<usageV2AddAddonDeleteResponse> => {
 
   return apiMutator<usageV2AddAddonDeleteResponse>(getUsageV2AddAddonDeleteUrl(),
   {
     ...options,
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      usageEmptyRequestApi,)
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -73751,15 +73733,14 @@ export const getUsageV2AddonDeleteUrl = () => {
 /**
  * Add or remove an add-on subscription.
  */
-export const usageV2AddonDelete = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2AddonDeleteResponse> => {
+export const usageV2AddonDelete = async ( options?: RequestInit): Promise<usageV2AddonDeleteResponse> => {
 
   return apiMutator<usageV2AddonDeleteResponse>(getUsageV2AddonDeleteUrl(),
   {
     ...options,
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      usageEmptyRequestApi,)
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -74943,16 +74924,14 @@ export const getUsageV2PaymentMethodsDeleteUrl = (pmId: string,) => {
 /**
  * Manage a specific payment method.
  */
-export const usageV2PaymentMethodsDelete = async (pmId: string,
-    usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2PaymentMethodsDeleteResponse> => {
+export const usageV2PaymentMethodsDelete = async (pmId: string, options?: RequestInit): Promise<usageV2PaymentMethodsDeleteResponse> => {
 
   return apiMutator<usageV2PaymentMethodsDeleteResponse>(getUsageV2PaymentMethodsDeleteUrl(pmId),
   {
     ...options,
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      usageEmptyRequestApi,)
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -75093,16 +75072,14 @@ export const getUsageV2PaymentMethodsDefaultDeleteUrl = (pmId: string,) => {
 /**
  * Manage a specific payment method.
  */
-export const usageV2PaymentMethodsDefaultDelete = async (pmId: string,
-    usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2PaymentMethodsDefaultDeleteResponse> => {
+export const usageV2PaymentMethodsDefaultDelete = async (pmId: string, options?: RequestInit): Promise<usageV2PaymentMethodsDefaultDeleteResponse> => {
 
   return apiMutator<usageV2PaymentMethodsDefaultDeleteResponse>(getUsageV2PaymentMethodsDefaultDeleteUrl(pmId),
   {
     ...options,
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      usageEmptyRequestApi,)
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -75390,15 +75367,14 @@ export const getUsageV2ReinstateAddonDeleteUrl = () => {
 /**
  * Add or remove an add-on subscription.
  */
-export const usageV2ReinstateAddonDelete = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2ReinstateAddonDeleteResponse> => {
+export const usageV2ReinstateAddonDelete = async ( options?: RequestInit): Promise<usageV2ReinstateAddonDeleteResponse> => {
 
   return apiMutator<usageV2ReinstateAddonDeleteResponse>(getUsageV2ReinstateAddonDeleteUrl(),
   {
     ...options,
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      usageEmptyRequestApi,)
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -75612,15 +75588,14 @@ export const getUsageV2RemoveAddonDeleteUrl = () => {
 /**
  * Add or remove an add-on subscription.
  */
-export const usageV2RemoveAddonDelete = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2RemoveAddonDeleteResponse> => {
+export const usageV2RemoveAddonDelete = async ( options?: RequestInit): Promise<usageV2RemoveAddonDeleteResponse> => {
 
   return apiMutator<usageV2RemoveAddonDeleteResponse>(getUsageV2RemoveAddonDeleteUrl(),
   {
     ...options,
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      usageEmptyRequestApi,)
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -75924,7 +75899,7 @@ and projected month-end usage.
 
 Query params:
     period: YYYY-MM (default: current month)
-    period_end: YYYY-MM (optional; defaults to period for a single month)
+    workspace_id: optional (filter by workspace)
  * @summary Get usage overview for the current billing period.
  */
 export const usageV2UsageOverviewList = async (params?: UsageV2UsageOverviewListParams, options?: RequestInit): Promise<usageV2UsageOverviewListResponse> => {

@@ -270,7 +270,7 @@ export const SelectedPromptTemplateDrawer = ({
               </Typography>
               <Typography
                 typography="s2"
-                color="text.disabled"
+                color="text.secondary"
                 fontWeight={"fontWeightRegular"}
               >
                 Generate engaging blog posts on any topic with SEO optimization

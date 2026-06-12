@@ -153,6 +153,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
+  const [multiChoice, setMultiChoice] = useState(false);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [templateFormat, setTemplateFormat] = useState("mustache");
@@ -478,6 +479,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           rawRunConfig.choiceScores ??
           evalData?.choice_scores ??
           evalData?.choiceScores,
+        multi_choice:
+          rawRunConfig.multi_choice ??
+          rawRunConfig.multiChoice ??
+          evalData?.multi_choice ??
+          evalData?.multiChoice,
         params: rawRunConfig.params ?? evalData?.params,
         messages: rawRunConfig.messages ?? evalData?.messages,
       };
@@ -519,6 +525,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       // Prefer user's saved run_config overrides (edit flow) over template defaults
       setPassThreshold(config.pass_threshold ?? fullEval.pass_threshold ?? 0.5);
       setChoiceScores(config.choice_scores || fullEval.choice_scores || {});
+      setMultiChoice(config.multi_choice ?? fullEval.multi_choice ?? false);
       // Messages: use config.messages if present, otherwise build from
       // instructions — but only for llm/agent evals, since code evals
       // don't have a prompt to seed into a system message.
@@ -979,6 +986,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       messages,
       pass_threshold: passThreshold,
       choice_scores: choiceScores,
+      multi_choice: multiChoice,
       // Code-eval static params (function_params_schema inputs, e.g.
       // min_words / max_words). Persisted so the backend writes them onto
       // UserEvalMetric.config.params and future runs can read them via
@@ -1015,6 +1023,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     fewShotExamples,
     passThreshold,
     choiceScores,
+    multiChoice,
     codeParams,
     agentMode,
     useInternet,
@@ -1580,6 +1589,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     setChoiceScores(v);
                     setIsDirty(true);
                   }}
+                  multiChoice={multiChoice}
+                  onMultiChoiceChange={(v) => {
+                    setMultiChoice(v);
+                    setIsDirty(true);
+                  }}
                   passThreshold={passThreshold}
                   onPassThresholdChange={(v) => {
                     setPassThreshold(v);
@@ -1728,6 +1742,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
+                    hasDataInjection={hasDataInjection}
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     initialMapping={evalData?.mapping}
                     {...compositeSourceModeProps}
@@ -1771,6 +1786,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
+                    hasDataInjection={hasDataInjection}
                     initialProjectId={sourceId}
                     initialRowType={sourceRowType}
                     initialMapping={evalData?.mapping}
@@ -1923,12 +1939,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             settings only. */}
         {source !== "composite" &&
           !sourceReady &&
-          !hasDataInjection &&
           !testError &&
           !testPassed && (
             <Typography
               variant="caption"
-              color="text.disabled"
+              color="text.secondary"
               sx={{ mr: "auto", fontSize: "11px" }}
             >
               Map all variables to enable testing & adding
@@ -2086,14 +2101,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 : `Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) before ${actionLabel}.`;
           }
 
-          // Non-composite flows additionally require the full source config
-          // (name / output type / etc.) to be valid.
-          if (
-            !addDisabled &&
-            source !== "composite" &&
-            !sourceReady &&
-            !hasDataInjection
-          ) {
+          if (!addDisabled && source !== "composite" && !sourceReady) {
             addDisabled = true;
             addDisabledReason = `Map all variables before ${actionLabel}.`;
           }

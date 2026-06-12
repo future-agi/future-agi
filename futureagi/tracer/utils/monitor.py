@@ -43,8 +43,8 @@ from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.services.clickhouse.query_builders.monitor_metrics import (
     MonitorMetricsQueryBuilder,
 )
-from tracer.services.clickhouse.query_service import AnalyticsQueryService
-from tracer.utils.eval_tasks import parsing_evaltask_filters
+from tracer.services.clickhouse.query_service import AnalyticsQueryService, QueryType
+from tracer.utils.eval_tasks import parsing_monitor_filters
 
 
 def _build_monitor_ch_builder(monitor):
@@ -64,6 +64,7 @@ def _build_monitor_ch_builder(monitor):
 
     # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=MONITOR_METRICS
     from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
     BuilderCls = get_query_builder_class("MONITOR_METRICS")
     return BuilderCls(
         project_id=str(monitor.project_id),
@@ -270,23 +271,7 @@ def _get_metric_value(monitor, start_time, end_time):
         )
 
     # --- PostgreSQL fallback ---
-    # CH25-TODO(blocked-on-reader-extension): the CH primary path above
-    # uses MonitorMetricsQueryBuilder which fully handles span_attributes_
-    # filters, status-stratified counts, group-by-session and group-by-
-    # provider via the FilterEngine v2. This Django-ORM fallback exists
-    # as the safety net when the CH dispatch raises.
-    # Migrating the fallback to CH would defeat its purpose. To remove
-    # the ORM entirely, we'd need readers for:
-    #   • aggregate_window_with_filters(project_id, since, until,
-    #       **parsing_evaltask_filters_for_ch_output) -> dict
-    #   • aggregate_with_status_breakdown(project_id, since, until, *,
-    #       observation_type=None) -> {total, error_count}
-    #   • group_by_session_window(project_id, since, until, **filters)
-    #   • group_by_provider_window(project_id, since, until, **filters)
-    # The new time_bucket_aggregate (commit 46153d310) only accepts
-    # observation_type — it cannot consume the full Q-object that
-    # parsing_evaltask_filters(monitor.filters) produces.
-    filters = parsing_evaltask_filters(monitor.filters)
+    filters = parsing_monitor_filters(monitor.filters)
     base_queryset = ObservationSpan.objects.filter(
         project=monitor.project, created_at__range=(start_time, end_time)
     )
@@ -413,7 +398,7 @@ def _get_evaluation_metric_stats(monitor, start_time, end_time):
         _mute_monitor(monitor)
         return None, None
 
-    filters = parsing_evaltask_filters(monitor.filters)
+    filters = parsing_monitor_filters(monitor.filters)
 
     eval_results = EvalLogger.objects.filter(
         custom_eval_config=custom_eval_config,
@@ -497,7 +482,8 @@ def _get_time_series_data_for_time_aggregated_metrics(
     until, **parsing_evaltask_filters_for_ch_output)` that also emits a
     status-stratified count column.
     """
-    filters = parsing_evaltask_filters(monitor.filters)
+
+    filters = parsing_monitor_filters(monitor.filters)
     base_queryset = ObservationSpan.objects.filter(project=monitor.project).filter(
         filters
     )
@@ -566,9 +552,7 @@ def _get_historical_stats(monitor, start_time, end_time):
             MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
             MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
         ):
-            return _get_stats_for_time_aggregated_metrics(
-                monitor, start_time, end_time
-            )
+            return _get_stats_for_time_aggregated_metrics(monitor, start_time, end_time)
 
         builder = _build_monitor_ch_builder(monitor)
         query, params = builder.build_historical_stats_query(
@@ -587,11 +571,7 @@ def _get_historical_stats(monitor, start_time, end_time):
         )
 
     # --- PostgreSQL fallback ---
-    # CH25-TODO(blocked-on-reader-extension): see _get_metric_value above.
-    # Same parsing_evaltask_filters Q-object + status-stratified Avg(Case)
-    # + group-by-session/provider pattern that the CH primary path covers
-    # via MonitorMetricsQueryBuilder. Fallback intentionally left as ORM.
-    filters = parsing_evaltask_filters(monitor.filters)
+    filters = parsing_monitor_filters(monitor.filters)
     base_queryset = ObservationSpan.objects.filter(
         project=monitor.project, created_at__range=(start_time, end_time)
     ).filter(filters)
@@ -766,7 +746,7 @@ def _get_time_series_df_for_other_metrics(monitor, now):
     signature closer to `iter_rows_with_filters(project_id, ..., **filters)`
     than a bucket aggregate. Defer until anomaly detection is re-enabled.
     """
-    filters = parsing_evaltask_filters(monitor.filters)
+    filters = parsing_monitor_filters(monitor.filters)
     base_queryset = ObservationSpan.objects.filter(
         project=monitor.project, created_at__lte=now
     ).filter(filters)
