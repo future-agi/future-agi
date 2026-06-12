@@ -4336,6 +4336,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         processed_log["duration_seconds"] = max(
                             0, int(_et.timestamp() - _st.timestamp())
                         )
+                # The list's date column binds created_at.
+                if not processed_log.get("created_at"):
+                    processed_log["created_at"] = processed_log.get("started_at")
 
             entry = {
                 **processed_log,
