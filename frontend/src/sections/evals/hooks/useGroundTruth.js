@@ -123,7 +123,7 @@ export function useSaveGroundTruthSetup(templateId) {
       enabled,
     }) => {
       const { data } = await axios.put(
-        endpoints.develop.eval.groundTruthRoleMapping(gtId),
+        endpoints.develop.eval.groundTruthSetup(gtId),
         {
           variable_mapping: variableMapping,
           role_mapping: roleMapping,
