@@ -18,6 +18,7 @@ import { z } from "zod";
 import { ShowComponent } from "src/components/show";
 import YAML from "yaml";
 import FormTextFieldV2 from "../FormTextField/FormTextFieldV2";
+import { getDefaultValues } from "./EditTool.utils";
 
 const tabOptions = [
   { label: "JSON", value: "json", disabled: false },
@@ -47,60 +48,6 @@ const editorOptions = {
     useShadows: false,
   },
 };
-
-function getDefaultValues(editTool) {
-  const defaultJson = `{
-  "type": "function",
-  "function": {
-      "name": "",
-      "description": "",
-      "parameters": {
-          "type": "object",
-          "properties": {},
-          "required": []
-      }
-  }
-}`;
-
-  const defaultYaml = `
-  type: function
-  function:
-    name:
-    description:
-    parameters:
-      type: object
-      properties: {}
-      required: []
-  `;
-
-  if (editTool) {
-    return {
-      name: editTool?.name || "",
-      description: editTool?.description || "",
-      config_type: editTool?.configType,
-      inputSchema: {
-        json:
-          editTool?.configType === "json" && editTool?.config
-            ? JSON.stringify(editTool?.config, null, 2)
-            : defaultJson,
-        yaml:
-          editTool?.configType === "yaml" && editTool?.yamlConfig
-            ? editTool?.yamlConfig
-            : defaultYaml,
-      },
-    };
-  }
-
-  return {
-    name: "",
-    description: "",
-    config_type: "json",
-    inputSchema: {
-      json: defaultJson,
-      yaml: defaultYaml,
-    },
-  };
-}
 
 const toolSchema = z
   .object({
