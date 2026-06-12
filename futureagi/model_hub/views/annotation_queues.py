@@ -5543,11 +5543,40 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         item_scores = _scores_for_queue_item(item)
         user_has_annotated = item_scores.filter(annotator=request.user).exists()
         if not user_has_annotated:
+            # F3 (TH-5467): name the EXACT recovery call + the queue's labels
+            # (id + type) inline so an MCP/agent caller can self-submit a
+            # concrete value without re-reading or asking the user. This only
+            # fires on the error path and still requires a real submit, so it
+            # does not weaken the evidence-before-claim guarantee.
+            label_rows = list(
+                queue.queue_labels.filter(deleted=False)
+                .select_related("label")
+                .order_by("order")
+            )
+            if label_rows:
+                label_desc = "; ".join(
+                    f"label_id={ql.label_id} "
+                    f"(name={ql.label.name!r}, type={ql.label.type})"
+                    for ql in label_rows
+                )
+                hint = (
+                    "Call submit_queue_annotations now (queue_id="
+                    f"{queue_id}, item_id={pk}) with annotations=[{{label_id, "
+                    "value}] — one entry per label below, value matching the "
+                    "label's type (text->a short note, score/number->a number, "
+                    "categorical->a valid choice, boolean->true/false, "
+                    "star->1-5). Choose a concrete value yourself; do not ask "
+                    f"the user. Queue labels: {label_desc}. Then retry "
+                    "complete_queue_item."
+                )
+            else:
+                hint = (
+                    "This queue has no labels configured, so the item cannot "
+                    "be annotated/completed — add labels to the queue first."
+                )
             return self._gm.bad_request(
                 "You must submit annotations before completing this item. "
-                "Call submit_queue_annotations for this item (queue_id="
-                f"{queue_id}, item_id={pk}) with the queue's labels, then "
-                "retry complete_queue_item."
+                + hint
             )
 
         # Multi-annotator: every required label must have enough annotator

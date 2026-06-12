@@ -52,10 +52,13 @@ class CustomEvalConfigSerializer(serializers.ModelSerializer):
         required=False,
         help_text=(
             "Variable mapping for the eval. JSON object whose KEYS are the eval "
-            "template's input variables (call get_eval_template or "
-            "get_eval_template_by_name to list its required_keys / optional_keys) "
-            "and whose VALUES are span attribute paths that exist in this project "
-            "(call get_project_eval_attributes for the available paths). "
+            "template's input variables (call get_eval_template with this "
+            "config's eval_template id to read its required_keys / optional_keys; "
+            "find the template id via list_eval_templates search if you only "
+            "have the name) and whose VALUES are span attribute paths that exist "
+            "in this project (call get_span_eval_attributes with "
+            'filters={"project_id": "<id>"} for the available paths). Cover '
+            "EVERY required_key. "
             'Example: {"input": "llm.input", "output": "llm.output"}.'
         ),
     )

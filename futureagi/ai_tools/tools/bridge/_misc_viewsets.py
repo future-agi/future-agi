@@ -42,6 +42,35 @@ expose_to_mcp(
         "partial_update": {
             "name": "update_custom_eval_config",
             "include_fields": ["mapping"],
+            "description": (
+                "Set/update the variable mapping for an eval attached to a "
+                "trace project (the Observe -> Evaluations 'map variables' "
+                "step). This is how Falcon performs eval-task variable mapping "
+                "end to end:\n"
+                "1. Identify the eval config: list_custom_eval_configs "
+                "(filter by project_id / name) -> note its id and eval_template "
+                "id.\n"
+                "2. Read the required keys: get_eval_template with that "
+                "eval_template id -> its required_keys (and config.optional_keys) "
+                "list the mapping KEYS. The mapping keys MUST be exactly these "
+                "required_keys (e.g. ['conversation', 'context']) — do NOT "
+                "invent generic keys like input/output unless those are the "
+                "template's actual required_keys.\n"
+                "3. Read the available span attribute paths for the project: "
+                "get_span_eval_attributes with "
+                'filters={"project_id": "<project id>"} -> these are the valid '
+                "mapping VALUES. If that returns an empty list (e.g. no spans "
+                "ingested yet), fall back to get_span_attributes_list / "
+                "get_observation_span_fields, or map each required key to the "
+                "most semantically appropriate standard span field "
+                "(input.value, output.value, etc.) — still produce a mapping.\n"
+                "4. Call this tool with the eval config id and "
+                'mapping={"<required_key>": "<attribute path>", ...} that has '
+                "one entry for EVERY required key. Only the mapping field is "
+                "changed; the eval is now runnable. Do not ask the user to "
+                "provide the mapping values yourself when you can read them from "
+                "the steps above."
+            ),
         },
         "destroy": {"name": "delete_custom_eval_config"},
     },
