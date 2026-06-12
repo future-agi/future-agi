@@ -1019,7 +1019,10 @@ class MemberRemoveAPIView(APIView):
 
     @validated_request(
         request_serializer=MemberRemoveSerializer,
-        responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: MemberUserMutationResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def delete(self, request):
@@ -1129,7 +1132,10 @@ class MemberReactivateAPIView(APIView):
 
     @validated_request(
         request_serializer=MemberRemoveSerializer,
-        responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: MemberUserMutationResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request):
@@ -1284,12 +1290,26 @@ class WorkspaceMemberListAPIView(APIView):
             .select_related("user", "organization_membership")
         )
 
+        # Fallback map for rows whose organization_membership FK is NULL.
+        # Legacy creation paths failed to set the FK; the model now self-heals
+        # on save, the data migration backfills history, but reads still need
+        # to be defensive in case any row slips through.
+        org_membership_by_user = {
+            om.user_id: om
+            for om in OrganizationMembership.objects.filter(
+                organization=organization,
+                is_active=True,
+            )
+        }
+
         explicit_user_ids = set()
         results = []
         for ws_mem in ws_memberships:
             user = ws_mem.user
             explicit_user_ids.add(user.id)
-            org_mem = ws_mem.organization_membership
+            org_mem = ws_mem.organization_membership or org_membership_by_user.get(
+                user.id
+            )
             results.append(
                 {
                     "id": str(user.id),
@@ -1579,7 +1599,10 @@ class WorkspaceMemberRemoveAPIView(APIView):
 
     @validated_request(
         request_serializer=WorkspaceMemberRemoveSerializer,
-        responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: MemberUserMutationResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def delete(self, request, workspace_id):

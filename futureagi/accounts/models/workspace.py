@@ -109,3 +109,20 @@ class WorkspaceMembership(BaseModel):
         if self.level is not None:
             return self.level
         return Level.STRING_TO_LEVEL.get(self.role, Level.WORKSPACE_VIEWER)
+
+    def save(self, *args, **kwargs):
+        if (
+            self.organization_membership_id is None
+            and self.user_id
+            and self.workspace_id
+        ):
+            from accounts.models.organization_membership import OrganizationMembership
+
+            self.organization_membership = (
+                OrganizationMembership.no_workspace_objects.filter(
+                    user_id=self.user_id,
+                    organization_id=self.workspace.organization_id,
+                    is_active=True,
+                ).first()
+            )
+        super().save(*args, **kwargs)

@@ -70,6 +70,7 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.constants.levels import Level
 from tfc.constants.roles import RoleMapping, RolePermissions
 from tfc.middleware.workspace_context import get_current_workspace
@@ -82,8 +83,6 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
-
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
     from ee.usage.models.usage import (
@@ -1990,6 +1989,9 @@ class ManageTeamView(APIView):
                             user=user,
                             role=OrganizationRoles.WORKSPACE_ADMIN,
                             invited_by=user,
+                            organization_membership=OrganizationMembership.no_workspace_objects.filter(
+                                user=user, organization=organization, is_active=True
+                            ).first(),
                         )
 
             # If no specific workspace, use default workspace
@@ -2015,6 +2017,9 @@ class ManageTeamView(APIView):
                         user=user,
                         role=OrganizationRoles.WORKSPACE_ADMIN,
                         invited_by=user,
+                        organization_membership=OrganizationMembership.no_workspace_objects.filter(
+                            user=user, organization=organization, is_active=True
+                        ).first(),
                     )
 
             members_data = validated_data.get("members", [])
@@ -2328,6 +2333,11 @@ class ManageTeamView(APIView):
                         role=role,
                         invited_by=invited_by,
                         is_active=True,
+                        organization_membership=OrganizationMembership.no_workspace_objects.filter(
+                            user=user,
+                            organization=workspace.organization,
+                            is_active=True,
+                        ).first(),
                     )
         except Exception as e:
             logger.error(
