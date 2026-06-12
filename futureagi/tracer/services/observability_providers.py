@@ -901,8 +901,16 @@ class ObservabilityService:
             "id": None,
             "call_id": raw_log.get("conversation_id"),
             "phone_number": None,
-            "status": raw_log.get("status"),
+            # ConvAI reports 'done' for finished conversations — normalize to
+            # the platform's 'completed' so list status chips/filters match
+            # every other provider.
+            "status": (
+                "completed"
+                if raw_log.get("status") in ("done", "ended")
+                else raw_log.get("status")
+            ),
             "started_at": started_at,
+            "created_at": started_at,
             "duration_seconds": metadata.get("call_duration_secs"),
             "recording_url": None,
             "cost_cents": cost if cost is not None else None,
@@ -943,6 +951,9 @@ class ObservabilityService:
             "phone_number": raw_log.get("to"),
             "status": raw_log.get("status"),
             "started_at": raw_log.get("started_at") or raw_log.get("created_at"),
+            # The list's date column binds created_at; Bland's raw payload
+            # carries created_at but the mapping dropped it.
+            "created_at": raw_log.get("created_at") or raw_log.get("started_at"),
             "duration_seconds": duration_seconds,
             "recording_url": raw_log.get("recording_url"),
             "cost_cents": float(price) * 100 if price not in (None, "") else None,
@@ -971,6 +982,8 @@ class ObservabilityService:
             "phone_number": raw_log.get("to"),
             "status": raw_log.get("status"),
             "started_at": raw_log.get("start_time"),
+            # The list's date column binds created_at.
+            "created_at": raw_log.get("start_time") or raw_log.get("date_created"),
             "duration_seconds": int(duration) if duration not in (None, "") else None,
             "recording_url": None,
             "cost_cents": abs(float(price)) * 100 if price not in (None, "") else None,
