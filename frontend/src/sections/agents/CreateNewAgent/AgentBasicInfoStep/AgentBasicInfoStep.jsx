@@ -37,7 +37,7 @@ const AgentBasicInfo = ({ control }) => {
         <Typography
           typography="s1"
           fontWeight="fontWeightRegular"
-          color="text.disabled"
+          color="text.secondary"
         >
           Set up the basic details for your agent that you want run simulation
           for

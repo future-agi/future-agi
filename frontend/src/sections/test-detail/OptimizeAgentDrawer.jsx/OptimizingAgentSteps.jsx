@@ -182,7 +182,7 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
                     >
                       <Typography
                         variant="body2"
-                        color="text.disabled"
+                        color="text.secondary"
                         fontSize="14px"
                       >
                         {description}

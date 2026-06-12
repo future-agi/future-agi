@@ -52,7 +52,7 @@ const AgentVideoPlayerModal = ({ open, onClose, content }) => {
             <Typography
               typography="m3"
               fontWeight="fontWeightRegular"
-              color="text.disabled"
+              color="text.secondary"
             >
               {subtitle}
             </Typography>

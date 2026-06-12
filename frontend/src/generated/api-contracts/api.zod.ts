@@ -43652,16 +43652,6 @@ export const UsageGetBillingDetailsListResponse = zod.object({
 
 
 
-export const usageGetCustomerInvoicesListQueryPageSizeMax = 100;
-
-
-
-export const UsageGetCustomerInvoicesListQueryParams = zod.object({
-  "page": zod.number().min(1).optional(),
-  "page_size": zod.number().min(1).max(usageGetCustomerInvoicesListQueryPageSizeMax).optional()
-})
-
-
 
 
 
@@ -44735,7 +44725,7 @@ export const UsageUsageSummaryListResponse = zod.object({
  * Add or remove an add-on subscription.
  */
 export const UsageV2AddAddonCreateBody = zod.object({
-  "plan": zod.enum(['payg', 'boost', 'scale', 'enterprise']).optional()
+  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
 })
 
 
@@ -44772,10 +44762,6 @@ export const UsageV2AddAddonUpdateResponse = zod.object({
 /**
  * Add or remove an add-on subscription.
  */
-export const UsageV2AddAddonDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -44791,7 +44777,7 @@ export const UsageV2AddAddonDeleteResponse = zod.object({
  * Add or remove an add-on subscription.
  */
 export const UsageV2AddonCreateBody = zod.object({
-  "plan": zod.enum(['payg', 'boost', 'scale', 'enterprise']).optional()
+  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
 })
 
 
@@ -44828,10 +44814,6 @@ export const UsageV2AddonUpdateResponse = zod.object({
 /**
  * Add or remove an add-on subscription.
  */
-export const UsageV2AddonDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -45277,10 +45259,6 @@ export const UsageV2PaymentMethodsDeleteParams = zod.object({
   "pm_id": zod.string()
 })
 
-export const UsageV2PaymentMethodsDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -45320,10 +45298,6 @@ export const UsageV2PaymentMethodsDefaultCreateResponse = zod.object({
 export const UsageV2PaymentMethodsDefaultDeleteParams = zod.object({
   "pm_id": zod.string()
 })
-
-export const UsageV2PaymentMethodsDefaultDeleteBody = zod.object({
-
-}).passthrough()
 
 
 
@@ -45406,7 +45380,7 @@ export const UsageV2PlansAndAddonsListResponse = zod.object({
  * Add or remove an add-on subscription.
  */
 export const UsageV2ReinstateAddonCreateBody = zod.object({
-  "plan": zod.enum(['payg', 'boost', 'scale', 'enterprise']).optional()
+  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
 })
 
 
@@ -45443,10 +45417,6 @@ export const UsageV2ReinstateAddonUpdateResponse = zod.object({
 /**
  * Add or remove an add-on subscription.
  */
-export const UsageV2ReinstateAddonDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -45462,7 +45432,7 @@ export const UsageV2ReinstateAddonDeleteResponse = zod.object({
  * Add or remove an add-on subscription.
  */
 export const UsageV2RemoveAddonCreateBody = zod.object({
-  "plan": zod.enum(['payg', 'boost', 'scale', 'enterprise']).optional()
+  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
 })
 
 
@@ -45499,10 +45469,6 @@ export const UsageV2RemoveAddonUpdateResponse = zod.object({
 /**
  * Add or remove an add-on subscription.
  */
-export const UsageV2RemoveAddonDeleteBody = zod.object({
-
-}).passthrough()
-
 
 
 
@@ -45588,7 +45554,7 @@ and projected month-end usage.
 
 Query params:
     period: YYYY-MM (default: current month)
-    period_end: YYYY-MM (optional; defaults to period for a single month)
+    workspace_id: optional (filter by workspace)
  * @summary Get usage overview for the current billing period.
  */
 
@@ -45601,7 +45567,8 @@ export const usageV2UsageOverviewListQueryPeriodEndRegExp = new RegExp('^\\d{4}-
 
 export const UsageV2UsageOverviewListQueryParams = zod.object({
   "period": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodRegExp).optional(),
-  "period_end": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodEndRegExp).optional()
+  "period_end": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodEndRegExp).optional(),
+  "workspace_id": zod.string().uuid().optional()
 })
 
 
