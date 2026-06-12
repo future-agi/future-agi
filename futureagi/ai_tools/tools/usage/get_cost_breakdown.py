@@ -61,6 +61,9 @@ class GetCostBreakdownTool(BaseTool):
         except ImportError:
             APICallLog = None
 
+        if APICallLog is None:
+            return ToolResult.feature_unavailable(EEFeature.AUDIT_LOGS.value)
+
         logs_qs = APICallLog.no_workspace_objects.filter(
             organization=context.organization,
             created_at__gte=since,
@@ -176,6 +179,9 @@ class GetCostBreakdownTool(BaseTool):
                 from ee.usage.models.usage import OrganizationSubscription
             except ImportError:
                 OrganizationSubscription = None
+
+            if OrganizationSubscription is None:
+                return {"tier": "self-hosted", "status": "self-hosted", "balance": None}
 
             sub = OrganizationSubscription.objects.select_related(
                 "subscription_tier"

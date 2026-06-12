@@ -136,6 +136,9 @@ class TriggerErrorLocalizationTool(BaseTool):
         except ImportError:
             APICallLog = None
 
+        if APICallLog is None:
+            return ToolResult.feature_unavailable("Audit Logs")
+
         try:
             log = APICallLog.objects.get(
                 log_id=log_id, organization=context.organization

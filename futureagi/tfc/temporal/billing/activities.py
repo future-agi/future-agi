@@ -54,6 +54,9 @@ def _run_dunning_checks_sync() -> int:
         except ImportError:
             DunningService = None
 
+        if OrganizationSubscription is None or DunningService is None:
+            return 0
+
         past_due_subs = OrganizationSubscription.objects.filter(
             status="past_due", deleted=False
         )
@@ -134,6 +137,9 @@ def _generate_monthly_invoices_sync(
             else:
                 period = f"{now.year}-{now.month - 1:02d}"
 
+        if InvoiceGenerationService is None:
+            return 0, 0, 0
+
         result = InvoiceGenerationService.run_for_period(
             period=period,
             org_id=org_id or None,
@@ -154,9 +160,13 @@ def _generate_monthly_invoices_sync(
 def _run_monthly_reset_sync(period: str) -> None:
     close_old_connections()
     try:
-        from ee.usage.tasks.monthly_reset import run_monthly_reset
+        try:
+            from ee.usage.tasks.monthly_reset import run_monthly_reset
+        except ImportError:
+            run_monthly_reset = None
 
-        run_monthly_reset(period=period)
+        if run_monthly_reset is not None:
+            run_monthly_reset(period=period)
     finally:
         close_old_connections()
 

@@ -172,20 +172,21 @@ class DevelopOptimizer:
             # get the api call log row by reference id
             if APICallLog is not None:
                 api_call_log_row = APICallLog.objects.filter(
-                reference_id=optimisation_id, deleted=False
-            ).first()
-            if optimizer_row.status == StatusType.FAILED.value:
-                # refund the cost
-                # update the api call log row
-                api_call_log_row.status = APICallStatusChoices.ERROR.value
-                api_call_log_row.save()
-                refund_config = {"reference_id": str(optimizer_row.id)}
-                if refund_cost_for_api_call is not None:
-                    refund_cost_for_api_call(api_call_log_row, config=refund_config)
-            else:
-                # update the api call log row
-                api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-                api_call_log_row.save()
+                    reference_id=optimisation_id, deleted=False
+                ).first()
+                if api_call_log_row is not None:
+                    if optimizer_row.status == StatusType.FAILED.value:
+                        # refund the cost
+                        # update the api call log row
+                        api_call_log_row.status = APICallStatusChoices.ERROR.value
+                        api_call_log_row.save()
+                        refund_config = {"reference_id": str(optimizer_row.id)}
+                        if refund_cost_for_api_call is not None:
+                            refund_cost_for_api_call(api_call_log_row, config=refund_config)
+                    else:
+                        # update the api call log row
+                        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+                        api_call_log_row.save()
 
         except Exception as e:
             logger.exception(f"error in refunding cost : {e}")

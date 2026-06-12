@@ -1108,6 +1108,7 @@ def process_single_error_localization(task_id):
                 raise ValueError(usage_check.reason or "Usage limit exceeded")
 
         # Log and deduct cost for error localization
+        api_call_log_row = None
         if log_and_deduct_cost_for_api_request is not None:
             api_call_log_row = log_and_deduct_cost_for_api_request(
                 organization=task.organization,
@@ -1169,8 +1170,9 @@ def process_single_error_localization(task_id):
 
         # Update the task with the results
         task.mark_as_completed(error_analysis, selected_input_key)
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save(update_fields=["status"])
+        if api_call_log_row is not None:
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save(update_fields=["status"])
 
         # Dual-write: emit usage event for new billing system (cost-based)
         try:
@@ -1207,22 +1209,22 @@ def process_single_error_localization(task_id):
             if BillingConfig is not None:
                 credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
-                emit(
-                UsageEvent(
-                    org_id=str(task.organization.id),
-                    event_type=BillingEventType.ERROR_LOCALIZER,
-                    amount=credits,
-                    properties={
-                        "source": "error_localizer",
-                        "source_id": str(task.id),
-                        "raw_cost_usd": str(actual_cost),
-                        **llm_usage_properties(
-                            getattr(localizer, "error_agent", None)
-                        ),
-                    },
-                )
-            )
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                    emit(
+                        UsageEvent(
+                            org_id=str(task.organization.id),
+                            event_type=BillingEventType.ERROR_LOCALIZER,
+                            amount=credits,
+                            properties={
+                                "source": "error_localizer",
+                                "source_id": str(task.id),
+                                "raw_cost_usd": str(actual_cost),
+                                **llm_usage_properties(
+                                    getattr(localizer, "error_agent", None)
+                                ),
+                            },
+                        )
+                    )
         except Exception:
             pass  # Metering failure must not break the action
 
@@ -1250,16 +1252,16 @@ def process_single_error_localization(task_id):
                     try:
                         if APICallLog is not None:
                             log = APICallLog.objects.get(log_id=metadata.get("log_id"))
-                        config = json.loads(log.config)
-                        config["error_localizer"] = {
-                            "error_analysis": error_analysis,
-                            "selected_input_key": selected_input_key,
-                            "input_types": task.input_types,
-                            "input_data": task.input_data,
-                        }
-                        log.config = json.dumps(config)
-                        log.save(update_fields=["config"])
-                    except APICallLog.DoesNotExist:
+                            config = json.loads(log.config)
+                            config["error_localizer"] = {
+                                "error_analysis": error_analysis,
+                                "selected_input_key": selected_input_key,
+                                "input_types": task.input_types,
+                                "input_data": task.input_data,
+                            }
+                            log.config = json.dumps(config)
+                            log.save(update_fields=["config"])
+                    except (APICallLog.DoesNotExist if APICallLog else Exception):
                         logger.info("Log doesn't exist.")
             except Exception as e:
                 logger.error(f"Error in updating cell metadata: {str(e)}")
@@ -1288,16 +1290,16 @@ def process_single_error_localization(task_id):
                     try:
                         if APICallLog is not None:
                             log = APICallLog.objects.get(log_id=metadata.get("log_id"))
-                        config = json.loads(log.config)
-                        config["error_localizer"] = {
-                            "error_analysis": error_analysis,
-                            "selected_input_key": selected_input_key,
-                            "input_types": task.input_types,
-                            "input_data": task.input_data,
-                        }
-                        log.config = json.dumps(config)
-                        log.save(update_fields=["config"])
-                    except APICallLog.DoesNotExist:
+                            config = json.loads(log.config)
+                            config["error_localizer"] = {
+                                "error_analysis": error_analysis,
+                                "selected_input_key": selected_input_key,
+                                "input_types": task.input_types,
+                                "input_data": task.input_data,
+                            }
+                            log.config = json.dumps(config)
+                            log.save(update_fields=["config"])
+                    except (APICallLog.DoesNotExist if APICallLog else Exception):
                         logger.info("Log doesn't exist.")
 
             except Exception as e:
@@ -1310,15 +1312,15 @@ def process_single_error_localization(task_id):
             try:
                 if APICallLog is not None:
                     eval_logger = APICallLog.objects.get(log_id=task.source_id)
-                config = json.loads(eval_logger.config) or {}
-                config["error_localizer"] = {
-                    "error_analysis": error_analysis,
-                    "selected_input_key": selected_input_key,
-                    "input_types": task.input_types,
-                    "input_data": task.input_data,
-                }
-                eval_logger.config = json.dumps(config)
-                eval_logger.save(update_fields=["config"])
+                    config = json.loads(eval_logger.config) or {}
+                    config["error_localizer"] = {
+                        "error_analysis": error_analysis,
+                        "selected_input_key": selected_input_key,
+                        "input_types": task.input_types,
+                        "input_data": task.input_data,
+                    }
+                    eval_logger.config = json.dumps(config)
+                    eval_logger.save(update_fields=["config"])
             except Exception as e:
                 logger.exception(f"Error in updating log config: {str(e)}")
                 if refund_cost_for_api_call is not None:

@@ -683,18 +683,19 @@ def run_single_prompt_chat(call_execution_id: str):
                 or 0
             )
 
-            emit(
-                UsageEvent(
-                    org_id=str(organization.id),
-                    event_type=BillingEventType.TEXT_CALL,
-                    amount=total_tokens,
-                    properties={
-                        "source": "simulate_prompt_chat",
-                        "source_id": str(call_execution.id),
-                        "total_tokens": total_tokens,
-                    },
+            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                emit(
+                    UsageEvent(
+                        org_id=str(organization.id),
+                        event_type=BillingEventType.TEXT_CALL,
+                        amount=total_tokens,
+                        properties={
+                            "source": "simulate_prompt_chat",
+                            "source_id": str(call_execution.id),
+                            "total_tokens": total_tokens,
+                        },
+                    )
                 )
-            )
         except Exception:
             pass  # Metering failure must not break the action
 

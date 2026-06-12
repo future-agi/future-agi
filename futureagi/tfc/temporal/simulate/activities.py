@@ -186,14 +186,15 @@ async def generate_synthetic_data_activity(
             except ImportError:
                 check_usage = None
 
-            usage_check = check_usage(
-                input.organization_id, BillingEventType.SYNTHETIC_DATA_GENERATION
-            )
-            if not usage_check.allowed:
-                return GenerateSyntheticDataOutput(
-                    status="FAILED",
-                    error=usage_check.reason or "Usage limit exceeded",
+            if check_usage is not None and BillingEventType is not None:
+                usage_check = check_usage(
+                    input.organization_id, BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
+                if not usage_check.allowed:
+                    return GenerateSyntheticDataOutput(
+                        status="FAILED",
+                        error=usage_check.reason or "Usage limit exceeded",
+                    )
         else:
             logger.warning(
                 "usage_check_skipped_no_org_id",
@@ -240,19 +241,21 @@ async def generate_synthetic_data_activity(
                     emit = None
 
                 actual_cost = agent.llm.cost.get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-                emit(
-                    UsageEvent(
-                        org_id=input.organization_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_scenario_generation",
-                            "raw_cost_usd": str(actual_cost),
-                            **token_usage_properties(agent.llm.token_usage),
-                        },
-                    )
-                )
+                if BillingConfig is not None:
+                    credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                        emit(
+                            UsageEvent(
+                                org_id=input.organization_id,
+                                event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
+                                amount=credits,
+                                properties={
+                                    "source": "simulate_scenario_generation",
+                                    "raw_cost_usd": str(actual_cost),
+                                    **token_usage_properties(agent.llm.token_usage),
+                                },
+                            )
+                        )
             except Exception:
                 pass
 
@@ -581,14 +584,15 @@ async def generate_column_data_activity(
             except ImportError:
                 check_usage = None
 
-            usage_check = check_usage(
-                input.organization_id, BillingEventType.SYNTHETIC_DATA_GENERATION
-            )
-            if not usage_check.allowed:
-                return GenerateColumnDataOutput(
-                    status="FAILED",
-                    error=usage_check.reason or "Usage limit exceeded",
+            if check_usage is not None and BillingEventType is not None:
+                usage_check = check_usage(
+                    input.organization_id, BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
+                if not usage_check.allowed:
+                    return GenerateColumnDataOutput(
+                        status="FAILED",
+                        error=usage_check.reason or "Usage limit exceeded",
+                    )
         else:
             logger.warning(
                 "usage_check_skipped_no_org_id",
@@ -636,19 +640,21 @@ async def generate_column_data_activity(
                     emit = None
 
                 actual_cost = agent.llm.cost.get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-                emit(
-                    UsageEvent(
-                        org_id=input.organization_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_column_generation",
-                            "raw_cost_usd": str(actual_cost),
-                            **token_usage_properties(agent.llm.token_usage),
-                        },
-                    )
-                )
+                if BillingConfig is not None:
+                    credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                        emit(
+                            UsageEvent(
+                                org_id=input.organization_id,
+                                event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
+                                amount=credits,
+                                properties={
+                                    "source": "simulate_column_generation",
+                                    "raw_cost_usd": str(actual_cost),
+                                    **token_usage_properties(agent.llm.token_usage),
+                                },
+                            )
+                        )
             except Exception:
                 pass
 
@@ -820,14 +826,15 @@ async def add_scenario_columns_activity(
             _close_check()
             _asc_scenario = Scenarios.objects.get(id=input.scenario_id)
             _asc_org_id = str(_asc_scenario.organization.id)
-            usage_check = check_usage(
-                _asc_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
-            )
-            if not usage_check.allowed:
-                raise ApplicationError(
-                    usage_check.reason or "Usage limit exceeded",
-                    non_retryable=True,
+            if check_usage is not None and BillingEventType is not None:
+                usage_check = check_usage(
+                    _asc_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
+                if not usage_check.allowed:
+                    raise ApplicationError(
+                        usage_check.reason or "Usage limit exceeded",
+                        non_retryable=True,
+                    )
         except ApplicationError:
             raise
         except Exception:
@@ -1281,14 +1288,15 @@ def _create_dataset_scenario_sync(
                 check_usage = None
 
             _cds_org_id = str(scenario.organization.id)
-            usage_check = check_usage(
-                _cds_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
-            )
-            if not usage_check.allowed:
-                raise ApplicationError(
-                    usage_check.reason or "Usage limit exceeded",
-                    non_retryable=True,
+            if check_usage is not None and BillingEventType is not None:
+                usage_check = check_usage(
+                    _cds_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
+                if not usage_check.allowed:
+                    raise ApplicationError(
+                        usage_check.reason or "Usage limit exceeded",
+                        non_retryable=True,
+                    )
         except ApplicationError:
             raise
         except Exception:
@@ -1871,22 +1879,24 @@ def _create_dataset_scenario_sync(
                     emit = None
 
                 _total_cost = graph_generator.sda.llm.cost.get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(_total_cost)
-                emit(
-                    UsageEvent(
-                        org_id=_cds_org_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_dataset_scenario_creation",
-                            "source_id": str(scenario_id),
-                            "raw_cost_usd": str(_total_cost),
-                            **token_usage_properties(
-                                graph_generator.sda.llm.token_usage
-                            ),
-                        },
-                    )
-                )
+                if BillingConfig is not None:
+                    credits = BillingConfig.get().calculate_ai_credits(_total_cost)
+                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                        emit(
+                            UsageEvent(
+                                org_id=_cds_org_id,
+                                event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
+                                amount=credits,
+                                properties={
+                                    "source": "simulate_dataset_scenario_creation",
+                                    "source_id": str(scenario_id),
+                                    "raw_cost_usd": str(_total_cost),
+                                    **token_usage_properties(
+                                        graph_generator.sda.llm.token_usage
+                                    ),
+                                },
+                            )
+                        )
         except Exception:
             pass
 
@@ -1999,14 +2009,15 @@ def _create_script_scenario_sync(
                 check_usage = None
 
             _org_id = str(scenario.organization.id)
-            usage_check = check_usage(
-                _org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
-            )
-            if not usage_check.allowed:
-                raise ApplicationError(
-                    usage_check.reason or "Usage limit exceeded",
-                    non_retryable=True,
+            if check_usage is not None and BillingEventType is not None:
+                usage_check = check_usage(
+                    _org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
+                if not usage_check.allowed:
+                    raise ApplicationError(
+                        usage_check.reason or "Usage limit exceeded",
+                        non_retryable=True,
+                    )
         except ApplicationError:
             raise
         except Exception:
@@ -2086,19 +2097,20 @@ def _create_script_scenario_sync(
                     emit = None
 
                 _cost = enhanced_agent.llm.cost.get("total_cost", 0)
-                emit(
-                    UsageEvent(
-                        org_id=_org_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=BillingConfig.get().calculate_ai_credits(_cost),
-                        properties={
-                            "source": "simulate_dataset_scenario",
-                            "source_id": scenario_id,
-                            "raw_cost_usd": str(_cost),
-                            **token_usage_properties(enhanced_agent.llm.token_usage),
-                        },
+                if BillingConfig is not None and emit is not None and UsageEvent is not None and BillingEventType is not None:
+                    emit(
+                        UsageEvent(
+                            org_id=_org_id,
+                            event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
+                            amount=BillingConfig.get().calculate_ai_credits(_cost),
+                            properties={
+                                "source": "simulate_dataset_scenario",
+                                "source_id": scenario_id,
+                                "raw_cost_usd": str(_cost),
+                                **token_usage_properties(enhanced_agent.llm.token_usage),
+                            },
+                        )
                     )
-                )
         except Exception:
             pass
 
@@ -2412,14 +2424,15 @@ def _create_graph_scenario_sync(
                 check_usage = None
 
             _org_id = str(scenario.organization.id)
-            usage_check = check_usage(
-                _org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
-            )
-            if not usage_check.allowed:
-                raise ApplicationError(
-                    usage_check.reason or "Usage limit exceeded",
-                    non_retryable=True,
+            if check_usage is not None and BillingEventType is not None:
+                usage_check = check_usage(
+                    _org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
+                if not usage_check.allowed:
+                    raise ApplicationError(
+                        usage_check.reason or "Usage limit exceeded",
+                        non_retryable=True,
+                    )
         except ApplicationError:
             raise
         except Exception:
@@ -2632,19 +2645,20 @@ def _create_graph_scenario_sync(
                     emit = None
 
                 _cost = enhanced_agent.llm.cost.get("total_cost", 0)
-                emit(
-                    UsageEvent(
-                        org_id=_org_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=BillingConfig.get().calculate_ai_credits(_cost),
-                        properties={
-                            "source": "simulate_script_scenario",
-                            "source_id": scenario_id,
-                            "raw_cost_usd": str(_cost),
-                            **token_usage_properties(enhanced_agent.llm.token_usage),
-                        },
+                if BillingConfig is not None and emit is not None and UsageEvent is not None and BillingEventType is not None:
+                    emit(
+                        UsageEvent(
+                            org_id=_org_id,
+                            event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
+                            amount=BillingConfig.get().calculate_ai_credits(_cost),
+                            properties={
+                                "source": "simulate_script_scenario",
+                                "source_id": scenario_id,
+                                "raw_cost_usd": str(_cost),
+                                **token_usage_properties(enhanced_agent.llm.token_usage),
+                            },
+                        )
                     )
-                )
         except Exception:
             pass
 
@@ -2826,14 +2840,15 @@ def _setup_graph_scenario_sync(
                 check_usage = None
 
             _sgs_org_id = str(scenario.organization.id)
-            usage_check = check_usage(
-                _sgs_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
-            )
-            if not usage_check.allowed:
-                raise ApplicationError(
-                    usage_check.reason or "Usage limit exceeded",
-                    non_retryable=True,
+            if check_usage is not None and BillingEventType is not None:
+                usage_check = check_usage(
+                    _sgs_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
+                if not usage_check.allowed:
+                    raise ApplicationError(
+                        usage_check.reason or "Usage limit exceeded",
+                        non_retryable=True,
+                    )
         except ApplicationError:
             raise
         except Exception:
@@ -3050,22 +3065,24 @@ def _setup_graph_scenario_sync(
                     emit = None
 
                 _total_cost = graph_generator.sda.llm.cost.get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(_total_cost)
-                emit(
-                    UsageEvent(
-                        org_id=_sgs_org_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_graph_scenario_setup",
-                            "source_id": str(scenario_id),
-                            "raw_cost_usd": str(_total_cost),
-                            **token_usage_properties(
-                                graph_generator.sda.llm.token_usage
-                            ),
-                        },
-                    )
-                )
+                if BillingConfig is not None:
+                    credits = BillingConfig.get().calculate_ai_credits(_total_cost)
+                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                        emit(
+                            UsageEvent(
+                                org_id=_sgs_org_id,
+                                event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
+                                amount=credits,
+                                properties={
+                                    "source": "simulate_graph_scenario_setup",
+                                    "source_id": str(scenario_id),
+                                    "raw_cost_usd": str(_total_cost),
+                                    **token_usage_properties(
+                                        graph_generator.sda.llm.token_usage
+                                    ),
+                                },
+                            )
+                        )
         except Exception:
             pass
 
@@ -3190,14 +3207,15 @@ def _extract_intents_sync(
 
             _ei_graph = ScenarioGraph.objects.get(id=graph_id)
             _ei_org_id = str(_ei_graph.organization.id)
-            usage_check = check_usage(
-                _ei_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
-            )
-            if not usage_check.allowed:
-                raise ApplicationError(
-                    usage_check.reason or "Usage limit exceeded",
-                    non_retryable=True,
+            if check_usage is not None and BillingEventType is not None:
+                usage_check = check_usage(
+                    _ei_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
+                if not usage_check.allowed:
+                    raise ApplicationError(
+                        usage_check.reason or "Usage limit exceeded",
+                        non_retryable=True,
+                    )
         except ApplicationError:
             raise
         except Exception:
@@ -3346,22 +3364,24 @@ def _extract_intents_sync(
                                 emit = None
 
                             _total_cost = llm.cost.get("total_cost", 0)
-                            credits = BillingConfig.get().calculate_ai_credits(
-                                _total_cost
-                            )
-                            emit(
-                                UsageEvent(
-                                    org_id=_ei_org_id,
-                                    event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                                    amount=credits,
-                                    properties={
-                                        "source": "simulate_extract_intents",
-                                        "source_id": str(graph_id),
-                                        "raw_cost_usd": str(_total_cost),
-                                        **token_usage_properties(llm.token_usage),
-                                    },
+                            if BillingConfig is not None:
+                                credits = BillingConfig.get().calculate_ai_credits(
+                                    _total_cost
                                 )
-                            )
+                                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                                    emit(
+                                        UsageEvent(
+                                            org_id=_ei_org_id,
+                                            event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
+                                            amount=credits,
+                                            properties={
+                                                "source": "simulate_extract_intents",
+                                                "source_id": str(graph_id),
+                                                "raw_cost_usd": str(_total_cost),
+                                                **token_usage_properties(llm.token_usage),
+                                            },
+                                        )
+                                    )
                     except Exception:
                         pass
                     try:
@@ -3474,14 +3494,15 @@ def _process_branches_sync(
 
             _pb_graph = ScenarioGraph.objects.get(id=graph_id)
             _pb_org_id = str(_pb_graph.organization.id)
-            usage_check = check_usage(
-                _pb_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
-            )
-            if not usage_check.allowed:
-                raise ApplicationError(
-                    usage_check.reason or "Usage limit exceeded",
-                    non_retryable=True,
+            if check_usage is not None and BillingEventType is not None:
+                usage_check = check_usage(
+                    _pb_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
+                if not usage_check.allowed:
+                    raise ApplicationError(
+                        usage_check.reason or "Usage limit exceeded",
+                        non_retryable=True,
+                    )
         except ApplicationError:
             raise
         except Exception:
@@ -3521,20 +3542,22 @@ def _process_branches_sync(
                     emit = None
 
                 _total_cost = agent.llm.cost.get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(_total_cost)
-                emit(
-                    UsageEvent(
-                        org_id=_pb_org_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_process_branches",
-                            "source_id": str(graph_id),
-                            "raw_cost_usd": str(_total_cost),
-                            **token_usage_properties(agent.llm.token_usage),
-                        },
-                    )
-                )
+                if BillingConfig is not None:
+                    credits = BillingConfig.get().calculate_ai_credits(_total_cost)
+                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                        emit(
+                            UsageEvent(
+                                org_id=_pb_org_id,
+                                event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
+                                amount=credits,
+                                properties={
+                                    "source": "simulate_process_branches",
+                                    "source_id": str(graph_id),
+                                    "raw_cost_usd": str(_total_cost),
+                                    **token_usage_properties(agent.llm.token_usage),
+                                },
+                            )
+                        )
         except Exception:
             pass
 
@@ -3694,7 +3717,7 @@ def _generate_cases_for_intent_sync(
                 check_usage = None
 
             _gc_org_id = agent_context.get("organization_id") if agent_context else None
-            if _gc_org_id:
+            if _gc_org_id and check_usage is not None and BillingEventType is not None:
                 usage_check = check_usage(
                     str(_gc_org_id), BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
@@ -3784,19 +3807,20 @@ def _generate_cases_for_intent_sync(
                         emit = None
 
                     _cost = agent.llm.cost.get("total_cost", 0)
-                    emit(
-                        UsageEvent(
-                            org_id=str(_gc_org_id),
-                            event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                            amount=BillingConfig.get().calculate_ai_credits(_cost),
-                            properties={
-                                "source": "simulate_generate_cases_intent",
-                                "source_id": str(intent_id),
-                                "raw_cost_usd": str(_cost),
-                                **token_usage_properties(agent.llm.token_usage),
-                            },
+                    if BillingConfig is not None and emit is not None and UsageEvent is not None and BillingEventType is not None:
+                        emit(
+                            UsageEvent(
+                                org_id=str(_gc_org_id),
+                                event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
+                                amount=BillingConfig.get().calculate_ai_credits(_cost),
+                                properties={
+                                    "source": "simulate_generate_cases_intent",
+                                    "source_id": str(intent_id),
+                                    "raw_cost_usd": str(_cost),
+                                    **token_usage_properties(agent.llm.token_usage),
+                                },
+                            )
                         )
-                    )
             except Exception:
                 pass
 
@@ -4300,7 +4324,7 @@ async def create_graph_scenario_activity(
             id=input.scenario_id
         )
         org_id = str(scenario.dataset.organization.id) if scenario.dataset else None
-        if org_id:
+        if org_id and check_usage is not None and BillingEventType is not None:
             usage_check = check_usage(
                 org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
             )
@@ -4576,14 +4600,15 @@ def _process_single_branch_sync(
                 except ImportError:
                     check_usage = None
 
-                usage_check = check_usage(
-                    str(_psb_org_id), BillingEventType.SYNTHETIC_DATA_GENERATION
-                )
-                if not usage_check.allowed:
-                    raise ApplicationError(
-                        usage_check.reason or "Usage limit exceeded",
-                        non_retryable=True,
+                if check_usage is not None and BillingEventType is not None:
+                    usage_check = check_usage(
+                        str(_psb_org_id), BillingEventType.SYNTHETIC_DATA_GENERATION
                     )
+                    if not usage_check.allowed:
+                        raise ApplicationError(
+                            usage_check.reason or "Usage limit exceeded",
+                            non_retryable=True,
+                        )
         except ApplicationError:
             raise
         except Exception:
@@ -4624,22 +4649,24 @@ def _process_single_branch_sync(
                     emit = None
 
                 _total_cost = _branch_llm_cost.get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(_total_cost)
-                emit(
-                    UsageEvent(
-                        org_id=str(_psb_org_id),
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_process_single_branch",
-                            "source_id": str(graph_id),
-                            "raw_cost_usd": str(_total_cost),
-                            **token_usage_properties(
-                                _branch_llm_cost.get("token_usage")
-                            ),
-                        },
-                    )
-                )
+                if BillingConfig is not None:
+                    credits = BillingConfig.get().calculate_ai_credits(_total_cost)
+                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                        emit(
+                            UsageEvent(
+                                org_id=str(_psb_org_id),
+                                event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
+                                amount=credits,
+                                properties={
+                                    "source": "simulate_process_single_branch",
+                                    "source_id": str(graph_id),
+                                    "raw_cost_usd": str(_total_cost),
+                                    **token_usage_properties(
+                                        _branch_llm_cost.get("token_usage")
+                                    ),
+                                },
+                            )
+                        )
         except Exception:
             pass
 
@@ -5134,14 +5161,15 @@ def _prepare_scenario_sync(
 
             _ps_scenario = Scenarios.objects.get(id=scenario_id)
             _ps_org_id = str(_ps_scenario.organization.id)
-            usage_check = check_usage(
-                _ps_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
-            )
-            if not usage_check.allowed:
-                raise ApplicationError(
-                    usage_check.reason or "Usage limit exceeded",
-                    non_retryable=True,
+            if check_usage is not None and BillingEventType is not None:
+                usage_check = check_usage(
+                    _ps_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
+                if not usage_check.allowed:
+                    raise ApplicationError(
+                        usage_check.reason or "Usage limit exceeded",
+                        non_retryable=True,
+                    )
         except ApplicationError:
             raise
         except Exception:

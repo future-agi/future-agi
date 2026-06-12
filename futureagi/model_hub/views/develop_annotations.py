@@ -604,17 +604,18 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 )
                 # Non-chargeable tracking event — annotation creation is free.
                 # "annotation_creation" is intentionally not in billing.yaml.
-                emit(
-                    UsageEvent(
-                        org_id=str(org.id),
-                        event_type="annotation_creation",
-                        amount=annotation_size,
-                        properties={
-                            "source": "annotation",
-                            "source_id": str(annotation.id),
-                        },
+                if emit is not None and UsageEvent is not None:
+                    emit(
+                        UsageEvent(
+                            org_id=str(org.id),
+                            event_type="annotation_creation",
+                            amount=annotation_size,
+                            properties={
+                                "source": "annotation",
+                                "source_id": str(annotation.id),
+                            },
+                        )
                     )
-                )
             except Exception:
                 logger.debug("emit_annotation_event_failed")
 
@@ -2030,11 +2031,12 @@ class AnnotationSummaryView(APIView):
                 except ImportError:
                     Entitlements = None
 
-                feat_check = Entitlements.check_feature(
-                    str(organization.id), "has_agreement_metrics"
-                )
-                if not feat_check.allowed:
-                    return self._gm.forbidden_response(feat_check.reason)
+                if Entitlements is not None:
+                    feat_check = Entitlements.check_feature(
+                        str(organization.id), "has_agreement_metrics"
+                    )
+                    if not feat_check.allowed:
+                        return self._gm.forbidden_response(feat_check.reason)
             except ImportError:
                 pass
 

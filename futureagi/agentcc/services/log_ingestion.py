@@ -308,7 +308,7 @@ def ingest_request_logs(logs):
         except ImportError:
             DeploymentMode = None
 
-        if not DeploymentMode.is_oss():
+        if DeploymentMode is not None and not DeploymentMode.is_oss():
             try:
                 from ee.usage.schemas.event_types import BillingEventType
             except ImportError:
@@ -325,7 +325,7 @@ def ingest_request_logs(logs):
             cache_hits = sum(1 for o in objects if o.cache_hit)
             regular_requests = len(objects) - cache_hits
 
-            if regular_requests > 0:
+            if regular_requests > 0 and emit is not None and UsageEvent is not None and BillingEventType is not None:
                 emit(
                     UsageEvent(
                         org_id=str(org.id),
@@ -334,7 +334,7 @@ def ingest_request_logs(logs):
                         properties={"batch_size": len(objects)},
                     )
                 )
-            if cache_hits > 0:
+            if cache_hits > 0 and emit is not None and UsageEvent is not None and BillingEventType is not None:
                 emit(
                     UsageEvent(
                         org_id=str(org.id),

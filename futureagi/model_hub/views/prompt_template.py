@@ -2726,16 +2726,17 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 result_data=response, eval_template=eval_template
             )
 
-            config_dict = json.loads(api_call_log_row.config)
-            config_dict.update(
-                {"output": {"output": value, "reason": response["reason"]}}
-            )
-            api_call_log_row.input_token_count = (
-                metadata.get("usage", {}).get("prompt_tokens") or 0
-            )
-            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-            api_call_log_row.config = json.dumps(config_dict)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                config_dict = json.loads(api_call_log_row.config)
+                config_dict.update(
+                    {"output": {"output": value, "reason": response["reason"]}}
+                )
+                api_call_log_row.input_token_count = (
+                    metadata.get("usage", {}).get("prompt_tokens") or 0
+                )
+                api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+                api_call_log_row.config = json.dumps(config_dict)
+                api_call_log_row.save()
 
             # Dual-write: emit usage event for new billing system
             try:
@@ -2779,11 +2780,12 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             try:
-                api_call_log_row.status = APICallStatusChoices.ERROR.value
-                config_dict = json.loads(api_call_log_row.config)
-                config_dict.update({"output": {"output": None, "reason": str(e)}})
-                api_call_log_row.config = json.dumps(config_dict)
-                api_call_log_row.save()
+                if api_call_log_row is not None:
+                    api_call_log_row.status = APICallStatusChoices.ERROR.value
+                    config_dict = json.loads(api_call_log_row.config)
+                    config_dict.update({"output": {"output": None, "reason": str(e)}})
+                    api_call_log_row.config = json.dumps(config_dict)
+                    api_call_log_row.save()
             except Exception:
                 pass
             logger.exception(f"{e} error")
@@ -3419,7 +3421,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                             event_type=BillingEventType.AI_PROMPT_CREATION,
                             properties={
                                 "source": "run_prompt_gen",
-                                "source_id": str(call_log_row.log_id),
+                                "source_id": str(call_log_row.log_id) if call_log_row else None,
                                 **token_usage_properties(config),
                             },
                         )
@@ -3557,7 +3559,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                             event_type=BillingEventType.AI_PROMPT_IMPROVEMENT,
                             properties={
                                 "source": "run_prompt_improve",
-                                "source_id": str(call_log_row.log_id),
+                                "source_id": str(call_log_row.log_id) if call_log_row else None,
                                 **token_usage_properties(config),
                             },
                         )

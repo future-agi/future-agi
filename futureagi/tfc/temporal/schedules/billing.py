@@ -45,6 +45,9 @@ def evaluate_budgets_catchup_activity():
         evaluate_budgets_catchup = None
         evaluate_total_spend_budget = None
 
+    if UsageBudget is None or evaluate_budgets_catchup is None or evaluate_total_spend_budget is None:
+        return 0
+
     period = datetime.now(tz=timezone.utc).strftime("%Y-%m")
 
     active_budgets = (

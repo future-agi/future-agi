@@ -1495,10 +1495,13 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                 except ImportError:
                     check_usage = None
 
-                usage_check = check_usage(str(organization.id), api_call_type)
-                if not usage_check.allowed:
-                    raise ValueError(usage_check.reason or "Usage limit exceeded")
+                if check_usage is not None:
+                    usage_check = check_usage(str(organization.id), api_call_type)
+                    if not usage_check.allowed:
+                        raise ValueError(usage_check.reason or "Usage limit exceeded")
 
+                if log_and_deduct_cost_for_api_request is None:
+                    continue
                 api_call_log_row = log_and_deduct_cost_for_api_request(
                     organization=organization,
                     api_call_type=api_call_type,
@@ -1580,21 +1583,23 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                         actual_cost = getattr(agent.llm, "cost", {}).get(
                             "total_cost", 0
                         )
-                    credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+                    if BillingConfig is not None:
+                        credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-                    emit(
-                        UsageEvent(
-                            org_id=str(organization.id),
-                            event_type=api_call_type,
-                            amount=credits,
-                            properties={
-                                "source": "simulate_tool_evaluation",
-                                "source_id": str(test_execution.id),
-                                "raw_cost_usd": str(actual_cost),
-                                **llm_usage_properties(agent),
-                            },
-                        )
-                    )
+                        if emit is not None and UsageEvent is not None:
+                            emit(
+                                UsageEvent(
+                                    org_id=str(organization.id),
+                                    event_type=api_call_type,
+                                    amount=credits,
+                                    properties={
+                                        "source": "simulate_tool_evaluation",
+                                        "source_id": str(test_execution.id),
+                                        "raw_cost_usd": str(actual_cost),
+                                        **llm_usage_properties(agent),
+                                    },
+                                )
+                            )
                 except Exception:
                     pass  # Metering failure must not break the action
 

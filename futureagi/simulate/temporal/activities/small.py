@@ -217,6 +217,8 @@ async def check_call_balance(input: CheckBalanceInput) -> CheckBalanceOutput:
             check_usage = None
 
         # Check voice_call limit (covers both voice and text — both are sim calls)
+        if check_usage is None:
+            return CheckBalanceOutput(sufficient=True)
         result = await sync_to_async(check_usage)(input.org_id, "voice_call")
 
         if not result.allowed:

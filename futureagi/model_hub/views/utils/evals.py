@@ -662,38 +662,39 @@ def process_eval_for_single_row(
 
         value = runner.format_output(response)
 
-        config_dict = json.loads(api_call_log_row.config)
+        if api_call_log_row is not None:
+            config_dict = json.loads(api_call_log_row.config)
 
-        if (
-            eval_template
-            and eval_template.config.get("eval_type_id") == "DeterministicEvaluator"
-        ):
-            metadata_json = eval_result.eval_results[0].get("metadata", "{}")
-            json.loads(metadata_json)
-            config_dict.update(
-                {"output": {"output": value, "reason": response["reason"]}}
-            )
+            if (
+                eval_template
+                and eval_template.config.get("eval_type_id") == "DeterministicEvaluator"
+            ):
+                metadata_json = eval_result.eval_results[0].get("metadata", "{}")
+                json.loads(metadata_json)
+                config_dict.update(
+                    {"output": {"output": value, "reason": response["reason"]}}
+                )
 
-        else:
-            config_dict.update(
-                {"output": {"output": value, "reason": response["reason"]}}
-            )
-
-        input_types = {}
-        for key, mapping_value in mappings.items():
-            # Extract base column ID to look up data type
-            if isinstance(mapping_value, uuid.UUID):
-                base_col_id = str(mapping_value)
-            elif isinstance(mapping_value, str) and mapping_value:
-                base_col_id, _ = _extract_column_id_and_path(mapping_value)
             else:
-                base_col_id = None
-            data_type = col_map.get(str(base_col_id)) if base_col_id else None
-            input_types[key] = data_type if data_type in ["image", "audio"] else "text"
-        config_dict.update({"input_data_types": input_types})
-        api_call_log_row.config = json.dumps(config_dict, default=str)
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save()
+                config_dict.update(
+                    {"output": {"output": value, "reason": response["reason"]}}
+                )
+
+            input_types = {}
+            for key, mapping_value in mappings.items():
+                # Extract base column ID to look up data type
+                if isinstance(mapping_value, uuid.UUID):
+                    base_col_id = str(mapping_value)
+                elif isinstance(mapping_value, str) and mapping_value:
+                    base_col_id, _ = _extract_column_id_and_path(mapping_value)
+                else:
+                    base_col_id = None
+                data_type = col_map.get(str(base_col_id)) if base_col_id else None
+                input_types[key] = data_type if data_type in ["image", "audio"] else "text"
+            config_dict.update({"input_data_types": input_types})
+            api_call_log_row.config = json.dumps(config_dict, default=str)
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save()
 
         output = {}
         for index, key in enumerate(required_field):
@@ -713,11 +714,12 @@ def process_eval_for_single_row(
         return output
     except Exception as e:
         try:
-            api_call_log_row.status = APICallStatusChoices.ERROR.value
-            current_config = json.loads(api_call_log_row.config)
-            current_config.update({"output": {"output": None, "reason": str(e)}})
-            api_call_log_row.config = json.dumps(current_config, default=str)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                api_call_log_row.status = APICallStatusChoices.ERROR.value
+                current_config = json.loads(api_call_log_row.config)
+                current_config.update({"output": {"output": None, "reason": str(e)}})
+                api_call_log_row.config = json.dumps(current_config, default=str)
+                api_call_log_row.save()
         except Exception:
             pass
         traceback.print_exc()

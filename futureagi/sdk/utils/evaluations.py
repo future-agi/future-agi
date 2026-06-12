@@ -288,6 +288,10 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
     # emit SDK/API-key evals never produce a billable UsageEvent. (TH-3402)
     try:
         try:
+            from ee.usage.schemas.event_types import BillingEventType
+        except ImportError:
+            BillingEventType = None
+        try:
             from ee.usage.schemas.events import UsageEvent
         except ImportError:
             UsageEvent = None
@@ -549,6 +553,10 @@ def _run_protect(
 
         # Emit usage event with actual cost after eval completion
         try:
+            try:
+                from ee.usage.schemas.event_types import BillingEventType
+            except ImportError:
+                BillingEventType = None
             try:
                 from ee.usage.schemas.events import UsageEvent
             except ImportError:

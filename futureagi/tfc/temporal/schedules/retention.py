@@ -15,6 +15,10 @@ def soft_delete_expired_data_activity():
     except ImportError:
         soft_delete_expired_data = None
 
+    if soft_delete_expired_data is None:
+        logger.info("soft_delete_activity_skipped", reason="ee module not available")
+        return {}
+
     result = soft_delete_expired_data()
     total = sum(sum(counts.values()) for counts in result.values())
     logger.info(
@@ -31,6 +35,10 @@ def hard_delete_expired_data_activity():
         from ee.usage.tasks.retention import hard_delete_expired_data
     except ImportError:
         hard_delete_expired_data = None
+
+    if hard_delete_expired_data is None:
+        logger.info("hard_delete_activity_skipped", reason="ee module not available")
+        return {}
 
     result = hard_delete_expired_data()
     total = sum(result.values())

@@ -207,7 +207,7 @@ class AudioProcessor:
 
         # Calculate token usage
         try:
-            prompt_tokens = count_tiktoken_tokens(input_text)
+            prompt_tokens = (count_tiktoken_tokens(input_text) if count_tiktoken_tokens else 0)
         except Exception:
             prompt_tokens = None
 

@@ -806,7 +806,7 @@ def bulk_create_observation_span_task(
             except ImportError:
                 DeploymentMode = None
 
-            if not DeploymentMode.is_oss():
+            if DeploymentMode is not None and not DeploymentMode.is_oss():
                 try:
                     from ee.usage.schemas.event_types import BillingEventType
                 except ImportError:
@@ -816,16 +816,17 @@ def bulk_create_observation_span_task(
                 except ImportError:
                     check_usage = None
 
-                usage_check = check_usage(
-                    str(organization_id), BillingEventType.TRACING_EVENT
-                )
-                if not usage_check.allowed:
-                    logger.warning(
-                        "trace_ingestion_blocked_free_tier",
-                        org_id=str(organization_id),
-                        reason=usage_check.reason,
+                if check_usage is not None and BillingEventType is not None:
+                    usage_check = check_usage(
+                        str(organization_id), BillingEventType.TRACING_EVENT
                     )
-                    return
+                    if not usage_check.allowed:
+                        logger.warning(
+                            "trace_ingestion_blocked_free_tier",
+                            org_id=str(organization_id),
+                            reason=usage_check.reason,
+                        )
+                        return
         except Exception:
             pass  # Fail open — don't break ingestion on metering errors
 

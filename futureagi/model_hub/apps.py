@@ -100,7 +100,7 @@ class ModelHubConfig(AppConfig):
         except ImportError:
             DeploymentMode = None
 
-        if DeploymentMode.is_cloud():
+        if DeploymentMode is not None and DeploymentMode.is_cloud():
             import threading
 
             threading.Thread(

@@ -140,23 +140,26 @@ def _emit_scanner_billing(
         if not project or not project.organization:
             return
 
-        credits = BillingConfig.get().calculate_ai_credits(cost_usd)
-        emit(
-            UsageEvent(
-                org_id=str(project.organization.id),
-                event_type=BillingEventType.TRACE_ERROR_ANALYSIS,
-                amount=credits,
-                properties={
-                    "source": "trace_scanner",
-                    "source_id": str(project_id),
-                    "traces_scanned": len(results),
-                    "issues_found": sum(len(r.issues) for r in results),
-                    "raw_cost_usd": str(cost_usd),
-                    "model": scanner.model_config.model_name,
-                    **token_usage_properties(getattr(scanner, "token_usage", {})),
-                },
-            )
-        )
+        if BillingConfig is not None:
+            credits = BillingConfig.get().calculate_ai_credits(cost_usd)
+
+            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                emit(
+                    UsageEvent(
+                        org_id=str(project.organization.id),
+                        event_type=BillingEventType.TRACE_ERROR_ANALYSIS,
+                        amount=credits,
+                        properties={
+                            "source": "trace_scanner",
+                            "source_id": str(project_id),
+                            "traces_scanned": len(results),
+                            "issues_found": sum(len(r.issues) for r in results),
+                            "raw_cost_usd": str(cost_usd),
+                            "model": scanner.model_config.model_name,
+                            **token_usage_properties(getattr(scanner, "token_usage", {})),
+                        },
+                    )
+                )
     except Exception:
         logger.exception("scanner_billing_emit_failed", project_id=project_id)
 

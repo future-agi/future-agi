@@ -70,13 +70,14 @@ class ObservationSpanService(generics.GenericService, TraceServiceServicer):
                 except ImportError:
                     RateLimiter = None
 
-                rl_result = await sync_to_async(RateLimiter.check)(
-                    str(organization_id), "ingestion"
-                )
-                if not rl_result.allowed:
-                    await context.abort(
-                        grpc.StatusCode.RESOURCE_EXHAUSTED, rl_result.reason
+                if RateLimiter is not None:
+                    rl_result = await sync_to_async(RateLimiter.check)(
+                        str(organization_id), "ingestion"
                     )
+                    if not rl_result.allowed:
+                        await context.abort(
+                            grpc.StatusCode.RESOURCE_EXHAUSTED, rl_result.reason
+                        )
             except ImportError:
                 pass
 

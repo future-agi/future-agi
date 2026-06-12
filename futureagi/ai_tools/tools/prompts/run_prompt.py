@@ -224,11 +224,11 @@ class RunPromptTool(BaseTool):
 
                 if check_usage is not None:
                     usage_check = check_usage(
-                    str(context.organization.id),
-                    BillingEventType.AI_PROMPT_CREATION,
-                )
-                if not usage_check.allowed:
-                    raise ValueError(usage_check.reason or "Usage limit exceeded")
+                        str(context.organization.id),
+                        BillingEventType.AI_PROMPT_CREATION,
+                    )
+                    if not usage_check.allowed:
+                        raise ValueError(usage_check.reason or "Usage limit exceeded")
             except ImportError:
                 pass
 

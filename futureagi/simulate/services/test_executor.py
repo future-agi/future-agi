@@ -2007,6 +2007,9 @@ class TestExecutor:
                 if call_type == SimulationCallType.TEXT
                 else "voice_call"
             )
+            if check_usage is None:
+                return True, 0, 0, None
+
             result = check_usage(str(organization.id), event_type)
 
             if result.allowed:
@@ -3604,6 +3607,9 @@ class TestExecutor:
             # Get organization from the call execution
             organization = call_execution.test_execution.run_test.organization
 
+            if APICallType is None:
+                return
+
             if call_execution.simulation_call_type == SimulationCallType.TEXT:
                 api_call_type_instance, created = APICallType.objects.get_or_create(
                     name="text_call",
@@ -3659,19 +3665,20 @@ class TestExecutor:
                     except ImportError:
                         emit = None
 
-                    emit(
-                        UsageEvent(
-                            org_id=str(organization.id),
-                            event_type=BillingEventType.TEXT_CALL,
-                            amount=total_tokens,
-                            properties={
-                                "source": "simulate",
-                                "source_id": str(call_execution.id),
-                                "turns": no_of_fagi_agent_turns,
-                                "total_tokens": total_tokens,
-                            },
+                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                        emit(
+                            UsageEvent(
+                                org_id=str(organization.id),
+                                event_type=BillingEventType.TEXT_CALL,
+                                amount=total_tokens,
+                                properties={
+                                    "source": "simulate",
+                                    "source_id": str(call_execution.id),
+                                    "turns": no_of_fagi_agent_turns,
+                                    "total_tokens": total_tokens,
+                                },
+                            )
                         )
-                    )
                 except Exception:
                     pass
 
@@ -3737,19 +3744,20 @@ class TestExecutor:
                 except ImportError:
                     emit = None
 
-                emit(
-                    UsageEvent(
-                        org_id=str(organization.id),
-                        event_type=BillingEventType.VOICE_CALL,
-                        amount=max(1, round(float(duration_minutes))),
-                        properties={
-                            "source": "simulate",
-                            "source_id": str(call_execution.id),
-                            "duration_seconds": call_execution.duration_seconds,
-                            "provider": call_execution.service_provider_call_id or "",
-                        },
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                    emit(
+                        UsageEvent(
+                            org_id=str(organization.id),
+                            event_type=BillingEventType.VOICE_CALL,
+                            amount=max(1, round(float(duration_minutes))),
+                            properties={
+                                "source": "simulate",
+                                "source_id": str(call_execution.id),
+                                "duration_seconds": call_execution.duration_seconds,
+                                "provider": call_execution.service_provider_call_id or "",
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass
 
@@ -5409,6 +5417,8 @@ class TestExecutor:
                     # Determine API call type based on model
                     api_call_type = _get_api_call_type(model=None)
                     # Log and deduct cost
+                    if log_and_deduct_cost_for_api_request is None:
+                        continue
                     api_call_log_row = log_and_deduct_cost_for_api_request(
                         organization=organization,
                         api_call_type=api_call_type,

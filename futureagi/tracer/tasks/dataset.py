@@ -365,18 +365,19 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
 
             dataset = Database.objects.only("organization_id").get(id=dataset_id)
             data_size = sum(len(str(c.value or "").encode()) for c in cells_to_create)
-            emit(
-                UsageEvent(
-                    org_id=str(dataset.organization_id),
-                    event_type="dataset_row_from_spans",
-                    amount=data_size,
-                    properties={
-                        "source": "dataset_from_spans",
-                        "source_id": str(dataset_id),
-                        "rows_created": len(created_rows),
-                    },
+            if emit is not None and UsageEvent is not None:
+                emit(
+                    UsageEvent(
+                        org_id=str(dataset.organization_id),
+                        event_type="dataset_row_from_spans",
+                        amount=data_size,
+                        properties={
+                            "source": "dataset_from_spans",
+                            "source_id": str(dataset_id),
+                            "rows_created": len(created_rows),
+                        },
+                    )
                 )
-            )
         except Exception:
             logger.debug(
                 "emit_dataset_storage_event_failed", dataset_id=str(dataset_id)
