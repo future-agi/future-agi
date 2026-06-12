@@ -317,6 +317,8 @@ class AlertRuleConfig(GatewayAdminContractModel):
     window: str | None = None
     cooldown: str | None = None
     channels: list[str] | None = None
+    severity: str | None = None
+    enabled: bool | None = None
 
 
 class AlertChannelConfig(GatewayAdminContractModel):
@@ -324,6 +326,7 @@ class AlertChannelConfig(GatewayAdminContractModel):
     type: str | None = None
     url: str | None = None
     headers: dict[str, str] | None = None
+    enabled: bool | None = None
 
 
 class AlertingConfig(GatewayAdminContractModel):

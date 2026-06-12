@@ -1958,7 +1958,7 @@ func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
 	db := h.ModelDB()
 
 	if scopedModels, ok := h.orgScopedModels(r); ok {
-		allModels = mergeModelObjects(allModels, scopedModels)
+		allModels = scopedModels
 	}
 
 	enriched := make([]models.EnrichedModelObject, 0, len(allModels))

@@ -235,7 +235,7 @@ const ProviderConfigDialog = ({
         <Button
           variant="contained"
           onClick={handleSave}
-          disabled={!form.name || !form.apiKey}
+          disabled={!form.name || (!isEdit && !form.apiKey)}
         >
           Save
         </Button>
