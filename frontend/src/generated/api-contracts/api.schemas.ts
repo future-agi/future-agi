@@ -9959,61 +9959,6 @@ export interface EvalFeedbackListResponseApi {
   result: EvalFeedbackListResponseResultApi;
 }
 
-export interface GroundTruthConfigApi {
-  enabled?: boolean;
-  ground_truth_id?: string;
-  /** @minLength 1 */
-  mode?: string;
-  max_examples?: number;
-  similarity_threshold?: number;
-  /** @minLength 1 */
-  injection_format?: string;
-}
-
-export interface GroundTruthConfigResponseResultApi {
-  ground_truth: GroundTruthConfigApi;
-}
-
-export interface GroundTruthConfigResponseApi {
-  status: boolean;
-  result: GroundTruthConfigResponseResultApi;
-}
-
-export type GroundTruthConfigRequestApiMode = typeof GroundTruthConfigRequestApiMode[keyof typeof GroundTruthConfigRequestApiMode];
-
-
-export const GroundTruthConfigRequestApiMode = {
-  auto: 'auto',
-  manual: 'manual',
-  disabled: 'disabled',
-} as const;
-
-export type GroundTruthConfigRequestApiInjectionFormat = typeof GroundTruthConfigRequestApiInjectionFormat[keyof typeof GroundTruthConfigRequestApiInjectionFormat];
-
-
-export const GroundTruthConfigRequestApiInjectionFormat = {
-  structured: 'structured',
-  conversational: 'conversational',
-  xml: 'xml',
-} as const;
-
-export interface GroundTruthConfigRequestApi {
-  enabled?: boolean;
-  ground_truth_id?: string;
-  mode?: GroundTruthConfigRequestApiMode;
-  /**
-     * @minimum 1
-     * @maximum 10
-     */
-  max_examples?: number;
-  /**
-     * @minimum 0
-     * @maximum 1
-     */
-  similarity_threshold?: number;
-  injection_format?: GroundTruthConfigRequestApiInjectionFormat;
-}
-
 export type GroundTruthItemApiVariableMapping = { [key: string]: unknown };
 
 export type GroundTruthItemApiRoleMapping = { [key: string]: unknown };
@@ -11410,24 +11355,6 @@ export interface GroundTruthEmbedResponseResultApi {
 export interface GroundTruthEmbedResponseApi {
   status: boolean;
   result: GroundTruthEmbedResponseResultApi;
-}
-
-export type GroundTruthMappingRequestApiVariableMapping = { [key: string]: unknown };
-
-export interface GroundTruthMappingRequestApi {
-  variable_mapping: GroundTruthMappingRequestApiVariableMapping;
-}
-
-export type GroundTruthMappingResponseResultApiVariableMapping = { [key: string]: unknown };
-
-export interface GroundTruthMappingResponseResultApi {
-  id: string;
-  variable_mapping?: GroundTruthMappingResponseResultApiVariableMapping;
-}
-
-export interface GroundTruthMappingResponseApi {
-  status: boolean;
-  result: GroundTruthMappingResponseResultApi;
 }
 
 /**

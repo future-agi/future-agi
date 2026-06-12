@@ -53,113 +53,11 @@ class GroundTruthService:
     the service free of DRF request plumbing and trivially unit-testable.
     """
 
-    # ── variable mapping ──────────────────────────────────────────
-
-    @staticmethod
-    def update_variable_mapping(
-        *,
-        gt: EvalGroundTruth,
-        variable_mapping: dict[str, Any],
-    ) -> dict[str, Any] | ServiceError:
-        """Persist ``variable_mapping`` and stale-flag embeddings if changed."""
-        bad = _first_missing_column(variable_mapping, gt.columns or [])
-        if bad is not None:
-            col, key = bad
-            return ServiceError(
-                f"Column '{col}' (mapped to variable '{key}') not found in "
-                f"dataset columns: {gt.columns}",
-                code="INVALID_COLUMN",
-            )
-
-        mapping_changed = (gt.variable_mapping or {}) != (variable_mapping or {})
-        update_fields = ["variable_mapping", "updated_at"]
-        gt.variable_mapping = variable_mapping
-
-        embeddings_stale = False
-        if mapping_changed and gt.embedding_status == "completed":
-            gt.embedding_status = "pending"
-            update_fields.append("embedding_status")
-            embeddings_stale = True
-
-        gt.save(update_fields=update_fields)
-        logger.info(
-            "ground_truth_variable_mapping_updated",
-            ground_truth_id=str(gt.id),
-            embeddings_stale=embeddings_stale,
-        )
-        return {
-            "id": str(gt.id),
-            "variable_mapping": gt.variable_mapping,
-            "embedding_status": gt.embedding_status,
-            "embeddings_stale": embeddings_stale,
-        }
-
-    # ── role mapping ──────────────────────────────────────────────
-
     ALLOWED_ROLE_KEYS = frozenset(
         {"output", "explanation", "expected_output", "reasoning", "reason"}
     )
 
-    @staticmethod
-    def update_role_mapping(
-        *,
-        gt: EvalGroundTruth,
-        role_mapping: dict[str, Any],
-    ) -> dict[str, Any] | ServiceError:
-        """Persist ``role_mapping`` without invalidating embeddings.
-
-        Role-mapped columns (``output`` / ``explanation``) are NOT
-        embedded — they're rendered verbatim as labels in the few-shot
-        examples at prompt-build time. Changing the mapping just swaps
-        which column supplies the label string; the per-row vectors
-        produced by ``variable_mapping`` columns stay valid. Compare
-        with :meth:`update_variable_mapping`, which DOES stale-flag
-        embeddings because its columns drive the embedded text.
-
-        Canonical keys are ``output`` (required at use time) and
-        ``explanation`` (optional). Legacy ``expected_output`` /
-        ``reasoning`` / ``reason`` keys are accepted for back-compat and
-        normalized to the canonical pair at read time elsewhere.
-        """
-        invalid = {
-            r for r in role_mapping if r not in GroundTruthService.ALLOWED_ROLE_KEYS
-        }
-        if invalid:
-            return ServiceError(
-                f"Invalid role keys: {sorted(invalid)}. "
-                "Allowed keys: output, explanation.",
-                code="INVALID_ROLE_KEY",
-            )
-
-        bad = _first_missing_column(role_mapping, gt.columns or [], label="role")
-        if bad is not None:
-            col, key = bad
-            return ServiceError(
-                f"Column '{col}' (mapped to role '{key}') not found in dataset "
-                f"columns: {gt.columns}",
-                code="INVALID_COLUMN",
-            )
-
-        gt.role_mapping = role_mapping
-        gt.save(update_fields=["role_mapping", "updated_at"])
-        logger.info(
-            "ground_truth_role_mapping_updated",
-            ground_truth_id=str(gt.id),
-        )
-        return {
-            "id": str(gt.id),
-            "role_mapping": gt.role_mapping,
-            "embedding_status": gt.embedding_status,
-            # Stale only if a prior variable_mapping change put the
-            # dataset into a non-terminal state. Role-mapping changes
-            # never set this themselves.
-            "embeddings_stale": bool(
-                gt.embedded_row_count > 0
-                and gt.embedding_status != "completed"
-            ),
-        }
-
-    # ── atomic setup write (FE single-save button) ────────────────
+    # ── atomic setup write (single Save) ──────────────────────────
 
     @staticmethod
     def update_setup(

@@ -219,11 +219,9 @@ from model_hub.views.separate_evals import (
     GetAPICallLogView,
     GetEvalTemplateNameView,
     GetEvalTemplates,
-    GroundTruthConfigView,
     GroundTruthDataView,
     GroundTruthDeleteView,
     GroundTruthListView,
-    GroundTruthMappingView,
     GroundTruthSearchView,
     GroundTruthSetupView,
     GroundTruthStatusView,
@@ -1173,16 +1171,6 @@ urlpatterns = [
         "eval-templates/<uuid:template_id>/ground-truth/upload/",
         GroundTruthUploadView.as_view(),
         name="eval-template-ground-truth-upload",
-    ),
-    path(
-        "eval-templates/<uuid:template_id>/ground-truth-config/",
-        GroundTruthConfigView.as_view(),
-        name="eval-template-ground-truth-config",
-    ),
-    path(
-        "ground-truth/<uuid:ground_truth_id>/mapping/",
-        GroundTruthMappingView.as_view(),
-        name="ground-truth-mapping",
     ),
     path(
         "ground-truth/<uuid:ground_truth_id>/setup/",

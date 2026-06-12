@@ -75,14 +75,10 @@ from model_hub.serializers.contracts import (
     EvalTemplateVersionResponseSerializer,
     EvalTemplateVersionRestoreResponseSerializer,
     EvalUsageStatsResponseSerializer,
-    GroundTruthConfigRequestSerializer,
-    GroundTruthConfigResponseSerializer,
     GroundTruthDataResponseSerializer,
     GroundTruthDeleteResponseSerializer,
     GroundTruthEmbedResponseSerializer,
     GroundTruthListResponseSerializer,
-    GroundTruthMappingRequestSerializer,
-    GroundTruthMappingResponseSerializer,
     GroundTruthSearchRequestSerializer,
     GroundTruthSearchResponseSerializer,
     GroundTruthSetupRequestSerializer,
@@ -4563,53 +4559,6 @@ class GroundTruthUploadView(APIView):
             return self._gm.bad_request(str(e))
 
 
-class GroundTruthMappingView(APIView):
-    """PUT /model-hub/ground-truth/<id>/mapping/
-
-    Legacy single-purpose endpoint. Superseded by
-    :class:`GroundTruthSetupView`, which writes variable mapping
-    alongside role mapping and injection config in one atomic call.
-    """
-
-    _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
-
-    @validated_request(
-        request_serializer=GroundTruthMappingRequestSerializer,
-        responses={
-            200: GroundTruthMappingResponseSerializer,
-            **MODEL_HUB_ERROR_RESPONSES,
-        },
-        reject_unknown_fields=True,
-    )
-    def put(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
-        from model_hub.services.ground_truth_service import (
-            GroundTruthService,
-            ServiceError,
-        )
-        from model_hub.types import VariableMappingRequest
-
-        try:
-            req = VariableMappingRequest(**request.validated_data)
-        except Exception as e:
-            from tfc.utils.errors import format_request_error
-
-            return self._gm.bad_request(format_request_error(e))
-
-        try:
-            gt = _get_accessible_ground_truth(ground_truth_id, request)
-        except EvalGroundTruth.DoesNotExist:
-            return self._gm.not_found("Ground truth not found.")
-
-        result = GroundTruthService.update_variable_mapping(
-            gt=gt, variable_mapping=req.variable_mapping
-        )
-        if isinstance(result, ServiceError):
-            return self._gm.bad_request(result.message)
-        return self._gm.success_response(result)
-
-
 class GroundTruthSetupView(APIView):
     """PUT /model-hub/ground-truth/<id>/setup/
 
@@ -4780,121 +4729,6 @@ class GroundTruthDeleteView(APIView):
         except Exception as e:
             logger.error(
                 f"Error in GroundTruthDeleteView: {str(e)}\n{traceback.format_exc()}"
-            )
-            return self._gm.bad_request(str(e))
-
-
-class GroundTruthConfigView(APIView):
-    """
-    GET/PUT /model-hub/eval-templates/<id>/ground-truth-config/
-
-    Manages ground truth configuration on the eval template's config JSONField.
-    """
-
-    _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
-
-    @swagger_auto_schema(
-        responses={
-            200: GroundTruthConfigResponseSerializer,
-            **MODEL_HUB_ERROR_RESPONSES,
-        }
-    )
-    def get(self, request, template_id, *args, **kwargs):
-        try:
-            try:
-                template = _get_accessible_eval_template_for_request(
-                    template_id, request
-                )
-            except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
-
-            config = template.config or {}
-            gt_config = config.get(
-                "ground_truth",
-                {
-                    "enabled": False,
-                    "ground_truth_id": None,
-                    "mode": "auto",
-                    "max_examples": 3,
-                    "similarity_threshold": 0.7,
-                    "injection_format": "structured",
-                },
-            )
-
-            return self._gm.success_response({"ground_truth": gt_config})
-
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthConfigView.get: {str(e)}\n{traceback.format_exc()}"
-            )
-            return self._gm.bad_request(str(e))
-
-    @validated_request(
-        request_serializer=GroundTruthConfigRequestSerializer,
-        responses={
-            200: GroundTruthConfigResponseSerializer,
-            **MODEL_HUB_ERROR_RESPONSES,
-        },
-        reject_unknown_fields=True,
-    )
-    def put(self, request, template_id, *args, **kwargs):
-        from model_hub.types import GroundTruthConfigRequest
-
-        try:
-            try:
-                request_data = dict(request.validated_data)
-                if request_data.get("ground_truth_id") is not None:
-                    request_data["ground_truth_id"] = str(
-                        request_data["ground_truth_id"]
-                    )
-                req = GroundTruthConfigRequest(**request_data)
-            except Exception as e:
-                from tfc.utils.errors import format_request_error
-
-                return self._gm.bad_request(format_request_error(e))
-
-            try:
-                template = _get_accessible_eval_template_for_request(
-                    template_id, request
-                )
-            except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
-
-            # Validate ground_truth_id exists if provided
-            if req.ground_truth_id:
-                from model_hub.models.evals_metric import EvalGroundTruth
-
-                try:
-                    ground_truth = _get_accessible_ground_truth(
-                        req.ground_truth_id, request
-                    )
-                except EvalGroundTruth.DoesNotExist:
-                    return self._gm.bad_request(
-                        "Ground truth dataset not found or does not belong to this eval template."
-                    )
-                if ground_truth.eval_template_id != template.id:
-                    return self._gm.bad_request(
-                        "Ground truth dataset not found or does not belong to this eval template."
-                    )
-
-            config = template.config or {}
-            config["ground_truth"] = {
-                "enabled": req.enabled,
-                "ground_truth_id": req.ground_truth_id,
-                "mode": req.mode,
-                "max_examples": req.max_examples,
-                "similarity_threshold": req.similarity_threshold,
-                "injection_format": req.injection_format,
-            }
-            template.config = config
-            template.save(update_fields=["config", "updated_at"])
-
-            return self._gm.success_response({"ground_truth": config["ground_truth"]})
-
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthConfigView.put: {str(e)}\n{traceback.format_exc()}"
             )
             return self._gm.bad_request(str(e))
 

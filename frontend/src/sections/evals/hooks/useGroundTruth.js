@@ -104,74 +104,6 @@ export function useGroundTruthStatus(gtId, { enabled = true } = {}) {
   });
 }
 
-// ── Get ground truth config for template ──
-export function useGroundTruthConfig(templateId) {
-  return useQuery({
-    queryKey: ["evals", "ground-truth-config", templateId],
-    queryFn: async () => {
-      const { data } = await axios.get(
-        endpoints.develop.eval.getGroundTruthConfig(templateId),
-      );
-      return data?.result?.ground_truth;
-    },
-    enabled: !!templateId,
-  });
-}
-
-// ── Update ground truth config ──
-export function useUpdateGroundTruthConfig(templateId) {
-  const queryClient = useQueryClient();
-  const { enqueueSnackbar } = useSnackbar();
-  return useMutation({
-    mutationFn: async (config) => {
-      const { data } = await axios.put(
-        endpoints.develop.eval.updateGroundTruthConfig(templateId),
-        config,
-      );
-      return data?.result;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["evals", "ground-truth-config", templateId],
-      });
-      enqueueSnackbar("Config saved", { variant: "success" });
-    },
-    onError: (err) =>
-      enqueueSnackbar(toastFromError(err, "Failed to save config"), {
-        variant: "error",
-      }),
-  });
-}
-
-// ── Update role mapping ──
-export function useUpdateRoleMapping() {
-  const queryClient = useQueryClient();
-  const { enqueueSnackbar } = useSnackbar();
-  return useMutation({
-    mutationFn: async ({ gtId, roleMapping }) => {
-      const { data } = await axios.put(
-        endpoints.develop.eval.groundTruthRoleMapping(gtId),
-        {
-          role_mapping: roleMapping,
-        },
-      );
-      return data?.result;
-    },
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["evals", "ground-truth"] });
-      enqueueSnackbar(
-        result?.embeddings_stale
-          ? "Role mapping saved. Embeddings are stale. Re-embed when ready."
-          : "Role mapping saved",
-        { variant: result?.embeddings_stale ? "warning" : "success" },
-      );
-    },
-    onError: (err) =>
-      enqueueSnackbar(toastFromError(err, "Failed to save mapping"), {
-        variant: "error",
-      }),
-  });
-}
 
 // ── Atomic save of the whole GT tab (variable mapping + role mapping +
 // injection config). Backs the single Save button on the FE GT tab.
@@ -191,7 +123,7 @@ export function useSaveGroundTruthSetup(templateId) {
       enabled,
     }) => {
       const { data } = await axios.put(
-        endpoints.develop.eval.groundTruthRoleMapping(gtId),
+        endpoints.develop.eval.groundTruthSetup(gtId),
         {
           variable_mapping: variableMapping,
           role_mapping: roleMapping,
@@ -206,9 +138,6 @@ export function useSaveGroundTruthSetup(templateId) {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["evals", "ground-truth"] });
       if (templateId) {
-        queryClient.invalidateQueries({
-          queryKey: ["evals", "ground-truth-config", templateId],
-        });
         // Setup writes template.config.ground_truth; without this the
         // dirty check stays true until the next page visit.
         queryClient.invalidateQueries({
@@ -224,36 +153,6 @@ export function useSaveGroundTruthSetup(templateId) {
     },
     onError: (err) =>
       enqueueSnackbar(toastFromError(err, "Failed to save"), {
-        variant: "error",
-      }),
-  });
-}
-
-// ── Update variable mapping ──
-export function useUpdateVariableMapping() {
-  const queryClient = useQueryClient();
-  const { enqueueSnackbar } = useSnackbar();
-  return useMutation({
-    mutationFn: async ({ gtId, variableMapping }) => {
-      const { data } = await axios.put(
-        endpoints.develop.eval.groundTruthMapping(gtId),
-        {
-          variable_mapping: variableMapping,
-        },
-      );
-      return data?.result;
-    },
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["evals", "ground-truth"] });
-      enqueueSnackbar(
-        result?.embeddings_stale
-          ? "Variable mapping saved. Embeddings are stale. Re-embed when ready."
-          : "Variable mapping saved",
-        { variant: result?.embeddings_stale ? "warning" : "success" },
-      );
-    },
-    onError: (err) =>
-      enqueueSnackbar(toastFromError(err, "Failed to save mapping"), {
         variant: "error",
       }),
   });

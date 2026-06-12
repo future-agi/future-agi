@@ -915,20 +915,6 @@ export const endpoints = {
           "/model-hub/eval-templates/{template_id}/ground-truth/upload/",
           { template_id: id },
         ),
-      getGroundTruthConfig: (id) =>
-        apiPath(
-          "/model-hub/eval-templates/{template_id}/ground-truth-config/",
-          { template_id: id },
-        ),
-      updateGroundTruthConfig: (id) =>
-        apiPath(
-          "/model-hub/eval-templates/{template_id}/ground-truth-config/",
-          { template_id: id },
-        ),
-      groundTruthMapping: (id) =>
-        apiPath("/model-hub/ground-truth/{ground_truth_id}/mapping/", {
-          ground_truth_id: id,
-        }),
       groundTruthSetup: (id) =>
         apiPath("/model-hub/ground-truth/{ground_truth_id}/setup/", {
           ground_truth_id: id,
