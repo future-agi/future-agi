@@ -7998,69 +7998,16 @@ class EditAndRunUserEvalView(APIView):
                         f"Missing required mapping keys: {', '.join(missing_keys)}"
                     )
 
-            # --- Version creation on edit (atomic) ---
-            # Only create a version when the request has actual config changes.
-            # A bare {"run": true} rerun should not snapshot stale template config.
-            # Wrapped in transaction.atomic so a failure between create_version
-            # and eval_metric.save() doesn't leave orphaned versions.
-            _has_config_changes = bool(
-                request_data.get("config")
-                or request_data.get("composite_weight_overrides") is not None
+            # Version creation on edit — business logic lives in the service.
+            from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+            maybe_pin_new_version(
+                eval_metric,
+                request_data,
+                user=request.user,
+                organization=organization,
+                workspace=getattr(request, "workspace", None),
             )
-            if _has_config_changes and eval_metric.template.owner == OwnerChoices.USER.value:
-                from model_hub.models.evals_metric import EvalTemplateVersion
-                from model_hub.utils.prompt_migration import config_to_prompt_messages
-
-                _tpl = eval_metric.template
-                _req_config = request_data.get("config") or {}
-                _inner_config = _req_config.get("config", {})
-                _run_config = _req_config.get("run_config", {})
-                _resolved_model = (
-                    request_data.get("model") or eval_metric.model
-                    or _tpl.model or ""
-                )
-
-                # Build snapshot: template base → FE config → run_config → top-level fields
-                _snap = dict(_tpl.config or {})
-                if _inner_config:
-                    _snap.update(_inner_config)
-                if _run_config:
-                    _snap.update(_run_config)
-                _snap["model"] = _resolved_model
-                _weight_overrides = request_data.get("composite_weight_overrides")
-                if _weight_overrides is not None:
-                    _snap["composite_weight_overrides"] = _weight_overrides
-
-                _rule_prompt = _inner_config.get("rule_prompt")
-                _criteria = _rule_prompt or _tpl.criteria or ""
-                if _rule_prompt:
-                    _snap["messages"] = [{"role": "system", "content": _rule_prompt}]
-
-                _pm = config_to_prompt_messages(
-                    _snap, criteria=_criteria,
-                    eval_type_id=_snap.get("eval_type_id"),
-                )
-
-                # Dedup: skip version creation if snapshot matches the
-                # currently pinned version's config.
-                _current_pinned = eval_metric.pinned_version
-                _snap_changed = True
-                if _current_pinned and _current_pinned.config_snapshot:
-                    _snap_changed = _snap != _current_pinned.config_snapshot
-
-                if _snap_changed:
-                    with transaction.atomic():
-                        _ver = EvalTemplateVersion.objects.create_version(
-                            eval_template=_tpl,
-                            prompt_messages=_pm,
-                            config_snapshot=_snap,
-                            criteria=_criteria,
-                            model=_resolved_model,
-                            user=request.user,
-                            organization=organization,
-                            workspace=getattr(request, "workspace", None),
-                        )
-                        eval_metric.pinned_version = _ver
 
             # Update the config (already validated above)
             if new_config:
