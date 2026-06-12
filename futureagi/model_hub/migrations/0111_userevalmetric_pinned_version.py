@@ -12,7 +12,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("model_hub", "0106_decouple_telemetry_fk_constraints"),
+        ("model_hub", "0110_merge_20260609_1253"),
     ]
 
     operations = [
