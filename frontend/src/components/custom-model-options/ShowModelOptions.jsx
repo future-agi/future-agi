@@ -107,9 +107,9 @@ const showModelOptionsPropTypes = {
   control: PropTypes.any,
   responseSchema: PropTypes.array,
   modelParams: PropTypes.shape({
-    sliders: PropTypes.any,
+    sliders: PropTypes.array,
     responseFormat: PropTypes.any,
-    dropdowns: PropTypes.any,
+    dropdowns: PropTypes.array,
     reasoning: PropTypes.any,
   }),
   modelConfig: PropTypes.object,
