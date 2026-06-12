@@ -1105,9 +1105,11 @@ def _execute_composite_on_span(
             observation_span_id,
             select_related=("project", "project__organization", "project__workspace"),
         )
-        custom_eval_config = CustomEvalConfig.objects.select_related(
-            "pinned_version",
-        ).get(id=custom_eval_config_id, deleted=False)
+        # Composite parent doesn't use its own pinned_version at runtime —
+        # each child has its own pin via CompositeEvalChild.pinned_version.
+        custom_eval_config = CustomEvalConfig.objects.get(
+            id=custom_eval_config_id, deleted=False
+        )
     except (ObservationSpan.DoesNotExist, CustomEvalConfig.DoesNotExist) as e:
         raise ValueError(f"Span composite eval load failed: {e}") from e
 
@@ -1592,11 +1594,7 @@ def _execute_evaluation(
             _eval_inputs["session_context"] = _session_ctx
 
     # --- Run eval via unified engine ---
-    _pinned_vn = (
-        custom_eval_config.pinned_version.version_number
-        if custom_eval_config.pinned_version_id
-        else None
-    )
+    _pinned_vn = custom_eval_config.pinned_version_number
     try:
         result = run_eval(
             EvalRequest(
@@ -2918,11 +2916,7 @@ def _execute_evaluation_for_trace(
     if _di["span_context"]:
         _eval_inputs["span_context"] = build_span_context(anchor_span)
 
-    _pinned_vn = (
-        custom_eval_config.pinned_version.version_number
-        if custom_eval_config.pinned_version_id
-        else None
-    )
+    _pinned_vn = custom_eval_config.pinned_version_number
     try:
         result = run_eval(
             EvalRequest(
@@ -3158,11 +3152,7 @@ def _execute_evaluation_for_session(
         if _session_ctx is not None:
             _eval_inputs["session_context"] = _session_ctx
 
-    _pinned_vn = (
-        custom_eval_config.pinned_version.version_number
-        if custom_eval_config.pinned_version_id
-        else None
-    )
+    _pinned_vn = custom_eval_config.pinned_version_number
     try:
         result = run_eval(
             EvalRequest(

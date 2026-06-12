@@ -61,6 +61,13 @@ class CustomEvalConfig(BaseModel):
         help_text="Pin to a specific template version for runtime.",
     )
 
+    @property
+    def pinned_version_number(self):
+        """Version number of the pinned version, or None if unpinned."""
+        if self.pinned_version_id:
+            return self.pinned_version.version_number
+        return None
+
     def __str__(self):
         return f"Custom Eval Config {self.id}"
 

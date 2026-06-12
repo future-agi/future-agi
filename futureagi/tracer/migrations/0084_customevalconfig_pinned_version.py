@@ -3,10 +3,9 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ("tracer", "0082_decouple_trace_session_fk"),
-        ("model_hub", "0107_merge_20260608"),
+        ("tracer", "0083_merge_20260610_1220"),
+        ("model_hub", "0110_merge_20260609_1253"),
     ]
 
     operations = [

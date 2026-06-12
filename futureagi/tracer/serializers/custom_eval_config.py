@@ -59,6 +59,19 @@ class CustomEvalConfigSerializer(serializers.ModelSerializer):
                     else getattr(self.instance, "config", {})
                 ),
             )
+
+        # Validate pinned_version belongs to this config's eval_template
+        pinned = attrs.get("pinned_version")
+        if pinned is not None and eval_template is not None:
+            if pinned.eval_template_id != eval_template.id:
+                raise serializers.ValidationError(
+                    {"pinned_version": "Version does not belong to this eval template."}
+                )
+            if pinned.deleted:
+                raise serializers.ValidationError(
+                    {"pinned_version": "Cannot pin a deleted version."}
+                )
+
         return attrs
 
 
