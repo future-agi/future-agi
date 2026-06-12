@@ -11,7 +11,12 @@ import React, {
 import { useAgThemePrompt } from "src/hooks/use-ag-theme";
 import { useWorkbenchEvaluationContext } from "../context/WorkbenchEvaluationContext";
 import "./EvaluationData.css";
-import { getColumnConfig, calculateRowHeight, CELL_STATE } from "../common";
+import {
+  getColumnConfig,
+  calculateRowHeight,
+  CELL_STATE,
+  isUnsavedRow,
+} from "../common";
 import { OriginTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import axios, { endpoints } from "src/utils/axios";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,6 +31,7 @@ import AddRowStatusPanel from "src/components/VariableDrawer/AddRowStatusPanel";
 import { runPromptOverSocket } from "../../common";
 import { usePromptStreamUrl } from "src/sections/workbench/createPrompt/hooks/usePromptStreamUrl";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
+import DeleteRowCellRenderer from "./DeleteRowCellRenderer";
 
 const EvaluationData = () => {
   const {
@@ -518,10 +524,41 @@ const EvaluationData = () => {
     return rows;
   }, []);
 
-  const columnConfig = useMemo(
-    () => processColumnConfig(evaluationData),
-    [evaluationData, processColumnConfig],
-  );
+  const handleDeleteRow = useCallback((rowId) => {
+    setRows((prev) =>
+      prev.length > 1 ? prev.filter((row) => row.id !== rowId) : prev,
+    );
+  }, []);
+
+  const hasDeletableRow = rows.length > 1 && rows.some(isUnsavedRow);
+
+  const columnConfig = useMemo(() => {
+    const cols = processColumnConfig(evaluationData);
+    // Show the delete gutter only when an unsaved local row exists.
+    if (evaluationData && hasDeletableRow) {
+      cols.push({
+        colId: "rowActions",
+        headerName: "",
+        pinned: "right",
+        width: 48,
+        minWidth: 48,
+        maxWidth: 48,
+        resizable: false,
+        sortable: false,
+        editable: false,
+        suppressMovable: true,
+        cellRenderer: DeleteRowCellRenderer,
+        cellRendererParams: { onDelete: handleDeleteRow },
+        cellStyle: {
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 0,
+        },
+      });
+    }
+    return cols;
+  }, [evaluationData, processColumnConfig, hasDeletableRow, handleDeleteRow]);
 
   useEffect(() => {
     setRows(processRowData(evaluationData));
@@ -588,10 +625,14 @@ const EvaluationData = () => {
       }
       addRowTimeoutRef.current = setTimeout(() => {
         setRows((prev) => {
+          // max(id)+1 keeps ids unique after a middle row is deleted.
+          let nextId =
+            prev.reduce((max, row) => Math.max(max, Number(row.id) || 0), -1) +
+            1;
           const newRows = Array.from({ length: count }, (_) => ({
             ...Object.keys(rows[0]).reduce((acc, key) => {
               if (key === "id") {
-                acc["id"] = `${Number(prev.length)}`;
+                acc["id"] = `${nextId++}`;
               } else {
                 acc[key] = CELL_STATE.EMPTY;
               }

@@ -20,6 +20,13 @@ export const CELL_STATE = {
   EMPTY: "__EMPTY__",
 };
 
+// Unsaved local row: any content cell still holds the __EMPTY__ sentinel (backend rows never do).
+export const isUnsavedRow = (rowData) =>
+  !!rowData &&
+  Object.entries(rowData).some(
+    ([key, value]) => key !== "id" && value === CELL_STATE.EMPTY,
+  );
+
 export const COLUMNIDS = {
   COMPARISON: "Comparison",
 };
