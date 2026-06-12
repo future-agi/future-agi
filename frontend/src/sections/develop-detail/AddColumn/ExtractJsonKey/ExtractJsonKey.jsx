@@ -15,7 +15,10 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useExtractJsonKeyStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
-import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
+import {
+  useDatasetColumnConfig,
+  getDatasetQueryOptions,
+} from "src/api/develop/develop-detail";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
 
@@ -50,6 +53,29 @@ export const ExtractJsonKeyChild = ({
 
   const { dataset } = useParams();
   const allColumns = useDatasetColumnConfig(dataset);
+
+  const { data: tableData } = useQuery(
+    getDatasetQueryOptions(dataset, 0, [], [], "", { enabled: false }),
+  );
+  const rows = tableData?.data?.result?.table ?? [];
+
+  const isApiCallColumnWithValidJson = (column) => {
+    for (const row of rows.slice(0, 2)) {
+      const cell = row[column.field];
+      const value = cell?.cell_value ?? cell?.cellValue;
+      if (value && typeof value === "object") return true;
+      if (value && typeof value === "string") {
+        try {
+          JSON.parse(value);
+          return true;
+        } catch {
+          // not valid JSON
+        }
+      }
+    }
+    return false;
+  };
+
   useEffect(() => {
     if (initialData) {
       reset(initialData);
@@ -201,7 +227,12 @@ export const ExtractJsonKeyChild = ({
             control={control}
             fieldName="columnId"
             options={allColumns
-              ?.filter((column) => column.dataType === "json")
+              ?.filter(
+                (column) =>
+                  column.dataType === "json" ||
+                  (column.originType === "api_call" &&
+                    isApiCallColumnWithValidJson(column)),
+              )
               ?.map((column) => ({
                 label: column.headerName,
                 value: column.field,
