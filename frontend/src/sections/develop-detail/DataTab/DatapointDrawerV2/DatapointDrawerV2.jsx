@@ -297,6 +297,7 @@ const DatapointDrawerChild = () => {
     evalMetaBySourceId[column?.col?.sourceId || column?.col?.source_id]
       ?.templateType === "composite";
 
+
   const runEvalData = useMemo(() => {
     const evalColumns = allColumns.filter((i) => i.originType === "evaluation");
     const currentRowData = datapoint?.rowData ? datapoint?.rowData : [];
@@ -367,9 +368,7 @@ const DatapointDrawerChild = () => {
       return null;
     }
   });
-  const evalValueInfos = evalOpen?.value_infos ?? evalOpen?.valueInfos;
-  const evalCellValue = evalOpen?.cell_value ?? evalOpen?.cellValue;
-  const evalOutput = evalValueInfos?.output;
+  const evalOutput = evalOpen?.valueInfos?.output;
 
   const loading = false;
 
@@ -455,9 +454,9 @@ const DatapointDrawerChild = () => {
   };
 
   const finalArray = useMemo(() => {
-    const v = normalizeEvalCellValue(evalCellValue);
+    const v = normalizeEvalCellValue(evalOpen?.cellValue);
     return Array.isArray(v) ? v : undefined;
-  }, [evalCellValue]);
+  }, [evalOpen?.cellValue]);
 
   const onNavigate = async (direction) => {
     isNavigatingRef.current = true;
@@ -775,19 +774,19 @@ const DatapointDrawerChild = () => {
                         Error
                       </Box>
                     ) : (
-                      hasRenderableCellValue(evalCellValue) && (
+                      hasRenderableCellValue(evalOpen?.cellValue) && (
                         <>
                           <ShowComponent condition={!Array.isArray(finalArray)}>
                             <Chip
                               variant="soft"
-                              label={getLabel(evalCellValue)}
+                              label={getLabel(evalOpen?.cellValue)}
                               size="small"
                               sx={{
-                                ...getStatusColor(evalCellValue, theme),
+                                ...getStatusColor(evalOpen?.cellValue, theme),
                                 transition: "none",
                                 "&:hover": {
                                   backgroundColor: getStatusColor(
-                                    evalCellValue,
+                                    evalOpen?.cellValue,
                                     theme,
                                   ).backgroundColor,
                                   boxShadow: "none",
@@ -823,12 +822,15 @@ const DatapointDrawerChild = () => {
                                   label={val}
                                   size="small"
                                   sx={{
-                                    ...getStatusColor(evalCellValue, theme),
+                                    ...getStatusColor(
+                                      evalOpen?.cellValue,
+                                      theme,
+                                    ),
                                     marginRight: theme.spacing(1),
                                     transition: "none",
                                     "&:hover": {
                                       backgroundColor: getStatusColor(
-                                        evalCellValue,
+                                        evalOpen?.cellValue,
                                         theme,
                                       ).backgroundColor,
                                       boxShadow: "none",
@@ -867,25 +869,26 @@ const DatapointDrawerChild = () => {
                       borderRadius: "4px",
                     }}
                   >
-                    {Array.isArray(evalValueInfos?.children) &&
-                    evalValueInfos.children.length > 0 ? (
+                    {Array.isArray(evalOpen?.valueInfos?.children) &&
+                    evalOpen.valueInfos.children.length > 0 ? (
                       (() => {
                         /** @type {any[]} */
-                        const compositeChildren = evalValueInfos.children || [];
+                        const compositeChildren =
+                          evalOpen.valueInfos.children || [];
                         return (
                           <CompositeResultView
                             compositeResult={{
-                              ...evalValueInfos,
+                              ...evalOpen.valueInfos,
                               total_children:
-                                evalValueInfos.total_children ??
+                                evalOpen.valueInfos.total_children ??
                                 compositeChildren.length,
                               completed_children:
-                                evalValueInfos.completed_children ??
+                                evalOpen.valueInfos.completed_children ??
                                 compositeChildren.filter(
                                   (child) => child.status === "completed",
                                 ).length,
                               failed_children:
-                                evalValueInfos.failed_children ??
+                                evalOpen.valueInfos.failed_children ??
                                 compositeChildren.filter(
                                   (child) => child.status === "failed",
                                 ).length,
@@ -893,18 +896,21 @@ const DatapointDrawerChild = () => {
                           />
                         );
                       })()
-                    ) : evalValueInfos?.reason?.trim() ||
-                      evalValueInfos?.summary ? (
+                    ) : evalOpen?.valueInfos?.reason?.trim() ||
+                      evalOpen?.valueInfos?.summary ? (
                       <CellMarkdown
                         spacing={0}
-                        text={evalValueInfos?.reason || evalValueInfos?.summary}
+                        text={
+                          evalOpen?.valueInfos?.reason ||
+                          evalOpen?.valueInfos?.summary
+                        }
                       />
                     ) : (
                       "Unable to fetch Explanation"
                     )}
                   </Box>
                 </Box>
-
+               
                 {!evalOpenIsCode && !isCompositeEval && (
                   <ErrorLocalizationCellSection
                     evalOpen={evalOpen}
@@ -1290,7 +1296,7 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
   useEffect(() => {
     onAnalysisLoadedRef.current = onAnalysisLoaded;
   }, [onAnalysisLoaded]);
-  const valueInfos = evalOpen?.value_infos ?? evalOpen?.valueInfos;
+  const valueInfos = evalOpen?.valueInfos;
   const inlineAnalysis = valueInfos?.errorAnalysis;
   const hasInlineAnalysis = !!(
     inlineAnalysis &&

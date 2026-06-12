@@ -46,7 +46,7 @@ const AddEvaluationFeeback = ({ module = "dataset", onRefreshGrid }) => {
   };
   const { experimentId } = useParams();
   const metricId = isExperimentModule ? data?.userEvalMetricId : data?.sourceId;
-  const rowId = data?.rowData?.row_id ?? data?.rowData?.rowId;
+  const rowId = data?.rowData?.row_id;
   const detailsEndpoint = isExperimentModule
     ? endpoints.develop.experiment.feedback.getDetails(experimentId)
     : endpoints.develop.eval.getFeedbackDetails;
@@ -143,7 +143,7 @@ const EvaluationFeeback = ({
   const existingFeedbackId = existingFeedback?.id;
   const { dataset, experimentId } = useParams();
   const metricId = isExperimentModule ? data?.userEvalMetricId : data?.sourceId;
-  const rowId = data?.rowData?.row_id ?? data?.rowData?.rowId;
+  const rowId = data?.rowData?.row_id;
   const feedbackEndpoints = isExperimentModule
     ? {
         getTemplate:
