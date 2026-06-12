@@ -21,6 +21,7 @@ from model_hub.models.ai_model import AIModel
 from model_hub.models.choices import StatusType
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.evals_metric import EvalTemplate
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.utils.storage import upload_audio_to_s3, upload_image_to_s3, upload_video_to_s3
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import ObservationSpan, UserIdType
@@ -35,7 +36,7 @@ from tracer.utils.semantic_conventions import (
     detect_semconv,
     get_attribute,
 )
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
@@ -820,23 +821,18 @@ def convert_otel_span_to_observation_span(
         session_name = attributes.get(SpanAttributes.SESSION_ID)
 
         attributes[SpanAttributes.RESPONSE] = decoder.parse_json_string(
-            attributes.get("fi.llm.output")
-            or attributes.get(SpanAttributes.OUTPUT_VALUE, "")
+            get_attribute(attributes, "output_value", "")
         )
 
         # Process input value
-        input_val = attributes.get("fi.llm.input", None) or attributes.get(
-            SpanAttributes.INPUT_VALUE, None
-        )
+        input_val = get_attribute(attributes, "input_value")
         if input_val in [None, "", "[]", []]:
             if attributes.get(SpanAttributes.RAW_INPUT) is not None:
                 input_val = attributes.get(SpanAttributes.RAW_INPUT, None)
         input_val = decoder.parse_nested_json(input_val) if input_val else None
 
         # Process output value
-        output_val = attributes.get("fi.llm.output", None) or attributes.get(
-            SpanAttributes.OUTPUT_VALUE, None
-        )
+        output_val = get_attribute(attributes, "output_value")
         if output_val in [None, "", "[]", []]:
             if attributes.get(SpanAttributes.RAW_OUTPUT) is not None:
                 output_val = attributes.get(SpanAttributes.RAW_OUTPUT, None)
@@ -1461,9 +1457,7 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         )
 
     # Process Input/Output
-    input_val = attributes.get("fi.llm.input") or attributes.get(
-        SpanAttributes.INPUT_VALUE
-    )
+    input_val = get_attribute(attributes, "input_value")
     if (
         input_val in [None, "", "[]", []]
         and attributes.get(SpanAttributes.RAW_INPUT) is not None
@@ -1471,9 +1465,7 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         input_val = attributes.get(SpanAttributes.RAW_INPUT)
     input_val = DECODER.parse_nested_json(input_val) if input_val else None
 
-    output_val = attributes.get("fi.llm.output") or attributes.get(
-        SpanAttributes.OUTPUT_VALUE
-    )
+    output_val = get_attribute(attributes, "output_value")
     if (
         output_val in [None, "", "[]", []]
         and attributes.get(SpanAttributes.RAW_OUTPUT) is not None
