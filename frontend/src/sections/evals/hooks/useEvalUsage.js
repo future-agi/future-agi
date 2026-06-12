@@ -34,7 +34,11 @@ export function useEvalUsageLogs(
         endpoints.develop.eval.getEvalUsage(templateId),
         { params: { page, page_size: pageSize, period } },
       );
-      return data?.result?.logs;
+      const result = data?.result || {};
+      return {
+        table: result.table || result.logs?.items || [],
+        pagination: result.logs || {},
+      };
     },
     enabled: !!templateId,
     keepPreviousData: true,

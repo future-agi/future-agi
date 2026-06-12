@@ -74,6 +74,7 @@ from model_hub.serializers.contracts import (
     EvalTemplateVersionListResponseSerializer,
     EvalTemplateVersionResponseSerializer,
     EvalTemplateVersionRestoreResponseSerializer,
+    EvalUsageQuerySerializer,
     EvalUsageStatsResponseSerializer,
     GroundTruthConfigRequestSerializer,
     GroundTruthConfigResponseSerializer,
@@ -5039,6 +5040,7 @@ class GroundTruthTriggerEmbeddingView(APIView):
             return self._gm.bad_request(str(e))
 
 
+
 class EvalUsageStatsView(APIView):
     """
     GET /model-hub/eval-templates/<id>/usage/
@@ -5061,8 +5063,9 @@ class EvalUsageStatsView(APIView):
         "365d": timedelta(days=365),
     }
 
-    @swagger_auto_schema(
-        responses={200: EvalUsageStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    @validated_request(
+        query_serializer=EvalUsageQuerySerializer,
+        responses={200: EvalUsageStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, template_id, *args, **kwargs):
         try:
@@ -5080,8 +5083,14 @@ class EvalUsageStatsView(APIView):
             )
 
             # Parse query params
-            page = int(request.GET.get("page", 0))
-            page_size = min(int(request.GET.get("page_size", 25)), 100)
+            try:
+                page = max(int(request.GET.get("page", 0)), 0)
+            except (ValueError, TypeError):
+                page = 0
+            try:
+                page_size = min(max(int(request.GET.get("page_size", 25)), 1), 100)
+            except (ValueError, TypeError):
+                page_size = 25
             period = request.GET.get("period", "30d")
 
             period_delta = self.PERIOD_MAP.get(period, timedelta(days=30))
@@ -5311,14 +5320,12 @@ class EvalUsageStatsView(APIView):
                                     )
                                     else "[url]"
                                 )
-                            else:
-                                val_str = val_str[:100]
                             input_vars[k] = val_str
 
                 # Build input summary: "key1: val1, key2: val2"
                 if input_vars:
                     input_str = ", ".join(
-                        f"{k}: {v[:60]}" for k, v in list(input_vars.items())[:3]
+                        f"{k}: {v}" for k, v in list(input_vars.items())[:3]
                     )
                 else:
                     # Fallback to config.input
@@ -5329,10 +5336,10 @@ class EvalUsageStatsView(APIView):
                         parts = []
                         for k, v in input_data.items():
                             if v and k not in _skip_keys:
-                                parts.append(f"{k}: {str(v)[:60]}")
+                                parts.append(f"{k}: {str(v)}")
                         input_str = ", ".join(parts[:3])
                     elif isinstance(input_data, str):
-                        input_str = input_data[:200]
+                        input_str = input_data
                     else:
                         input_str = ""
 
@@ -5373,51 +5380,89 @@ class EvalUsageStatsView(APIView):
                     else None
                 )
 
-                log_item = {
-                    "id": str(log.log_id),
-                    "input": input_str[:200],
-                    "result": result_label,
-                    "score": score,
-                    "reason": ((reason[:150] + "...") if len(reason) > 150 else reason),
-                    "status": log.status,
-                    "source": source,
-                    "created_at": (
-                        log.created_at.isoformat() if log.created_at else ""
-                    ),
-                    "warnings": warnings or [],
-                    "detail": {
-                        "input_variables": input_vars or config.get("input", {}),
-                        "output": output_data,
-                        "warnings": warnings or [],
-                        "mappings": mappings,
-                        "model": (
-                            config.get("model") if isinstance(config, dict) else None
+                # Build row: static fields + flattened input variables
+                row_data = {
+                    "row_id": str(log.log_id),
+                    "score": {"cell_value": score},
+                    "result": {"cell_value": result_label},
+                    "input": {"cell_value": input_str},
+                    "reason": {"cell_value": reason},
+                    "source": {"cell_value": source},
+                    "version": {
+                        "cell_value": (
+                            ""
+                            if template.owner == OwnerChoices.SYSTEM.value
+                            else config.get("version_number")
+                            if isinstance(config, dict)
+                            else None
                         ),
                     },
-                    "feedback": feedback_map.get(str(log.log_id)),
+                    "feedback": {
+                        "cell_value": feedback_map.get(str(log.log_id)),
+                    },
+                    "created_at": {
+                        "cell_value": (
+                            log.created_at.isoformat() if log.created_at else ""
+                        ),
+                    },
+                    "status": {"cell_value": log.status},
+                    "warnings": {"cell_value": warnings or []},
+                }
+
+                # Flatten input variables as individual columns
+                all_vars = input_vars or config.get("input", {})
+                if isinstance(all_vars, dict):
+                    for var_key, var_val in all_vars.items():
+                        row_data[f"input_var_{var_key}"] = {
+                            "cell_value": var_val,
+                        }
+
+                # Keep detail for the side panel
+                row_data["detail"] = {
+                    "input_variables": all_vars,
+                    "output": output_data,
+                    "warnings": warnings or [],
+                    "mappings": mappings,
+                    "model": (
+                        config.get("model")
+                        if isinstance(config, dict)
+                        else None
+                    ),
+                    "version_id": (
+                        config.get("version_id")
+                        if isinstance(config, dict)
+                        else None
+                    ),
+                    "version_number": (
+                        config.get("version_number")
+                        if isinstance(config, dict)
+                        else None
+                    ),
                 }
 
                 if is_composite_log:
                     children = config.get("children", [])
-                    log_item["composite"] = True
-                    log_item["aggregate_pass"] = (
+                    row_data["composite"] = True
+                    row_data["aggregate_pass"] = (
                         output_data.get("aggregate_pass")
                         if isinstance(output_data, dict)
                         else None
                     )
-                    log_item["detail"]["children"] = children
-                    log_item["detail"]["aggregation_function"] = config.get(
+                    row_data["detail"]["children"] = children
+                    row_data["detail"]["aggregation_function"] = config.get(
                         "aggregation_function"
                     )
-                    log_item["detail"]["total_children"] = config.get("total_children")
-                    log_item["detail"]["completed_children"] = config.get(
+                    row_data["detail"]["total_children"] = config.get(
+                        "total_children"
+                    )
+                    row_data["detail"]["completed_children"] = config.get(
                         "completed_children"
                     )
-                    log_item["detail"]["failed_children"] = config.get(
+                    row_data["detail"]["failed_children"] = config.get(
                         "failed_children"
                     )
 
-                log_items.append(log_item)
+                log_items.append(row_data)
 
             response = {
                 "template_id": str(template_id),
@@ -5432,8 +5477,8 @@ class EvalUsageStatsView(APIView):
                     ),
                 },
                 "chart": chart_data,
+                "table": log_items,
                 "logs": {
-                    "items": log_items,
                     "total": total_logs,
                     "page": page,
                     "page_size": page_size,
@@ -5477,8 +5522,14 @@ class EvalFeedbackListView(APIView):
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Eval template not found.")
 
-            page = int(request.GET.get("page", 0))
-            page_size = min(int(request.GET.get("page_size", 25)), 100)
+            try:
+                page = max(int(request.GET.get("page", 0)), 0)
+            except (ValueError, TypeError):
+                page = 0
+            try:
+                page_size = min(max(int(request.GET.get("page_size", 25)), 1), 100)
+            except (ValueError, TypeError):
+                page_size = 25
 
             # Get log IDs for this template as strings (Feedback.source_id is CharField)
             log_ids = list(

@@ -1725,8 +1725,7 @@ class EvalUsageLogItemSerializer(serializers.Serializer):
     aggregate_pass = serializers.BooleanField(required=False, allow_null=True)
 
 
-class EvalUsageLogsSerializer(serializers.Serializer):
-    items = EvalUsageLogItemSerializer(many=True)
+class EvalUsagePaginationSerializer(serializers.Serializer):
     total = serializers.IntegerField()
     page = serializers.IntegerField()
     page_size = serializers.IntegerField()
@@ -1737,7 +1736,8 @@ class EvalUsageStatsResponseResultSerializer(serializers.Serializer):
     is_composite = serializers.BooleanField()
     stats = EvalUsageStatsSerializer()
     chart = EvalUsageChartPointSerializer(many=True)
-    logs = EvalUsageLogsSerializer()
+    table = serializers.ListField(child=serializers.DictField())
+    logs = EvalUsagePaginationSerializer()
 
 
 class EvalUsageStatsResponseSerializer(serializers.Serializer):
@@ -2194,6 +2194,7 @@ class CompositeEvalCreateRequestSerializer(serializers.Serializer):
         default=list,
     )
     child_template_ids = serializers.ListField(child=serializers.UUIDField())
+    child_configs = serializers.JSONField(required=False, allow_null=True, default=dict)
     aggregation_enabled = serializers.BooleanField(required=False, default=True)
     aggregation_function = serializers.ChoiceField(
         choices=["weighted_avg", "avg", "min", "max", "pass_rate"],
@@ -2947,4 +2948,20 @@ class ExperimentAdditionalEvaluationsRequestSerializer(serializers.Serializer):
     eval_template_ids = serializers.ListField(
         child=serializers.UUIDField(),
         allow_empty=False,
+    )
+
+
+
+# ── Eval Usage Stats ────────────────────────────────────────────────
+
+
+class EvalUsageQuerySerializer(serializers.Serializer):
+    page = serializers.IntegerField(required=False, default=0, min_value=0)
+    page_size = serializers.IntegerField(
+        required=False, default=25, min_value=1, max_value=100
+    )
+    period = serializers.ChoiceField(
+        choices=["30m", "6h", "1d", "7d", "30d", "90d", "180d", "365d"],
+        required=False,
+        default="30d",
     )

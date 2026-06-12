@@ -17,7 +17,7 @@ from accounts.models.workspace import Workspace
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from common.utils.data_injection import normalize as _di_normalize
 from model_hub.models.choices import StatusType
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from sdk.utils.helpers import _get_api_call_type
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.temporal import temporal_activity
@@ -1541,6 +1541,15 @@ def _execute_evaluation(
     if feedback_id:
         source_config["feedback_id"] = str(feedback_id)
 
+    # Track which eval version produced this result
+    try:
+        _ver = EvalTemplateVersion.objects.get_default(eval_model)
+        if _ver:
+            source_config["version_id"] = str(_ver.id)
+            source_config["version_number"] = _ver.version_number
+    except Exception:
+        logger.warning("version_tracking_failed", exc_info=True)
+
     api_call_type = _get_api_call_type(custom_eval_config.model)
     workspace = observation_span.project.workspace
     if workspace is None:
@@ -2858,6 +2867,15 @@ def _execute_evaluation_for_trace(
     if feedback_id:
         source_config["feedback_id"] = str(feedback_id)
 
+    # Track which eval version produced this result
+    try:
+        _ver = EvalTemplateVersion.objects.get_default(eval_template)
+        if _ver:
+            source_config["version_id"] = str(_ver.id)
+            source_config["version_number"] = _ver.version_number
+    except Exception:
+        logger.warning("version_tracking_failed", exc_info=True)
+
     api_call_type = _get_api_call_type(custom_eval_config.model)
     api_call_log_row = None
     if log_and_deduct_cost_for_api_request is not None:
@@ -3091,6 +3109,15 @@ def _execute_evaluation_for_session(
     }
     if feedback_id:
         source_config["feedback_id"] = str(feedback_id)
+
+    # Track which eval version produced this result
+    try:
+        _ver = EvalTemplateVersion.objects.get_default(eval_template)
+        if _ver:
+            source_config["version_id"] = str(_ver.id)
+            source_config["version_number"] = _ver.version_number
+    except Exception:
+        logger.warning("version_tracking_failed", exc_info=True)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
     api_call_log_row = None

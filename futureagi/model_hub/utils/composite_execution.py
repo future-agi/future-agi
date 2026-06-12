@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from model_hub.models.evals_metric import CompositeEvalChild, EvalTemplate
+from model_hub.models.evals_metric import CompositeEvalChild, EvalTemplate, EvalTemplateVersion
 from model_hub.types import CompositeChildResult
 from model_hub.utils.composite_aggregation import (
     aggregate_error_localizers,
@@ -129,6 +129,7 @@ def _execute_child(
             trace_context=trace_context,
             session_context=session_context,
             call_context=call_context,
+            resolved_version=link.pinned_version if link.pinned_version else None,
         )
 
         score: float | None = None
@@ -232,10 +233,23 @@ def _log_composite_usage(
             else:
                 safe_mappings[k] = str(v)[:200]
 
+        # Track which version of the composite eval produced this result
+        _parent_version_id = None
+        _parent_version_number = None
+        try:
+            _default_ver = EvalTemplateVersion.objects.get_default(parent)
+            if _default_ver:
+                _parent_version_id = str(_default_ver.id)
+                _parent_version_number = _default_ver.version_number
+        except Exception:
+            pass
+
         config_payload = {
             "composite": True,
             "source": source,
             "reference_id": str(parent.id),
+            "version_id": _parent_version_id,
+            "version_number": _parent_version_number,
             "aggregation_enabled": parent.aggregation_enabled,
             "aggregation_function": parent.aggregation_function,
             "mappings": safe_mappings,

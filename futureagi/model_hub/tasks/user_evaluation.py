@@ -212,15 +212,28 @@ def process_single_evaluation(user_eval_metric):
             _mark_cells_usage_limit_error(user_eval_metric, usage_check)
             raise ValueError(usage_check.reason or "Usage limit exceeded")
 
+    # Track which eval version produced this result
+    _source_configs = {
+        "dataset_id": str(user_eval_metric.dataset.id),
+        "source": "dataset",
+    }
+    try:
+        from model_hub.models.evals_metric import EvalTemplateVersion
+        _default_ver = EvalTemplateVersion.objects.get_default(
+            user_eval_metric.template
+        )
+        if _default_ver:
+            _source_configs["version_id"] = str(_default_ver.id)
+            _source_configs["version_number"] = _default_ver.version_number
+    except Exception:
+        logger.warning("version_tracking_failed", eval_id=str(eval_id), exc_info=True)
+
     runner = EvaluationRunner(
         user_eval_metric_id=user_eval_metric.id,
         is_only_eval=True,
         source="dataset_evaluation",
         source_id=user_eval_metric.template.id,
-        source_configs={
-            "dataset_id": str(user_eval_metric.dataset.id),
-            "source": "dataset",
-        },
+        source_configs=_source_configs,
     )
     cols_used = runner._get_all_column_ids_being_used()
 
@@ -1224,7 +1237,7 @@ def process_single_error_localization(task_id):
                 )
             )
         except Exception:
-            pass  # Metering failure must not break the action
+            logger.warning("error_localizer_billing_emit_failed", eval_id=str(task.id), exc_info=True)
 
         logger.info(f"Error Localization task {task.id} completed")
 
