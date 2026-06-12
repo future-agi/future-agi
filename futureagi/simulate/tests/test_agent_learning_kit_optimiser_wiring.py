@@ -33,37 +33,114 @@ def _fake_run(optimiser_type, configuration=None):
 def test_optimiser_routes_to_bridge_for_agent_learning_kit():
     run = _fake_run(
         AgentPromptOptimiserRun.OptimiserType.AGENT_LEARNING_KIT,
-        {"agent_candidates": [{"type": "scripted", "responses": [{"content": "hi"}]}],
-         "evaluation_config": {"metrics": [{"name": "task_completion"}]}, "dry_run": True},
+        {
+            "agent_candidates": [
+                {"type": "scripted", "responses": [{"content": "hi"}]}
+            ],
+            "evaluation_config": {"metrics": [{"name": "task_completion"}]},
+            "dry_run": True,
+        },
     )
-    with patch.object(apo.AgentPromptOptimiserRun.objects, "get", return_value=run), \
-         patch("simulate.services.agent_learning_bridge.is_available", return_value=True), \
-         patch("simulate.services.agent_learning_bridge.optimize_and_apply_for_agent",
-               return_value={"status": "passed", "summary": {"optimization_score": 0.9}}) as m:
+    with (
+        patch.object(apo.AgentPromptOptimiserRun.objects, "get", return_value=run),
+        patch(
+            "simulate.services.agent_learning_bridge.is_available", return_value=True
+        ),
+        patch(
+            "simulate.services.agent_learning_bridge.optimize_and_apply_for_agent",
+            return_value={"status": "passed", "summary": {"optimization_score": 0.9}},
+        ) as m,
+    ):
         apo.run_agent_prompt_optimiser("run-1")
 
     # The REAL platform optimiser flow invoked the bridge — no longer an island.
     m.assert_called_once()
     kwargs = m.call_args.kwargs
     assert kwargs["name"] == "run-1"
-    assert kwargs["agent_candidates"] == [{"type": "scripted", "responses": [{"content": "hi"}]}]
+    assert kwargs["agent_candidates"] == [
+        {"type": "scripted", "responses": [{"content": "hi"}]}
+    ]
     assert kwargs["dry_run"] is True
     assert run.result == {"status": "passed", "summary": {"optimization_score": 0.9}}
     assert run.status == AgentPromptOptimiserRun.Status.COMPLETED
 
 
 @pytest.mark.unit
-def test_other_optimiser_types_do_not_route_to_bridge():
+def test_other_optimiser_types_route_to_kit_search_cutover():
+    """Phase-10A Tier-1 cutover #1: legacy optimiser types (GEPA, random_search, ...)
+    now route through the kit SEARCH path (_run_kit_search_optimisation), while the
+    explicit AGENT_LEARNING_KIT branch stays separate."""
     run = _fake_run(AgentPromptOptimiserRun.OptimiserType.GEPA)
-    # Force the ee FixYourAgent import to fail so the non-kit path returns early cleanly;
-    # the assertion is that the kit branch is NOT taken for non-kit optimiser types.
-    with patch.object(apo.AgentPromptOptimiserRun.objects, "get", return_value=run), \
-         patch("simulate.utils.agent_prompt_optimiser._run_agent_learning_kit_optimisation") as kit, \
-         patch.dict("sys.modules", {"ee.agenthub.fix_your_agent.fix_your_agent": None}), \
-         patch("simulate.utils.agent_prompt_optimiser.settings") as s:
-        s.DEBUG = False
+    with (
+        patch.object(apo.AgentPromptOptimiserRun.objects, "get", return_value=run),
+        patch(
+            "simulate.utils.agent_prompt_optimiser._run_kit_search_optimisation"
+        ) as search,
+        patch(
+            "simulate.utils.agent_prompt_optimiser._run_agent_learning_kit_optimisation"
+        ) as kit_type,
+        patch(
+            "simulate.services.agent_learning_bridge.is_available", return_value=True
+        ),
+    ):
         apo.run_agent_prompt_optimiser("run-1")
-    kit.assert_not_called()
+    search.assert_called_once_with(run)
+    kit_type.assert_not_called()
+
+
+@pytest.mark.unit
+def test_legacy_flag_keeps_old_search_engine_callable():
+    """The legacy FixYourAgent engine stays reachable behind _legacy=True (and
+    configuration.use_legacy_search) until parity sign-off — not deleted."""
+    run = _fake_run(AgentPromptOptimiserRun.OptimiserType.GEPA)
+    with (
+        patch.object(apo.AgentPromptOptimiserRun.objects, "get", return_value=run),
+        patch(
+            "simulate.utils.agent_prompt_optimiser._run_kit_search_optimisation"
+        ) as search,
+        patch(
+            "simulate.utils.agent_prompt_optimiser._run_legacy_agent_prompt_optimiser"
+        ) as legacy,
+    ):
+        apo.run_agent_prompt_optimiser("run-1", _legacy=True)
+    legacy.assert_called_once_with(run)
+    search.assert_not_called()
+
+    run2 = _fake_run(
+        AgentPromptOptimiserRun.OptimiserType.GEPA, {"use_legacy_search": True}
+    )
+    with (
+        patch.object(apo.AgentPromptOptimiserRun.objects, "get", return_value=run2),
+        patch(
+            "simulate.utils.agent_prompt_optimiser._run_kit_search_optimisation"
+        ) as search2,
+        patch(
+            "simulate.utils.agent_prompt_optimiser._run_legacy_agent_prompt_optimiser"
+        ) as legacy2,
+    ):
+        apo.run_agent_prompt_optimiser("run-1")
+    legacy2.assert_called_once_with(run2)
+    search2.assert_not_called()
+
+
+@pytest.mark.unit
+def test_kit_unavailable_falls_back_to_legacy_engine():
+    run = _fake_run(AgentPromptOptimiserRun.OptimiserType.RANDOM_SEARCH)
+    with (
+        patch.object(apo.AgentPromptOptimiserRun.objects, "get", return_value=run),
+        patch(
+            "simulate.services.agent_learning_bridge.is_available", return_value=False
+        ),
+        patch(
+            "simulate.utils.agent_prompt_optimiser._run_kit_search_optimisation"
+        ) as search,
+        patch(
+            "simulate.utils.agent_prompt_optimiser._run_legacy_agent_prompt_optimiser"
+        ) as legacy,
+    ):
+        apo.run_agent_prompt_optimiser("run-1")
+    legacy.assert_called_once_with(run)
+    search.assert_not_called()
 
 
 @pytest.mark.integration
@@ -81,8 +158,10 @@ def test_real_kit_optimisation_runs_end_to_end_through_platform_flow():
         {
             "agent_candidates": [
                 {"type": "scripted", "responses": [{"content": "I don't know."}]},
-                {"type": "scripted",
-                 "responses": [{"content": "Sure! Our hours are 9-5 Mon-Fri."}]},
+                {
+                    "type": "scripted",
+                    "responses": [{"content": "Sure! Our hours are 9-5 Mon-Fri."}],
+                },
             ],
             "evaluation_config": {"metrics": [{"name": "task_completion"}]},
             "dry_run": False,  # real (non-dry-run) kit optimisation
@@ -101,9 +180,15 @@ def test_real_kit_optimisation_runs_end_to_end_through_platform_flow():
 @pytest.mark.unit
 def test_bridge_unavailable_marks_run_failed():
     run = _fake_run(AgentPromptOptimiserRun.OptimiserType.AGENT_LEARNING_KIT)
-    with patch.object(apo.AgentPromptOptimiserRun.objects, "get", return_value=run), \
-         patch("simulate.services.agent_learning_bridge.is_available", return_value=False), \
-         patch("simulate.services.agent_learning_bridge.optimize_and_apply_for_agent") as m:
+    with (
+        patch.object(apo.AgentPromptOptimiserRun.objects, "get", return_value=run),
+        patch(
+            "simulate.services.agent_learning_bridge.is_available", return_value=False
+        ),
+        patch(
+            "simulate.services.agent_learning_bridge.optimize_and_apply_for_agent"
+        ) as m,
+    ):
         apo.run_agent_prompt_optimiser("run-1")
     m.assert_not_called()
     assert getattr(run, "_failed", None) and "agent-learning-kit" in run._failed

@@ -329,6 +329,7 @@ class TestCreatePromptTrial:
             is_baseline=False,
             prompt="Test prompt",
             average_score=0.85,
+            metadata={},
         )
 
     @patch("simulate.utils.agent_prompt_optimiser.PromptTrial")
@@ -1001,9 +1002,7 @@ class TestGetAgentPromptOptimiserRunGraphData:
     @patch("simulate.utils.agent_prompt_optimiser.ComponentEvaluation")
     def test_returns_empty_for_no_trials(self, mock_comp_eval):
         """Should return empty dict when no evaluations exist."""
-        mock_comp_eval.objects.filter.return_value.values.return_value.annotate.return_value = (
-            []
-        )
+        mock_comp_eval.objects.filter.return_value.values.return_value.annotate.return_value = []
 
         mock_run = MagicMock()
         mock_run.trials.all.return_value.order_by.return_value = []
@@ -1144,6 +1143,6 @@ class TestBuildOptimiserParameters:
 
         for opt_type, keys in OPTIMISER_REQUIRED_CONFIG_KEYS.items():
             for key in keys:
-                assert (
-                    key in OPTIMISER_PARAM_META
-                ), f"Missing metadata for {opt_type}.{key}"
+                assert key in OPTIMISER_PARAM_META, (
+                    f"Missing metadata for {opt_type}.{key}"
+                )

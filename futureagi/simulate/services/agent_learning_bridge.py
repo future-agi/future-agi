@@ -90,6 +90,23 @@ def _optimize_module() -> Any:
     return _kit_submodule("optimize")
 
 
+def _ensure_kit_runtime() -> None:
+    """Pre-import heavy native deps the kit's local engines pull in lazily.
+
+    The kit's optimizer/evaluator engines import ``fi.evals.metrics`` →
+    ``spacy`` → ``thinc`` → ``torch``. When torch is first imported deep inside
+    that lazy chain it can hit a circular-import failure ("partially initialized
+    module 'torch'"), which the kit surfaces as "optimizer engine is required" /
+    "fi.evals.metrics.agents is not available". Importing torch up-front from a
+    clean context avoids the cycle entirely. Best-effort: a missing torch is the
+    kit's problem to report, not ours to mask.
+    """
+    try:  # pragma: no cover - import side effect only
+        import torch  # noqa: F401
+    except Exception:
+        pass
+
+
 def _attacks_for_categories(categories: Sequence[str]) -> list[str]:
     out: list[str] = []
     for key in categories:
@@ -410,4 +427,5 @@ def optimize_and_apply_for_agent(
         base_agent=base_agent,
     )
     opt = _optimize_module()
+    _ensure_kit_runtime()
     return opt.optimize_manifest(manifest, dry_run=dry_run)

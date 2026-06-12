@@ -82,6 +82,9 @@ def _create_prompt_trial(
         is_baseline=is_baseline,
         prompt=trial_data.get("prompt", ""),
         average_score=trial_data.get("average_score", 0),
+        # Kit-run searches carry candidate_id/candidate_config here so apply can
+        # push the whole agent config; legacy trials simply have no metadata.
+        metadata=trial_data.get("metadata") or {},
     )
 
 
@@ -285,42 +288,25 @@ def store_optimization_results(
 
 
 def _resolve_optimiser_base_prompt(prompt_optimiser_run) -> str:
-    """Best-effort current system prompt for the agent under optimisation (TH-5642)."""
-    te = prompt_optimiser_run.test_execution
-    agent_def = getattr(te, "agent_definition", None) or getattr(
-        getattr(te, "run_test", None), "agent_definition", None
-    )
-    for attr in ("system_prompt", "prompt", "instructions"):
-        val = getattr(agent_def, attr, None)
-        if val:
-            return str(val)
-    return "You are a helpful assistant."
+    """Best-effort current system prompt for the agent under optimisation (TH-5642).
+
+    Canonical implementation moved to simulate.services.optimize_via_kit
+    (Phase-10A Tier-1 cutover #1); this alias keeps existing imports working.
+    """
+    from simulate.services.optimize_via_kit import resolve_base_prompt
+
+    return resolve_base_prompt(prompt_optimiser_run)
 
 
 def _resolve_optimiser_base_agent(prompt_optimiser_run) -> dict:
     """Build the WHOLE-agent base config from the run's agent definition (TH-5642).
 
-    The optimisation searches the full agent config (model, provider identity,
-    instructions, …), not just the prompt; this is the seed every search-space
-    patch applies to. Provider/assistant_id ride along so the winning config can
-    be applied back to the provider-side agent.
+    Canonical implementation moved to simulate.services.optimize_via_kit
+    (Phase-10A Tier-1 cutover #1); this alias keeps existing imports working.
     """
-    te = prompt_optimiser_run.test_execution
-    agent_def = getattr(te, "agent_definition", None) or getattr(
-        getattr(te, "run_test", None), "agent_definition", None
-    )
-    base: dict = {
-        "type": "llm",
-        "name": getattr(agent_def, "agent_name", None) or "agent-under-optimisation",
-        "model": (getattr(prompt_optimiser_run, "model", None) or "gpt-4o-mini"),
-        "instructions": _resolve_optimiser_base_prompt(prompt_optimiser_run),
-    }
-    if agent_def is not None:
-        if getattr(agent_def, "provider", None):
-            base["provider"] = str(agent_def.provider)
-        if getattr(agent_def, "assistant_id", None):
-            base["assistant_id"] = str(agent_def.assistant_id)
-    return base
+    from simulate.services.optimize_via_kit import resolve_base_agent
+
+    return resolve_base_agent(prompt_optimiser_run)
 
 
 def _run_agent_learning_kit_optimisation(prompt_optimiser_run) -> None:
@@ -418,9 +404,52 @@ def _store_kit_candidates_as_trials(prompt_optimiser_run, result, candidates) ->
         logger.exception("failed to store kit candidates as PromptTrials")
 
 
-def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
+def _run_kit_search_optimisation(prompt_optimiser_run) -> None:
+    """Phase-10A Tier-1 cutover #1: kit drives the SEARCH for legacy optimiser types.
+
+    The kit replaces the FixYourAgent candidate-generation + trial loop; the
+    platform keeps everything else byte-compatible — the result lands in the
+    legacy ``OptimizationResult.dict()`` contract (mapped by optimize_via_kit),
+    trials persist through the SAME ``store_optimization_results`` path the
+    legacy engine used, and apply semantics (optimizer_apply → PromptVersion)
+    are untouched.
+    """
+    from simulate.services import optimize_via_kit
+
+    try:
+        result_dict = optimize_via_kit.run_prompt_optimisation_search(
+            prompt_optimiser_run
+        )
+    except Exception as e:  # surface on the run; don't crash the task
+        logger.exception("agent_learning_kit search optimisation failed")
+        prompt_optimiser_run.mark_as_failed(str(e))
+        return
+
+    # Platform-native persistence, unchanged: PromptTrial rows via the same
+    # storage path the legacy engine fed.
+    store_optimization_results(
+        prompt_optimiser_run, result_dict, starting_trial_number=0
+    )
+
+    prompt_optimiser_run.result = result_dict
+    prompt_optimiser_run.status = AgentPromptOptimiserRun.Status.COMPLETED
+    prompt_optimiser_run.save(update_fields=["result", "status", "updated_at"])
+    logger.info(
+        f"Agent prompt optimiser run {prompt_optimiser_run.id} completed via "
+        "agent-learning-kit search."
+    )
+
+
+def run_agent_prompt_optimiser(
+    prompt_optimiser_run_id: str, *, _legacy: bool = False
+) -> None:
     """
     Runs the agent prompt optimiser and stores the results.
+
+    Phase-10A Tier-1 cutover #1: the SEARCH engine is the agent-learning-kit for
+    all optimiser types. The legacy FixYourAgent engine stays callable behind
+    ``_legacy=True`` (or ``configuration.use_legacy_search``) until parity
+    sign-off; it is deleted in a later pass.
     """
     prompt_optimiser_run = AgentPromptOptimiserRun.objects.get(
         id=prompt_optimiser_run_id
@@ -437,6 +466,24 @@ def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
         _run_agent_learning_kit_optimisation(prompt_optimiser_run)
         return
 
+    from simulate.services import agent_learning_bridge as alb
+
+    use_legacy = (
+        _legacy
+        or bool((prompt_optimiser_run.configuration or {}).get("use_legacy_search"))
+        or not alb.is_available()
+    )
+    if not use_legacy:
+        _run_kit_search_optimisation(prompt_optimiser_run)
+        return
+
+    _run_legacy_agent_prompt_optimiser(prompt_optimiser_run)
+
+
+def _run_legacy_agent_prompt_optimiser(prompt_optimiser_run) -> None:
+    """LEGACY platform-native search engine (FixYourAgent), kept callable for the
+    Phase-10A parity window only — superseded by _run_kit_search_optimisation.
+    Scheduled for deletion after parity sign-off."""
     try:
         from ee.agenthub.fix_your_agent.fix_your_agent import FixYourAgent
     except ImportError:
@@ -473,7 +520,7 @@ def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
         use_evals=True,
         optimizer_config=prompt_optimiser_run.configuration,
         agent_optimiser_run_steps=get_agent_prompt_optimiser_run_steps(
-            prompt_optimiser_run_id
+            str(prompt_optimiser_run.id)
         ),
         api_key=api_key,
     )
@@ -490,7 +537,7 @@ def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
     prompt_optimiser_run.status = AgentPromptOptimiserRun.Status.COMPLETED
     prompt_optimiser_run.save(update_fields=["result", "status", "updated_at"])
 
-    logger.info(f"Agent prompt optimiser run {prompt_optimiser_run_id} completed.")
+    logger.info(f"Agent prompt optimiser run {prompt_optimiser_run.id} completed.")
 
 
 def create_agent_prompt_optimiser_run_steps(prompt_optimiser_run_id: str) -> None:
