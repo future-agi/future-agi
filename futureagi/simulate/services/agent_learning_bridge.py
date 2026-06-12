@@ -90,6 +90,10 @@ def _optimize_module() -> Any:
     return _kit_submodule("optimize")
 
 
+def _evals_module() -> Any:
+    return _kit_submodule("evals")
+
+
 def _ensure_kit_runtime() -> None:
     """Pre-import heavy native deps the kit's local engines pull in lazily.
 
@@ -429,3 +433,64 @@ def optimize_and_apply_for_agent(
     opt = _optimize_module()
     _ensure_kit_runtime()
     return opt.optimize_manifest(manifest, dry_run=dry_run)
+
+
+# --------------------------------------------------------------------------- #
+# Evaluation — score task evidence via the kit (Phase-10A Tier-1 cutover #2)  #
+# --------------------------------------------------------------------------- #
+def build_eval_evidence(
+    *,
+    input_text: str = "",
+    output_text: str = "",
+    transcript: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Map the platform's (input, output, metadata) eval triple onto kit task
+    evidence. Pure (no I/O).
+
+    The kit's ``evaluate_task_evidence`` normalises this into an agent-learning
+    artifact (``build_task_evidence_artifact``): ``input``/``output`` become the
+    conversation, everything else rides along as metadata for the evaluator.
+    """
+    md = dict(metadata or {})
+    if transcript:
+        md.setdefault("transcript", str(transcript))
+    return {
+        "input": str(input_text or ""),
+        "output": str(output_text or ""),
+        "metadata": md,
+    }
+
+
+def run_eval_for_evidence(
+    *,
+    name: str,
+    evidence: Mapping[str, Any],
+    task_description: str,
+    success_criteria: Sequence[str] = (),
+    metric_weights: Mapping[str, float] | None = None,
+    threshold: float = 0.7,
+) -> dict[str, Any]:
+    """Score task evidence via the kit's agent-report evaluator.
+
+    Returns the kit's artifact-evaluation payload
+    (``status``/``summary{score,threshold,...}``/``evaluation``/``findings``/...).
+    Credential-free: the evaluator is local, no provider keys required.
+    """
+    if not name:
+        raise ValueError("name is required")
+    if not task_description:
+        raise ValueError("task_description is required")
+    ev = _evals_module()
+    _ensure_kit_runtime()
+    config = ev.build_task_evaluation_config(
+        task_description=task_description,
+        success_criteria=list(success_criteria),
+        metric_weights=dict(metric_weights) if metric_weights else None,
+    )
+    return ev.evaluate_task_evidence(
+        dict(evidence),
+        config=config,
+        threshold=threshold,
+        name=name,
+    )
