@@ -23,13 +23,20 @@ class ModelServingClient:
         """
         if cls._instance is None:
             if base_url is None:
-                raise ValueError("base_url must be provided for the first instance creation.")
+                raise ValueError(
+                    "base_url must be provided for the first instance creation."
+                )
             _instance = super().__new__(cls)
             _instance.base_url = base_url
             cls._instance = _instance
         return cls._instance
 
-    def get(self, endpoint: str, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    def get(
+        self,
+        endpoint: str,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """
         Sends a GET request to the specified endpoint.
 
@@ -46,13 +53,25 @@ class ModelServingClient:
             requests.HTTPError: If the server responds with a non-2xx status code.
         """
         try:
-            response = requests.get(f"{self.base_url}/{endpoint}", params=params, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
+            response = requests.get(
+                f"{self.base_url}/{endpoint}",
+                params=params,
+                headers=headers,
+                timeout=DEFAULT_HTTP_TIMEOUT,
+            )
             response.raise_for_status()  # Raise an exception for HTTP errors
             return response.json()  # Return the JSON response as a dictionary
         except requests.RequestException as exc:
-            raise RuntimeError(f"An error occurred while requesting {exc.request.url!r}.") from exc
+            raise RuntimeError(
+                f"An error occurred while requesting {exc.request.url!r}."
+            ) from exc
 
-    def post(self, endpoint: str, json: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    def post(
+        self,
+        endpoint: str,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """
         Sends a POST request to the specified endpoint.
 
@@ -69,8 +88,15 @@ class ModelServingClient:
             requests.HTTPError: If the server responds with a non-2xx status code.
         """
         try:
-            response = requests.post(f"{self.base_url}/{endpoint}", json=json, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
+            response = requests.post(
+                f"{self.base_url}/{endpoint}",
+                json=json,
+                headers=headers,
+                timeout=DEFAULT_HTTP_TIMEOUT,
+            )
             response.raise_for_status()  # Raise an exception for HTTP errors
             return response.json()  # Return the JSON response as a dictionary
         except requests.RequestException as exc:
-            raise RuntimeError(f"An error occurred while requesting {exc.request.url!r}.")
+            raise RuntimeError(
+                f"An error occurred while requesting {exc.request.url!r}."
+            )

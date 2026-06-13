@@ -25,20 +25,23 @@ Speech-to-Text (STT):
 - EagerEOT: Optional faster response with eager_eot_threshold (0.3-0.9)
 """
 
-import requests
 import time
+
+import requests
 import structlog
 
 logger = structlog.get_logger(__name__)
+import io
 import json
 import ssl
-import websocket
 import threading
-import io
+from urllib.parse import urlencode
+
+import websocket
+from pydub import AudioSegment
+
 from tfc.utils.http_timeouts import LLM_HTTP_TIMEOUT
 from tfc.utils.storage import audio_bytes_from_url_or_base64
-from pydub import AudioSegment
-from urllib.parse import urlencode
 
 
 def deepgram_speech_response(run_prompt_instance, start_time, api_key):
@@ -84,7 +87,9 @@ def deepgram_speech_response(run_prompt_instance, start_time, api_key):
         f"Deepgram TTS request initiated - model: {full_model_id}, input_length: {len(input_text)}"
     )
 
-    response = requests.post(url, headers=headers, json=payload, timeout=LLM_HTTP_TIMEOUT)
+    response = requests.post(
+        url, headers=headers, json=payload, timeout=LLM_HTTP_TIMEOUT
+    )
 
     if response.status_code == 200:
         audio_bytes = response.content

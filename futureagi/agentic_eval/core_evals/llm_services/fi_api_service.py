@@ -1,8 +1,6 @@
-
 import requests
-from retrying import retry
-
 import structlog
+from retrying import retry
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.constants import API_BASE_URL
@@ -19,7 +17,7 @@ from agentic_eval.core_evals.keys.fi_api_key import FiApiKey
 from tfc.utils.http_timeouts import DEFAULT_HTTP_TIMEOUT
 
 # SDK_VERSION = pkg_resources.get_distribution("Fi").version
-SDK_VERSION = '1.1.1'
+SDK_VERSION = "1.1.1"
 
 
 class FiApiService:
@@ -31,9 +29,7 @@ class FiApiService:
         }
 
     @staticmethod
-    def fetch_inferences(
-        filters: FiFilters | None, limit: int
-    ) -> list[FiInference]:
+    def fetch_inferences(filters: FiFilters | None, limit: int) -> list[FiInference]:
         """
         Load data from Fi API.
         """
@@ -53,14 +49,15 @@ class FiApiService:
             )
             if response.status_code == 401:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = 'please check your Fi api key and try again'
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = "please check your Fi api key and try again"
                 raise CustomException(error_message, {"details": details_message})
             elif response.status_code != 200 and response.status_code != 201:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = response_json.get(
-                    'details', {}).get('message', 'No Details')
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = response_json.get("details", {}).get(
+                    "message", "No Details"
+                )
                 raise CustomException(error_message, {"details": details_message})
             inferences = response.json()["data"]["inferences"]
             return [FiInference(**x) for x in inferences]
@@ -111,14 +108,15 @@ class FiApiService:
             )
             if response.status_code == 401:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = 'please check your Fi api key and try again'
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = "please check your Fi api key and try again"
                 raise CustomException(error_message, {"details": details_message})
             elif response.status_code != 200 and response.status_code != 201:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = response_json.get(
-                    'details', {}).get('message', 'No Details')
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = response_json.get("details", {}).get(
+                    "message", "No Details"
+                )
                 raise CustomException(error_message, {"details": details_message})
             return response.json()
         except Exception as e:
@@ -129,9 +127,7 @@ class FiApiService:
             raise
 
     @staticmethod
-    def create_dataset(
-        dataset: dict
-    ):
+    def create_dataset(dataset: dict):
         """
         Creates a dataset by calling the Fi API
         """
@@ -145,24 +141,22 @@ class FiApiService:
             )
             if response.status_code == 401:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = 'please check your Fi api key and try again'
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = "please check your Fi api key and try again"
                 raise CustomException(error_message, {"details": details_message})
             elif response.status_code != 200 and response.status_code != 201:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = response_json.get(
-                    'details', {}).get('message', 'No Details')
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = response_json.get("details", {}).get(
+                    "message", "No Details"
+                )
                 raise CustomException(error_message, {"details": details_message})
-            return response.json()['data']['dataset']
+            return response.json()["data"]["dataset"]
         except Exception:
             raise
 
     @staticmethod
-    def fetch_dataset_rows(
-        dataset_id: str,
-        number_of_rows: int | None = None
-    ):
+    def fetch_dataset_rows(dataset_id: str, number_of_rows: int | None = None):
         """
         Fetch the dataset rows by calling the Fi API
 
@@ -178,16 +172,17 @@ class FiApiService:
             )
             if response.status_code == 401:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = 'please check your Fi api key and try again'
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = "please check your Fi api key and try again"
                 raise CustomException(error_message, {"details": details_message})
             elif response.status_code != 200 and response.status_code != 201:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = response_json.get(
-                    'details', {}).get('message', 'No Details')
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = response_json.get("details", {}).get(
+                    "message", "No Details"
+                )
                 raise CustomException(error_message, {"details": details_message})
-            return response.json()['data']['dataset_rows']
+            return response.json()["data"]["dataset_rows"]
         except Exception:
             raise
 
@@ -216,15 +211,17 @@ class FiApiService:
             )
             if response.status_code == 401:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = 'please check your Fi api key and try again'
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = "please check your Fi api key and try again"
                 raise CustomException(error_message, {"details": details_message})
             elif response.status_code != 200 and response.status_code != 201:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = response_json.get('details', {}).get('message', 'No Details')
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = response_json.get("details", {}).get(
+                    "message", "No Details"
+                )
                 raise CustomException(error_message, {"details": details_message})
-            return response.json()['data']
+            return response.json()["data"]
         except Exception:
             raise
 
@@ -245,14 +242,15 @@ class FiApiService:
             )
             if response.status_code == 401:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = 'please check your Fi api key and try again'
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = "please check your Fi api key and try again"
                 raise CustomException(error_message, {"details": details_message})
             elif response.status_code != 200 and response.status_code != 201:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = response_json.get(
-                    'details', {}).get('message', 'No Details')
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = response_json.get("details", {}).get(
+                    "message", "No Details"
+                )
                 raise CustomException(error_message, {"details": details_message})
             return response.json()
         except Exception as e:
@@ -290,14 +288,15 @@ class FiApiService:
             )
             if response.status_code == 401:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = 'please check your Fi api key and try again'
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = "please check your Fi api key and try again"
                 raise CustomException(error_message, {"details": details_message})
             elif response.status_code != 200 and response.status_code != 201:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = response_json.get(
-                    'details', {}).get('message', 'No Details')
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = response_json.get("details", {}).get(
+                    "message", "No Details"
+                )
                 raise CustomException(error_message, {"details": details_message})
             return response.json()
         except Exception as e:
@@ -333,14 +332,15 @@ class FiApiService:
             )
             if response.status_code == 401:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = 'please check your Fi api key and try again'
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = "please check your Fi api key and try again"
                 raise CustomException(error_message, {"details": details_message})
             elif response.status_code != 200 and response.status_code != 201:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = response_json.get(
-                    'details', {}).get('message', 'No Details')
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = response_json.get("details", {}).get(
+                    "message", "No Details"
+                )
                 raise CustomException(error_message, {"details": details_message})
             return response.json()
         except Exception as e:
@@ -362,14 +362,15 @@ class FiApiService:
             )
             if response.status_code == 401:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = 'please check your Fi api key and try again'
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = "please check your Fi api key and try again"
                 raise CustomException(error_message, {"details": details_message})
             elif response.status_code != 200 and response.status_code != 201:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = response_json.get(
-                    'details', {}).get('message', 'No Details')
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = response_json.get("details", {}).get(
+                    "message", "No Details"
+                )
                 raise CustomException(error_message, {"details": details_message})
             return response.json()
         except Exception:

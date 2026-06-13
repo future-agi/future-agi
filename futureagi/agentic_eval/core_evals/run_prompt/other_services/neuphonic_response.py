@@ -16,12 +16,13 @@ Authentication: API key via X-API-KEY header
 Endpoint: https://api.neuphonic.com/sse/speak/{lang_code}
 """
 
-import requests
-import time
-import json
 import base64
-import wave
 import io
+import json
+import time
+import wave
+
+import requests
 import structlog
 
 from tfc.utils.http_timeouts import LLM_HTTP_TIMEOUT
@@ -165,7 +166,9 @@ def neuphonic_speech_response(run_prompt_instance, start_time, api_key):
     )
 
     # Send request to SSE endpoint
-    response = requests.post(url, json=payload, headers=headers, stream=True, timeout=LLM_HTTP_TIMEOUT)
+    response = requests.post(
+        url, json=payload, headers=headers, stream=True, timeout=LLM_HTTP_TIMEOUT
+    )
     response.raise_for_status()
 
     # Process SSE stream - audio chunks are base64-encoded and sent in 'data:' events

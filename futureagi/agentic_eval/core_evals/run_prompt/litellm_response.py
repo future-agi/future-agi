@@ -1,81 +1,76 @@
 import ast
+import base64
+import copy
+import io
 import json
 import os
 import re
 import time
 
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
-from model_hub.queries.tts_voices import resolve_voice_id
+import av
+import litellm
+import requests
+import structlog
+from channels.db import sync_to_async
+from django.core.cache import cache
 
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
-
+from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.queries.tts_voices import resolve_voice_id
 from model_hub.utils import call_websocket
-from django.core.cache import cache
 from model_hub.utils.azure_endpoints import normalize_azure_custom_model_config
 from model_hub.utils.utils import MyCustomLLM, convert_messages_to_text_only
 from model_hub.utils.websocket_manager import get_websocket_manager
-from channels.db import sync_to_async
-
-import litellm
-import av
-import requests
-import base64
-import copy
-import io
-
-import structlog
-
 from tfc.utils.http_timeouts import LLM_HTTP_TIMEOUT
 
 logger = structlog.get_logger(__name__)
 
+from django.core.cache import cache
+
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from model_hub.models.custom_models import CustomAIModel
-
 from model_hub.utils import call_websocket
-from django.core.cache import cache
 from model_hub.utils.utils import convert_messages_to_text_only
-
-from model_hub.utils.utils import convert_messages_to_text_only
-
 from model_hub.utils.websocket_manager import get_websocket_manager
 from tfc.utils.error_codes import get_error_message
+
 try:
     from ee.usage.utils.usage_entries import count_tiktoken_tokens
 except ImportError:
     count_tiktoken_tokens = None
-from tfc.utils.storage import upload_audio_to_s3, upload_image_to_s3
-from agentic_eval.core_evals.run_prompt.other_services.manager import (
-    OtherServicesManager,
-)
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
-# (available_models always available)
-from tfc.utils.storage import (
-    detect_audio_format,
-    convert_to_mp3,
-    get_audio_duration,
-    audio_bytes_from_url_or_base64,
-)
-from agentic_eval.core_evals.run_prompt.other_services.elevenlabs_response import (
-    elevenlabs_transcription_response,
-)
-from model_hub.utils.utils import get_model_mode
 from agentic_eval.core_evals.run_prompt.error_handler import (
     ErrorContext,
     handle_api_error,
     litellm_try_except,
 )
+from agentic_eval.core_evals.run_prompt.other_services.elevenlabs_response import (
+    elevenlabs_transcription_response,
+)
+from agentic_eval.core_evals.run_prompt.other_services.manager import (
+    OtherServicesManager,
+)
 
 # New handler imports for refactored implementation
 from agentic_eval.core_evals.run_prompt.runprompt_handlers import (
-    ModelHandlerFactory,
     ModelHandlerContext,
+    ModelHandlerFactory,
 )
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.llm_handler import (
     LLMHandler,
+)
+from model_hub.utils.utils import get_model_mode
+
+# (available_models always available)
+from tfc.utils.storage import (
+    audio_bytes_from_url_or_base64,
+    convert_to_mp3,
+    detect_audio_format,
+    get_audio_duration,
+    upload_audio_to_s3,
+    upload_image_to_s3,
 )
 
 # Var for quick hotfix if something breaks, will remove in future if everything works
@@ -322,7 +317,9 @@ class RunPrompt:
 
         # Token usage: prompt (text) via tiktoken helper, completion (audio) via 32 tokens/sec
         try:
-            prompt_tokens = (count_tiktoken_tokens(input_text) if count_tiktoken_tokens else 0)
+            prompt_tokens = (
+                count_tiktoken_tokens(input_text) if count_tiktoken_tokens else 0
+            )
         except Exception:
             prompt_tokens = None
         completion_tokens = int(duration_seconds * 32) if duration_seconds else None
@@ -947,7 +944,9 @@ class RunPrompt:
             url = api_key.pop("api_base")
             headers = api_key.pop("headers")
 
-            response = requests.post(url, headers=headers, json=payload, timeout=LLM_HTTP_TIMEOUT)
+            response = requests.post(
+                url, headers=headers, json=payload, timeout=LLM_HTTP_TIMEOUT
+            )
             response_content = response.text
             end_time = time.time()
 
@@ -969,8 +968,16 @@ class RunPrompt:
                 completion_text = response_content
 
                 # Use tiktoken for accurate token counting (handles both text and images)
-                estimated_prompt_tokens = (count_tiktoken_tokens(prompt_text, image_urls) if count_tiktoken_tokens else 0)
-                estimated_completion_tokens = (count_tiktoken_tokens(completion_text) if count_tiktoken_tokens else 0)
+                estimated_prompt_tokens = (
+                    count_tiktoken_tokens(prompt_text, image_urls)
+                    if count_tiktoken_tokens
+                    else 0
+                )
+                estimated_completion_tokens = (
+                    count_tiktoken_tokens(completion_text)
+                    if count_tiktoken_tokens
+                    else 0
+                )
                 total_tokens = estimated_prompt_tokens + estimated_completion_tokens
 
                 # Use calculate_total_cost with custom model pricing as fallback
@@ -1264,9 +1271,9 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"]["arguments"] += (
-                                    tool_call.function.arguments
-                                )
+                                tc["function"][
+                                    "arguments"
+                                ] += tool_call.function.arguments
 
         except Exception as e:
             if "value must be a string" in str(e):
@@ -1368,9 +1375,11 @@ class RunPrompt:
                 "data": {"response": response_content},
                 "failure": None,
                 "runtime": time.time() - start_time,
-                "model": chunk.model
-                if "chunk" in locals() and hasattr(chunk, "model")
-                else None,
+                "model": (
+                    chunk.model
+                    if "chunk" in locals() and hasattr(chunk, "model")
+                    else None
+                ),
                 "metrics": [],
                 "metadata": {},
                 "output": None,
@@ -1627,9 +1636,11 @@ class RunPrompt:
                     message="String response_format is deprecated. Use dict format instead.",
                 )
                 response_format = {
-                    "type": "text"
-                    if self.response_format.lower() == "text"
-                    else "json_object"
+                    "type": (
+                        "text"
+                        if self.response_format.lower() == "text"
+                        else "json_object"
+                    )
                 }
             else:
                 logger.error(
@@ -1666,15 +1677,19 @@ class RunPrompt:
         payload = {
             "messages": self.messages,
             "model": self.model,
-            "temperature": float(self.temperature)
-            if self.temperature is not None
-            else None,
-            "frequency_penalty": float(self.frequency_penalty)
-            if self.frequency_penalty is not None
-            else None,
-            "presence_penalty": float(self.presence_penalty)
-            if self.presence_penalty is not None
-            else None,
+            "temperature": (
+                float(self.temperature) if self.temperature is not None else None
+            ),
+            "frequency_penalty": (
+                float(self.frequency_penalty)
+                if self.frequency_penalty is not None
+                else None
+            ),
+            "presence_penalty": (
+                float(self.presence_penalty)
+                if self.presence_penalty is not None
+                else None
+            ),
             "max_tokens": int(self.max_tokens) if self.max_tokens is not None else None,
             "top_p": float(self.top_p) if self.top_p is not None else None,
             "response_format": response_format,
@@ -1839,8 +1854,14 @@ class RunPrompt:
                 if provider_for_payload == "openai":
                     payload["model"] = "openai/" + payload["model"]
             elif provider_for_payload.startswith("vertex_ai"):
-                vertex_location = api_key.get("location") if isinstance(api_key, dict) else None
-                creds = {k: v for k, v in api_key.items() if k != "location"} if isinstance(api_key, dict) else api_key
+                vertex_location = (
+                    api_key.get("location") if isinstance(api_key, dict) else None
+                )
+                creds = (
+                    {k: v for k, v in api_key.items() if k != "location"}
+                    if isinstance(api_key, dict)
+                    else api_key
+                )
                 payload["vertex_credentials"] = json.dumps(creds)
                 if vertex_location:
                     payload["vertex_location"] = vertex_location
@@ -1941,8 +1962,8 @@ class RunPrompt:
                         f"Using litellm.completion() for audio generation with model {self.model}"
                     )
                     try:
-                        import copy
                         import base64
+                        import copy
 
                         fallback_payload = copy.deepcopy(payload)
                         config = self.run_prompt_config or {}
@@ -1956,9 +1977,9 @@ class RunPrompt:
                                 "voice", "Kore"
                             )
                             fallback_payload["audio"] = {
-                                "voice": voice_val
-                                if isinstance(voice_val, str)
-                                else "Kore",
+                                "voice": (
+                                    voice_val if isinstance(voice_val, str) else "Kore"
+                                ),
                                 "format": "pcm16",
                             }
                             # Strip OpenAI-only params
@@ -2051,8 +2072,8 @@ class RunPrompt:
                             f"Attempting fallback via litellm.completion(). Error: {str(e)}"
                         )
                         try:
-                            import copy
                             import base64
+                            import copy
 
                             fallback_payload = copy.deepcopy(payload)
                             config = self.run_prompt_config or {}
@@ -2392,8 +2413,8 @@ class RunPrompt:
                         f"Using litellm.completion() for audio generation with model {self.model}"
                     )
                     try:
-                        import copy
                         import base64
+                        import copy
 
                         fallback_payload = copy.deepcopy(payload)
                         config = self.run_prompt_config or {}
@@ -2406,9 +2427,9 @@ class RunPrompt:
                                 "voice", "Kore"
                             )
                             fallback_payload["audio"] = {
-                                "voice": voice_val
-                                if isinstance(voice_val, str)
-                                else "Kore",
+                                "voice": (
+                                    voice_val if isinstance(voice_val, str) else "Kore"
+                                ),
                                 "format": "pcm16",
                             }
                             # Strip OpenAI-only params
@@ -2547,8 +2568,8 @@ class RunPrompt:
                             f"Attempting fallback via litellm.completion(). Error: {str(e)}"
                         )
                         try:
-                            import copy
                             import base64
+                            import copy
 
                             fallback_payload = copy.deepcopy(payload)
                             config = self.run_prompt_config or {}
@@ -2961,9 +2982,9 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"]["arguments"] += (
-                                    tool_call.function.arguments
-                                )
+                                tc["function"][
+                                    "arguments"
+                                ] += tool_call.function.arguments
 
         except Exception as e:
             if "value must be a string" in str(e):
@@ -3064,9 +3085,11 @@ class RunPrompt:
                 "data": {"response": response_content},
                 "failure": None,
                 "runtime": time.time() - start_time,
-                "model": chunk.model
-                if "chunk" in locals() and hasattr(chunk, "model")
-                else None,
+                "model": (
+                    chunk.model
+                    if "chunk" in locals() and hasattr(chunk, "model")
+                    else None
+                ),
                 "metrics": [],
                 "metadata": {},
                 "output": None,

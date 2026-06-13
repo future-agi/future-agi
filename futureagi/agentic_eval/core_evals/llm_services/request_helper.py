@@ -9,6 +9,7 @@ class RequestHelper:
     """
     class to make requests to the FI api
     """
+
     @staticmethod
     @retry(wait_fixed=100, stop_max_attempt_number=2)
     def make_post_request(endpoint: str, payload: dict, headers: dict):
@@ -21,11 +22,13 @@ class RequestHelper:
             )
             if response.status_code != 200 and response.status_code != 201:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = response_json.get(
-                    'details', {}).get('message', 'No Details')
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = response_json.get("details", {}).get(
+                    "message", "No Details"
+                )
                 raise CustomException(
-                    response.status_code, f'{error_message}: {details_message}')
+                    response.status_code, f"{error_message}: {details_message}"
+                )
         except requests.exceptions.RequestException as e:
             raise e
         except Exception as e:
@@ -43,11 +46,13 @@ class RequestHelper:
             )
             if response.status_code != 200:
                 response_json = response.json()
-                error_message = response_json.get('error', 'Unknown Error')
-                details_message = response_json.get(
-                    'details', {}).get('message', 'No Details')
+                error_message = response_json.get("error", "Unknown Error")
+                details_message = response_json.get("details", {}).get(
+                    "message", "No Details"
+                )
                 raise CustomException(
-                    response.status_code, f'{error_message}: {details_message}')
+                    response.status_code, f"{error_message}: {details_message}"
+                )
         except requests.exceptions.RequestException as e:
             raise e
         except Exception as e:
