@@ -6,6 +6,8 @@ import sys
 
 def main():
     """Run administrative tasks."""
+    from dotenv import load_dotenv
+    load_dotenv()
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
     if os.getenv("ENV_TYPE") == "prod":
         pass
