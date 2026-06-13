@@ -1,6 +1,9 @@
-import requests
 import time
+
+import requests
 import structlog
+
+from tfc.utils.http_timeouts import LLM_HTTP_TIMEOUT
 
 logger = structlog.get_logger(__name__)
 
@@ -132,7 +135,9 @@ def rime_speech_response(run_prompt_instance, start_time, api_key):
         f"lang: {payload.get('lang', 'eng')}, input_length: {len(input_text)}"
     )
 
-    response = requests.post(url, json=payload, headers=headers)
+    response = requests.post(
+        url, json=payload, headers=headers, timeout=LLM_HTTP_TIMEOUT
+    )
     response.raise_for_status()
     audio_content = response.content
 

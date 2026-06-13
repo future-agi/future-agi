@@ -1,7 +1,10 @@
-import requests
-import time
 import base64
+import time
+
+import requests
 import structlog
+
+from tfc.utils.http_timeouts import LLM_HTTP_TIMEOUT
 
 logger = structlog.get_logger(__name__)
 
@@ -176,7 +179,9 @@ def lmnt_speech_response(run_prompt_instance, start_time, api_key):
         f"format: {payload.get('format')}, model: {payload.get('model', 'aurora')}"
     )
 
-    response = requests.post(url, json=payload, headers=headers)
+    response = requests.post(
+        url, json=payload, headers=headers, timeout=LLM_HTTP_TIMEOUT
+    )
     response.raise_for_status()
 
     response_data = response.json()

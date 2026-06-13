@@ -5,6 +5,7 @@ from typing import Any
 import requests
 import structlog
 
+from tfc.utils.http_timeouts import HEALTHCHECK_HTTP_TIMEOUT
 from tracer.constants.external_endpoints import ObservabilityRoutes
 
 logger = structlog.get_logger(__name__)
@@ -36,7 +37,9 @@ class ObservabilityService:
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
         headers = {"Authorization": f"Bearer {api_key}"}
-        response = requests.get(api_endpoint, headers=headers)
+        response = requests.get(
+            api_endpoint, headers=headers, timeout=HEALTHCHECK_HTTP_TIMEOUT
+        )
         return response.status_code
 
     @staticmethod

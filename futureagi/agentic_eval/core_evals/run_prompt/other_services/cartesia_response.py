@@ -1,6 +1,9 @@
-import requests
 import time
+
+import requests
 import structlog
+
+from tfc.utils.http_timeouts import HEALTHCHECK_HTTP_TIMEOUT, LLM_HTTP_TIMEOUT
 
 logger = structlog.get_logger(__name__)
 
@@ -236,7 +239,9 @@ def cartesia_speech_response(run_prompt_instance, start_time, api_key):
         f"Cartesia AI TTS request initiated - voice: {voice_id}, input_length: {len(input_text)}"
     )
 
-    response = requests.post(url, json=payload, headers=headers)
+    response = requests.post(
+        url, json=payload, headers=headers, timeout=LLM_HTTP_TIMEOUT
+    )
     response.raise_for_status()
 
     audio_bytes = response.content
@@ -254,7 +259,7 @@ def validate_cartesia_voice(voice_id, api_key):
         "Authorization": f"Bearer {api_key}",
         "Cartesia-Version": "2025-04-16",  # Updated to latest API version
     }
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=HEALTHCHECK_HTTP_TIMEOUT)
 
     if response.status_code == 200:
         return True
