@@ -35,6 +35,7 @@ import ssl
 import websocket
 import threading
 import io
+from tfc.utils.http_timeouts import LLM_HTTP_TIMEOUT
 from tfc.utils.storage import audio_bytes_from_url_or_base64
 from pydub import AudioSegment
 from urllib.parse import urlencode
@@ -83,7 +84,7 @@ def deepgram_speech_response(run_prompt_instance, start_time, api_key):
         f"Deepgram TTS request initiated - model: {full_model_id}, input_length: {len(input_text)}"
     )
 
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, timeout=LLM_HTTP_TIMEOUT)
 
     if response.status_code == 200:
         audio_bytes = response.content

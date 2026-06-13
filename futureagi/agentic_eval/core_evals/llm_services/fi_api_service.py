@@ -16,6 +16,7 @@ from agentic_eval.core_evals.fi_utils.fi_interfaces import (
     FiInference,
 )
 from agentic_eval.core_evals.keys.fi_api_key import FiApiKey
+from tfc.utils.http_timeouts import DEFAULT_HTTP_TIMEOUT
 
 # SDK_VERSION = pkg_resources.get_distribution("Fi").version
 SDK_VERSION = '1.1.1'
@@ -48,6 +49,7 @@ class FiApiService:
                 endpoint,
                 headers=FiApiService._headers(),
                 json=json,
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
             if response.status_code == 401:
                 response_json = response.json()
@@ -84,6 +86,7 @@ class FiApiService:
                     "evalName": eval_name,
                     "run_type": run_type,
                 },
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
         except Exception:
             # Silent failure is ok here.
@@ -104,6 +107,7 @@ class FiApiService:
                 endpoint,
                 headers=FiApiService._headers(),
                 json=Fi_eval_result_create_many_request,
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
             if response.status_code == 401:
                 response_json = response.json()
@@ -137,6 +141,7 @@ class FiApiService:
                 endpoint,
                 headers=FiApiService._headers(),
                 json=dataset,
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
             if response.status_code == 401:
                 response_json = response.json()
@@ -168,7 +173,8 @@ class FiApiService:
             endpoint = f"{API_BASE_URL}/api/v1/dataset_v2/fetch-by-id/{dataset_id}?offset=0&limit={number_of_rows}&include_dataset_rows=true"
             response = requests.post(
                 endpoint,
-                headers=FiApiService._headers()
+                headers=FiApiService._headers(),
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
             if response.status_code == 401:
                 response_json = response.json()
@@ -206,6 +212,7 @@ class FiApiService:
                 endpoint,
                 headers=FiApiService._headers(),
                 json={"dataset_rows": rows},
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
             if response.status_code == 401:
                 response_json = response.json()
@@ -234,6 +241,7 @@ class FiApiService:
                 endpoint,
                 headers=FiApiService._headers(),
                 json=Fi_eval_request_create_request,
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
             if response.status_code == 401:
                 response_json = response.json()
@@ -278,6 +286,7 @@ class FiApiService:
                     "runtime": report["runtime"],
                     "dataset_size": report["dataset_size"],
                 },
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
             if response.status_code == 401:
                 response_json = response.json()
@@ -320,6 +329,7 @@ class FiApiService:
                     "prompt_template": experiment["prompt_template"],
                     "dataset_name": experiment["dataset_name"],
                 },
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
             if response.status_code == 401:
                 response_json = response.json()
@@ -348,6 +358,7 @@ class FiApiService:
                 endpoint,
                 headers=FiApiService._headers(),
                 json=eval_results_with_config,
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
             if response.status_code == 401:
                 response_json = response.json()

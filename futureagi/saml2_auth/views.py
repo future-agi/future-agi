@@ -66,6 +66,7 @@ from tfc.settings.settings import (
 )
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.http_timeouts import DEFAULT_HTTP_TIMEOUT
 
 logger = structlog.get_logger(__name__)
 
@@ -842,7 +843,7 @@ class MicrosoftCallbackView(APIView):
             }
 
             token_response = requests.post(
-                token_url, data=token_payload, headers=headers
+                token_url, data=token_payload, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT
             )
             if token_response.status_code != 200:
                 logger.error(f"Token response error: {token_response.text}")
@@ -859,7 +860,7 @@ class MicrosoftCallbackView(APIView):
                 "Authorization": f"Bearer {access_token}",
                 "Accept": "application/json",
             }
-            user_response = requests.get(user_api_url, headers=user_headers)
+            user_response = requests.get(user_api_url, headers=user_headers, timeout=DEFAULT_HTTP_TIMEOUT)
             if user_response.status_code != 200:
                 logger.error(f"User info response error: {user_response.text}")
                 raise Exception("Failed to retrieve user information.")

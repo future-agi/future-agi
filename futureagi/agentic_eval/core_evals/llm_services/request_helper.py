@@ -2,6 +2,7 @@ import requests
 from retrying import retry
 
 from agentic_eval.core_evals.fi_utils.exceptions import CustomException
+from tfc.utils.http_timeouts import DEFAULT_HTTP_TIMEOUT
 
 
 class RequestHelper:
@@ -16,6 +17,7 @@ class RequestHelper:
                 endpoint,
                 json=payload,
                 headers=headers,
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
             if response.status_code != 200 and response.status_code != 201:
                 response_json = response.json()
@@ -37,6 +39,7 @@ class RequestHelper:
                 endpoint,
                 json=payload,
                 headers=headers,
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
             if response.status_code != 200:
                 response_json = response.json()

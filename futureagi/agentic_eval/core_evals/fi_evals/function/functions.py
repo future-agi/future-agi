@@ -22,6 +22,7 @@ from agentic_eval.core_evals.fi_utils.logging import logger
 from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 from agentic_eval.core_evals.keys.openai_api import OpenAiApiKey
 from agentic_eval.core_evals.llm_services.openai_api import OpenAiService
+from tfc.utils.http_timeouts import DEFAULT_HTTP_TIMEOUT, LINK_CHECK_HTTP_TIMEOUT
 
 
 def _standardize_url(url):
@@ -1333,7 +1334,7 @@ def contains_valid_link(text, **kwargs):
         if matched_url:
             standardized_url = _standardize_url(matched_url)
             try:
-                text = requests.head(standardized_url)
+                text = requests.head(standardized_url, timeout=LINK_CHECK_HTTP_TIMEOUT)
                 if text.status_code == 200:
                     return {
                         "result": True,
@@ -1369,7 +1370,7 @@ def no_invalid_links(text, **kwargs):
         if matched_url:
             standardized_url = _standardize_url(matched_url)
             try:
-                text = requests.head(standardized_url)
+                text = requests.head(standardized_url, timeout=LINK_CHECK_HTTP_TIMEOUT)
                 if text.status_code == 200:
                     return {
                         "result": True,
@@ -1425,7 +1426,7 @@ def api_call(
         payload["expected_response"] = expected_response
     # Check the status code and set the reason accordingly
     try:
-        api_response = requests.post(url, json=payload, headers=headers)
+        api_response = requests.post(url, json=payload, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
         if api_response.status_code == 200:
             # Success
             result = api_response.json().get("result")

@@ -2,6 +2,8 @@ from typing import Any
 
 import requests
 
+from tfc.utils.http_timeouts import DEFAULT_HTTP_TIMEOUT
+
 from ..clients.constants import MODEL_SERVING_BASE_URL
 
 
@@ -44,7 +46,7 @@ class ModelServingClient:
             requests.HTTPError: If the server responds with a non-2xx status code.
         """
         try:
-            response = requests.get(f"{self.base_url}/{endpoint}", params=params, headers=headers)
+            response = requests.get(f"{self.base_url}/{endpoint}", params=params, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
             response.raise_for_status()  # Raise an exception for HTTP errors
             return response.json()  # Return the JSON response as a dictionary
         except requests.RequestException as exc:
@@ -67,7 +69,7 @@ class ModelServingClient:
             requests.HTTPError: If the server responds with a non-2xx status code.
         """
         try:
-            response = requests.post(f"{self.base_url}/{endpoint}", json=json, headers=headers)
+            response = requests.post(f"{self.base_url}/{endpoint}", json=json, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
             response.raise_for_status()  # Raise an exception for HTTP errors
             return response.json()  # Return the JSON response as a dictionary
         except requests.RequestException as exc:

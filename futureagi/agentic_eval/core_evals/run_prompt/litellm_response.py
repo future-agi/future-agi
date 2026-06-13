@@ -28,6 +28,8 @@ import io
 
 import structlog
 
+from tfc.utils.http_timeouts import LLM_HTTP_TIMEOUT
+
 logger = structlog.get_logger(__name__)
 
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
@@ -945,7 +947,7 @@ class RunPrompt:
             url = api_key.pop("api_base")
             headers = api_key.pop("headers")
 
-            response = requests.post(url, headers=headers, json=payload)
+            response = requests.post(url, headers=headers, json=payload, timeout=LLM_HTTP_TIMEOUT)
             response_content = response.text
             end_time = time.time()
 

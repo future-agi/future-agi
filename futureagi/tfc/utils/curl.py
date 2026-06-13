@@ -5,6 +5,8 @@ Description:        For server-side API call
 
 import requests
 
+from tfc.utils.http_timeouts import DEFAULT_HTTP_TIMEOUT
+
 
 class Curl:
     """
@@ -31,7 +33,7 @@ class Curl:
         headers=None,
         cookies=None,
         auth=None,
-        timeout=None,
+        timeout=DEFAULT_HTTP_TIMEOUT,
     ):
         if not api:
             return False
@@ -60,7 +62,7 @@ class Curl:
         headers=None,
         cookies=None,
         auth=None,
-        timeout=None,
+        timeout=DEFAULT_HTTP_TIMEOUT,
         verify=True,
     ):
         if not api:
@@ -92,7 +94,7 @@ class Curl:
         headers=None,
         cookies=None,
         auth=None,
-        timeout=None,
+        timeout=DEFAULT_HTTP_TIMEOUT,
     ):
         if not api:
             return False
@@ -121,7 +123,7 @@ class Curl:
         headers=None,
         cookies=None,
         auth=None,
-        timeout=None,
+        timeout=DEFAULT_HTTP_TIMEOUT,
     ):
         if not api:
             return False

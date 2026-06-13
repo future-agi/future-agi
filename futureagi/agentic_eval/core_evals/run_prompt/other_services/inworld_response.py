@@ -3,6 +3,8 @@ import base64
 import time
 import structlog
 
+from tfc.utils.http_timeouts import LLM_HTTP_TIMEOUT
+
 logger = structlog.get_logger(__name__)
 
 
@@ -81,7 +83,7 @@ def inworld_speech_response(run_prompt_instance, start_time, api_key):
         f"Inworld TTS request initiated - model: {run_prompt_instance.model}, voiceId: {voice_name}, temperature: {temperature}, input_length: {len(input_text)}"
     )
 
-    response = requests.post(url, json=payload, headers=headers)
+    response = requests.post(url, json=payload, headers=headers, timeout=LLM_HTTP_TIMEOUT)
     response.raise_for_status()
     result = response.json()
     audio_content = base64.b64decode(result["audioContent"])

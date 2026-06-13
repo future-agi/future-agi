@@ -24,6 +24,8 @@ import wave
 import io
 import structlog
 
+from tfc.utils.http_timeouts import LLM_HTTP_TIMEOUT
+
 logger = structlog.get_logger(__name__)
 
 # Voice ID mapping - Maps friendly voice names to Neuphonic voice UUIDs
@@ -163,7 +165,7 @@ def neuphonic_speech_response(run_prompt_instance, start_time, api_key):
     )
 
     # Send request to SSE endpoint
-    response = requests.post(url, json=payload, headers=headers, stream=True)
+    response = requests.post(url, json=payload, headers=headers, stream=True, timeout=LLM_HTTP_TIMEOUT)
     response.raise_for_status()
 
     # Process SSE stream - audio chunks are base64-encoded and sent in 'data:' events
