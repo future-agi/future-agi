@@ -187,22 +187,25 @@ def _resolve_fid_input(value):
     return resolved
 
 
-def register_preprocessor(eval_name):
-    """Decorator to register a preprocessor for an eval type."""
+def register_preprocessor(*eval_names):
+    """Decorator to register a preprocessor for one or more eval keys."""
 
     def decorator(func):
-        PREPROCESSORS[eval_name] = func
+        for eval_name in eval_names:
+            PREPROCESSORS[eval_name] = func
         return func
 
     return decorator
 
 
-def preprocess_inputs(eval_name, inputs):
+def preprocess_inputs(eval_name, inputs, fallback_eval_name=None):
     """
     Run preprocessing for a specific eval if a preprocessor is registered.
     Returns the inputs dict with any additional computed fields.
     """
     preprocessor = PREPROCESSORS.get(eval_name)
+    if not preprocessor and fallback_eval_name:
+        preprocessor = PREPROCESSORS.get(fallback_eval_name)
     if not preprocessor:
         return inputs
 
@@ -213,7 +216,7 @@ def preprocess_inputs(eval_name, inputs):
         return inputs
 
 
-@register_preprocessor("clip_score")
+@register_preprocessor("clip_score", "ClipScore")
 def _preprocess_clip(inputs):
     """
     Pre-compute CLIP embeddings for images and text.
@@ -290,7 +293,7 @@ def _preprocess_clip(inputs):
     return inputs
 
 
-@register_preprocessor("fid_score")
+@register_preprocessor("fid_score", "FidScore")
 def _preprocess_fid(inputs):
     """
     Pre-compute Inception features for FID.
@@ -367,14 +370,14 @@ def _preprocess_fid(inputs):
     return inputs
 
 
-@register_preprocessor("image_properties")
+@register_preprocessor("image_properties", "ImageProperties")
 def _preprocess_image_properties(inputs):
     """Resolve URL input to base64 for the image_properties eval."""
     inputs["text"] = _resolve_image_input(inputs.get("text"))
     return inputs
 
 
-@register_preprocessor("psnr")
+@register_preprocessor("psnr", "Psnr")
 def _preprocess_psnr(inputs):
     """Resolve URL inputs to base64 for PSNR (output, expected)."""
     inputs["output"] = _resolve_image_input(inputs.get("output"))
@@ -382,7 +385,7 @@ def _preprocess_psnr(inputs):
     return inputs
 
 
-@register_preprocessor("ssim")
+@register_preprocessor("ssim", "Ssim")
 def _preprocess_ssim(inputs):
     """Resolve URL inputs to base64 for SSIM (output, expected)."""
     inputs["output"] = _resolve_image_input(inputs.get("output"))
@@ -488,7 +491,7 @@ def _preprocess_dead_air_detection(inputs):
     return inputs
 
 
-@register_preprocessor("meteor_score")
+@register_preprocessor("meteor_score", "MeteorScore")
 def _preprocess_meteor(inputs):
     """Compute METEOR via NLTK on the backend, inject the score as a kwarg.
 
