@@ -1128,6 +1128,7 @@ import type {
   TracerEvalTaskPauseEvalTaskParams,
   TracerEvalTaskUnpauseEvalTaskParams,
   TracerFeedIssuesListParams,
+  TracerFeedIssuesOverviewListParams,
   TracerFeedIssuesReadParams,
   TracerFeedIssuesRootCauseListParams,
   TracerFeedIssuesSidebarListParams,
@@ -60990,20 +60991,33 @@ export type tracerFeedIssuesOverviewListResponseError = (tracerFeedIssuesOvervie
 
 export type tracerFeedIssuesOverviewListResponse = (tracerFeedIssuesOverviewListResponseSuccess | tracerFeedIssuesOverviewListResponseError)
 
-export const getTracerFeedIssuesOverviewListUrl = (clusterId: string,) => {
+export const getTracerFeedIssuesOverviewListUrl = (clusterId: string,
+    params?: TracerFeedIssuesOverviewListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/tracer/feed/issues/${clusterId}/overview/`
+  return stringifiedParams.length > 0 ? `/tracer/feed/issues/${clusterId}/overview/?${stringifiedParams}` : `/tracer/feed/issues/${clusterId}/overview/`
 }
 
 /**
  * GET /tracer/feed/issues/{cluster_id}/overview/
  */
-export const tracerFeedIssuesOverviewList = async (clusterId: string, options?: RequestInit): Promise<tracerFeedIssuesOverviewListResponse> => {
+export const tracerFeedIssuesOverviewList = async (clusterId: string,
+    params?: TracerFeedIssuesOverviewListParams, options?: RequestInit): Promise<tracerFeedIssuesOverviewListResponse> => {
 
-  return apiMutator<tracerFeedIssuesOverviewListResponse>(getTracerFeedIssuesOverviewListUrl(clusterId),
+  return apiMutator<tracerFeedIssuesOverviewListResponse>(getTracerFeedIssuesOverviewListUrl(clusterId,params),
   {
     ...options,
     method: 'GET'

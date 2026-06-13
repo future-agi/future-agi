@@ -31851,10 +31851,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/feed/issues/{cluster_id}/overview/": {
       "get": {
         "operationId": "tracer_feed_issues_overview_list",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": true,
         "requestBody": null,
-        "queryParameters": {},
+        "queryParameters": {
+          "rep_limit": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 20
+            }
+          }
+        },
         "responses": {
           "200": {
             "$ref": "#/definitions/OverviewApiResponse"
@@ -49605,6 +49615,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Context page",
           "type": "string",
           "maxLength": 500
+        },
+        "hidden": {
+          "title": "Hidden",
+          "type": "boolean",
+          "default": false
         }
       }
     },
@@ -81278,6 +81293,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "representative_trace": {
           "$ref": "#/definitions/TracePreview"
+        },
+        "rca": {
+          "$ref": "#/definitions/RcaSummary"
         }
       }
     },
@@ -84978,6 +84996,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/RepresentativeTrace"
           }
+        },
+        "representative_total": {
+          "title": "Representative total",
+          "type": "integer",
+          "default": 0
         }
       }
     },
@@ -93430,6 +93453,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "required": [
         "cluster_id",
         "source",
+        "modality",
         "error",
         "status",
         "severity",
@@ -93461,6 +93485,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "source": {
           "title": "Source",
+          "type": "string",
+          "minLength": 1
+        },
+        "modality": {
+          "title": "Modality",
           "type": "string",
           "minLength": 1
         },
@@ -93578,6 +93607,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true
         }
       }
+    },
+    "RcaSummary": {
+      "type": "object",
+      "properties": {
+        "synthesis": {
+          "title": "Synthesis",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "fix": {
+          "title": "Fix",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "confidence": {
+          "title": "Confidence",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "evidence_trace_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "analyzed_at": {
+          "title": "Analyzed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "failures_at_run": {
+          "title": "Failures at run",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "trace": {
+          "title": "Trace",
+          "type": "object"
+        }
+      },
+      "x-nullable": true
     },
     "TracePreview": {
       "required": [
@@ -98329,6 +98404,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       "type": "object",
       "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string",
+          "default": "",
+          "minLength": 1
+        },
         "value": {
           "title": "Value",
           "type": "string",
@@ -98336,8 +98417,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "caption": {
           "title": "Caption",
-          "type": "string",
-          "minLength": 1
+          "type": "string"
+        },
+        "evidence": {
+          "title": "Evidence",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          }
         }
       }
     },
@@ -98410,6 +98498,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "x-nullable": true
             }
           }
+        },
+        "judge_reason": {
+          "title": "Judge reason",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "score": {
+          "title": "Score",
+          "type": "number",
+          "x-nullable": true
         }
       }
     },

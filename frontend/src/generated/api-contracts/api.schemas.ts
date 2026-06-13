@@ -3946,6 +3946,7 @@ export interface ConversationCreateRequestApi {
   title?: string;
   /** @maxLength 500 */
   context_page?: string;
+  hidden?: boolean;
 }
 
 export type FalconMessageApiRole = typeof FalconMessageApiRole[keyof typeof FalconMessageApiRole];
@@ -18814,6 +18815,8 @@ export interface FeedListRowApi {
   cluster_id: string;
   /** @minLength 1 */
   source: string;
+  /** @minLength 1 */
+  modality: string;
   error: ErrorNameApi;
   /** @minLength 1 */
   status: string;
@@ -18883,12 +18886,28 @@ export interface TracePreviewApi {
   output: string;
 }
 
+export type RcaSummaryApiTrace = { [key: string]: unknown };
+
+export interface RcaSummaryApi {
+  /** @minLength 1 */
+  synthesis?: string;
+  /** @minLength 1 */
+  fix?: string;
+  /** @minLength 1 */
+  confidence?: string;
+  evidence_trace_ids?: string[];
+  analyzed_at?: string;
+  failures_at_run?: number;
+  trace?: RcaSummaryApiTrace;
+}
+
 export interface FeedDetailCoreApi {
   row: FeedListRowApi;
   /** @minLength 1 */
   description: string;
   success_trace: TracePreviewApi;
   representative_trace: TracePreviewApi;
+  rca?: RcaSummaryApi;
 }
 
 export interface FeedDetailApiResponseApi {
@@ -18974,11 +18993,15 @@ export interface EventsOverTimePointApi {
   users: number;
 }
 
+export type PatternInsightApiEvidence = {[key: string]: string};
+
 export interface PatternInsightApi {
   /** @minLength 1 */
-  value: string;
+  title?: string;
   /** @minLength 1 */
+  value: string;
   caption: string;
+  evidence?: PatternInsightApiEvidence;
 }
 
 export interface KeyMomentApi {
@@ -19013,6 +19036,9 @@ export interface TraceEvidenceApi {
   output: string;
   fail_reel: TraceEvidenceApiFailReelItem[];
   pass_reel: TraceEvidenceApiPassReelItem[];
+  /** @minLength 1 */
+  judge_reason?: string;
+  score?: number;
 }
 
 export type AgentFlowGraphApiNodesItem = {[key: string]: string};
@@ -19048,6 +19074,7 @@ export interface OverviewResponseApi {
   events_over_time: EventsOverTimePointApi[];
   pattern_summary: PatternSummaryApi;
   representative_traces: RepresentativeTraceApi[];
+  representative_total?: number;
 }
 
 export interface OverviewApiResponseApi {
@@ -25338,6 +25365,14 @@ time_range_days?: number;
 
 export type TracerFeedIssuesReadParams = {
 project_id?: string;
+};
+
+export type TracerFeedIssuesOverviewListParams = {
+/**
+ * @minimum 1
+ * @maximum 200
+ */
+rep_limit?: number;
 };
 
 export type TracerFeedIssuesRootCauseListParams = {

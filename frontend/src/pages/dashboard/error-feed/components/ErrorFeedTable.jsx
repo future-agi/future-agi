@@ -260,9 +260,6 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
   const apiParams = useErrorFeedApiParams();
   const { data, isLoading } = useErrorFeedList(apiParams);
 
-  const rows = useMemo(() => data?.data ?? [], [data]);
-  const totalCount = data?.total ?? 0;
-
   const isFiltered = useErrorFeedStore(
     (s) =>
       !!(
@@ -274,6 +271,9 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
         s.selectedErrorType
       ),
   );
+
+  const rows = useMemo(() => data?.data ?? [], [data]);
+  const totalCount = data?.total ?? 0;
 
   const handleRowClick = useCallback(
     (clusterId) => {

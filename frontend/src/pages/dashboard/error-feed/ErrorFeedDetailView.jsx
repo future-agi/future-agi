@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -21,12 +21,16 @@ import {
 } from "src/api/errorFeed/error-feed";
 import ErrorStatusChip from "./components/ErrorStatusChip";
 import ErrorSeverityBadge from "./components/ErrorSeverityBadge";
-import ErrorMetadataPanel from "./components/ErrorMetadataPanel";
+import ErrorMetadataPanel, {
+  LinearTeamPicker,
+} from "./components/ErrorMetadataPanel";
 import OverviewTab from "./components/OverviewTab";
 import TracesTab from "./components/TracesTab";
-import StateGraphTab from "./components/StateGraphTab";
 import TrendsTab from "./components/TrendsTab";
+import ClusterHeadlineCard from "./components/ClusterHeadlineCard";
+import AnalyzeTab from "./components/AnalyzeTab";
 import { useErrorFeedStore } from "./store";
+import { useAnalyzeRunner } from "./useAnalyzeRunner";
 
 // ── Detail page skeleton ─────────────────────────────────────────────────────
 function DetailSkeleton() {
@@ -82,11 +86,13 @@ TabLabel.propTypes = {
 };
 
 // ── Tab definitions ──────────────────────────────────────────────────────────
+// State Graph is no longer a peer tab — per PRD §5.1 it's demoted to a
+// view-mode toggle inside the per-trace panel (Breadcrumb · State Graph · Agent Path).
 const TABS = [
   { key: "overview", label: "Overview", icon: "mdi:view-dashboard-outline" },
   { key: "traces", label: "Traces", icon: "mdi:timeline-text-outline" },
-  { key: "stategraph", label: "State Graph", icon: "mdi:graph-outline" },
   { key: "trends", label: "Trends", icon: "mdi:chart-line" },
+  { key: "analyze", label: "Fix", icon: "mdi:wrench-outline" },
 ];
 
 // ── Main view ─────────────────────────────────────────────────────────────────
@@ -94,6 +100,12 @@ export default function ErrorFeedDetailView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { activeTab, setActiveTab } = useErrorFeedStore();
+  // Headline card's "Create Linear issue" — cluster-level (no trace), the
+  // backend attaches the full cluster RCA to the ticket body.
+  const [linearPickerOpen, setLinearPickerOpen] = useState(false);
+  const setAnalyzePendingStart = useErrorFeedStore(
+    (s) => s.setAnalyzePendingStart,
+  );
   const { data: detail, isLoading } = useErrorFeedDetail(id);
   const updateIssue = useUpdateErrorFeedIssue();
 
@@ -104,8 +116,14 @@ export default function ErrorFeedDetailView() {
       description: detail.description,
       successTrace: detail.successTrace,
       representativeTrace: detail.representativeTrace,
+      rca: detail.rca,
     };
   }, [detail]);
+
+  // Single shared analyze run for this cluster. The hook owns the timers
+  // and patches the store-backed thread; the headline card and the
+  // Analyze tab both observe that thread state, so they stay in sync.
+  useAnalyzeRunner(currentError?.clusterId, currentError);
 
   if (isLoading || !currentError) {
     return <DetailSkeleton />;
@@ -182,6 +200,9 @@ export default function ErrorFeedDetailView() {
                 bgcolor: "action.hover",
                 color: "text.secondary",
                 "& .MuiChip-label": { px: "7px" },
+                // Static badge — kill the default Chip hover/focus tinting.
+                "&:hover": { bgcolor: "action.hover" },
+                "&:focus": { bgcolor: "action.hover" },
               }}
             />
           </Stack>
@@ -277,8 +298,7 @@ export default function ErrorFeedDetailView() {
               </Tooltip>
               <Button
                 size="small"
-                variant="contained"
-                color="primary"
+                variant="outlined"
                 startIcon={<Iconify icon="mdi:check" width={13} />}
                 disabled={updateIssue.isPending}
                 onClick={() =>
@@ -292,6 +312,8 @@ export default function ErrorFeedDetailView() {
                   fontSize: "12px",
                   borderRadius: "6px",
                   textTransform: "none",
+                  borderColor: "divider",
+                  color: "text.secondary",
                 }}
               >
                 Resolve
@@ -397,19 +419,79 @@ export default function ErrorFeedDetailView() {
           </Tabs>
         </Box>
 
-        {/* ── Scrollable tab content ── */}
-        <Box sx={{ flex: 1, overflowY: "auto" }}>
-          <Box sx={{ p: 2 }}>
-            {safeTabIndex === 0 && <OverviewTab _error={currentError} />}
-            {safeTabIndex === 1 && <TracesTab error={currentError} />}
-            {safeTabIndex === 2 && <StateGraphTab error={currentError} />}
-            {safeTabIndex === 3 && <TrendsTab error={currentError} />}
-          </Box>
+        {/* ── Tab content ──
+            Two layout modes share this column:
+              - Overview / Traces / Trends → page-style scrolling (long content)
+              - Analyze → fixed-height flex column so the compose area can
+                dock at the bottom of the viewport, chat-style.
+            Each tab wraps itself in the right kind of container instead of
+            trying to share one — that keeps Analyze's bottom-anchored
+            compose area honest without breaking the others' overflow. */}
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {safeTabIndex === 3 ? (
+            // Analyze: fixed-height flex column. AnalyzeTab fills the box
+            // and handles its own internal scroll.
+            <Box
+              sx={{
+                flex: 1,
+                minHeight: 0,
+                p: 2,
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <AnalyzeTab error={currentError} />
+            </Box>
+          ) : (
+            // Overview / Traces / Trends: classic page scroll. The cluster
+            // analysis accordion only renders on Overview.
+            <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+              <Box sx={{ p: 2 }}>
+                {activeTab === "overview" && (
+                  <Box sx={{ mb: 2 }}>
+                    <ClusterHeadlineCard
+                      error={currentError}
+                      onOpenAnalyze={() => {
+                        // "View reasoning" — run already happened; just
+                        // switch to the Analyze tab to read the thread.
+                        setActiveTab("analyze");
+                      }}
+                      onStartAnalysis={() => {
+                        // "Debug this cluster" — kick the run and jump to
+                        // Analyze so the user watches the live status.
+                        setAnalyzePendingStart(currentError.clusterId, true);
+                        setActiveTab("analyze");
+                      }}
+                      onCreateLinear={() => setLinearPickerOpen(true)}
+                    />
+                  </Box>
+                )}
+                {safeTabIndex === 0 && <OverviewTab _error={currentError} />}
+                {safeTabIndex === 1 && <TracesTab error={currentError} />}
+                {safeTabIndex === 2 && <TrendsTab error={currentError} />}
+              </Box>
+            </Box>
+          )}
         </Box>
       </Box>
 
       {/* ── Right sidebar ── */}
       <ErrorMetadataPanel error={currentError} />
+
+      <LinearTeamPicker
+        open={linearPickerOpen}
+        onClose={() => setLinearPickerOpen(false)}
+        clusterId={currentError?.clusterId}
+        traceId={null}
+      />
     </Box>
   );
 }

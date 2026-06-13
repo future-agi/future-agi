@@ -95,6 +95,7 @@ class TrendPointSerializer(serializers.Serializer):
 class FeedListRowSerializer(serializers.Serializer):
     cluster_id = serializers.CharField()
     source = serializers.CharField()
+    modality = serializers.CharField()
     error = ErrorNameSerializer()
     status = serializers.CharField()
     severity = serializers.CharField()
@@ -150,11 +151,24 @@ class TracePreviewSerializer(serializers.Serializer):
     output = serializers.CharField(allow_null=True)
 
 
+class RcaSummarySerializer(serializers.Serializer):
+    synthesis = serializers.CharField(allow_null=True, required=False)
+    fix = serializers.CharField(allow_null=True, required=False)
+    confidence = serializers.CharField(allow_null=True, required=False)
+    evidence_trace_ids = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
+    analyzed_at = serializers.DateTimeField(allow_null=True, required=False)
+    failures_at_run = serializers.IntegerField(allow_null=True, required=False)
+    trace = serializers.JSONField(required=False)
+
+
 class FeedDetailCoreSerializer(serializers.Serializer):
     row = FeedListRowSerializer()
     description = serializers.CharField(allow_null=True)
     success_trace = TracePreviewSerializer(allow_null=True)
     representative_trace = TracePreviewSerializer(allow_null=True)
+    rca = RcaSummarySerializer(allow_null=True, required=False)
 
 
 class FeedDetailApiResponseSerializer(serializers.Serializer):
@@ -180,8 +194,12 @@ class KeyMomentSerializer(serializers.Serializer):
 
 
 class PatternInsightSerializer(serializers.Serializer):
+    title = serializers.CharField(required=False, default="")
     value = serializers.CharField()
-    caption = serializers.CharField()
+    # Caption supports **bold** markers, rendered by the FE renderRichCaption.
+    caption = serializers.CharField(allow_blank=True)
+    # Stat rigor for a future hover tooltip (test, z/p, lift, sample sizes).
+    evidence = serializers.DictField(required=False)
 
 
 class PatternSummarySerializer(serializers.Serializer):
@@ -203,6 +221,8 @@ class TraceEvidenceSerializer(serializers.Serializer):
     output = serializers.CharField(allow_null=True)
     fail_reel = serializers.ListField(child=serializers.DictField())
     pass_reel = serializers.ListField(child=serializers.DictField())
+    judge_reason = serializers.CharField(allow_null=True, required=False)
+    score = serializers.FloatField(allow_null=True, required=False)
 
 
 class AgentFlowGraphSerializer(serializers.Serializer):
@@ -226,6 +246,7 @@ class OverviewResponseSerializer(serializers.Serializer):
     events_over_time = EventsOverTimePointSerializer(many=True)
     pattern_summary = PatternSummarySerializer()
     representative_traces = RepresentativeTraceSerializer(many=True)
+    representative_total = serializers.IntegerField(default=0)
 
 
 class OverviewApiResponseSerializer(serializers.Serializer):
@@ -277,6 +298,14 @@ class TracesTabQuerySerializer(serializers.Serializer):
         required=False, default=50, min_value=1, max_value=500
     )
     offset = serializers.IntegerField(required=False, default=0, min_value=0)
+
+
+class OverviewQuerySerializer(serializers.Serializer):
+    """Query params for GET /tracer/feed/issues/{cluster_id}/overview/."""
+
+    rep_limit = serializers.IntegerField(
+        required=False, default=20, min_value=1, max_value=200
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -42,6 +42,10 @@ from tracer.types.scan_types import ClusteringSummary, SuccessTraceMatch
 
 logger = structlog.get_logger(__name__)
 
+# Scan + write in sub-chunks of this many traces so partial progress survives an
+# activity timeout (the scanner makes one LLM call per trace, serially).
+_SCAN_WRITE_CHUNK = 5
+
 
 def scan_and_write(trace_ids: List[str], project_id: str) -> List[ScanResult]:
     """
@@ -74,12 +78,20 @@ def scan_and_write(trace_ids: List[str], project_id: str) -> List[ScanResult]:
         logger.warning("no_trace_data_found", trace_ids=trace_ids)
         return []
 
-    # Scan — convert TraceData → dicts for scanner (scanner expects TRAIL format)
+    # Scan + write in small sub-chunks so partial progress is persisted even if
+    # the surrounding activity hits its time limit mid-batch. Writing only after
+    # scanning the whole batch (the old behavior) meant a large/slow batch that
+    # exceeded the activity time_limit wrote NOTHING — silent data loss under
+    # high sampling/volume.
     scanner = TraceScanner()
-    results = scanner.scan_batch([t.to_dict() for t in traces_data])
+    results: List[ScanResult] = []
+    written = 0
+    for i in range(0, len(traces_data), _SCAN_WRITE_CHUNK):
+        chunk = traces_data[i : i + _SCAN_WRITE_CHUNK]
+        chunk_results = scanner.scan_batch([t.to_dict() for t in chunk])
+        written += write_scan_results(chunk_results, project_id, config.scan_version)
+        results.extend(chunk_results)
 
-    # Write
-    written = write_scan_results(results, project_id, config.scan_version)
     logger.info(
         "scan_pipeline_completed",
         traces_scanned=len(results),
