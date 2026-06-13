@@ -26,6 +26,7 @@ import {
   CardContent,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { canonicalObject } from "src/utils/utils";
 import useRequestDetail from "./hooks/useRequestDetail";
 import FeedbackWidget from "../guardrails/FeedbackWidget";
 import { formatCost } from "../utils/formatters";
@@ -325,7 +326,9 @@ function ResponseTab({ log }) {
 MetadataTab.propTypes = { log: PropTypes.object.isRequired };
 
 function MetadataTab({ log }) {
-  const entries = Object.entries(log.metadata || {});
+  // Drop the response interceptor's camelCase aliases so user metadata keys
+  // don't render as duplicate rows (including nested object values).
+  const entries = Object.entries(canonicalObject(log.metadata || {}));
 
   if (entries.length === 0) {
     return (

@@ -17,6 +17,7 @@ import {
   IconButton,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { canonicalObject } from "src/utils/utils";
 import Chart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
 import { useNavigate } from "react-router-dom";
@@ -298,7 +299,7 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
                     overflowX: "auto",
                   }}
                 >
-                  {JSON.stringify(keyData.metadata, null, 2)}
+                  {JSON.stringify(canonicalObject(keyData.metadata), null, 2)}
                 </Box>
               </Box>
             )}

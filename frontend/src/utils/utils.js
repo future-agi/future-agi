@@ -808,6 +808,17 @@ export const canonicalValues = (obj) => {
   return canonicalKeys(obj).map((key) => obj[key]);
 };
 
+// Deep variant: returns a copy with alias keys removed at every level, so the
+// result can be serialized (e.g. JSON.stringify) without exposing duplicates
+// from nested objects. Does not mutate the input.
+export const canonicalObject = (obj) => {
+  if (!obj || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(canonicalObject);
+  return Object.fromEntries(
+    canonicalEntries(obj).map(([key, value]) => [key, canonicalObject(value)]),
+  );
+};
+
 export const objectCamelToSnake = (obj) => {
   if (obj === null || obj === undefined) {
     return obj;

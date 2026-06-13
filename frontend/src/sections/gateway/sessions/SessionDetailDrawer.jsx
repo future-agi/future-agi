@@ -20,6 +20,7 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
+import { canonicalObject } from "src/utils/utils";
 import { useSessionDetail, useSessionRequests } from "./hooks/useSessions";
 import {
   formatDateTime as formatDate,
@@ -151,7 +152,7 @@ const SessionDetailDrawer = ({ sessionId, open, onClose }) => {
                       whiteSpace: "pre-wrap",
                     }}
                   >
-                    {JSON.stringify(session.metadata, null, 2)}
+                    {JSON.stringify(canonicalObject(session.metadata), null, 2)}
                   </Typography>
                 </Card>
               </Box>

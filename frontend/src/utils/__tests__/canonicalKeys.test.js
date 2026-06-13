@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { canonicalKeys, canonicalEntries, canonicalValues } from "../utils";
+import {
+  canonicalKeys,
+  canonicalEntries,
+  canonicalValues,
+  canonicalObject,
+} from "../utils";
 
 // Helper that simulates a legacy object containing both canonical keys and
 // old alias keys so iteration sees both.
@@ -92,5 +97,44 @@ describe("canonicalKeys / canonicalEntries / canonicalValues", () => {
     const obj = withAliases({ tone_17_apr_2026: { neutral: 10 } });
     expect(Object.keys(obj)).toContain("tone17Apr2026");
     expect(canonicalKeys(obj)).toEqual(["tone_17_apr_2026"]);
+  });
+
+  describe("canonicalObject", () => {
+    it("returns a copy with alias keys removed", () => {
+      const obj = withAliases({ user_id: 1, total_rows: 10 });
+      expect(canonicalObject(obj)).toEqual({ user_id: 1, total_rows: 10 });
+    });
+
+    it("removes aliases from nested objects and arrays", () => {
+      const obj = withAliases({
+        user_id: 1,
+        nested: withAliases({ inner_key: 2 }),
+        items: [withAliases({ row_id: 3 })],
+      });
+      expect(canonicalObject(obj)).toEqual({
+        user_id: 1,
+        nested: { inner_key: 2 },
+        items: [{ row_id: 3 }],
+      });
+    });
+
+    it("does not mutate the input object", () => {
+      const obj = withAliases({ user_id: 1 });
+      const before = Object.keys(obj).length;
+      canonicalObject(obj);
+      expect(Object.keys(obj).length).toBe(before);
+    });
+
+    it("preserves genuine camelCase keys with no snake twin", () => {
+      expect(canonicalObject({ alreadyCamel: 1, plain: 2 })).toEqual({
+        alreadyCamel: 1,
+        plain: 2,
+      });
+    });
+
+    it("passes through null and primitives unchanged", () => {
+      expect(canonicalObject(null)).toBe(null);
+      expect(canonicalObject("x")).toBe("x");
+    });
   });
 });
