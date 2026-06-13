@@ -1,0 +1,1070 @@
+"""Build reproducibility passports for simulation test executions.
+
+A passport is a deterministic, JSON-serializable summary of the inputs that
+made a simulate/eval run happen: agent or prompt version, scenarios, eval
+configs, and execution options. It is meant to make reruns and regression
+debugging explicit without storing raw transcripts or provider responses.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
+
+from django.db.models import Model, QuerySet
+from django.utils import timezone
+
+from simulate.models.eval_config import SimulateEvalConfig
+from simulate.models.run_test import RunTest
+from simulate.models.scenarios import Scenarios
+from simulate.models.test_execution import TestExecution
+
+logger = logging.getLogger(__name__)
+
+PASSPORT_SCHEMA_VERSION = "2026-06-09"
+REPRO_METADATA_KEY = "reproducibility_passports"
+REDACTED = "[redacted]"
+INTERNAL_EXECUTION_METADATA_KEYS = (REPRO_METADATA_KEY,)
+SECRET_KEY_FRAGMENTS = (
+    "api_key",
+    "apikey",
+    "apiSecret",
+    "api_secret",
+    "auth",
+    "authorization",
+    "bearer",
+    "credential",
+    "password",
+    "secret",
+    "token",
+)
+DRIFT_SEVERITY_BY_SECTION = {
+    "agent": "blocker",
+    "prompt": "blocker",
+    "scenarios": "blocker",
+    "eval_configs": "blocker",
+    "run_test": "warning",
+    "execution_options": "warning",
+    "execution": "info",
+}
+DRIFT_REASON_BY_SECTION = {
+    "agent": "The agent definition, version snapshot, or simulator changed.",
+    "prompt": "The prompt template, prompt version, or prompt snapshot changed.",
+    "scenarios": "The scenario set, dataset links, metadata, or source hashes changed.",
+    "eval_configs": "The eval templates, configs, mappings, or filters changed.",
+    "run_test": "Run-level settings changed.",
+    "execution_options": "Execution metadata or selected ids changed.",
+    "execution": "Execution status or counters changed.",
+}
+STABILIZATION_ACTION_BY_SECTION = {
+    "agent": {
+        "title": "Pin the agent version",
+        "action": "Replay against the same agent version snapshot used by the baseline.",
+        "why": "Agent configuration drift can change behavior before the model output is compared.",
+    },
+    "prompt": {
+        "title": "Pin the prompt version",
+        "action": "Replay against the baseline prompt version and prompt config snapshot.",
+        "why": "Prompt text, variables, or provider config changes can dominate score movement.",
+    },
+    "scenarios": {
+        "title": "Replay the same scenarios",
+        "action": "Restore the baseline scenario ids and dataset row selection before rerunning.",
+        "why": "Scenario drift changes the task distribution, so scores are no longer comparable.",
+    },
+    "eval_configs": {
+        "title": "Freeze eval configuration",
+        "action": "Compare eval template, mapping, filters, threshold, and model before rerun.",
+        "why": "Eval drift can change the judge, scoring rubric, or rows being scored.",
+    },
+    "run_test": {
+        "title": "Confirm run-level settings",
+        "action": "Check run source, dataset rows, and tool-evaluation settings.",
+        "why": "Run-level drift can change which execution path is measured.",
+    },
+    "execution_options": {
+        "title": "Match execution options",
+        "action": "Replay with the same selected scenarios, dataset rows, and external metadata.",
+        "why": "Execution option drift can make a rerun look like a model regression when it is not.",
+    },
+}
+REPLAY_INPUT_SECTIONS = (
+    "run_test",
+    "agent",
+    "prompt",
+    "scenarios",
+    "eval_configs",
+    "execution_options",
+)
+RUNTIME_SECTIONS = ("execution",)
+
+
+@dataclass(frozen=True)
+class PassportDiff:
+    """Section-level drift between two reproducibility passports."""
+
+    changed_sections: list[str]
+    before_hashes: dict[str, str | None]
+    after_hashes: dict[str, str | None]
+
+    @property
+    def has_drift(self) -> bool:
+        return bool(self.changed_sections)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "has_drift": self.has_drift,
+            "changed_sections": self.changed_sections,
+            "before_hashes": self.before_hashes,
+            "after_hashes": self.after_hashes,
+        }
+
+
+@dataclass(frozen=True)
+class ReplayReadinessIssue:
+    """A concrete reason a run may not be replayable as-is."""
+
+    severity: str
+    code: str
+    section: str
+    message: str
+    remediation: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "severity": self.severity,
+            "code": self.code,
+            "section": self.section,
+            "message": self.message,
+            "remediation": self.remediation,
+        }
+
+
+def build_reproducibility_report(test_execution: TestExecution) -> dict[str, object]:
+    """Return the API-ready reproducibility state for a test execution."""
+
+    current_passport = build_test_execution_passport(test_execution)
+    replay_plan = build_replay_plan(test_execution)
+    snapshots = get_reproducibility_snapshots(test_execution)
+    start_snapshot = snapshots.get("start")
+    completion_snapshot = snapshots.get("completion")
+
+    baseline_passport = None
+    if isinstance(start_snapshot, Mapping):
+        baseline_passport = _mapping_or_empty(start_snapshot.get("passport"))
+    if not baseline_passport:
+        baseline_passport = current_passport
+
+    input_drift = explain_replay_input_drift(baseline_passport, current_passport)
+    full_drift = explain_passport_drift(baseline_passport, current_passport)
+    score_change_diagnosis = diagnose_eval_score_change(
+        baseline_passport,
+        current_passport,
+    )
+    stabilization_plan = build_stabilization_plan(
+        replay_plan,
+        input_drift,
+        score_change_diagnosis,
+    )
+
+    return {
+        "test_execution_id": str(test_execution.id),
+        "run_test_id": str(test_execution.run_test_id),
+        "current": {
+            "passport": current_passport,
+            "replay_plan": replay_plan,
+        },
+        "snapshots": snapshots,
+        "preflight": {
+            "can_replay": replay_plan["can_replay"],
+            "issues": replay_plan["issues"],
+            "input_drift": input_drift,
+            "status": _preflight_status(replay_plan, input_drift),
+        },
+        "drift": {
+            "from_start": full_drift,
+            "input_from_start": input_drift,
+        },
+        "score_change_diagnosis": score_change_diagnosis,
+        "stabilization_plan": stabilization_plan,
+        "has_start_snapshot": isinstance(start_snapshot, Mapping),
+        "has_completion_snapshot": isinstance(completion_snapshot, Mapping),
+    }
+
+
+def capture_reproducibility_snapshot(
+    test_execution: TestExecution,
+    stage: str,
+) -> dict[str, object]:
+    """Store a passport snapshot in execution metadata without a migration."""
+
+    if stage not in {"start", "completion"}:
+        raise ValueError("stage must be 'start' or 'completion'")
+
+    passport = build_test_execution_passport(test_execution)
+    replay_plan = build_replay_plan(test_execution)
+    snapshot = {
+        "stage": stage,
+        "captured_at": timezone.now().isoformat(),
+        "passport_hash": passport["passport_hash"],
+        "input_fingerprint": passport["input_fingerprint"],
+        "runtime_fingerprint": passport["runtime_fingerprint"],
+        "section_hashes": passport["section_hashes"],
+        "input_section_hashes": passport["input_section_hashes"],
+        "runtime_section_hashes": passport["runtime_section_hashes"],
+        "passport": passport,
+        "replay_plan": replay_plan,
+    }
+
+    metadata = dict(test_execution.execution_metadata or {})
+    snapshots = dict(metadata.get(REPRO_METADATA_KEY) or {})
+    snapshots[stage] = snapshot
+    metadata[REPRO_METADATA_KEY] = snapshots
+    test_execution.execution_metadata = metadata
+    test_execution.save(update_fields=["execution_metadata"])
+    return snapshot
+
+
+def safe_capture_reproducibility_snapshot(
+    test_execution: TestExecution,
+    stage: str,
+) -> dict[str, object] | None:
+    """Best-effort snapshot capture for execution lifecycle hooks."""
+
+    try:
+        return capture_reproducibility_snapshot(test_execution, stage)
+    except Exception:
+        logger.exception(
+            "Failed to capture reproducibility snapshot",
+            extra={"test_execution_id": str(test_execution.id), "stage": stage},
+        )
+        return None
+
+
+def get_reproducibility_snapshots(
+    test_execution: TestExecution,
+) -> dict[str, object]:
+    metadata = test_execution.execution_metadata or {}
+    snapshots = metadata.get(REPRO_METADATA_KEY)
+    return dict(snapshots) if isinstance(snapshots, Mapping) else {}
+
+
+def build_test_execution_passport(
+    test_execution: TestExecution,
+) -> dict[str, object]:
+    """Return a deterministic passport for a completed or in-flight run.
+
+    The passport intentionally captures configuration snapshots and identifiers
+    instead of live transcript payloads. That keeps the artifact useful for
+    replay planning while avoiding accidental leakage of call content or secrets.
+    """
+
+    run_test = test_execution.run_test
+    sections: dict[str, object] = {
+        "execution": _execution_section(test_execution),
+        "run_test": _run_test_section(run_test),
+        "agent": _agent_section(test_execution, run_test),
+        "prompt": _prompt_section(run_test),
+        "scenarios": _scenario_section(run_test, test_execution),
+        "eval_configs": _eval_config_section(run_test),
+        "execution_options": _execution_options_section(test_execution, run_test),
+    }
+
+    section_hashes = {
+        name: stable_hash(payload) for name, payload in sections.items()
+    }
+    input_section_hashes = {
+        name: section_hashes[name]
+        for name in REPLAY_INPUT_SECTIONS
+        if name in section_hashes
+    }
+    runtime_section_hashes = {
+        name: section_hashes[name]
+        for name in RUNTIME_SECTIONS
+        if name in section_hashes
+    }
+    input_fingerprint = stable_hash(
+        {
+            "schema_version": PASSPORT_SCHEMA_VERSION,
+            "section_hashes": input_section_hashes,
+        }
+    )
+    runtime_fingerprint = stable_hash(
+        {
+            "schema_version": PASSPORT_SCHEMA_VERSION,
+            "section_hashes": runtime_section_hashes,
+        }
+    )
+
+    return {
+        "schema_version": PASSPORT_SCHEMA_VERSION,
+        "passport_hash": stable_hash(
+            {
+                "schema_version": PASSPORT_SCHEMA_VERSION,
+                "section_hashes": section_hashes,
+            }
+        ),
+        "input_fingerprint": input_fingerprint,
+        "runtime_fingerprint": runtime_fingerprint,
+        "section_hashes": section_hashes,
+        "input_section_hashes": input_section_hashes,
+        "runtime_section_hashes": runtime_section_hashes,
+        **sections,
+    }
+
+
+def build_replay_plan(test_execution: TestExecution) -> dict[str, object]:
+    """Build a replay-oriented plan from a test execution passport.
+
+    The plan is intentionally declarative. It does not rerun anything; it tells
+    a caller which stable inputs should be used and whether the current run has
+    enough pinned state to make a future replay trustworthy.
+    """
+
+    passport = build_test_execution_passport(test_execution)
+    issues = _replay_readiness_issues(passport)
+    replay_inputs = _replay_inputs(passport)
+    replay_key = stable_hash(
+        {
+            "schema_version": passport["schema_version"],
+            "input_fingerprint": passport["input_fingerprint"],
+            "replay_inputs": replay_inputs,
+        }
+    )
+
+    return {
+        "replay_key": replay_key,
+        "passport_hash": passport["passport_hash"],
+        "input_fingerprint": passport["input_fingerprint"],
+        "can_replay": not any(issue.severity == "blocker" for issue in issues),
+        "issues": [issue.as_dict() for issue in issues],
+        "replay_inputs": replay_inputs,
+        "baseline": {
+            "section_hashes": passport["section_hashes"],
+            "input_section_hashes": passport["input_section_hashes"],
+            "passport_hash": passport["passport_hash"],
+            "input_fingerprint": passport["input_fingerprint"],
+        },
+    }
+
+
+def diff_passports(
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+) -> PassportDiff:
+    """Compare two passports using their section hashes."""
+
+    before_hashes = _extract_section_hashes(before)
+    after_hashes = _extract_section_hashes(after)
+    section_names = sorted(set(before_hashes) | set(after_hashes))
+    changed = [
+        section
+        for section in section_names
+        if before_hashes.get(section) != after_hashes.get(section)
+    ]
+    return PassportDiff(
+        changed_sections=changed,
+        before_hashes={
+            section: before_hashes.get(section) for section in section_names
+        },
+        after_hashes={section: after_hashes.get(section) for section in section_names},
+    )
+
+
+def explain_passport_drift(
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+) -> dict[str, object]:
+    """Return a severity-ranked explanation of section-level drift."""
+
+    diff = diff_passports(before, after)
+    changes = [
+        {
+            "section": section,
+            "severity": DRIFT_SEVERITY_BY_SECTION.get(section, "info"),
+            "reason": DRIFT_REASON_BY_SECTION.get(
+                section,
+                "The section hash changed.",
+            ),
+            "before_hash": diff.before_hashes.get(section),
+            "after_hash": diff.after_hashes.get(section),
+        }
+        for section in diff.changed_sections
+    ]
+    severity_rank = {"blocker": 0, "warning": 1, "info": 2}
+    changes.sort(key=lambda item: severity_rank.get(str(item["severity"]), 3))
+
+    return {
+        "has_drift": diff.has_drift,
+        "highest_severity": _highest_drift_severity(changes),
+        "changed_sections": diff.changed_sections,
+        "changes": changes,
+    }
+
+
+def explain_replay_input_drift(
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+) -> dict[str, object]:
+    """Explain only replay-input drift, ignoring runtime execution changes."""
+
+    before_hashes = _extract_input_section_hashes(before)
+    after_hashes = _extract_input_section_hashes(after)
+    section_names = sorted(set(before_hashes) | set(after_hashes))
+    changed_sections = [
+        section
+        for section in section_names
+        if before_hashes.get(section) != after_hashes.get(section)
+    ]
+    changes = [
+        {
+            "section": section,
+            "severity": DRIFT_SEVERITY_BY_SECTION.get(section, "info"),
+            "reason": DRIFT_REASON_BY_SECTION.get(
+                section,
+                "The replay input section hash changed.",
+            ),
+            "before_hash": before_hashes.get(section),
+            "after_hash": after_hashes.get(section),
+        }
+        for section in changed_sections
+    ]
+    severity_rank = {"blocker": 0, "warning": 1, "info": 2}
+    changes.sort(key=lambda item: severity_rank.get(str(item["severity"]), 3))
+
+    return {
+        "has_drift": bool(changed_sections),
+        "highest_severity": _highest_drift_severity(changes),
+        "changed_sections": changed_sections,
+        "changes": changes,
+        "before_input_fingerprint": before.get("input_fingerprint"),
+        "after_input_fingerprint": after.get("input_fingerprint"),
+    }
+
+
+def diagnose_eval_score_change(
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+) -> dict[str, object]:
+    """Explain likely score-change causes from replay-input drift."""
+
+    input_drift = explain_replay_input_drift(before, after)
+    if not input_drift["has_drift"]:
+        return {
+            "classification": "runtime_or_model_behavior",
+            "confidence": "medium",
+            "summary": (
+                "Replay inputs match. Any score change is more likely from model "
+                "nondeterminism, provider behavior, or runtime output differences."
+            ),
+            "evidence": [],
+            "recommended_action": (
+                "Compare call transcripts, provider responses, and eval outputs."
+            ),
+        }
+
+    changed_sections = input_drift["changed_sections"]
+    return {
+        "classification": "replay_inputs_changed",
+        "confidence": "high",
+        "summary": (
+            "Replay inputs changed before scores were compared, so the score delta "
+            "cannot be attributed to model behavior alone."
+        ),
+        "evidence": input_drift["changes"],
+        "recommended_action": _diagnosis_recommendation(changed_sections),
+    }
+
+
+def build_stabilization_plan(
+    replay_plan: Mapping[str, object],
+    input_drift: Mapping[str, object],
+    diagnosis: Mapping[str, object],
+) -> dict[str, object]:
+    """Return concrete rerun-stabilization actions for the UI and API."""
+
+    issues = _sequence_or_empty(replay_plan.get("issues"))
+    drift_changes = _sequence_or_empty(input_drift.get("changes"))
+    actions: list[dict[str, object]] = []
+    seen_keys: set[tuple[str, str]] = set()
+
+    for issue in issues:
+        action = {
+            "priority": _action_priority(str(issue.get("severity"))),
+            "source": "readiness_issue",
+            "section": str(issue.get("section") or "unknown"),
+            "title": str(issue.get("message") or "Replay readiness issue"),
+            "action": str(issue.get("remediation") or "Resolve this issue before rerun."),
+            "why": "The replay plan is not fully pinned.",
+            "severity": str(issue.get("severity") or "warning"),
+        }
+        _append_unique_action(actions, seen_keys, action)
+
+    for change in drift_changes:
+        section = str(change.get("section") or "unknown")
+        template = STABILIZATION_ACTION_BY_SECTION.get(
+            section,
+            {
+                "title": f"Review {section} drift",
+                "action": "Compare the baseline and current section hashes before rerun.",
+                "why": "This replay input changed from the baseline.",
+            },
+        )
+        action = {
+            "priority": _action_priority(str(change.get("severity"))),
+            "source": "input_drift",
+            "section": section,
+            "title": template["title"],
+            "action": template["action"],
+            "why": template["why"],
+            "severity": str(change.get("severity") or "warning"),
+            "before_hash": change.get("before_hash"),
+            "after_hash": change.get("after_hash"),
+        }
+        _append_unique_action(actions, seen_keys, action)
+
+    actions.sort(
+        key=lambda item: (
+            int(item.get("priority", 99)),
+            str(item.get("section") or ""),
+            str(item.get("source") or ""),
+        )
+    )
+
+    can_run_without_stabilization = (
+        replay_plan.get("can_replay") is True
+        and input_drift.get("highest_severity") not in {"blocker", "warning"}
+    )
+    if not actions and diagnosis.get("classification") == "runtime_or_model_behavior":
+        actions.append(
+            {
+                "priority": 2,
+                "source": "runtime_comparison",
+                "section": "execution",
+                "title": "Compare runtime outputs",
+                "action": "Inspect transcripts, provider responses, eval outputs, and latency traces.",
+                "why": "Replay inputs match, so the score movement is likely runtime or model behavior.",
+                "severity": "info",
+            }
+        )
+
+    return {
+        "can_run_without_stabilization": can_run_without_stabilization,
+        "risk_level": _stabilization_risk_level(actions),
+        "summary": _stabilization_summary(actions, diagnosis),
+        "actions": actions,
+    }
+
+
+def stable_hash(value: object) -> str:
+    """Hash a JSON-compatible value after stable normalization."""
+
+    payload = json.dumps(
+        _normalize(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _execution_section(test_execution: TestExecution) -> dict[str, object]:
+    return {
+        "id": str(test_execution.id),
+        "status": test_execution.status,
+        "started_at": _normalize(test_execution.started_at),
+        "completed_at": _normalize(test_execution.completed_at),
+        "total_scenarios": test_execution.total_scenarios,
+        "scenario_ids": _normalize(test_execution.scenario_ids),
+        "total_calls": test_execution.total_calls,
+        "completed_calls": test_execution.completed_calls,
+        "failed_calls": test_execution.failed_calls,
+        "error_reason": test_execution.error_reason,
+    }
+
+
+def _run_test_section(run_test: RunTest) -> dict[str, object]:
+    return {
+        "id": str(run_test.id),
+        "name": run_test.name,
+        "description": run_test.description,
+        "source_type": run_test.source_type,
+        "organization_id": _model_id(run_test, "organization_id"),
+        "workspace_id": _model_id(run_test, "workspace_id"),
+        "dataset_row_ids": _normalize(run_test.dataset_row_ids),
+        "enable_tool_evaluation": run_test.enable_tool_evaluation,
+    }
+
+
+def _agent_section(
+    test_execution: TestExecution,
+    run_test: RunTest,
+) -> dict[str, object]:
+    agent_definition = test_execution.agent_definition or run_test.agent_definition
+    agent_version = test_execution.agent_version or run_test.agent_version
+    simulator_agent = test_execution.simulator_agent or run_test.simulator_agent
+
+    return {
+        "agent_definition": _agent_definition_payload(agent_definition),
+        "agent_version": _agent_version_payload(agent_version),
+        "simulator_agent": _simulator_agent_payload(simulator_agent),
+    }
+
+
+def _prompt_section(run_test: RunTest) -> dict[str, object] | None:
+    prompt_version = run_test.prompt_version
+    prompt_template = run_test.prompt_template
+    if not prompt_version and not prompt_template:
+        return None
+
+    snapshot = getattr(prompt_version, "prompt_config_snapshot", None)
+    return {
+        "prompt_template_id": _model_id(prompt_template),
+        "prompt_template_name": getattr(prompt_template, "name", None),
+        "prompt_version_id": _model_id(prompt_version),
+        "template_version": getattr(prompt_version, "template_version", None),
+        "commit_message": getattr(prompt_version, "commit_message", None),
+        "config_snapshot": _normalize(snapshot),
+        "config_snapshot_hash": stable_hash(snapshot or {}),
+        "variable_names": _normalize(getattr(prompt_version, "variable_names", None)),
+        "placeholders": _normalize(getattr(prompt_version, "placeholders", None)),
+    }
+
+
+def _scenario_section(
+    run_test: RunTest,
+    test_execution: TestExecution,
+) -> list[dict[str, object]]:
+    scenarios = _selected_scenarios(run_test, test_execution)
+    return [
+        {
+            "id": str(scenario.id),
+            "name": scenario.name,
+            "scenario_type": scenario.scenario_type,
+            "source_type": scenario.source_type,
+            "status": scenario.status,
+            "dataset_id": _model_id(scenario, "dataset_id"),
+            "agent_definition_id": _model_id(scenario, "agent_definition_id"),
+            "prompt_template_id": _model_id(scenario, "prompt_template_id"),
+            "prompt_version_id": _model_id(scenario, "prompt_version_id"),
+            "simulator_agent_id": _model_id(scenario, "simulator_agent_id"),
+            "metadata": _normalize(scenario.metadata),
+            "source_hash": stable_hash(scenario.source or ""),
+        }
+        for scenario in scenarios
+    ]
+
+
+def _eval_config_section(run_test: RunTest) -> list[dict[str, object]]:
+    eval_configs = (
+        SimulateEvalConfig.objects.filter(run_test=run_test, deleted=False)
+        .select_related("eval_template", "eval_group", "kb_id")
+        .order_by("id")
+    )
+    return [_eval_config_payload(eval_config) for eval_config in eval_configs]
+
+
+def _execution_options_section(
+    test_execution: TestExecution,
+    run_test: RunTest,
+) -> dict[str, object]:
+    metadata = _normalize(
+        _external_execution_metadata(test_execution.execution_metadata or {})
+    )
+    return {
+        "execution_metadata": metadata,
+        "execution_metadata_hash": stable_hash(metadata),
+        "dataset_row_ids": _normalize(run_test.dataset_row_ids),
+        "scenario_ids": _normalize(test_execution.scenario_ids),
+        "enable_tool_evaluation": run_test.enable_tool_evaluation,
+    }
+
+
+def _replay_inputs(passport: Mapping[str, object]) -> dict[str, object]:
+    agent = _mapping_or_empty(passport.get("agent"))
+    agent_definition = _mapping_or_empty(agent.get("agent_definition"))
+    agent_version = _mapping_or_empty(agent.get("agent_version"))
+    simulator_agent = _mapping_or_empty(agent.get("simulator_agent"))
+    prompt = _mapping_or_empty(passport.get("prompt"))
+    scenarios = _sequence_or_empty(passport.get("scenarios"))
+    eval_configs = _sequence_or_empty(passport.get("eval_configs"))
+    run_test = _mapping_or_empty(passport.get("run_test"))
+
+    return {
+        "run_test_id": run_test.get("id"),
+        "source_type": run_test.get("source_type"),
+        "agent_definition_id": agent_definition.get("id"),
+        "agent_version_id": agent_version.get("id"),
+        "simulator_agent_id": simulator_agent.get("id"),
+        "prompt_template_id": prompt.get("prompt_template_id"),
+        "prompt_version_id": prompt.get("prompt_version_id"),
+        "scenario_ids": [scenario.get("id") for scenario in scenarios],
+        "eval_config_ids": [config.get("id") for config in eval_configs],
+        "dataset_row_ids": run_test.get("dataset_row_ids", []),
+        "enable_tool_evaluation": run_test.get("enable_tool_evaluation"),
+    }
+
+
+def _replay_readiness_issues(
+    passport: Mapping[str, object],
+) -> list[ReplayReadinessIssue]:
+    issues: list[ReplayReadinessIssue] = []
+    run_test = _mapping_or_empty(passport.get("run_test"))
+    execution = _mapping_or_empty(passport.get("execution"))
+    agent = _mapping_or_empty(passport.get("agent"))
+    prompt = _mapping_or_empty(passport.get("prompt"))
+    scenarios = _sequence_or_empty(passport.get("scenarios"))
+    eval_configs = _sequence_or_empty(passport.get("eval_configs"))
+
+    source_type = run_test.get("source_type")
+    if source_type == RunTest.SourceTypes.PROMPT and not prompt.get(
+        "prompt_version_id"
+    ):
+        issues.append(
+            ReplayReadinessIssue(
+                severity="blocker",
+                code="missing_prompt_version",
+                section="prompt",
+                message="Prompt simulation does not have a pinned prompt version.",
+                remediation="Attach a prompt version before treating reruns as exact.",
+            )
+        )
+
+    agent_definition = _mapping_or_empty(agent.get("agent_definition"))
+    agent_version = _mapping_or_empty(agent.get("agent_version"))
+    if source_type == RunTest.SourceTypes.AGENT_DEFINITION and not agent_definition:
+        issues.append(
+            ReplayReadinessIssue(
+                severity="blocker",
+                code="missing_agent_definition",
+                section="agent",
+                message="Agent-definition simulation has no agent definition.",
+                remediation="Attach the agent definition used by the original run.",
+            )
+        )
+    elif source_type == RunTest.SourceTypes.AGENT_DEFINITION and not agent_version:
+        issues.append(
+            ReplayReadinessIssue(
+                severity="warning",
+                code="missing_agent_version_snapshot",
+                section="agent",
+                message="Agent-definition simulation has no pinned agent version.",
+                remediation="Create or attach an agent version snapshot for reruns.",
+            )
+        )
+
+    requested_scenarios = execution.get("scenario_ids") or []
+    if not scenarios:
+        issues.append(
+            ReplayReadinessIssue(
+                severity="blocker",
+                code="missing_scenarios",
+                section="scenarios",
+                message="No scenarios are available in the passport.",
+                remediation="Attach at least one scenario before replaying this run.",
+            )
+        )
+    elif requested_scenarios and len(scenarios) != len(requested_scenarios):
+        issues.append(
+            ReplayReadinessIssue(
+                severity="blocker",
+                code="scenario_selection_mismatch",
+                section="scenarios",
+                message="Some scenario ids from the execution were not resolved.",
+                remediation="Restore the missing scenarios or replay a new baseline.",
+            )
+        )
+
+    if not eval_configs:
+        issues.append(
+            ReplayReadinessIssue(
+                severity="warning",
+                code="missing_eval_configs",
+                section="eval_configs",
+                message="No eval configs are attached to the run.",
+                remediation="Attach eval configs before comparing eval outcomes.",
+            )
+        )
+
+    return issues
+
+
+def _external_execution_metadata(
+    execution_metadata: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        str(key): value
+        for key, value in execution_metadata.items()
+        if str(key) not in INTERNAL_EXECUTION_METADATA_KEYS
+    }
+
+
+def _preflight_status(
+    replay_plan: Mapping[str, object],
+    input_drift: Mapping[str, object],
+) -> str:
+    if not replay_plan.get("can_replay"):
+        return "blocked"
+    if input_drift.get("highest_severity") == "blocker":
+        return "input_drift_blocked"
+    if input_drift.get("has_drift") or replay_plan.get("issues"):
+        return "warning"
+    return "ready"
+
+
+def _diagnosis_recommendation(changed_sections: Sequence[object]) -> str:
+    sections = {str(section) for section in changed_sections}
+    if "eval_configs" in sections:
+        return "Review eval template, mapping, filter, and threshold changes first."
+    if "prompt" in sections:
+        return "Compare prompt version snapshots before interpreting score deltas."
+    if "agent" in sections:
+        return "Compare agent version snapshots and simulator settings."
+    if "scenarios" in sections:
+        return "Verify the same scenario and dataset rows were replayed."
+    return "Resolve replay-input drift before attributing score deltas."
+
+
+def _append_unique_action(
+    actions: list[dict[str, object]],
+    seen_keys: set[tuple[str, str]],
+    action: dict[str, object],
+) -> None:
+    key = (str(action.get("source")), str(action.get("section")))
+    if key in seen_keys:
+        return
+    seen_keys.add(key)
+    actions.append(action)
+
+
+def _action_priority(severity: str) -> int:
+    return {"blocker": 0, "warning": 1, "info": 2}.get(severity, 3)
+
+
+def _stabilization_risk_level(actions: Sequence[Mapping[str, object]]) -> str:
+    severities = {str(action.get("severity")) for action in actions}
+    if "blocker" in severities:
+        return "high"
+    if "warning" in severities:
+        return "medium"
+    return "low"
+
+
+def _stabilization_summary(
+    actions: Sequence[Mapping[str, object]],
+    diagnosis: Mapping[str, object],
+) -> str:
+    if not actions:
+        return "Replay inputs look stable. Compare runtime outputs if scores moved."
+    if diagnosis.get("classification") == "replay_inputs_changed":
+        return "Stabilize changed replay inputs before treating score movement as model behavior."
+    return "Resolve replay readiness issues before starting a high-confidence rerun."
+
+
+def _agent_definition_payload(
+    agent_definition: Model | None,
+) -> dict[str, object] | None:
+    if not agent_definition:
+        return None
+
+    return {
+        "id": str(agent_definition.id),
+        "name": getattr(agent_definition, "agent_name", None),
+        "agent_type": getattr(agent_definition, "agent_type", None),
+        "provider": getattr(agent_definition, "provider", None),
+        "assistant_id": getattr(agent_definition, "assistant_id", None),
+        "language": getattr(agent_definition, "language", None),
+        "languages": _normalize(getattr(agent_definition, "languages", None)),
+        "model": getattr(agent_definition, "model", None),
+        "model_details": _normalize(getattr(agent_definition, "model_details", None)),
+        "knowledge_base_id": _model_id(agent_definition, "knowledge_base_id"),
+        "observability_provider_id": _model_id(
+            agent_definition, "observability_provider_id"
+        ),
+    }
+
+
+def _agent_version_payload(agent_version: Model | None) -> dict[str, object] | None:
+    if not agent_version:
+        return None
+
+    snapshot = getattr(agent_version, "configuration_snapshot", None)
+    return {
+        "id": str(agent_version.id),
+        "version_number": getattr(agent_version, "version_number", None),
+        "version_name": getattr(agent_version, "version_name", None),
+        "status": getattr(agent_version, "status", None),
+        "commit_message": getattr(agent_version, "commit_message", None),
+        "configuration_snapshot": _normalize(snapshot),
+        "configuration_snapshot_hash": stable_hash(snapshot or {}),
+    }
+
+
+def _simulator_agent_payload(simulator_agent: Model | None) -> dict[str, object] | None:
+    if not simulator_agent:
+        return None
+
+    return {
+        "id": str(simulator_agent.id),
+        "name": getattr(simulator_agent, "name", None),
+        "model": getattr(simulator_agent, "model", None),
+        "voice_provider": getattr(simulator_agent, "voice_provider", None),
+        "voice_name": getattr(simulator_agent, "voice_name", None),
+        "prompt_hash": stable_hash(getattr(simulator_agent, "prompt", "") or ""),
+    }
+
+
+def _eval_config_payload(eval_config: SimulateEvalConfig) -> dict[str, object]:
+    eval_template = eval_config.eval_template
+    eval_group = eval_config.eval_group
+    return {
+        "id": str(eval_config.id),
+        "name": eval_config.name,
+        "status": eval_config.status,
+        "model": eval_config.model,
+        "error_localizer": eval_config.error_localizer,
+        "knowledge_base_id": _model_id(eval_config, "kb_id_id"),
+        "eval_group": (
+            {
+                "id": str(eval_group.id),
+                "name": eval_group.name,
+            }
+            if eval_group
+            else None
+        ),
+        "eval_template": {
+            "id": str(eval_template.id),
+            "name": eval_template.name,
+            "eval_id": eval_template.eval_id,
+            "eval_type": eval_template.eval_type,
+            "template_type": eval_template.template_type,
+            "model": eval_template.model,
+            "config": _normalize(eval_template.config),
+            "criteria_hash": stable_hash(eval_template.criteria or ""),
+            "choices": _normalize(eval_template.choices),
+        },
+        "config": _normalize(eval_config.config),
+        "mapping": _normalize(eval_config.mapping),
+        "filters": _normalize(eval_config.filters),
+    }
+
+
+def _selected_scenarios(
+    run_test: RunTest,
+    test_execution: TestExecution,
+) -> list[Scenarios]:
+    scenario_ids = [str(item) for item in test_execution.scenario_ids or []]
+    queryset = run_test.scenarios.filter(deleted=False)
+    if scenario_ids:
+        queryset = queryset.filter(id__in=scenario_ids)
+    return list(
+        queryset.select_related(
+            "dataset",
+            "agent_definition",
+            "prompt_template",
+            "prompt_version",
+            "simulator_agent",
+        ).order_by("id")
+    )
+
+
+def _extract_section_hashes(passport: Mapping[str, object]) -> dict[str, str]:
+    raw_hashes = passport.get("section_hashes")
+    if not isinstance(raw_hashes, Mapping):
+        return {}
+    return {
+        str(section): str(section_hash)
+        for section, section_hash in raw_hashes.items()
+        if section_hash is not None
+    }
+
+
+def _extract_input_section_hashes(passport: Mapping[str, object]) -> dict[str, str]:
+    raw_hashes = passport.get("input_section_hashes")
+    if isinstance(raw_hashes, Mapping):
+        return {
+            str(section): str(section_hash)
+            for section, section_hash in raw_hashes.items()
+            if section_hash is not None
+        }
+
+    section_hashes = _extract_section_hashes(passport)
+    return {
+        section: section_hashes[section]
+        for section in REPLAY_INPUT_SECTIONS
+        if section in section_hashes
+    }
+
+
+def _highest_drift_severity(changes: Sequence[Mapping[str, object]]) -> str | None:
+    if not changes:
+        return None
+
+    severity_rank = {"blocker": 0, "warning": 1, "info": 2}
+    return str(
+        min(
+            (change.get("severity", "info") for change in changes),
+            key=lambda severity: severity_rank.get(str(severity), 3),
+        )
+    )
+
+
+def _mapping_or_empty(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _sequence_or_empty(value: object) -> Sequence[Mapping[str, object]]:
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
+        return []
+    return [item for item in value if isinstance(item, Mapping)]
+
+
+def _model_id(instance: object | None, attr: str = "id") -> str | None:
+    if instance is None:
+        return None
+    value = getattr(instance, attr, None)
+    if value is None:
+        return None
+    return str(value)
+
+
+def _normalize(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): REDACTED if _is_secret_key(str(key)) else _normalize(item)
+            for key, item in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+
+    if isinstance(value, QuerySet):
+        return [_normalize(item) for item in value]
+
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        return [_normalize(item) for item in value]
+
+    if isinstance(value, UUID):
+        return str(value)
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    if isinstance(value, date):
+        return value.isoformat()
+
+    if isinstance(value, Decimal):
+        return str(value)
+
+    if isinstance(value, Model):
+        return str(value.pk)
+
+    return value
+
+
+def _is_secret_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(fragment.lower() in lowered for fragment in SECRET_KEY_FRAGMENTS)

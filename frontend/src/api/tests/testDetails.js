@@ -9,6 +9,16 @@ export const useRerunTest = (executionId, options) => {
   });
 };
 
+export const useExecutionReproducibility = (executionId, options = {}) => {
+  return useQuery({
+    queryKey: ["test-execution-reproducibility", executionId],
+    queryFn: () => axios.get(endpoints.testExecutions.reproducibility(executionId)),
+    enabled: !!executionId,
+    select: (data) => data.data,
+    ...options,
+  });
+};
+
 export const useGetTestDetail = (testId, options = {}) => {
   return useQuery({
     queryKey: ["test-runs-detail", testId],

@@ -92,6 +92,9 @@ from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import SimulationCallType
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
+from simulate.services.reproducibility_passport import (
+    safe_capture_reproducibility_snapshot,
+)
 try:
     from ee.voice.services.conversation_metrics import ConversationMetricsCalculator
     from ee.voice.services.phone_number_service import PhoneNumberService
@@ -208,6 +211,10 @@ class TestExecutor:
                 if test.status != TestExecution.ExecutionStatus.CANCELLED:
                     test_execution.status = TestExecution.ExecutionStatus.COMPLETED
                     test_execution.save()
+                    safe_capture_reproducibility_snapshot(
+                        test_execution,
+                        "completion",
+                    )
                     logger.info(
                         f"Test execution {test_execution.id} marked as completed"
                     )
@@ -431,6 +438,10 @@ class TestExecutor:
                             EvalExplanationSummaryStatus.PENDING
                         )
                         test_execution.save()
+                        safe_capture_reproducibility_snapshot(
+                            test_execution,
+                            "completion",
+                        )
                         # Lazy import to avoid circular dependency
                         from simulate.tasks.eval_summary_tasks import (
                             run_eval_summary_task,
@@ -518,6 +529,10 @@ class TestExecutor:
                     simulator_agent=simulator_agent,
                     agent_definition=agent_definition,
                     agent_version=agent_version,
+                )
+                safe_capture_reproducibility_snapshot(
+                    test_execution_record,
+                    "start",
                 )
             except Exception as e:
                 logger.error(f"Error creating TestExecution record: {str(e)}")
@@ -2198,6 +2213,10 @@ class TestExecutor:
                 test_execution_record.status = TestExecution.ExecutionStatus.FAILED
                 test_execution_record.error_reason = validation_error
                 test_execution_record.save()
+                safe_capture_reproducibility_snapshot(
+                    test_execution_record,
+                    "completion",
+                )
                 return {
                     "phone_number": "",
                     "metadata": call_data.get("metadata", {}),
@@ -2804,6 +2823,10 @@ class TestExecutor:
             test_execution_record.completed_at = timezone.now()
             test_execution_record.picked_up_by_executor = False
             test_execution_record.save()
+            safe_capture_reproducibility_snapshot(
+                test_execution_record,
+                "completion",
+            )
 
             logger.info(
                 f"Successfully cancelled test execution {test_execution_record.id}"

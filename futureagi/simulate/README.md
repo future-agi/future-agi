@@ -28,6 +28,24 @@ GET/POST /simulate/api/scenarios/
 GET/PUT/DELETE /simulate/api/scenarios/<uuid>/
 ```
 
+### Test Execution Reproducibility
+```
+GET /simulate/test-executions/<uuid>/reproducibility/
+```
+
+Returns a replay passport and rerun preflight report for a test execution.
+
+The response includes:
+- `current.passport`: deterministic hashes for the replay inputs and runtime state
+- `current.replay_plan`: replay inputs, replay key, and readiness issues
+- `preflight`: replay status plus input drift from the stored start snapshot
+- `score_change_diagnosis`: likely cause of score movement from replay-input drift
+- `stabilization_plan`: ranked actions to make the rerun comparable before launch
+
+The rerun modal uses the stabilization plan to show whether the rerun is low,
+medium, or high risk. This helps teams avoid attributing an eval score change to
+model behavior when prompt, agent, scenario, eval, or execution options changed.
+
 ## Example Usage
 
 ### Create a new scenario
