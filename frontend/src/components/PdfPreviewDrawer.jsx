@@ -222,7 +222,7 @@ const PdfPreviewDrawer = () => {
                   Local Preview Unavailable
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
-                  Office document previews (.docx / .doc) rely on Microsoft's cloud viewer, which cannot access files hosted on your local system (localhost).
+                  Office document previews (.docx / .doc) rely on Microsoft&apos;s cloud viewer, which cannot access files hosted on your local system (localhost).
                   <br />
                   <br />
                   Please download the file to view it on your computer.
