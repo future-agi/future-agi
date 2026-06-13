@@ -13908,13 +13908,14 @@ class CreateKnowledgeBaseView(APIView):
             close_old_connections()
             connection.ensure_connection()
 
-            upload_file_to_s3(
+            url = upload_file_to_s3(
                 file_bytes=file_bytes,
                 file_name=file_name,
                 kb_id=kb_id,
                 file_id=file_id,
                 org_id=org_id,
             )
+            Files.objects.filter(id=file_id).update(uploaded_url=url)
             logger.info(f"Background S3 upload completed for file {file_id}")
 
         except Exception as e:
@@ -14705,6 +14706,7 @@ class ExistingKnowledgeBaseView(APIView):
                         "status": entry["status"],
                         "updated": entry["updated_at"],
                         "updated_by": entry["updated_by"],
+                        "uploaded_url": entry.get("uploaded_url"),
                     }
                 )
                 if error is not None:

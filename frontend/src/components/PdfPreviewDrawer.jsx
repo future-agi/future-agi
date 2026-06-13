@@ -75,6 +75,8 @@ const PdfPreviewDrawer = () => {
     if (type?.toLowerCase() === "txt" || type?.toLowerCase() === "text") {
       fetchedUrlsRef.current = fileUrl;
       fetchTextContent();
+    } else if (["png", "jpg", "jpeg", "webp", "gif", "svg", "bmp"].includes(type?.toLowerCase())) {
+      // wait for image component to load
     } else {
       setLoading(false);
     }
@@ -186,6 +188,46 @@ const PdfPreviewDrawer = () => {
               }}
             />
           </div>
+        );
+
+      case "png":
+      case "jpg":
+      case "jpeg":
+      case "webp":
+      case "gif":
+      case "svg":
+      case "bmp":
+        return (
+          <Box
+            sx={{
+              height: "100%",
+              width: "100%",
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              backgroundColor: "background.neutral",
+              p: 2,
+              overflow: "auto",
+            }}
+          >
+            <Box
+              component="img"
+              src={fileUrl}
+              alt={name || "Image Preview"}
+              sx={{
+                maxWidth: "100%",
+                maxHeight: "100%",
+                objectFit: "contain",
+                borderRadius: "8px",
+                boxShadow: (theme) => theme.customShadows?.z24 || theme.shadows[24],
+              }}
+              onLoad={() => setLoading(false)}
+              onError={() => {
+                setLoading(false);
+                setError("Failed to load image");
+              }}
+            />
+          </Box>
         );
 
       default:

@@ -362,9 +362,10 @@ class KBIndexer:
     ) -> None:
         """Process a single file from a temporary directory."""
         # Get the file extension
-        file_extension = os.path.splitext(file_path)[1]
+        file_extension = os.path.splitext(file_path)[1].lower()
 
         # Process the file based on its extension
+        text = None
         if file_extension == ".pdf":
             text = self.process_pdf(file_path)
         elif file_extension == ".txt":
@@ -373,6 +374,10 @@ class KBIndexer:
             text = self.process_docx(file_path)
         elif file_extension == ".rtf":
             text = self.process_rtf(file_path)
+        elif file_extension in [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".bmp"]:
+            logger.info(f"Skipping content indexing for image file {file_id}")
+            return
+
         if text:
             self.process_content(text, file_id, kb_id, organization_id)
         else:
