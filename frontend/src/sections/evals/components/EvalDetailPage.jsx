@@ -47,6 +47,7 @@ import LLMPromptEditor from "./LLMPromptEditor";
 import OutputTypeConfig from "./OutputTypeConfig";
 import FewShotExamples from "./FewShotExamples";
 import CodeEvalEditor from "./CodeEvalEditor";
+import CustomTagInput from "./CustomTagInput";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TestPlayground from "./TestPlayground";
 import CompositeDetailPanel from "./CompositeDetailPanel";
@@ -1841,6 +1842,16 @@ const EvalDetailPage = () => {
                         );
                       })()}
                     </Box>
+                    {!isSystemEval && (
+                      <CustomTagInput
+                        predefinedTags={EVAL_TAGS}
+                        selected={tags}
+                        onAdd={(value) => {
+                          setTags((prev) => [...prev, value]);
+                          markDirty();
+                        }}
+                      />
+                    )}
                   </Box>
                 )}
               </Box>

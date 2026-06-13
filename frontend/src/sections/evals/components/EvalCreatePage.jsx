@@ -22,6 +22,8 @@ import { useSnackbar } from "notistack";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 
+import CustomTagInput from "./CustomTagInput";
+import { canonicalizeTag, humanizeTag } from "../constant";
 import { useCreateEval } from "../hooks/useCreateEval";
 import { useUpdateEval } from "../hooks/useEvalDetail";
 import { useCreateCompositeEval } from "../hooks/useCompositeEval";
@@ -1141,6 +1143,37 @@ const EvalCreatePage = () => {
                               gap: 0.75,
                             }}
                           >
+                            {/* Custom tags (not in the predefined list) */}
+                            {tags
+                              .filter(
+                                (t) =>
+                                  !EVAL_TAGS.some(
+                                    (p) =>
+                                      canonicalizeTag(p.value) ===
+                                      canonicalizeTag(t),
+                                  ),
+                              )
+                              .map((t) => (
+                                <Chip
+                                  key={`custom-${t}`}
+                                  icon={
+                                    <Iconify icon="mdi:tag-outline" width={14} />
+                                  }
+                                  label={humanizeTag(t)}
+                                  size="small"
+                                  variant="filled"
+                                  color="primary"
+                                  onDelete={() =>
+                                    setTags((prev) =>
+                                      prev.filter((x) => x !== t),
+                                    )
+                                  }
+                                  sx={{
+                                    fontSize: "12px",
+                                    "& .MuiChip-icon": { fontSize: "14px" },
+                                  }}
+                                />
+                              ))}
                             {EVAL_TAGS.map((tag) => {
                               const selected = tags.includes(tag.value);
                               return (
@@ -1167,6 +1200,13 @@ const EvalCreatePage = () => {
                               );
                             })}
                           </Box>
+                          <CustomTagInput
+                            predefinedTags={EVAL_TAGS}
+                            selected={tags}
+                            onAdd={(value) =>
+                              setTags((prev) => [...prev, value])
+                            }
+                          />
                         </Box>
                       </Box>
                     )}

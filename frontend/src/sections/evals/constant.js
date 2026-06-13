@@ -253,3 +253,19 @@ export const TAG_LOOKUP = (() => {
   });
   return map;
 })();
+
+// Normalize free-text tag input into a canonical value (UPPERCASE_UNDERSCORE),
+// matching the convention used by EVAL_TAGS values and backend semantic tags.
+export const canonicalizeTag = (s) =>
+  String(s || "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .toUpperCase();
+
+// Turn a stored tag value (e.g. "CUSTOMER_SUPPORT") into a readable label.
+export const humanizeTag = (s) =>
+  String(s || "")
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase());
