@@ -1,6 +1,12 @@
+import concurrent.futures
+import structlog
 from typing import Any
 
 from tfc.ee_stub import _ee_stub
+
+logger = structlog.get_logger(__name__)
+
+_EVAL_AGENT_TIMEOUT_SECONDS = 120
 
 try:
     from ee.agenthub.explanation_agent.exp_agent import (
@@ -68,12 +74,31 @@ def _generate_cluster_dict_by_eval(eval_reasons_by_config):
         eval_criteria = config_data["eval_template_criteria"]
         eval_values = [e.get("value") for e in explanations]
 
-        result = explanation_agent.evaluate(
-            explanation=explanations,
-            eval_name=eval_name,
-            eval_criteria=eval_criteria,
-            eval_values=eval_values,
-        )
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    explanation_agent.evaluate,
+                    explanation=explanations,
+                    eval_name=eval_name,
+                    eval_criteria=eval_criteria,
+                    eval_values=eval_values,
+                )
+                result = future.result(timeout=_EVAL_AGENT_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            logger.warning(
+                "eval_explanation_agent_timeout",
+                config_name=config_name,
+                eval_name=eval_name,
+                timeout_seconds=_EVAL_AGENT_TIMEOUT_SECONDS,
+            )
+            continue
+        except Exception:
+            logger.exception(
+                "eval_explanation_agent_error",
+                config_name=config_name,
+                eval_name=eval_name,
+            )
+            continue
 
         if not result:
             continue
