@@ -531,6 +531,7 @@ export const endpoints = {
     knowledgeBase: "/model-hub/knowledge-base/",
     list: "/model-hub/knowledge-base/get/",
     files: "/model-hub/knowledge-base/files/",
+    downloadFile: (kbId) => `/model-hub/kb/${kbId}/download-file/`,
   },
   customMetric: {
     list: "/model-hub/custom-metric/",
