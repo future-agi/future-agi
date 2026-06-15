@@ -8,7 +8,6 @@
     "futureagi/accounts/views",
     "futureagi/agent_playground/views",
     "futureagi/agentcc/views",
-    "futureagi/ee/usage/views",
     "futureagi/integrations/views",
     "futureagi/mcp_server/views",
     "futureagi/model_hub/views",
@@ -17,18 +16,17 @@
     "futureagi/tfc/views",
     "futureagi/tracer/views",
     "futureagi/ai_tools/views.py",
-    "futureagi/ee/falcon_ai/views.py",
     "futureagi/saml2_auth/views.py"
   ],
   "summary": {
-    "runtime_backed_validated_request_decorators": 336,
-    "direct_swagger_auto_schema_decorators": 125,
+    "runtime_backed_validated_request_decorators": 357,
+    "direct_swagger_auto_schema_decorators": 132,
     "doc_only_input_contract_decorators": 0,
     "broad_request_contract_decorators": 0
   },
   "app_wide_summary": {
-    "runtime_backed_validated_request_decorators": 442,
-    "direct_swagger_auto_schema_decorators": 233,
+    "runtime_backed_validated_request_decorators": 463,
+    "direct_swagger_auto_schema_decorators": 240,
     "doc_only_input_contract_decorators": 0,
     "broad_request_contract_decorators": 0
   },

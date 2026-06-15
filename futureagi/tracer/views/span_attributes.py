@@ -61,7 +61,7 @@ class SpanAttributeKeysView(APIView):
         query = """
             SELECT key, 'string' AS type, count() AS cnt
             FROM (
-                SELECT arrayJoin(mapKeys(span_attr_str)) AS key
+                SELECT arrayJoin(mapKeys(attrs_string)) AS key
                 FROM spans
                 WHERE project_id = %(project_id)s
             )
@@ -71,7 +71,7 @@ class SpanAttributeKeysView(APIView):
 
             SELECT key, 'number' AS type, count() AS cnt
             FROM (
-                SELECT arrayJoin(mapKeys(span_attr_num)) AS key
+                SELECT arrayJoin(mapKeys(attrs_number)) AS key
                 FROM spans
                 WHERE project_id = %(project_id)s
             )
@@ -81,7 +81,7 @@ class SpanAttributeKeysView(APIView):
 
             SELECT key, 'boolean' AS type, count() AS cnt
             FROM (
-                SELECT arrayJoin(mapKeys(span_attr_bool)) AS key
+                SELECT arrayJoin(mapKeys(attrs_bool)) AS key
                 FROM spans
                 WHERE project_id = %(project_id)s
             )
@@ -152,12 +152,12 @@ class SpanAttributeValuesView(APIView):
 
         if q:
             query = """
-                SELECT span_attr_str[%(key)s] AS value, count() AS cnt
+                SELECT attrs_string[%(key)s] AS value, count() AS cnt
                 FROM spans
                 WHERE project_id = %(project_id)s
-                  AND mapContains(span_attr_str, %(key)s)
-                  AND span_attr_str[%(key)s] != ''
-                  AND span_attr_str[%(key)s] LIKE %(q_pattern)s
+                  AND mapContains(attrs_string, %(key)s)
+                  AND attrs_string[%(key)s] != ''
+                  AND attrs_string[%(key)s] LIKE %(q_pattern)s
                 GROUP BY value
                 ORDER BY cnt DESC
                 LIMIT %(limit)s
@@ -165,11 +165,11 @@ class SpanAttributeValuesView(APIView):
             params["q_pattern"] = f"%{q}%"
         else:
             query = """
-                SELECT span_attr_str[%(key)s] AS value, count() AS cnt
+                SELECT attrs_string[%(key)s] AS value, count() AS cnt
                 FROM spans
                 WHERE project_id = %(project_id)s
-                  AND mapContains(span_attr_str, %(key)s)
-                  AND span_attr_str[%(key)s] != ''
+                  AND mapContains(attrs_string, %(key)s)
+                  AND attrs_string[%(key)s] != ''
                 GROUP BY value
                 ORDER BY cnt DESC
                 LIMIT %(limit)s
@@ -261,9 +261,9 @@ class SpanAttributeDetailView(APIView):
         """Determine which attribute map contains the given key."""
         type_query = """
             SELECT
-                countIf(mapContains(span_attr_str, %(key)s))  AS str_cnt,
-                countIf(mapContains(span_attr_num, %(key)s))  AS num_cnt,
-                countIf(mapContains(span_attr_bool, %(key)s)) AS bool_cnt
+                countIf(mapContains(attrs_string, %(key)s))  AS str_cnt,
+                countIf(mapContains(attrs_number, %(key)s))  AS num_cnt,
+                countIf(mapContains(attrs_bool, %(key)s)) AS bool_cnt
             FROM spans
             WHERE project_id = %(project_id)s
         """
@@ -287,12 +287,12 @@ class SpanAttributeDetailView(APIView):
         """Return top values with percentages for a string attribute."""
         query = """
             SELECT
-                span_attr_str[%(key)s] AS value,
+                attrs_string[%(key)s] AS value,
                 count() AS cnt
             FROM spans
             WHERE project_id = %(project_id)s
-              AND mapContains(span_attr_str, %(key)s)
-              AND span_attr_str[%(key)s] != ''
+              AND mapContains(attrs_string, %(key)s)
+              AND attrs_string[%(key)s] != ''
             GROUP BY value
             ORDER BY cnt DESC
             LIMIT 100
@@ -336,14 +336,14 @@ class SpanAttributeDetailView(APIView):
         query = """
             SELECT
                 count()                                          AS cnt,
-                min(span_attr_num[%(key)s])                      AS min_val,
-                max(span_attr_num[%(key)s])                      AS max_val,
-                avg(span_attr_num[%(key)s])                      AS avg_val,
-                quantile(0.50)(span_attr_num[%(key)s])           AS p50,
-                quantile(0.95)(span_attr_num[%(key)s])           AS p95
+                min(attrs_number[%(key)s])                      AS min_val,
+                max(attrs_number[%(key)s])                      AS max_val,
+                avg(attrs_number[%(key)s])                      AS avg_val,
+                quantile(0.50)(attrs_number[%(key)s])           AS p50,
+                quantile(0.95)(attrs_number[%(key)s])           AS p95
             FROM spans
             WHERE project_id = %(project_id)s
-              AND mapContains(span_attr_num, %(key)s)
+              AND mapContains(attrs_number, %(key)s)
         """
         rows, _, query_time_ms = client.execute_read(query, params)
 
@@ -378,11 +378,11 @@ class SpanAttributeDetailView(APIView):
         """Return true/false distribution for a boolean attribute."""
         query = """
             SELECT
-                span_attr_bool[%(key)s] AS value,
+                attrs_bool[%(key)s] AS value,
                 count() AS cnt
             FROM spans
             WHERE project_id = %(project_id)s
-              AND mapContains(span_attr_bool, %(key)s)
+              AND mapContains(attrs_bool, %(key)s)
             GROUP BY value
             ORDER BY cnt DESC
         """

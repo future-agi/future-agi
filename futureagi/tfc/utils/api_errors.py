@@ -131,6 +131,9 @@ def first_error_code(value: Any, default_code: str = "error") -> str:
     if code:
         return str(code)
     if isinstance(value, Mapping):
+        explicit_code = value.get("error_code") or value.get("code")
+        if explicit_code:
+            return str(explicit_code)
         for item in value.values():
             nested_code = first_error_code(item, "")
             if nested_code:
@@ -197,6 +200,15 @@ def build_error_envelope(
         status_code, ApiErrorType.API_ERROR
     ).value
     message = error_message(value)
+
+    # When the caller passes a dict with an explicit ``error_code`` key (e.g.
+    # the login view's structured error responses), preserve the full dict as
+    # ``result`` so consumers can access ``data["result"]["error_code"]`` etc.,
+    # and promote the error_code to the top-level ``code`` field.
+    _has_error_code = isinstance(value, Mapping) and "error_code" in value
+    if _has_error_code and not code:
+        resolved_code = value["error_code"]
+
     body: dict[str, Any] = {
         "status": False,
         "type": resolved_type,
@@ -204,7 +216,7 @@ def build_error_envelope(
         "detail": message,
         "message": message,
         "error": message,
-        "result": message,
+        "result": dict(value) if _has_error_code else message,
     }
     attr = first_error_attr(resolved_details)
     if attr:

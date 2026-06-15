@@ -1984,6 +1984,111 @@ class TestReviewItem:
             == 2
         )
 
+    def test_bulk_review_requests_changes_selected_items(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+        organization,
+        workspace,
+    ):
+        queue_id, item_ids, label = queue_with_items
+        selected_ids = item_ids[:2]
+        QueueItem.objects.filter(pk__in=selected_ids).update(
+            status=QueueItemStatus.IN_PROGRESS.value,
+            review_status="pending_review",
+        )
+        for item in QueueItem.objects.filter(pk__in=selected_ids):
+            _create_score_for_item(item, label, second_user, organization)
+
+        resp = auth_client.post(
+            bulk_review_url(queue_id),
+            {
+                "item_ids": [str(item_id) for item_id in selected_ids],
+                "action": "request_changes",
+                "notes": "Bulk needs revision.",
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        result = _result(resp)
+        assert result["reviewed"] == 2
+        assert result["errors"] == []
+        assert set(result["reviewed_item_ids"]) == {
+            str(item_id) for item_id in selected_ids
+        }
+        reviewed_items = QueueItem.objects.filter(pk__in=selected_ids)
+        assert {item.review_status for item in reviewed_items} == {"rejected"}
+        assert {item.status for item in reviewed_items} == {
+            QueueItemStatus.IN_PROGRESS.value
+        }
+        assert {item.review_notes for item in reviewed_items} == {
+            "Bulk needs revision."
+        }
+        comments = QueueItemReviewComment.objects.filter(
+            queue_item_id__in=selected_ids,
+            action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+            comment="Bulk needs revision.",
+            deleted=False,
+        )
+        assert comments.count() == 2
+        assert set(comments.values_list("workspace_id", flat=True)) == {workspace.id}
+        threads = QueueItemReviewThread.objects.filter(
+            queue_item_id__in=selected_ids,
+            action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+            blocking=True,
+            status=QueueItemReviewThread.STATUS_OPEN,
+            deleted=False,
+        )
+        assert threads.count() == 2
+        assert set(threads.values_list("workspace_id", flat=True)) == {workspace.id}
+
+    def test_bulk_review_respects_review_workflow_entitlement_denial(
+        self,
+        auth_client,
+        queue_with_items,
+        second_user,
+        organization,
+    ):
+        if importlib.util.find_spec("ee.usage.services.entitlements") is None:
+            pytest.skip("Enterprise entitlement module is not available.")
+
+        queue_id, item_ids, label = queue_with_items
+        item = QueueItem.objects.get(pk=item_ids[0])
+        item.status = QueueItemStatus.IN_PROGRESS.value
+        item.review_status = "pending_review"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        _create_score_for_item(item, label, second_user, organization)
+
+        with patch(
+            "ee.usage.services.entitlements.Entitlements.check_feature",
+            return_value=SimpleNamespace(
+                allowed=False,
+                reason="review workflow disabled",
+            ),
+        ):
+            resp = auth_client.post(
+                bulk_review_url(queue_id),
+                {
+                    "item_ids": [str(item.id)],
+                    "action": "approve",
+                    "notes": "Should not be saved.",
+                },
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+        assert "review workflow disabled" in str(_result(resp))
+        item.refresh_from_db()
+        assert item.review_status == "pending_review"
+        assert item.status == QueueItemStatus.IN_PROGRESS.value
+        assert item.review_notes in (None, "")
+        assert not QueueItemReviewComment.objects.filter(
+            queue_item=item,
+            action=QueueItemReviewComment.ACTION_APPROVE,
+        ).exists()
+
     def test_bulk_review_reports_own_annotations_without_approving_them(
         self,
         auth_client,
@@ -3691,11 +3796,14 @@ class TestSkipItem:
             organization=organization,
             workspace=workspace,
         )
-        AnnotationQueueAnnotator.objects.create(
+        AnnotationQueueAnnotator.objects.update_or_create(
             queue=queue,
             user=manager,
-            role=AnnotatorRole.MANAGER.value,
-            roles=[AnnotatorRole.MANAGER.value],
+            deleted=False,
+            defaults={
+                "role": AnnotatorRole.MANAGER.value,
+                "roles": [AnnotatorRole.MANAGER.value],
+            },
         )
         item = QueueItem.objects.create(
             queue=queue,
@@ -5432,11 +5540,14 @@ class TestAssignItems:
             organization=organization,
             workspace=workspace,
         )
-        AnnotationQueueAnnotator.objects.create(
+        AnnotationQueueAnnotator.objects.update_or_create(
             queue=queue,
             user=manager,
-            role=AnnotatorRole.MANAGER.value,
-            roles=[AnnotatorRole.MANAGER.value],
+            deleted=False,
+            defaults={
+                "role": AnnotatorRole.MANAGER.value,
+                "roles": [AnnotatorRole.MANAGER.value],
+            },
         )
         item = QueueItem.objects.create(
             queue=queue,

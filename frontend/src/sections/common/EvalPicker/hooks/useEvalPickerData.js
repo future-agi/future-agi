@@ -20,9 +20,7 @@ export function useEvalPickerData({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [sorting, setSorting] = useState([{ id: "lastUpdated", desc: true }]);
-  const [filters, setFilters] = useState(
- null,
-  );
+  const [filters, setFilters] = useState(null);
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
 
   const ownerFilter = filters?.owner || "all";
@@ -32,7 +30,7 @@ export function useEvalPickerData({
     if (filters?.output_type) f.output_type = filters.output_type;
     if (filters?.tags) f.tags = filters.tags;
     // Locked filters override and cannot be removed by the user.
-    const lf  =lockedFilters;
+    const lf = lockedFilters;
     if (lf?.eval_type) f.eval_type = lf.eval_type;
     if (lf?.output_type) f.output_type = lf.output_type;
     if (lf?.template_type) f.template_type = lf.template_type;

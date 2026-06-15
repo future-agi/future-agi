@@ -19,10 +19,7 @@ import pytest
 
 from ai_tools.tests.conftest import run_tool
 from ai_tools.tests.fixtures import make_trace
-try:
-    from ee.usage.schemas.events import CheckResult
-except ImportError:
-    CheckResult = None
+from tfc.ee_gating import EEFeature, FeatureUnavailable
 
 # ---------------------------------------------------------------------------
 # Helpers / constants
@@ -125,10 +122,7 @@ def mock_orchestrator():
 @pytest.fixture(autouse=True)
 def allow_agentic_eval_feature():
     """Default tests assume evaluate_with_agent is available."""
-    with patch(
-        "ee.usage.services.entitlements.Entitlements.check_feature",
-        return_value=CheckResult(allowed=True),
-    ):
+    with patch("tfc.ee_gating.check_ee_feature", return_value=None):
         yield
 
 
@@ -139,13 +133,10 @@ def allow_agentic_eval_feature():
 
 class TestInputValidation:
     def test_blocked_when_agentic_eval_not_allowed(self, tool_context):
-        with patch(
-            "ee.usage.services.entitlements.Entitlements.check_feature"
-        ) as mock_check:
-            mock_check.return_value = CheckResult(
-                allowed=False,
-                reason="Agentic evaluation requires Boost plan",
-                error_code="ENTITLEMENT_DENIED",
+        with patch("tfc.ee_gating.check_ee_feature") as mock_check:
+            mock_check.side_effect = FeatureUnavailable(
+                EEFeature.AGENTIC_EVAL,
+                detail="Agentic evaluation requires Boost plan",
             )
 
             result = run_tool(
@@ -159,10 +150,13 @@ class TestInputValidation:
             )
 
             assert result.is_error
-            assert result.error_code == "PERMISSION_DENIED"
-            assert "requires Boost plan" in result.content
+            assert result.error_code == "ENTITLEMENT_DENIED"
+            assert result.data == {
+                "feature": EEFeature.AGENTIC_EVAL.value,
+                "upgrade_required": True,
+            }
             mock_check.assert_called_once_with(
-                str(tool_context.organization.id), "has_agentic_eval"
+                EEFeature.AGENTIC_EVAL, org_id=str(tool_context.organization.id)
             )
 
     def test_invalid_scope_returns_error(self, tool_context):

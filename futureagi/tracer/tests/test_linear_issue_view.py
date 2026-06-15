@@ -9,8 +9,7 @@ a deep analysis has run — the root causes + immediate fixes inline.
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import pytest
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 
 from tracer.types.feed_types import (
     DeepAnalysisResponse,
@@ -22,21 +21,20 @@ from tracer.views.feed.linear_issue_view import (
     _cluster_url,
 )
 
-
 # ---------------------------------------------------------------------------
 # _cluster_url helper
 # ---------------------------------------------------------------------------
 
 
 @override_settings(APP_URL="app.futureagi.com", ssl="https://")
-class TestClusterUrl:
+class TestClusterUrl(SimpleTestCase):
     def test_builds_url_from_app_url_and_scheme(self):
         url = _cluster_url("E-ABC123")
         assert url == "https://app.futureagi.com/dashboard/error-feed/E-ABC123"
 
 
 @override_settings(APP_URL=None)
-class TestClusterUrlWithoutAppUrl:
+class TestClusterUrlWithoutAppUrl(SimpleTestCase):
     def test_returns_empty_when_app_url_unset(self):
         # No APP_URL configured (some envs); helper returns "" so the
         # description builder can fall back to a non-link mention.
@@ -86,7 +84,7 @@ def _done_analysis(trace_id="trace-123", with_findings=True):
 
 
 @override_settings(APP_URL="app.futureagi.com", ssl="https://")
-class TestBuildIssueDescriptionBacklink:
+class TestBuildIssueDescriptionBacklink(SimpleTestCase):
     """The backlink must always be the first line — it's the only piece
     of context that lets a Linear assignee actually find the cluster."""
 
@@ -103,7 +101,7 @@ class TestBuildIssueDescriptionBacklink:
 
 
 @override_settings(APP_URL=None)
-class TestBuildIssueDescriptionWithoutAppUrl:
+class TestBuildIssueDescriptionWithoutAppUrl(SimpleTestCase):
     def test_falls_back_to_plain_cluster_mention(self):
         body = _build_issue_description(_cluster("E-1"), trace_id=None)
         # No URL → no markdown link, but cluster_id still mentioned.
@@ -112,7 +110,7 @@ class TestBuildIssueDescriptionWithoutAppUrl:
 
 
 @override_settings(APP_URL="app.futureagi.com", ssl="https://")
-class TestBuildIssueDescriptionWithDeepAnalysis:
+class TestBuildIssueDescriptionWithDeepAnalysis(SimpleTestCase):
     @patch("tracer.views.feed.linear_issue_view.feed_service.get_deep_analysis")
     def test_done_analysis_renders_root_causes_and_fixes(self, mock_get):
         mock_get.return_value = _done_analysis()

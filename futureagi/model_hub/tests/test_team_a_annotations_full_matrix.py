@@ -1980,7 +1980,7 @@ class TestAutomationRules:
         payload = {
             "name": "TeamA Rule",
             "source_type": "trace",
-            "conditions": {"all": []},
+            "conditions": {},
             "trigger_frequency": AutomationRuleTriggerFrequency.MANUAL.value,
         }
         resp = auth_client.post(_rules_url(queue), payload, format="json")
@@ -2048,7 +2048,7 @@ class TestAutomationRules:
             name="pick all",
             queue_id=queue,
             source_type="trace",
-            conditions={"project_id": str(project.id), "all": []},
+            conditions={"scope": {"project_id": str(project.id)}},
             organization=organization,
         )
         # Pre-state: no items.

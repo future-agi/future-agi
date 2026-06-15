@@ -16,6 +16,46 @@ def source_persona(db, organization, workspace):
     )
 
 
+ANONYMOUS_PERSONA_ID = "00000000-0000-4000-8000-000000001022"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("get", "/simulate/api/personas/", None),
+        ("post", "/simulate/api/personas/", {}),
+        ("post", f"/simulate/api/personas/duplicate/{ANONYMOUS_PERSONA_ID}/", {}),
+        ("get", "/simulate/api/personas/field-options/", None),
+        ("get", "/simulate/api/personas/system/", None),
+        ("get", "/simulate/api/personas/workspace/", None),
+        ("get", f"/simulate/api/personas/{ANONYMOUS_PERSONA_ID}/", None),
+        ("put", f"/simulate/api/personas/{ANONYMOUS_PERSONA_ID}/", {}),
+        ("patch", f"/simulate/api/personas/{ANONYMOUS_PERSONA_ID}/", {}),
+        ("delete", f"/simulate/api/personas/{ANONYMOUS_PERSONA_ID}/", None),
+        (
+            "post",
+            f"/simulate/api/personas/{ANONYMOUS_PERSONA_ID}/duplicate/",
+            {},
+        ),
+    ],
+)
+def test_persona_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+
+    if body is None:
+        response = request(path)
+    else:
+        response = request(path, body, format="json")
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestPersonaDuplicateView:

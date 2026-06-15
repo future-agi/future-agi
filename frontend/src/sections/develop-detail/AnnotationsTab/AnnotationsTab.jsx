@@ -25,6 +25,7 @@ import RunAnnotations from "../Annotations/RunAnnotations";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { normalizeAnnotationListRow } from "./annotationPreviewShape";
 
 const AnnotationsTab = ({ setSelectedRowsCount, setSelectedRowIds }) => {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
@@ -64,23 +65,29 @@ const AnnotationsTab = ({ setSelectedRowsCount, setSelectedRowIds }) => {
   const dataList = useMemo(() => {
     const data = apiData;
     if (!data) return [];
-    return data.map((i) => ({
-      id: i.id,
-      name: i.name,
-      noOfAnnotations: i.labels?.length,
-      status: {
-        progress: (i.summary?.completed / i.summary?.total) * 100 || 0,
-        text: `${i.summary.completed}/${i.summary.total} Completed`,
-      },
-      peopleAssigned: {
-        name: i.assignedUsers[0]?.name,
-        otherCount: i.assignedUsers?.length - 1,
-      },
-      assignedUsers: i.assignedUsers,
-      created_at: i.created_at,
-      actions: { annotationId: i.id, handleSetRenderAnnotationTable },
-      lowestUnfinishedRow: i.lowestUnfinishedRow,
-    }));
+    return data.map((row) => {
+      const i = normalizeAnnotationListRow(row);
+      const completed = i.summary?.completed ?? 0;
+      const total = i.summary?.total ?? 0;
+
+      return {
+        id: i.id,
+        name: i.name,
+        noOfAnnotations: i.labels?.length,
+        status: {
+          progress: total ? (completed / total) * 100 : 0,
+          text: `${completed}/${total} Completed`,
+        },
+        peopleAssigned: {
+          name: i.assignedUsers[0]?.name,
+          otherCount: Math.max(i.assignedUsers?.length - 1, 0),
+        },
+        assignedUsers: i.assignedUsers,
+        created_at: i.created_at,
+        actions: { annotationId: i.id, handleSetRenderAnnotationTable },
+        lowestUnfinishedRow: i.lowestUnfinishedRow,
+      };
+    });
   }, [apiData, handleSetRenderAnnotationTable]);
 
   const handleOpenModal = (el, data) => {
@@ -146,7 +153,7 @@ const AnnotationsTab = ({ setSelectedRowsCount, setSelectedRowIds }) => {
         onCellClicked={(event) => {
           if (
             event?.colDef?.field === "name" ||
-            event?.colDef?.field === "no_of_annotations" ||
+            event?.colDef?.field === "noOfAnnotations" ||
             event?.colDef?.field === "status" ||
             event?.colDef?.field === "created_at"
           ) {

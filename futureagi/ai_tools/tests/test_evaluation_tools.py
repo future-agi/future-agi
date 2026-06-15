@@ -259,11 +259,16 @@ class TestCreateEvalTemplateTool:
         assert result.is_error
         assert "already exists" in result.content
 
-    def test_create_duplicate_system_name(self, tool_context, eval_template):
+    def test_create_duplicate_system_name(self, tool_context):
         """Cannot create user template with same name as system template."""
+        eval_template = make_eval_template(tool_context, name="system-eval")
         result = run_tool(
             "create_eval_template",
-            {"name": eval_template.name},
+            {
+                "name": eval_template.name,
+                "criteria": "Evaluate {{response}}",
+                "required_keys": ["response"],
+            },
             tool_context,
         )
 

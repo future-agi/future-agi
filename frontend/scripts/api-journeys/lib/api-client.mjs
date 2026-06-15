@@ -1,5 +1,6 @@
 import process from "node:process";
 import { apiPath } from "../../../src/api/contracts/api-surface.js";
+import { readCachedTokens, writeCachedTokens } from "./token-cache.mjs";
 
 export { apiPath };
 
@@ -205,7 +206,7 @@ export function createApiClient({
 
 export async function createAuthenticatedContext() {
   const apiBase = process.env.API_BASE || "http://localhost:8003";
-  const tokens = await login(apiBase);
+  const tokens = await loadTokensForApiJourney(apiBase);
   let userClient = createApiClient({
     apiBase,
     accessToken: tokens.access,
@@ -220,6 +221,13 @@ export async function createAuthenticatedContext() {
     organizationId: contextIds.organizationId,
     workspaceId: contextIds.workspaceId,
   });
+  if (tokens.source !== "env") {
+    await writeCachedTokens(tokens, {
+      apiBase,
+      organizationId: contextIds.organizationId,
+      workspaceId: contextIds.workspaceId,
+    }).catch(() => null);
+  }
 
   return {
     client: userClient,
@@ -234,38 +242,53 @@ export async function createAuthenticatedContext() {
   };
 }
 
-async function login(apiBase) {
-  if (process.env.FUTURE_AGI_ACCESS_TOKEN) {
+export async function loadTokensForApiJourney(
+  apiBase,
+  { env = process.env, fetchImpl = fetch } = {},
+) {
+  if (env.FUTURE_AGI_ACCESS_TOKEN) {
     return {
-      access: process.env.FUTURE_AGI_ACCESS_TOKEN,
-      refresh: process.env.FUTURE_AGI_REFRESH_TOKEN || "",
+      access: env.FUTURE_AGI_ACCESS_TOKEN,
+      refresh: env.FUTURE_AGI_REFRESH_TOKEN || "",
+      source: "env",
     };
   }
 
-  const email = process.env.FUTURE_AGI_EMAIL;
-  const password = process.env.FUTURE_AGI_PASSWORD;
+  const cachedTokens = await readCachedTokens({ apiBase, env });
+  if (
+    cachedTokens?.access &&
+    (await accessTokenAccepted(apiBase, cachedTokens.access, fetchImpl))
+  ) {
+    return cachedTokens;
+  }
+
+  const email = env.FUTURE_AGI_EMAIL;
+  const password = env.FUTURE_AGI_PASSWORD;
   if (!email || !password) {
     throw new Error(
-      "Set FUTURE_AGI_ACCESS_TOKEN or FUTURE_AGI_EMAIL and FUTURE_AGI_PASSWORD.",
+      "Set FUTURE_AGI_ACCESS_TOKEN, FUTURE_AGI_TOKEN_FILE, or FUTURE_AGI_EMAIL and FUTURE_AGI_PASSWORD.",
     );
   }
 
-  let response = await fetch(`${normalizeBaseUrl(apiBase)}/accounts/token/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      email,
-      password,
-      remember_me: true,
-      "recaptcha-response": "api-journey-local-test",
-    }),
-  });
+  let response = await fetchImpl(
+    `${normalizeBaseUrl(apiBase)}/accounts/token/`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email,
+        password,
+        remember_me: true,
+        "recaptcha-response": "api-journey-local-test",
+      }),
+    },
+  );
   let body = await parseResponseBody(response);
   if (
     response.status === 400 &&
     String(body?.message || body?.detail || "").includes("recaptcha-response")
   ) {
-    response = await fetch(`${normalizeBaseUrl(apiBase)}/accounts/token/`, {
+    response = await fetchImpl(`${normalizeBaseUrl(apiBase)}/accounts/token/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, remember_me: true }),
@@ -283,7 +306,25 @@ async function login(apiBase) {
       },
     );
   }
-  return body;
+  const tokens = { ...body, source: "login" };
+  await writeCachedTokens(tokens, { apiBase, env }).catch(() => null);
+  return tokens;
+}
+
+async function accessTokenAccepted(apiBase, accessToken, fetchImpl) {
+  try {
+    const response = await fetchImpl(
+      `${normalizeBaseUrl(apiBase)}/accounts/user-info/`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+    );
+    const body = await parseResponseBody(response);
+    return response.ok && body?.status !== false;
+  } catch {
+    return false;
+  }
 }
 
 async function resolveContextIds(client, user) {

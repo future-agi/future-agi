@@ -251,7 +251,14 @@ export function AuthProvider({ children }) {
 
       return response.data; // Return response so calling function can use it
     } catch (error) {
-      logger.error("Registration Error:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Registration Error (expected)", error);
+      } else {
+        logger.error("Registration Error:", error);
+      }
       throw error; // Ensure errors are caught by caller
     }
   }, []);
@@ -264,7 +271,14 @@ export function AuthProvider({ children }) {
 
       return response.data; // Return response so calling function can use it
     } catch (error) {
-      logger.error("Registration Error:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Registration Error (expected)", error);
+      } else {
+        logger.error("Registration Error:", error);
+      }
       throw error; // Ensure errors are caught by caller
     }
   }, []);

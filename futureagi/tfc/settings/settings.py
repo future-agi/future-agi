@@ -227,6 +227,7 @@ WSGI_APPLICATION = "tfc.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
+
 def _pg_config(host, port=None, *, name=None, disable_cursors=True, options=None):
     """
     Build a Postgres config dict for a Django DATABASES alias.
@@ -273,7 +274,9 @@ if _read_host:
         port=os.getenv("PGBOUNCER_READ_PORT", os.getenv("PGBOUNCER_PORT", 6432)),
         name=os.getenv("PG_READ_DB", os.getenv("PG_DB", "tfc")),
     )
-    DATABASES["replica"]["TEST"] = {"MIRROR": "default"}  # Tests use default DB, not a real replica
+    DATABASES["replica"]["TEST"] = {
+        "MIRROR": "default"
+    }  # Tests use default DB, not a real replica
 
 # Direct connection (bypasses PgBouncer) — used for migrations that need
 # `lock_timeout` set at connection time. PgBouncer transaction-pool mode
@@ -311,7 +314,9 @@ if _direct_host:
 # router re-reads settings per call, but feature-key constants in hot paths
 # are computed at import time.
 _opt_in_raw = os.getenv("READ_REPLICA_OPT_IN", "")
-READ_REPLICA_OPT_IN: list[str] = [s.strip() for s in _opt_in_raw.split(",") if s.strip()]
+READ_REPLICA_OPT_IN: list[str] = [
+    s.strip() for s in _opt_in_raw.split(",") if s.strip()
+]
 
 DATABASE_ROUTERS = ["tfc.routers.ReadReplicaRouter"]
 
@@ -329,35 +334,11 @@ CLICKHOUSE = {
     "CH_FLUSH_INTERVAL_SECONDS": int(os.getenv("CH_FLUSH_INTERVAL_SECONDS", "5")),
     "CH_MAX_RETRIES": int(os.getenv("CH_MAX_RETRIES", "3")),
     "CH_RETRY_DELAY_SECONDS": int(os.getenv("CH_RETRY_DELAY_SECONDS", "1")),
-    # Query routing: "clickhouse", "postgres", or "auto" (ClickHouse with PG fallback)
-    "CH_ANALYTICS_BACKEND": os.getenv("CH_ANALYTICS_BACKEND", "postgres"),
     # Connection pool settings
     "CH_POOL_SIZE": int(os.getenv("CH_POOL_SIZE", "10")),
     "CH_CONNECT_TIMEOUT": int(os.getenv("CH_CONNECT_TIMEOUT", "10")),
     "CH_SEND_TIMEOUT": int(os.getenv("CH_SEND_TIMEOUT", "300")),
     "CH_RECEIVE_TIMEOUT": int(os.getenv("CH_RECEIVE_TIMEOUT", "300")),
-    # Per-query-type routing for gradual rollout
-    # Values: "postgres", "clickhouse", "auto" (CH with PG fallback), "shadow" (both, compare, return PG)
-    "CH_ROUTE_TIME_SERIES": os.getenv("CH_ROUTE_TIME_SERIES", "postgres"),
-    "CH_ROUTE_TRACE_LIST": os.getenv("CH_ROUTE_TRACE_LIST", "postgres"),
-    "CH_ROUTE_SESSION_LIST": os.getenv("CH_ROUTE_SESSION_LIST", "postgres"),
-    "CH_ROUTE_EVAL_METRICS": os.getenv("CH_ROUTE_EVAL_METRICS", "postgres"),
-    "CH_ROUTE_ERROR_ANALYSIS": os.getenv("CH_ROUTE_ERROR_ANALYSIS", "postgres"),
-    "CH_ROUTE_SPAN_LIST": os.getenv("CH_ROUTE_SPAN_LIST", "postgres"),
-    "CH_ROUTE_TRACE_OF_SESSION_LIST": os.getenv(
-        "CH_ROUTE_TRACE_OF_SESSION_LIST", "postgres"
-    ),
-    "CH_ROUTE_SPAN_GRAPH": os.getenv("CH_ROUTE_SPAN_GRAPH", "postgres"),
-    "CH_ROUTE_VOICE_CALL_LIST": os.getenv("CH_ROUTE_VOICE_CALL_LIST", "postgres"),
-    "CH_ROUTE_SESSION_ANALYTICS": os.getenv("CH_ROUTE_SESSION_ANALYTICS", "postgres"),
-    "CH_ROUTE_ANNOTATION_GRAPH": os.getenv("CH_ROUTE_ANNOTATION_GRAPH", "postgres"),
-    "CH_ROUTE_TRACE_DETAIL": os.getenv("CH_ROUTE_TRACE_DETAIL", "postgres"),
-    "CH_ROUTE_MONITOR_METRICS": os.getenv("CH_ROUTE_MONITOR_METRICS", "postgres"),
-    "CH_ROUTE_ANNOTATION_DETAIL": os.getenv("CH_ROUTE_ANNOTATION_DETAIL", "postgres"),
-    "CH_ROUTE_VOICE_CALL_DETAIL": os.getenv("CH_ROUTE_VOICE_CALL_DETAIL", "postgres"),
-    # Shadow mode: run both PG+CH, compare results, return PG
-    "CH_SHADOW_MODE": os.getenv("CH_SHADOW_MODE", "false").lower()
-    in ("true", "1", "yes"),
 }
 
 # Password validation
@@ -495,6 +476,9 @@ BILLING_CONFIG_PATH = os.environ.get(
 
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
+EE_LICENSE_PRIVATE_KEY = os.environ.get("EE_LICENSE_PRIVATE_KEY", "").replace(
+    "\\n", "\n"
+)
 
 # Cloud API key for managed AI features (self-hosted → cloud Agentcc gateway)
 FUTUREAGI_CLOUD_API_KEY = os.environ.get("FUTUREAGI_CLOUD_API_KEY", "")
@@ -661,7 +645,7 @@ _ssl = "http://" if _is_local else "https://"
 ssl = _ssl  # exported — used by accounts.utils, accounts.views.workspace_management
 
 BASE_URL = os.getenv(
-    "BASE_URL", "http://localhost:8000" if _is_local else f"https://api.futureagi.com"
+    "BASE_URL", "http://localhost:8000" if _is_local else "https://api.futureagi.com"
 )
 WEBSOCKET_ENDPOINT = os.getenv("WEBSOCKET_ENDPOINT", f"{BASE_URL}/call-websocket/")
 MINIO_URL = os.getenv(
@@ -752,17 +736,25 @@ CHANNEL_LAYERS = {
 }
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.getenv("REDIS_CACHE_URL", f"{REDIS_URL}"),
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-        },
-        "KEY_PREFIX": "futureagi",
-        "TIMEOUT": 600,  # Default timeout in seconds (10 minutes)
+if os.getenv("DJANGO_CACHE_BACKEND") == "locmem":
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "futureagi-local-cache",
+        }
     }
-}
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": os.getenv("REDIS_CACHE_URL", f"{REDIS_URL}"),
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            },
+            "KEY_PREFIX": "futureagi",
+            "TIMEOUT": 600,  # Default timeout in seconds (10 minutes)
+        }
+    }
 
 # Authentication Security Settings
 MAX_LOGIN_ATTEMPTS = 10  # Maximum failed login attempts before account lockout
@@ -798,3 +790,41 @@ WEBAUTHN_ORIGIN = os.getenv("WEBAUTHN_ORIGIN", "http://localhost:3031")
 # 2FA challenge token TTLs (seconds)
 TWO_FACTOR_CHALLENGE_TTL = 300  # 5 minutes
 WEBAUTHN_CHALLENGE_TTL = 120  # 2 minutes
+
+# ─── ClickHouse 25.3 (v2) span store ────────────────────────────────────────
+# The new spans cluster (typed Maps + typed JSON; PLAN_V2_NO_CDC). Falls back
+# to the legacy CLICKHOUSE dict above for connection details if not set
+# explicitly — see tracer/services/clickhouse/v2/__init__.py:get_v2_config().
+CLICKHOUSE_V2 = {
+    "CH25_HOST":      os.getenv("CH25_HOST"),
+    "CH25_HTTP_PORT": os.getenv("CH25_HTTP_PORT", "8123"),
+    "CH25_TCP_PORT":  os.getenv("CH25_TCP_PORT", "9000"),
+    "CH25_USER":      os.getenv("CH25_USER", "default"),
+    "CH25_PASSWORD":  os.getenv("CH25_PASSWORD", ""),
+    "CH25_DATABASE":  os.getenv("CH25_DATABASE", "default"),
+    # ─── Per-query-type routing for the shadow-mode rollout ──────────────────
+    # Comma-separated query type names. See tracer/services/clickhouse/v2/shadow.py
+    # for RoutingMode definitions. Anything not listed defaults to V1_ONLY.
+    "QUERY_TYPES_V2_PRIMARY": os.getenv("CH25_QUERY_TYPES_V2_PRIMARY", ""),
+    "QUERY_TYPES_V2_ONLY":    os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
+    "QUERY_TYPES_SHADOW":     os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
+    "QUERY_TYPES_DISABLED":   os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
+}
+
+# Eval-logger table read by the trace/voice/user eval-config discovery queries.
+# The CH25 spans cutover intentionally kept the legacy peerdb CDC table
+# `tracer_eval_logger` (`_peerdb_is_deleted`/`deleted` columns); the v2 table
+# `tracer_eval_logger_v2` (`is_deleted`) is its prepared replacement. Flip this
+# per-deployment (default = legacy so the peerdb-backed stacks are unaffected;
+# CH-direct stacks set it to `tracer_eval_logger_v2`). See
+# tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
+CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
+
+# Where the eval runner reads span data from.
+#   "postgres"   — current behavior; reads from tracer_observation_span (Django ORM)
+#   "clickhouse" — reads span data from CH 25.3 via the hybrid loader
+#                  (tracer/services/clickhouse/v2/eval_loader.py). Django FK
+#                  navigation (project, trace, end_user, …) still hits PG.
+# Default is "postgres" so cutover is opt-in. Flip to "clickhouse" only after
+# the backfill + validator pass and a soak period.
+EVAL_SPAN_READ_SOURCE = os.getenv("EVAL_SPAN_READ_SOURCE", "postgres").lower()

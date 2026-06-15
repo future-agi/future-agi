@@ -1,0 +1,64 @@
+-- =============================================================================
+-- 013 — Convert `attributes_extra` from typed JSON to plain String
+-- =============================================================================
+--
+-- ROOT CAUSE (verified empirically):
+--   CH 25.3 typed JSON columns (`JSON(max_dynamic_paths=N)`) stringify
+--   numeric leaves that live INSIDE ARRAYS, regardless of N. Proven via:
+--
+--     INSERT FORMAT JSONEachRow
+--       {"ae": {"raw_log": {"artifact": {"messages":
+--                 [{"duration": 932, "role": "user"}]}}}}
+--     SELECT toJSONString(ae)
+--     -> {"raw_log":{"artifact":{"messages":[{"duration":"932","role":"user"}]}}}
+--                                                          ^^^^^ was 932 (int)
+--
+--   This is documented behaviour of the typed-JSON array-element storage
+--   path. Top-level and shallow-object numeric leaves are preserved; leaves
+--   nested inside arrays are not.
+--
+-- WHY THIS MATTERS (the bug that surfaced this):
+--   `tracer.services.observability_providers._process_vapi_logs` reads
+--   `raw_log.artifact.messages[i].duration` and divides by 1000. Every Vapi
+--   call has messages as an array, and every message has numeric duration.
+--   After CH typed-JSON round-trip, those numbers come back as strings →
+--   `TypeError: unsupported operand type(s) for /: 'str' and 'int'`. Same
+--   pattern affects Retell, OpenAI streaming chunks (`logprobs[i].logprob`),
+--   any provider with array-of-objects payloads.
+--
+-- WHY String IS THE RIGHT CHOICE FOR `attributes_extra`:
+--   • `attributes_extra` is the OVERFLOW tier — by design we don't path-
+--     query it (the typed Maps `attrs_string`/`attrs_number`/`attrs_bool`
+--     handle path-queryable attribute access). It's read whole, parsed in
+--     application code, and used as-is.
+--   • Plain String preserves the original JSON text verbatim — round-trip
+--     is identity, no type mangling possible.
+--   • ZSTD(3) gives equivalent compression to the typed-JSON storage at
+--     the scale this column sees.
+--   • Loses: in-CH path-access syntax (`attributes_extra.foo.bar.:Int64`).
+--     We don't use this anywhere — typed Maps cover the path-access case
+--     and `JSONExtract*()` functions still work on String columns when
+--     needed for ad-hoc dashboard queries.
+--
+-- BACKWARD COMPATIBILITY:
+--   • Existing rows: CH will rewrite parts to the new column type via merge.
+--     Reads return string-form JSON, which is what `toJSONString(JSON)`
+--     was already producing. No application code change needed (every read
+--     site already parses with `json.loads(value if isinstance(value, str)
+--     else json.dumps(value))`).
+--   • `resource_attrs` (max_dynamic_paths=512) and `metadata`
+--     (max_dynamic_paths=256) are NOT changed. They store metadata that
+--     doesn't have nested-array numeric leaves; queries against them rely
+--     on the path-indexed access. If a similar bug surfaces there, the
+--     same ALTER pattern applies.
+--
+-- TEST COVERAGE:
+--   `test_ch25_typed_json_roundtrip` (added with this schema) seeds an
+--   `attributes_extra` value with deeply-nested numeric leaves inside
+--   arrays, reads it back via `toJSONString`, and asserts type identity
+--   with the original. The test would catch any future schema regression
+--   that re-introduces array-leaf stringification.
+-- =============================================================================
+
+ALTER TABLE spans
+    MODIFY COLUMN attributes_extra String DEFAULT '{}' CODEC(ZSTD(3));

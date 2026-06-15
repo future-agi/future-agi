@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 981,
+  "endpointCount": 977,
   "groups": {
     "accounts": {
       "/accounts/2fa/recovery-codes/": [
@@ -1826,14 +1826,10 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "get"
       ],
       "/model-hub/organizations/{organization_id}/users/": [
-        "get",
-        "post"
+        "get"
       ],
       "/model-hub/organizations/{organization_id}/users/{id}/": [
-        "delete",
-        "get",
-        "patch",
-        "put"
+        "get"
       ],
       "/model-hub/overview/": [
         "get"
@@ -2523,18 +2519,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/bulk-annotation/": [
         "post"
       ],
-      "/tracer/charts/": [
-        "get",
-        "post"
-      ],
       "/tracer/charts/fetch_graph/": [
         "get"
-      ],
-      "/tracer/charts/{id}/": [
-        "delete",
-        "get",
-        "patch",
-        "put"
       ],
       "/tracer/custom-eval-config/": [
         "get",
@@ -2913,18 +2899,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/shared/{token}/": [
         "get"
       ],
-      "/tracer/trace-annotation/": [
-        "get",
-        "post"
-      ],
       "/tracer/trace-annotation/get_annotation_values/": [
         "get"
-      ],
-      "/tracer/trace-annotation/{id}/": [
-        "delete",
-        "get",
-        "patch",
-        "put"
       ],
       "/tracer/trace-error-analysis/{trace_id}/": [
         "get"
@@ -5145,14 +5121,10 @@ export const API_SURFACE_PATHS = Object.freeze({
     "get"
   ],
   "/model-hub/organizations/{organization_id}/users/": [
-    "get",
-    "post"
+    "get"
   ],
   "/model-hub/organizations/{organization_id}/users/{id}/": [
-    "delete",
-    "get",
-    "patch",
-    "put"
+    "get"
   ],
   "/model-hub/overview/": [
     "get"
@@ -5834,18 +5806,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/bulk-annotation/": [
     "post"
   ],
-  "/tracer/charts/": [
-    "get",
-    "post"
-  ],
   "/tracer/charts/fetch_graph/": [
     "get"
-  ],
-  "/tracer/charts/{id}/": [
-    "delete",
-    "get",
-    "patch",
-    "put"
   ],
   "/tracer/custom-eval-config/": [
     "get",
@@ -6224,18 +6186,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/shared/{token}/": [
     "get"
   ],
-  "/tracer/trace-annotation/": [
-    "get",
-    "post"
-  ],
   "/tracer/trace-annotation/get_annotation_values/": [
     "get"
-  ],
-  "/tracer/trace-annotation/{id}/": [
-    "delete",
-    "get",
-    "patch",
-    "put"
   ],
   "/tracer/trace-error-analysis/{trace_id}/": [
     "get"

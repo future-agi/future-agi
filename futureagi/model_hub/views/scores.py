@@ -8,6 +8,7 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
 from model_hub.models.annotation_queues import QueueItem
 from model_hub.models.choices import QueueItemStatus
@@ -23,6 +24,7 @@ from model_hub.serializers.scores import (
     ScoreListQuerySerializer,
     ScoreResponseSerializer,
     ScoreSerializer,
+    UpdateScoreSerializer,
 )
 from model_hub.utils.annotation_queue_helpers import (
     resolve_default_queue_item_for_source,
@@ -46,9 +48,7 @@ ERROR_RESPONSES = {
 }
 
 
-def _resolve_queue_item(
-    queue_item_id, source_type, source_obj, organization, user
-):
+def _resolve_queue_item(queue_item_id, source_type, source_obj, organization, user):
     """Return a ``QueueItem`` to attribute a score to.
 
     If the request includes ``queue_item_id``, validate and return it.
@@ -68,9 +68,8 @@ def _resolve_queue_item(
         queue_item_source_id = (
             getattr(queue_item, f"{fk_field}_id", None) if fk_field else None
         )
-        if (
-            queue_item.source_type != source_type
-            or str(queue_item_source_id) != str(source_obj.pk)
+        if queue_item.source_type != source_type or str(queue_item_source_id) != str(
+            source_obj.pk
         ):
             logger.warning(
                 "score_queue_item_source_mismatch",
@@ -329,7 +328,10 @@ class ScoreViewSet(viewsets.ModelViewSet):
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
         source_obj = resolve_source_object(
-            source_type, source_id, organization=request.organization
+            source_type,
+            source_id,
+            organization=request.organization,
+            workspace=getattr(request, "workspace", None),
         )
         if not source_obj:
             return self._gm.not_found(f"Source not found: {source_type}={source_id}")
@@ -382,6 +384,8 @@ class ScoreViewSet(viewsets.ModelViewSet):
                     "score_source": data.get("score_source", "human"),
                     "notes": data.get("notes", ""),
                     "organization": request.organization,
+                    "workspace": getattr(request, "workspace", None)
+                    or getattr(queue_item, "workspace", None),
                 },
             )
 
@@ -427,7 +431,10 @@ class ScoreViewSet(viewsets.ModelViewSet):
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
         source_obj = resolve_source_object(
-            source_type, source_id, organization=request.organization
+            source_type,
+            source_id,
+            organization=request.organization,
+            workspace=getattr(request, "workspace", None),
         )
         if not source_obj:
             return self._gm.not_found(f"Source not found: {source_type}={source_id}")
@@ -441,6 +448,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
                     "observation_span",
                     span_notes_source_id,
                     organization=request.organization,
+                    workspace=getattr(request, "workspace", None),
                 )
                 if not span_notes_target:
                     return self._gm.not_found(
@@ -478,7 +486,9 @@ class ScoreViewSet(viewsets.ModelViewSet):
                     continue
 
                 # Per-score notes: only saved if the label has allow_notes=True.
-                per_score_notes = score_data.get("notes", "") if label.allow_notes else ""
+                per_score_notes = (
+                    score_data.get("notes", "") if label.allow_notes else ""
+                )
 
                 # See comment in create() for why no_workspace_objects is used:
                 # avoids FOR UPDATE + nullable LEFT JOIN issue; workspace is
@@ -495,6 +505,8 @@ class ScoreViewSet(viewsets.ModelViewSet):
                         "score_source": score_data.get("score_source", "human"),
                         "notes": per_score_notes,
                         "organization": request.organization,
+                        "workspace": getattr(request, "workspace", None)
+                        or getattr(queue_item, "workspace", None),
                     },
                 )
                 created_scores.append(score)
@@ -571,6 +583,57 @@ class ScoreViewSet(viewsets.ModelViewSet):
             }
         )
 
+    def _can_mutate_score(self, request, score):
+        is_owner_or_admin = request.user.get_organization_role(
+            request.organization
+        ) in (OrganizationRoles.OWNER, OrganizationRoles.ADMIN)
+        return score.annotator_id == request.user.pk or is_owner_or_admin
+
+    def _get_scoped_score(self, request, pk):
+        try:
+            score = self.get_queryset().get(pk=pk)
+        except Score.DoesNotExist:
+            return None
+        if not self._can_mutate_score(request, score):
+            return "forbidden"
+        return score
+
+    def _update_score(self, request, *, partial=False, pk=None):
+        if not partial and "value" not in request.validated_data:
+            return self._gm.bad_request({"value": ["This field is required."]})
+
+        score = self._get_scoped_score(request, pk)
+        if score is None:
+            return self._gm.not_found("Score not found.")
+        if score == "forbidden":
+            return self._gm.bad_request(
+                "You do not have permission to update this score."
+            )
+
+        update_fields = []
+        for field_name in ("value", "notes", "score_source"):
+            if field_name in request.validated_data:
+                setattr(score, field_name, request.validated_data[field_name])
+                update_fields.append(field_name)
+        score.save(update_fields=[*update_fields, "updated_at"])
+        return Response(ScoreSerializer(score).data)
+
+    @validated_request(
+        request_serializer=UpdateScoreSerializer,
+        responses={200: ScoreSerializer, **ERROR_RESPONSES},
+        partial_request_validation=True,
+    )
+    def update(self, request, *args, **kwargs):
+        return self._update_score(request, partial=False, pk=kwargs.get("pk"))
+
+    @validated_request(
+        request_serializer=UpdateScoreSerializer,
+        responses={200: ScoreSerializer, **ERROR_RESPONSES},
+        partial_request_validation=True,
+    )
+    def partial_update(self, request, *args, **kwargs):
+        return self._update_score(request, partial=True, pk=kwargs.get("pk"))
+
     @validated_request(
         query_serializer=ScoreForSourceQuerySerializer,
         responses={200: ScoreForSourceResponseSerializer, **ERROR_RESPONSES},
@@ -625,50 +688,66 @@ class ScoreViewSet(viewsets.ModelViewSet):
             # parent trace is semantically a "note on this span" for the
             # purposes of the trace-detail panel.
             from model_hub.models.annotation_queues import QueueItemNote
-            from tracer.models.observation_span import ObservationSpan
+            from tracer.models.project import Project
+            from tracer.services.clickhouse.v2 import get_reader
 
             # Resolve the parent trace, scoped to the requester's organization
             # so a direct call with another org's span id can't surface this
             # org's queue notes via the trace-level filter branch. If the
             # span doesn't belong to this org, ``span_belongs_to_org`` stays
             # False and we skip note enrichment entirely.
-            span_row = (
-                ObservationSpan.objects.filter(
-                    id=source_id,
-                    project__organization=request.organization,
-                )
-                .values_list("trace_id", flat=True)
-                .first()
-            )
-            span_belongs_to_org = span_row is not None
-            trace_id = span_row
+            #
+            # CH read replaces the PG path
+            #   ObservationSpan.objects.filter(id=, project__organization=)
+            #     .values_list("trace_id", flat=True).first()
+            # Org-tenant scope is verified by checking the span's project_id
+            # against the requesting org via Project (the only side of the
+            # FK that's still in PG).
+            with get_reader() as reader:
+                span = reader.get(str(source_id))
+            span_belongs_to_org = False
+            trace_id = None
+            if (
+                span is not None
+                and Project.objects.filter(
+                    id=span.project_id, organization=request.organization
+                ).exists()
+            ):
+                span_belongs_to_org = True
+                trace_id = span.trace_id or None
 
             queue_note_filter = Q(queue_item__observation_span_id=source_id)
             if trace_id:
                 queue_note_filter |= Q(queue_item__trace_id=trace_id)
 
             queue_notes = (
-                QueueItemNote.no_workspace_objects.filter(
-                    queue_note_filter,
-                    organization=request.organization,
-                    queue_item__organization=request.organization,
-                    queue_item__deleted=False,
-                    deleted=False,
+                (
+                    QueueItemNote.no_workspace_objects.filter(
+                        queue_note_filter,
+                        organization=request.organization,
+                        queue_item__organization=request.organization,
+                        queue_item__deleted=False,
+                        deleted=False,
+                    )
+                    .select_related(
+                        "annotator",
+                        "queue_item",
+                        "queue_item__queue",
+                    )
+                    .order_by("-updated_at", "-created_at")
                 )
-                .select_related(
-                    "annotator",
-                    "queue_item",
-                    "queue_item__queue",
-                )
-                .order_by("-updated_at", "-created_at")
-            ) if span_belongs_to_org else []
+                if span_belongs_to_org
+                else []
+            )
 
             payloads = []
             seen_user_queue = set()
             users_with_queue_notes = set()
             for note in queue_notes:
                 queue_name = (
-                    note.queue_item.queue.name if note.queue_item and note.queue_item.queue else None
+                    note.queue_item.queue.name
+                    if note.queue_item and note.queue_item.queue
+                    else None
                 )
                 annotator_label = (
                     note.annotator.name or note.annotator.email
@@ -697,11 +776,15 @@ class ScoreViewSet(viewsets.ModelViewSet):
             # org-scoped span check above so cross-org callers can't read
             # this org's legacy notes.
             legacy_notes = (
-                SpanNotes.objects.filter(span_id=source_id)
-                .exclude(created_by_user_id__in=users_with_queue_notes)
-                .select_related("created_by_user")
-                .order_by("-created_at")
-            ) if span_belongs_to_org else []
+                (
+                    SpanNotes.objects.filter(span_id=source_id)
+                    .exclude(created_by_user_id__in=users_with_queue_notes)
+                    .select_related("created_by_user")
+                    .order_by("-created_at")
+                )
+                if span_belongs_to_org
+                else []
+            )
             for note in legacy_notes:
                 payloads.append(
                     {

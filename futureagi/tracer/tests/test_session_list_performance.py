@@ -14,9 +14,6 @@ Run with: bin/test -k "test_session_list_performance" --no-services unit
 import json
 import time
 import uuid
-from datetime import datetime, timedelta
-from typing import Any, Dict, List
-from unittest import mock
 
 import pytest
 
@@ -34,6 +31,7 @@ class TestSessionListQueryPerformance:
                 {
                     "column_id": f"custom_attr_{i}",
                     "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
                         "filter_type": "text",
                         "filter_op": "equals",
                         "filter_value": f"value_{i}",
@@ -46,6 +44,8 @@ class TestSessionListQueryPerformance:
                 {
                     "column_id": col,
                     "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "number",
                         "filter_op": "greater_than",
                         "filter_value": i * 10,
                     },
@@ -125,7 +125,12 @@ class TestSessionListQueryPerformance:
         builder.build()
         query, _ = builder.build_count_query()
 
-        assert "GROUP BY" not in query
+        # The id-remap survivor map (id_remap_sql) embeds internal
+        # `GROUP BY new_id` + `GROUP BY any_id` in its join subquery; the simple
+        # count path must have no OTHER (session-level) GROUP BY — strip the
+        # remap's first.
+        stripped = query.replace("GROUP BY new_id", "").replace("GROUP BY any_id", "")
+        assert "GROUP BY" not in stripped
         assert "HAVING" not in query
         assert "count(DISTINCT trace_session_id)" in query
 
@@ -206,7 +211,7 @@ class TestSpanAttributesProcessingStress:
                     }
                 )
 
-        aggregated_attrs: Dict[str, Dict] = {}
+        aggregated_attrs: dict[str, dict] = {}
         start = time.monotonic()
 
         for attr_row in attr_rows:
@@ -246,7 +251,7 @@ class TestSpanAttributesProcessingStress:
             num_sessions=30, attrs_per_session=17, keys_per_attr=10
         )
         assert elapsed < 0.5, f"Took {elapsed:.3f}s (limit: 0.5s)"
-        for sid, keys in attrs.items():
+        for _sid, keys in attrs.items():
             assert len(keys) <= 50
 
     def test_attribute_processing_key_cap_effective(self):
@@ -254,7 +259,7 @@ class TestSpanAttributesProcessingStress:
         elapsed, attrs = self._simulate_attribute_processing(
             num_sessions=30, attrs_per_session=100, keys_per_attr=100
         )
-        for sid, keys in attrs.items():
+        for _sid, keys in attrs.items():
             assert len(keys) <= 50
         assert elapsed < 2.0, f"Took {elapsed:.3f}s (limit: 2.0s)"
 
@@ -284,7 +289,7 @@ class TestSpanAttributesProcessingStress:
             )
 
         start = time.monotonic()
-        aggregated_attrs: Dict[str, Dict] = {}
+        aggregated_attrs: dict[str, dict] = {}
 
         for attr_row in attr_data:
             sid = str(attr_row["session_id"])
@@ -369,4 +374,11 @@ class TestQueryTimeoutBudget:
         query, params = builder.build_span_attributes_query(session_ids)
         assert "LIMIT 500" in query
         assert "parent_span_id IS NULL OR parent_span_id = ''" in query
-        assert "PREWHERE" in query
+        # The committed PREWHERE micro-opt became a WHERE when the query gained
+        # the P3b id-remap LEFT JOIN: ClickHouse PREWHERE cannot reference a
+        # joined column, and the session-id filter now matches the resolved
+        # `ts_remap.survivor_id` (see session_list.build_span_attributes_query).
+        # The query is still bounded by LIMIT 500 + the root-span filter above;
+        # assert the resolved session filter is applied in the WHERE.
+        assert "WHERE" in query
+        assert "IN %(attr_session_ids)s" in query

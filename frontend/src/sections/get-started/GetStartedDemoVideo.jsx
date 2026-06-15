@@ -53,7 +53,7 @@ const GetStartedDemoVideo = ({
               <Typography
                 variant="s2"
                 fontWeight={"fontWeightRegular"}
-                color="text.disabled"
+                color="text.secondary"
               >
                 {headingDescription}
               </Typography>

@@ -129,10 +129,17 @@ export default function NodeDrawer({
     if (hadInitialConfigRef.current) {
       // Imported node: form already populated with model/messages from _initialConfig.
       // Only update IDs from the backend — don't overwrite imported data.
-      const pt = nodeDetailData.promptTemplate;
+      const pt =
+        nodeDetailData.promptTemplate || nodeDetailData.prompt_template;
       if (pt) {
-        setValue("prompt_version_id", pt.promptVersionId || null);
-        setValue("prompt_template_id", pt.promptTemplateId || null);
+        setValue(
+          "prompt_version_id",
+          pt.promptVersionId || pt.prompt_version_id || null,
+        );
+        setValue(
+          "prompt_template_id",
+          pt.promptTemplateId || pt.prompt_template_id || null,
+        );
       }
       hadInitialConfigRef.current = false;
     } else {
@@ -144,10 +151,11 @@ export default function NodeDrawer({
     updateNodeData(activeNode.id, enrichedNode.data);
 
     // Invalidate prompt versions cache so PromptNameRow fetches fresh versions
-    const pt = nodeDetailData.promptTemplate;
-    if (pt?.promptTemplateId) {
+    const pt = nodeDetailData.promptTemplate || nodeDetailData.prompt_template;
+    const promptTemplateId = pt?.promptTemplateId || pt?.prompt_template_id;
+    if (promptTemplateId) {
       queryClient.invalidateQueries({
-        queryKey: ["prompt-versions", pt.promptTemplateId],
+        queryKey: ["prompt-versions", promptTemplateId],
       });
     }
   }, [

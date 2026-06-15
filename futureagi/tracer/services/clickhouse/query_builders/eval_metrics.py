@@ -129,7 +129,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             return (
                 f"AND trace_id IN ("
                 f"SELECT DISTINCT trace_id FROM spans "
-                f"WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0 "
+                f"WHERE project_id = %(project_id)s AND is_deleted = 0 "
                 f"AND {extra_where})"
             )
         return ""

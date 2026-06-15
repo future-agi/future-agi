@@ -311,7 +311,7 @@ export default function AnnotationSidebarContent({
             </Typography>
             <Typography
               variant="caption"
-              color="text.disabled"
+              color="text.secondary"
               textAlign="center"
             >
               This item is not part of any annotation queue assigned to you.

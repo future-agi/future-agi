@@ -607,7 +607,11 @@ function DraggableWidgetCard({
 
           {/* Chart */}
           <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-            <WidgetChart widget={widget} globalDateRange={globalDateRange} />
+            <WidgetChart
+              key={`${widget.id}:${datePreset || "default"}`}
+              widget={widget}
+              globalDateRange={globalDateRange}
+            />
           </Box>
         </CardContent>
       </Card>
@@ -1215,7 +1219,7 @@ export default function DashboardDetailView() {
             <Typography variant="h6" color="text.secondary">
               No widgets yet
             </Typography>
-            <Typography variant="body2" color="text.disabled">
+            <Typography variant="body2" color="text.secondary">
               Add your first widget to start visualizing data
             </Typography>
             <Button

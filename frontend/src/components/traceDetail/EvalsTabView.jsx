@@ -83,7 +83,10 @@ export function collectAllEvalsFromEntry(entry) {
 // score, arbitrary label) is treated as not-passed and keeps the button.
 const isPassedEval = (ev) => {
   if (ev?.score != null) return ev.score >= 50;
-  const label = (ev?.score_label || "").trim().toLowerCase();
+  const rawLabel = (ev?.score_label || "").trim();
+  const numericLabel = parseFloat(rawLabel.replace(/%$/, ""));
+  if (Number.isFinite(numericLabel)) return numericLabel >= 50;
+  const label = rawLabel.toLowerCase();
   return label === "pass" || label === "passed" || label === "true";
 };
 
@@ -121,22 +124,38 @@ const EvalTableRow = ({
   const setObserveFeedbackTarget = useAddObserveEvalFeedbackStore(
     (s) => s.setAddObserveEvalFeedbackTarget,
   );
-  const hasError = ev?.error === true;
-  const sc = hasError
+  const isSkipped = ev?.skipped === true;
+  const hasError = ev?.error === true && !isSkipped;
+  const sc = isSkipped
     ? {
-        bg: (theme) => alpha(theme.palette.error.main, 0.08),
-        text: "error.main",
+        bg: (theme) => alpha(theme.palette.text.disabled, 0.08),
+        text: "text.disabled",
       }
-    : scoreColor(ev.score);
+    : hasError
+      ? {
+          bg: (theme) => alpha(theme.palette.error.main, 0.08),
+          text: "error.main",
+        }
+      : scoreColor(ev.score);
   const evalName = ev.eval_name || ev.eval_config_id || "Eval";
   const explanation = ev.explanation || ev.eval_explanation;
-  const scoreLabel = hasError
-    ? "Error"
-    : ev.score_label != null
-      ? ev.score_label
-      : ev.score != null
-        ? `${ev.score}%`
-        : "—";
+  // Pass/Fail evals
+  const isPassFail =
+    ev.output_type === "pass_fail" || ev.output_type === "Pass/Fail";
+  const passFailLabel =
+    isPassFail && typeof ev.result === "boolean"
+      ? ev.result
+        ? "Pass"
+        : "Fail"
+      : null;
+
+  const scoreLabel = isSkipped
+    ? "Skipped"
+    : hasError
+      ? "Error"
+      : (ev.score_label ??
+        passFailLabel ??
+        (ev.score != null ? `${ev.score}%` : "—"));
 
   // Error localization visibility — surfaced for every eval that has
   // enough identifiers to drive either the cell-based or trace-based

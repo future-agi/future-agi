@@ -16,7 +16,7 @@ from tfc.utils.general_methods import GeneralMethods
 from tracer.db_routing import DATABASE_FOR_DASHBOARD_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.dashboard import Dashboard, DashboardWidget
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
 from tracer.serializers.dashboard import (
     DashboardCreateUpdateSerializer,
     DashboardDetailSerializer,
@@ -48,6 +48,10 @@ from tracer.services.clickhouse.query_builders.simulation_dashboard import (
     SimulationQueryBuilder,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2.id_remap_sql import (
+    remap_left_join,
+    resolved_id_expr,
+)
 from tracer.utils.sql_queries import SQL_query_handler
 
 logger = structlog.get_logger(__name__)
@@ -570,7 +574,13 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 trace_config["organization_id"] = str(request.workspace.organization_id)
                 trace_config["workspace_id"] = str(request.workspace.id)
 
-                builder = DashboardQueryBuilder(trace_config)
+                # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=DASHBOARD
+                from tracer.services.clickhouse.v2.dispatch import (
+                    get_query_builder_class,
+                )
+
+                _DashCls = get_query_builder_class("DASHBOARD")
+                builder = _DashCls(trace_config)
                 query_timeout = self._get_trace_query_timeout_ms(trace_config)
                 for sql, params, metric_info in builder.build_all_queries():
                     metric_info["source"] = "traces"
@@ -831,7 +841,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     },
                     {
                         "name": "service_name",
-                        "display_name": "Service / Trace Name",
+                        "display_name": "Service Name",
                         "category": "system_metric",
                         "source": "traces",
                         "type": "string",
@@ -1030,6 +1040,27 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             filter_by_project = bool(req_project_ids and project_ids)
 
+            if (
+                filter_by_project
+                and not Project.objects.filter(
+                    id__in=project_ids,
+                )
+                .exclude(
+                    source=ProjectSourceChoices.SIMULATOR.value,
+                )
+                .exists()
+            ):
+                metrics.append(
+                    {
+                        "name": "agent_talk_percentage",
+                        "display_name": "Agent Talk %",
+                        "category": "system_metric",
+                        "source": "traces",
+                        "type": "number",
+                        "unit": "%",
+                    }
+                )
+
             # 3. Eval metrics — scoped to project(s) when project_ids provided
             try:
                 from model_hub.models.evals_metric import EvalTemplate
@@ -1049,6 +1080,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             "FROM tracer_eval_logger "
                             "WHERE _peerdb_is_deleted = 0 AND deleted = 0 "
                             "AND custom_eval_config_id != toUUID('00000000-0000-0000-0000-000000000000') "
+                            "AND created_at >= now() - INTERVAL 90 DAY "
                             "AND dictGet('trace_dict', 'project_id', trace_id) IN %(project_ids)s",
                             {"project_ids": project_ids},
                             timeout_ms=5000,
@@ -1145,10 +1177,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 from model_hub.models.develop_annotations import AnnotationsLabels
 
                 if filter_by_project:
-                    # Find annotation labels used in the given project(s) via
-                    # the Score model (the current write target for annotations).
-                    # Score.project_id may be NULL — scores are linked to traces,
-                    # so also look up via trace__project_id.
+
                     from model_hub.models.score import Score
 
                     used_label_ids = list(
@@ -1220,18 +1249,18 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         """
                         SELECT key, argMax(type, cnt) AS type FROM (
                             SELECT key, 'text' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_str) AS key
-                            WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
+                            FROM spans ARRAY JOIN mapKeys(attrs_string) AS key
+                            WHERE project_id IN %(project_ids)s AND is_deleted = 0
                             GROUP BY key
                             UNION ALL
                             SELECT key, 'number' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_num) AS key
-                            WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
+                            FROM spans ARRAY JOIN mapKeys(attrs_number) AS key
+                            WHERE project_id IN %(project_ids)s AND is_deleted = 0
                             GROUP BY key
                             UNION ALL
                             SELECT key, 'boolean' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_bool) AS key
-                            WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
+                            FROM spans ARRAY JOIN mapKeys(attrs_bool) AS key
+                            WHERE project_id IN %(project_ids)s AND is_deleted = 0
                             GROUP BY key
                         )
                         GROUP BY key ORDER BY key LIMIT 2000
@@ -1844,23 +1873,16 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         except (ImportError, Exception):
             pass
 
+        # CH-only span attribute key inventory. PG fallback removed
+        # post-migration — the attrs_* typed-Map indexes on CH are the
+        # authoritative source of which keys exist for a project.
         custom_attributes = []
+        analytics = AnalyticsQueryService() if is_clickhouse_enabled() else None
         for pid in project_ids:
-            try:
-                if is_clickhouse_enabled():
-                    analytics = AnalyticsQueryService()
-                    keys = analytics.get_span_attribute_keys_ch(pid)
-                else:
-                    keys = SQL_query_handler.get_span_attributes_for_project(pid)
-            except Exception as e:
-                logger.warning(
-                    f"CH span attributes failed for {pid}, falling back to PG",
-                    error=str(e),
-                )
-                try:
-                    keys = SQL_query_handler.get_span_attributes_for_project(pid)
-                except Exception:
-                    keys = []
+            if analytics is not None:
+                keys = analytics.get_span_attribute_keys_ch(pid)
+            else:
+                keys = SQL_query_handler.get_span_attributes_for_project(pid)
             for key in keys:
                 attr = {"name": key, "display_name": key, "type": "string"}
                 if attr not in custom_attributes:
@@ -2127,6 +2149,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "observation_type": "observation_type",
                     "span_kind": "observation_type",  # span_kind maps to observation_type in CH
                     "service_name": "name",  # service_name maps to span name
+                    "name": "name",
+                    "span_name": "name",
                     "session": "toString(trace_session_id)",
                     "tag": "arrayJoin(trace_tags)",
                     "prompt_name": "dictGet('prompt_dict', 'prompt_name', prompt_version_id)",
@@ -2141,11 +2165,21 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 if metric_name in enduser_string_cols:
                     enduser_col = enduser_string_cols[metric_name]
                     try:
+                        # P3b step2 precondition — the user/user_id_type filter-
+                        # value list is cut off the legacy CDC `tracer_enduser`
+                        # onto the v2 `end_users` RMT (017): `_peerdb_is_deleted`
+                        # → `is_deleted`; `user_id`/`user_id_type` columns are
+                        # identical. The legacy table stops getting new users
+                        # once step2 drops the PG get_or_create → PG→CDC chain,
+                        # so a newly-active user's `user_id` would be MISSING from
+                        # this dropdown; `end_users` is kept fresh by the P3a-ii
+                        # ingest dual-write. Both are OLD-keyed pre-flip with the
+                        # same rows → byte-identical value list (gate B).
                         sql = (
                             f"SELECT DISTINCT {enduser_col} AS val "
-                            f"FROM tracer_enduser FINAL "
+                            f"FROM end_users FINAL "
                             f"WHERE project_id IN %(project_ids)s "
-                            f"AND _peerdb_is_deleted = 0 "
+                            f"AND is_deleted = 0 "
                             f"AND {enduser_col} IS NOT NULL "
                             f"AND {enduser_col} != '' "
                             f"ORDER BY val "
@@ -2178,15 +2212,42 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     # type is non-nullable by default — the Nullable
                     # wrapper isn't always preserved through the MV chain.
                     null_uuid = "00000000-0000-0000-0000-000000000000"
-                    sql = (
-                        f"SELECT DISTINCT {col_expr} AS val "
-                        f"FROM spans "
-                        f"WHERE project_id IN %(project_ids)s "
-                        f"AND _peerdb_is_deleted = 0 "
-                        f"AND {col_expr} NOT IN ('', '{null_uuid}') "
-                        f"ORDER BY val "
-                        f"LIMIT 500"
+                    # Trace Name = root span name; restrict to root spans.
+                    root_only_clause = (
+                        "AND parent_span_id IS NULL " if metric_name == "name" else ""
                     )
+
+                    if metric_name == "session":
+                        ts_remap_join = remap_left_join(
+                            "sp.trace_session_id",
+                            "trace_session_id_remap",
+                            "ts_remap",
+                        )
+                        ts_resolved = resolved_id_expr(
+                            "sp.trace_session_id", "ts_remap"
+                        )
+                        col_expr = f"toString({ts_resolved})"
+                        sql = (
+                            f"SELECT DISTINCT {col_expr} AS val "
+                            f"FROM spans AS sp "
+                            f"{ts_remap_join} "
+                            f"WHERE sp.project_id IN %(project_ids)s "
+                            f"AND sp.is_deleted = 0 "
+                            f"AND {col_expr} NOT IN ('', '{null_uuid}') "
+                            f"ORDER BY val "
+                            f"LIMIT 500"
+                        )
+                    else:
+                        sql = (
+                            f"SELECT DISTINCT {col_expr} AS val "
+                            f"FROM spans "
+                            f"WHERE project_id IN %(project_ids)s "
+                            f"AND is_deleted = 0 "
+                            f"AND {col_expr} NOT IN ('', '{null_uuid}') "
+                            f"{root_only_clause}"
+                            f"ORDER BY val "
+                            f"LIMIT 500"
+                        )
                     result = analytics.execute_ch_query(
                         sql, {"project_ids": project_ids}, timeout_ms=5000
                     )
@@ -2316,7 +2377,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     values = []
 
             elif metric_type == "custom_attribute":
-                # Use mapContains() so the `idx_span_attr_str_keys` bloom
+                # Use mapContains() so the `idx_attrs_string_keys` bloom
                 # filter index prunes granules that don't have the key.
                 # Without this, wide-attribute projects can blow past
                 # ClickHouse's `max_bytes_to_read` limit (code 307) and
@@ -2324,19 +2385,19 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 # conversation.recording.mono.assistant / ended_reason for
                 # heavy voice projects.
                 sql = (
-                    "SELECT DISTINCT span_attr_str[%(attr_key)s] AS val "
+                    "SELECT DISTINCT attrs_string[%(attr_key)s] AS val "
                     "FROM spans "
                     "WHERE project_id IN %(project_ids)s "
-                    "AND _peerdb_is_deleted = 0 "
-                    "AND mapContains(span_attr_str, %(attr_key)s) "
-                    "AND span_attr_str[%(attr_key)s] != '' "
+                    "AND is_deleted = 0 "
+                    "AND mapContains(attrs_string, %(attr_key)s) "
+                    "AND attrs_string[%(attr_key)s] != '' "
                     "ORDER BY val "
                     "LIMIT 500"
                 )
                 result = analytics.execute_ch_query(
                     sql,
                     {"project_ids": project_ids, "attr_key": metric_name},
-                    timeout_ms=5000,
+                    timeout_ms=15000,
                 )
                 values = [
                     {"value": row["val"], "label": row["val"]} for row in result.data
@@ -2830,7 +2891,13 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                     return self._gm.bad_request(
                         "Some project_ids are invalid or not in this workspace"
                     )
-            builder = DashboardQueryBuilder(trace_config)
+            # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=DASHBOARD
+            from tracer.services.clickhouse.v2.dispatch import (
+                get_query_builder_class,
+            )
+
+            _DashCls = get_query_builder_class("DASHBOARD")
+            builder = _DashCls(trace_config)
             query_timeout = self._get_trace_query_timeout_ms(trace_config)
             for sql, params, metric_info in builder.build_all_queries():
                 metric_info["source"] = "traces"

@@ -88,7 +88,7 @@ const PersonaSection = ({ control, description = "" }) => {
           <Typography
             typography="s2_1"
             fontWeight="fontWeightRegular"
-            color="text.disabled"
+            color="text.secondary"
           >
             Auto-adds all active personas to your scenarios
           </Typography>

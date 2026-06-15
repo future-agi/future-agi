@@ -3,8 +3,9 @@
 from urllib.parse import urlencode
 
 import structlog
+from django.db import DatabaseError
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -32,6 +33,31 @@ from mcp_server.serializers.contracts import (
 from tfc.utils.api_contracts import validated_request
 
 logger = structlog.get_logger(__name__)
+
+
+def _client_registry_unavailable_response(protocol="management"):
+    if protocol == "oauth":
+        return Response(
+            {
+                "error": "server_error",
+                "error_description": "OAuth client registry unavailable",
+            },
+            status=503,
+        )
+    return Response(
+        {"status": False, "error": "OAuth client registry unavailable"},
+        status=503,
+    )
+
+
+def _get_active_oauth_client(client_id, protocol="management"):
+    try:
+        return MCPOAuthClient.objects.get(client_id=client_id, is_active=True), None
+    except MCPOAuthClient.DoesNotExist:
+        return None, None
+    except DatabaseError:
+        logger.exception("mcp_oauth_client_registry_unavailable", client_id=client_id)
+        return None, _client_registry_unavailable_response(protocol=protocol)
 
 
 def _oauth_validation_error_response(errors):
@@ -90,9 +116,10 @@ class MCPOAuthAuthorizeView(APIView):
                 status=400,
             )
 
-        try:
-            client = MCPOAuthClient.objects.get(client_id=client_id, is_active=True)
-        except MCPOAuthClient.DoesNotExist:
+        client, error_response = _get_active_oauth_client(client_id)
+        if error_response is not None:
+            return error_response
+        if client is None:
             return Response(
                 {"status": False, "error": "Unknown client_id"},
                 status=400,
@@ -138,6 +165,8 @@ class MCPOAuthAuthorizeView(APIView):
 class MCPOAuthConsentView(APIView):
     """POST /mcp/oauth/consent/ — Process user consent decision."""
 
+    permission_classes = [IsAuthenticated]
+
     @validated_request(
         request_serializer=MCPOAuthConsentRequestSerializer,
         responses={
@@ -166,9 +195,10 @@ class MCPOAuthConsentView(APIView):
                 status=403,
             )
 
-        try:
-            client = MCPOAuthClient.objects.get(client_id=client_id, is_active=True)
-        except MCPOAuthClient.DoesNotExist:
+        client, error_response = _get_active_oauth_client(client_id)
+        if error_response is not None:
+            return error_response
+        if client is None:
             return Response(
                 {"status": False, "error": "Unknown client_id"},
                 status=400,
@@ -258,9 +288,10 @@ class MCPOAuthTokenView(APIView):
             return Response({"error": "invalid_request"}, status=400)
 
         # Validate client
-        try:
-            client = MCPOAuthClient.objects.get(client_id=client_id, is_active=True)
-        except MCPOAuthClient.DoesNotExist:
+        client, error_response = _get_active_oauth_client(client_id, protocol="oauth")
+        if error_response is not None:
+            return error_response
+        if client is None:
             return Response({"error": "invalid_client"}, status=401)
 
         if not verify_client_secret(client_secret, client.client_secret_hash):
@@ -361,9 +392,10 @@ class MCPOAuthTokenView(APIView):
             return Response({"error": "invalid_request"}, status=400)
 
         # Validate client
-        try:
-            client = MCPOAuthClient.objects.get(client_id=client_id, is_active=True)
-        except MCPOAuthClient.DoesNotExist:
+        client, error_response = _get_active_oauth_client(client_id, protocol="oauth")
+        if error_response is not None:
+            return error_response
+        if client is None:
             return Response({"error": "invalid_client"}, status=401)
 
         if not verify_client_secret(client_secret, client.client_secret_hash):

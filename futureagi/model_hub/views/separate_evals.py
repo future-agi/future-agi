@@ -3,10 +3,11 @@ import math
 import traceback
 import uuid
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Callable, Optional
+from typing import Any
 
 import structlog
 from django.db import IntegrityError, transaction
@@ -36,10 +37,8 @@ from model_hub.models.evals_metric import (
     UserEvalMetric,
 )
 from model_hub.models.run_prompt import PromptEvalConfig
-from model_hub.serializers.develop_dataset import (
-    EvalPlayGroundFeedbackSerializer,
-)
 from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
     CellErrorLocalizerResponseSerializer,
     CompositeEvalAdhocExecuteRequestSerializer,
     CompositeEvalCreateRequestSerializer,
@@ -49,35 +48,35 @@ from model_hub.serializers.contracts import (
     CompositeEvalExecuteResponseSerializer,
     CompositeEvalUpdateRequestSerializer,
     DuplicateEvalTemplateResponseSerializer,
-    EvalApiLogTableQuerySerializer,
     EvalApiLogRowResponseSerializer,
+    EvalApiLogTableQuerySerializer,
     EvalApiLogTableResponseSerializer,
     EvalCodeSnippetResponseSerializer,
     EvalExecutionResponseSerializer,
     EvalFeedbackListResponseSerializer,
-    EvalMetricResponseSerializer,
     EvalMetricQuerySerializer,
+    EvalMetricRequestSerializer,
+    EvalMetricResponseSerializer,
     EvalPlaygroundFeedbackResponseSerializer,
     EvalTemplateBulkDeleteRequestSerializer,
     EvalTemplateBulkDeleteResponseSerializer,
-    EvalTemplateCreateV2RequestSerializer,
     EvalTemplateCreateResponseSerializer,
+    EvalTemplateCreateV2RequestSerializer,
     EvalTemplateDetailResponseSerializer,
     EvalTemplateListChartsRequestSerializer,
     EvalTemplateListChartsResponseSerializer,
     EvalTemplateListResponseSerializer,
-    EvalTemplateUpdateV2RequestSerializer,
+    EvalTemplateNamesRequestSerializer,
+    EvalTemplateNamesResponseSerializer,
     EvalTemplateUpdateResponseSerializer,
+    EvalTemplateUpdateV2RequestSerializer,
     EvalTemplateVersionCreateRequestSerializer,
     EvalTemplateVersionListResponseSerializer,
     EvalTemplateVersionResponseSerializer,
     EvalTemplateVersionRestoreResponseSerializer,
-    EvalTemplateNamesResponseSerializer,
     EvalUsageStatsResponseSerializer,
-    EvalMetricRequestSerializer,
-    EvalTemplateNamesRequestSerializer,
-    GroundTruthConfigResponseSerializer,
     GroundTruthConfigRequestSerializer,
+    GroundTruthConfigResponseSerializer,
     GroundTruthDataResponseSerializer,
     GroundTruthDeleteResponseSerializer,
     GroundTruthEmbedResponseSerializer,
@@ -89,14 +88,16 @@ from model_hub.serializers.contracts import (
     GroundTruthSearchRequestSerializer,
     GroundTruthSearchResponseSerializer,
     GroundTruthStatusResponseSerializer,
-    GroundTruthUploadResponseSerializer,
     GroundTruthUploadRequestSerializer,
+    GroundTruthUploadResponseSerializer,
     LegacyEvalTemplatesRequestSerializer,
     LegacyEvalTemplatesResponseSerializer,
     LegacyEvalTemplateUpdateResponseSerializer,
-    MODEL_HUB_ERROR_RESPONSES,
     ModelHubEmptyRequestSerializer,
     ModelHubStringResultResponseSerializer,
+)
+from model_hub.serializers.develop_dataset import (
+    EvalPlayGroundFeedbackSerializer,
 )
 from model_hub.serializers.eval_list import EvalListRequestSerializer
 from model_hub.serializers.eval_runner import (
@@ -117,13 +118,19 @@ from model_hub.utils.function_eval_params import (
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
+from tfc.constants.api_calls import APICallStatusChoices
+from tfc.middleware.workspace_context import get_current_workspace
 from tfc.settings.settings import BASE_URL
 from tfc.telemetry import wrap_for_thread
-from tfc.middleware.workspace_context import get_current_workspace
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import calculate_eval_average
 from tfc.utils.general_methods import GeneralMethods
+from tracer.models.custom_eval_config import CustomEvalConfig, InlineEval, ModelChoices
+from tracer.models.external_eval_config import ExternalEvalConfig
+from tracer.models.observation_span import EvalLogger
+from tracer.utils.filters import apply_created_at_filters
+from tracer.utils.graphs import GraphEngine
 
 try:
     from ee.usage.exceptions import UsageLimitExceeded
@@ -131,13 +138,6 @@ except ImportError:
     UsageLimitExceeded = None
 
 logger = structlog.get_logger(__name__)
-from tracer.models.custom_eval_config import CustomEvalConfig, InlineEval, ModelChoices
-from tracer.models.external_eval_config import ExternalEvalConfig
-from tracer.models.observation_span import EvalLogger
-from tracer.utils.filters import apply_created_at_filters
-from tracer.utils.graphs import GraphEngine
-
-from tfc.constants.api_calls import APICallStatusChoices
 
 try:
     from ee.usage.models.usage import APICallLog
@@ -163,7 +163,7 @@ def apply_filters(row_data, filters):
             if filter_value is None and filter_op not in ("is_null", "is_not_null"):
                 continue
 
-            def cell_value(row):
+            def cell_value(row, column_id=column_id):
                 cell = row.get(column_id)
                 if cell is None:
                     return None
@@ -207,11 +207,8 @@ def apply_filters(row_data, filters):
                 }
 
                 if filter_op not in text_ops:
-                    message = (
-                        "Invalid filter operation. \
-                        Allowed operations are: "
-                        + ", ".join(text_ops.keys())
-                    )
+                    message = "Invalid filter operation. \
+                        Allowed operations are: " + ", ".join(text_ops.keys())
                     raise ValueError(message)
 
                 result = []
@@ -439,7 +436,9 @@ class GetAPICallLogDetailsView(APIView):
             current_page = query["current_page_index"]
             source = query["source"]
             search = query["search"]
-            organization = getattr(request, "organization", None) or request.user.organization
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
 
             try:
                 eval_template = _get_accessible_eval_template(
@@ -694,7 +693,9 @@ class GetAPICallLogView(APIView):
             if not eval_id:
                 return self._gm.bad_request(get_error_message("EVAL_ID_REQUIRED."))
             column_config = validated_data.get("column_config")
-            organization = getattr(request, "organization", None) or request.user.organization
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
             try:
                 _get_accessible_eval_template(eval_id, organization)
             except EvalTemplate.DoesNotExist:
@@ -1410,12 +1411,12 @@ class GetEvalTemplates(APIView):
                 logs = []
             else:
                 logs = APICallLog.objects.filter(
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                deleted=False,
-                created_at__gte=start_date,
-                source_id__in=paginated_template_ids,
-            ).values("source_id", "created_at", "status", "config", "updated_at")
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    deleted=False,
+                    created_at__gte=start_date,
+                    source_id__in=paginated_template_ids,
+                ).values("source_id", "created_at", "status", "config", "updated_at")
 
             template_logs_map = defaultdict(list)
             for log in logs:
@@ -1488,7 +1489,6 @@ class EvalTemplateListView(APIView):
         },
     )
     def post(self, request, *args, **kwargs):
-        from model_hub.serializers.eval_list import EvalListRequestSerializer
         from model_hub.types import EvalListItem, EvalListResponse
         from model_hub.utils.eval_list import (
             build_eval_list_queryset,
@@ -1812,26 +1812,100 @@ class EvalTemplateBulkDeleteView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            templates_to_delete = list(
-                EvalTemplate.objects.filter(
+            from model_hub.models.develop_dataset import Cell, Column, Dataset
+
+            with transaction.atomic():
+                deleted_count = EvalTemplate.objects.filter(
                     id__in=req.template_ids,
                     organization=organization,
                     owner=OwnerChoices.USER.value,
                     deleted=False,
-                ).values_list("id", flat=True)
-            )
+                ).update(deleted=True, deleted_at=timezone.now())
 
-            now = timezone.now()
-            deleted_count = EvalTemplate.objects.filter(
-                id__in=templates_to_delete,
-                organization=organization,
-                owner=OwnerChoices.USER.value,
-                deleted=False,
-            ).update(deleted=True, deleted_at=now)
-            EvalSettings.objects.filter(
-                eval_id__in=templates_to_delete,
-                deleted=False,
-            ).update(deleted=True, deleted_at=now)
+                # Fetch all UserEvalMetrics bound to these templates
+                # Scoped to the requesting org to prevent cross-tenant cascade
+                metrics = list(
+                    UserEvalMetric.objects.filter(
+                        template_id__in=req.template_ids,
+                        organization=organization,
+                        deleted=False,
+                    ).values_list("id", "dataset_id")
+                )
+
+                if metrics:
+                    metric_ids = {str(m[0]) for m in metrics}
+                    dataset_ids = {m[1] for m in metrics}
+
+                    # Find eval result columns scoped by dataset (indexed)
+                    eval_cols = list(
+                        Column.objects.filter(
+                            dataset_id__in=dataset_ids,
+                            source=SourceChoices.EVALUATION.value,
+                            source_id__in=metric_ids,
+                            deleted=False,
+                        ).values_list("id", "dataset_id", flat=False)
+                    )
+
+                    # Build set of eval column IDs for dependent column lookup
+                    eval_col_ids = {row[0] for row in eval_cols}
+                    all_col_ids = set(eval_col_ids)
+
+                    # Find dependent columns (reason, tags) scoped by dataset
+                    if eval_col_ids:
+                        eval_col_suffixes = {
+                            f"{ecid}-sourceid-"
+                            for ecid in (str(eid) for eid in eval_col_ids)
+                        }
+                        dep_cols = list(
+                            Column.objects.filter(
+                                dataset_id__in=dataset_ids,
+                                source__in=[
+                                    SourceChoices.EVALUATION_REASON.value,
+                                    SourceChoices.EVALUATION_TAGS.value,
+                                ],
+                                deleted=False,
+                            ).values_list("id", "source_id")
+                        )
+                        for col_id, source_id in dep_cols:
+                            if source_id and any(
+                                sfx in source_id for sfx in eval_col_suffixes
+                            ):
+                                all_col_ids.add(col_id)
+
+                    if all_col_ids:
+                        # Bulk soft-delete cells
+                        Cell.objects.filter(
+                            column_id__in=all_col_ids, deleted=False
+                        ).update(deleted=True, deleted_at=timezone.now())
+
+                        # Bulk soft-delete columns
+                        Column.objects.filter(id__in=all_col_ids).update(
+                            deleted=True, deleted_at=timezone.now()
+                        )
+
+                        # Fix column_order per affected dataset
+                        col_id_strs = {str(c) for c in all_col_ids}
+                        affected_datasets = list(
+                            Dataset.objects.filter(id__in=dataset_ids)
+                        )
+                        datasets_to_update = []
+                        for ds in affected_datasets:
+                            if ds.column_order:
+                                new_order = [
+                                    c for c in ds.column_order if c not in col_id_strs
+                                ]
+                                if len(new_order) != len(ds.column_order):
+                                    ds.column_order = new_order
+                                    datasets_to_update.append(ds)
+                        if datasets_to_update:
+                            Dataset.objects.bulk_update(
+                                datasets_to_update, ["column_order"]
+                            )
+
+                    # Soft-delete the metrics themselves
+                    UserEvalMetric.objects.filter(
+                        id__in=[m[0] for m in metrics]
+                    ).update(deleted=True, deleted_at=timezone.now())
 
             response = BulkDeleteResponse(deleted_count=deleted_count)
             return self._gm.success_response(response.model_dump())
@@ -2758,9 +2832,7 @@ class EvalTemplateVersionListView(APIView):
                         eval_tags=list(v.eval_tags or []),
                         # Derived; tolerate camelCase from older FE round-trips.
                         choices=cs.get("choices") or [],
-                        choices_map=cs.get("choices_map")
-                        or cs.get("choicesMap")
-                        or {},
+                        choices_map=cs.get("choices_map") or cs.get("choicesMap") or {},
                         multi_choice=bool(cs.get("multi_choice", False)),
                     )
                 )
@@ -2869,7 +2941,7 @@ class _SnapshotField:
     rewrite needed."""
 
     name: str
-    transform: Optional[Callable[[Any], Any]] = None
+    transform: Callable[[Any], Any] | None = None
 
 
 # Each entry is nullable on EvalTemplateVersion; NULL → skip on restore
@@ -3197,9 +3269,7 @@ def _request_workspace_filter(request, field_name="workspace"):
     return Q(**{field_name: workspace})
 
 
-def _get_accessible_eval_template_for_request(
-    template_id, request, template_type=None
-):
+def _get_accessible_eval_template_for_request(template_id, request, template_type=None):
     organization = _request_organization(request)
     queryset = EvalTemplate.no_workspace_objects.filter(id=template_id, deleted=False)
     if template_type:
@@ -3280,8 +3350,7 @@ def _resolve_child_pinned_versions(child_ids, child_pinned_versions):
             )
         except EvalTemplateVersion.DoesNotExist as exc:
             raise ValueError(
-                f"Pinned version {version_id} is invalid for child template "
-                f"{child_id}."
+                f"Pinned version {version_id} is invalid for child template {child_id}."
             ) from exc
     return resolved
 
@@ -3322,8 +3391,7 @@ class CompositeEvalCreateView(APIView):
             try:
                 request_data = dict(request.validated_data)
                 request_data["child_template_ids"] = [
-                    str(child_id)
-                    for child_id in request_data["child_template_ids"]
+                    str(child_id) for child_id in request_data["child_template_ids"]
                 ]
                 req = CompositeCreateRequest(**request_data)
             except Exception as e:
@@ -3456,9 +3524,7 @@ class CompositeEvalCreateView(APIView):
                             str(pinned_version.id) if pinned_version else None
                         ),
                         pinned_version_number=(
-                            pinned_version.version_number
-                            if pinned_version
-                            else None
+                            pinned_version.version_number if pinned_version else None
                         ),
                         config=child_config,
                     )
@@ -3468,11 +3534,38 @@ class CompositeEvalCreateView(APIView):
             from model_hub.models.evals_metric import EvalTemplateVersion
 
             workspace = getattr(request, "workspace", None)
+            # Build the same config_snapshot that PATCH uses so V1
+            # captures children, weights, and aggregation settings.
+            links = list(
+                CompositeEvalChild.objects.filter(parent=parent, deleted=False)
+                .select_related("child")
+                .order_by("order")
+            )
+            config_snapshot = {
+                "aggregation_enabled": parent.aggregation_enabled,
+                "aggregation_function": parent.aggregation_function,
+                "composite_child_axis": parent.composite_child_axis or "",
+                "children": [
+                    {
+                        "child_id": str(link.child_id),
+                        "child_name": link.child.name,
+                        "order": link.order,
+                        "weight": link.weight,
+                        "config": link.config or {},
+                        "pinned_version_id": (
+                            str(link.pinned_version_id)
+                            if link.pinned_version_id
+                            else None
+                        ),
+                    }
+                    for link in links
+                ],
+            }
             try:
                 EvalTemplateVersion.objects.create_version(
                     eval_template=parent,
                     prompt_messages=[],
-                    config_snapshot={},
+                    config_snapshot=config_snapshot,
                     criteria=req.description or "",
                     model="",
                     user=request.user,
@@ -3521,12 +3614,11 @@ class CompositeEvalDetailView(APIView):
         from model_hub.utils.eval_list import derive_eval_type
 
         try:
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
             try:
-                parent = _get_accessible_composite_template(
-                    template_id, organization
+                parent = _get_accessible_eval_template_for_request(
+                    template_id,
+                    request,
+                    template_type="composite",
                 )
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Composite eval template not found.")
@@ -3620,8 +3712,7 @@ class CompositeEvalDetailView(APIView):
                 request_data = dict(request.validated_data)
                 if request_data.get("child_template_ids") is not None:
                     request_data["child_template_ids"] = [
-                        str(child_id)
-                        for child_id in request_data["child_template_ids"]
+                        str(child_id) for child_id in request_data["child_template_ids"]
                     ]
                 req = CompositeUpdateRequest(**request_data)
             except Exception as e:
@@ -3800,9 +3891,7 @@ class CompositeEvalDetailView(APIView):
                 or req.child_configs is not None
             ):
                 existing_links = list(
-                    CompositeEvalChild.objects.filter(
-                        parent=parent, deleted=False
-                    )
+                    CompositeEvalChild.objects.filter(parent=parent, deleted=False)
                 )
                 try:
                     pinned_versions = _resolve_child_pinned_versions(
@@ -3885,7 +3974,9 @@ class CompositeEvalDetailView(APIView):
                     ),
                     weight=link.weight,
                     config=link.config or {},
-                    required_keys=list((link.child.config or {}).get("required_keys") or []),
+                    required_keys=list(
+                        (link.child.config or {}).get("required_keys") or []
+                    ),
                 )
                 for link in links
             ]
@@ -4163,8 +4254,7 @@ class CompositeEvalAdhocExecuteView(APIView):
             try:
                 request_data = dict(request.validated_data)
                 request_data["child_template_ids"] = [
-                    str(child_id)
-                    for child_id in request_data["child_template_ids"]
+                    str(child_id) for child_id in request_data["child_template_ids"]
                 ]
                 req = CompositeAdhocExecuteRequest(**request_data)
             except Exception as e:
@@ -4399,9 +4489,7 @@ class GroundTruthUploadView(APIView):
                 if uploaded_file.size > MAX_FILE_SIZE_BYTES:
                     return self._gm.bad_request("File exceeds maximum size of 50MB.")
 
-                name = request_data.get("name") or uploaded_file.name.rsplit(".", 1)[
-                    0
-                ]
+                name = request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
                 description = request_data.get("description", "")
 
                 try:
@@ -4718,7 +4806,6 @@ class GroundTruthConfigView(APIView):
     )
     def get(self, request, template_id, *args, **kwargs):
         try:
-            organization = _request_organization(request)
             try:
                 template = _get_accessible_eval_template_for_request(
                     template_id, request
@@ -4772,7 +4859,6 @@ class GroundTruthConfigView(APIView):
                 return self._gm.bad_request(format_request_error(e))
 
             try:
-                organization = _request_organization(request)
                 template = _get_accessible_eval_template_for_request(
                     template_id, request
                 )
@@ -4936,9 +5022,7 @@ class GroundTruthTriggerEmbeddingView(APIView):
             if workflow_run_id is None:
                 gt.embedding_status = "failed"
                 gt.save(update_fields=["embedding_status", "updated_at"])
-                return self._gm.bad_request(
-                    "Failed to trigger embedding generation."
-                )
+                return self._gm.bad_request("Failed to trigger embedding generation.")
 
             return self._gm.success_response(
                 {
@@ -4999,7 +5083,6 @@ class EvalUsageStatsView(APIView):
             page = int(request.GET.get("page", 0))
             page_size = min(int(request.GET.get("page_size", 25)), 100)
             period = request.GET.get("period", "30d")
-            version_filter = request.GET.get("version", None)
 
             period_delta = self.PERIOD_MAP.get(period, timedelta(days=30))
             end_date = timezone.now()
@@ -5081,7 +5164,7 @@ class EvalUsageStatsView(APIView):
                         if isinstance(output, dict):
                             is_composite = config.get("composite") is True
                             score = output.get("output")
-                            if isinstance(score, (int, float)):
+                            if isinstance(score, int | float):
                                 buckets_scores[bucket_key].append(float(score))
                                 # Composite logs carry aggregate_pass
                                 if is_composite:
@@ -5098,8 +5181,6 @@ class EvalUsageStatsView(APIView):
                                 buckets_scores[bucket_key].append(0.0)
 
                 # Zero-fill: generate all buckets in the range
-                from datetime import datetime as _dt
-
                 current_bucket = start_date.replace(
                     minute=0,
                     second=0,
@@ -5210,7 +5291,7 @@ class EvalUsageStatsView(APIView):
                 if isinstance(mappings, dict):
                     for k, v in mappings.items():
                         if k not in _skip_keys and v is not None:
-                            val_str = str(v) if not isinstance(v, (dict, list)) else ""
+                            val_str = str(v) if not isinstance(v, dict | list) else ""
                             if not val_str or val_str.startswith("There seems to be"):
                                 continue
                             # Truncate URLs to just show [image] or [url]
@@ -5266,7 +5347,7 @@ class EvalUsageStatsView(APIView):
                         # Choice object
                         result_label = raw_output.get("label", "")
                         score = raw_output.get("score")
-                    elif isinstance(raw_output, (int, float)):
+                    elif isinstance(raw_output, int | float):
                         score = raw_output
                     elif isinstance(raw_output, str):
                         result_label = raw_output
@@ -5541,7 +5622,6 @@ class TraceEvalView(APIView):
 
                 output = result.get("output", {}) if isinstance(result, dict) else {}
                 raw_value = output.get("output") if isinstance(output, dict) else result
-                output_type = config.get("output", "Pass/Fail")
 
                 score = normalize_score(
                     raw_value,
@@ -5803,6 +5883,57 @@ def _build_span_context(span) -> dict:
     return base
 
 
+def _chspan_to_eval_playground_view(ch_span):
+    """Build a span-shaped namespace that `_build_span_context` can consume.
+
+    `_build_span_context` was written against the Django ``ObservationSpan``
+    model and reads ``span.span_attributes`` / ``span.resource_attributes``
+    as already-deserialized dicts plus a handful of scalar fields. CHSpan
+    stores the same payload across the typed Map columns + ``attributes_extra``
+    (merged in ``to_django_dict``) and ``resource_attrs`` (raw JSON string),
+    so this shim reassembles the fields under the names the template helper
+    expects. Keeping the helper unchanged avoids touching the voice-eval
+    enrichment branch on this refactor.
+    """
+    from types import SimpleNamespace
+
+    from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+    d = CHSpanReader.to_django_dict(ch_span)
+    try:
+        resource_attributes = (
+            json.loads(ch_span.resource_attrs) if ch_span.resource_attrs else {}
+        )
+    except json.JSONDecodeError:
+        resource_attributes = {}
+    return SimpleNamespace(
+        id=d["id"],
+        trace_id=d["trace"],
+        name=d["name"],
+        observation_type=d["observation_type"],
+        input=d["input"],
+        output=d["output"],
+        span_attributes=d["span_attributes"] or {},
+        resource_attributes=resource_attributes,
+        status=d["status"],
+        status_message=d["status_message"],
+        model=d["model"],
+        provider=d["provider"],
+        # Pass the raw datetime objects (not the to_django_dict isoformat
+        # string) so `_build_span_context`'s `str(span.start_time)` matches
+        # what the Django model emitted before this migration.
+        start_time=ch_span.start_time,
+        end_time=ch_span.end_time,
+        latency_ms=d["latency_ms"],
+        cost=d["cost"],
+        prompt_tokens=d["prompt_tokens"],
+        completion_tokens=d["completion_tokens"],
+        total_tokens=d["total_tokens"],
+        metadata=d["metadata"] or {},
+        tags=d["tags"] or [],
+    )
+
+
 class EvalPlayGroundAPIView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -5854,53 +5985,89 @@ class EvalPlayGroundAPIView(APIView):
             _call_id = validated_data.get("call_id")
             if span_context is None and _span_id:
                 try:
-                    from tracer.models.observation_span import ObservationSpan
+                    # Codex consolidated review P1 (2026-05-26): the legacy ORM
+                    # path was unscoped, but the eval playground accepts a
+                    # caller-supplied span_id and renders its content into a
+                    # template — that's a cross-org read surface. We now
+                    # require org-scope verification via a Project lookup on
+                    # the span's project_id (CH spans store project_id as a
+                    # UUID string).
+                    #
+                    # CHSpan attribute names differ from the Django model in
+                    # two places that _build_span_context reads:
+                    # `span_attributes` (typed maps + attributes_extra merge →
+                    # use to_django_dict) and `resource_attributes` (CH stores
+                    # as JSON string in `resource_attrs`). The shim namespace
+                    # below maps both.
+                    from tracer.models.project import Project
+                    from tracer.services.clickhouse.v2 import get_reader
 
-                    _s = ObservationSpan.objects.filter(id=str(_span_id)).first()
-                    if _s:
-                        span_context = _build_span_context(_s)
+                    with get_reader() as reader:
+                        _s = reader.get(str(_span_id))
+                    if (
+                        _s
+                        and Project.objects.filter(
+                            id=_s.project_id, organization=org
+                        ).exists()
+                    ):
+                        span_context = _build_span_context(
+                            _chspan_to_eval_playground_view(_s)
+                        )
                 except Exception as _e:
                     logger.warning(f"Failed to fetch span {_span_id}: {_e}")
             if trace_context is None and _trace_id:
                 try:
-                    from django.db.models import Count, Sum, Min, Max, Q
                     from tracer.models.trace import Trace
-                    from tracer.models.observation_span import ObservationSpan
+                    from tracer.services.clickhouse.v2 import get_reader
 
-                    _t = Trace.objects.filter(id=_trace_id).first()
+                    # Codex P1: scope Trace lookup to org so a caller can't
+                    # feed another tenant's trace_id into the playground.
+                    _t = Trace.objects.filter(
+                        id=_trace_id, project__organization=org
+                    ).first()
                     if _t:
-                        # Aggregate stats from child spans (single query)
-                        _span_agg = ObservationSpan.objects.filter(
-                            trace=_t, deleted=False
-                        ).aggregate(
-                            span_count=Count("id"),
-                            error_count=Count("id", filter=Q(status="ERROR")),
-                            total_tokens=Sum("total_tokens"),
-                            total_cost=Sum("cost"),
-                            start_time=Min("start_time"),
-                            end_time=Max("end_time"),
-                            total_latency=Sum("latency_ms"),
-                        )
+                        # CH read replaces two ObservationSpan ORM calls:
+                        #   1. .filter(trace=_t, deleted=False).aggregate(...)
+                        #   2. .filter(trace=_t, deleted=False)
+                        #        .order_by("start_time").values(...)[:200]
+                        # CHSpanReader doesn't expose an `error_count`/
+                        # `total_latency` aggregate, so we list spans once
+                        # (already filtered to is_deleted=0 + ordered by
+                        # start_time, id) and compute aggregates in Python.
+                        # A trace's span count is bounded (FutureAGI caps
+                        # writes via the OTLP ingest pipeline) so a single
+                        # in-process pass is cheaper than two CH round-trips.
+                        with get_reader() as reader:
+                            _ch_spans = reader.list_by_trace(str(_t.id))
+                        _span_count = len(_ch_spans)
+                        _error_count = sum(1 for s in _ch_spans if s.status == "ERROR")
+                        _total_tokens = sum((s.total_tokens or 0) for s in _ch_spans)
+                        _total_cost = sum((s.cost or 0.0) for s in _ch_spans)
+                        _total_latency = sum((s.latency_ms or 0) for s in _ch_spans)
+                        _start_times = [s.start_time for s in _ch_spans if s.start_time]
+                        _end_times = [s.end_time for s in _ch_spans if s.end_time]
+                        _agg_start = min(_start_times) if _start_times else None
+                        _agg_end = max(_end_times) if _end_times else None
 
-                        # Lightweight span summaries for the agent to
-                        # browse and decide which to drill into.
-                        # Only fetch essential fields, cap at 200 spans.
-                        _span_summaries = list(
-                            ObservationSpan.objects.filter(trace=_t, deleted=False)
-                            .order_by("start_time")
-                            .values(
-                                "id",
-                                "name",
-                                "observation_type",
-                                "status",
-                                "status_message",
-                                "latency_ms",
-                                "model",
-                                "total_tokens",
-                                "cost",
-                                "parent_span_id",
-                            )[:200]
-                        )
+                        # Lightweight span summaries for the agent to browse
+                        # and decide which to drill into. Only fetch essential
+                        # fields, cap at 200 spans (matches the prior
+                        # ``.values(...)[:200]`` slice).
+                        _span_summaries = [
+                            {
+                                "id": s.id,
+                                "name": s.name,
+                                "observation_type": s.observation_type,
+                                "status": s.status,
+                                "status_message": s.status_message,
+                                "latency_ms": s.latency_ms,
+                                "model": s.model,
+                                "total_tokens": s.total_tokens,
+                                "cost": s.cost,
+                                "parent_span_id": s.parent_span_id or None,
+                            }
+                            for s in _ch_spans[:200]
+                        ]
 
                         trace_context = {
                             "id": str(_t.id),
@@ -5919,78 +6086,133 @@ class EvalPlayGroundAPIView(APIView):
                             "created_at": (
                                 _t.created_at.isoformat() if _t.created_at else None
                             ),
-                            "span_count": _span_agg["span_count"] or 0,
-                            "error_count": _span_agg["error_count"] or 0,
-                            "total_tokens": _span_agg["total_tokens"] or 0,
+                            "span_count": _span_count,
+                            "error_count": _error_count,
+                            "total_tokens": _total_tokens,
                             "total_cost": (
-                                float(round(_span_agg["total_cost"], 6))
-                                if _span_agg["total_cost"]
-                                else 0
+                                float(round(_total_cost, 6)) if _total_cost else 0
                             ),
-                            "total_latency_ms": _span_agg["total_latency"] or 0,
-                            "start_time": (
-                                str(_span_agg["start_time"])
-                                if _span_agg["start_time"]
-                                else None
-                            ),
-                            "end_time": (
-                                str(_span_agg["end_time"])
-                                if _span_agg["end_time"]
-                                else None
-                            ),
+                            "total_latency_ms": _total_latency,
+                            "start_time": (str(_agg_start) if _agg_start else None),
+                            "end_time": (str(_agg_end) if _agg_end else None),
                             "spans": _span_summaries,
                         }
                 except Exception as _e:
                     logger.warning(f"Failed to fetch trace {_trace_id}: {_e}")
             if session_context is None and _session_id:
                 try:
-                    from django.db.models import Count, Sum, Min, Max, Q
+                    from tracer.models.project import Project
                     from tracer.models.trace import Trace
-                    from tracer.models.trace_session import TraceSession
-                    from tracer.models.observation_span import ObservationSpan
+                    from tracer.services.clickhouse.v2 import get_reader
+                    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+                        resolve_session_fields,
+                    )
 
-                    _ss = TraceSession.objects.filter(id=_session_id).first()
-                    if _ss:
-                        # Get trace IDs for this session
-                        _trace_qs = Trace.objects.filter(session=_ss, deleted=False)
-
-                        # Aggregate stats across all spans in session
-                        _sess_agg = ObservationSpan.objects.filter(
-                            trace__in=_trace_qs, deleted=False
-                        ).aggregate(
-                            total_spans=Count("id"),
-                            error_count=Count("id", filter=Q(status="ERROR")),
-                            total_tokens=Sum("total_tokens"),
-                            total_cost=Sum("cost"),
-                            start_time=Min("start_time"),
-                            end_time=Max("end_time"),
+                    # Resolve the session identity from CH (Slice D, DESIGN §5 /
+                    # PG_ORM_READ_MIGRATION), NOT PG ``TraceSession``: a net-new
+                    # session (first seen post-flip) has no PG row, and a straddler
+                    # queried by its NEW deterministic id would 404 the old
+                    # ``.first()``. ``resolve_session_fields`` is remap-aware
+                    # (straddler old|new id → ONE survivor) and returns
+                    # external_session_id / first_seen / project_id / bookmarked /
+                    # display_name. Absent → ``_ss_fields`` is None → behave like
+                    # the old ``.first()`` returning None (session_context stays
+                    # None, no error). The org-scope the old ``project__organization
+                    # =org`` filter enforced is reproduced by validating the
+                    # CH-derived project_id belongs to ``org`` (mirrors the span_id
+                    # / Project.exists() guard above) — so a net-new session in
+                    # another tenant cannot leak.
+                    _ss_fields = resolve_session_fields([_session_id]).get(
+                        str(_session_id)
+                    )
+                    _ss_project_id = (
+                        _ss_fields.get("project_id") if _ss_fields else None
+                    )
+                    _ss_in_org = (
+                        bool(_ss_project_id)
+                        and Project.objects.filter(
+                            id=_ss_project_id, organization=org
+                        ).exists()
+                    )
+                    if _ss_fields and _ss_in_org:
+                        # Trace SET via CH spans, NOT the dead ``Trace.session`` FK
+                        # (None post-flip → empty for ALL sessions). Trace stays PG
+                        # → the CH-derived ids drive a PG ``id__in`` filter.
+                        with get_reader() as reader:
+                            _trace_id_list = reader.session_trace_ids(
+                                str(_ss_project_id), str(_session_id)
+                            )
+                        _trace_qs = Trace.objects.filter(
+                            id__in=_trace_id_list, deleted=False
                         )
 
-                        # Lightweight trace summaries for the agent to
-                        # browse and decide which to drill into. Use one
-                        # grouped aggregate instead of N+1 per-trace queries.
+                        # CH read replaces two ObservationSpan ORM queries:
+                        #   1. .filter(trace__in=_trace_qs, deleted=False).aggregate(...)
+                        #   2. .filter(trace_id__in=_trace_ids, deleted=False)
+                        #        .values("trace_id").annotate(...)
+                        # CHSpanReader doesn't expose `error_count` / per-trace
+                        # `error_count` or `total_latency` aggregates, so we
+                        # list session spans once (already filtered to
+                        # is_deleted=0) and compute both rollups in Python.
+                        # Sessions are bounded by product semantics (a single
+                        # conversation/workflow), so the in-process scan is
+                        # cheaper than two CH round-trips.
+                        # ``list_by_session`` matches the RAW ``_session_id``; the
+                        # ``session_trace_ids`` trace set above resolves the input
+                        # id. They agree because the eval-context ``session_id`` is
+                        # always a SURVIVOR (old) or NET-NEW id (the session
+                        # list/detail surfaces resolved/old ids), never a
+                        # straddler's raw NEW id — for those the input resolves to
+                        # itself, so both reads see the same session.
+                        with get_reader() as reader:
+                            _ch_session_spans = reader.list_by_session(str(_session_id))
+                        _total_spans = len(_ch_session_spans)
+                        _sess_error_count = sum(
+                            1 for s in _ch_session_spans if s.status == "ERROR"
+                        )
+                        _sess_total_tokens = sum(
+                            (s.total_tokens or 0) for s in _ch_session_spans
+                        )
+                        _sess_total_cost = sum(
+                            (s.cost or 0.0) for s in _ch_session_spans
+                        )
+                        _sess_start_times = [
+                            s.start_time for s in _ch_session_spans if s.start_time
+                        ]
+                        _sess_end_times = [
+                            s.end_time for s in _ch_session_spans if s.end_time
+                        ]
+                        _start = min(_sess_start_times) if _sess_start_times else None
+                        _end = max(_sess_end_times) if _sess_end_times else None
+
+                        # Lightweight trace summaries for the agent to browse
+                        # and decide which to drill into. Page-scoped (first
+                        # 100 traces by created_at) to match the prior PG path
+                        # which annotated only over `trace_id__in=_trace_ids`.
                         _traces_page = list(_trace_qs.order_by("created_at")[:100])
-                        _trace_ids = [_tr.id for _tr in _traces_page]
-                        _per_trace = {
-                            _row["trace_id"]: _row
-                            for _row in (
-                                ObservationSpan.objects.filter(
-                                    trace_id__in=_trace_ids, deleted=False
-                                )
-                                .values("trace_id")
-                                .annotate(
-                                    span_count=Count("id"),
-                                    error_count=Count(
-                                        "id", filter=Q(status="ERROR")
-                                    ),
-                                    total_tokens=Sum("total_tokens"),
-                                    total_latency=Sum("latency_ms"),
-                                )
+                        _trace_id_set = {str(_tr.id) for _tr in _traces_page}
+                        _per_trace: dict[str, dict] = {}
+                        for s in _ch_session_spans:
+                            if s.trace_id not in _trace_id_set:
+                                continue
+                            row = _per_trace.setdefault(
+                                s.trace_id,
+                                {
+                                    "span_count": 0,
+                                    "error_count": 0,
+                                    "total_tokens": 0,
+                                    "total_latency": 0,
+                                },
                             )
-                        }
+                            row["span_count"] += 1
+                            if s.status == "ERROR":
+                                row["error_count"] += 1
+                            row["total_tokens"] += s.total_tokens or 0
+                            row["total_latency"] += s.latency_ms or 0
+
                         _trace_summaries = []
                         for _tr in _traces_page:
-                            _agg = _per_trace.get(_tr.id, {})
+                            _agg = _per_trace.get(str(_tr.id), {})
                             _err_count = _agg.get("error_count") or 0
                             _trace_summaries.append(
                                 {
@@ -6004,37 +6226,41 @@ class EvalPlayGroundAPIView(APIView):
                                     "span_count": _agg.get("span_count") or 0,
                                     "error_count": _err_count,
                                     "total_tokens": _agg.get("total_tokens") or 0,
-                                    "total_latency_ms": _agg.get("total_latency")
-                                    or 0,
+                                    "total_latency_ms": _agg.get("total_latency") or 0,
                                     "has_error": bool(_tr.error or _err_count > 0),
                                 }
                             )
 
-                        _start = _sess_agg["start_time"]
-                        _end = _sess_agg["end_time"]
                         _duration = None
                         if _start and _end:
                             _duration = (_end - _start).total_seconds()
 
+                        # Session identity fields now come from the CH record +
+                        # PG overlay (``resolve_session_fields``), NOT a PG
+                        # TraceSession row: name = display_name override else the
+                        # external session id (DESIGN §5.2 COALESCE); created_at =
+                        # first_seen (the session's first observed activity).
+                        _ss_first_seen = _ss_fields["first_seen"]
                         session_context = {
-                            "id": str(_ss.id),
-                            "name": _ss.name,
-                            "project_id": (
-                                str(_ss.project_id) if _ss.project_id else None
+                            "id": str(_session_id),
+                            "name": (
+                                _ss_fields["display_name"]
+                                or _ss_fields["external_session_id"]
                             ),
-                            "bookmarked": _ss.bookmarked,
+                            "project_id": (
+                                str(_ss_project_id) if _ss_project_id else None
+                            ),
+                            "bookmarked": bool(_ss_fields["bookmarked"]),
                             "created_at": (
-                                _ss.created_at.isoformat()
-                                if _ss.created_at
-                                else None
+                                _ss_first_seen.isoformat() if _ss_first_seen else None
                             ),
                             "trace_count": _trace_qs.count(),
-                            "total_spans": _sess_agg["total_spans"] or 0,
-                            "error_count": _sess_agg["error_count"] or 0,
-                            "total_tokens": _sess_agg["total_tokens"] or 0,
+                            "total_spans": _total_spans,
+                            "error_count": _sess_error_count,
+                            "total_tokens": _sess_total_tokens,
                             "total_cost": (
-                                float(round(_sess_agg["total_cost"], 6))
-                                if _sess_agg["total_cost"]
+                                float(round(_sess_total_cost, 6))
+                                if _sess_total_cost
                                 else 0
                             ),
                             "start_time": (str(_start) if _start else None),
@@ -6068,13 +6294,35 @@ class EvalPlayGroundAPIView(APIView):
             )
             if _session_id and isinstance(mapping_paths, dict) and mapping_paths:
                 from tracer.models.trace_session import TraceSession
+                from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+                    resolve_session_fields,
+                )
                 from tracer.utils.eval import _process_session_mapping
 
-                _ss_for_mapping = TraceSession.objects.filter(
-                    id=_session_id
-                ).first()
-                if _ss_for_mapping is None:
+                # Resolve the session identity from CH (Slice D, DESIGN §5 /
+                # PG_ORM_READ_MIGRATION) and build an UNSAVED ``TraceSession``
+                # vehicle, NOT ``TraceSession.objects.first()`` — the same shape
+                # ``evaluate_trace_session_observe`` uses (Slice C). A net-new
+                # session has no PG row (old ``.first()`` → None → 400) and a
+                # straddler-by-new-id would 404; CH resolves all three states.
+                # ``project_id`` is set on the vehicle so the downstream
+                # ``_resolve_session_path`` (``traces`` branch) can re-derive the
+                # session's trace set from CH spans (the dead ``Trace.session`` FK
+                # is None post-flip). Absent → 400, preserving the old contract.
+                _map_fields = resolve_session_fields([_session_id]).get(
+                    str(_session_id)
+                )
+                if _map_fields is None:
                     return self._gm.bad_request(f"Session {_session_id} not found")
+                _ss_for_mapping = TraceSession(
+                    id=_session_id,
+                    name=(
+                        _map_fields["display_name"]
+                        or _map_fields["external_session_id"]
+                    ),
+                    bookmarked=bool(_map_fields["bookmarked"]),
+                    project_id=_map_fields["project_id"],
+                )
                 try:
                     resolved_session_mapping = _process_session_mapping(
                         dict(mapping_paths),
@@ -6158,9 +6406,7 @@ class EvalPlayGroundAPIView(APIView):
             try:
                 eval_template = _get_accessible_eval_template(template_id, org)
             except EvalTemplate.DoesNotExist:
-                return self._gm.bad_request(
-                    get_error_message("MISSING_EVAL_TEMPLATE")
-                )
+                return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
 
             # Validate + coerce function params (matches Dataset / Experiments
             # paths). Without this, FE-sent blank strings flow straight into
@@ -6196,9 +6442,7 @@ class EvalPlayGroundAPIView(APIView):
                     response if response else "Evaluation has been updated."
                 )
             except Exception as e:
-                if UsageLimitExceeded is not None and isinstance(
-                    e, UsageLimitExceeded
-                ):
+                if UsageLimitExceeded is not None and isinstance(e, UsageLimitExceeded):
                     logger.warning(f"Eval playground usage limit: {str(e)}")
                     return self._gm.usage_limit_response(e.check_result)
                 logger.error(f"Error in run_eval_func: {str(e)}")
@@ -6379,7 +6623,7 @@ class EvalPlayGroundFeedbackAPIView(APIView):
             # print(f"[FEEDBACK] Storing embedding for eval_id={log.source_id} org_id={org_for_embedding} required_keys={required_keys} row_dict_keys={list(row_dict.keys())} feedback_value='{value}' feedback_comment='{explanation}'", flush=True)
             embedding_manager = EmbeddingManager()
             try:
-                result = embedding_manager.data_formatter(
+                embedding_manager.data_formatter(
                     eval_id=str(log.source_id),
                     row_dict=row_dict,
                     inputs_formater=required_keys,
@@ -6387,9 +6631,7 @@ class EvalPlayGroundFeedbackAPIView(APIView):
                     organization_id=org_for_embedding,
                     workspace_id=None,
                 )
-                # print(f"[FEEDBACK] data_formatter returned vectors={len(result[0]) if result and result[0] else 0} metadata={len(result[1]) if result and len(result) > 1 else 0}", flush=True)
-            except Exception as e:
-                # print(f"[FEEDBACK] data_formatter FAILED: {e}", flush=True)
+            except Exception:
                 import traceback
 
                 traceback.print_exc()
@@ -6454,6 +6696,7 @@ class UpdateEvalTemplateView(APIView):
             org = getattr(request, "organization", None) or request.user.organization
 
             validated_data = request.validated_data
+            raw_data = request.data
 
             name = validated_data.get("name", None)
             function_eval = validated_data.get("function_eval", None)
@@ -6480,24 +6723,28 @@ class UpdateEvalTemplateView(APIView):
                 return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
 
             config = eval_template.config
-            eval_template.description = (
-                description if description else eval_template.description
-            )
-            eval_template.criteria = criteria if criteria else eval_template.criteria
-            eval_template.eval_tags = (
-                eval_tags if eval_tags else eval_template.eval_tags
-            )
-            eval_template.multi_choice = (
-                multi_choice if multi_choice else eval_template.multi_choice
-            )
+            if "description" in raw_data:
+                eval_template.description = description
+            if "criteria" in raw_data:
+                eval_template.criteria = criteria
+            if "eval_tags" in raw_data:
+                eval_template.eval_tags = eval_tags
+            if "multi_choice" in raw_data:
+                eval_template.multi_choice = multi_choice
+                config["multi_choice"] = multi_choice
 
             if name is not None:
-                if EvalTemplate.objects.filter(
-                    name=name,
-                    organization=org,
-                    owner=OwnerChoices.USER.value,
-                    deleted=False,
-                ).exists():
+                if (
+                    EvalTemplate.no_workspace_objects.filter(
+                        _request_workspace_filter(request),
+                        name=name,
+                        organization=org,
+                        owner=OwnerChoices.USER.value,
+                        deleted=False,
+                    )
+                    .exclude(id=eval_template.id)
+                    .exists()
+                ):
                     raise Exception(get_error_message("EVAL_TEMPLATE_ALREADY_EXISTS"))
                 else:
                     eval_template.name = name
@@ -6506,15 +6753,16 @@ class UpdateEvalTemplateView(APIView):
                 config["model"] = model
                 eval_template.model = model
 
-            if choices_map is not None and len(list(choices_map.keys())) > 0:
+            if "choices_map" in raw_data:
+                choices_map = choices_map or {}
                 config["choices_map"] = choices_map
                 eval_template.choices = list(choices_map.keys())
 
-            if check_internet is not None:
+            if "check_internet" in raw_data:
                 config["check_internet"] = check_internet
 
-            if required_keys is not None and len(required_keys) > 0:
-                config["required_keys"] = required_keys
+            if "required_keys" in raw_data:
+                config["required_keys"] = required_keys or []
 
             if function_eval:
                 configuration = eval_template.config.copy()
@@ -6522,7 +6770,7 @@ class UpdateEvalTemplateView(APIView):
                 configuration["config"] = validated_data.get("config", {}).get("config")
                 config = configuration
 
-            if eval_type_id:
+            if "eval_type_id" in raw_data:
                 config["eval_type_id"] = eval_type_id
 
             if error_localizer_enabled is not None:
@@ -6740,9 +6988,8 @@ class TestEvaluationTemplateAPIView(APIView):
                     function_template = _get_accessible_eval_template(template_id, org)
                     template_config = function_template.config or {}
                     template_config_eval_id = template_config.get("eval_type_id")
-                    if (
-                        template_config_eval_id
-                        and str(template_config_eval_id) != str(eval_id)
+                    if template_config_eval_id and str(template_config_eval_id) != str(
+                        eval_id
                     ):
                         return self._gm.bad_request(
                             "template_id eval_type_id does not match request eval_type_id"
@@ -6761,20 +7008,17 @@ class TestEvaluationTemplateAPIView(APIView):
                     function_template = EvalTemplate.no_workspace_objects.filter(
                         config__eval_type_id=eval_id,
                         deleted=False,
-                    ).filter(
-                        Q(organization=org)
-                        | Q(organization__isnull=True)
-                    )
+                    ).filter(Q(organization=org) | Q(organization__isnull=True))
 
-                    function_template = function_template.order_by("-updated_at").first()
+                    function_template = function_template.order_by(
+                        "-updated_at"
+                    ).first()
                 eval_template = function_template
 
                 if function_template and has_function_params_schema(
                     function_template.config
                 ):
-                    prepared_params = (
-                        (config.get("configuration") or {}).get("params")
-                    )
+                    prepared_params = (config.get("configuration") or {}).get("params")
                     if prepared_params is not None:
                         config["params"] = prepared_params
                     config = normalize_eval_runtime_config(
@@ -7067,7 +7311,9 @@ def create_column_config_playground(eval_template_id, source):
             raw_config = latest_log.config
             try:
                 log_config = (
-                    json.loads(raw_config) if isinstance(raw_config, str) else raw_config
+                    json.loads(raw_config)
+                    if isinstance(raw_config, str)
+                    else raw_config
                 )
             except json.JSONDecodeError:
                 log_config = {}

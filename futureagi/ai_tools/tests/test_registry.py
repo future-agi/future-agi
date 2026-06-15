@@ -34,6 +34,16 @@ class DifferentCategoryTool(BaseTool):
         return ToolResult(content="different category")
 
 
+class ConflictingDummyTool(BaseTool):
+    name = "dummy_tool"
+    description = "Different implementation with colliding name"
+    category = "test"
+    input_model = EmptyInput
+
+    def execute(self, params, context):
+        return ToolResult(content="conflict")
+
+
 class TestToolRegistry:
     def test_register_and_get(self, fresh_registry):
         tool = DummyTool()
@@ -43,10 +53,15 @@ class TestToolRegistry:
     def test_get_nonexistent(self, fresh_registry):
         assert fresh_registry.get("nonexistent") is None
 
-    def test_register_duplicate_raises(self, fresh_registry):
+    def test_register_duplicate_same_class_is_idempotent(self, fresh_registry):
+        fresh_registry.register(DummyTool())
+        fresh_registry.register(DummyTool())
+        assert fresh_registry.count() == 1
+
+    def test_register_name_collision_raises(self, fresh_registry):
         fresh_registry.register(DummyTool())
         with pytest.raises(ValueError, match="already registered"):
-            fresh_registry.register(DummyTool())
+            fresh_registry.register(ConflictingDummyTool())
 
     def test_list_all(self, fresh_registry):
         fresh_registry.register(DummyTool())
