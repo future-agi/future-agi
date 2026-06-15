@@ -8,6 +8,7 @@ from typing import Any
 import structlog
 
 from model_hub.models.evals_metric import EvalGroundTruth, EvalTemplate
+from model_hub.utils.eval_input_validation import is_empty_value
 
 logger = structlog.get_logger(__name__)
 
@@ -38,9 +39,9 @@ class GroundTruthService:
         variable_mapping: dict[str, Any],
     ) -> dict[str, Any] | ServiceError:
         """Persist ``variable_mapping`` and stale-flag embeddings if changed."""
-        bad = _first_missing_column(variable_mapping, gt.columns or [])
-        if bad is not None:
-            col, key = bad
+        missing = _first_missing_column(variable_mapping, gt.columns or [])
+        if missing is not None:
+            col, key = missing
             return ServiceError(
                 f"Column '{col}' (mapped to variable '{key}') not found in "
                 f"dataset columns: {gt.columns}",
@@ -75,64 +76,6 @@ class GroundTruthService:
     )
 
     @staticmethod
-    def update_role_mapping(
-        *,
-        gt: EvalGroundTruth,
-        role_mapping: dict[str, Any],
-    ) -> dict[str, Any] | ServiceError:
-        """Persist ``role_mapping`` without invalidating embeddings.
-
-        Role-mapped columns (``output`` / ``explanation``) are NOT
-        embedded - they're rendered verbatim as labels in the few-shot
-        examples at prompt-build time. Changing the mapping just swaps
-        which column supplies the label string; the per-row vectors
-        produced by ``variable_mapping`` columns stay valid. Compare
-        with :meth:`update_variable_mapping`, which DOES stale-flag
-        embeddings because its columns drive the embedded text.
-
-        Canonical keys are ``output`` (required at use time) and
-        ``explanation`` (optional). Legacy ``expected_output`` /
-        ``reasoning`` / ``reason`` keys are accepted for back-compat and
-        normalized to the canonical pair at read time elsewhere.
-        """
-        invalid = {
-            r for r in role_mapping if r not in GroundTruthService.ALLOWED_ROLE_KEYS
-        }
-        if invalid:
-            return ServiceError(
-                f"Invalid role keys: {sorted(invalid)}. "
-                "Allowed keys: output, explanation.",
-                code="INVALID_ROLE_KEY",
-            )
-
-        bad = _first_missing_column(role_mapping, gt.columns or [], label="role")
-        if bad is not None:
-            col, key = bad
-            return ServiceError(
-                f"Column '{col}' (mapped to role '{key}') not found in dataset "
-                f"columns: {gt.columns}",
-                code="INVALID_COLUMN",
-            )
-
-        gt.role_mapping = role_mapping
-        gt.save(update_fields=["role_mapping", "updated_at"])
-        logger.info(
-            "ground_truth_role_mapping_updated",
-            ground_truth_id=str(gt.id),
-        )
-        return {
-            "id": str(gt.id),
-            "role_mapping": gt.role_mapping,
-            "embedding_status": gt.embedding_status,
-            # Stale only if a prior variable_mapping change put the
-            # dataset into a non-terminal state. Role-mapping changes
-            # never set this themselves.
-            "embeddings_stale": bool(
-                gt.embedded_row_count > 0 and gt.embedding_status != "completed"
-            ),
-        }
-
-    @staticmethod
     def update_setup(
         *,
         gt: EvalGroundTruth,
@@ -144,19 +87,10 @@ class GroundTruthService:
         injection_format: str = "structured",
         enabled: bool = True,
     ) -> dict[str, Any] | ServiceError:
-        """Persist mappings + injection config atomically.
-
-        Rules:
-        * ``role_mapping["output"]`` (or legacy ``expected_output``) is
-          mandatory and must point at a real GT column.
-        * ``role_mapping["explanation"]`` (or legacy ``reasoning`` /
-          ``reason``) is optional; when set must be a real column.
-        * Every ``variable_mapping`` value must be a real GT column.
-        * ``max_examples`` in [1, 20], ``similarity_threshold`` in [0, 1].
-        """
+        """Persist mappings + injection config atomically."""
         from django.db import transaction
 
-        if not _has_value(role_mapping.get("output")) and not _has_value(
+        if is_empty_value(role_mapping.get("output")) and is_empty_value(
             role_mapping.get("expected_output")
         ):
             return ServiceError(
@@ -189,9 +123,9 @@ class GroundTruthService:
             (variable_mapping, "variable"),
             (role_mapping, "role"),
         ):
-            bad = _first_missing_column(source_mapping, gt.columns or [], label=label)
-            if bad is not None:
-                col, key = bad
+            missing = _first_missing_column(source_mapping, gt.columns or [], label=label)
+            if missing is not None:
+                col, key = missing
                 return ServiceError(
                     f"Column '{col}' (mapped to {label} '{key}') not found "
                     f"in dataset columns: {gt.columns}",
@@ -245,14 +179,7 @@ class GroundTruthService:
     def resolve_preview_examples(
         *, eval_template: EvalTemplate, eval_inputs: dict[str, Any]
     ) -> list[dict[str, Any]] | None:
-        """Return retrieved GT rows for the playground response.
-
-        Tri-state contract for the FE panel: ``None`` when GT is off or
-        unconfigured (panel hides); ``[]`` when enabled with zero
-        matches (panel renders empty state); ``[...]`` with matches.
-        Falls back to ``None`` on internal errors so the eval verdict
-        is not blocked.
-        """
+        """Return retrieved GT rows for the playground; None when disabled."""
         try:
             from model_hub.utils.ground_truth_retrieval import (
                 get_ground_truth_few_shot_examples,
@@ -296,19 +223,7 @@ class GroundTruthService:
 
     @staticmethod
     def embed_dataset(*, gt: EvalGroundTruth) -> EmbedDatasetResult:
-        """Embed every row of ``gt`` into the CH ``ground_truths`` table.
-
-        Drives the Temporal activity, the explicit re-embed endpoint, and
-        the management command roundtrip test. The PG ``EvalGroundTruth``
-        row is the source of truth for status (``pending`` → ``processing``
-        → ``completed`` / ``failed``); CH only stores the vectors.
-
-        Idempotency: the writer soft-deletes any existing vectors for the
-        same ``(eval_template_id, organization_id, workspace_id)`` triple
-        before re-embedding, so re-runs replace cleanly rather than
-        accumulate. Single GT per (template, org, workspace) is the
-        product invariant (FE only surfaces one).
-        """
+        """Embed every row of ``gt`` into the CH ``ground_truths`` table."""
         from agentic_eval.core.embeddings.embedding_manager import (
             GROUND_TRUTH_TABLE_NAME,
             EmbeddingManager,
@@ -397,15 +312,7 @@ class GroundTruthService:
         inputs: dict[str, Any],
         max_results: int = 3,
     ) -> list[dict[str, Any]]:
-        """Return GT example rows most similar to ``inputs``.
-
-        Wraps :func:`retrieve_ground_truth_fewshots` with the GT's stored
-        ``variable_mapping`` (template-var → GT-column) and tenant
-        identifiers. Returns the raw source-row dicts in rank order -
-        callers downstream are responsible for projecting them into
-        whatever surface they need (few-shot prompt text, agent-tool
-        output, FE Match cards).
-        """
+        """Return GT example rows most similar to ``inputs``."""
         from agentic_eval.core.embeddings.ground_truth_fewshots import (
             GroundTruthFewShotRequest,
             retrieve_ground_truth_fewshots,
@@ -488,34 +395,6 @@ class GroundTruthService:
             "results": results,
             "total": len(results),
         }
-
-    @staticmethod
-    def validate_output(
-        *,
-        template: EvalTemplate,
-        value: Any,
-    ) -> dict[str, Any]:
-        from model_hub.utils.ground_truth_retrieval import validate_output_value
-
-        ok, error = validate_output_value(
-            value,
-            output_type_normalized=getattr(template, "output_type_normalized", None),
-            choice_scores=getattr(template, "choice_scores", None),
-            pass_threshold=getattr(template, "pass_threshold", None),
-        )
-        return {"ok": ok, "error": error or ""}
-
-
-def _has_value(value: Any) -> bool:
-    """Treat blank strings, None and empty containers as unset."""
-    if value is None:
-        return False
-    if isinstance(value, str):
-        return bool(value.strip())
-    if isinstance(value, (list, tuple, set, dict)):
-        return len(value) > 0
-    return True
-
 
 def _first_missing_column(
     mapping: dict[str, Any],

@@ -33,10 +33,6 @@ from tfc.utils.storage import (
 # Thread-local storage for models
 _thread_local = threading.local()
 FEEDBACK_TABLE_NAME = "feedbacks"
-# Ground truth datasets live in their own CH table with the same generic
-# schema as feedbacks. Both share the writer / reader plumbing in this
-# module so the multimodal embedding routing and per-input-column
-# intersection logic apply uniformly.
 GROUND_TRUTH_TABLE_NAME = "ground_truths"
 _TENANT_SCOPED_TABLES = (FEEDBACK_TABLE_NAME, GROUND_TRUTH_TABLE_NAME)
 

@@ -2,27 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterator
 
 import structlog
 
+from model_hub.utils.eval_input_validation import is_empty_value
+
 logger = structlog.get_logger(__name__)
-
-
-def _is_empty_value(value: Any) -> bool:
-    """Should this runtime value be treated as "no signal" for GT retrieval?
-
-    Falsy-but-legitimate scalars (``0``, ``False``) are NOT empty -
-    they're valid eval inputs. Empty means actually absent: ``None``,
-    blank/whitespace string, empty list/tuple/set, empty dict.
-    """
-    if value is None:
-        return True
-    if isinstance(value, str):
-        return not value.strip()
-    if isinstance(value, (list, tuple, set, dict)):
-        return len(value) == 0
-    return False
 
 
 def has_usable_inputs_for_gt(
@@ -41,11 +27,11 @@ def has_usable_inputs_for_gt(
     if not runtime_inputs or not isinstance(runtime_inputs, dict):
         return False
     for tmpl_var, col in variable_mapping.items():
-        if not _is_empty_value(runtime_inputs.get(tmpl_var)):
+        if not is_empty_value(runtime_inputs.get(tmpl_var)):
             return True
         targets = col if isinstance(col, list) else [col]
         for target in targets:
-            if target and not _is_empty_value(runtime_inputs.get(target)):
+            if target and not is_empty_value(runtime_inputs.get(target)):
                 return True
     return False
 
@@ -91,67 +77,6 @@ def get_label_columns(role_mapping: dict | None) -> tuple[str, str]:
     return output, explanation
 
 
-def _parse_score(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return 1.0 if value else 0.0
-    if isinstance(value, (int, float)):
-        return float(value)
-    s = str(value).strip()
-    if not s:
-        return None
-    try:
-        return float(s)
-    except (TypeError, ValueError):
-        return None
-
-
-def validate_output_value(
-    value: Any,
-    output_type_normalized: str | None,
-    choice_scores: dict | None = None,
-    pass_threshold: float | None = None,  # noqa: ARG001
-) -> tuple[bool, str | None]:
-    """Validate a candidate eval-output value against a template's output type.
-
-    Used by the FE preview check at upload time so users see immediate
-    feedback if their mapped output column carries values incompatible
-    with the template type. Returns ``(ok, error_message)``.
-    """
-    if value is None or (isinstance(value, str) and not value.strip()):
-        return False, "Value is empty."
-
-    out_type = (output_type_normalized or "").lower()
-    if out_type == "pass_fail":
-        allowed = {"pass", "fail", "true", "false", "0", "1", "yes", "no"}
-        if str(value).strip().lower() not in allowed:
-            return (
-                False,
-                "Expected one of: Pass / Fail / True / False / Yes / No.",
-            )
-        return True, None
-
-    if out_type == "percentage":
-        score = _parse_score(value)
-        if score is None:
-            return False, "Expected a numeric score between 0 and 1."
-        if score < 0 or score > 1:
-            return False, "Score must lie in the [0, 1] range."
-        return True, None
-
-    if out_type == "deterministic":
-        if not isinstance(choice_scores, dict) or not choice_scores:
-            return True, None
-        canonical = {str(k).strip().lower(): k for k in choice_scores.keys()}
-        if str(value).strip().lower() not in canonical:
-            options = ", ".join(str(k) for k in choice_scores.keys())
-            return False, f"Expected one of: {options}."
-        return True, None
-
-    return True, None
-
-
 def get_ground_truth_few_shot_examples(
     gt_config: dict,
     current_input: dict,
@@ -186,16 +111,7 @@ def get_ground_truth_few_shot_examples(
 def inject_ground_truth_context(
     mapped: dict, eval_template, eval_type_id: str = ""
 ) -> dict:
-    """Mutate ``mapped`` with GT context when the template has GT enabled.
-
-    CustomPromptEvaluator path → inject ``ground_truth_few_shot`` (a
-    formatted string of retrieved examples).
-    Other (Agent) paths → inject ``ground_truth_config`` so the
-    evaluator can expose the ``search_ground_truth`` tool.
-
-    Skips entirely when there's no usable input to query against - see
-    :func:`has_usable_inputs_for_gt` for the rule.
-    """
+    """Mutate ``mapped`` with GT context when the template has GT enabled."""
     from model_hub.models.evals_metric import EvalGroundTruth
 
     gt_config = load_ground_truth_config(eval_template)
@@ -280,16 +196,7 @@ def format_few_shot_examples(
     explanation_column: str | None = None,
     injection_format: str = "structured",
 ) -> str:
-    """Render GT examples as a prompt block for the LLM judge.
-
-    Each example row is projected through the rule-prompt's template
-    variable names (``{{question}}: ...``) and the labelled output /
-    explanation columns. Three layouts:
-
-    * ``structured`` (default): newline-delimited ``Example N:`` blocks
-    * ``conversational``: one-line ``Example N: ... | Expert judgment: ...``
-    * ``xml``: ``<reference_examples><example>...</example></reference_examples>``
-    """
+    """Render GT examples as a prompt block for the LLM judge."""
     if not examples:
         return ""
     if injection_format == "xml":
@@ -305,7 +212,9 @@ def format_few_shot_examples(
     )
 
 
-def _iter_inputs(example: dict, variable_mapping: dict | None):
+def _iter_inputs(
+    example: dict, variable_mapping: dict | None
+) -> Iterator[tuple[str, str, Any]]:
     """Yield ``(template_variable, gt_column, value)`` for the input side."""
     if not variable_mapping:
         for key, val in (example or {}).items():
@@ -318,7 +227,12 @@ def _iter_inputs(example: dict, variable_mapping: dict | None):
                 yield tmpl_var, target, example[target]
 
 
-def _format_structured(examples, variable_mapping, output_column, explanation_column):
+def _format_structured(
+    examples: list[dict],
+    variable_mapping: dict | None,
+    output_column: str | None,
+    explanation_column: str | None,
+) -> str:
     lines = ["--- Reference Examples (scored by human experts) ---", ""]
     for i, example in enumerate(examples, 1):
         lines.append(f"Example {i}:")
@@ -335,8 +249,11 @@ def _format_structured(examples, variable_mapping, output_column, explanation_co
 
 
 def _format_conversational(
-    examples, variable_mapping, output_column, explanation_column
-):
+    examples: list[dict],
+    variable_mapping: dict | None,
+    output_column: str | None,
+    explanation_column: str | None,
+) -> str:
     lines = []
     for i, example in enumerate(examples, 1):
         case_parts: list[str] = []
@@ -355,7 +272,12 @@ def _format_conversational(
     return "\n".join(lines)
 
 
-def _format_xml(examples, variable_mapping, output_column, explanation_column):
+def _format_xml(
+    examples: list[dict],
+    variable_mapping: dict | None,
+    output_column: str | None,
+    explanation_column: str | None,
+) -> str:
     lines = ["<reference_examples>"]
     for example in examples:
         attr = ""

@@ -136,11 +136,11 @@ class EvalCreateRequest(BaseModel):
     summary: dict | None = (
         None  # {type: short|long|concise|custom, custom: str}
     )
-    # Error Localization - mirrors EvalUpdateRequest. Without this here the
+    # Error Localization — mirrors EvalUpdateRequest. Without this here the
     # FE's create payload (which always includes the toggle value) is
     # rejected by `extra="forbid"`.
     error_localizer_enabled: bool = False
-    # Template format - determines how variables are extracted
+    # Template format — determines how variables are extracted
     template_format: Literal["mustache", "jinja"] = "mustache"
 
 
@@ -519,24 +519,13 @@ class GroundTruthUploadResponse(BaseModel):
 
 
 class VariableMappingRequest(BaseModel):
-    """Request for PUT /model-hub/ground-truth/{id}/mapping/
-
-    Maps a rule prompt's ``{{template_variable}}`` placeholders to the
-    GT column whose value should fill each placeholder at retrieval and
-    few-shot rendering time. Values may be either a single column name
-    or a list of column names (the latter for multi-column inputs).
-    """
+    """Request for PUT /model-hub/ground-truth/{id}/mapping/"""
 
     variable_mapping: dict[str, MappingValue]
 
 
 class RoleMappingRequest(BaseModel):
-    """Request for PUT /model-hub/ground-truth/{id}/role-mapping/
-
-    ``role_mapping`` values may be either a single GT column name or a
-    list of GT column names — the latter is used for multi-variable
-    input prompts where several columns together form the embedded text.
-    """
+    """Request for PUT /model-hub/ground-truth/{id}/role-mapping/"""
 
     role_mapping: dict[str, MappingValue]
 
@@ -589,17 +578,6 @@ class GroundTruthSearchRequest(BaseModel):
     similarity_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
-class GroundTruthValidateOutputRequest(BaseModel):
-    """Request for POST /model-hub/eval-templates/{id}/ground-truth/validate-output/"""
-
-    value: object
-
-
-class GroundTruthValidateOutputResponse(BaseModel):
-    """Response for POST /model-hub/eval-templates/{id}/ground-truth/validate-output/"""
-
-    ok: bool
-    error: str | None = None
 
 
 # =============================================================================

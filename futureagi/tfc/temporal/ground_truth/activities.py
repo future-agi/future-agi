@@ -1,11 +1,4 @@
-"""Temporal activity wrapper around the ground-truth embedding service.
-
-The activity itself stays a thin async shell that hands the work to
-:meth:`model_hub.services.ground_truth_service.GroundTruthService.embed_dataset`.
-All business logic - modality dispatch, soft-delete of prior vectors,
-CH bulk write, PG status transitions - lives in the service so it can
-be unit-tested without a Temporal worker.
-"""
+"""Temporal activity wrapper for GroundTruthService.embed_dataset."""
 
 import structlog
 from django.db import close_old_connections

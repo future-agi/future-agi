@@ -1,28 +1,4 @@
-"""Unit tests for :class:`GroundTruthService` with a mocked EmbeddingManager.
-
-These exercise the business rules in
-``model_hub/services/ground_truth_service.py`` against lightweight
-stand-ins for the Django models so the test suite stays pure unit (no
-DB, no CH, no embedding service). The live CH round-trip is covered by
-``manage.py gt_roundtrip_test`` separately — and by the integration
-tests in ``test_ground_truth.py`` which use real DB fixtures.
-
-Key behaviours tested here:
-
-* ``update_variable_mapping`` flips ``embedding_status`` back to
-  ``pending`` only when the mapping actually changed AND the dataset
-  had previously been embedded — never on the first save of an empty
-  mapping, never on idempotent re-save.
-* ``update_role_mapping`` does NOT touch ``embedding_status`` because
-  role-mapped columns are rendered as labels at prompt-build time,
-  not embedded.
-* ``embed_dataset`` short-circuits with a typed failure when the GT
-  has no rows / no mapped columns, marks ``failed`` on EmbeddingManager
-  errors, and stamps ``completed`` + the row count on success.
-* ``retrieve_few_shot`` honours the ``embedding_status != completed``
-  short-circuit, the empty-mapping skip, and delegates to the shared
-  helper otherwise.
-"""
+"""Unit tests for GroundTruthService with a mocked EmbeddingManager."""
 
 from __future__ import annotations
 
@@ -172,61 +148,6 @@ def test_update_variable_mapping_rejects_missing_inside_list():
 
 
 # ─────────────────────────────────────────────────────────────────────
-# update_role_mapping
-# ─────────────────────────────────────────────────────────────────────
-
-
-def test_role_mapping_canonical_keys_persist():
-    gt = _FakeGT(columns=["label", "why"])
-    result = GroundTruthService.update_role_mapping(
-        gt=gt, role_mapping={"output": "label", "explanation": "why"}
-    )
-    assert result["role_mapping"] == {"output": "label", "explanation": "why"}
-    assert result["embeddings_stale"] is False
-
-
-def test_role_mapping_legacy_keys_accepted():
-    gt = _FakeGT(columns=["truth", "reason"])
-    result = GroundTruthService.update_role_mapping(
-        gt=gt, role_mapping={"expected_output": "truth", "reasoning": "reason"}
-    )
-    assert not isinstance(result, ServiceError)
-
-
-def test_role_mapping_rejects_unknown_role_key():
-    gt = _FakeGT(columns=["a"])
-    result = GroundTruthService.update_role_mapping(
-        gt=gt, role_mapping={"score": "a"}
-    )
-    assert isinstance(result, ServiceError)
-    assert result.code == "INVALID_ROLE_KEY"
-
-
-def test_role_mapping_rejects_unknown_column():
-    gt = _FakeGT(columns=["truth"])
-    result = GroundTruthService.update_role_mapping(
-        gt=gt, role_mapping={"output": "missing"}
-    )
-    assert isinstance(result, ServiceError)
-    assert result.code == "INVALID_COLUMN"
-
-
-def test_role_mapping_does_not_invalidate_embeddings():
-    """Role-mapped columns feed the prompt as labels, not embedded text.
-    Swapping which column supplies the label leaves vectors valid."""
-    gt = _FakeGT(
-        columns=["a", "b"],
-        role_mapping={"output": "a"},
-        embedding_status="completed",
-    )
-    result = GroundTruthService.update_role_mapping(
-        gt=gt, role_mapping={"output": "b"}
-    )
-    assert result["embeddings_stale"] is False
-    assert gt.embedding_status == "completed"
-
-
-# ─────────────────────────────────────────────────────────────────────
 # embed_dataset
 # ─────────────────────────────────────────────────────────────────────
 
@@ -333,22 +254,6 @@ def test_retrieve_few_shot_delegates_to_helper():
 
     mock_retrieve.assert_called_once()
     assert rows == sentinel
-
-
-# ─────────────────────────────────────────────────────────────────────
-# validate_output
-# ─────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "value,expected_ok",
-    [("Pass", True), ("FAIL", True), ("garbage", False)],
-)
-def test_validate_output_uses_template_type(value, expected_ok):
-    template = _FakeTemplate(output_type_normalized="pass_fail")
-    result = GroundTruthService.validate_output(template=template, value=value)
-    assert result["ok"] is expected_ok
-    assert isinstance(result["error"], str)
 
 
 # ─────────────────────────────────────────────────────────────────────

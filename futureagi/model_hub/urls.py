@@ -229,7 +229,6 @@ from model_hub.views.separate_evals import (
     GroundTruthStatusView,
     GroundTruthTriggerEmbeddingView,
     GroundTruthUploadView,
-    GroundTruthValidateOutputView,
     RestoreVersionView,
     SetDefaultVersionView,
     TestEvaluationTemplateAPIView,
@@ -1208,11 +1207,6 @@ urlpatterns = [
         "ground-truth/<uuid:ground_truth_id>/embed/",
         GroundTruthTriggerEmbeddingView.as_view(),
         name="ground-truth-embed",
-    ),
-    path(
-        "eval-templates/<uuid:template_id>/ground-truth/validate-output/",
-        GroundTruthValidateOutputView.as_view(),
-        name="eval-template-ground-truth-validate-output",
     ),
     path(
         "ground-truth/<uuid:ground_truth_id>/",

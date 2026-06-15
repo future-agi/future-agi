@@ -32,13 +32,7 @@ class GroundTruthFewShotRequest:
 
 @dataclass(frozen=True)
 class GroundTruthMatch:
-    """One retrieved GT row, projected back into the original shape.
-
-    The CH writer splits a single GT row into one CH row per mapped
-    input column, all sharing an ``item_id``. We collapse them here so
-    callers get the source-row shape they uploaded (plus the mapped
-    columns appear once, not N times).
-    """
+    """One retrieved GT row, projected back into the original shape."""
 
     item_id: str
     row: dict[str, Any]
@@ -50,21 +44,7 @@ def retrieve_ground_truth_fewshots(
     *,
     embedding_manager: EmbeddingManager | None = None,
 ) -> list[GroundTruthMatch]:
-    """Retrieve ground-truth rows similar to the runtime input.
-
-    The runtime ``inputs`` dict is split per template variable and each
-    value is similarity-searched against its corresponding GT column.
-    Rows that match across **all** input columns survive the
-    intersection; ties below ``similarity_threshold`` drop the whole row.
-
-    Returns an empty list when:
-        * the request has no usable inputs (every value is empty),
-        * the underlying CH search returns no intersection.
-
-    Raises whatever ``EmbeddingManager.retrieve_avg_rag_based_examples``
-    raises on a real failure (CH unreachable, embedding service down,
-    etc.). The caller decides how to render those.
-    """
+    """Retrieve ground-truth rows similar to the runtime input."""
     template_vars = _ordered_present_keys(request.inputs)
     if not template_vars:
         logger.info(
@@ -134,14 +114,7 @@ def _ordered_present_keys(inputs: dict[str, Any]) -> list[str]:
 
 
 def _project_match(group: list[dict[str, Any]]) -> GroundTruthMatch:
-    """Collapse one CH item group back into a single source-row shape.
-
-    Each CH row in ``group`` corresponds to one mapped input column of
-    the same source GT row (same ``item_id``). They share all
-    non-column metadata. We deduplicate by taking the first row's
-    metadata as the canonical row and recording the per-column
-    input types separately.
-    """
+    """Collapse one CH item group back into a single source-row shape."""
     canonical = dict(group[0])
     item_id = str(canonical.pop("item_id", ""))
     per_column_input_types: dict[str, str] = {}
