@@ -193,7 +193,7 @@ def bulk_update_or_create_cells(
         column_id: Column ID to filter by
         dataset_id: Dataset ID to filter by
         new_values: Dictionary containing values to update/set
-        user_eval_metric_id: Optional - when supplied, the write is skipped
+        user_eval_metric_id: Optional — when supplied, the write is skipped
             entirely if the user has stopped this eval mid-run. Mirrors the
             guard in EvaluationRunner._create_cell so that late Temporal
             workers can't overwrite the "User stopped evaluation" state
@@ -515,7 +515,7 @@ def _resolve_special_value(value, row, runner):
 
     if value_lower == "output":
         # For base evals (no experiment_dataset), use base_column which preserves
-        # the actual data column - self.column gets overwritten to the eval result
+        # the actual data column — self.column gets overwritten to the eval result
         # column by load_user_eval_metric when is_only_eval=True.
         if not runner.experiment_dataset and getattr(runner, "base_column", None):
             output_col = runner.base_column
@@ -613,7 +613,7 @@ def process_mapping(
     mapping = []
 
     # Collect all column IDs that need to be fetched (extracting base column IDs from JSON paths)
-    # Skip special mapping values - they resolve via runner context, not column lookup
+    # Skip special mapping values — they resolve via runner context, not column lookup
     column_ids_to_fetch = set()
     for key, value in mappings.items():
         if key == "call_type":
@@ -869,7 +869,7 @@ class EvaluationRunner:
                 logger.warning(
                     "No organization_id available for filtering in get_few_shot_examples - returning empty examples"
                 )
-                # print(f"[FEEDBACK RAG] Skipped - no organization_id", flush=True)
+                # print(f"[FEEDBACK RAG] Skipped — no organization_id", flush=True)
                 return all_examples
 
             # print(f"[FEEDBACK RAG] Querying eval_id={self.eval_template.id} org={self.organization_id} input_cols={required_field} inputs_preview={[str(v)[:60] for v in mapping]}", flush=True)
@@ -1000,7 +1000,7 @@ class EvaluationRunner:
             # Always (re)link the column to the EDT M2M for experiments.
             # M2M.add is idempotent, so safe on existing rows. This heals any
             # column that was created previously without the M2M link
-            # (e.g. earlier reason-column code paths) - the grid serializer
+            # (e.g. earlier reason-column code paths) — the grid serializer
             # filters by exp_dataset.columns, so unlinked columns never
             # render even if they exist in the DB.
             if self.experiment_dataset:
@@ -1022,7 +1022,7 @@ class EvaluationRunner:
         deterministic source_id.
         """
         # Guard: if the eval was stopped or deleted while we were running,
-        # don't create a new reason column - it would be orphaned.
+        # don't create a new reason column — it would be orphaned.
         from model_hub.services.experiment_utils import is_user_eval_stopped
 
         if is_user_eval_stopped(self.user_eval_metric_id):
@@ -1445,7 +1445,7 @@ class EvaluationRunner:
                 return
 
         # Guard: user issued a Stop on this eval via StopUserEvalView; the
-        # eval's cells were reset to "User stopped evaluation" - don't let
+        # eval's cells were reset to "User stopped evaluation" — don't let
         # a late worker finish overwrite that state.
         from model_hub.services.experiment_utils import is_user_eval_stopped
 
@@ -1647,7 +1647,7 @@ class EvaluationRunner:
             #     the YAML (enforces truly-required keys).
             #   - User evals: treat ALL required_keys as optional. Users can
             #     use Jinja2 templating (`{% if input %}...{% endif %}`) in
-            #     their rule_prompt to handle nulls however they want - we
+            #     their rule_prompt to handle nulls however they want — we
             #     shouldn't block the run when a field is missing.
             is_system_eval = (
                 getattr(self.eval_template, "owner", None) == OwnerChoices.SYSTEM.value
@@ -1730,7 +1730,7 @@ class EvaluationRunner:
 
     def update_config_list_values(self, config, row=None):
         # Prompt-template fields hold {{var}} placeholders resolved later by
-        # the evaluator via the user's mapping - not column UUIDs/names.
+        # the evaluator via the user's mapping — not column UUIDs/names.
         PROMPT_KEYS = {"rule_prompt", "criteria", "instructions"}
         if config:
             config = config.copy()
@@ -2089,7 +2089,7 @@ class EvaluationRunner:
             mapped_keys=mapped_keys_for_validation,
         )
         # The dataset path runs rows in parallel via ThreadPoolExecutor,
-        # so we cannot stash this on self - sibling threads would race and
+        # so we cannot stash this on self — sibling threads would race and
         # lose each other's warnings. Threaded through the return tuple
         # and into _format_response per-row instead.
         #
@@ -2179,7 +2179,7 @@ class EvaluationRunner:
 
         # Inject row_context when full_row data injection is enabled.
         # data_injection lives in the user's eval metric config (run_config)
-        # or the eval template config - check both.
+        # or the eval template config — check both.
         _di_raw = {}
         if self.user_eval_metric and self.user_eval_metric.config:
             _uem_cfg = self.user_eval_metric.config
@@ -2409,8 +2409,8 @@ class EvaluationRunner:
                     id=self._resolved_version.id
                 ).update(usage_count=models.F("usage_count") + 1)
         except Exception:
-            # Backward compatibility - don't break if versions don't exist yet
-            logger.debug("Version resolution skipped - no versions found")
+            # Backward compatibility — don't break if versions don't exist yet
+            logger.debug("Version resolution skipped — no versions found")
             self._resolved_version = None
 
     def _apply_version_overrides(self, config):
@@ -2496,7 +2496,7 @@ class EvaluationRunner:
         eval_type_id = self.eval_template.config.get("eval_type_id")
 
         if eval_type_id == "CustomCodeEval":
-            # Code evals only need the code string - strip everything else.
+            # Code evals only need the code string — strip everything else.
             # Do NOT fall back to template.criteria: after an instructions
             # update via the API, criteria holds the LLM-prompt text, not
             # Python code, which would produce a silent "skip" result.
@@ -2506,7 +2506,7 @@ class EvaluationRunner:
             return config
 
         if eval_type_id == "AgentEvaluator":
-            # Agent eval - uses Falcon AI AgentLoop for multi-turn reasoning
+            # Agent eval — uses Falcon AI AgentLoop for multi-turn reasoning
             config["rule_prompt"] = self.eval_template.config.get("rule_prompt")
             config["model"] = model or self.eval_template.config.get("model")
             raw_output = self.eval_template.config.get("output")
@@ -2586,7 +2586,7 @@ class EvaluationRunner:
                     "few_shot_examples"
                 )
 
-            # Resolve model - prefer runtime model over stored config
+            # Resolve model — prefer runtime model over stored config
             raw_model = model or self.eval_template.config.get("model")
             futureagi_models = {
                 ModelChoices.TURING_LARGE.value,
@@ -2701,7 +2701,7 @@ class EvaluationRunner:
         # Attach the per-row partial-input warning so the cell payload
         # and the EvalLogger projection (output_metadata.warnings) both
         # carry it. Threaded in as an argument because rows run in
-        # parallel - see _process_eval_result.
+        # parallel — see _process_eval_result.
         if partial_input_warning:
             response.setdefault("warnings", []).append(partial_input_warning)
 
@@ -2928,7 +2928,7 @@ class EvaluationRunner:
                     logger.exception(f"Error processing row: {str(e)}")
                     fail += 1
                     if _cancel_requested:
-                        # User stopped this eval - leave the "Evaluation
+                        # User stopped this eval — leave the "Evaluation
                         # stopped by user" cells (set by mark_eval_cells_stopped)
                         # in place instead of overwriting them.
                         continue

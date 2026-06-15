@@ -226,15 +226,3 @@ export function useSearchGroundTruth() {
   });
 }
 
-// ── Validate a candidate eval-output value against the template's output type ──
-export function useValidateGroundTruthOutput(templateId) {
-  return useMutation({
-    mutationFn: async ({ value }) => {
-      const { data } = await axios.post(
-        endpoints.develop.eval.groundTruthValidateOutput(templateId),
-        { value },
-      );
-      return data?.result;
-    },
-  });
-}

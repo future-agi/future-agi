@@ -532,8 +532,6 @@ import type {
   GroundTruthStatusResponseApi,
   GroundTruthUploadRequestApi,
   GroundTruthUploadResponseApi,
-  GroundTruthValidateOutputRequestApi,
-  GroundTruthValidateOutputResponseApi,
   HealthCheckResponseApi,
   HuggingFaceAddRowsRequestApi,
   HuggingFaceDatasetConfigRequestApi,
@@ -35695,80 +35693,6 @@ export const modelHubEvalTemplatesGroundTruthUploadCreate = async (templateId: s
 
 
 
-export type modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse200 = {
-  data: GroundTruthValidateOutputResponseApi
-  status: 200
-}
-
-export type modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse400 = {
-  data: ModelHubErrorResponseApi
-  status: 400
-}
-
-export type modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse403 = {
-  data: ModelHubErrorResponseApi
-  status: 403
-}
-
-export type modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse404 = {
-  data: ModelHubErrorResponseApi
-  status: 404
-}
-
-export type modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse409 = {
-  data: ModelHubErrorResponseApi
-  status: 409
-}
-
-export type modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse500 = {
-  data: ModelHubErrorResponseApi
-  status: 500
-}
-
-export type modelHubEvalTemplatesGroundTruthValidateOutputCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
-}
-
-export type modelHubEvalTemplatesGroundTruthValidateOutputCreateResponseSuccess = (modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse200) & {
-  headers: Headers;
-};
-export type modelHubEvalTemplatesGroundTruthValidateOutputCreateResponseError = (modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse400 | modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse403 | modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse404 | modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse409 | modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse500 | modelHubEvalTemplatesGroundTruthValidateOutputCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse = (modelHubEvalTemplatesGroundTruthValidateOutputCreateResponseSuccess | modelHubEvalTemplatesGroundTruthValidateOutputCreateResponseError)
-
-export const getModelHubEvalTemplatesGroundTruthValidateOutputCreateUrl = (templateId: string,) => {
-
-
-
-
-  return `/model-hub/eval-templates/${templateId}/ground-truth/validate-output/`
-}
-
-/**
- * Validates a candidate eval-output value against the template's
-configured output type. Used by the FE when previewing/importing
-rows so the user gets immediate feedback if their mapped output
-column contains values that won't be accepted at eval time.
- * @summary POST /model-hub/eval-templates/<id>/ground-truth/validate-output/
- */
-export const modelHubEvalTemplatesGroundTruthValidateOutputCreate = async (templateId: string,
-    groundTruthValidateOutputRequestApi: GroundTruthValidateOutputRequestApi, options?: RequestInit): Promise<modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse> => {
-
-  return apiMutator<modelHubEvalTemplatesGroundTruthValidateOutputCreateResponse>(getModelHubEvalTemplatesGroundTruthValidateOutputCreateUrl(templateId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      groundTruthValidateOutputRequestApi,)
-  }
-);}
-
-
-
 export type modelHubEvalTemplatesUpdateUpdateResponse200 = {
   data: EvalTemplateUpdateResponseApi
   status: 200
@@ -40331,10 +40255,7 @@ export const getModelHubGroundTruthSetupUpdateUrl = (groundTruthId: string,) => 
 }
 
 /**
- * Atomic save of variable mapping, role mapping, and injection config
-(max_examples, similarity_threshold, injection_format, enabled).
-``role_mapping["output"]`` is mandatory.
- * @summary PUT /model-hub/ground-truth/<id>/setup/
+ * PUT /model-hub/ground-truth/<id>/setup/
  */
 export const modelHubGroundTruthSetupUpdate = async (groundTruthId: string,
     groundTruthSetupRequestApi: GroundTruthSetupRequestApi, options?: RequestInit): Promise<modelHubGroundTruthSetupUpdateResponse> => {

@@ -939,11 +939,6 @@ export const endpoints = {
         apiPath("/model-hub/ground-truth/{ground_truth_id}/", {
           ground_truth_id: id,
         }),
-      groundTruthValidateOutput: (id) =>
-        apiPath(
-          "/model-hub/eval-templates/{template_id}/ground-truth/validate-output/",
-          { template_id: id },
-        ),
       runEval: apiPath("/model-hub/test-evaluation/"),
       getEvalConfigs: apiPath("/model-hub/get-eval-config"),
       getEvalNames: apiPath("/model-hub/get-eval-template-names"),

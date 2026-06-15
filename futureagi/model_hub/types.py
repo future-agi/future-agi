@@ -136,11 +136,11 @@ class EvalCreateRequest(BaseModel):
     summary: dict | None = (
         None  # {type: short|long|concise|custom, custom: str}
     )
-    # Error Localization - mirrors EvalUpdateRequest. Without this here the
+    # Error Localization — mirrors EvalUpdateRequest. Without this here the
     # FE's create payload (which always includes the toggle value) is
     # rejected by `extra="forbid"`.
     error_localizer_enabled: bool = False
-    # Template format - determines how variables are extracted
+    # Template format — determines how variables are extracted
     template_format: Literal["mustache", "jinja"] = "mustache"
 
 
@@ -555,17 +555,6 @@ class GroundTruthSearchRequest(BaseModel):
     similarity_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
-class GroundTruthValidateOutputRequest(BaseModel):
-    """Request for POST /model-hub/eval-templates/{id}/ground-truth/validate-output/"""
-
-    value: object
-
-
-class GroundTruthValidateOutputResponse(BaseModel):
-    """Response for POST /model-hub/eval-templates/{id}/ground-truth/validate-output/"""
-
-    ok: bool
-    error: str | None = None
 
 
 # =============================================================================

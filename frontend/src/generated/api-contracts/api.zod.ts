@@ -19729,32 +19729,6 @@ export const ModelHubEvalTemplatesGroundTruthUploadCreateResponse = zod.object({
 
 
 /**
- * Validates a candidate eval-output value against the template's
-configured output type. Used by the FE when previewing/importing
-rows so the user gets immediate feedback if their mapped output
-column contains values that won't be accepted at eval time.
- * @summary POST /model-hub/eval-templates/<id>/ground-truth/validate-output/
- */
-export const ModelHubEvalTemplatesGroundTruthValidateOutputCreateParams = zod.object({
-  "template_id": zod.string()
-})
-
-export const ModelHubEvalTemplatesGroundTruthValidateOutputCreateBody = zod.object({
-  "value": zod.object({
-
-}).passthrough()
-})
-
-export const ModelHubEvalTemplatesGroundTruthValidateOutputCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "ok": zod.boolean(),
-  "error": zod.string().optional()
-})
-})
-
-
-/**
  * Update an eval template. Only user-owned templates can be updated.
  * @summary PUT /model-hub/eval-templates/<id>/update/
  */
@@ -22042,10 +22016,7 @@ export const ModelHubGroundTruthSearchCreateResponse = zod.object({
 
 
 /**
- * Atomic save of variable mapping, role mapping, and injection config
-(max_examples, similarity_threshold, injection_format, enabled).
-``role_mapping["output"]`` is mandatory.
- * @summary PUT /model-hub/ground-truth/<id>/setup/
+ * PUT /model-hub/ground-truth/<id>/setup/
  */
 export const ModelHubGroundTruthSetupUpdateParams = zod.object({
   "ground_truth_id": zod.string()

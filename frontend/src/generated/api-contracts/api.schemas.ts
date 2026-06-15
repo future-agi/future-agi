@@ -10050,22 +10050,6 @@ export interface GroundTruthUploadResponseApi {
   result: GroundTruthUploadResponseResultApi;
 }
 
-export type GroundTruthValidateOutputRequestApiValue = { [key: string]: unknown };
-
-export interface GroundTruthValidateOutputRequestApi {
-  value: GroundTruthValidateOutputRequestApiValue;
-}
-
-export interface GroundTruthValidateOutputResponseResultApi {
-  ok: boolean;
-  error?: string;
-}
-
-export interface GroundTruthValidateOutputResponseApi {
-  status: boolean;
-  result: GroundTruthValidateOutputResponseResultApi;
-}
-
 export type EvalTemplateUpdateV2RequestApiEvalType = typeof EvalTemplateUpdateV2RequestApiEvalType[keyof typeof EvalTemplateUpdateV2RequestApiEvalType];
 
 

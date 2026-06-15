@@ -12,18 +12,12 @@ from __future__ import annotations
 
 import pytest
 
+from model_hub.utils.eval_input_validation import is_empty_value
 from model_hub.utils.ground_truth_retrieval import (
-    _is_empty_value,
     format_few_shot_examples,
     get_label_columns,
     has_usable_inputs_for_gt,
-    validate_output_value,
 )
-
-
-# ─────────────────────────────────────────────────────────────────────
-# _is_empty_value
-# ─────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -37,11 +31,9 @@ from model_hub.utils.ground_truth_retrieval import (
         ({}, True),
         ((), True),
         (set(), True),
-        # Falsy-but-legitimate scalars are valid eval inputs, NOT empty.
         (0, False),
         (0.0, False),
         (False, False),
-        # Real content
         ("hello", False),
         ("  hello  ", False),
         ([1], False),
@@ -50,7 +42,7 @@ from model_hub.utils.ground_truth_retrieval import (
     ],
 )
 def test_is_empty_value(value, expected):
-    assert _is_empty_value(value) is expected
+    assert is_empty_value(value) is expected
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -157,71 +149,6 @@ def test_label_cols_list_value_picks_first():
         "first",
         "",
     )
-
-
-# ─────────────────────────────────────────────────────────────────────
-# validate_output_value
-# ─────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "value",
-    ["Pass", "FAIL", "True", "false", "0", "1", "yes", "No"],
-)
-def test_validate_pass_fail_accepts_canonical(value):
-    ok, err = validate_output_value(value, "pass_fail")
-    assert ok is True
-    assert err is None
-
-
-def test_validate_pass_fail_rejects_garbage():
-    ok, err = validate_output_value("maybe", "pass_fail")
-    assert ok is False
-    assert err == "Expected one of: Pass / Fail / True / False / Yes / No."
-
-
-@pytest.mark.parametrize("value", [0, "0", 0.0, "0.5", 1, "1", "0.75"])
-def test_validate_percentage_accepts_range(value):
-    ok, _ = validate_output_value(value, "percentage")
-    assert ok is True
-
-
-@pytest.mark.parametrize("value", [-0.1, 1.5, "abc", "  "])
-def test_validate_percentage_rejects_out_of_range_or_garbage(value):
-    ok, _ = validate_output_value(value, "percentage")
-    assert ok is False
-
-
-def test_validate_deterministic_accepts_known_choice():
-    ok, err = validate_output_value(
-        "good", "deterministic", {"good": 1.0, "bad": 0.0}
-    )
-    assert ok is True
-    assert err is None
-
-
-def test_validate_deterministic_rejects_unknown_choice():
-    ok, err = validate_output_value(
-        "meh", "deterministic", {"good": 1.0, "bad": 0.0}
-    )
-    assert ok is False
-    assert err == "Expected one of: good, bad."
-
-
-def test_validate_unknown_output_type_is_permissive():
-    ok, err = validate_output_value("anything", "")
-    assert ok is True
-    assert err is None
-    ok, err = validate_output_value("anything", "future_output_type")
-    assert ok is True
-    assert err is None
-
-
-@pytest.mark.parametrize("value", [None, "", "   "])
-def test_validate_rejects_empty(value):
-    ok, err = validate_output_value(value, "pass_fail")
-    assert ok is False
-    assert err == "Value is empty."
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -2503,22 +2503,6 @@ class GroundTruthSearchRequestSerializer(serializers.Serializer):
         return attrs
 
 
-class GroundTruthValidateOutputRequestSerializer(serializers.Serializer):
-    """Validate a candidate output value against the template's output_type."""
-
-    value = serializers.JSONField()
-
-
-class GroundTruthValidateOutputResponseResultSerializer(serializers.Serializer):
-    ok = serializers.BooleanField()
-    error = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-
-
-class GroundTruthValidateOutputResponseSerializer(serializers.Serializer):
-    status = serializers.BooleanField()
-    result = GroundTruthValidateOutputResponseResultSerializer()
-
-
 class GroundTruthItemSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     name = serializers.CharField()

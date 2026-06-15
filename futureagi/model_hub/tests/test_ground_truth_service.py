@@ -1,25 +1,4 @@
-"""Unit tests for :class:`GroundTruthService` with mocked EmbeddingManager.
-
-Pure unit (no DB, no CH, no embedding service). The live CH round-trip
-is covered by ``manage.py gt_roundtrip_test`` and the integration tests
-in ``test_ground_truth.py``.
-
-Coverage:
-
-* ``update_setup`` validates the payload (output column required,
-  variable mapping columns real, numeric bounds), persists atomically,
-  flips ``embedding_status`` to ``pending`` when the variable mapping
-  changed and the dataset was previously embedded, and writes the
-  injection config onto ``EvalTemplate.config["ground_truth"]``.
-* ``embed_dataset`` short-circuits with a typed failure on empty data
-  or empty mapping, marks ``failed`` on EmbeddingManager errors, and
-  stamps ``completed`` + the row count on success.
-* ``retrieve_few_shot`` honours the ``embedding_status != completed``
-  short-circuit, the empty-mapping skip, and delegates to the shared
-  helper otherwise.
-* ``resolve_preview_examples`` returns the tri-state contract the FE
-  panel depends on.
-"""
+"""Unit tests for GroundTruthService with a mocked EmbeddingManager."""
 
 from __future__ import annotations
 
@@ -188,22 +167,6 @@ def test_retrieve_few_shot_delegates_to_helper():
 
     mock_retrieve.assert_called_once()
     assert rows == sentinel
-
-
-# ─────────────────────────────────────────────────────────────────────
-# validate_output
-# ─────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "value,expected_ok",
-    [("Pass", True), ("FAIL", True), ("garbage", False)],
-)
-def test_validate_output_uses_template_type(value, expected_ok):
-    template = _FakeTemplate(output_type_normalized="pass_fail")
-    result = GroundTruthService.validate_output(template=template, value=value)
-    assert result["ok"] is expected_ok
-    assert isinstance(result["error"], str)
 
 
 # ─────────────────────────────────────────────────────────────────────

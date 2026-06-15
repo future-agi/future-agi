@@ -1271,6 +1271,13 @@ const GroundTruthSetupForm = ({
         >
           The labeled answer the evaluator compares its result against.
         </Typography>
+        <Typography
+          variant="caption"
+          sx={{ color: "warning.dark", fontSize: "11px", mt: -0.25 }}
+        >
+          Ensure values in this column match the template's expected output
+          type (pass/fail, score 0-1, or one of the configured choices).
+        </Typography>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Typography variant="caption" sx={labelColSx}>
             Output column *

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 975,
+  "endpointCount": 974,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -17812,40 +17812,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/GroundTruthUploadResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "409": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/model-hub/eval-templates/{template_id}/ground-truth/validate-output/": {
-      "post": {
-        "operationId": "model-hub_eval-templates_ground-truth_validate-output_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/GroundTruthValidateOutputRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/GroundTruthValidateOutputResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -57152,34 +57118,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "GroundTruthValidateOutputRequest": {
-      "required": [
-        "value"
-      ],
-      "type": "object",
-      "properties": {
-        "value": {
-          "title": "Value",
-          "type": "object"
-        }
-      }
-    },
-    "GroundTruthValidateOutputResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/GroundTruthValidateOutputResponseResult"
-        }
-      }
-    },
     "HealthCheckResponse": {
       "required": [
         "result"
@@ -82276,23 +82214,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Embedding status",
           "type": "string",
           "minLength": 1
-        }
-      }
-    },
-    "GroundTruthValidateOutputResponseResult": {
-      "required": [
-        "ok"
-      ],
-      "type": "object",
-      "properties": {
-        "ok": {
-          "title": "Ok",
-          "type": "boolean"
-        },
-        "error": {
-          "title": "Error",
-          "type": "string",
-          "x-nullable": true
         }
       }
     },
