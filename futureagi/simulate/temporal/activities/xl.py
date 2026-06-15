@@ -1570,6 +1570,10 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                         from ee.usage.services.emitter import emit
                     except ImportError:
                         emit = None
+                    try:
+                        from ee.usage.utils.event_properties import llm_usage_properties
+                    except ImportError:
+                        llm_usage_properties = lambda obj: {}
 
                     actual_cost = 0
                     if hasattr(agent, "llm") and agent.llm:
@@ -1587,6 +1591,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                                 "source": "simulate_tool_evaluation",
                                 "source_id": str(test_execution.id),
                                 "raw_cost_usd": str(actual_cost),
+                                **llm_usage_properties(agent),
                             },
                         )
                     )

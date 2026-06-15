@@ -1,9 +1,14 @@
 """ClickHouse query builder for Observe end-user list and detail metrics."""
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+from tracer.services.clickhouse.v2.id_remap_sql import (
+    remap_left_join,
+    resolved_id_expr,
+)
 
 
 class UserListQueryBuilder(BaseQueryBuilder):
@@ -15,7 +20,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
 
     TABLE = "spans"
 
-    OUTPUT_FILTER_MAP: Dict[str, str] = {
+    OUTPUT_FILTER_MAP: dict[str, str] = {
         "user_id": "user_id",
         "user_id_type": "user_id_type",
         "user_id_hash": "user_id_hash",
@@ -54,17 +59,28 @@ class UserListQueryBuilder(BaseQueryBuilder):
         self,
         *,
         organization_id: str,
-        workspace_id: Optional[str],
-        project_id: Optional[str] = None,
-        filters: Optional[List[Dict[str, Any]]] = None,
-        search: Optional[str] = None,
-        sort_params: Optional[List[Dict[str, Any]]] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        end_user_id: Optional[str] = None,
+        workspace_id: str | None = None,
+        project_id: str | None = None,
+        project_ids: list[str] | None = None,
+        filters: list[dict[str, Any]] | None = None,
+        search: str | None = None,
+        sort_params: list[dict[str, Any]] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        end_user_id: str | None = None,
         include_null_workspace: bool = False,
+        empty_scope: bool = False,
     ) -> None:
-        super().__init__(project_id=project_id)
+        # CH25 EndUser cutover (DESIGN §4.3): the curated source is now the v2
+        # `end_users` RMT, which — unlike the legacy CDC `tracer_enduser` — has
+        # NO `workspace_id` column (schema 017). Workspace isolation therefore
+        # can no longer key on the entity's own workspace; the caller resolves
+        # the workspace's projects and passes them as `project_ids`, scoping the
+        # enduser set by `project_id IN (...)`. `workspace_id` /
+        # `include_null_workspace` are retained for signature compatibility but
+        # no longer drive any SQL (the project set already encodes the
+        # is_default / null-workspace fan-out the legacy filter expressed).
+        super().__init__(project_id=project_id, project_ids=project_ids)
         self.organization_id = str(organization_id)
         self.workspace_id = str(workspace_id) if workspace_id else None
         self.filters = filters or []
@@ -74,8 +90,13 @@ class UserListQueryBuilder(BaseQueryBuilder):
         self.offset = offset
         self.end_user_id = str(end_user_id) if end_user_id else None
         self.include_null_workspace = include_null_workspace
+        # When the caller resolved an EMPTY workspace-project set, the read must
+        # return nothing — NOT fall through to an org-wide scan. (BaseQueryBuilder
+        # treats `project_ids=[]` as falsy and would otherwise drop project
+        # scoping entirely, re-introducing a cross-workspace leak.)
+        self.empty_scope = empty_scope
 
-    def build(self) -> Tuple[str, Dict[str, Any]]:
+    def build(self) -> tuple[str, dict[str, Any]]:
         start_date, end_date = self.parse_time_range(self.filters)
         self.params.update(
             {
@@ -85,8 +106,6 @@ class UserListQueryBuilder(BaseQueryBuilder):
             }
         )
 
-        if self.workspace_id:
-            self.params["workspace_id"] = self.workspace_id
         if self.search:
             self.params["search"] = self.search
         if self.end_user_id:
@@ -107,19 +126,21 @@ class UserListQueryBuilder(BaseQueryBuilder):
         output_where, output_params = self._output_where()
         self.params.update(output_params)
 
+        # Project scoping carries workspace isolation now that `end_users` has no
+        # `workspace_id` (the list view passes the workspace's projects as
+        # `project_ids`; the detail views pass a single validated `project_id`).
+        # `project_filter_sql()` (BaseQueryBuilder) emits `project_id = …` or
+        # `project_id IN …` depending on which mode the builder was built with,
+        # and is applied to BOTH the enduser set and the span set (spans also
+        # inherit isolation via `end_user_id IN (SELECT … FROM
+        # filtered_end_users)`).
         project_filter = ""
-        if self.project_id:
-            project_filter = "AND project_id = toUUID(%(project_id)s)"
+        if self.project_ids is not None or self.project_id:
+            project_filter = f"AND {self.project_filter_sql()}"
 
-        workspace_filter = ""
-        if self.workspace_id:
-            if self.include_null_workspace:
-                workspace_filter = (
-                    "AND (workspace_id = toUUID(%(workspace_id)s) "
-                    "OR isNull(workspace_id))"
-                )
-            else:
-                workspace_filter = "AND workspace_id = toUUID(%(workspace_id)s)"
+        # Empty resolved workspace-project set ⇒ return nothing (a contradiction
+        # the planner prunes), rather than scanning the whole org.
+        empty_scope_filter = "AND 0 = 1" if self.empty_scope else ""
 
         search_filter = ""
         if self.search:
@@ -127,7 +148,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
 
         end_user_filter = ""
         if self.end_user_id:
-            end_user_filter = "AND id = toUUID(%(end_user_id)s)"
+            end_user_filter = "AND end_user_id = toUUID(%(end_user_id)s)"
 
         span_extra = f"AND {span_where}" if span_where else ""
         final_filter = f"WHERE {output_where}" if output_where else ""
@@ -138,27 +159,44 @@ class UserListQueryBuilder(BaseQueryBuilder):
             else ""
         )
 
+        # P3b step1.5 id-remap resolution (see id_remap_sql / DESIGN §3): map a
+        # NEW-id span back to its OLD curated id so a straddler reads as ONE user.
+        # DUAL remap: `end_user_id` (the per-user grouping key) AND `trace_session_id`
+        # (the per-user `num_sessions` distinct-session count + `avg_session_duration`
+        # in the `session_durations`/`session_aggregates` CTEs below) — a straddler
+        # splits on BOTH, so resolve both. The two joins hang off the SAME `raw_spans`
+        # row `rs` and so MUST carry DISTINCT aliases (`eu_remap` / `ts_remap`; the
+        # default `id_remap` would collide).
+        eu_remap_join = remap_left_join(
+            "rs.end_user_id", "end_user_id_remap", "eu_remap"
+        )
+        ts_remap_join = remap_left_join(
+            "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
+        )
+        resolved_eu = resolved_id_expr("rs.end_user_id", "eu_remap")
+        resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
+        eval_table, eval_nd_e = eval_logger_source("e")
+
         query = f"""
         WITH
         filtered_end_users AS (
             SELECT
-                id,
+                end_user_id,
                 user_id,
                 user_id_type,
                 user_id_hash,
-                created_at,
+                first_seen,
                 project_id
-            FROM tracer_enduser FINAL
+            FROM end_users FINAL
             WHERE organization_id = toUUID(%(org_id)s)
-              AND _peerdb_is_deleted = 0
-              AND deleted = 0
+              AND is_deleted = 0
               AND notEmpty(user_id)
-              {workspace_filter}
+              {empty_scope_filter}
               {project_filter}
               {search_filter}
               {end_user_filter}
         ),
-        filtered_spans AS (
+        raw_spans AS (
             SELECT
                 id,
                 trace_id,
@@ -173,18 +211,43 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 cost,
                 total_tokens,
                 prompt_tokens,
-                completion_tokens,
-                span_attributes_raw,
-                span_attr_str,
-                span_attr_num
+                completion_tokens
             FROM spans
-            WHERE _peerdb_is_deleted = 0
-              AND end_user_id IN (SELECT id FROM filtered_end_users)
+            WHERE is_deleted = 0
               AND isNotNull(end_user_id)
               AND start_time >= %(start_date)s
               AND start_time < %(end_date)s
               {project_filter}
               {span_extra}
+        ),
+        filtered_spans AS (
+            -- P3b step1.5: resolve each span's `end_user_id` and
+            -- `trace_session_id` through the id-remap SURVIVOR MAP before the
+            -- enduser-set membership check and grouping, so a straddler and a
+            -- many-old→one-new consolidation group each read as ONE user/session.
+            -- The resolved id is projected AS the same column, so downstream CTEs
+            -- group on the unified id unchanged. See id_remap_sql (survivor
+            -- collapse, zero-uuid guard, gate-B no-op).
+            SELECT
+                rs.id AS id,
+                rs.trace_id AS trace_id,
+                rs.project_id AS project_id,
+                {resolved_eu} AS end_user_id,
+                {resolved_ts} AS trace_session_id,
+                rs.observation_type AS observation_type,
+                rs.status AS status,
+                rs.start_time AS start_time,
+                rs.end_time AS end_time,
+                rs.latency_ms AS latency_ms,
+                rs.cost AS cost,
+                rs.total_tokens AS total_tokens,
+                rs.prompt_tokens AS prompt_tokens,
+                rs.completion_tokens AS completion_tokens
+            FROM raw_spans AS rs
+            {eu_remap_join}
+            {ts_remap_join}
+            WHERE {resolved_eu}
+                  IN (SELECT end_user_id FROM filtered_end_users)
         ),
         aggregated_usage AS (
             SELECT
@@ -236,10 +299,9 @@ class UserListQueryBuilder(BaseQueryBuilder):
                     2
                 ) AS bool_eval_pass_rate,
                 round(avg(e.output_float), 2) AS avg_output_float
-            FROM tracer_eval_logger AS e FINAL
+            FROM {eval_table} AS e FINAL
             INNER JOIN user_traces AS ut ON toString(e.trace_id) = ut.trace_id
-            WHERE e._peerdb_is_deleted = 0
-              AND e.deleted = 0
+            WHERE {eval_nd_e}
             GROUP BY ut.end_user_id
         ),
         final_rows AS (
@@ -255,7 +317,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 coalesce(au.avg_trace_latency, 0) AS avg_trace_latency,
                 coalesce(au.num_llm_calls, 0) AS num_llm_calls,
                 coalesce(au.num_guardrails_triggered, 0) AS num_guardrails_triggered,
-                eu.created_at AS activated_at,
+                eu.first_seen AS activated_at,
                 au.last_active AS last_active,
                 coalesce(au.num_active_days, 0) AS num_active_days,
                 coalesce(au.num_traces_with_errors, 0) AS num_traces_with_errors,
@@ -264,13 +326,13 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 eu.project_id AS project_id,
                 eu.user_id_type AS user_id_type,
                 eu.user_id_hash AS user_id_hash,
-                eu.id AS end_user_id
+                eu.end_user_id AS end_user_id
             FROM filtered_end_users AS eu
             INNER JOIN (SELECT DISTINCT end_user_id FROM filtered_spans) AS visible
-                ON visible.end_user_id = eu.id
-            LEFT JOIN aggregated_usage AS au ON au.end_user_id = eu.id
-            LEFT JOIN session_aggregates AS sa ON sa.end_user_id = eu.id
-            LEFT JOIN eval_pass_rate AS epr ON epr.end_user_id = eu.id
+                ON visible.end_user_id = eu.end_user_id
+            LEFT JOIN aggregated_usage AS au ON au.end_user_id = eu.end_user_id
+            LEFT JOIN session_aggregates AS sa ON sa.end_user_id = eu.end_user_id
+            LEFT JOIN eval_pass_rate AS epr ON epr.end_user_id = eu.end_user_id
         ),
         counted_rows AS (
             SELECT
@@ -286,16 +348,16 @@ class UserListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def _span_filters(self) -> List[Dict[str, Any]]:
+    def _span_filters(self) -> list[dict[str, Any]]:
         return [
             f
             for f in self.filters
             if not self._is_date_filter(f) and not self._is_output_filter(f)
         ]
 
-    def _output_where(self) -> Tuple[str, Dict[str, Any]]:
-        clauses: List[str] = []
-        params: Dict[str, Any] = {}
+    def _output_where(self) -> tuple[str, dict[str, Any]]:
+        clauses: list[str] = []
+        params: dict[str, Any] = {}
         for index, item in enumerate(self.filters):
             if self._is_date_filter(item) or not self._is_output_filter(item):
                 continue
@@ -315,7 +377,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
     def _order_by(self) -> str:
         if not self.sort_params:
             return "ORDER BY last_active DESC NULLS LAST"
-        parts: List[str] = []
+        parts: list[str] = []
         for sort in self.sort_params:
             column_id = sort.get("column_id")
             column = self.OUTPUT_FILTER_MAP.get(column_id)
@@ -325,27 +387,31 @@ class UserListQueryBuilder(BaseQueryBuilder):
             if direction not in ("ASC", "DESC"):
                 direction = "DESC"
             parts.append(f"{column} {direction} NULLS LAST")
-        return f"ORDER BY {', '.join(parts)}" if parts else "ORDER BY last_active DESC NULLS LAST"
+        return (
+            f"ORDER BY {', '.join(parts)}"
+            if parts
+            else "ORDER BY last_active DESC NULLS LAST"
+        )
 
     @staticmethod
-    def _is_date_filter(item: Dict[str, Any]) -> bool:
+    def _is_date_filter(item: dict[str, Any]) -> bool:
         config = item.get("filter_config") or {}
         return item.get("column_id") in ("created_at", "start_time") and config.get(
             "filter_type"
         ) in ("datetime", "date")
 
-    def _is_output_filter(self, item: Dict[str, Any]) -> bool:
+    def _is_output_filter(self, item: dict[str, Any]) -> bool:
         return item.get("column_id") in self.OUTPUT_FILTER_MAP
 
     @staticmethod
     def _condition(
         *,
         column: str,
-        op: Optional[str],
+        op: str | None,
         value: Any,
         prefix: str,
-    ) -> Tuple[Optional[str], Dict[str, Any]]:
-        params: Dict[str, Any] = {}
+    ) -> tuple[str | None, dict[str, Any]]:
+        params: dict[str, Any] = {}
         if op == "is_null":
             return f"isNull({column})", params
         if op == "is_not_null":
@@ -373,13 +439,25 @@ class UserListQueryBuilder(BaseQueryBuilder):
 
         params[prefix] = value
         if op == "contains":
-            return f"positionCaseInsensitive(toString({column}), toString(%({prefix})s)) > 0", params
+            return (
+                f"positionCaseInsensitive(toString({column}), toString(%({prefix})s)) > 0",
+                params,
+            )
         if op == "not_contains":
-            return f"positionCaseInsensitive(toString({column}), toString(%({prefix})s)) = 0", params
+            return (
+                f"positionCaseInsensitive(toString({column}), toString(%({prefix})s)) = 0",
+                params,
+            )
         if op == "starts_with":
-            return f"startsWith(lower(toString({column})), lower(toString(%({prefix})s)))", params
+            return (
+                f"startsWith(lower(toString({column})), lower(toString(%({prefix})s)))",
+                params,
+            )
         if op == "ends_with":
-            return f"endsWith(lower(toString({column})), lower(toString(%({prefix})s)))", params
+            return (
+                f"endsWith(lower(toString({column})), lower(toString(%({prefix})s)))",
+                params,
+            )
 
         operator_map = {
             "equals": "=",
@@ -395,8 +473,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
         return f"{column} {operator} %({prefix})s", params
 
     @staticmethod
-    def format_rows(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-        table: List[Dict[str, Any]] = []
+    def format_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        table: list[dict[str, Any]] = []
         total_count = 0
         for row in rows:
             total_count = int(row.get("total_count") or total_count or 0)
@@ -428,7 +506,16 @@ class UserListQueryBuilder(BaseQueryBuilder):
                         row.get("project_id")
                     ),
                     "user_id_type": row.get("user_id_type"),
-                    "user_id_hash": row.get("user_id_hash"),
+                    # CH25 EndUser cutover (DESIGN §4.3): the v2 `end_users`
+                    # column coerces PG NULL hash → '' on write, whereas the
+                    # legacy `tracer_enduser.user_id_hash` (Nullable) preserved
+                    # NULL and the old read surfaced it as None. Normalize '' →
+                    # None here to keep that contract — matching the sibling
+                    # `end_user_dict_reader.resolve_end_user_fields` (`row[3] or
+                    # None`). `user_id_type` is Nullable end-to-end (no
+                    # coercion) so it is NOT normalized: a genuine '' must stay
+                    # '' to match the old FK value.
+                    "user_id_hash": row.get("user_id_hash") or None,
                     "end_user_id": UserListQueryBuilder._json_value(
                         row.get("end_user_id")
                     ),

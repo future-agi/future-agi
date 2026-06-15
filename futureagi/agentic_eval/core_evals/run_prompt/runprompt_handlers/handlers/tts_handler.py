@@ -158,7 +158,14 @@ class TTSHandler(BaseModelHandler):
             return sub_handler.execute_sync(streaming=streaming)
 
         except Exception as e:
-            self.logger.exception(f"TTS sync execution failed: {str(e)}")
+            # Expected, handled validation failure (empty messages) is user
+            # misconfiguration, not a bug; it is returned as a failed
+            # HandlerResponse. Downgrade only that case to warning so real TTS
+            # failures keep creating Sentry issues.
+            if "Messages are required" in str(e):
+                self.logger.warning(f"TTS sync execution failed: {str(e)}")
+            else:
+                self.logger.exception(f"TTS sync execution failed: {str(e)}")
             return self._build_handler_response(
                 response=None,
                 start_time=start_time,
@@ -187,7 +194,14 @@ class TTSHandler(BaseModelHandler):
             return await sub_handler.execute_async(streaming=streaming)
 
         except Exception as e:
-            self.logger.exception(f"TTS async execution failed: {str(e)}")
+            # Expected, handled validation failure (empty messages) is user
+            # misconfiguration, not a bug; it is returned as a failed
+            # HandlerResponse. Downgrade only that case to warning so real TTS
+            # failures keep creating Sentry issues.
+            if "Messages are required" in str(e):
+                self.logger.warning(f"TTS async execution failed: {str(e)}")
+            else:
+                self.logger.exception(f"TTS async execution failed: {str(e)}")
             return self._build_handler_response(
                 response=None,
                 start_time=start_time,

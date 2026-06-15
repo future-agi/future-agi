@@ -7,7 +7,9 @@ Covers:
 - `process_eval_batch_async_task` branching on `template_type`
 """
 
-from unittest.mock import patch
+import json
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -324,6 +326,98 @@ class TestExecuteCompositeChildrenSync:
         assert statuses == ["failed", "completed"]
         # Aggregate should still compute using the one completed child.
         assert outcome.aggregate_score == pytest.approx(0.8, abs=1e-6)
+
+    def test_composite_child_billing_uses_token_pricing_when_cost_is_zero(
+        self, composite_parent, organization, workspace, monkeypatch
+    ):
+        from ee.usage.services.config import BillingConfig
+        import model_hub.views.utils.evals as evals_module
+        from model_hub.views.utils.evals import run_eval_func
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        child = CompositeEvalChild.objects.filter(parent=composite_parent).first().child
+        child.model = "turing_large"
+        child.save(update_fields=["model"])
+        captured = []
+
+        class FakeEvalInstance:
+            cost = {"total_cost": 0}
+            token_usage = {
+                "prompt_tokens": 1341,
+                "completion_tokens": 150,
+                "total_tokens": 1491,
+            }
+
+            def run(self, **_kwargs):
+                return SimpleNamespace(
+                    eval_results=[
+                        {
+                            "data": {"input": "hello"},
+                            "failure": None,
+                            "reason": "ok",
+                            "runtime": 0.01,
+                            "model": "turing_large",
+                            "metrics": None,
+                            "metadata": {},
+                        }
+                    ]
+                )
+
+        log_row = SimpleNamespace(
+            log_id="log-1",
+            config=json.dumps({}),
+            status=APICallStatusChoices.PROCESSING.value,
+            input_token_count=0,
+            save=MagicMock(),
+        )
+
+        monkeypatch.setattr(
+            evals_module,
+            "log_and_deduct_cost_for_api_request",
+            lambda **_kwargs: log_row,
+        )
+        monkeypatch.setattr(
+            "ee.usage.services.metering.check_usage",
+            lambda *_args, **_kwargs: SimpleNamespace(allowed=True),
+        )
+        monkeypatch.setattr(
+            "ee.usage.services.emitter.emit",
+            lambda event: captured.append(event),
+        )
+        monkeypatch.setattr(
+            "model_hub.views.utils.evals.EvaluationRunner._create_eval_instance",
+            lambda *_args, **_kwargs: FakeEvalInstance(),
+        )
+        monkeypatch.setattr(
+            "model_hub.views.utils.evals.EvaluationRunner.map_fields",
+            lambda *_args, **_kwargs: {"input": "hello"},
+        )
+        monkeypatch.setattr(
+            "model_hub.views.utils.evals.EvaluationRunner.format_output",
+            lambda *_args, **_kwargs: 0.7,
+        )
+
+        output = run_eval_func(
+            {"config": {}, "params": {}},
+            {"input": "hello"},
+            child,
+            organization,
+            model=None,
+            workspace=workspace,
+            source="composite_eval",
+        )
+
+        assert output["output"] == 0.7
+        assert captured
+        event = captured[0]
+        assert event.properties["raw_cost_usd"] == "0.012001"
+        assert event.properties["llm_cost_usd"] == "0.011501"
+        assert event.properties["reported_llm_cost_usd"] == "0"
+        assert event.properties["llm_cost_source"] == "token_pricing"
+        assert event.properties["pricing_source"] == "available_models"
+        assert event.amount == pytest.approx(
+            BillingConfig.get().calculate_ai_credits(0.012001)
+        )
 
 
 # ---------------------------------------------------------------------------

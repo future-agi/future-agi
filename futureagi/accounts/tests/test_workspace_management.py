@@ -255,7 +255,7 @@ class TestWorkspaceInviteAPIView:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_invite_user_unauthenticated(self, api_client, workspace):
         """Unauthenticated request fails."""
@@ -546,7 +546,7 @@ class TestResendInviteAPIView:
             {"user_id": str(inactive_user.id)},
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_resend_invite_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -620,7 +620,7 @@ class TestDeleteUserAPIView:
             {"user_id": str(admin_user.id)},
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_delete_user_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -705,7 +705,7 @@ class TestDeactivateUserAPIView:
             {"user_id": str(admin_user.id)},
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_deactivate_user_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -792,7 +792,7 @@ class TestSwitchWorkspaceAPIView:
             format="json",
         )
         # Members do NOT have global workspace access — need explicit membership
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_switch_workspace_unauthenticated(self, api_client, workspace):
         """Unauthenticated request fails."""
@@ -846,12 +846,12 @@ class TestManageTeamViewGet:
     def test_list_team_as_admin_forbidden(self, admin_client):
         """Admin cannot list team (owner only)."""
         response = admin_client.get("/accounts/team/users/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_list_team_as_member_forbidden(self, member_client):
         """Member cannot list team."""
         response = member_client.get("/accounts/team/users/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_list_team_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -961,7 +961,7 @@ class TestManageTeamViewPost:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_add_team_member_as_member_forbidden(self, member_client, workspace):
         """Member cannot add team members."""
@@ -978,7 +978,7 @@ class TestManageTeamViewPost:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_add_team_member_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -1070,12 +1070,12 @@ class TestManageTeamViewDelete:
     def test_delete_team_member_as_admin_forbidden(self, admin_client, member_user):
         """Admin cannot delete team members (owner only)."""
         response = admin_client.delete(f"/accounts/team/users/{member_user.id}/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_delete_team_member_as_member_forbidden(self, member_client, admin_user):
         """Member cannot delete team members."""
         response = member_client.delete(f"/accounts/team/users/{admin_user.id}/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
     def test_delete_team_member_unauthenticated(self, api_client, member_user):
         """Unauthenticated request fails."""

@@ -142,15 +142,25 @@ class CreateAnnotationLabelTool(BaseTool):
 def _validate_label_settings(label_type: str, settings: dict) -> str | None:
     """Validate required settings per label type, matching API serializer behavior."""
     if label_type == "numeric":
-        if "min" not in settings or "max" not in settings:
-            return "Numeric labels require 'min' and 'max' in settings."
+        required_fields = {"min", "max", "step_size", "display_type"}
+        missing_fields = sorted(required_fields - set(settings))
+        if missing_fields:
+            return (
+                "Numeric labels require 'min', 'max', 'step_size', and "
+                f"'display_type' in settings. Missing: {', '.join(missing_fields)}."
+            )
         try:
             min_val = float(settings["min"])
             max_val = float(settings["max"])
+            step_size = float(settings["step_size"])
         except (TypeError, ValueError):
-            return "'min' and 'max' must be numbers."
+            return "'min', 'max', and 'step_size' must be numbers."
         if min_val >= max_val:
             return "'min' must be less than 'max'."
+        if step_size <= 0:
+            return "'step_size' must be greater than 0."
+        if settings["display_type"] not in {"slider", "button"}:
+            return "'display_type' must be either 'slider' or 'button'."
 
     elif label_type == "star":
         if "no_of_stars" not in settings:
@@ -163,14 +173,39 @@ def _validate_label_settings(label_type: str, settings: dict) -> str | None:
             return "'no_of_stars' must be at least 1."
 
     elif label_type == "categorical":
-        if "options" not in settings:
-            return "Categorical labels require 'options' in settings (e.g., {options: [{label: 'Good'}, {label: 'Bad'}]})."
+        required_fields = {
+            "rule_prompt",
+            "multi_choice",
+            "options",
+            "auto_annotate",
+            "strategy",
+        }
+        missing_fields = sorted(required_fields - set(settings))
+        if missing_fields:
+            return (
+                "Categorical labels require 'options', 'multi_choice', "
+                "'rule_prompt', 'auto_annotate', and 'strategy' in settings. "
+                f"Missing: {', '.join(missing_fields)}."
+            )
         options = settings["options"]
-        if not isinstance(options, list) or len(options) == 0:
-            return "'options' must be a non-empty list of objects with 'label' key."
+        if not isinstance(options, list) or len(options) < 2:
+            return "'options' must contain at least two objects with a 'label' key."
         for opt in options:
             if not isinstance(opt, dict) or "label" not in opt:
                 return "Each option must be a dict with a 'label' key."
+        option_labels = [str(opt.get("label") or "").strip().casefold() for opt in options]
+        if any(not label for label in option_labels):
+            return "Option labels cannot be empty."
+        if len(option_labels) != len(set(option_labels)):
+            return "Categorical option labels must be unique."
+        if not isinstance(settings["multi_choice"], bool):
+            return "'multi_choice' must be a boolean."
+        if not isinstance(settings["rule_prompt"], str):
+            return "'rule_prompt' must be a string."
+        if settings["strategy"] not in {"Rag", None}:
+            return "'strategy' must be 'Rag' or null."
+        if not isinstance(settings["auto_annotate"], bool):
+            return "'auto_annotate' must be a boolean."
 
     # text and thumbs_up_down have no required settings
     return None

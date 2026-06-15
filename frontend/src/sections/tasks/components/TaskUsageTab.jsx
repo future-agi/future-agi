@@ -339,7 +339,6 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
   // instead of seeing "[object Object]". Strings, numbers, booleans, and
   // null still render as plain text.
 
-
   const isResultRow =
     typeof label === "string" && label.trim().toLowerCase() === "result";
   // The result may arrive as a string like "{'score': 0.0, 'choice': 'Low'}"
@@ -624,7 +623,6 @@ const ErrorDetails = ({ rawError }) => {
 ErrorDetails.propTypes = {
   rawError: PropTypes.string,
 };
-
 
 PartialInputWarningDetails.propTypes = {
   warnings: PropTypes.arrayOf(PropTypes.object),

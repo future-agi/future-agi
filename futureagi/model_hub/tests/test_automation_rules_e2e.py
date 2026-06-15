@@ -69,6 +69,15 @@ def _create_queue(auth_client, name, **extra):
     return resp.data["id"]
 
 
+def _assert_conditions_validation_error(resp, expected_text=None):
+    assert resp.status_code == status.HTTP_400_BAD_REQUEST
+    assert resp.data.get("attr") == "conditions"
+    details = resp.data.get("details") or {}
+    assert "conditions" in details
+    if expected_text:
+        assert expected_text in str(details["conditions"])
+
+
 def _create_label(organization, workspace, name, label_type="categorical"):
     from model_hub.models.develop_annotations import AnnotationsLabels
 
@@ -352,8 +361,7 @@ class TestAutomationRulesE2E:
             format="json",
         )
 
-        assert resp.status_code == status.HTTP_400_BAD_REQUEST
-        assert "conditions" in resp.data
+        _assert_conditions_validation_error(resp)
 
     def test_create_rule_rejects_legacy_filters_key(
         self, auth_client, organization, workspace
@@ -371,8 +379,7 @@ class TestAutomationRulesE2E:
             format="json",
         )
 
-        assert resp.status_code == status.HTTP_400_BAD_REQUEST
-        assert "conditions" in resp.data
+        _assert_conditions_validation_error(resp)
 
     def test_create_rule_rejects_legacy_rule_filter_type_alias(
         self, auth_client, organization, workspace
@@ -399,8 +406,7 @@ class TestAutomationRulesE2E:
             format="json",
         )
 
-        assert resp.status_code == status.HTTP_400_BAD_REQUEST
-        assert "conditions" in resp.data
+        _assert_conditions_validation_error(resp)
 
     def test_create_rule_rejects_legacy_camel_case_rule_field(
         self, auth_client, organization, workspace
@@ -422,8 +428,7 @@ class TestAutomationRulesE2E:
             format="json",
         )
 
-        assert resp.status_code == status.HTTP_400_BAD_REQUEST
-        assert "conditions" in resp.data
+        _assert_conditions_validation_error(resp)
 
     # -----------------------------------------------------------------------
     # 3. Project-scoped queue
@@ -822,9 +827,7 @@ class TestAutomationRulesE2E:
             },
             format="json",
         )
-        assert resp.status_code == status.HTTP_400_BAD_REQUEST
-        assert "conditions" in resp.data
-        assert "user__password" in str(resp.data["conditions"])
+        _assert_conditions_validation_error(resp, "user__password")
 
     # -----------------------------------------------------------------------
     # 10. Rule stats updated after evaluation

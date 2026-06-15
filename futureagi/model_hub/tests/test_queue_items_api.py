@@ -105,9 +105,7 @@ class TestAddItems:
             )
         ) == {workspace.id}
 
-    def test_add_trace_session_item(
-        self, auth_client, queue, organization, workspace
-    ):
+    def test_add_trace_session_item(self, auth_client, queue, organization, workspace):
         """Explicit trace_session sources persist with workspace/org scope."""
         from model_hub.models.ai_model import AIModel
         from tracer.models.project import Project
@@ -163,6 +161,28 @@ class TestAddItems:
         result = resp.data.get("result", resp.data)
         assert result["duplicates"] == 1
         assert result["added"] == 0
+
+    def test_create_duplicate_item_returns_validation_error(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        """Direct nested create returns 400 instead of leaking DB IntegrityError."""
+        _, rows = dataset_with_rows
+        payload = {"source_type": "dataset_row", "source_id": str(rows[0].id)}
+
+        first = auth_client.post(items_url(queue), payload, format="json")
+        assert first.status_code == status.HTTP_201_CREATED
+
+        duplicate = auth_client.post(items_url(queue), payload, format="json")
+
+        assert duplicate.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            QueueItem.objects.filter(
+                queue_id=queue,
+                dataset_row=rows[0],
+                deleted=False,
+            ).count()
+            == 1
+        )
 
     def test_add_invalid_source_type(self, auth_client, queue):
         """TC-4: Invalid source_type returns 400."""

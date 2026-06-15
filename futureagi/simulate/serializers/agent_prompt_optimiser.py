@@ -1,5 +1,9 @@
 from rest_framework import serializers
 
+from model_hub.utils.workspace_scope import (
+    request_organization,
+    request_workspace_filter,
+)
 from simulate.models import (
     AgentPromptOptimiserRun,
     AgentPromptOptimiserRunStep,
@@ -49,8 +53,22 @@ class AgentPromptOptimiserRunCreateSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("id", "created_at", "updated_at")
 
+    def _test_execution_queryset(self):
+        request = self.context.get("request")
+        queryset = TestExecution.objects.select_related(
+            "agent_optimiser",
+            "run_test__organization",
+            "run_test__workspace",
+        )
+        organization = request_organization(request)
+        if organization is not None:
+            queryset = queryset.filter(run_test__organization=organization)
+        return queryset.filter(
+            request_workspace_filter(request, field_name="run_test__workspace")
+        )
+
     def validate_test_execution_id(self, value):
-        if not TestExecution.objects.filter(id=value).exists():
+        if not self._test_execution_queryset().filter(id=value).exists():
             raise serializers.ValidationError(
                 "TestExecution with this ID does not exist."
             )
@@ -88,9 +106,9 @@ class AgentPromptOptimiserRunCreateSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        test_execution = TestExecution.objects.select_related(
-            "agent_optimiser", "run_test__organization"
-        ).get(id=validated_data.pop("test_execution_id"))
+        test_execution = self._test_execution_queryset().get(
+            id=validated_data.pop("test_execution_id")
+        )
         agent_optimiser = test_execution.agent_optimiser
 
         if not agent_optimiser:
@@ -117,7 +135,7 @@ class AgentPromptOptimiserRunCreateSerializer(serializers.ModelSerializer):
                 workspace_id=workspace_id,
             )
         except ValueError as e:
-            raise serializers.ValidationError(str(e))
+            raise serializers.ValidationError(str(e)) from e
 
         validated_data["test_execution"] = test_execution
         validated_data["agent_optimiser"] = agent_optimiser

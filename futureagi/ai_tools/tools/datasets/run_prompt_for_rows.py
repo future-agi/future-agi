@@ -57,7 +57,7 @@ class RunPromptForRowsTool(BaseTool):
     ) -> ToolResult:
         from model_hub.models.develop_dataset import Row
         from model_hub.models.run_prompt import RunPrompter
-        from model_hub.tasks.run_prompt import run_all_prompts_task
+        from model_hub.views.run_prompt import run_all_prompts_task
 
         # Validate all run_prompters exist and belong to user's organization
         run_prompters = RunPrompter.objects.filter(id__in=params.run_prompt_ids)

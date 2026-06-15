@@ -9,6 +9,7 @@ import secrets
 import string
 import sys
 import uuid
+from collections.abc import Mapping
 
 import structlog
 from rest_framework.response import Response
@@ -32,6 +33,9 @@ from tfc.utils.contants import (
 )
 
 logger = structlog.get_logger(__name__)
+
+_ERROR_MESSAGE_KEYS = {"message", "detail", "error"}
+_ERROR_ENVELOPE_KEYS = _ERROR_MESSAGE_KEYS | {"code"}
 
 
 class GeneralMethods:
@@ -240,7 +244,15 @@ class GeneralMethods:
     """
 
     def _error_response_body(self, result, *, status_code, code=None):
-        return build_error_envelope(result, status_code=status_code, code=code)
+        response = build_error_envelope(result, status_code=status_code, code=code)
+        if isinstance(result, Mapping):
+            has_structured_error_code = bool(result.get("error_code"))
+            has_structured_metadata = bool(
+                _ERROR_MESSAGE_KEYS.intersection(result)
+            ) and any(key not in _ERROR_ENVELOPE_KEYS for key in result)
+            if has_structured_error_code or has_structured_metadata:
+                response["result"] = dict(result)
+        return response
 
     def bad_request(self, result):
         """

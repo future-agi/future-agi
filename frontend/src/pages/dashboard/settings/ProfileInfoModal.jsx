@@ -153,7 +153,12 @@ const ProfileInfoModal = ({ open, onClose, fullName, setRefreshData }) => {
                 padding: theme.spacing(2),
               }}
             >
-              <Button variant="outlined" fullWidth onClick={onClose}>
+              <Button
+                type="button"
+                variant="outlined"
+                fullWidth
+                onClick={onClose}
+              >
                 <Typography
                   variant="s2"
                   fontWeight={"fontWeightMedium"}
@@ -163,11 +168,11 @@ const ProfileInfoModal = ({ open, onClose, fullName, setRefreshData }) => {
                 </Typography>
               </Button>
               <LoadingButton
+                type="submit"
                 loading={isEditFullNameLoading}
                 fullWidth
                 variant="contained"
                 color="primary"
-                onClick={handleSubmit(handleEditFullName)}
               >
                 Update Full Name
               </LoadingButton>

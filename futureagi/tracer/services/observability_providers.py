@@ -573,15 +573,19 @@ class ObservabilityService:
                 }
             )
             if transcript.get("role") in ["user", "agent"]:
+                if started_at and seconds_from_start is not None:
+                    abs_time = (
+                        datetime.fromisoformat(started_at)
+                        + timedelta(seconds=seconds_from_start)
+                    ).isoformat()
+                else:
+                    abs_time = None
                 processed_transcripts.append(
                     {
                         "id": str(uuid.uuid4()),
                         "role": role,
                         "content": transcript.get("content"),
-                        "time": (
-                            datetime.fromisoformat(started_at)
-                            + timedelta(seconds=seconds_from_start)
-                        ).isoformat(),
+                        "time": abs_time,
                         "duration": duration,
                     }
                 )

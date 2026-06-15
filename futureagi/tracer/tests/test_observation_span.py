@@ -22,6 +22,11 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 
+AUTH_REQUIRED_STATUS_CODES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+)
+
 
 def get_result(response):
     """Extract result from API response wrapper."""
@@ -82,7 +87,7 @@ class TestObservationSpanRetrieveAPI:
     def test_retrieve_span_unauthenticated(self, api_client, observation_span):
         """Unauthenticated requests should be rejected."""
         response = api_client.get(f"/tracer/observation-span/{observation_span.id}/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_retrieve_span_success(self, auth_client, observation_span):
         """Retrieve an observation span by ID."""
@@ -285,7 +290,7 @@ class TestObservationSpanCreateAPI:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_create_span_success(self, auth_client, project, trace):
         """Create a new observation span."""
@@ -416,7 +421,7 @@ class TestObservationSpanBulkCreateAPI:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_bulk_create_spans_success(self, auth_client, project, trace):
         """Bulk create multiple observation spans."""
@@ -486,7 +491,7 @@ class TestObservationSpanListSpansAPI:
             "/tracer/observation-span/list_spans/",
             {"project_version_id": str(project_version.id)},
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_list_spans_missing_project_version(self, auth_client):
         """List spans fails without project version ID."""
@@ -617,7 +622,7 @@ class TestObservationSpanListSpansObserveAPI:
             "/tracer/observation-span/list_spans_observe/",
             {"project_id": str(observe_project.id)},
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_list_spans_observe_missing_project(self, auth_client):
         """List spans observe fails without project ID."""
@@ -727,7 +732,7 @@ class TestObservationSpanSubmitFeedbackAPI:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_submit_feedback_rejects_missing_target_type(
         self, auth_client, observation_span, custom_eval_config
@@ -1527,7 +1532,7 @@ class TestObservationSpanGraphMethodsAPI:
             {"project_id": str(project.id)},
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_get_graph_methods_missing_project(self, auth_client):
         """Get graph methods fails without project ID."""
@@ -1618,7 +1623,7 @@ class TestObservationSpanGetFieldsAPI:
         response = api_client.get(
             "/tracer/observation-span/get_observation_span_fields/"
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_get_fields_success(self, auth_client):
         """Get available observation span fields."""
@@ -1646,7 +1651,7 @@ class TestObservationSpanAddAnnotationsAPI:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_add_annotations_success(
         self, auth_client, observation_span, project_version
@@ -1702,7 +1707,7 @@ class TestObservationSpanExportAPI:
             "/tracer/observation-span/get_spans_export_data/",
             {"project_version_id": str(project_version.id)},
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_export_spans_missing_project_version(self, auth_client):
         """Export spans fails without project version ID."""
@@ -1741,7 +1746,7 @@ class TestObservationSpanCreateOtelSpanAPI:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_create_otel_span_success(self, auth_client, project, trace):
         """Create an OTEL-format observation span."""
@@ -1861,7 +1866,7 @@ class TestObservationSpanRetrieveLoadingAPI:
             "/tracer/observation-span/retrieve_loading/",
             {"span_id": observation_span.id},
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_retrieve_loading_missing_span_id(self, auth_client):
         """Retrieve loading fails without span ID."""

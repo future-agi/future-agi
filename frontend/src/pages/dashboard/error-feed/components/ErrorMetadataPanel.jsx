@@ -860,8 +860,7 @@ function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
         },
         onError: (err) => {
           const message =
-            err?.response?.data?.result ||
-            "Failed to create Linear issue";
+            err?.response?.data?.result || "Failed to create Linear issue";
           enqueueSnackbar(message, { variant: "error" });
         },
       },
@@ -894,7 +893,7 @@ function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
             <Typography fontSize="14px" fontWeight={700} color="text.primary">
               Create Linear Issue
             </Typography>
-            <Typography fontSize="11px" color="text.disabled">
+            <Typography fontSize="11px" color="text.secondary">
               Select a team to create the issue in.
             </Typography>
           </Stack>
@@ -1563,9 +1562,7 @@ export default function ErrorMetadataPanel({ error }) {
             />
             <MetaRow
               label="Version"
-              value={
-                sidebar?.aiMetadata?.modelVersion ?? error.modelVersion
-              }
+              value={sidebar?.aiMetadata?.modelVersion ?? error.modelVersion}
               icon="mdi:tag-outline"
               monospace
             />

@@ -138,8 +138,8 @@ export const useAlertStore = create((set, get) => ({
   setDuplicateAlertName: (name) => set({ duplicateAlertName: name }),
 
   handleStartCreatingAlerts: () => {
-    const { selectedProject, mainPage } = get();
-    if (mainPage && !selectedProject) {
+    const { selectedProject, mainPage, openSheetView } = get();
+    if (mainPage && !selectedProject && !openSheetView) {
       set({ openSelectProjectModal: true });
       return;
     }

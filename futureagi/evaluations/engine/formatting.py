@@ -107,10 +107,18 @@ def format_eval_value(result_data, eval_template):
             and isinstance(choice_result, list)
             and choice_result
         ):
-            first = str(choice_result[0])
-            mapped = apply_choice_scores(first, eval_template.choice_scores)
+            # Multi-choice: mean of per-pick scores; unknown labels skipped.
+            picked_scores = [
+                s
+                for s in (
+                    apply_choice_scores(str(c), eval_template.choice_scores)
+                    for c in choice_result
+                )
+                if s is not None
+            ]
+            mean = sum(picked_scores) / len(picked_scores) if picked_scores else 0.0
             value = {
-                "score": mapped if mapped is not None else 0.0,
+                "score": mean,
                 "choices": choice_result,
             }
         else:

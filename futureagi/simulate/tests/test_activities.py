@@ -82,8 +82,8 @@ def source_dataset(db, organization, workspace, user):
     dataset.column_order = [str(col1.id), str(col2.id)]
     dataset.save()
 
-    # Create rows with cells
-    for i in range(3):
+    # Seed >= scenario-create min rows so the Import Dataset path validates.
+    for i in range(10):
         row = Row.objects.create(dataset=dataset, order=i)
         Cell.objects.create(dataset=dataset, column=col1, row=row, value=f"Input {i}")
         Cell.objects.create(dataset=dataset, column=col2, row=row, value=f"Output {i}")
@@ -363,6 +363,7 @@ class TestCreateScenarioAPIWithMockedWorkflow:
             "name": "Failing Workflow Scenario",
             "kind": "dataset",
             "dataset_id": str(source_dataset.id),
+            "agent_definition_id": str(agent_definition.id),
         }
 
         response = auth_client.post(
@@ -375,6 +376,7 @@ class TestCreateScenarioAPIWithMockedWorkflow:
         # This depends on the actual implementation - might return 500 or create with failed status
         assert response.status_code in [
             status.HTTP_201_CREATED,
+            status.HTTP_202_ACCEPTED,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         ]
 

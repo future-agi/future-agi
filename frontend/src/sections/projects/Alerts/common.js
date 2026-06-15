@@ -804,6 +804,7 @@ export function getSimpleLineChartConfig(
       yaxis: customOptions.thresholds.map((threshold) => ({
         y: threshold.value || 0,
         y2: threshold.y2 || 0,
+        yAxisIndex: 0,
         fillColor: threshold.fillColor || "#00A25108",
         borderColor: threshold.borderColor || "#00A251",
         strokeDashArray: threshold.strokeDashArray || 4,
@@ -823,6 +824,15 @@ export function getSimpleLineChartConfig(
     xaxis: { ...defaultOptions.xaxis, ...customOptions.xaxis },
     yaxis: { ...defaultOptions.yaxis, ...customOptions.yaxis },
   };
+
+  if (customOptions?.thresholds && !Array.isArray(options.yaxis)) {
+    options.yaxis = [
+      {
+        ...options.yaxis,
+        seriesName: [customOptions.seriesName || series[0]?.name || ""],
+      },
+    ];
+  }
 
   return { series, options, metadata };
 }

@@ -1,5 +1,5 @@
 from functools import wraps
-from inspect import Parameter, signature
+from inspect import Parameter, iscoroutinefunction, signature
 
 import structlog
 from django.conf import settings
@@ -17,6 +17,23 @@ logger = structlog.get_logger(__name__)
 DEFAULT_ERROR_STATUS_CODE = "default"
 RUNTIME_REQUEST_VALIDATION_EXTENSION = "x-runtime-request-validation"
 RUNTIME_RESPONSE_VALIDATION_EXTENSION = "x-runtime-response-validation"
+
+
+def hide_swagger_schema_for_actions(*action_names):
+    """Hide explicitly unsupported ViewSet actions from generated OpenAPI output."""
+
+    def decorator(viewset_class):
+        for action_name in action_names:
+            action = getattr(viewset_class, action_name, None)
+            if action is None:
+                continue
+
+            overrides = dict(getattr(action, "_swagger_auto_schema", {}))
+            overrides["auto_schema"] = None
+            action._swagger_auto_schema = overrides
+        return viewset_class
+
+    return decorator
 
 
 def _documented_response_has_schema(response):
@@ -290,9 +307,7 @@ def validated_request(
             # strict_response_validation=True.
             swagger_options["runtime_response_validation"] = True
 
-        @swagger_auto_schema(**swagger_options)
-        @wraps(view_func)
-        def wrapper(*args, **kwargs):
+        def prepare_request(*args, **kwargs):
             request = _request_from_call(args)
             request.validated_data = {}
             request.validated_query_data = {}
@@ -351,8 +366,9 @@ def validated_request(
                 request.validated_data = serializer.validated_data
                 request.validated_serializer = serializer
 
-            response = view_func(*args, **kwargs)
+            return None
 
+        def finalize_response(response):
             if not responses or not isinstance(response, Response):
                 return response
 
@@ -381,6 +397,30 @@ def validated_request(
                 )
 
             return response
+
+        if iscoroutinefunction(view_func):
+
+            @swagger_auto_schema(**swagger_options)
+            @wraps(view_func)
+            async def wrapper(*args, **kwargs):
+                early_response = prepare_request(*args, **kwargs)
+                if early_response is not None:
+                    return early_response
+
+                response = await view_func(*args, **kwargs)
+                return finalize_response(response)
+
+            return wrapper
+
+        @swagger_auto_schema(**swagger_options)
+        @wraps(view_func)
+        def wrapper(*args, **kwargs):
+            early_response = prepare_request(*args, **kwargs)
+            if early_response is not None:
+                return early_response
+
+            response = view_func(*args, **kwargs)
+            return finalize_response(response)
 
         return wrapper
 

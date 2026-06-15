@@ -8,6 +8,7 @@ from accounts.models.workspace import Workspace
 from model_hub.models.choices import DataTypeChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
+from model_hub.views.datasets.create import file_upload
 
 
 class _SuccessfulResourceCallLog:
@@ -112,6 +113,33 @@ def test_create_empty_dataset_sets_workspace_after_validation(
     dataset = Dataset.no_workspace_objects.get(id=dataset_id)
     assert dataset.workspace_id == workspace.id
     assert len(usage_calls) == 1
+
+
+@pytest.mark.django_db
+def test_create_empty_dataset_accepts_legacy_model_type(
+    auth_client, workspace, monkeypatch
+):
+    _patch_usage(
+        monkeypatch,
+        "model_hub.views.datasets.create.empty_dataset",
+    )
+
+    response = auth_client.post(
+        "/model-hub/develops/create-empty-dataset/",
+        {
+            "new_dataset_name": "Legacy Model Type Empty Dataset",
+            "model_type": "generative_llm",
+            "row": 0,
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    result = response.json()["result"]
+    dataset = Dataset.no_workspace_objects.get(id=result["dataset_id"])
+    assert dataset.workspace_id == workspace.id
+    assert dataset.model_type == "GenerativeLLM"
+    assert result["dataset_model_type"] == "GenerativeLLM"
 
 
 @pytest.mark.django_db
@@ -255,6 +283,54 @@ def test_create_dataset_from_local_file_duplicate_name_does_not_charge(
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert usage_calls == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_process_dataset_from_file_skips_media_dispatch_for_text_only_csv(
+    organization, workspace, user, monkeypatch, tmp_path
+):
+    dataset = Dataset.objects.create(
+        name="Text Only Local File Dataset",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        model_type="GenerativeLLM",
+        dataset_config={
+            "dataset_source_local": True,
+            "file_processing_status": "queued",
+            "original_filename": "text-only.csv",
+            "file_url": "minio://text-only.csv",
+        },
+    )
+    csv_path = tmp_path / "text-only.csv"
+    csv_path.write_text("input,output\nhello,world\n", encoding="utf-8")
+    media_calls = []
+
+    monkeypatch.setattr(
+        file_upload,
+        "download_file_from_minio",
+        lambda file_url, original_filename=None: str(csv_path),
+    )
+    monkeypatch.setattr(
+        file_upload.process_media_uploads,
+        "delay",
+        lambda *args, **kwargs: media_calls.append((args, kwargs)),
+    )
+
+    file_upload.process_dataset_from_file.run_sync(
+        str(dataset.id),
+        "minio://text-only.csv",
+        "text-only.csv",
+    )
+
+    dataset.refresh_from_db()
+    assert dataset.dataset_config["file_processing_status"] == "completed"
+    assert dataset.dataset_config["completed_columns"] == 2
+    assert dataset.dataset_config["error_columns"] == 0
+    assert media_calls == []
+    assert Column.objects.filter(dataset=dataset, deleted=False).count() == 2
+    assert Row.objects.filter(dataset=dataset, deleted=False).count() == 1
+    assert Cell.objects.filter(dataset=dataset, deleted=False).count() == 2
 
 
 @pytest.mark.django_db
