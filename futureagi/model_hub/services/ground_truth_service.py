@@ -34,45 +34,6 @@ class EmbedDatasetResult:
 class GroundTruthService:
     """Ground-truth business logic; views and Temporal activities call here."""
 
-    @staticmethod
-    def update_variable_mapping(
-        *,
-        gt: EvalGroundTruth,
-        variable_mapping: dict[str, Any],
-    ) -> dict[str, Any] | ServiceError:
-        """Persist ``variable_mapping`` and stale-flag embeddings if changed."""
-        missing = _first_missing_column(variable_mapping, gt.columns or [])
-        if missing is not None:
-            col, key = missing
-            return ServiceError(
-                f"Column '{col}' (mapped to variable '{key}') not found in "
-                f"dataset columns: {gt.columns}",
-                code="INVALID_COLUMN",
-            )
-
-        mapping_changed = (gt.variable_mapping or {}) != (variable_mapping or {})
-        update_fields = ["variable_mapping", "updated_at"]
-        gt.variable_mapping = variable_mapping
-
-        embeddings_stale = False
-        if mapping_changed and gt.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED:
-            gt.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING
-            update_fields.append("embedding_status")
-            embeddings_stale = True
-
-        gt.save(update_fields=update_fields)
-        logger.info(
-            "ground_truth_variable_mapping_updated",
-            ground_truth_id=str(gt.id),
-            embeddings_stale=embeddings_stale,
-        )
-        return {
-            "id": str(gt.id),
-            "variable_mapping": gt.variable_mapping,
-            "embedding_status": gt.embedding_status,
-            "embeddings_stale": embeddings_stale,
-        }
-
     ALLOWED_ROLE_KEYS = frozenset(
         {"output", "explanation", "expected_output", "reasoning", "reason"}
     )

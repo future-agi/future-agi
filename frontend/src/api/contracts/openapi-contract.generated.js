@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 976,
+  "endpointCount": 974,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -17768,70 +17768,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "/model-hub/eval-templates/{template_id}/ground-truth-config/": {
-      "get": {
-        "operationId": "model-hub_eval-templates_ground-truth-config_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/GroundTruthConfigResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "409": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "model-hub_eval-templates_ground-truth-config_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/GroundTruthConfigRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/GroundTruthConfigResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "409": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
     "/model-hub/eval-templates/{template_id}/ground-truth/": {
       "get": {
         "operationId": "model-hub_eval-templates_ground-truth_list",
@@ -20355,40 +20291,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/GroundTruthEmbedResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "409": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/model-hub/ground-truth/{ground_truth_id}/mapping/": {
-      "put": {
-        "operationId": "model-hub_ground-truth_mapping_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/GroundTruthMappingRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/GroundTruthMappingResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -56958,70 +56860,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "GroundTruthConfigRequest": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "title": "Enabled",
-          "type": "boolean",
-          "default": true
-        },
-        "ground_truth_id": {
-          "title": "Ground truth id",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
-        },
-        "mode": {
-          "title": "Mode",
-          "type": "string",
-          "enum": [
-            "auto",
-            "manual",
-            "disabled"
-          ],
-          "default": "auto"
-        },
-        "max_examples": {
-          "title": "Max examples",
-          "type": "integer",
-          "maximum": 10,
-          "minimum": 1
-        },
-        "similarity_threshold": {
-          "title": "Similarity threshold",
-          "type": "number",
-          "maximum": 1,
-          "minimum": 0
-        },
-        "injection_format": {
-          "title": "Injection format",
-          "type": "string",
-          "enum": [
-            "structured",
-            "conversational",
-            "xml"
-          ],
-          "default": "structured"
-        }
-      }
-    },
-    "GroundTruthConfigResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/GroundTruthConfigResponseResult"
-        }
-      }
-    },
     "GroundTruthDataResponse": {
       "required": [
         "status",
@@ -57083,34 +56921,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/GroundTruthListResponseResult"
-        }
-      }
-    },
-    "GroundTruthMappingRequest": {
-      "required": [
-        "variable_mapping"
-      ],
-      "type": "object",
-      "properties": {
-        "variable_mapping": {
-          "title": "Variable mapping",
-          "type": "object"
-        }
-      }
-    },
-    "GroundTruthMappingResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/GroundTruthMappingResponseResult"
         }
       }
     },
@@ -82102,17 +81912,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "GroundTruthConfigResponseResult": {
-      "required": [
-        "ground_truth"
-      ],
-      "type": "object",
-      "properties": {
-        "ground_truth": {
-          "$ref": "#/definitions/GroundTruthConfig"
-        }
-      }
-    },
     "GroundTruthDataResponseResult": {
       "required": [
         "id",
@@ -82226,37 +82025,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total": {
           "title": "Total",
           "type": "integer"
-        }
-      }
-    },
-    "GroundTruthMappingResponseResult": {
-      "required": [
-        "id",
-        "embedding_status"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "variable_mapping": {
-          "title": "Variable mapping",
-          "description": "Map of template variable name to GT column name (string) or list of column names.",
-          "type": "object",
-          "x-nullable": true,
-          "additionalProperties": true
-        },
-        "embedding_status": {
-          "title": "Embedding status",
-          "type": "string",
-          "minLength": 1
-        },
-        "embeddings_stale": {
-          "title": "Embeddings stale",
-          "type": "boolean",
-          "default": false
         }
       }
     },
@@ -94286,39 +94054,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Next page",
           "type": "integer",
           "x-nullable": true
-        }
-      }
-    },
-    "GroundTruthConfig": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "title": "Enabled",
-          "type": "boolean"
-        },
-        "ground_truth_id": {
-          "title": "Ground truth id",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
-        },
-        "mode": {
-          "title": "Mode",
-          "type": "string",
-          "minLength": 1
-        },
-        "max_examples": {
-          "title": "Max examples",
-          "type": "integer"
-        },
-        "similarity_threshold": {
-          "title": "Similarity threshold",
-          "type": "number"
-        },
-        "injection_format": {
-          "title": "Injection format",
-          "type": "string",
-          "minLength": 1
         }
       }
     },

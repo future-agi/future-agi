@@ -19634,78 +19634,6 @@ export const ModelHubEvalTemplatesFeedbackListListResponse = zod.object({
 
 
 /**
- * Manages ground truth configuration on the eval template's config JSONField.
- * @summary GET/PUT /model-hub/eval-templates/<id>/ground-truth-config/
- */
-export const ModelHubEvalTemplatesGroundTruthConfigListParams = zod.object({
-  "template_id": zod.string()
-})
-
-
-
-
-
-export const ModelHubEvalTemplatesGroundTruthConfigListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "ground_truth": zod.object({
-  "enabled": zod.boolean().optional(),
-  "ground_truth_id": zod.string().uuid().optional(),
-  "mode": zod.string().min(1).optional(),
-  "max_examples": zod.number().optional(),
-  "similarity_threshold": zod.number().optional(),
-  "injection_format": zod.string().min(1).optional()
-})
-})
-})
-
-
-/**
- * Manages ground truth configuration on the eval template's config JSONField.
- * @summary GET/PUT /model-hub/eval-templates/<id>/ground-truth-config/
- */
-export const ModelHubEvalTemplatesGroundTruthConfigUpdateParams = zod.object({
-  "template_id": zod.string()
-})
-
-export const modelHubEvalTemplatesGroundTruthConfigUpdateBodyEnabledDefault = true;
-export const modelHubEvalTemplatesGroundTruthConfigUpdateBodyModeDefault = `auto`;
-export const modelHubEvalTemplatesGroundTruthConfigUpdateBodyMaxExamplesMax = 10;
-
-export const modelHubEvalTemplatesGroundTruthConfigUpdateBodySimilarityThresholdMin = 0;
-export const modelHubEvalTemplatesGroundTruthConfigUpdateBodySimilarityThresholdMax = 1;
-
-export const modelHubEvalTemplatesGroundTruthConfigUpdateBodyInjectionFormatDefault = `structured`;
-
-export const ModelHubEvalTemplatesGroundTruthConfigUpdateBody = zod.object({
-  "enabled": zod.boolean().default(modelHubEvalTemplatesGroundTruthConfigUpdateBodyEnabledDefault),
-  "ground_truth_id": zod.string().uuid().optional(),
-  "mode": zod.enum(['auto', 'manual', 'disabled']).default(modelHubEvalTemplatesGroundTruthConfigUpdateBodyModeDefault),
-  "max_examples": zod.number().min(1).max(modelHubEvalTemplatesGroundTruthConfigUpdateBodyMaxExamplesMax).optional(),
-  "similarity_threshold": zod.number().min(modelHubEvalTemplatesGroundTruthConfigUpdateBodySimilarityThresholdMin).max(modelHubEvalTemplatesGroundTruthConfigUpdateBodySimilarityThresholdMax).optional(),
-  "injection_format": zod.enum(['structured', 'conversational', 'xml']).default(modelHubEvalTemplatesGroundTruthConfigUpdateBodyInjectionFormatDefault)
-})
-
-
-
-
-
-export const ModelHubEvalTemplatesGroundTruthConfigUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "ground_truth": zod.object({
-  "enabled": zod.boolean().optional(),
-  "ground_truth_id": zod.string().uuid().optional(),
-  "mode": zod.string().min(1).optional(),
-  "max_examples": zod.number().optional(),
-  "similarity_threshold": zod.number().optional(),
-  "injection_format": zod.string().min(1).optional()
-})
-})
-})
-
-
-/**
  * GET /model-hub/eval-templates/<id>/ground-truth/
  */
 export const ModelHubEvalTemplatesGroundTruthListParams = zod.object({
@@ -22045,36 +21973,6 @@ export const ModelHubGroundTruthEmbedCreateResponse = zod.object({
   "id": zod.string().uuid(),
   "embedding_status": zod.string().min(1),
   "message": zod.string().min(1)
-})
-})
-
-
-/**
- * Legacy single-purpose endpoint. Superseded by
-:class:`GroundTruthSetupView`, which writes variable mapping
-alongside role mapping and injection config in one atomic call.
- * @summary PUT /model-hub/ground-truth/<id>/mapping/
- */
-export const ModelHubGroundTruthMappingUpdateParams = zod.object({
-  "ground_truth_id": zod.string()
-})
-
-export const ModelHubGroundTruthMappingUpdateBody = zod.object({
-  "variable_mapping": zod.object({
-
-}).passthrough()
-})
-
-
-export const modelHubGroundTruthMappingUpdateResponseResultEmbeddingsStaleDefault = false;
-
-export const ModelHubGroundTruthMappingUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.string().uuid(),
-  "variable_mapping": zod.record(zod.string(), zod.unknown()).optional().describe('Map of template variable name to GT column name (string) or list of column names.'),
-  "embedding_status": zod.string().min(1),
-  "embeddings_stale": zod.boolean().default(modelHubGroundTruthMappingUpdateResponseResultEmbeddingsStaleDefault)
 })
 })
 
