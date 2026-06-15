@@ -43000,7 +43000,7 @@ export const tracerUsersListQuerySortParamsDefault = `[]`;
 
 export const tracerUsersListQueryFiltersDefault = `[]`;
 
-
+export const tracerUsersListQueryExportDefault = false;
 
 export const TracerUsersListQueryParams = zod.object({
   "project_id": zod.string().uuid().optional(),
@@ -43008,7 +43008,8 @@ export const TracerUsersListQueryParams = zod.object({
   "page_size": zod.number().min(1).max(tracerUsersListQueryPageSizeMax).optional(),
   "current_page_index": zod.number().min(tracerUsersListQueryCurrentPageIndexMin).optional(),
   "sort_params": zod.string().min(1).default(tracerUsersListQuerySortParamsDefault),
-  "filters": zod.string().min(1).default(tracerUsersListQueryFiltersDefault)
+  "filters": zod.string().min(1).default(tracerUsersListQueryFiltersDefault),
+  "export": zod.boolean().default(tracerUsersListQueryExportDefault)
 })
 
 export const tracerUsersListResponseStatusDefault = true;
