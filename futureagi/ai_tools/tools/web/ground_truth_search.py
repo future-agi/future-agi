@@ -58,9 +58,7 @@ class GroundTruthSearchTool(BaseTool):
         "Search the ground truth dataset for relevant reference examples "
         "that have been evaluated by human experts. Returns similar "
         "cases with their labelled eval outputs and explanations. Use "
-        "this to find calibration examples when evaluating similar "
-        "inputs. Prefer the `inputs` parameter (a dict of template "
-        "variables) for multi-variable prompts."
+        "this to find calibration examples when evaluating similar inputs."
     )
     category = "web"
     input_model = GroundTruthSearchInput
