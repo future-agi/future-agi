@@ -151,6 +151,10 @@ INSTALLED_APPS = [app for app in INSTALLED_APPS if "debug_toolbar" not in app]
 # Test-specific settings
 SECRET_KEY = "test-secret-key-for-testing-only"
 ALLOWED_HOSTS = ["*"]
+INTEGRATION_ENCRYPTION_KEY = os.environ.get(
+    "INTEGRATION_ENCRYPTION_KEY",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+)
 
 # Security settings for tests
 SECURE_SSL_REDIRECT = False

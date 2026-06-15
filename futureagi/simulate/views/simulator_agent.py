@@ -6,6 +6,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from model_hub.utils.workspace_scope import (
+    request_organization,
+    request_workspace_filter,
+)
 from simulate.models import SimulatorAgent
 from simulate.serializers.simulator_agent import (
     SimulatorAgentDeleteResponseSerializer,
@@ -20,6 +24,14 @@ from tfc.utils.pagination import ExtendedPageNumberPagination
 
 def _serializer_error_response(errors):
     return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+def simulator_agent_queryset(request):
+    queryset = SimulatorAgent.no_workspace_objects.filter(deleted=False)
+    organization = request_organization(request)
+    if organization is not None:
+        queryset = queryset.filter(organization=organization)
+    return queryset.filter(request_workspace_filter(request))
 
 
 class SimulatorAgentListView(APIView):
@@ -39,12 +51,7 @@ class SimulatorAgentListView(APIView):
         search_query = request.GET.get("search", "").strip()
         page_size = int(request.GET.get("limit", 10))
 
-        # Base queryset - filter by organization
-        queryset = SimulatorAgent.objects.filter(
-            organization=getattr(request, "organization", None)
-            or request.user.organization,
-            deleted=False,
-        )
+        queryset = simulator_agent_queryset(request)
 
         # Apply search filter if provided
         if search_query:
@@ -107,11 +114,8 @@ class SimulatorAgentDetailView(APIView):
     )
     def get(self, request, agent_id):
         simulator_agent = get_object_or_404(
-            SimulatorAgent,
+            simulator_agent_queryset(request),
             id=agent_id,
-            organization=getattr(request, "organization", None)
-            or request.user.organization,
-            deleted=False,
         )
 
         serializer = SimulatorAgentSerializer(simulator_agent)
@@ -136,11 +140,8 @@ class EditSimulatorAgentView(APIView):
     )
     def put(self, request, agent_id):
         simulator_agent = get_object_or_404(
-            SimulatorAgent,
+            simulator_agent_queryset(request),
             id=agent_id,
-            organization=getattr(request, "organization", None)
-            or request.user.organization,
-            deleted=False,
         )
 
         serializer = SimulatorAgentSerializer(
@@ -173,16 +174,11 @@ class DeleteSimulatorAgentView(APIView):
     )
     def delete(self, request, agent_id):
         simulator_agent = get_object_or_404(
-            SimulatorAgent,
+            simulator_agent_queryset(request),
             id=agent_id,
-            organization=getattr(request, "organization", None)
-            or request.user.organization,
-            deleted=False,
         )
 
-        # Perform soft delete
-        simulator_agent.deleted = True
-        simulator_agent.save()
+        simulator_agent.delete()
 
         return Response(
             {"message": "Simulator agent deleted successfully"},

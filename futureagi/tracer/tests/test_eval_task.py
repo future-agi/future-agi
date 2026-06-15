@@ -17,6 +17,11 @@ from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 
+AUTH_REQUIRED_STATUS_CODES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+)
+
 
 def get_result(response):
     """Extract result from API response wrapper."""
@@ -77,7 +82,7 @@ class TestEvalTaskCreateAPI:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_create_eval_task_success(self, auth_client, project, custom_eval_config):
         """Create a new eval task."""
@@ -230,7 +235,7 @@ class TestEvalTaskListAPI:
             "/tracer/eval-task/list_eval_tasks/",
             {"project_id": str(project.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_list_eval_tasks_success(self, auth_client, project, eval_task):
         """List eval tasks for a project."""
@@ -279,7 +284,7 @@ class TestEvalTaskListWithProjectNameAPI:
         response = api_client.get(
             "/tracer/eval-task/list_eval_tasks_with_project_name/"
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_list_with_project_name_success(self, auth_client, project, eval_task):
         """List eval tasks with project names."""
@@ -371,7 +376,7 @@ class TestEvalTaskGetLogsAPI:
             "/tracer/eval-task/get_eval_task_logs/",
             {"eval_task_id": str(eval_task.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_get_logs_success(self, auth_client, eval_task):
         """Get logs for an eval task."""
@@ -408,7 +413,7 @@ class TestEvalTaskPauseAPI:
         response = api_client.post(
             f"/tracer/eval-task/pause_eval_task/?eval_task_id={eval_task.id}",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_pause_eval_task_success(self, auth_client, eval_task):
         """Pause an eval task."""
@@ -444,7 +449,7 @@ class TestEvalTaskUnpauseAPI:
         response = api_client.post(
             f"/tracer/eval-task/unpause_eval_task/?eval_task_id={eval_task.id}",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_unpause_eval_task_success(self, auth_client, eval_task):
         """Unpause a paused eval task."""
@@ -474,7 +479,7 @@ class TestEvalTaskDeleteAPI:
             {"eval_task_ids": [str(eval_task.id)]},
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_delete_eval_tasks_success(self, auth_client, eval_task):
         """Delete eval tasks."""
@@ -601,10 +606,7 @@ class TestEvalTaskDestroyAPI:
     def test_destroy_eval_task_unauthenticated(self, api_client, eval_task):
         """Unauthenticated requests should be rejected."""
         response = api_client.delete(f"/tracer/eval-task/{eval_task.id}/")
-        assert response.status_code in (
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_403_FORBIDDEN,
-        )
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_destroy_eval_task_cascades_soft_delete(
         self, auth_client, eval_task, trace, observation_span
@@ -677,7 +679,7 @@ class TestEvalTaskUpdateAPI:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_update_eval_task_success(self, auth_client, eval_task):
         """Update an eval task."""
@@ -779,7 +781,7 @@ class TestEvalTaskGetDetailsAPI:
             "/tracer/eval-task/get_eval_details/",
             {"eval_id": str(eval_task.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_get_details_success(self, auth_client, eval_task, custom_eval_config):
         """Get details for an eval task."""

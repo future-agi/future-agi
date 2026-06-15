@@ -40,6 +40,38 @@ from model_hub.models.score import Score
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
+from tracer.utils.filters import FilterEngine
+
+
+CHART_SPAN_FIELD_MAP = {
+    "avg_cost": "cost",
+    "cost": "cost",
+    "total_cost": "cost",
+    "avg_latency": "latency_ms",
+    "latency": "latency_ms",
+    "latency_ms": "latency_ms",
+    "tokens": "total_tokens",
+    "total_tokens": "total_tokens",
+    "input_tokens": "prompt_tokens",
+    "prompt_tokens": "prompt_tokens",
+    "output_tokens": "completion_tokens",
+    "completion_tokens": "completion_tokens",
+    "node_type": "observation_type",
+    "trace_id": "trace_id",
+    "span_id": "id",
+    "session_id": "trace__session_id",
+    "created_at": "created_at",
+    "start_time": "start_time",
+    "name": "name",
+    "run_name": "trace__name",
+    "span_name": "name",
+    "trace_name": "trace__name",
+    "user_id": "end_user__user_id",
+    "status": "status",
+    "prompt_template_version": "prompt_version__template_version",
+    "prompt_label_id": "prompt_label_id",
+    "prompt_label_name": "prompt_label__name",
+}
 
 
 def parse_time_filters(filters: List[Dict]) -> tuple:
@@ -70,6 +102,24 @@ def parse_time_filters(filters: List[Dict]) -> tuple:
         start_date = end_date - timedelta(days=7)
 
     return start_date, end_date
+
+
+def apply_chart_span_filters(base_queryset, filters: List[Dict]):
+    """
+    Apply non-date Observe chart filters to ObservationSpan querysets.
+
+    The date window is still parsed separately by parse_time_filters so chart
+    bucketing can fill empty timestamps over the requested range.
+    """
+    if not filters:
+        return base_queryset
+
+    system_metric_q = FilterEngine.get_filter_conditions_for_system_metrics(
+        filters,
+        field_map=CHART_SPAN_FIELD_MAP,
+    )
+    span_attribute_q = FilterEngine.get_filter_conditions_for_span_attributes(filters)
+    return base_queryset.filter(system_metric_q).filter(span_attribute_q)
 
 
 def get_truncate_function(interval: str):
@@ -613,6 +663,8 @@ def get_all_system_metrics(
     else:
         raise ValueError("Either project_id or span_ids must be provided")
 
+    base_queryset = apply_chart_span_filters(base_queryset, filters)
+
     # Get truncate function
     trunc_func = get_truncate_function(interval)
 
@@ -1051,6 +1103,7 @@ def get_system_metric_data(
             created_at__gte=start_date,
             created_at__lte=end_date,
         )
+        base_queryset = apply_chart_span_filters(base_queryset, filters)
 
     else:
         raise ValueError(f"Unsupported observe_type: {observe_type}")

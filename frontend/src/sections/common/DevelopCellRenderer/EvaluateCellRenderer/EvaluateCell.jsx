@@ -150,7 +150,15 @@ const EvaluateCell = ({
 
     if (hasRenderableValue(result) && !Number.isNaN(result)) {
       return (
-        <Box sx={{ display: "flex",alignItems:"flex-start", p: 1,height:"100%", maxWidth: "100%" }}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "flex-start",
+            p: 1,
+            height: "100%",
+            maxWidth: "100%",
+          }}
+        >
           <Chip
             label={result}
             size="small"

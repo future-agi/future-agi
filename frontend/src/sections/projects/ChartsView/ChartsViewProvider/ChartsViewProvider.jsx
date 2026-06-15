@@ -11,6 +11,7 @@ import { convertToISO } from "./common";
 const ChartsViewProvider = ({ children }) => {
   const [selectedInterval, setSelectedInterval] = useState("Day");
   const [zoomRange, setZoomRange] = useState([null, null]);
+  const [extraFilters, setExtraFilters] = useState([]);
   const [parentDateFilter, setParentDateFilter] = useState(() => {
     const defaultDates = [sub(new Date(), { days: 30 }), endOfToday()];
     return convertToISO(defaultDates);
@@ -28,8 +29,9 @@ const ChartsViewProvider = ({ children }) => {
           filter_value: convertToISO(parentDateFilter),
         },
       },
+      ...extraFilters,
     ],
-    [parentDateFilter],
+    [parentDateFilter, extraFilters],
   );
 
   const handleZoomChange = (dates) => {
@@ -43,6 +45,8 @@ const ChartsViewProvider = ({ children }) => {
     parentDateFilter,
     isMoreThan7Days,
     setParentDateFilter,
+    extraFilters,
+    setExtraFilters,
     filters,
     zoomRange,
     setZoomRange,

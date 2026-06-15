@@ -69,8 +69,19 @@ export default function DevKeysView() {
         header: "Key Name",
         meta: { flex: 1 },
         cell: ({ getValue, row }) => (
-          <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              minWidth: 0,
+              width: "100%",
+            }}
+          >
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{ fontSize: 13, minWidth: 0, flex: "0 1 auto" }}
+            >
               {getValue()}
             </Typography>
             {!row.original.enabled && (
@@ -78,6 +89,7 @@ export default function DevKeysView() {
                 label="Disabled"
                 sx={{
                   ml: 1,
+                  flexShrink: 0,
                   height: 22,
                   fontSize: 11,
                   borderRadius: "4px",

@@ -49,7 +49,6 @@ import { ID_ONLY_FIELDS } from "./idFields";
 // ---------------------------------------------------------------------------
 const BASE_TRACE_FILTER_FIELDS = [
   { value: "name", label: "Trace Name", type: "string" },
-  { value: "span_name", label: "Span Name", type: "string" },
   {
     value: "status",
     label: "Status",
@@ -71,10 +70,8 @@ const BASE_TRACE_FILTER_FIELDS = [
       "embedding",
     ],
   },
-  { value: "user_id", label: "User ID", type: "string" },
-  { value: "service_name", label: "Service / Trace Name", type: "string" },
+  { value: "service_name", label: "Service Name", type: "string" },
   { value: "provider", label: "Provider", type: "string" },
-  { value: "span_kind", label: "Span Kind", type: "string" },
   { value: "tag", label: "Tag", type: "string" },
 ];
 
@@ -188,7 +185,6 @@ const ANNOTATOR_OPS = [
 
 // Direct UUID identifiers support exact multi-select through the canonical
 // list operators. Avoid substring/null operators for these fields.
-const ID_ONLY_FIELDS = new Set(["trace_id", "span_id", "session"]);
 const ID_ONLY_OPS = [
   { value: "in", label: "equals" },
   { value: "not_in", label: "not equals" },
@@ -323,6 +319,9 @@ const DEFAULT_OP_FOR_TYPE = {
 // the same canonical `in` / `not_in` API shape.
 const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 
+// Categorical / thumbs ops in saved views — reverse the save-side LEGACY_OP_ALIAS so the menu renders.
+const HYDRATE_CATEGORICAL_OP = { equals: "is", not_equals: "is_not" };
+
 const NO_VALUE_OPS = new Set(["is_null", "is_not_null"]);
 
 // Scalar ops — value picker forces single-select. Multi-value goes via in/not_in.
@@ -337,15 +336,6 @@ const SINGLE_VALUE_OPS = new Set([
 
 // List ops — multi-select picker.
 const LIST_VALUE_OPS = new Set(["in", "not_in"]);
-const MULTI_VALUE_EQUALITY_TYPES = new Set([
-  "categorical",
-  "thumbs",
-  "annotator",
-]);
-
-export const shouldUseSingleSelectValuePicker = (filter, operator) =>
-  SINGLE_VALUE_OPS.has(operator) &&
-  !MULTI_VALUE_EQUALITY_TYPES.has(filter?.fieldType);
 
 // ---------------------------------------------------------------------------
 // Hook: fetch properties from dashboard metrics
@@ -364,6 +354,8 @@ const EXCLUDED_METRICS = new Set([
   "eval_source",
   "row_count",
   "cell_error_rate",
+  // duplicate of node_type — both map to observation_type
+  "span_kind",
 ]);
 const PROPERTY_PICKER_RENDER_LIMIT = 250;
 
@@ -436,6 +428,13 @@ function metricToTraceFilterProperty(m) {
   // thumbs labels have two fixed choices — surface them so the value picker
   // renders a multi-select without needing a dashboard lookup.
   const choices = type === "thumbs" ? ["Thumbs Up", "Thumbs Down"] : m.choices;
+  const apiColType = isEval
+    ? "EVAL_METRIC"
+    : isAnnotation
+      ? "ANNOTATION"
+      : m.category === "system_metric" || m.category === "systemMetric"
+        ? "SYSTEM_METRIC"
+        : "SPAN_ATTRIBUTE";
   return {
     id: m.name,
     name: m.displayName || m.display_name || m.name,
@@ -444,6 +443,7 @@ function metricToTraceFilterProperty(m) {
     type,
     outputType,
     choices,
+    apiColType,
   };
 }
 
@@ -515,7 +515,7 @@ export function buildTraceFilterProperties(
   return properties;
 }
 
-function useTraceFilterProperties(
+export function useTraceFilterProperties(
   projectId,
   { enabled = true, isSimulator = false, sourceScope = null } = {},
 ) {
@@ -530,6 +530,11 @@ function useTraceFilterProperties(
     queryFn: async () => {
       const params = {};
       if (projectId) params.project_ids = projectId;
+      // Observe filter dropdown wants per-CustomEvalConfig eval entries (so
+      // the dropdown matches the per-config columns in the trace/span list
+      // table). Default behaviour at /tracer/dashboard/metrics/ is still
+      // template-level — used by dashboards, PrimaryGraph, widget pickers.
+      params.per_eval_config = true;
       const { data } = await axios.get(endpoints.dashboard.metrics, { params });
       return data?.result?.metrics || [];
     },
@@ -716,6 +721,8 @@ function PropertyPicker({
               {visibleProperties.map((prop, idx) => (
                 <Box
                   key={`${prop.category}:${prop.id}:${idx}`}
+                  data-filter-property-option={prop.id}
+                  data-filter-property-label={prop.name}
                   onClick={() => {
                     onSelect(prop);
                     onClose();
@@ -942,6 +949,7 @@ function ValuePicker({
   return (
     <>
       <Box
+        data-filter-value-trigger={property?.id || ""}
         onClick={(e) => setAnchorEl(e.currentTarget)}
         sx={{
           display: "flex",
@@ -1126,6 +1134,7 @@ function ValuePicker({
             return (
               <Box
                 key={strVal}
+                data-filter-value-option={strVal}
                 onClick={() => toggleValue(opt)}
                 sx={{
                   display: "flex",
@@ -1183,6 +1192,7 @@ function ValuePicker({
             <>
               {filtered.length > 0 && <Divider />}
               <Box
+                data-filter-value-option={customSearchValue}
                 onClick={() => {
                   // singleSelect: replace the selection. Otherwise: append
                   // (but skip if the value is already selected).
@@ -1303,7 +1313,10 @@ function FilterRow({
         prop.type === "annotator"
           ? prop.type
           : normalizeFieldType(prop.type);
-      const defaultOp = DEFAULT_OP_FOR_TYPE[nt] || "equals";
+      // ID-only fields only support "is"; fallback would render blank.
+      const defaultOp = ID_ONLY_FIELDS.has(prop.id)
+        ? "is"
+        : DEFAULT_OP_FOR_TYPE[nt] || "equals";
       let defaultValue;
       if (nt === "number" || nt === "date") defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
@@ -1563,7 +1576,9 @@ function FilterRow({
         source={source}
         property={properties.find((p) => p.id === filter.field)}
         freeSoloValues={rowFreeSoloValues}
-        singleSelect={shouldUseSingleSelectValuePicker(filter, safeOperator)}
+        singleSelect={
+          ID_ONLY_FIELDS.has(filter.field) || SINGLE_VALUE_OPS.has(safeOperator)
+        }
         onChange={(newVal) => updateRow({ value: newVal })}
       />
     );
@@ -1714,14 +1729,18 @@ const TraceFilterPanel = ({
           name: "Span Name",
           category: "system",
           type: "string",
+          apiColType: "SYSTEM_METRIC",
         };
       }
       return {
         id: f.value,
         name: f.label,
-        // trace_id / span_id are direct column filters — omit category so
-        // col_type is not injected (the backend handles them without it).
-        ...(!ID_ONLY_FIELDS.has(f.value) && { category: "system" }),
+        category: "system",
+        // Pinned so the eval-task wire encoding doesn't have to guess
+        // from `category` alone — without this every static field would
+        // round-trip through the chain with apiColType=undefined and
+        // get coerced to SPAN_ATTRIBUTE downstream.
+        apiColType: "SYSTEM_METRIC",
         type: f.type === "enum" ? "string" : f.type,
         ...(f.choices ? { choices: f.choices } : {}),
       };
@@ -1826,16 +1845,11 @@ const TraceFilterPanel = ({
         const enriched = currentFilters.map((f) => {
           const prop = propertyById[f.field];
           const fieldType = f.fieldType || prop?.type || "string";
-          const ID_OP_HYDRATE = {
-            is: "in",
-            equals: "in",
-            "=": "in",
-            is_not: "not_in",
-            not_equals: "not_in",
-            "!=": "not_in",
-          };
+          // ID-only fields (trace_id / span_id) bypass the string-op
+          // rewrite — ID_ONLY_OPS = [{ value: "is" }] so anything other
+          // than "is" renders blank in the operator Select.
           const hydratedOp = ID_ONLY_FIELDS.has(f.field)
-            ? ID_OP_HYDRATE[f.operator] || f.operator
+            ? "is"
             : (fieldType === "string" || fieldType === "text") &&
                 HYDRATE_STRING_OP[f.operator]
               ? HYDRATE_STRING_OP[f.operator]
@@ -2113,6 +2127,7 @@ const TraceFilterPanel = ({
               <Stack direction="row" spacing={1} sx={{ ml: "auto" }}>
                 <Button
                   size="small"
+                  data-filter-panel-action="clear"
                   onClick={handleClear}
                   sx={{ textTransform: "none", fontSize: 12 }}
                 >
@@ -2121,6 +2136,7 @@ const TraceFilterPanel = ({
                 <Button
                   size="small"
                   variant="contained"
+                  data-filter-panel-action="apply"
                   onClick={handleApply}
                   sx={{
                     textTransform: "none",
@@ -2173,6 +2189,7 @@ const TraceFilterPanel = ({
             >
               <Button
                 size="small"
+                data-filter-panel-action="clear"
                 onClick={handleClear}
                 sx={{ textTransform: "none", fontSize: 12 }}
               >
@@ -2181,6 +2198,7 @@ const TraceFilterPanel = ({
               <Button
                 size="small"
                 variant="contained"
+                data-filter-panel-action="apply"
                 onClick={handleApply}
                 sx={{ textTransform: "none", fontSize: 12, px: 2 }}
               >

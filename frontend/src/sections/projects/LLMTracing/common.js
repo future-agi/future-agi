@@ -830,7 +830,8 @@ export const DOC_LINKS = {
   sessions: "https://docs.futureagi.com/docs/observe/features/session",
   evals: "https://docs.futureagi.com/docs/observe/features/evals",
   alerts: "https://docs.futureagi.com/docs/observe/features/alerts",
-  users: "https://docs.futureagi.com/docs/observe/features/manual-tracing/set-session-user-id",
+  users:
+    "https://docs.futureagi.com/docs/observe/features/manual-tracing/set-session-user-id",
   charts: "https://docs.futureagi.com/docs/observe/features/evals",
 };
 

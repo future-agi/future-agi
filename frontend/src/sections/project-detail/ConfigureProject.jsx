@@ -56,7 +56,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
   } = useForm({
     defaultValues: {
       projectName: projectDetail?.name || "",
-      samplingRate: projectDetail?.samplingRate * 100,
+      samplingRate: getSamplingRatePercent(projectDetail, module),
     },
     resolver: zodResolver(projectSchema),
     mode: "onChange",
@@ -96,7 +96,8 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
       name: data.projectName,
     };
     if (module === "observe") {
-      payload["sampling_rate"] = data.samplingRate / 100;
+      payload["sampling_rate"] =
+        typeof data.samplingRate === "number" ? data.samplingRate / 100 : 1;
     }
     updateProject(payload);
   };
@@ -105,10 +106,10 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
     if (projectDetail) {
       reset({
         projectName: projectDetail.name || "",
-        samplingRate: projectDetail.samplingRate * 100,
+        samplingRate: getSamplingRatePercent(projectDetail, module),
       });
     }
-  }, [projectDetail, reset]);
+  }, [module, projectDetail, reset]);
 
   const handleDeleteClick = () => {
     handleClose();
@@ -230,7 +231,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                         fontSize={"12px"}
                         typography={"s2_1"}
                         fontWeight={"fontWeightRegular"}
-                        color={"text.disabled"}
+                        color={"text.secondary"}
                       >
                         Defines the percentage of data processed for agent
                         compass
@@ -280,7 +281,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                   control={control}
                   name={"samplingRate"}
                   helperText={errors.samplingRate?.message}
-                  defaultValue={projectDetail?.samplingRate * 100}
+                  defaultValue={getSamplingRatePercent(projectDetail, module)}
                   min={0}
                   valueLabelDisplay="auto"
                   max={100}
@@ -414,3 +415,10 @@ ConfigureProject.propTypes = {
   refreshGrid: PropTypes.func,
   module: PropTypes.oneOf(["prototype", "observe"]),
 };
+
+function getSamplingRatePercent(projectDetail, module) {
+  if (typeof projectDetail?.samplingRate === "number") {
+    return projectDetail.samplingRate * 100;
+  }
+  return module === "observe" ? 100 : undefined;
+}

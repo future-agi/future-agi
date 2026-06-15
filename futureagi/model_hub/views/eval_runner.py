@@ -1297,8 +1297,18 @@ class EvaluationRunner:
                     )
 
         except Exception as e:
-            logger.exception(f"Error in evaluation of row: {str(e)}")
-            traceback.print_exc()
+            # Expected, handled validation failures (a required input was not
+            # mapped/provided, or the eval targets a cell that already errored)
+            # are user-driven, not bugs; the row is persisted as a failed result
+            # below. Downgrade only those to warning so genuine errors keep
+            # creating Sentry issues.
+            if str(e).startswith("No input received") or str(e) == get_error_message(
+                "EVALUATION_NOT_FOR_ERROR_CELL"
+            ):
+                logger.warning(f"Error in evaluation of row: {str(e)}")
+            else:
+                logger.exception(f"Error in evaluation of row: {str(e)}")
+                traceback.print_exc()
 
             # Use the centralized error handling function
             error_message = get_specific_error_message(e)
@@ -1719,6 +1729,9 @@ class EvaluationRunner:
         self.eval_class = get_eval_class(eval_type_id)
 
     def update_config_list_values(self, config, row=None):
+        # Prompt-template fields hold {{var}} placeholders resolved later by
+        # the evaluator via the user's mapping — not column UUIDs/names.
+        PROMPT_KEYS = {"rule_prompt", "criteria", "instructions"}
         if config:
             config = config.copy()
             for key, value in config.items():
@@ -1726,7 +1739,7 @@ class EvaluationRunner:
                 if (
                     isinstance(value, str)
                     and "," in value
-                    and key not in ["rule_prompt", "criteria"]
+                    and key not in PROMPT_KEYS
                 ):
                     # Split the string by commas and update the value as a list
                     config[key] = value.split(",")
@@ -1738,7 +1751,7 @@ class EvaluationRunner:
                     config[key] = comparator_class()  # Instantiate comparator
                 # Handle both string and list values for dynamic ID replacement
                 if isinstance(value, str):
-                    if key != "rule_prompt":
+                    if key not in PROMPT_KEYS:
                         config[key] = self._replace_dynamic_ids(value, row)
                 elif isinstance(value, list):
                     # Process each item in the list

@@ -91,7 +91,7 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
           <Typography
             variant="s1"
             fontWeight={"fontWeightRegular"}
-            color="text.disabled"
+            color="text.secondary"
           >
             Explore all actions taken and their outcomes during the tool run.
           </Typography>

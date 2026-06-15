@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from model_hub.models.choices import ProviderLogoUrls
+from model_hub.utils.workspace_scope import request_organization, request_workspace
 from simulate.models import SimulatorAgent
 
 
@@ -57,12 +58,15 @@ class SimulatorAgentSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         """Create a new SimulatorAgent instance"""
-        # Set organization from request context
         request = self.context.get("request")
-        if request and hasattr(request.user, "organization"):
-            validated_data["organization"] = (
-                getattr(request, "organization", None) or request.user.organization
-            )
+        if request:
+            organization = request_organization(request)
+            if organization is not None:
+                validated_data["organization"] = organization
+
+            workspace = request_workspace(request)
+            if workspace is not None:
+                validated_data["workspace"] = workspace
 
         return SimulatorAgent.objects.create(**validated_data)
 

@@ -299,7 +299,7 @@ const GeneratePrompt = (props) => {
           {/* sub title */}
           <Box sx={{ display: "flex", gap: 0.6, alignItems: "center" }}>
             {/* <Iconify icon="solar:info-circle-bold" color="#637381" width="15px" /> */}
-            <Typography color={"text.disabled"} variant="caption">
+            <Typography color={"text.secondary"} variant="caption">
               You can generate a structured prompt by sharing basic details
               about your task
             </Typography>

@@ -35,7 +35,10 @@ async function main() {
     configuredTextProvider,
     "No configured text provider with a masked key is available for Get Started smoke.",
   );
-  assertNoRawSecretString(JSON.stringify(providerStatus || {}), "provider status");
+  assertNoRawSecretString(
+    JSON.stringify(providerStatus || {}),
+    "provider status",
+  );
 
   const customModelsRaw = await auth.client.get(
     apiPath("/model-hub/custom-models/"),
@@ -44,7 +47,10 @@ async function main() {
       unwrap: false,
     },
   );
-  assertNoRawSecretString(JSON.stringify(customModelsRaw || {}), "custom models");
+  assertNoRawSecretString(
+    JSON.stringify(customModelsRaw || {}),
+    "custom models",
+  );
 
   const apiFailures = [];
   const pageErrors = [];
@@ -79,9 +85,11 @@ async function main() {
       localStorage.setItem("refreshToken", tokens.refresh || "");
       localStorage.setItem("rememberMe", "true");
       localStorage.setItem("initial-render", "done");
-      if (organizationId) sessionStorage.setItem("organizationId", organizationId);
+      if (organizationId)
+        sessionStorage.setItem("organizationId", organizationId);
       if (workspaceId) sessionStorage.setItem("workspaceId", workspaceId);
-      if (user?.id) sessionStorage.setItem("futureagi-current-user-id", user.id);
+      if (user?.id)
+        sessionStorage.setItem("futureagi-current-user-id", user.id);
     },
     {
       tokens: auth.tokens,
@@ -117,21 +125,7 @@ async function main() {
       { timeout: 30000 },
     );
 
-    await waitForVisibleText(page, "Get Started with FutureAGI", { exact: true });
-    await waitForVisibleText(page, "Initial Setup", { exact: true });
-    await waitForVisibleText(page, "Add keys", { exact: true });
-    await waitForVisibleText(page, "Create first dataset", { exact: true });
-    await waitForVisibleText(page, "Create your first evaluation", {
-      exact: true,
-    });
-    await waitForVisibleText(page, "Run your first experiment", { exact: true });
-    await waitForVisibleText(page, "Setup observability in application", {
-      exact: true,
-    });
-    await waitForVisibleText(page, "Try out our features", { exact: true });
-    await waitForVisibleText(page, "Add dataset", { exact: true });
-    await waitForVisibleText(page, "Experiment", { exact: true });
-    await waitForVisibleText(page, "Evaluate", { exact: true });
+    await waitForGetStartedPage(page);
     await waitForVisibleText(page, configuredTextProvider.display_name, {
       exact: true,
     });
@@ -139,22 +133,38 @@ async function main() {
     await assertNoRawSecretVisible(page);
     await waitForNoVisibleText(page, "Invalid Date");
 
-    const datasetNavigation = page.waitForFunction(
-      () => window.location.pathname === "/dashboard/develop",
-      { timeout: 30000 },
-    );
-    await clickVisibleText(page, "Create dataset");
-    await datasetNavigation;
-    evidence.dataset_navigation_path = await page.evaluate(
-      () => window.location.pathname,
-    );
-
-    await page.goBack({ waitUntil: "domcontentloaded" });
-    await page.waitForFunction(
-      () => window.location.pathname === "/dashboard/get-started",
-      { timeout: 30000 },
-    );
-    await waitForVisibleText(page, "Get Started with FutureAGI", { exact: true });
+    evidence.dataset_navigation_path = await navigateFromGetStarted({
+      page,
+      buttonText: "Create dataset",
+      expectedPath: "/dashboard/develop",
+    });
+    evidence.experiment_navigation_path = await navigateFromGetStarted({
+      page,
+      buttonText: "Start experiment",
+      expectedPath: "/dashboard/prototype",
+    });
+    evidence.evaluate_navigation_path = await navigateFromGetStarted({
+      page,
+      buttonText: "Try evaluations",
+      expectedPath: "/dashboard/evaluations",
+    });
+    evidence.observe_navigation_path = await navigateFromGetStarted({
+      page,
+      buttonText: "Go to observe",
+      expectedPath: "/dashboard/observe",
+      beforeClick: async () => {
+        await clickVisibleText(page, "Setup observability in application");
+        await waitForVisibleText(page, "Set observability in application", {
+          exact: true,
+        });
+      },
+    });
+    await page.goto(`${APP_BASE}/dashboard/get-started`, {
+      waitUntil: "domcontentloaded",
+    });
+    await waitForGetStartedPage(page);
+    await assertNoRawSecretVisible(page);
+    await waitForNoVisibleText(page, "Invalid Date");
 
     await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
     evidence.screenshot = SCREENSHOT_PATH;
@@ -202,6 +212,50 @@ async function installRuntimeConfig(page, auth) {
     }
     request.continue();
   });
+}
+
+async function waitForGetStartedPage(page) {
+  await page.waitForFunction(
+    () => window.location.pathname === "/dashboard/get-started",
+    { timeout: 30000 },
+  );
+  await waitForVisibleText(page, "Get Started with FutureAGI", { exact: true });
+  await waitForVisibleText(page, "Initial Setup", { exact: true });
+  await waitForVisibleText(page, "Add keys", { exact: true });
+  await waitForVisibleText(page, "Create first dataset", { exact: true });
+  await waitForVisibleText(page, "Create your first evaluation", {
+    exact: true,
+  });
+  await waitForVisibleText(page, "Run your first experiment", { exact: true });
+  await waitForVisibleText(page, "Setup observability in application", {
+    exact: true,
+  });
+  await waitForVisibleText(page, "Try out our features", { exact: true });
+  await waitForVisibleText(page, "Add dataset", { exact: true });
+  await waitForVisibleText(page, "Experiment", { exact: true });
+  await waitForVisibleText(page, "Evaluate", { exact: true });
+}
+
+async function navigateFromGetStarted({
+  page,
+  buttonText,
+  expectedPath,
+  beforeClick,
+}) {
+  await page.goto(`${APP_BASE}/dashboard/get-started`, {
+    waitUntil: "domcontentloaded",
+  });
+  await waitForGetStartedPage(page);
+  if (beforeClick) await beforeClick();
+
+  const navigation = page.waitForFunction(
+    (path) => window.location.pathname === path,
+    { timeout: 30000 },
+    expectedPath,
+  );
+  await clickVisibleText(page, buttonText);
+  await navigation;
+  return page.evaluate(() => window.location.pathname);
 }
 
 async function waitForVisibleText(
@@ -252,12 +306,14 @@ async function waitForNoVisibleText(
           rect.height > 0
         );
       };
-      return !Array.from(document.querySelectorAll("body *")).some((element) => {
-        if (!isVisible(element)) return false;
-        const textContent = normalized(element.textContent);
-        if (exactMatch) return textContent === expectedText;
-        return textContent.includes(expectedText);
-      });
+      return !Array.from(document.querySelectorAll("body *")).some(
+        (element) => {
+          if (!isVisible(element)) return false;
+          const textContent = normalized(element.textContent);
+          if (exactMatch) return textContent === expectedText;
+          return textContent.includes(expectedText);
+        },
+      );
     },
     { timeout },
     { text, exact },
@@ -290,7 +346,9 @@ async function clickVisibleText(page, text) {
         );
       };
       return Array.from(document.querySelectorAll("body *")).some(
-        (element) => isVisible(element) && normalized(element.textContent) === expectedText,
+        (element) =>
+          isVisible(element) &&
+          normalized(element.textContent) === expectedText,
       );
     },
     { timeout: 30000 },
@@ -298,6 +356,7 @@ async function clickVisibleText(page, text) {
   );
   const clicked = await page.evaluate((expectedText) => {
     const normalized = (value) => String(value || "").trim();
+    const actionableSelector = "button,[role='button'],a,[role='tab']";
     const isVisible = (element) => {
       const style = window.getComputedStyle(element);
       const rect = element.getBoundingClientRect();
@@ -308,16 +367,20 @@ async function clickVisibleText(page, text) {
         rect.height > 0
       );
     };
-    const element = Array.from(document.querySelectorAll("body *")).find(
+    const matches = Array.from(document.querySelectorAll("body *")).filter(
       (candidate) =>
-        isVisible(candidate) && normalized(candidate.textContent) === expectedText,
+        isVisible(candidate) &&
+        normalized(candidate.textContent) === expectedText,
     );
-    const clickable =
-      element?.closest("button,[role='button'],a,[role='tab']") || element;
+    const element =
+      matches.find((candidate) => candidate.matches(actionableSelector)) ||
+      matches
+        .map((candidate) => candidate.closest(actionableSelector))
+        .find((candidate) => candidate && isVisible(candidate));
+    const clickable = element?.closest(actionableSelector) || element;
     if (!clickable) return false;
-    clickable.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    clickable.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    clickable.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    clickable.scrollIntoView({ block: "center", inline: "center" });
+    clickable.click();
     return true;
   }, text);
   assert(clicked, `Could not click visible text ${text}.`);
@@ -341,7 +404,10 @@ function assertNoRawSecretString(value, label) {
     /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   ];
   for (const pattern of rawSecretPatterns) {
-    assert(!pattern.test(value), `${label} contains a raw provider secret pattern.`);
+    assert(
+      !pattern.test(value),
+      `${label} contains a raw provider secret pattern.`,
+    );
   }
 }
 

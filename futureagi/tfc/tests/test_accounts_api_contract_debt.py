@@ -7,9 +7,7 @@ def _repo_root():
 
 
 def _swagger():
-    with (
-        _repo_root() / "api_contracts" / "openapi" / "swagger.json"
-    ).open() as f:
+    with (_repo_root() / "api_contracts" / "openapi" / "swagger.json").open() as f:
         return json.load(f)
 
 
@@ -79,7 +77,13 @@ def test_accounts_mutations_have_request_contracts():
             "WorkspaceMemberRoleUpdate"
         ),
         ("POST", "/accounts/workspaces/"): "WorkspaceCreateRequest",
+        ("PUT", "/accounts/workspaces/"): "WorkspaceUpdateRequest",
+        ("POST", "/accounts/workspaces/{workspace_id}/"): ("WorkspaceCreateRequest"),
+        ("PUT", "/accounts/workspaces/{workspace_id}/"): "WorkspaceUpdateRequest",
         ("POST", "/accounts/workspaces/{workspace_id}/members/"): (
+            "WorkspaceMembersRequest"
+        ),
+        ("POST", "/accounts/workspaces/{workspace_id}/members/{member_id}/"): (
             "WorkspaceMembersRequest"
         ),
     }
@@ -108,15 +112,11 @@ def test_accounts_endpoints_have_response_contracts():
         ("POST", "/accounts/organization/members/reactivate/"): (
             "MemberUserMutationResponse"
         ),
-        ("POST", "/accounts/organization/members/role/"): (
-            "MemberRoleUpdateResponse"
-        ),
+        ("POST", "/accounts/organization/members/role/"): ("MemberRoleUpdateResponse"),
         ("POST", "/accounts/passkey/register/options/"): "PasskeyOptionsResponse",
         ("PATCH", "/accounts/passkeys/{id}/"): "PasskeyRenameResponse",
         ("POST", "/accounts/token/refresh/"): "AccountsAccessTokenResponse",
-        ("GET", "/accounts/workspace/{workspace_id}/members/"): (
-            "MemberListResponse"
-        ),
+        ("GET", "/accounts/workspace/{workspace_id}/members/"): ("MemberListResponse"),
         ("DELETE", "/accounts/workspace/{workspace_id}/members/remove/"): (
             "MemberUserMutationResponse"
         ),
@@ -125,8 +125,32 @@ def test_accounts_endpoints_have_response_contracts():
         ),
         ("GET", "/accounts/workspace/list/"): "WorkspaceListPaginatedResponse",
         ("GET", "/accounts/workspaces/"): "WorkspaceManagementListResponse",
+        ("POST", "/accounts/workspaces/"): "WorkspaceCreateResponse",
+        ("PUT", "/accounts/workspaces/"): "WorkspaceUpdateResponse",
+        ("DELETE", "/accounts/workspaces/"): "WorkspaceDeleteResponse",
+        ("GET", "/accounts/workspaces/{workspace_id}/"): (
+            "WorkspaceManagementListResponse"
+        ),
+        ("POST", "/accounts/workspaces/{workspace_id}/"): ("WorkspaceCreateResponse"),
+        ("PUT", "/accounts/workspaces/{workspace_id}/"): "WorkspaceUpdateResponse",
+        ("DELETE", "/accounts/workspaces/{workspace_id}/"): ("WorkspaceDeleteResponse"),
+        ("GET", "/accounts/workspaces/{workspace_id}/members/"): (
+            "WorkspaceMembersListResponse"
+        ),
         ("POST", "/accounts/workspaces/{workspace_id}/members/"): (
             "WorkspaceMembersAddResponse"
+        ),
+        ("DELETE", "/accounts/workspaces/{workspace_id}/members/"): (
+            "WorkspaceMemberRemoveResponse"
+        ),
+        ("GET", "/accounts/workspaces/{workspace_id}/members/{member_id}/"): (
+            "WorkspaceMembersListResponse"
+        ),
+        ("POST", "/accounts/workspaces/{workspace_id}/members/{member_id}/"): (
+            "WorkspaceMembersAddResponse"
+        ),
+        ("DELETE", "/accounts/workspaces/{workspace_id}/members/{member_id}/"): (
+            "WorkspaceMemberRemoveResponse"
         ),
     }
 

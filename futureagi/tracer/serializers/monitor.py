@@ -5,6 +5,7 @@ from rest_framework import serializers
 from accounts.serializers.user import UserSerializer
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
+    AlertTypeChoices,
     MonitorMetricTypeChoices,
     ThresholdCalculationMethodChoices,
     UserAlertMonitor,
@@ -222,12 +223,97 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
         return validated_data
 
 
+class UserAlertMonitorBulkMuteRequestSerializer(StrictInputSerializer):
+    ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    is_mute = serializers.BooleanField(required=False, default=True)
+    select_all = serializers.BooleanField(required=False, default=False)
+    exclude_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+
+
+class UserAlertMonitorPreviewGraphSerializer(UserAlertMonitorSerializer):
+    name = serializers.CharField(required=False, allow_blank=True)
+
+
 class UserAlertMonitorLogSerializer(serializers.ModelSerializer):
     resolved_by = UserSerializer(read_only=True)
 
     class Meta:
         model = UserAlertMonitorLog
         exclude = ["deleted_at", "deleted", "alert", "updated_at"]
+
+
+class UserAlertMonitorLogWriteSerializer(serializers.ModelSerializer):
+    alert = serializers.PrimaryKeyRelatedField(queryset=UserAlertMonitor.objects.none())
+    resolved_by = UserSerializer(read_only=True)
+
+    class Meta:
+        model = UserAlertMonitorLog
+        fields = [
+            "id",
+            "alert",
+            "type",
+            "message",
+            "resolved",
+            "resolved_at",
+            "resolved_by",
+            "link",
+            "time_window_start",
+            "time_window_end",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at", "resolved_by"]
+
+
+class UserAlertMonitorLogWriteRequestSerializer(StrictInputSerializer):
+    alert = serializers.UUIDField()
+    type = serializers.ChoiceField(choices=AlertTypeChoices.choices)
+    message = serializers.CharField()
+    resolved = serializers.BooleanField(required=False, default=False)
+    resolved_at = serializers.DateTimeField(required=False, allow_null=True)
+    link = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+    time_window_start = serializers.DateTimeField(required=False, allow_null=True)
+    time_window_end = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class UserAlertMonitorLogWriteResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    alert = serializers.UUIDField()
+    type = serializers.ChoiceField(choices=AlertTypeChoices.choices)
+    message = serializers.CharField()
+    resolved = serializers.BooleanField()
+    resolved_at = serializers.DateTimeField(required=False, allow_null=True)
+    resolved_by = UserSerializer(required=False, allow_null=True)
+    link = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+    time_window_start = serializers.DateTimeField(required=False, allow_null=True)
+    time_window_end = serializers.DateTimeField(required=False, allow_null=True)
+    created_at = serializers.DateTimeField()
+
+
+class UserAlertMonitorLogResolveRequestSerializer(StrictInputSerializer):
+    log_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    select_all = serializers.BooleanField(required=False, default=False)
+    exclude_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+
+
+class UserAlertMonitorLogResolveResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.CharField()
 
 
 class UserAlertMonitorDuplicateSerializer(serializers.Serializer):
@@ -324,6 +410,8 @@ class FetchGraphMetricConfigField(serializers.Field):
 class FetchGraphSerializer(StrictInputSerializer):
     interval = serializers.CharField()
     filters = filter_list_field(required=False, default=list)
-    property = serializers.CharField(required=False, allow_blank=True, default="average")
+    property = serializers.CharField(
+        required=False, allow_blank=True, default="average"
+    )
     req_data_config = FetchGraphMetricConfigField()
     project_id = serializers.UUIDField()

@@ -651,6 +651,14 @@ class TestFilterSerializerContracts:
         assert not serializer.is_valid()
         assert "sort_params" in serializer.errors
 
+    def test_project_version_export_request_defaults_omitted_run_ids(self):
+        serializer = ProjectVersionExportSerializer(
+            data={"project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f"}
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["runs_ids"] == []
+
     def test_project_user_metrics_request_rejects_legacy_filters(self):
         serializer = ProjectUserMetricsRequestSerializer(
             data={

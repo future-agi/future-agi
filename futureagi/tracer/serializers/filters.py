@@ -3,7 +3,7 @@ import json
 from rest_framework import serializers
 
 from tfc.utils.api_serializers import StrictInputMixin, StrictInputSerializer
-from tfc.utils.serializer_fields import JSON_VALUE_SCHEMA, JsonValueField
+from tfc.utils.serializer_fields import JSON_VALUE_SCHEMA, JsonValueField  # noqa: F401
 from tracer.utils.filter_operators import (
     FILTER_TYPE_ALLOWED_OPS,
     LIST_FILTER_OPS,
@@ -317,9 +317,7 @@ class JsonObjectQueryParamField(serializers.Field):
             try:
                 data = json.loads(data)
             except json.JSONDecodeError as exc:
-                raise serializers.ValidationError(
-                    "Value must be valid JSON."
-                ) from exc
+                raise serializers.ValidationError("Value must be valid JSON.") from exc
         if not isinstance(data, dict):
             raise serializers.ValidationError("Value must be an object.")
         return data
@@ -508,12 +506,15 @@ class EvalTaskFiltersField(serializers.JSONField):
             filter_value = value.get(key)
             if filter_value is None:
                 continue
-            values = filter_value if isinstance(filter_value, list) else [filter_value]
-            if not all(isinstance(item, str) and item for item in values):
+            if isinstance(filter_value, str):
+                filter_value = [filter_value]
+                value[key] = filter_value
+            if not isinstance(filter_value, list) or not all(
+                isinstance(item, str) and item for item in filter_value
+            ):
                 raise serializers.ValidationError(
-                    f"{key} must be a string or list of non-empty strings."
+                    f"{key} must be a list of non-empty strings."
                 )
-            value[key] = values
 
         if "span_attributes_filters" in value:
             value["span_attributes_filters"] = FilterListField().run_validation(

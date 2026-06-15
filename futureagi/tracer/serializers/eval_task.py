@@ -46,6 +46,48 @@ class EvalTaskListWithProjectNameQuerySerializer(EvalTaskListQuerySerializer):
     )
 
 
+class EvalTaskIdQuerySerializer(StrictInputSerializer):
+    eval_task_id = serializers.UUIDField(required=True)
+
+
+class EvalTaskDeleteRequestSerializer(StrictInputSerializer):
+    eval_task_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=True,
+    )
+
+
+class EvalTaskCreateResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+
+
+class EvalTaskCreateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalTaskCreateResultSerializer()
+
+
+class EvalTaskMessageResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+
+
+class EvalTaskMessageResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalTaskMessageResultSerializer()
+
+
+class EvalTaskUpdateResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    edit_type = serializers.ChoiceField(
+        choices=[("edit_rerun", "edit_rerun"), ("fresh_run", "fresh_run")]
+    )
+    task_id = serializers.UUIDField()
+
+
+class EvalTaskUpdateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalTaskUpdateResultSerializer()
+
+
 class EvalTaskSerializer(serializers.ModelSerializer):
     project = serializers.PrimaryKeyRelatedField(
         queryset=Project.objects.all(), many=False
@@ -194,3 +236,7 @@ class EditEvalTaskSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f"Invalid eval config IDs: {str(e)}"
             ) from e
+
+
+class EvalTaskUpdateRequestSerializer(EditEvalTaskSerializer):
+    eval_task_id = serializers.UUIDField(required=True)

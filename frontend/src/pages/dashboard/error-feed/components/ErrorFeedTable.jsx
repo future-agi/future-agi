@@ -237,7 +237,7 @@ function EmptyState({ filtered }) {
               ? "No errors match your filters"
               : "No errors — everything looks good!"}
           </Typography>
-          <Typography typography="s2" color="text.disabled">
+          <Typography typography="s2" color="text.secondary">
             {filtered
               ? "Try adjusting your search or filter criteria."
               : "Errors captured by Future AGI will appear here."}

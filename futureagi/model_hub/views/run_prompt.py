@@ -21,6 +21,7 @@ from jinja2.sandbox import SandboxedEnvironment
 from rest_framework import viewsets
 from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.views import APIView
 
 logger = structlog.get_logger(__name__)
@@ -63,7 +64,11 @@ from model_hub.serializers.develop_dataset_contracts import (
 )
 from model_hub.serializers.run_prompt import (
     AddRunPromptSerializer,
+    ApiKeyListResponseSerializer,
+    ApiKeyRequestSerializer,
+    ApiKeyResponseSerializer,
     ApiKeySerializer,
+    ApiKeySuccessResponseSerializer,
     EditRunPromptColumnSerializer,
     LitellmSerializer,
     PreviewRunPromptSerializer,
@@ -101,6 +106,7 @@ from tfc.utils.storage import (
     detect_audio_format,
 )
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -156,6 +162,18 @@ def _request_run_prompter_queryset(request):
     )
 
 
+def _extract_tool_ids(tools):
+    tool_ids = []
+    for tool in tools or []:
+        if isinstance(tool, dict):
+            tool_id = tool.get("id")
+        else:
+            tool_id = tool
+        if tool_id:
+            tool_ids.append(tool_id)
+    return tool_ids
+
+
 PROVIDERS_WITH_JSON = ["vertex_ai", "azure", "bedrock", "sagemaker"]
 
 # Re-export for backward compatibility - prefer importing from column_utils directly
@@ -181,57 +199,116 @@ class ApiKeyViewSet(viewsets.ModelViewSet):
         # The decryption will happen automatically through the model's __init__ method
         return queryset
 
+    def _provider_uses_json_config(self, provider):
+        return any(
+            provider and provider.startswith(json_provider)
+            for json_provider in PROVIDERS_WITH_JSON
+        )
+
+    def _request_workspace(self, request):
+        return getattr(request, "workspace", None)
+
+    def _save_context(self, request):
+        context = {
+            "organization": getattr(request, "organization", None)
+            or request.user.organization
+        }
+        workspace = self._request_workspace(request)
+        if workspace is not None:
+            context["workspace"] = workspace
+        return context
+
+    def _normalize_provider_key_payload(self, data, instance=None):
+        payload = data.copy() if hasattr(data, "copy") else dict(data)
+        provider = payload.get("provider") or getattr(instance, "provider", None)
+
+        if not self._provider_uses_json_config(provider):
+            if "key" in payload:
+                payload["config_json"] = None
+            return payload
+
+        has_config_json = "config_json" in payload and payload.get(
+            "config_json"
+        ) not in (
+            None,
+            "",
+        )
+        has_key = "key" in payload and payload.get("key") not in (None, "")
+
+        if not has_config_json and not has_key:
+            return payload
+
+        config_json = (
+            payload.get("config_json") if has_config_json else payload.get("key")
+        )
+        if isinstance(config_json, str):
+            config_json = json.loads(config_json)
+
+        if not isinstance(config_json, dict) or any(
+            isinstance(value, dict) for value in config_json.values()
+        ):
+            raise ValidationError("Invalid JSON format for config_json")
+
+        payload["config_json"] = config_json
+        payload["key"] = None
+        return payload
+
+    @swagger_auto_schema(
+        responses={200: ApiKeyListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @validated_request(
+        request_serializer=ApiKeyRequestSerializer,
+        responses={200: ApiKeySuccessResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        try:
+            payload = self._normalize_provider_key_payload(request.data)
+        except (json.JSONDecodeError, TypeError, ValidationError):
+            return self._gm.bad_request(get_error_message("INVALID_FORMAT"))
+
+        serializer = self.get_serializer(data=payload)
         if serializer.is_valid():
             validated_data = serializer.validated_data
 
             # First try to get existing API key
             try:
-                config_json = None
-                if any(
-                    validated_data.get("provider").startswith(json_provider)
-                    for json_provider in PROVIDERS_WITH_JSON
-                ):
-                    config_json = json.loads(validated_data.get("key"))
-                    try:
-                        if any(
-                            isinstance(value, dict) for value in config_json.values()
-                        ):
-                            raise ValidationError("Invalid JSON format for config_json")
-                    except Exception:
-                        return self._gm.bad_request(get_error_message("INVALID_FORMAT"))
-                api_key = ApiKey.objects.get(
-                    provider=validated_data.get("provider"),
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
-                # Update existing key
-                if config_json:
-                    api_key.config_json = config_json
-                    api_key.key = None
-                else:
-                    api_key.key = validated_data.get("key")
-                    api_key.config_json = None
-                api_key.user = request.user
-                api_key.save()
-            except ApiKey.DoesNotExist:
-                # Create new key if not found
-                if config_json:
-                    api_key = ApiKey.objects.create(
+                config_json = validated_data.get("config_json")
+                api_key = (
+                    self.get_queryset()
+                    .filter(
                         provider=validated_data.get("provider"),
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
-                        config_json=config_json,
-                        user=request.user,
                     )
+                    .first()
+                )
+                if api_key:
+                    # Update existing key
+                    if config_json:
+                        api_key.config_json = config_json
+                        api_key.key = None
+                    else:
+                        api_key.key = validated_data.get("key")
+                        api_key.config_json = None
+                    api_key.user = request.user
+                    workspace = self._request_workspace(request)
+                    if workspace is not None:
+                        api_key.workspace = workspace
+                    api_key.save()
                 else:
+                    # Create new key if not found
+                    create_data = {
+                        "provider": validated_data.get("provider"),
+                        "user": request.user,
+                        **self._save_context(request),
+                    }
+                    if config_json:
+                        create_data["config_json"] = config_json
+                    else:
+                        create_data["key"] = validated_data.get("key")
                     api_key = ApiKey.objects.create(
-                        provider=validated_data.get("provider"),
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
-                        key=validated_data.get("key"),
-                        user=request.user,
+                        **create_data,
                     )
             except Exception:
                 return self._gm.bad_request(get_error_message("UNABLE_TO_ADD_API_KEY"))
@@ -241,17 +318,24 @@ class ApiKeyViewSet(viewsets.ModelViewSet):
                     "id": str(api_key.id),
                     "provider": api_key.provider,
                     "masked_actual_key": api_key.masked_actual_key,
-                    "config_json": api_key.actual_json,
                 }
             )
         return self._gm.bad_request(parse_serialized_errors(serializer))
 
     def perform_update(self, serializer):
-        serializer.save(
-            organization=getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        serializer.save(**self._save_context(self.request))
 
+    def _update_provider_key(self, request, *, partial):
+        instance = self.get_object()
+        payload = self._normalize_provider_key_payload(request.data, instance=instance)
+        serializer = self.get_serializer(instance, data=payload, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(serializer.data)
+
+    @swagger_auto_schema(
+        responses={200: ApiKeySuccessResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
         serializer = self.get_serializer(instance)
@@ -260,6 +344,27 @@ class ApiKeyViewSet(viewsets.ModelViewSet):
         # if instance.actual_key:
         #     data['key'] = instance.actual_key
         return self._gm.success_response(data)
+
+    @validated_request(
+        request_serializer=ApiKeyRequestSerializer,
+        responses={200: ApiKeyResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
+    def update(self, request, *args, **kwargs):
+        try:
+            return self._update_provider_key(request, partial=False)
+        except (json.JSONDecodeError, TypeError, ValidationError):
+            return self._gm.bad_request(get_error_message("INVALID_FORMAT"))
+
+    @validated_request(
+        request_serializer=ApiKeyRequestSerializer,
+        partial_request_validation=True,
+        responses={200: ApiKeyResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
+    def partial_update(self, request, *args, **kwargs):
+        try:
+            return self._update_provider_key(request, partial=True)
+        except (json.JSONDecodeError, TypeError, ValidationError):
+            return self._gm.bad_request(get_error_message("INVALID_FORMAT"))
 
     def destroy(self, request, *args, **kwargs):
         """
@@ -378,14 +483,18 @@ def render_template(
 class JsonStr(dict):
     """Dict subclass that renders as its original JSON string via str()/Jinja.
     Allows {{col.key}} via dict attribute access while {{col}} outputs the raw JSON."""
+
     def __init__(self, data, raw):
         super().__init__(data)
         self._raw = raw
+
     def __str__(self):
         return self._raw
 
 
-def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None):
+def populate_placeholders(
+    messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None
+):
     try:
         media_error = None
         # Debug: Log input messages to see what template we're processing
@@ -438,7 +547,11 @@ def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, mode
                         parsed_json, is_valid = parse_json_safely(cell_value)
                         if is_valid and isinstance(parsed_json, dict):
                             cell_value = JsonStr(parsed_json, cell_value)
-                        elif is_valid and isinstance(parsed_json, list) and template_format in ("jinja", "jinja2"):
+                        elif (
+                            is_valid
+                            and isinstance(parsed_json, list)
+                            and template_format in ("jinja", "jinja2")
+                        ):
                             # Only parse lists for Jinja mode ({% for %} iteration).
                             # Mustache/default mode keeps the raw JSON string.
                             cell_value = parsed_json
@@ -531,7 +644,9 @@ def populate_placeholders(messages: list[dict], dataset_id, row_id, col_id, mode
             return messages
 
 
-def process_list_content(content, column_info, context, image_counter, model_name, template_format=None):
+def process_list_content(
+    content, column_info, context, image_counter, model_name, template_format=None
+):
     """Process list-type content with proper media handling"""
     processed_content = []
 
@@ -559,14 +674,23 @@ def process_list_content(content, column_info, context, image_counter, model_nam
     return processed_content
 
 
-def process_string_content(content, column_info, context, image_counter, model_name, template_format=None):
+def process_string_content(
+    content, column_info, context, image_counter, model_name, template_format=None
+):
     """Process string-type content with proper media handling"""
     return process_text_with_media(
-        content, column_info, context, image_counter, model_name, template_format=template_format
+        content,
+        column_info,
+        context,
+        image_counter,
+        model_name,
+        template_format=template_format,
     )
 
 
-def process_text_with_media(text, column_info, context, image_counter, model_name, template_format=None):
+def process_text_with_media(
+    text, column_info, context, image_counter, model_name, template_format=None
+):
     """Process text content, handling both templates and media placeholders"""
     try:
         # Get the text and fix doubled-up quotes
@@ -682,7 +806,9 @@ def process_text_with_media(text, column_info, context, image_counter, model_nam
         if effective_format == "jinja":
             effective_format = TEMPLATE_FORMAT_JINJA2
         try:
-            processed_text = render_template(text, context, template_format=effective_format)
+            processed_text = render_template(
+                text, context, template_format=effective_format
+            )
         except Exception as render_error:
             logger.exception(
                 f"Template rendering failed: {render_error}. Template: {text[:200]}..."
@@ -924,17 +1050,22 @@ class LitellmAPIView(CreateAPIView):
         validated_data = request.validated_data
         # `validated_request` owns request-shape validation; from here the view
         # handles only domain execution errors.
-        organization = (
-            getattr(request, "organization", None) or request.user.organization
+        organization = _request_organization(request)
+        dataset = (
+            _request_dataset_queryset(request)
+            .filter(id=validated_data.get("dataset_id"))
+            .first()
         )
-        dataset = Dataset.objects.filter(
-            id=validated_data.get("dataset_id"), deleted=False
-        ).first()
-        if not dataset or dataset.organization_id != organization.id:
+        if not dataset:
             return self._gm.not_found("Dataset not found")
         # Retrieve tools based on the IDs from the validated data
-        tool_ids = validated_data.get("tools", [])
-        tools = Tools.objects.filter(id__in=tool_ids)
+        tool_ids = _extract_tool_ids(validated_data.get("tools"))
+        tools = Tools.objects.filter(
+            _request_workspace_filter(request),
+            id__in=tool_ids,
+            organization=organization,
+            deleted=False,
+        )
 
         # Use transaction to ensure atomicity
         with transaction.atomic():
@@ -952,6 +1083,7 @@ class LitellmAPIView(CreateAPIView):
                 tool_choice=validated_data.get("tool_choice"),
                 output_format=validated_data.get("output_format"),
                 dataset=dataset,
+                workspace=dataset.workspace,
                 concurrency=validated_data.get("concurrency"),
                 run_prompt_config=validated_data.get("run_prompt_config"),
                 status=StatusType.NOT_STARTED.value,  # Start with NOT_STARTED
@@ -1221,8 +1353,12 @@ class RunPrompts:
                             row_id=row_id,
                         )
                         raise ValueError("Error in API call validation")
-                    elif api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                        error_message = get_error_for_api_status(api_call_log_row.status)
+                    elif (
+                        api_call_log_row.status != APICallStatusChoices.PROCESSING.value
+                    ):
+                        error_message = get_error_for_api_status(
+                            api_call_log_row.status
+                        )
                         logger.error(
                             "RunPrompts_process_row_api_call_status_invalid",
                             run_prompt_id=str(self.run_prompt_id),
@@ -1231,7 +1367,9 @@ class RunPrompts:
                             error_message=error_message,
                         )
                         raise ValueError(error_message)
-                    elif api_call_log_row.status == APICallStatusChoices.PROCESSING.value:
+                    elif (
+                        api_call_log_row.status == APICallStatusChoices.PROCESSING.value
+                    ):
                         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
                         api_call_log_row.save()
                         logger.info(
@@ -1252,18 +1390,16 @@ class RunPrompts:
                         emit = None
 
                     if emit is not None and UsageEvent is not None:
-
-
                         emit(
-                        UsageEvent(
-                            org_id=str(self.run_prompt_model.organization.id),
-                            event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
-                            properties={
-                                "source": "dataset_run_prompt",
-                                "source_id": str(self.run_prompt_id),
-                            },
+                            UsageEvent(
+                                org_id=str(self.run_prompt_model.organization.id),
+                                event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
+                                properties={
+                                    "source": "dataset_run_prompt",
+                                    "source_id": str(self.run_prompt_id),
+                                },
+                            )
                         )
-                    )
                 except Exception:
                     pass  # Metering failure must not break the action
 
@@ -1278,7 +1414,9 @@ class RunPrompts:
                     row_id=row.id,
                     col_id=column.id,
                     model_name=self.run_prompt_model.model,
-                    template_format=(self.run_prompt_model.run_prompt_config or {}).get("template_format"),
+                    template_format=(self.run_prompt_model.run_prompt_config or {}).get(
+                        "template_format"
+                    ),
                 )
                 messages = remove_empty_text_from_messages(messages)
                 logger.info(
@@ -2248,7 +2386,10 @@ class DatasetRunPromptStatsView(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: DatasetRunPromptStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: DatasetRunPromptStatsResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request, dataset_id):
         try:
@@ -2488,7 +2629,9 @@ class LiteLLMModelVoicesView(APIView):
 
             # Fetch custom voices
             custom_voices = get_custom_voices(
-                organization=organization, provider=model_info.get("providers", "")
+                organization=organization,
+                provider=model_info.get("providers", ""),
+                workspace=getattr(request, "workspace", None),
             )
 
             # Add custom voices
