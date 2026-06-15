@@ -9,7 +9,7 @@ import TalkRatioCell from "./CallLogs/TalkRatioCell";
 import { evalCellChips } from "src/sections/projects/LLMTracing/evalCellModel";
 import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
-import VOICE_CALLS_DUMMY from "./CallLogs/__dummy__/voiceCallsDummy.json";
+// Voice detail API is still pending — keep its dummy fallback until it lands.
 import VOICE_CALL_DETAIL_DUMMY from "./CallLogs/__dummy__/voiceCallDetailDummy.json";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -850,12 +850,7 @@ export const useCallLogs = ({
         params: { page, page_size: pageLimit, ...params },
       }),
     enabled: condition && enabled,
-    // DEV DUMMY: fall back to a static reference payload when the project has
-    // no real voice calls yet so the grid renders. Remove once seeded.
-    select: (data) => {
-      const real = data?.data;
-      return real?.results?.length ? real : VOICE_CALLS_DUMMY;
-    },
+    select: (data) => data?.data,
   });
   return { queryKey, data, isLoading, error };
 };

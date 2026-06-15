@@ -40,18 +40,8 @@ import IPOPCell from "./Renderers/IPOPCell";
 import { isCellValueEmpty } from "src/components/table/utils";
 import { APP_CONSTANTS } from "src/utils/constants";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
-import dummySpans from "./dummySpans.json";
 
 const ROWS_LIMIT = 100;
-
-// TH-5641 dev stub: serve the captured list_spans_observe response (task-enriched
-// config) instead of hitting the API. Page 0 only — later pages return an empty
-// table so infinite scroll terminates. Flip to false to restore the live call.
-const USE_DUMMY_SPANS = true;
-const EMPTY_DUMMY_SPAN_PAGE = {
-  ...dummySpans,
-  result: { ...dummySpans.result, table: [] },
-};
 
 // Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
 const normalizeConfigKeys = (config) =>
@@ -408,19 +398,12 @@ const SpanGrid = React.forwardRef(
               // Use prefetched data if available, otherwise fetch
               const cached = prefetchCache.current.get(pageNumber);
               prefetchCache.current.delete(pageNumber);
-              let results;
-              if (USE_DUMMY_SPANS) {
-                results = {
-                  data: pageNumber === 0 ? dummySpans : EMPTY_DUMMY_SPAN_PAGE,
-                };
-              } else {
-                results =
-                  cached ||
-                  (await axios.get(
-                    endpoints.project.getSpansForObserveProject(),
-                    { params: buildParams(pageNumber) },
-                  ));
-              }
+              const results =
+                cached ||
+                (await axios.get(
+                  endpoints.project.getSpansForObserveProject(),
+                  { params: buildParams(pageNumber) },
+                ));
 
               const res = results?.data?.result;
               const newCols = normalizeConfigKeys(res?.config);
@@ -489,7 +472,7 @@ const SpanGrid = React.forwardRef(
               });
 
               // Prefetch next page so scroll feels instant
-              if (!isLastPage && !USE_DUMMY_SPANS) {
+              if (!isLastPage) {
                 axios
                   .get(endpoints.project.getSpansForObserveProject(), {
                     params: buildParams(pageNumber + 1),

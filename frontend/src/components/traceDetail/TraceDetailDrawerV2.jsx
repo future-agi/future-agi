@@ -11,10 +11,6 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
-// TH-5629 DEV DUMMY: drive the drawer from the v2 fixture until the live
-// endpoint returns object-shaped eval_scores. Flip false / delete then.
-import dummyTraceDetailV2 from "src/sections/projects/LLMTracing/dummyTraceDetailV2.json";
-const USE_DUMMY_TRACE_DETAIL = true;
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import DrawerHeader from "./DrawerHeader";
@@ -595,8 +591,8 @@ const TraceDetailDrawerV2 = ({
   const { data: apiData, isLoading: apiLoading } = useGetTraceDetail(
     open ? traceId : null,
   );
-  const data = USE_DUMMY_TRACE_DETAIL ? dummyTraceDetailV2.result : apiData;
-  const isLoading = USE_DUMMY_TRACE_DETAIL ? false : apiLoading;
+  const data = apiData;
+  const isLoading = apiLoading;
 
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["trace-detail", traceId] });
