@@ -8,8 +8,8 @@ from typing import Any
 import structlog
 
 from agentic_eval.core.embeddings.embedding_manager import (
-    EmbeddingManager,
     GROUND_TRUTH_TABLE_NAME,
+    EmbeddingManager,
 )
 
 logger = structlog.get_logger(__name__)

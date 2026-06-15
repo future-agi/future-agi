@@ -213,8 +213,8 @@ class GroundTruthService:
         product invariant (FE only surfaces one).
         """
         from agentic_eval.core.embeddings.embedding_manager import (
-            EmbeddingManager,
             GROUND_TRUTH_TABLE_NAME,
+            EmbeddingManager,
         )
 
         data = gt.data or []
@@ -377,7 +377,7 @@ class GroundTruthService:
                     "`query` string to a column.",
                     code="VARIABLE_MAPPING_MISSING",
                 )
-            resolved_inputs = {var: stripped for var in mapped}
+            resolved_inputs = dict.fromkeys(mapped, stripped)
 
         results = GroundTruthService.retrieve_few_shot(
             gt=gt,
