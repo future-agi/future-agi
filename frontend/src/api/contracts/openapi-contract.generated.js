@@ -56980,11 +56980,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "properties": {
         "variable_mapping": {
           "title": "Variable mapping",
-          "description": "Map of template variable name → GT column name (string) or list of column names. Keys are dynamic per-template.",
+          "description": "Map of template variable name to GT column name (string) or list of column names. Keys are dynamic per-template.",
           "type": "object",
-          "additionalProperties": {
-            "type": "object"
-          }
+          "additionalProperties": true
         },
         "role_mapping": {
           "$ref": "#/definitions/GroundTruthRoleMapping"
@@ -82113,12 +82111,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "variable_mapping": {
           "title": "Variable mapping",
-          "description": "Map of template variable name → GT column name (string) or list of column names.",
+          "description": "Map of template variable name to GT column name (string) or list of column names.",
           "type": "object",
-          "additionalProperties": {
-            "type": "object"
-          },
-          "x-nullable": true
+          "x-nullable": true,
+          "additionalProperties": true
         },
         "role_mapping": {
           "$ref": "#/definitions/GroundTruthRoleMapping"
@@ -94101,12 +94097,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "variable_mapping": {
           "title": "Variable mapping",
-          "description": "Map of template variable name → GT column name (string) or list of column names.",
+          "description": "Map of template variable name to GT column name (string) or list of column names.",
           "type": "object",
-          "additionalProperties": {
-            "type": "object"
-          },
-          "x-nullable": true
+          "x-nullable": true,
+          "additionalProperties": true
         },
         "role_mapping": {
           "$ref": "#/definitions/GroundTruthRoleMapping"

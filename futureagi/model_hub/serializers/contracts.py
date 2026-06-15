@@ -2451,11 +2451,9 @@ class GroundTruthSetupRequestSerializer(serializers.Serializer):
     service layer rejects any other keys.
     """
 
-    variable_mapping = serializers.DictField(
-        child=serializers.JSONField(),
-        allow_empty=False,
+    variable_mapping = JsonObjectRequestField(
         help_text=(
-            "Map of template variable name → GT column name (string) "
+            "Map of template variable name to GT column name (string) "
             "or list of column names. Keys are dynamic per-template."
         ),
     )
@@ -2510,12 +2508,11 @@ class GroundTruthItemSerializer(serializers.Serializer):
     file_name = serializers.CharField(required=False, allow_blank=True)
     columns = serializers.ListField(child=serializers.CharField())
     row_count = serializers.IntegerField()
-    variable_mapping = serializers.DictField(
-        child=serializers.JSONField(),
+    variable_mapping = JsonObjectRequestField(
         required=False,
         allow_null=True,
         help_text=(
-            "Map of template variable name → GT column name (string) "
+            "Map of template variable name to GT column name (string) "
             "or list of column names."
         ),
     )
@@ -2556,12 +2553,11 @@ class GroundTruthSetupResponseResultSerializer(serializers.Serializer):
 
     id = serializers.UUIDField()
     template_id = serializers.UUIDField()
-    variable_mapping = serializers.DictField(
-        child=serializers.JSONField(),
+    variable_mapping = JsonObjectRequestField(
         required=False,
         allow_null=True,
         help_text=(
-            "Map of template variable name → GT column name (string) "
+            "Map of template variable name to GT column name (string) "
             "or list of column names."
         ),
     )

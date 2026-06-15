@@ -19662,9 +19662,7 @@ export const ModelHubEvalTemplatesGroundTruthListResponse = zod.object({
   "file_name": zod.string().optional(),
   "columns": zod.array(zod.string().min(1)),
   "row_count": zod.number(),
-  "variable_mapping": zod.record(zod.string(), zod.object({
-
-}).passthrough()).optional().describe('Map of template variable name → GT column name (string) or list of column names.'),
+  "variable_mapping": zod.record(zod.string(), zod.unknown()).optional().describe('Map of template variable name to GT column name (string) or list of column names.'),
   "role_mapping": zod.object({
   "output": zod.string().min(1).optional(),
   "explanation": zod.string().min(1).optional(),
@@ -22036,9 +22034,7 @@ export const modelHubGroundTruthSetupUpdateBodyInjectionFormatDefault = `structu
 export const modelHubGroundTruthSetupUpdateBodyEnabledDefault = true;
 
 export const ModelHubGroundTruthSetupUpdateBody = zod.object({
-  "variable_mapping": zod.record(zod.string(), zod.object({
-
-}).passthrough()).describe('Map of template variable name → GT column name (string) or list of column names. Keys are dynamic per-template.'),
+  "variable_mapping": zod.record(zod.string(), zod.unknown()).describe('Map of template variable name to GT column name (string) or list of column names. Keys are dynamic per-template.'),
   "role_mapping": zod.object({
   "output": zod.string().min(1).optional(),
   "explanation": zod.string().min(1).optional(),
@@ -22065,9 +22061,7 @@ export const ModelHubGroundTruthSetupUpdateResponse = zod.object({
   "result": zod.object({
   "id": zod.string().uuid(),
   "template_id": zod.string().uuid(),
-  "variable_mapping": zod.record(zod.string(), zod.object({
-
-}).passthrough()).optional().describe('Map of template variable name → GT column name (string) or list of column names.'),
+  "variable_mapping": zod.record(zod.string(), zod.unknown()).optional().describe('Map of template variable name to GT column name (string) or list of column names.'),
   "role_mapping": zod.object({
   "output": zod.string().min(1).optional(),
   "explanation": zod.string().min(1).optional(),
