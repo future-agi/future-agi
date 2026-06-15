@@ -21,8 +21,10 @@ services:
     container_name: jaeger
     ports:
       - "${JAEGER_UI_PORT:-16686}:16686" # Jaeger UI
-      - "${JAEGER_OTLP_GRPC_PORT:-4317}:4317" # OTLP gRPC receiver
-      - "${JAEGER_OTLP_HTTP_PORT:-4318}:4318" # OTLP HTTP receiver
+      # Host ports moved off 4317/4318 — fi-collector (product OTLP ingest)
+      # owns the standard ports. In-stack services still use jaeger:4317.
+      - "${JAEGER_OTLP_GRPC_PORT:-14317}:4317" # OTLP gRPC receiver
+      - "${JAEGER_OTLP_HTTP_PORT:-14318}:4318" # OTLP HTTP receiver
     volumes:
       - ./config/jaeger-ui-config.json:/etc/jaeger/jaeger-ui-config.json:ro
     environment:
