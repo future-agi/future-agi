@@ -2244,9 +2244,9 @@ const RunPrompt = () => {
   // values diverge — `modelType: ""` while `model_type: "tts"`. Read
   // snake_case first with a camelCase fallback so the form hydrates with
   // the real value.
-  const runPromptConfig =
-    runPromptDataRaw?.data?.result?.config?.run_prompt_config ??
-    runPromptDataRaw?.data?.result?.config?.runPromptConfig;
+  const runPromptConfig = normalizeConfigurationForLoad(
+    runPromptDataRaw?.data?.result?.config?.run_prompt_config 
+  );
   const model = runPromptDataRaw?.data?.result?.config?.model;
   const provider = runPromptConfig?.providers;
   const modelType = runPromptConfig?.model_type || runPromptConfig?.modelType;
@@ -2270,13 +2270,13 @@ const RunPrompt = () => {
 
   const transformedModelParamsSliders = modelParams?.sliders?.map((item) => {
     if (
-      runPromptData?.runPromptConfig[_.camelCase(item?.label)] !== undefined
+      runPromptConfig?.[_.camelCase(item?.label)] !== undefined
     ) {
       return {
         ...item,
         id: _.camelCase(item?.label),
         value:
-          runPromptData?.runPromptConfig[_.camelCase(item?.label)] ??
+          runPromptConfig?.[_.camelCase(item?.label)] ??
           item?.default,
       };
     }
@@ -2292,21 +2292,21 @@ const RunPrompt = () => {
     ...(modelParams?.booleans && {
       booleans: transformParameterType(
         modelParams?.booleans,
-        runPromptData?.runPromptConfig,
+        runPromptConfig,
         "booleans",
       ),
     }),
     ...(modelParams?.dropdowns && {
       dropdowns: transformParameterType(
         modelParams?.dropdowns,
-        runPromptData?.runPromptConfig,
+        runPromptConfig,
         "dropdowns",
       ),
     }),
   };
 
   const reasoningConfig = modelParams?.reasoning;
-  const savedReasoning = runPromptData?.runPromptConfig?.reasoning;
+  const savedReasoning = runPromptConfig?.reasoning;
 
   const transformedReasoningSliders = reasoningConfig?.sliders?.map((item) => {
     if (savedReasoning?.sliders?.[_.camelCase(item?.label)] !== undefined) {
