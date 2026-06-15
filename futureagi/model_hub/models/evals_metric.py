@@ -814,12 +814,13 @@ class EvalGroundTruth(ModelBaseModel):
     Embeddings are generated asynchronously for similarity-based retrieval.
     """
 
-    EMBEDDING_STATUS_CHOICES = [
-        ("pending", "Pending"),
-        ("processing", "Processing"),
-        ("completed", "Completed"),
-        ("failed", "Failed"),
-    ]
+    class EmbeddingStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    EMBEDDING_STATUS_CHOICES = EmbeddingStatus.choices
 
     STORAGE_TYPE_CHOICES = [
         ("db", "Database"),
@@ -873,8 +874,8 @@ class EvalGroundTruth(ModelBaseModel):
     # Embedding fields
     embedding_status = models.CharField(
         max_length=20,
-        choices=EMBEDDING_STATUS_CHOICES,
-        default="pending",
+        choices=EmbeddingStatus.choices,
+        default=EmbeddingStatus.PENDING,
         help_text="Status of embedding generation for this dataset",
     )
     embedding_model = models.CharField(

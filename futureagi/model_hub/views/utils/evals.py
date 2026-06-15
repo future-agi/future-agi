@@ -290,11 +290,9 @@ def run_eval_func(
             if isinstance(code_eval_params, dict):
                 _run_kwargs.update(code_eval_params)
 
-        from model_hub.utils.ground_truth_retrieval import (
-            inject_ground_truth_context,
-        )
+        from model_hub.services.ground_truth_service import GroundTruthService
 
-        inject_ground_truth_context(_run_kwargs, template, eval_type_id=eval_id)
+        GroundTruthService.inject_context(_run_kwargs, template, eval_type_id=eval_id)
 
         # Preprocess inputs for code evals that need external data (e.g. CLIP embeddings)
         if _is_code_eval:

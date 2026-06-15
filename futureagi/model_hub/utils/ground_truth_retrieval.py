@@ -1,14 +1,10 @@
-"""Runtime GT injection and few-shot prompt formatting."""
+"""Pure helpers for GT runtime gating and prompt formatting."""
 
 from __future__ import annotations
 
 from typing import Any, Iterator
 
-import structlog
-
 from model_hub.utils.eval_input_validation import is_empty_value
-
-logger = structlog.get_logger(__name__)
 
 
 def has_usable_inputs_for_gt(
@@ -36,20 +32,6 @@ def has_usable_inputs_for_gt(
     return False
 
 
-def load_ground_truth_config(eval_template) -> dict | None:
-    """Return the GT config dict from the template, or ``None``.
-
-    Treats ``enabled=False`` and missing ``ground_truth_id`` as "not
-    configured". Callers should fall through silently in that case.
-    """
-    config = (eval_template.config or {}).get("ground_truth")
-    if not config or not config.get("enabled"):
-        return None
-    if not config.get("ground_truth_id"):
-        return None
-    return config
-
-
 def get_label_columns(role_mapping: dict | None) -> tuple[str, str]:
     """Return ``(output_column, explanation_column)`` from ``role_mapping``.
 
@@ -75,117 +57,6 @@ def get_label_columns(role_mapping: dict | None) -> tuple[str, str]:
         role_mapping.get("reason"),
     )
     return output, explanation
-
-
-def get_ground_truth_few_shot_examples(
-    gt_config: dict,
-    current_input: dict,
-) -> list[dict]:
-    """Retrieve similar GT rows for few-shot injection.
-
-    Resolves the ``EvalGroundTruth`` from the config and delegates to
-    :meth:`GroundTruthService.retrieve_few_shot`. Returns ``[]`` when the
-    config doesn't point at a real GT, or when the dataset isn't ready,
-    or when the inputs don't have anything to query against.
-    """
-    from model_hub.models.evals_metric import EvalGroundTruth
-    from model_hub.services.ground_truth_service import GroundTruthService
-
-    gt_id = gt_config.get("ground_truth_id")
-    max_examples = int(gt_config.get("max_examples", 3))
-
-    try:
-        gt = EvalGroundTruth.objects.get(id=gt_id, deleted=False)
-    except EvalGroundTruth.DoesNotExist:
-        logger.warning("ground_truth_not_found", gt_id=gt_id)
-        return []
-
-    if not has_usable_inputs_for_gt(gt.variable_mapping, current_input):
-        return []
-
-    return GroundTruthService.retrieve_few_shot(
-        gt=gt, inputs=current_input, max_results=max_examples
-    )
-
-
-def inject_ground_truth_context(
-    mapped: dict, eval_template, eval_type_id: str = ""
-) -> dict:
-    """Mutate ``mapped`` with GT context when the template has GT enabled."""
-    from model_hub.models.evals_metric import EvalGroundTruth
-
-    gt_config = load_ground_truth_config(eval_template)
-    if not gt_config:
-        return mapped
-
-    try:
-        gt_obj = EvalGroundTruth.objects.filter(
-            id=gt_config["ground_truth_id"], deleted=False
-        ).first()
-    except Exception:
-        gt_obj = None
-
-    if gt_obj is None:
-        return mapped
-
-    if not has_usable_inputs_for_gt(gt_obj.variable_mapping, mapped):
-        logger.debug(
-            "ground_truth_skipped_no_usable_inputs",
-            gt_id=str(gt_obj.id),
-            eval_type_id=eval_type_id,
-            template_id=str(getattr(eval_template, "id", "") or ""),
-            variable_mapping=gt_obj.variable_mapping,
-            runtime_inputs=mapped,
-        )
-        return mapped
-
-    gt_config = dict(gt_config)
-    gt_config["embedding_status"] = gt_obj.embedding_status
-
-    if (
-        eval_type_id == "CustomPromptEvaluator"
-        and gt_obj.embedding_status == "completed"
-    ):
-        examples = get_ground_truth_few_shot_examples(gt_config, mapped)
-        output_col, explanation_col = get_label_columns(gt_obj.role_mapping)
-        few_shot_text = ""
-        if examples:
-            few_shot_text = format_few_shot_examples(
-                examples,
-                variable_mapping=gt_obj.variable_mapping,
-                output_column=output_col,
-                explanation_column=explanation_col,
-                injection_format=gt_config.get("injection_format", "structured"),
-            )
-            mapped["ground_truth_few_shot"] = few_shot_text
-        logger.debug(
-            "ground_truth_custom_prompt_injected",
-            gt_id=str(gt_obj.id),
-            template_id=str(getattr(eval_template, "id", "") or ""),
-            variable_mapping=gt_obj.variable_mapping,
-            role_mapping=gt_obj.role_mapping,
-            output_column=output_col,
-            explanation_column=explanation_col,
-            runtime_inputs=mapped,
-            examples_count=len(examples),
-            examples_preview=examples[:3],
-            injection_format=gt_config.get("injection_format", "structured"),
-            few_shot_text=few_shot_text,
-        )
-        return mapped
-
-    mapped["ground_truth_config"] = gt_config
-    logger.debug(
-        "ground_truth_agent_config_injected",
-        gt_id=str(gt_obj.id),
-        template_id=str(getattr(eval_template, "id", "") or ""),
-        eval_type_id=eval_type_id,
-        variable_mapping=gt_obj.variable_mapping,
-        role_mapping=gt_obj.role_mapping,
-        runtime_inputs=mapped,
-        ground_truth_config=gt_config,
-    )
-    return mapped
 
 
 def format_few_shot_examples(

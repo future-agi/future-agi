@@ -25,6 +25,9 @@ from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalGroundTruth, EvalTemplate
 from model_hub.services.ground_truth_service import GroundTruthService
 from tfc.constants.roles import OrganizationRoles
+from model_hub.models.evals_metric import EvalGroundTruth
+
+EmbeddingStatus = EvalGroundTruth.EmbeddingStatus
 
 
 @dataclass
@@ -103,7 +106,7 @@ class Command(BaseCommand):
         fx.gt.refresh_from_db()
         self._assert(
             "service returns status=completed",
-            result.status == "completed",
+            result.status == EmbeddingStatus.COMPLETED,
             f"got {result.status!r} (error={result.error!r})",
             failures,
         )
@@ -115,7 +118,7 @@ class Command(BaseCommand):
         )
         self._assert(
             "PG row reflects status=completed",
-            fx.gt.embedding_status == "completed",
+            fx.gt.embedding_status == EmbeddingStatus.COMPLETED,
             f"got {fx.gt.embedding_status}",
             failures,
         )
@@ -301,7 +304,7 @@ class Command(BaseCommand):
             row_count=3,
             variable_mapping={"question": "question", "answer": "answer"},
             role_mapping={"output": "verdict", "explanation": "reason"},
-            embedding_status="pending",
+            embedding_status=EmbeddingStatus.PENDING,
         )
         return _Fixture(
             org=org, user=user, workspace=workspace, template=template, gt=gt
