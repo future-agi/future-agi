@@ -670,15 +670,25 @@ def calculate_eval_average(eval_template, api_logs):
 
                 elif output_type == "score":
                     try:
-                        score = round(float(output.get("output")), 2)
+                        raw = output.get("output_scalar")
+                        if raw is None:
+                            raw = output.get("output")
+                        if isinstance(raw, dict):
+                            raw = raw.get("score")
+                        score = round(float(raw), 2)
                         success_count += score
                         valid_logs += 1
                     except (ValueError, TypeError):
                         continue
 
                 elif output_type in ["choices", "reason"]:
-                    if choices_map and not eval_template.multi_choice:
-                        match choices_map.get(output.get("output")[0]):
+                    raw_choices = output.get("output")
+                    if isinstance(raw_choices, dict):
+                        raw_choices = raw_choices.get("choices") or raw_choices.get("choice")
+                        if isinstance(raw_choices, str):
+                            raw_choices = [raw_choices]
+                    if choices_map and not eval_template.multi_choice and raw_choices:
+                        match choices_map.get(raw_choices[0]):
                             case "pass":
                                 success_count += 1
                                 valid_logs += 1

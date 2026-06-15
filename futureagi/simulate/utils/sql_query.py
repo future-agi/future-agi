@@ -206,7 +206,23 @@ def get_kpi_eval_metrics_query(test_execution_id):
             COALESCE(e.value->>'name', 'metric_' || e.key)    AS metric_name,
             e.value->>'output_type'                            AS output_type,
             e.value->'output'                                  AS output_raw,
-            e.value->>'output'                                 AS output_text
+            e.value->>'output'                                 AS output_text,
+            -- choice_scores dict shape: project inner score/choice/choices.
+            CASE
+                WHEN jsonb_typeof(e.value->'output') = 'object'
+                    THEN (e.value->'output'->>'score')
+                ELSE NULL
+            END                                                AS dict_score_text,
+            CASE
+                WHEN jsonb_typeof(e.value->'output') = 'object'
+                    THEN (e.value->'output'->>'choice')
+                ELSE NULL
+            END                                                AS dict_choice_text,
+            CASE
+                WHEN jsonb_typeof(e.value->'output') = 'object'
+                    THEN (e.value->'output'->'choices')
+                ELSE NULL
+            END                                                AS dict_choices_raw
         FROM simulate_call_execution ce,
              jsonb_each(ce.eval_outputs) AS e(key, value)
         WHERE ce.test_execution_id = %s
@@ -216,7 +232,7 @@ def get_kpi_eval_metrics_query(test_execution_id):
           AND e.value ? 'output_type'
     ),
 
-    -- Pass/Fail and score: aggregate to a single avg per metric_name
+    -- Pass/Fail and score: aggregate to a single avg per metric_name.
     scalar_agg AS (
         SELECT
             metric_id,
@@ -226,8 +242,10 @@ def get_kpi_eval_metrics_query(test_execution_id):
                 CASE
                     WHEN output_type = 'Pass/Fail' AND output_text = 'Passed' THEN 100.0
                     WHEN output_type = 'Pass/Fail' AND output_text = 'Failed' THEN 0.0
-                    WHEN output_type = 'score' AND jsonb_typeof(output_raw) IN ('number')
+                    WHEN output_type = 'score' AND jsonb_typeof(output_raw) = 'number'
                          THEN (output_text)::numeric * 100
+                    WHEN output_type = 'score' AND dict_score_text IS NOT NULL
+                         THEN (dict_score_text)::numeric * 100
                 END
             )::numeric, 1) AS avg_value,
             NULL::text AS choice_value,
@@ -237,7 +255,7 @@ def get_kpi_eval_metrics_query(test_execution_id):
         GROUP BY metric_id, metric_name, output_type
     ),
 
-    -- Choices: unnest strings, numbers, and arrays into individual rows
+    -- Choices: unnest strings, numbers, arrays, and dict shape.
     choice_rows AS (
         -- string values
         SELECT metric_id, metric_name,
@@ -253,6 +271,28 @@ def get_kpi_eval_metrics_query(test_execution_id):
         FROM eval_entries,
              jsonb_array_elements_text(output_raw) AS elem
         WHERE output_type = 'choices' AND jsonb_typeof(output_raw) = 'array'
+
+        UNION ALL
+
+        -- dict shape with single ``choice`` field
+        SELECT metric_id, metric_name,
+               dict_choice_text AS choice_value
+        FROM eval_entries
+        WHERE output_type = 'choices'
+          AND jsonb_typeof(output_raw) = 'object'
+          AND dict_choice_text IS NOT NULL
+
+        UNION ALL
+
+        -- dict shape with multi-choice ``choices`` array
+        SELECT metric_id, metric_name,
+               elem AS choice_value
+        FROM eval_entries,
+             jsonb_array_elements_text(dict_choices_raw) AS elem
+        WHERE output_type = 'choices'
+          AND jsonb_typeof(output_raw) = 'object'
+          AND dict_choices_raw IS NOT NULL
+          AND jsonb_typeof(dict_choices_raw) = 'array'
     ),
 
     choice_agg AS (

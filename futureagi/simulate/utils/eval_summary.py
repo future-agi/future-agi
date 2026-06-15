@@ -70,6 +70,27 @@ def _build_template_statistics(eval_configs, call_executions):
     return template_stats
 
 
+def _normalize_aggregation_output(output, output_type):
+    """Unwrap dict-shape eval outputs into the scalar / list form the
+    aggregation helpers expect."""
+    if not isinstance(output, dict):
+        return output
+    if output_type == "score":
+        score = output.get("score")
+        if isinstance(score, (int, float)) and not isinstance(score, bool):
+            return float(score)
+        return None
+    if output_type == "choices":
+        choices = output.get("choices")
+        if isinstance(choices, list):
+            return choices
+        choice = output.get("choice")
+        if isinstance(choice, str):
+            return choice
+        return None
+    return output
+
+
 def _extract_config_outputs(eval_config, call_executions):
     """Extract outputs for a specific eval config from call executions"""
     config_outputs = []
@@ -78,8 +99,13 @@ def _extract_config_outputs(eval_config, call_executions):
     for call_execution in call_executions:
         eval_data = call_execution.eval_outputs.get(eval_config_id)
         if eval_data:
-            output = eval_data.get("output")
             output_type = eval_data.get("output_type")
+            raw_output = (
+                eval_data.get("output_dict")
+                if eval_data.get("output_dict") is not None
+                else eval_data.get("output")
+            )
+            output = _normalize_aggregation_output(raw_output, output_type)
             reason = eval_data.get("reason", "")
 
             if output is not None and output_type is not None:

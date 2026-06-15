@@ -193,7 +193,12 @@ class RunNewEvalsOnSimulationTool(BaseTool):
                 call_execution.eval_outputs = {}
 
             for eval_config in eval_configs:
-                call_execution.eval_outputs[str(eval_config.id)] = {"status": "pending"}
+                call_execution.eval_outputs[str(eval_config.id)] = {
+                    "status": "pending",
+                    "output": None,
+                    "output_scalar": None,
+                    "output_dict": None,
+                }
 
             call_executions_list.append(call_execution)
 
