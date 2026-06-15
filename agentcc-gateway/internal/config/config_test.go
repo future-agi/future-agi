@@ -157,3 +157,40 @@ func TestAddr(t *testing.T) {
 		t.Errorf("Addr() = %q, want %q", addr, "0.0.0.0:8080")
 	}
 }
+
+// A present internal API key must force auth ON, even when AGENTCC_AUTH_ENABLED=false
+// is also set. Before the precedence fix the toggle ran last and could silently
+// re-open a gateway that had a key configured.
+func TestLoadFromEnvAuthFailsClosedWhenKeyPresent(t *testing.T) {
+	t.Setenv("AGENTCC_AUTH_ENABLED", "false")
+	t.Setenv("AGENTCC_INTERNAL_API_KEY", "test-internal-key")
+
+	cfg := DefaultConfig()
+	loadFromEnv(cfg)
+
+	if !cfg.Auth.Enabled {
+		t.Fatal("auth must be enabled when AGENTCC_INTERNAL_API_KEY is set, even with AGENTCC_AUTH_ENABLED=false")
+	}
+	seeded := false
+	for _, k := range cfg.Auth.Keys {
+		if k.Key == "test-internal-key" {
+			seeded = true
+		}
+	}
+	if !seeded {
+		t.Fatal("internal API key must be seeded into the key store")
+	}
+}
+
+// The explicit toggle still applies on its own when no key is configured.
+func TestLoadFromEnvAuthToggleHonoredWhenNoKey(t *testing.T) {
+	t.Setenv("AGENTCC_INTERNAL_API_KEY", "")
+	t.Setenv("AGENTCC_AUTH_ENABLED", "false")
+
+	cfg := DefaultConfig()
+	loadFromEnv(cfg)
+
+	if cfg.Auth.Enabled {
+		t.Fatal("auth should stay off when no key is set and the toggle is false")
+	}
+}

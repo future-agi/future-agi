@@ -979,6 +979,22 @@ func loadFromEnv(cfg *Config) {
 		cfg.ControlPlane.WebhookSecret = v
 	}
 
+	// Auth env overrides. Evaluate the explicit toggle first, then let a present
+	// internal API key have the final say: it seeds the key store and forces auth
+	// on. A configured key can therefore never leave the gateway open, even if
+	// AGENTCC_AUTH_ENABLED=false is also set (fail closed).
+	if v := os.Getenv("AGENTCC_AUTH_ENABLED"); v != "" {
+		cfg.Auth.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("AGENTCC_INTERNAL_API_KEY"); v != "" {
+		cfg.Auth.Enabled = true
+		cfg.Auth.Keys = append(cfg.Auth.Keys, AuthKeyConfig{
+			Name:  "internal-backend",
+			Key:   v,
+			Owner: "futureagi-backend",
+		})
+	}
+
 	// Redis state env overrides.
 	if v := os.Getenv("AGENTCC_REDIS_ADDRESS"); v != "" {
 		cfg.Redis.Address = v
