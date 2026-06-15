@@ -35,19 +35,6 @@ class AnnotationLabelsListQuerySerializer(StrictInputSerializer):
     archived = serializers.BooleanField(required=False)
 
 
-class AnnotationLabelCreateRequestSerializer(StrictInputSerializer):
-    name = serializers.CharField(max_length=255)
-    type = serializers.ChoiceField(
-        choices=[choice.value for choice in AnnotationTypeChoices]
-    )
-    settings = serializers.JSONField(required=False, default=dict)
-    project = serializers.UUIDField(required=False, allow_null=True)
-    description = serializers.CharField(
-        required=False, allow_blank=True, allow_null=True, default=""
-    )
-    allow_notes = serializers.BooleanField(required=False, default=False)
-
-
 class BulkDestroyAnnotationsRequestSerializer(StrictInputSerializer):
     annotation_ids = serializers.ListField(
         child=serializers.UUIDField(),

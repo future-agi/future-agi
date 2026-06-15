@@ -14260,19 +14260,17 @@ export const ModelHubAnnotationsLabelsListResponse = zod.array(ModelHubAnnotatio
  */
 export const modelHubAnnotationsLabelsCreateBodyNameMax = 255;
 
-export const modelHubAnnotationsLabelsCreateBodySettingsDefault = {  };
-export const modelHubAnnotationsLabelsCreateBodyDescriptionDefault = ``;
-export const modelHubAnnotationsLabelsCreateBodyAllowNotesDefault = false;
+
 
 export const ModelHubAnnotationsLabelsCreateBody = zod.object({
   "name": zod.string().min(1).max(modelHubAnnotationsLabelsCreateBodyNameMax),
   "type": zod.enum(['text', 'numeric', 'categorical', 'star', 'thumbs_up_down']),
   "settings": zod.object({
 
-}).passthrough().default(modelHubAnnotationsLabelsCreateBodySettingsDefault),
+}).passthrough().optional(),
   "project": zod.string().uuid().optional(),
-  "description": zod.string().default(modelHubAnnotationsLabelsCreateBodyDescriptionDefault),
-  "allow_notes": zod.boolean().default(modelHubAnnotationsLabelsCreateBodyAllowNotesDefault)
+  "description": zod.string().optional(),
+  "allow_notes": zod.boolean().optional()
 })
 
 export const modelHubAnnotationsLabelsCreateResponseStatusDefault = true;

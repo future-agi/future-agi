@@ -178,7 +178,6 @@ import type {
   AgentccWebhooksListParams,
   AllActiveTestsApi,
   AnnotationActionMessageResponseApi,
-  AnnotationLabelCreateRequestApi,
   AnnotationLabelCreateResponseApi,
   AnnotationLabelRestoreResponseApi,
   AnnotationQueueApi,
@@ -24465,7 +24464,7 @@ export const getModelHubAnnotationsLabelsCreateUrl = () => {
 /**
  * Custom create to provide clearer error responses in GM format.
  */
-export const modelHubAnnotationsLabelsCreate = async (annotationLabelCreateRequestApi: AnnotationLabelCreateRequestApi, options?: RequestInit): Promise<modelHubAnnotationsLabelsCreateResponse> => {
+export const modelHubAnnotationsLabelsCreate = async (annotationsLabelsApi: NonReadonly<AnnotationsLabelsApi>, options?: RequestInit): Promise<modelHubAnnotationsLabelsCreateResponse> => {
 
   return apiMutator<modelHubAnnotationsLabelsCreateResponse>(getModelHubAnnotationsLabelsCreateUrl(),
   {
@@ -24473,7 +24472,7 @@ export const modelHubAnnotationsLabelsCreate = async (annotationLabelCreateReque
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      annotationLabelCreateRequestApi,)
+      annotationsLabelsApi,)
   }
 );}
 

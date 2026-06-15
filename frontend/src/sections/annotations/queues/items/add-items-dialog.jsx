@@ -1087,13 +1087,12 @@ SourceTypeSelection.propTypes = {
 // ---------------------------------------------------------------------------
 // Build read-only column defs that match the dataset view exactly
 // ---------------------------------------------------------------------------
-function buildReadOnlyColumnDefs(columnConfig) {
+export function buildReadOnlyColumnDefs(columnConfig) {
   return columnConfig
     .filter((col) => col.is_visible !== false)
     .map((col) => {
       const colDataType = col.data_type;
       const colIsFrozen = col.is_frozen;
-      const colIsVisible = col.is_visible;
       return {
         field: col.id,
         headerName: col.name,
@@ -1104,7 +1103,7 @@ function buildReadOnlyColumnDefs(columnConfig) {
         cellDataType: AGGridCellDataType[colDataType],
         dataType: colDataType,
         pinned: colIsFrozen,
-        hide: !colIsVisible,
+        hide: false,
         headerComponent: CustomDevelopDetailColumn,
         headerComponentParams: { col, readOnly: true },
         cellRenderer: CustomCellRender,
@@ -1372,10 +1371,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   );
 
   const columnConfig = useMemo(
-    () =>
-      tableData?.data?.result?.column_config ??
-      tableData?.data?.result?.columnConfig ??
-      [],
+    () => tableData?.data?.result?.column_config ?? [],
     [tableData],
   );
 
@@ -1383,7 +1379,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
     () => buildReadOnlyColumnDefs(columnConfig),
     [columnConfig],
   );
-
 
   const defaultColDef = useMemo(
     () => ({
@@ -1552,7 +1547,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
 
   const handleDatasetChange = (e) => {
     setDatasetId(e.target.value);
-
     setSearch("");
     searchRef.current = "";
     filtersRef.current = [];
@@ -1619,14 +1613,11 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
               Loading datasets...
             </MenuItem>
           )}
-          {(datasets || []).map((ds) => {
-            const optionId = ds.dataset_id || ds.datasetId || ds.id;
-            return (
-              <MenuItem key={optionId} value={optionId}>
-                {ds.name}
-              </MenuItem>
-            );
-          })}
+          {(datasets || []).map((ds) => (
+            <MenuItem key={ds.dataset_id} value={ds.dataset_id}>
+              {ds.name}
+            </MenuItem>
+          ))}
         </TextField>
 
         {datasetId && (

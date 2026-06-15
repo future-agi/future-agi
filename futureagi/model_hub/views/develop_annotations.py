@@ -21,6 +21,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.models import User
+from accounts.utils import get_request_organization
 from agentic_eval.core.embeddings.embedding_manager import (
     EmbeddingManager,
 )
@@ -37,7 +38,6 @@ from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.annotation import AnnotationTaskSerializer
 from model_hub.serializers.develop_annotations import (
-    AnnotationLabelCreateRequestSerializer,
     AnnotationLabelCreateResponseSerializer,
     AnnotationLabelRestoreResponseSerializer,
     AnnotationLabelsListQuerySerializer,
@@ -405,24 +405,16 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
             )
 
     @validated_request(
-        request_serializer=AnnotationLabelCreateRequestSerializer,
+        request_serializer=AnnotationsLabelsSerializer,
+        serializer_context=lambda request: {"request": request},
         responses={200: AnnotationLabelCreateResponseSerializer, **ERROR_RESPONSES},
     )
     def create(self, request, *args, **kwargs):
         """Custom create to provide clearer error responses in GM format."""
-        serializer = self.get_serializer(data=request.data)
-        if not serializer.is_valid():
-            # Return validation errors in the same structure frontend expects.
-            logger.warning(f"Annotation label validation failed: {serializer.errors}")
-            return self._gm.bad_request(
-                f"Annotation label creation failed: {serializer.errors}"
-            )
+        serializer = request.validated_serializer
 
         try:
-            serializer.save(
-                organization=getattr(request, "organization", None)
-                or request.user.organization
-            )
+            serializer.save(organization=get_request_organization(request))
         except serializers.ValidationError as exc:
             # Serializer or model raised duplicate-label validation.
             detail = exc.detail
