@@ -4608,10 +4608,12 @@ class UsersView(APIView):
         produces=["application/json", "text/csv"],
     )
     def get(self, request, *args, **kwargs):
-        """List Observe end-users (JSON) or stream them as CSV (``export=true``).
-
-        Deserializes the request and delegates all work to ``UsersListManager``.
         """
+        List traces filtered by project ID with optimized queries.
+        """
+        # Thin transport layer: deserialize the request, resolve the
+        # request-scoped allowed projects, then delegate all query/enrichment/
+        # CSV work to UsersListManager (export=true streams CSV; else JSON).
         try:
             query_data = request.validated_query_data
 
