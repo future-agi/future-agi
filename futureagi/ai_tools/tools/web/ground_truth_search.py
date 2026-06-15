@@ -2,8 +2,8 @@
 
 Lets the agent retrieve human-annotated GT rows whose mapped inputs are
 semantically similar to whatever the agent is currently evaluating. The
-agent receives a structured text block — input columns first, then the
-labelled eval output and (optional) explanation — and can use those as
+agent receives a structured text block - input columns first, then the
+labelled eval output and (optional) explanation - and can use those as
 reference judgments before producing its own verdict.
 
 All retrieval logic lives in :class:`GroundTruthService`. This file is
@@ -127,7 +127,7 @@ def _resolve_inputs(
     """Project either ``inputs`` or the legacy ``query`` string into the
     per-variable dict the retrieval helper expects.
 
-    Returns ``{}`` when neither field carries any signal — callers
+    Returns ``{}`` when neither field carries any signal - callers
     surface that as a 4xx-style error to the agent so it can retry
     with a real query.
     """
@@ -166,10 +166,10 @@ def _render_for_agent(
 
     Each match gets:
 
-    * INPUTS — one line per mapped template variable, labelled by
+    * INPUTS - one line per mapped template variable, labelled by
       ``{{var}} ← gt_column`` so the agent sees what was used
-    * EVAL OUTPUT — the labelled verdict (the format it should match)
-    * EVAL EXPLANATION — the reasoning the human gave, when present
+    * EVAL OUTPUT - the labelled verdict (the format it should match)
+    * EVAL EXPLANATION - the reasoning the human gave, when present
 
     Unmapped columns are suppressed; they're noise in the retrieval
     context and tend to mislead the agent.

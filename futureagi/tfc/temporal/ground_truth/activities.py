@@ -2,8 +2,8 @@
 
 The activity itself stays a thin async shell that hands the work to
 :meth:`model_hub.services.ground_truth_service.GroundTruthService.embed_dataset`.
-All business logic — modality dispatch, soft-delete of prior vectors,
-CH bulk write, PG status transitions — lives in the service so it can
+All business logic - modality dispatch, soft-delete of prior vectors,
+CH bulk write, PG status transitions - lives in the service so it can
 be unit-tested without a Temporal worker.
 """
 

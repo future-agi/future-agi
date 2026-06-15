@@ -1,20 +1,4 @@
-"""Service layer for ground-truth operations.
-
-Views, Temporal activities, and management commands delegate here so the
-caller stays thin: each surface is responsible only for *taking* the
-work and *responding*; the actual embedding writes, retrieval, and
-state transitions live on :class:`GroundTruthService`.
-
-Storage: vectors live in the ClickHouse ``ground_truths`` table managed
-by :class:`agentic_eval.core.embeddings.embedding_manager.EmbeddingManager`,
-keyed by ``EvalTemplate.id`` + ``organization_id`` + ``workspace_id``.
-The corresponding ``EvalGroundTruth`` PG row remains the user-facing
-metadata anchor (name, columns, status, file).
-
-The legacy ``EvalGroundTruthEmbedding`` PG table is no longer written
-by this service. Existing PG rows are tolerated but ignored; a separate
-follow-up will drop the model.
-"""
+"""Service layer for ground-truth operations."""
 
 from __future__ import annotations
 
@@ -45,19 +29,12 @@ class EmbedDatasetResult:
 
 
 class GroundTruthService:
-    """Owns the business logic behind the GT REST endpoints.
-
-    Each public method takes the resolved ``EvalGroundTruth`` (or
-    ``EvalTemplate``) — the view is responsible for permission/workspace
-    resolution via the existing ``_get_accessible_*`` helpers. This keeps
-    the service free of DRF request plumbing and trivially unit-testable.
-    """
+    """Ground-truth business logic; views and Temporal activities call here."""
 
     ALLOWED_ROLE_KEYS = frozenset(
         {"output", "explanation", "expected_output", "reasoning", "reason"}
     )
 
-    # ── atomic setup write (single Save) ──────────────────────────
 
     @staticmethod
     def update_setup(
@@ -168,7 +145,6 @@ class GroundTruthService:
             "config": template_config["ground_truth"],
         }
 
-    # ── preview-time enrichment for the FE playground ─────────────
 
     @staticmethod
     def resolve_preview_examples(
@@ -223,7 +199,6 @@ class GroundTruthService:
             )
             return None
 
-    # ── CH embedding write (full-dataset pass) ────────────────────
 
     @staticmethod
     def embed_dataset(*, gt: EvalGroundTruth) -> EmbedDatasetResult:
@@ -253,7 +228,7 @@ class GroundTruthService:
         if not mapped_columns:
             return _mark_failed(
                 gt,
-                "variable_mapping is empty — at least one mapped column is "
+                "variable_mapping is empty - at least one mapped column is "
                 "required before embedding.",
             )
 
@@ -323,7 +298,6 @@ class GroundTruthService:
             status="completed",
         )
 
-    # ── CH retrieval ──────────────────────────────────────────────
 
     @staticmethod
     def retrieve_few_shot(
@@ -336,7 +310,7 @@ class GroundTruthService:
 
         Wraps :func:`retrieve_ground_truth_fewshots` with the GT's stored
         ``variable_mapping`` (template-var → GT-column) and tenant
-        identifiers. Returns the raw source-row dicts in rank order —
+        identifiers. Returns the raw source-row dicts in rank order -
         callers downstream are responsible for projecting them into
         whatever surface they need (few-shot prompt text, agent-tool
         output, FE Match cards).
@@ -369,7 +343,6 @@ class GroundTruthService:
         matches = retrieve_ground_truth_fewshots(request)
         return [match.row for match in matches]
 
-    # ── search (FE Test Retrieval) ────────────────────────────────
 
     @staticmethod
     def search(
@@ -426,7 +399,6 @@ class GroundTruthService:
             "total": len(results),
         }
 
-    # ── output validation ─────────────────────────────────────────
 
     @staticmethod
     def validate_output(
@@ -498,7 +470,7 @@ def _flatten_variable_mapping(
 
     Reads expect ``{template_var: gt_column}`` (one column per variable);
     if a variable maps to a list, we take the first. This is a
-    documented simplification — the writer ingests every column in the
+    documented simplification - the writer ingests every column in the
     list, but the reader's per-column search is one query per template
     variable.
     """
@@ -517,7 +489,7 @@ def _flatten_variable_mapping(
 
 def _organization_id_or_raise(gt: EvalGroundTruth) -> str:
     """Tenant-scoped CH writes require an organization. Refuse to embed
-    a row without one — the alternative is a silent cross-tenant leak."""
+    a row without one - the alternative is a silent cross-tenant leak."""
     organization_id = getattr(gt, "organization_id", None) or (
         gt.organization.id if getattr(gt, "organization", None) else None
     )
@@ -564,7 +536,7 @@ def _soft_delete_prior_vectors(
 ) -> None:
     """Mark any existing CH rows for this (eval, org, workspace) as deleted.
 
-    The CH writer doesn't dedup on its own — re-running the embed pass
+    The CH writer doesn't dedup on its own - re-running the embed pass
     would accumulate stale vectors otherwise. Soft-delete via
     ``ALTER … UPDATE deleted=1`` keeps the historical data recoverable
     if we ever need to audit.

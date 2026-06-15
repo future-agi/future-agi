@@ -97,7 +97,7 @@ const StatusBadge = ({ status }) => {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// Upload Drawer — right sidebar like KB
+// Upload Drawer - right sidebar like KB
 // ═══════════════════════════════════════════════════════════════
 const ACCEPTED_TYPES = {
   "text/csv": [".csv"],
@@ -1464,7 +1464,7 @@ const EvalGroundTruthTab = ({ templateId }) => {
   const { enqueueSnackbar } = useSnackbar();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // Eval data — to get required_keys (variables)
+  // Eval data - to get required_keys (variables)
   const { data: evalData } = useEvalDetail(templateId);
   const evalVariables = useMemo(() => {
     const config = evalData?.config || {};
@@ -1487,7 +1487,7 @@ const EvalGroundTruthTab = ({ templateId }) => {
   const { data: statusData } = useGroundTruthStatus(activeDataset?.id, {
     // Poll while the embed job is still in flight. The trigger view
     // sets `pending` synchronously and the Temporal activity flips
-    // through `processing` before settling on a terminal status — both
+    // through `processing` before settling on a terminal status - both
     // need polling so the UI can react.
     enabled:
       ((activeDataset?.embedding_status || activeDataset?.embeddingStatus) ===
@@ -1596,7 +1596,7 @@ const EvalGroundTruthTab = ({ templateId }) => {
         evalVariables={evalVariables}
       />
 
-      {/* Empty state — clicks opens drawer */}
+      {/* Empty state - clicks opens drawer */}
       {!datasets.length && <EmptyState onUpload={() => setDrawerOpen(true)} />}
 
       {/* Dataset header */}
@@ -1724,7 +1724,7 @@ const EvalGroundTruthTab = ({ templateId }) => {
                 rulePrompt={rulePrompt}
               />
             </Box>
-            {/* Right: data preview — AG Grid spreadsheet */}
+            {/* Right: data preview - AG Grid spreadsheet */}
             <Box
               sx={{
                 flex: 1,

@@ -4,7 +4,7 @@ import axios, { endpoints } from "src/utils/axios";
 
 // Centralized toast wrapper for the GT mutation hooks. Lives here (not
 // in the component callsites) so success/error feedback fires
-// regardless of the parent's render timing — particularly important on
+// regardless of the parent's render timing - particularly important on
 // the first save when local state and persisted state were equal a
 // tick earlier and the component is mid-resync.
 const toastFromError = (err, fallback) =>
@@ -70,7 +70,7 @@ export function useGroundTruthData(gtId, { page = 1, pageSize = 50 } = {}) {
 
 // ── Get embedding status ──
 //
-// Polls every 3s whenever the embed job is still in flight — both the
+// Polls every 3s whenever the embed job is still in flight - both the
 // `pending` (queued, workflow not yet picked up) and `processing`
 // (activity running) interim states. When the status flips to a
 // terminal value (`completed` / `failed`), polling stops AND the list
@@ -195,7 +195,7 @@ export function useTriggerEmbedding() {
 }
 
 // ── Search ground truth (test retrieval) ──
-// Accepts either `inputs` (multi-variable dict — preferred) or a legacy
+// Accepts either `inputs` (multi-variable dict - preferred) or a legacy
 // single `query` string. Mirrors the runtime path so the test reflects
 // what the eval pipeline will see.
 export function useSearchGroundTruth() {

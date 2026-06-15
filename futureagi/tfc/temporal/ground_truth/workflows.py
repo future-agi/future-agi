@@ -1,7 +1,7 @@
 """
 Temporal workflows for ground truth embedding generation.
 
-IMPORTANT: Do NOT use workflow.logger — it uses Python's stdlib logging
+IMPORTANT: Do NOT use workflow.logger - it uses Python's stdlib logging
 which acquires locks and causes deadlocks. Logging is done in activities.
 """
 

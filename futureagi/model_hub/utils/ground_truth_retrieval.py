@@ -1,29 +1,4 @@
-"""Ground-truth runtime injection + few-shot formatting.
-
-This module is the runtime glue between the eval runner / agent tool
-and :class:`model_hub.services.ground_truth_service.GroundTruthService`.
-It owns three concerns:
-
-1. The **skip gate** (:func:`has_usable_inputs_for_gt`): given a row's
-   runtime variables, decide whether the dataset can usefully retrieve
-   anything. Short-circuits the whole GT pipeline for evals that have
-   no template variables, no mapping, or all-empty inputs.
-
-2. **Runtime injection** (:func:`inject_ground_truth_context`): for a
-   single eval invocation, pull similar GT rows via the service and
-   plug them into the evaluator's ``mapped`` kwargs as a formatted
-   few-shot block (CustomPromptEvaluator) or as the GT config the
-   agent tool exposes (AgentEvaluator path).
-
-3. **Few-shot prompt formatting** (:func:`format_few_shot_examples` and
-   the ``_format_*`` siblings): render retrieved GT rows into one of
-   three text layouts that the LLM judge prompt expects.
-
-The vector store (write + read) is owned by ``EmbeddingManager`` and
-the CH ``ground_truths`` table. This file deliberately holds no
-embedding code, no cosine similarity, no model dispatch — it sits
-above all of that.
-"""
+"""Runtime GT injection and few-shot prompt formatting."""
 
 from __future__ import annotations
 
@@ -34,15 +9,10 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
-# ─────────────────────────────────────────────────────────────────────
-# Skip gate
-# ─────────────────────────────────────────────────────────────────────
-
-
 def _is_empty_value(value: Any) -> bool:
     """Should this runtime value be treated as "no signal" for GT retrieval?
 
-    Falsy-but-legitimate scalars (``0``, ``False``) are NOT empty —
+    Falsy-but-legitimate scalars (``0``, ``False``) are NOT empty -
     they're valid eval inputs. Empty means actually absent: ``None``,
     blank/whitespace string, empty list/tuple/set, empty dict.
     """
@@ -79,10 +49,6 @@ def has_usable_inputs_for_gt(
                 return True
     return False
 
-
-# ─────────────────────────────────────────────────────────────────────
-# GT config + label-column helpers
-# ─────────────────────────────────────────────────────────────────────
 
 
 def load_ground_truth_config(eval_template) -> dict | None:
@@ -127,10 +93,6 @@ def get_label_columns(role_mapping: dict | None) -> tuple[str, str]:
     )
     return output, explanation
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Output-value validation against the template's output type
-# ─────────────────────────────────────────────────────────────────────
 
 
 def _parse_score(value: Any) -> float | None:
@@ -194,10 +156,6 @@ def validate_output_value(
     return True, None
 
 
-# ─────────────────────────────────────────────────────────────────────
-# Few-shot retrieval + injection (eval-runtime entry point)
-# ─────────────────────────────────────────────────────────────────────
-
 
 def get_ground_truth_few_shot_examples(
     gt_config: dict,
@@ -240,7 +198,7 @@ def inject_ground_truth_context(
     Other (Agent) paths → inject ``ground_truth_config`` so the
     evaluator can expose the ``search_ground_truth`` tool.
 
-    Skips entirely when there's no usable input to query against — see
+    Skips entirely when there's no usable input to query against - see
     :func:`has_usable_inputs_for_gt` for the rule.
     """
     from model_hub.models.evals_metric import EvalGroundTruth
@@ -318,10 +276,6 @@ def inject_ground_truth_context(
     )
     return mapped
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Few-shot prompt formatting
-# ─────────────────────────────────────────────────────────────────────
 
 
 def format_few_shot_examples(

@@ -1,27 +1,4 @@
-"""Ground-truth few-shot retrieval over the shared ClickHouse vector store.
-
-The Ground Truth (GT) feature embeds each row of an annotated dataset and,
-at eval time, retrieves the rows that are semantically closest to the
-runtime input. The retrieved rows feed the LLM-judge prompt as
-calibration examples (CustomPromptEvaluator) or surface through the
-``search_ground_truth`` agent tool (AgentEvaluator).
-
-This module is the thin, typed boundary between the eval/Temporal callers
-and :class:`agentic_eval.core.embeddings.embedding_manager.EmbeddingManager`.
-Storage layout is owned by the table constant ``GROUND_TRUTH_TABLE_NAME``
-and exactly mirrors the ``feedbacks`` shape so both features share the
-same writer + reader plumbing.
-
-Engineering notes:
-    * Inputs are validated via a Pydantic dataclass — keeps service-layer
-      callers honest and lets MyPy catch shape drift early.
-    * Errors propagate. We do not return ``[]`` to hide an exception;
-      the caller decides whether a retrieval failure is fatal (eval
-      runner: swallow + log) or surfaced to the user (test-retrieval
-      view: render as a 4xx).
-    * Structured logging is emitted on entry/exit/empty-skip, never
-      free-form strings, so events can be aggregated in Loki.
-"""
+"""Ground-truth few-shot retrieval over the ClickHouse vector store."""
 
 from __future__ import annotations
 
@@ -38,38 +15,12 @@ from agentic_eval.core.embeddings.embedding_manager import (
 logger = structlog.get_logger(__name__)
 
 
-# Default retrieval knob. Per-column intersection already gates noise:
-# a row must rank in the per-column top-20 for *every* mapped input to
-# survive ``get_top_common_items``. Adding a similarity threshold on top
-# is possible but requires lifting per-column similarity through
-# ``EmbeddingManager.get_top_common_items`` (currently dropped on the
-# floor). Defer until we have a concrete need.
 DEFAULT_MAX_RESULTS = 3
 
 
 @dataclass(frozen=True)
 class GroundTruthFewShotRequest:
-    """Typed request to :func:`retrieve_ground_truth_fewshots`.
-
-    Attributes:
-        eval_id: Stable identifier for the GT slice. Today this is the
-            :class:`EvalTemplate` id — combined with ``organization_id``
-            and ``workspace_id`` it uniquely identifies one GT dataset.
-        inputs: Runtime variable values keyed by the template variable
-            name, e.g. ``{"question": "...", "context": "..."}``. Order
-            does not matter; the writer side stamps a per-column
-            ``input_type`` so the reader can scope each query.
-        input_cols: Ground-truth column names parallel to ``inputs`` (i.e.
-            ``variable_mapping[template_var]`` for each entry in
-            ``inputs``). Required because the CH writer indexes rows by
-            GT column name, not by template variable name.
-        organization_id: Tenant filter. Required.
-        workspace_id: Sub-tenant filter. Mirrors feedback behaviour:
-            writers stamp it, but the reader currently accepts ``None``
-            to widen the search to the whole org. Symmetry will be
-            tackled in a follow-up cross-feature ticket.
-        max_results: Top-K number of GT rows to return.
-    """
+    """Typed request to :func:`retrieve_ground_truth_fewshots`."""
 
     eval_id: str
     inputs: dict[str, Any]

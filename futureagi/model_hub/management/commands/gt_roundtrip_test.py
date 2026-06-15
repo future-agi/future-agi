@@ -1,18 +1,10 @@
-"""Live round-trip test for the Ground Truth ↔ ClickHouse path.
+"""Live round-trip test for the Ground Truth <-> ClickHouse path.
 
-Mirrors the spirit of ``tracer.management.commands.feedback_roundtrip_test``
-introduced in PR #820: build a real ``EvalGroundTruth``, run it through
-:meth:`GroundTruthService.embed_dataset`, then verify the CH vectors are
-queryable end-to-end via :meth:`GroundTruthService.retrieve_few_shot`.
+Builds a real ``EvalGroundTruth``, runs it through
+:meth:`GroundTruthService.embed_dataset`, then verifies the CH vectors
+are queryable via :meth:`GroundTruthService.retrieve_few_shot`.
 
-Run::
-
-    docker exec backend python manage.py gt_roundtrip_test
-    docker exec backend python manage.py gt_roundtrip_test --keep
-    docker exec backend python manage.py gt_roundtrip_test --inspect
-
-Use ``--keep`` to leave the fixtures in PG and the CH rows in place for
-post-mortem; the default tears everything down on success.
+    python manage.py gt_roundtrip_test [--keep] [--inspect]
 """
 
 from __future__ import annotations
@@ -92,13 +84,13 @@ class Command(BaseCommand):
         if failures:
             self.stdout.write(
                 self.style.ERROR(
-                    f"\nFAILED — {len(failures)} case(s):\n  - "
+                    f"\nFAILED - {len(failures)} case(s):\n  - "
                     + "\n  - ".join(failures)
                 )
             )
             sys.exit(1)
         self.stdout.write(
-            self.style.SUCCESS("\n✓ GT round-trip OK — all cases passed.")
+            self.style.SUCCESS("\n✓ GT round-trip OK - all cases passed.")
         )
 
     # ─────────────────────────────────────────────────────────────────
@@ -166,7 +158,7 @@ class Command(BaseCommand):
     ):
         self.stdout.write(self.style.NOTICE("→ Case: cross-tenant isolation"))
         # Mutate the gt to look like a different org for the retrieval
-        # check; we don't persist this — we just want the helper's
+        # check; we don't persist this - we just want the helper's
         # tenant filter to gate the CH read.
         original_org_id = fx.gt.organization_id
         other = Organization.objects.create(
@@ -383,6 +375,6 @@ class Command(BaseCommand):
         if ok:
             self.stdout.write(self.style.SUCCESS(f"  ✓ {label}"))
         else:
-            message = f"{label} — {failure_detail}"
+            message = f"{label} - {failure_detail}"
             self.stdout.write(self.style.ERROR(f"  ✗ {message}"))
             failures.append(message)

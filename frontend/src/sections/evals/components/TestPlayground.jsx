@@ -73,7 +73,7 @@ const CustomJsonInput = ({
   const [hasResult, setHasResult] = useState(false);
   const [originalJson, setOriginalJson] = useState(null);
 
-  // Extract keys from current JSON — include nested dot-notation paths
+  // Extract keys from current JSON - include nested dot-notation paths
   const jsonKeys = React.useMemo(() => {
     try {
       const parsed = JSON.parse(jsonText);
@@ -138,7 +138,7 @@ const CustomJsonInput = ({
     });
   }, [variables, jsonKeys]);
 
-  // Sync JSON keys with variables — add new ones, remove stale ones
+  // Sync JSON keys with variables - add new ones, remove stale ones
   useEffect(() => {
     // Parse current JSON
     let current = {};
@@ -321,7 +321,7 @@ const CustomJsonInput = ({
                 <Box
                   component="input"
                   autoFocus
-                  placeholder="Describe the test data you need — e.g. 'generate a failing case'"
+                  placeholder="Describe the test data you need - e.g. 'generate a failing case'"
                   value={aiPrompt}
                   onChange={(e) => setAiPrompt(e.target.value)}
                   onKeyDown={(e) => {
@@ -515,7 +515,7 @@ const CustomJsonInput = ({
         </Typography>
       )}
 
-      {/* Variable mapping with dropdowns — same UI as DatasetTestMode */}
+      {/* Variable mapping with dropdowns - same UI as DatasetTestMode */}
       {variables.length > 0 && (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           {variables.map((variable) => (
@@ -717,7 +717,7 @@ const TestPlayground = React.forwardRef(
       setSelectedVersionId(menuVersion.id);
       onVersionSelect?.(menuVersion);
       enqueueSnackbar(
-        `Loaded V${menuVersion.version_number} config — edit and save to create a new version`,
+        `Loaded V${menuVersion.version_number} config - edit and save to create a new version`,
         { variant: "info" },
       );
       handleVersionMenuClose();
@@ -728,7 +728,7 @@ const TestPlayground = React.forwardRef(
         const isAlreadySelected = selectedVersionId === version.id;
         if (isAlreadySelected) {
           setSelectedVersionId(null);
-          onVersionSelect?.(null); // deselect — go back to current config
+          onVersionSelect?.(null); // deselect - go back to current config
         } else {
           setSelectedVersionId(version.id);
           onVersionSelect?.(version);
@@ -755,7 +755,7 @@ const TestPlayground = React.forwardRef(
 
       // For code evals: system evals always have the canonical signature
       // `evaluate(input, output, expected, context, **kwargs)` and store
-      // the real keys in YAML required_keys — use those directly.
+      // the real keys in YAML required_keys - use those directly.
       // User-authored code is live-parsed so newly typed kwargs surface
       // as mapping rows. Standard trio is the last-resort fallback.
       let codeStdVars = [];
@@ -835,7 +835,7 @@ const TestPlayground = React.forwardRef(
       );
     }, [functionParamsSchema, variables]);
 
-    // Per-tab readiness — Custom always allows running (empty strings are
+    // Per-tab readiness - Custom always allows running (empty strings are
     // a valid input for exploratory testing); Dataset/Tracing/Simulation
     // report up via their own onReadyChange callbacks because they require
     // a row / dataset selection.
@@ -888,7 +888,7 @@ const TestPlayground = React.forwardRef(
       const tid = templateIdRef.current;
       // Adhoc composite (eval create page) doesn't need a saved templateId.
       if (!tid && !compositeAdhocConfig) {
-        onTestResult?.(false, "No template ID — save the eval first");
+        onTestResult?.(false, "No template ID - save the eval first");
         return;
       }
 
@@ -902,7 +902,7 @@ const TestPlayground = React.forwardRef(
 
         // Composite evals use a dedicated execute endpoint that runs every
         // child and optionally aggregates their scores.
-        // Composite parent templates have no declared required_keys — child
+        // Composite parent templates have no declared required_keys - child
         // evals each declare their own. Pass every key the user typed in the
         // JSON input so the execute endpoint can route them to children.
         if (isComposite) {
@@ -970,7 +970,7 @@ const TestPlayground = React.forwardRef(
         if (data?.status) {
           setResult(data.result);
           onTestResult?.(true, data.result);
-          // Kick off the async error-localization poll when enabled —
+          // Kick off the async error-localization poll when enabled -
           // the eval playground returns before the localizer task
           // finishes, so we poll `/get-eval-logs` and merge the
           // resulting error_details into `result` via the EvalResultDisplay
@@ -988,7 +988,7 @@ const TestPlayground = React.forwardRef(
         // banner so users see an upgrade CTA instead of a generic red
         // "failed" box. Fall back to the friendly `result` field that the
         // axios interceptor flattens (backend `usage_limit_response` sets
-        // result=reason). `err.response.data.result` is dead — the
+        // result=reason). `err.response.data.result` is dead - the
         // interceptor rejects with a flat custom error.
         if (handleCreditError(err)) {
           onTestResult?.(false, err?.result || "Usage limit exceeded");
@@ -1059,7 +1059,7 @@ const TestPlayground = React.forwardRef(
           height: "100%",
         }}
       >
-        {/* Header — Test Evaluations + Versions (only if saved) */}
+        {/* Header - Test Evaluations + Versions (only if saved) */}
         <Box sx={{ display: "flex", gap: 2, mb: 1.5 }}>
           <Box
             onClick={() => setActiveMainTab("test")}
@@ -1145,7 +1145,7 @@ const TestPlayground = React.forwardRef(
 
         {activeMainTab === "test" ? (
           <>
-            {/* Source tabs + Map Variables — same row */}
+            {/* Source tabs + Map Variables - same row */}
             <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
               <Tabs
                 value={activeTab}
@@ -1252,7 +1252,7 @@ const TestPlayground = React.forwardRef(
                     </Box>
                   )}
 
-                  {/* Credit-limit / upgrade banner — takes precedence over
+                  {/* Credit-limit / upgrade banner - takes precedence over
                       the generic error box so users see a clear CTA. */}
                   {exhaustionError && (
                     <Box sx={{ mt: 1 }}>
@@ -1287,7 +1287,7 @@ const TestPlayground = React.forwardRef(
               )}
               {activeTab === "CustomOLD" && (
                 <Box>
-                  {/* placeholder to keep JSX structure — not rendered */}
+                  {/* placeholder to keep JSX structure - not rendered */}
 
                   {/* Result display */}
                   {result && (
@@ -1439,7 +1439,7 @@ const TestPlayground = React.forwardRef(
                 />
               )}
 
-              {/* Code eval params — visible on all source tabs */}
+              {/* Code eval params - visible on all source tabs */}
               {evalType === "code" &&
                 visibleFunctionParamEntries.length > 0 && (
                   <Box sx={{ mt: 2 }}>
@@ -1774,7 +1774,7 @@ const TestPlayground = React.forwardRef(
                           )}
                         </Box>
 
-                        {/* Three-dot menu — always visible */}
+                        {/* Three-dot menu - always visible */}
                         <Tooltip title="Actions" arrow placement="left">
                           <IconButton
                             size="small"

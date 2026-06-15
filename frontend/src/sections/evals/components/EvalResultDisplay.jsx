@@ -26,11 +26,11 @@ const EvalResultDisplay = ({ result }) => {
 
   // Support multiple shapes:
   //   LLM/Agent evals:  { output, outputType, reason, ... }
-  //   Code evals:       { score, reason, metadata, ... }  — no "output" field
+  //   Code evals:       { score, reason, metadata, ... }  - no "output" field
   //   Composite evals:  { compositeResult: { aggregate_score, children, ... } }
   if (!result) return null;
 
-  // Short-circuit for composite results — render a dedicated view.
+  // Short-circuit for composite results - render a dedicated view.
   if (result.compositeResult) {
     return <CompositeResultView compositeResult={result.compositeResult} />;
   }
@@ -102,7 +102,7 @@ const EvalResultDisplay = ({ result }) => {
 };
 
 const FormattedResult = ({ result }) => {
-  // For code evals, result.output is missing — use result.score as the raw value
+  // For code evals, result.output is missing - use result.score as the raw value
   const rawInput = result.output != null ? result.output : result.score;
   const outputType = result.output_type;
 
@@ -321,7 +321,7 @@ const FormattedResult = ({ result }) => {
       }}
     >
       {renderResult()}
-      {/* Error Localization — rendered BEFORE the Explanation so the
+      {/* Error Localization - rendered BEFORE the Explanation so the
           "running" banner stays visible at the top of the card while the
           async localizer task (30–90s) is still in flight. */}
       <ErrorLocalizationSection result={result} />
@@ -431,7 +431,7 @@ const ErrorLocalizationSection = ({ result }) => {
   const errorLocalizerStatus = result?.error_localizer_status;
   const errorLocalizerMessage = result?.error_localizer_message;
 
-  // Show running indicator — the localizer runs on a ~30s Temporal tick
+  // Show running indicator - the localizer runs on a ~30s Temporal tick
   // so the wait between eval finishing and highlights appearing can be
   // 30–90 seconds. Keep the banner visible the whole time so users know
   // something is still in flight.
@@ -603,7 +603,7 @@ const ErrorLocalizationSection = ({ result }) => {
     input_types: inputTypes,
   };
 
-  // If no entries ended up with content, don't render anything — the eval
+  // If no entries ended up with content, don't render anything - the eval
   // might have passed or the localizer might have found nothing to flag.
   const mapHasContent =
     entriesMap &&
@@ -618,7 +618,7 @@ const ErrorLocalizationSection = ({ result }) => {
             color="text.secondary"
             sx={{ display: "block" }}
           >
-            Error Localization — no error segments found.
+            Error Localization - no error segments found.
           </Typography>
         </Box>
       );

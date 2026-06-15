@@ -43,7 +43,7 @@ def run_eval_func(
 ):
     api_call_log_row = None
     try:
-        # Block agent-type evals in OSS mode — AgentEvaluator requires ee/
+        # Block agent-type evals in OSS mode - AgentEvaluator requires ee/
         if getattr(template, "eval_type", "") == "agent":
             from tfc.ee_loader import _is_oss_mode
 
@@ -59,7 +59,7 @@ def run_eval_func(
         input_data_types = kwargs.get("input_data_types", {})
         error_localizer = kwargs.get("error_localizer", False)
         kb_id = kwargs.get("kb_id", None)
-        # Auto-context payloads — forwarded untouched to the evaluator's
+        # Auto-context payloads - forwarded untouched to the evaluator's
         # run() so `{{row.X}}` / `{{span.X}}` / `{{trace.X}}` /
         # `{{session.X}}` resolve at render time.
         row_context = kwargs.get("row_context")
@@ -290,7 +290,7 @@ def run_eval_func(
             if isinstance(code_eval_params, dict):
                 _run_kwargs.update(code_eval_params)
 
-        # Inject ground truth context (centralised — handles both
+        # Inject ground truth context (centralised - handles both
         # CustomPromptEvaluator few-shot injection and Agent
         # ``ground_truth_config`` passthrough).
         from model_hub.utils.ground_truth_retrieval import (
@@ -306,7 +306,7 @@ def run_eval_func(
             _run_kwargs = preprocess_inputs(template.name, _run_kwargs)
 
         # Apply the shared empty-input rules so the playground (and
-        # every other caller of run_eval_func — composite children,
+        # every other caller of run_eval_func - composite children,
         # protect, simulation) behaves the same way as the dataset path.
         # The validator also normalizes kwargs for custom evals so the
         # underlying engine doesn't raise "Missing required key" when

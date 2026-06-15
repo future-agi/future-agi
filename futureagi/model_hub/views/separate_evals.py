@@ -877,7 +877,7 @@ class CellErrorLocalizerView(APIView):
             # for the localizer to chew on.
             if not input_data:
                 return self._gm.bad_request(
-                    "Cannot run error localization — this eval has no input "
+                    "Cannot run error localization - this eval has no input "
                     "variable mapping. Add at least one mapping in the eval "
                     "config and re-run the eval first."
                 )
@@ -969,7 +969,7 @@ class CellErrorLocalizerView(APIView):
     )
     def get(self, request, cell_id=None, *args, **kwargs):
         """
-        Poll endpoint — returns the current state of the localizer task
+        Poll endpoint - returns the current state of the localizer task
         for a given cell, including the analysis once completed.
         """
         try:
@@ -2068,7 +2068,7 @@ class EvalTemplateCreateV2View(APIView):
 
             # Extract required_keys from instructions (shared).
             # Auto-context roots (row / span / trace / session) and their
-            # dotted descendants are NOT user-mappable variables — they are
+            # dotted descendants are NOT user-mappable variables - they are
             # resolved at runtime from the current row / span / trace /
             # session. Strip them from required_keys and auto-enable the
             # matching data_injection flags so the template saves without
@@ -2202,7 +2202,7 @@ class EvalTemplateCreateV2View(APIView):
                 # Store full message chain if provided
                 if req.messages and len(req.messages) > 1:
                     config["messages"] = req.messages
-                # Always set the key — missing key leaks prior version's FE state.
+                # Always set the key - missing key leaks prior version's FE state.
                 config["few_shot_examples"] = req.few_shot_examples or []
                 if choices_list:
                     config["choices"] = choices_list
@@ -2214,12 +2214,12 @@ class EvalTemplateCreateV2View(APIView):
             # Store template_format in config
             config["template_format"] = template_format
 
-            # Mirror into config — FE form-load reads from config_snapshot.
+            # Mirror into config - FE form-load reads from config_snapshot.
             config["pass_threshold"] = req.pass_threshold
             config["choice_scores"] = req.choice_scores
             config["error_localizer_enabled"] = bool(req.error_localizer_enabled)
 
-            # Build eval_tags — category tags only (not type)
+            # Build eval_tags - category tags only (not type)
             eval_tags = list(req.tags) if req.tags else []
 
             # 7. Create EvalTemplate
@@ -2497,7 +2497,7 @@ class EvalTemplateUpdateView(APIView):
             )
 
             if req.instructions is not None:
-                # For code evals, `criteria` stores the Python/JS code — don't
+                # For code evals, `criteria` stores the Python/JS code - don't
                 # overwrite it with LLM prompt instructions.
                 if template.config.get("eval_type_id") != "CustomCodeEval":
                     template.criteria = req.instructions
@@ -3073,7 +3073,7 @@ class RestoreVersionView(APIView):
     POST /model-hub/eval-templates/<id>/versions/<version_id>/restore/
 
     Restore a version by creating a new version with the old version's config.
-    Does NOT modify the old version — creates a new one on top.
+    Does NOT modify the old version - creates a new one on top.
     """
 
     _gm = GeneralMethods()
@@ -3112,7 +3112,7 @@ class RestoreVersionView(APIView):
             except EvalTemplateVersion.DoesNotExist:
                 return self._gm.not_found("Version not found.")
 
-            # Mirror source, align live row, promote mirror to default — atomic.
+            # Mirror source, align live row, promote mirror to default - atomic.
             with transaction.atomic():
                 new_version = EvalTemplateVersion.objects.create_version(
                     eval_template=template,
@@ -3456,7 +3456,7 @@ class CompositeEvalCreateView(APIView):
                         "Composite evals cannot contain other composite evals."
                     )
 
-            # Enforce homogeneity — every child must match the axis.
+            # Enforce homogeneity - every child must match the axis.
             # _validate_child_matches_axis is a no-op if axis is empty.
             if req.composite_child_axis:
                 for child in children:
@@ -3682,7 +3682,7 @@ class CompositeEvalDetailView(APIView):
         reject_unknown_fields=True,
     )
     def patch(self, request, template_id, *args, **kwargs):
-        """PATCH — partial update of a composite eval.
+        """PATCH - partial update of a composite eval.
 
         Supported fields (all optional):
           name, description, tags,
@@ -3722,7 +3722,7 @@ class CompositeEvalDetailView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            # Fetch parent composite — must exist and be a composite
+            # Fetch parent composite - must exist and be a composite
             try:
                 parent = EvalTemplate.objects.get(
                     id=template_id,
@@ -3764,7 +3764,7 @@ class CompositeEvalDetailView(APIView):
                         "Name can only contain lowercase letters, numbers, "
                         "hyphens, or underscores."
                     )
-                # Name uniqueness — exclude self
+                # Name uniqueness - exclude self
                 if (
                     EvalTemplate.objects.filter(
                         name=cleaned_name,
@@ -4090,7 +4090,7 @@ class CompositeEvalExecuteView(APIView):
     POST /model-hub/eval-templates/<template_id>/composite/execute/
 
     Execute all child evals in a composite and optionally aggregate results.
-    Thin wrapper around `execute_composite_children_sync` — the same helper
+    Thin wrapper around `execute_composite_children_sync` - the same helper
     the dataset/experiment `CompositeEvaluationRunner` uses, so aggregation
     semantics stay consistent across surfaces.
     """
@@ -4136,7 +4136,7 @@ class CompositeEvalExecuteView(APIView):
             if not child_links:
                 return self._gm.bad_request("Composite eval has no children.")
 
-            # Defence in depth — if a child has been edited since it was added
+            # Defence in depth - if a child has been edited since it was added
             # to the composite, reject the run with a clear message rather than
             # silently aggregating mismatched score shapes.
             if parent.composite_child_axis:
@@ -4298,7 +4298,7 @@ class CompositeEvalAdhocExecuteView(APIView):
                         return self._gm.bad_request(str(ve))
 
             # Build an unsaved parent template carrying the aggregation config
-            # the runner reads. Never .save() this — it must stay in-memory.
+            # the runner reads. Never .save() this - it must stay in-memory.
             parent = EvalTemplate(
                 name="(adhoc-composite)",
                 organization=org,
@@ -4316,7 +4316,7 @@ class CompositeEvalAdhocExecuteView(APIView):
             child_links: list[CompositeEvalChild] = []
             for i, child_id in enumerate(req.child_template_ids):
                 child = children_by_id[child_id]
-                # Unsaved link object — execute_composite_children_sync only
+                # Unsaved link object - execute_composite_children_sync only
                 # reads .child, .child_id, .order, .weight, .pinned_version, .config.
                 link = CompositeEvalChild(
                     parent=parent,
@@ -4734,7 +4734,7 @@ class GroundTruthDeleteView(APIView):
 
 
 class GroundTruthSearchView(APIView):
-    """POST /model-hub/ground-truth/<id>/search/ — test retrieval with a query."""
+    """POST /model-hub/ground-truth/<id>/search/ - test retrieval with a query."""
 
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -4817,7 +4817,7 @@ class GroundTruthValidateOutputView(APIView):
 
 
 class GroundTruthTriggerEmbeddingView(APIView):
-    """POST /model-hub/ground-truth/<id>/embed/ — trigger embedding generation."""
+    """POST /model-hub/ground-truth/<id>/embed/ - trigger embedding generation."""
 
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -4955,7 +4955,7 @@ class EvalUsageStatsView(APIView):
                 status=APICallStatusChoices.ERROR.value
             ).count()
 
-            # Chart data — aggregate by time bucket
+            # Chart data - aggregate by time bucket
             from collections import defaultdict
 
             chart_data = []
@@ -5630,7 +5630,7 @@ def _build_span_context(span) -> dict:
     if not is_voice:
         return base
 
-    # Voice enrichment — hoist the useful fields.
+    # Voice enrichment - hoist the useful fields.
     base["is_voice"] = True
 
     # Turn-by-turn transcript. Prefer the clean provider_transcript list
@@ -5683,7 +5683,7 @@ def _build_span_context(span) -> dict:
             if _last_asst:
                 base["output"] = _last_asst
 
-    # Recording URLs — look in raw_log first, then flat attributes.
+    # Recording URLs - look in raw_log first, then flat attributes.
     raw_log = sa.get("raw_log")
     if isinstance(raw_log, str):
         try:
@@ -5836,7 +5836,7 @@ class EvalPlayGroundAPIView(APIView):
                     # Codex consolidated review P1 (2026-05-26): the legacy ORM
                     # path was unscoped, but the eval playground accepts a
                     # caller-supplied span_id and renders its content into a
-                    # template — that's a cross-org read surface. We now
+                    # template - that's a cross-org read surface. We now
                     # require org-scope verification via a Project lookup on
                     # the span's project_id (CH spans store project_id as a
                     # UUID string).
@@ -5968,7 +5968,7 @@ class EvalPlayGroundAPIView(APIView):
                     # None, no error). The org-scope the old ``project__organization
                     # =org`` filter enforced is reproduced by validating the
                     # CH-derived project_id belongs to ``org`` (mirrors the span_id
-                    # / Project.exists() guard above) — so a net-new session in
+                    # / Project.exists() guard above) - so a net-new session in
                     # another tenant cannot leak.
                     _ss_fields = resolve_session_fields([_session_id]).get(
                         str(_session_id)
@@ -6010,7 +6010,7 @@ class EvalPlayGroundAPIView(APIView):
                         # id. They agree because the eval-context ``session_id`` is
                         # always a SURVIVOR (old) or NET-NEW id (the session
                         # list/detail surfaces resolved/old ids), never a
-                        # straddler's raw NEW id — for those the input resolves to
+                        # straddler's raw NEW id - for those the input resolves to
                         # itself, so both reads see the same session.
                         with get_reader() as reader:
                             _ch_session_spans = reader.list_by_session(str(_session_id))
@@ -6124,7 +6124,7 @@ class EvalPlayGroundAPIView(APIView):
             # (variable -> dotted path) because its lazy fetch only
             # populates the first trace's spans, so local resolution
             # would silently drop deeper mappings. `_process_session_mapping`
-            # walks the real DB models — same code path as the
+            # walks the real DB models - same code path as the
             # eval-task runtime, so preview results match prod.
             logger.info(
                 "eval_playground_session_mapping_inputs",
@@ -6149,7 +6149,7 @@ class EvalPlayGroundAPIView(APIView):
 
                 # Resolve the session identity from CH (Slice D, DESIGN §5 /
                 # PG_ORM_READ_MIGRATION) and build an UNSAVED ``TraceSession``
-                # vehicle, NOT ``TraceSession.objects.first()`` — the same shape
+                # vehicle, NOT ``TraceSession.objects.first()`` - the same shape
                 # ``evaluate_trace_session_observe`` uses (Slice C). A net-new
                 # session has no PG row (old ``.first()`` → None → 400) and a
                 # straddler-by-new-id would 404; CH resolves all three states.
@@ -6187,7 +6187,7 @@ class EvalPlayGroundAPIView(APIView):
                     },
                 )
                 # FE-supplied resolved `mapping` wins over the
-                # server-side resolution on key collision — lets the
+                # server-side resolution on key collision - lets the
                 # caller force a value for a variable if they need to.
                 _merged = dict(resolved_session_mapping)
                 _merged.update(mapping or {})
