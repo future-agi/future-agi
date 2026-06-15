@@ -11,6 +11,9 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import axios, { endpoints } from "src/utils/axios";
+import AddFeedbackChip from "src/components/feedback/AddFeedbackChip";
+import useAddObserveEvalFeedbackStore from "src/sections/projects/Observe/EvalFeedback/useAddObserveEvalFeedbackStore";
+import { TARGET_TYPES } from "src/sections/projects/Observe/EvalFeedback/AddObserveEvalFeedbackDrawer";
 
 const ScoreChip = ({ value }) => {
   if (value == null) {
@@ -45,16 +48,20 @@ StatusChip.propTypes = {
   result: PropTypes.string,
 };
 
-const Row = ({ item }) => {
+const Row = ({ item, sessionId }) => {
   const theme = useTheme();
   const created = item.created_at
     ? format(parseISO(item.created_at), "dd/MM/yyyy HH:mm")
     : "—";
+  const setObserveFeedbackTarget = useAddObserveEvalFeedbackStore(
+    (s) => s.setAddObserveEvalFeedbackTarget,
+  );
+  const hasError = item.status === "error";
   return (
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: "1.5fr 1fr 1fr 2fr 1fr",
+        gridTemplateColumns: "1.5fr 1fr 1fr 2fr 1fr auto",
         alignItems: "center",
         gap: 1.5,
         px: 1.5,
@@ -82,10 +89,31 @@ const Row = ({ item }) => {
       <Typography variant="caption" color="text.secondary">
         {created}
       </Typography>
+      {/* Add feedback — session-target. Disabled when the eval errored. */}
+      <AddFeedbackChip
+        disabled={hasError}
+        tooltipWhenDisabled="Eval errored — feedback unavailable"
+        onClick={() =>
+          setObserveFeedbackTarget({
+            target_type: TARGET_TYPES.SESSION,
+            trace_session_id: sessionId,
+            custom_eval_config_id: item.eval_id,
+            name: item.eval_name || "Eval",
+            output_type: item.detail?.output_type,
+            value_infos: { reason: item.reason },
+            eval_task_id: item.detail?.eval_task_id,
+            has_error: hasError,
+            error_message: item.detail?.error_message,
+          })
+        }
+      />
     </Box>
   );
 };
-Row.propTypes = { item: PropTypes.object.isRequired };
+Row.propTypes = {
+  item: PropTypes.object.isRequired,
+  sessionId: PropTypes.string,
+};
 
 const SessionEvalsList = ({ sessionId }) => {
   const theme = useTheme();
@@ -94,9 +122,10 @@ const SessionEvalsList = ({ sessionId }) => {
     queryFn: () =>
       axios
         .get(endpoints.project.getSessionEvalLogs(sessionId), {
-          params: { page: 1, page_size: 100 },
+          // BE PaginationQuerySerializer is 0-indexed; response uses `items`.
+          params: { page: 0, page_size: 100 },
         })
-        .then((res) => res.data?.result || { results: [], count: 0 }),
+        .then((res) => res.data?.result || { items: [], total: 0 }),
     enabled: Boolean(sessionId),
   });
 
@@ -118,7 +147,7 @@ const SessionEvalsList = ({ sessionId }) => {
     );
   }
 
-  const items = data?.results || [];
+  const items = data?.items || [];
 
   if (items.length === 0) {
     return (
@@ -142,7 +171,7 @@ const SessionEvalsList = ({ sessionId }) => {
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: "1.5fr 1fr 1fr 2fr 1fr",
+          gridTemplateColumns: "1.5fr 1fr 1fr 2fr 1fr auto",
           gap: 1.5,
           px: 1.5,
           py: 1,
@@ -165,9 +194,10 @@ const SessionEvalsList = ({ sessionId }) => {
         <Typography variant="caption" color="text.secondary" fontWeight={600}>
           When
         </Typography>
+        <Box />
       </Box>
       {items.map((item) => (
-        <Row key={item.id} item={item} />
+        <Row key={item.id} item={item} sessionId={sessionId} />
       ))}
     </Box>
   );

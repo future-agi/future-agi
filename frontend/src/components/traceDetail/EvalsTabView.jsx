@@ -6,6 +6,9 @@ import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import EvalErrorLocalization from "./EvalErrorLocalization";
+import AddFeedbackChip from "src/components/feedback/AddFeedbackChip";
+import useAddObserveEvalFeedbackStore from "src/sections/projects/Observe/EvalFeedback/useAddObserveEvalFeedbackStore";
+import { TARGET_TYPES } from "src/sections/projects/Observe/EvalFeedback/AddObserveEvalFeedbackDrawer";
 
 // Kept locally so callers that don't supply an onFixWithFalcon handler still
 // see the informational toast — preserves pre-integration behavior.
@@ -118,6 +121,9 @@ const EvalTableRow = ({
   onFixWithFalcon,
 }) => {
   const [expanded, setExpanded] = useState(false);
+  const setObserveFeedbackTarget = useAddObserveEvalFeedbackStore(
+    (s) => s.setAddObserveEvalFeedbackTarget,
+  );
   const isSkipped = ev?.skipped === true;
   const hasError = ev?.error === true && !isSkipped;
   const sc = isSkipped
@@ -256,11 +262,18 @@ const EvalTableRow = ({
           )}
         </Box>
 
-        {/* Span name — hidden for single-call views (voice drawer) */}
+        {/* Span name — hidden for single-call views (voice drawer).
+            min-width:0 lets the noWrap ellipsis kick in inside a flex parent
+            instead of pushing the action column off the row. */}
         {showSpanColumn && (
           <Typography
             noWrap
-            sx={{ width: "30%", fontSize: 10.5, color: "text.secondary" }}
+            sx={{
+              width: "25%",
+              minWidth: 0,
+              fontSize: 10.5,
+              color: "text.secondary",
+            }}
           >
             {ev.spanName || ""}
           </Typography>
@@ -269,13 +282,42 @@ const EvalTableRow = ({
         {/* Action buttons */}
         <Box
           sx={{
-            width: "25%",
+            width: "30%",
             display: "flex",
             gap: 0.5,
             justifyContent: "flex-end",
+            alignItems: "center",
             flexShrink: 0,
           }}
         >
+          {/* Add feedback — always-visible affordance per row. Surfaced even
+              for passed evals (a user may want to confirm a verdict or flag
+              a false-positive). Disabled with a tooltip when the eval
+              errored — feedback is meaningless on a row that never
+              produced a verdict. */}
+          {observationSpanId && customEvalConfigId && (
+            <AddFeedbackChip
+              disabled={hasError}
+              tooltipWhenDisabled="Eval errored — feedback unavailable"
+              onClick={() =>
+                setObserveFeedbackTarget({
+                  target_type: ev.target_type || TARGET_TYPES.SPAN,
+                  observation_span_id: observationSpanId,
+                  trace_id: ev.trace_id || ev.traceId,
+                  trace_session_id:
+                    ev.trace_session_id || ev.traceSessionId,
+                  custom_eval_config_id: customEvalConfigId,
+                  name: evalName,
+                  output_type: ev.output_type || ev.outputType,
+                  value_infos: { reason: explanation },
+                  eval_task_id: ev.eval_task_id || ev.evalTaskId,
+                  has_error: hasError,
+                  error_message: ev.error_message || ev.errorMessage,
+                })
+              }
+            />
+          )}
+
           {ev.spanId && onSelectSpan && (
             <Box
               onClick={(e) => {
@@ -398,6 +440,7 @@ const EvalTableRow = ({
               </Typography>
             </Box>
           )}
+
         </Box>
       )}
     </>

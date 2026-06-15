@@ -290,6 +290,10 @@ class SubmitFeedbackActionTypeSerializer(serializers.Serializer):
     )
     custom_eval_config_id = serializers.UUIDField(required=True)
     feedback_id = serializers.UUIDField(required=True)
+    feedback_value = serializers.CharField(required=False, allow_blank=True)
+    feedback_explanation = serializers.CharField(
+        required=False, allow_blank=True, max_length=5000
+    )
 
     def validate(self, attrs):
         return _validate_target_anchor_ids(attrs)
@@ -317,6 +321,31 @@ class SubmitFeedbackSerializer(serializers.Serializer):
 
 class SubmitFeedbackResponseSerializer(serializers.Serializer):
     feedback_id = serializers.UUIDField()
+
+
+class GetFeedbackQuerySerializer(serializers.Serializer):
+    target_type = serializers.ChoiceField(
+        choices=EvalTargetType.choices, required=True
+    )
+    observation_span_id = serializers.CharField(required=False, allow_blank=True)
+    trace_id = serializers.UUIDField(required=False)
+    trace_session_id = serializers.UUIDField(required=False)
+    custom_eval_config_id = serializers.UUIDField(required=True)
+
+    def validate(self, attrs):
+        return _validate_target_anchor_ids(attrs)
+
+
+class GetFeedbackResponseSerializer(serializers.Serializer):
+    # Nullable when no prior feedback exists for (anchor, custom_eval_config).
+    # The FE uses `feedback_id` truthiness as the "existing-feedback" signal.
+    feedback_id = serializers.UUIDField(allow_null=True)
+    value = serializers.CharField(allow_null=True)
+    explanation = serializers.CharField(allow_null=True, allow_blank=True)
+    feedback_improvement = serializers.CharField(allow_null=True, allow_blank=True)
+    action_type = serializers.ChoiceField(
+        choices=FeedbackActionType.get_choices(), allow_null=True
+    )
 
 
 class SubmitFeedbackActionTypeResponseSerializer(serializers.Serializer):

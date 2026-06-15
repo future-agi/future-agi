@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 976,
+  "endpointCount": 977,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -32566,6 +32566,62 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "/tracer/observation-span/get_feedback/": {
+      "get": {
+        "operationId": "tracer_observation-span_get_feedback",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
+        "queryParameters": {
+          "target_type": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "span",
+                "trace",
+                "session"
+              ]
+            }
+          },
+          "observation_span_id": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "trace_id": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "trace_session_id": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "custom_eval_config_id": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/GetFeedbackResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
     "/tracer/observation-span/get_graph_methods/": {
       "post": {
         "operationId": "tracer_observation-span_get_graph_methods",
@@ -56757,6 +56813,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/AnnotationLabelResponse"
           }
+        }
+      }
+    },
+    "GetFeedbackResponse": {
+      "type": "object",
+      "properties": {
+        "feedback_id": {
+          "title": "Feedback Id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "value": {
+          "title": "Value",
+          "type": "string",
+          "x-nullable": true
+        },
+        "explanation": {
+          "title": "Explanation",
+          "type": "string",
+          "x-nullable": true
+        },
+        "feedback_improvement": {
+          "title": "Feedback Improvement",
+          "type": "string",
+          "x-nullable": true
+        },
+        "action_type": {
+          "title": "Action Type",
+          "type": "string",
+          "enum": [
+            "retune",
+            "recalculate",
+            "retune_recalculate"
+          ],
+          "x-nullable": true
         }
       }
     },

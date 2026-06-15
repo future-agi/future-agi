@@ -37958,6 +37958,26 @@ export const TracerObservationSpanRootSpansResponse = zod.object({
 })
 
 
+/**
+ * Return the most recent Observe Feedback row for (target, eval).
+ */
+export const TracerObservationSpanGetFeedbackQueryParams = zod.object({
+  "target_type": zod.enum(['span', 'trace', 'session']),
+  "observation_span_id": zod.string().optional(),
+  "trace_id": zod.string().uuid().optional(),
+  "trace_session_id": zod.string().uuid().optional(),
+  "custom_eval_config_id": zod.string().uuid()
+})
+
+export const TracerObservationSpanGetFeedbackResponse = zod.object({
+  "feedback_id": zod.string().uuid().optional(),
+  "value": zod.string().optional(),
+  "explanation": zod.string().optional(),
+  "feedback_improvement": zod.string().optional(),
+  "action_type": zod.enum(['retune', 'recalculate', 'retune_recalculate']).optional()
+})
+
+
 export const tracerObservationSpanSubmitFeedbackBodyParentSpanIdMax = 255;
 
 export const tracerObservationSpanSubmitFeedbackBodyNameMax = 2000;

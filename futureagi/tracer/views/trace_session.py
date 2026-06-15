@@ -2734,6 +2734,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                             "target_type": log.target_type,
                             "session_id": str(session.id),
                             "session_name": session.name,
+                            "eval_task_id": (
+                                str(log.eval_task_id) if log.eval_task_id else None
+                            ),
                             "output_bool": log.output_bool,
                             "output_float": log.output_float,
                             "output_str": log.output_str,

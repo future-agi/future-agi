@@ -19534,6 +19534,23 @@ export interface ObserveGraphDataResponseApi {
   result: ObserveGraphDataResultApi;
 }
 
+export type GetFeedbackResponseApiActionType = typeof GetFeedbackResponseApiActionType[keyof typeof GetFeedbackResponseApiActionType];
+
+
+export const GetFeedbackResponseApiActionType = {
+  retune: 'retune',
+  recalculate: 'recalculate',
+  retune_recalculate: 'retune_recalculate',
+} as const;
+
+export interface GetFeedbackResponseApi {
+  feedback_id?: string;
+  value?: string;
+  explanation?: string;
+  feedback_improvement?: string;
+  action_type?: GetFeedbackResponseApiActionType;
+}
+
 export type ProjectVersionApiMetadata = { [key: string]: unknown };
 
 export type ProjectVersionApiError = { [key: string]: unknown };
@@ -25670,6 +25687,23 @@ export type TracerObservationSpanRootSpans200 = {
   previous?: string;
   results: ObservationSpanApi[];
 };
+
+export type TracerObservationSpanGetFeedbackParams = {
+target_type: TracerObservationSpanGetFeedbackTargetType;
+observation_span_id?: string;
+trace_id?: string;
+trace_session_id?: string;
+custom_eval_config_id: string;
+};
+
+export type TracerObservationSpanGetFeedbackTargetType = typeof TracerObservationSpanGetFeedbackTargetType[keyof typeof TracerObservationSpanGetFeedbackTargetType];
+
+
+export const TracerObservationSpanGetFeedbackTargetType = {
+  span: 'span',
+  trace: 'trace',
+  session: 'session',
+} as const;
 
 /**
  * Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.

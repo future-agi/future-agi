@@ -19,13 +19,13 @@
     "futureagi/saml2_auth/views.py"
   ],
   "summary": {
-    "runtime_backed_validated_request_decorators": 356,
+    "runtime_backed_validated_request_decorators": 357,
     "direct_swagger_auto_schema_decorators": 132,
     "doc_only_input_contract_decorators": 0,
     "broad_request_contract_decorators": 0
   },
   "app_wide_summary": {
-    "runtime_backed_validated_request_decorators": 462,
+    "runtime_backed_validated_request_decorators": 463,
     "direct_swagger_auto_schema_decorators": 240,
     "doc_only_input_contract_decorators": 0,
     "broad_request_contract_decorators": 0

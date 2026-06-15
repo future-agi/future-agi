@@ -81,6 +81,7 @@ const EvalFeedbackActionStage = ({ control, target, retuneOptions }) => {
         options={retuneOptions.map((opt) => ({
           value: opt.value,
           label: <OptionLabel title={opt.title} description={opt.description} />,
+          disabled: Boolean(opt.disabled),
         }))}
       />
     </Box>
@@ -98,6 +99,7 @@ EvalFeedbackActionStage.propTypes = {
       value: PropTypes.string.isRequired,
       title: PropTypes.string.isRequired,
       description: PropTypes.string.isRequired,
+      disabled: PropTypes.bool,
     })
   ).isRequired,
 };
