@@ -10,7 +10,15 @@ Per output type the ``aggregate`` is avg% (score), ``{"pass","fail"}`` counts
 is the raw score / "pass"|"fail" / [labels].
 """
 
-from tracer.utils.helper import build_task_grouped_eval_scores
+from types import SimpleNamespace
+
+import pytest
+
+from tracer.utils.helper import (
+    attach_grouped_eval_scores,
+    build_task_grouped_eval_scores,
+    fetch_grouped_eval_rows,
+)
 
 CONFIG_LOOKUP = {
     "cfg1": {"name": "Eval1", "output": "score", "choices": []},
@@ -153,3 +161,223 @@ def test_unknown_config_rows_skipped():
         rows, CONFIG_LOOKUP, TASK_LOOKUP, SPAN_NAMES, "trace"
     )
     assert out["eval_tasks"] == []
+
+
+# ---------------------------------------------------------------------------
+# attach_grouped_eval_scores — the SHARED voice-call-detail / trace-detail span
+# wiring. Root span gets the trace-level view (all spans); each other span gets
+# its own scope. Returns the trace-level structure for top-level surfacing.
+# ---------------------------------------------------------------------------
+
+
+def _voice_spans():
+    # Flat list as built by _voice_call_detail_clickhouse: conversation root
+    # first, then children.
+    return [
+        {"id": "SPAN1", "name": "conversation"},  # root conversation span
+        {"id": "SPAN2", "name": "child-a"},
+        {"id": "SPAN3", "name": "child-b"},
+    ]
+
+
+def _rows_by_span(rows):
+    out = {}
+    for r in rows:
+        out.setdefault(r["span_id"], []).append(r)
+    return out
+
+
+def _span_targets(spans, root_id="SPAN1"):
+    # (span_id, span_name, is_root, target_dict) — same tuple both endpoints
+    # build (voice: id == root_span_id; trace: _parent_id is None).
+    return [(s["id"], s.get("name"), s["id"] == root_id, s) for s in spans]
+
+
+def test_attach_root_gets_trace_scope_all_spans():
+    rows = _three_span_rows()
+    spans = _voice_spans()
+    trace_level = attach_grouped_eval_scores(
+        _span_targets(spans), rows, _rows_by_span(rows), CONFIG_LOOKUP, TASK_LOOKUP
+    )
+
+    # Returned structure == the root span's eval_scores, trace scope.
+    assert trace_level["scope"] == "trace"
+    root = next(s for s in spans if s["id"] == "SPAN1")
+    assert root["eval_scores"] is trace_level
+    evals = _evals_by_cid(root["eval_scores"])
+    assert evals["cfg2"]["aggregate"] == {"pass": 1, "fail": 2}
+    assert {s["span_id"] for s in evals["cfg1"]["spans"]} == {"SPAN1", "SPAN2", "SPAN3"}
+
+
+def test_attach_children_get_span_scope_only_self():
+    rows = _three_span_rows()
+    spans = _voice_spans()
+    attach_grouped_eval_scores(
+        _span_targets(spans), rows, _rows_by_span(rows), CONFIG_LOOKUP, TASK_LOOKUP
+    )
+
+    child = next(s for s in spans if s["id"] == "SPAN2")
+    assert child["eval_scores"]["scope"] == "span"
+    evals = _evals_by_cid(child["eval_scores"])
+    # SPAN2 only: cfg2 bool=1 -> pass, cfg1 score 0.8 -> 80.
+    assert evals["cfg2"]["aggregate"] == {"pass": 1, "fail": 0}
+    assert evals["cfg1"]["aggregate"] == 80.0
+    for ev in child["eval_scores"]["eval_tasks"][0]["evals"]:
+        assert [s["span_id"] for s in ev["spans"]] == ["SPAN2"]
+
+
+def test_attach_every_span_has_eval_scores():
+    rows = _three_span_rows()
+    spans = _voice_spans()
+    attach_grouped_eval_scores(
+        _span_targets(spans), rows, _rows_by_span(rows), CONFIG_LOOKUP, TASK_LOOKUP
+    )
+    assert all("eval_scores" in s for s in spans)
+    assert spans[0]["eval_scores"]["scope"] == "trace"
+    assert all(s["eval_scores"]["scope"] == "span" for s in spans[1:])
+
+
+def test_attach_single_span_trace_voice_call_shape():
+    # Voice calls typically have ONE span per trace: the root conversation span
+    # carries the trace-level aggregate over just itself.
+    rows = [r for r in _three_span_rows() if r["span_id"] == "SPAN1"]
+    spans = [{"id": "SPAN1", "name": "conversation"}]
+    trace_level = attach_grouped_eval_scores(
+        _span_targets(spans), rows, _rows_by_span(rows), CONFIG_LOOKUP, TASK_LOOKUP
+    )
+    root = spans[0]
+    assert root["eval_scores"] is trace_level
+    assert root["eval_scores"]["scope"] == "trace"
+    evals = _evals_by_cid(root["eval_scores"])
+    assert evals["cfg2"]["aggregate"] == {"pass": 0, "fail": 1}  # SPAN1 bool=0
+    for ev in root["eval_scores"]["eval_tasks"][0]["evals"]:
+        assert [s["span_id"] for s in ev["spans"]] == ["SPAN1"]
+
+
+def test_attach_span_with_no_rows_is_empty_but_scoped():
+    rows = [r for r in _three_span_rows() if r["span_id"] in ("SPAN1", "SPAN2")]
+    spans = _voice_spans()
+    attach_grouped_eval_scores(
+        _span_targets(spans), rows, _rows_by_span(rows), CONFIG_LOOKUP, TASK_LOOKUP
+    )
+    span3 = next(s for s in spans if s["id"] == "SPAN3")
+    assert span3["eval_scores"] == {"scope": "span", "eval_tasks": []}
+
+
+# ---------------------------------------------------------------------------
+# fetch_grouped_eval_rows — the SHARED CH fetch + batched PG name lookups used
+# by both detail endpoints. CH is faked; config/task names come from PG.
+# ---------------------------------------------------------------------------
+
+
+def _fake_analytics(rows):
+    return SimpleNamespace(execute_ch_query=lambda *a, **k: SimpleNamespace(data=rows))
+
+
+def _ch_eval_row(span_id, cid, tid, **kw):
+    base = {
+        "span_id": span_id,
+        "eval_config_id": cid,
+        "eval_task_id": tid,
+        "output_float": None,
+        "output_bool": None,
+        "output_str": None,
+        "output_str_list": "[]",
+        "error": 0,
+        "eval_explanation": None,
+    }
+    base.update(kw)
+    return base
+
+
+@pytest.mark.django_db
+def test_fetch_builds_rows_and_batched_lookups(custom_eval_config, eval_task):
+    cid = str(custom_eval_config.id)
+    tid = str(eval_task.id)
+    ch_rows = [
+        _ch_eval_row("SPANA", cid, tid, output_float=0.8, eval_explanation="ok"),
+        _ch_eval_row("SPANB", cid, tid, output_float=0.6),
+        _ch_eval_row("", cid, tid, output_float=0.5),  # no span_id -> skipped
+        # Valid UUID but no matching CustomEvalConfig row -> skipped.
+        _ch_eval_row("SPANC", "00000000-0000-0000-0000-000000000099", tid),
+    ]
+    eval_rows, rows_by_span, config_lookup, task_lookup = fetch_grouped_eval_rows(
+        _fake_analytics(ch_rows), "trace-1"
+    )
+
+    # Only the two valid span-level rows for known configs survive.
+    assert len(eval_rows) == 2
+    assert set(rows_by_span) == {"SPANA", "SPANB"}
+    # Batched PG name lookups resolved.
+    assert config_lookup[cid]["name"] == custom_eval_config.name
+    assert config_lookup[cid]["output"] == "score"  # template has no "output"
+    assert task_lookup[tid] == eval_task.name
+    # Explanation normalised ("" -> None handled at row level).
+    assert rows_by_span["SPANA"][0]["explanation"] == "ok"
+    assert rows_by_span["SPANB"][0]["explanation"] is None
+
+
+@pytest.mark.django_db
+def test_fetch_returns_empty_on_ch_failure():
+    def boom(*a, **k):
+        raise RuntimeError("CH unavailable")
+
+    analytics = SimpleNamespace(execute_ch_query=boom)
+    eval_rows, rows_by_span, config_lookup, task_lookup = fetch_grouped_eval_rows(
+        analytics, "trace-1"
+    )
+    assert eval_rows == []
+    assert rows_by_span == {}
+    assert config_lookup == {}
+    assert task_lookup == {}
+
+
+# ---------------------------------------------------------------------------
+# Parity: trace-detail root span vs voice-detail (single root span) produce the
+# SAME eval_scores. Both endpoints build the same (id, name, is_root, target)
+# tuples and call the same attach util, so the root span's output is identical.
+# ---------------------------------------------------------------------------
+
+
+def test_trace_root_and_voice_outputs_match():
+    # Voice trace == one span (the conversation root). Trace-detail root span is
+    # the parent_span_id-null span. Same rows -> same eval_scores.
+    rows = [
+        _row("ROOT", "cfg1", "task1", output_float=0.8),
+        _row("ROOT", "cfg2", "task1", output_bool=1),
+        _row("ROOT", "cfg3", "task1", output_str_list='["Pass"]'),
+    ]
+    rbs = _rows_by_span(rows)
+
+    # trace-detail wiring: root identified by `_parent_id is None`, written to
+    # the span-tree entry wrapper.
+    trace_entry = {"id": "ROOT"}
+    trace_level_t = attach_grouped_eval_scores(
+        [("ROOT", "conversation", True, trace_entry)],
+        rows,
+        rbs,
+        CONFIG_LOOKUP,
+        TASK_LOOKUP,
+    )
+
+    # voice-detail wiring: root identified by `id == root_span_id`, written to
+    # the observation_span dict.
+    voice_span = {"id": "ROOT", "name": "conversation"}
+    trace_level_v = attach_grouped_eval_scores(
+        [("ROOT", "conversation", True, voice_span)],
+        rows,
+        rbs,
+        CONFIG_LOOKUP,
+        TASK_LOOKUP,
+    )
+
+    # The two endpoints emit byte-identical eval_scores for the root span.
+    assert trace_entry["eval_scores"] == voice_span["eval_scores"]
+    assert trace_level_t == trace_level_v
+    # And the root span carries the trace-level aggregate.
+    assert trace_entry["eval_scores"] == trace_level_t
+    assert trace_entry["eval_scores"]["scope"] == "trace"
+    evals = _evals_by_cid(trace_entry["eval_scores"])
+    assert evals["cfg1"]["aggregate"] == 80.0
+    assert evals["cfg2"]["aggregate"] == {"pass": 1, "fail": 0}
+    assert evals["cfg3"]["aggregate"] == {"Pass": 1, "Fail": 0, "Unknown": 0}

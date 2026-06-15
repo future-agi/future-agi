@@ -47,7 +47,6 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
-from tracer.models.eval_task import EvalTask
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
@@ -88,9 +87,10 @@ from tracer.utils.annotations import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
+    attach_grouped_eval_scores,
     build_eval_task_map,
-    build_task_grouped_eval_scores,
     eval_count_cell,
+    fetch_grouped_eval_rows,
     get_annotation_labels_for_project,
     get_default_trace_config,
     update_column_config_based_on_eval_config,
@@ -1363,107 +1363,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             }
 
         # ----- Phase 8: Batch fetch eval scores from CH -----
-        # Collect raw (non-deleted) span-level eval rows + lookups so evals can
-        # be grouped eval_task -> eval -> {aggregate, spans} per span. All work
-        # is batched: one CH query (rows), one PG query (config names/output/
-        # choices via select_related — no extra query), one PG query (task
-        # names). Grouping/aggregation is pure Python over the fetched rows.
-        eval_rows: list[dict] = []
-        rows_by_span: dict[str, list[dict]] = {}
-        config_lookup: dict[str, dict] = {}
-        task_lookup: dict[str, str] = {}
-        try:
-            eval_table, eval_nd = eval_logger_source()
-            eval_query = f"""
-            SELECT
-                toString(observation_span_id) AS span_id,
-                toString(custom_eval_config_id) AS eval_config_id,
-                eval_task_id,
-                output_float,
-                output_bool,
-                output_str,
-                output_str_list,
-                error,
-                eval_explanation
-            FROM {eval_table} FINAL
-            WHERE trace_id = %(trace_id)s
-              AND {eval_nd}
-            """
-            eval_result = analytics.execute_ch_query(
-                eval_query, {"trace_id": str(trace_id)}, timeout_ms=30000
-            )
-
-            # Collect unique config + task IDs for batched name lookups.
-            config_ids_set = set()
-            task_ids_set = set()
-            for row in eval_result.data:
-                if not row.get("span_id"):
-                    continue  # span-level evals only (skip trace/session rows)
-                cid = row.get("eval_config_id", "")
-                if cid:
-                    config_ids_set.add(cid)
-                tid = row.get("eval_task_id")
-                if tid:
-                    task_ids_set.add(str(tid))
-
-            # Eval config name / output type / choices (single PG query;
-            # eval_template is select_related so choices/config cost no extra
-            # query). Soft-deleted configs excluded.
-            if config_ids_set:
-                configs = CustomEvalConfig.objects.filter(
-                    id__in=list(config_ids_set), deleted=False
-                ).select_related("eval_template")
-                config_lookup = {
-                    str(c.id): {
-                        # Prefer the CustomEvalConfig's user-given name, fall
-                        # back to the template name only if unset.
-                        "name": c.name
-                        or (c.eval_template.name if c.eval_template else str(c.id)),
-                        "output": (
-                            (c.eval_template.config or {}).get(
-                                "output", EvalOutputType.SCORE.value
-                            )
-                            if c.eval_template
-                            else EvalOutputType.SCORE.value
-                        ),
-                        "choices": (
-                            (c.eval_template.choices or []) if c.eval_template else []
-                        ),
-                    }
-                    for c in configs
-                }
-
-            # Eval task names (single PG query; soft-deleted tasks excluded).
-            if task_ids_set:
-                task_lookup = {
-                    str(tid): name
-                    for tid, name in EvalTask.objects.filter(
-                        id__in=task_ids_set, deleted=False
-                    ).values_list("id", "name")
-                }
-
-            # Normalise rows once; bucket by span for per-span child structures.
-            for row in eval_result.data:
-                sid = row.get("span_id", "")
-                cid = row.get("eval_config_id", "")
-                if not sid or not cid or cid not in config_lookup:
-                    continue
-                tid = row.get("eval_task_id")
-                normalized = {
-                    "span_id": sid,
-                    "eval_config_id": cid,
-                    "eval_task_id": str(tid) if tid else None,
-                    "output_float": row.get("output_float"),
-                    "output_bool": row.get("output_bool"),
-                    "output_str": row.get("output_str"),
-                    "output_str_list": row.get("output_str_list"),
-                    "error": row.get("error"),
-                    "explanation": row.get("eval_explanation") or None,
-                }
-                eval_rows.append(normalized)
-                rows_by_span.setdefault(sid, []).append(normalized)
-        except Exception as e:
-            logger.warning(f"Failed to fetch trace eval scores: {e}")
+        # Shared with the voice-call-detail endpoint: one CH query for raw
+        # span-level eval rows + batched PG name lookups (config + task), all
+        # non-deleted. Grouping is pure Python over the fetched rows.
+        eval_rows, rows_by_span, config_lookup, task_lookup = fetch_grouped_eval_rows(
+            analytics, trace_id
+        )
 
         # ----- Phase 8: Batch fetch annotations from PG -----
         annotation_map = {}
@@ -1571,28 +1476,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 logger.warning(f"Failed to fetch span tags from PG: {e}")
 
         # ----- Attach evals + annotations to each span -----
-        # eval_scores is grouped eval_task -> eval -> {aggregate, spans}.
-        # Root span (parent_span_id null) gets the trace-level view: aggregate +
-        # span-wise data across ALL spans, built once and shared. Every other
-        # span gets the same structure scoped to just its own rows.
-        span_name_map = {
-            sid: entry["observation_span"].get("name")
+        # eval_scores is grouped eval_task -> eval -> {aggregate, spans}. Root
+        # spans (parent_span_id null) get the trace-level view (aggregate +
+        # span-wise across ALL spans, shared); every other span gets the same
+        # structure scoped to just its own rows. Shared with voice-call-detail.
+        span_targets = [
+            (
+                sid,
+                entry["observation_span"].get("name"),
+                entry["_parent_id"] is None,
+                entry,
+            )
             for sid, entry in span_map.items()
-        }
-        trace_level_scores = build_task_grouped_eval_scores(
-            eval_rows, config_lookup, task_lookup, span_name_map, "trace"
+        ]
+        attach_grouped_eval_scores(
+            span_targets, eval_rows, rows_by_span, config_lookup, task_lookup
         )
         for sid, entry in span_map.items():
-            if entry["_parent_id"] is None:
-                entry["eval_scores"] = trace_level_scores
-            else:
-                entry["eval_scores"] = build_task_grouped_eval_scores(
-                    rows_by_span.get(sid, []),
-                    config_lookup,
-                    task_lookup,
-                    span_name_map,
-                    "span",
-                )
             entry["annotations"] = annotation_map.get(sid, [])
 
         # Build tree: link children to parents
@@ -3073,10 +2973,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
     def _voice_call_detail_clickhouse(self, request, trace_id, analytics, project_id):
         """Return heavy voice-call detail fields from ClickHouse."""
-        from tracer.services.clickhouse.query_builders.trace_list import (
-            TraceListQueryBuilder,
-        )
-
         # 1. Fetch root conversation span for this trace
         root_query = """
         SELECT
@@ -3284,101 +3180,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        # Fetch ALL non-deleted eval configs for the project so the drawer
-        # renders the same set of evals as the list columns. Missing scores
-        # become placeholder entries with `output=None`.
-        eval_configs = CustomEvalConfig.objects.filter(
-            id__in=EvalLogger.objects.filter(
-                trace_id__in=Trace.objects.filter(project_id=project_id).values("id")
-            )
-            .values("custom_eval_config_id")
-            .distinct(),
-            deleted=False,
-        ).select_related("eval_template")
-        eval_config_ids = [str(c.id) for c in eval_configs]
-
-        eval_outputs = {}
-        trace_evals: dict[str, Any] = {}
-        if eval_config_ids:
-            eval_table, eval_nd = eval_logger_source()
-            eval_query = f"""
-            SELECT
-                trace_id,
-                toString(custom_eval_config_id) AS eval_config_id,
-                avg(output_float) AS avg_score,
-                avg(CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END) AS pass_rate,
-                count() AS eval_count,
-                any(output_str_list) AS output_str_list
-            FROM {eval_table} FINAL
-            WHERE {eval_nd}
-              AND trace_id = %(trace_id)s
-              AND custom_eval_config_id IN %(eval_config_ids)s
-            GROUP BY trace_id, custom_eval_config_id
-            """
-            eval_result = analytics.execute_ch_query(
-                eval_query,
-                {
-                    "trace_id": str(trace_id),
-                    "eval_config_ids": tuple(eval_config_ids),
-                },
-                timeout_ms=30000,
-            )
-            eval_map = TraceListQueryBuilder.pivot_eval_results(
-                [(list(r.values())) for r in eval_result.data],
-                list(eval_result.data[0].keys()) if eval_result.data else [],
-            )
-            trace_evals = eval_map.get(str(trace_id), {}) or {}
-
-        for config in eval_configs:
-            config_id = str(config.id)
-            metric_name = getattr(config, "name", None) or (
-                getattr(config, "eval_template", None).name
-                if getattr(config, "eval_template", None)
-                else None
-            )
-            eval_template_config = (
-                config.eval_template.config
-                if getattr(config, "eval_template", None)
-                else {}
-            ) or {}
-            output_type = eval_template_config.get("output", "score")
-
-            if config_id not in trace_evals:
-                eval_outputs[config_id] = {
-                    "name": metric_name,
-                    "output_type": output_type,
-                    "output": None,
-                    "reason": None,
-                    "error": None,
-                }
-                continue
-
-            scores = trace_evals[config_id]
-            metric_entry = {"name": metric_name, "output_type": output_type}
-            if isinstance(scores, dict):
-                if scores.get("per_choice"):
-                    metric_entry["output"] = [
-                        k for k, v in scores["per_choice"].items() if v > 0
-                    ]
-                elif "str_list" in scores and scores["str_list"]:
-                    metric_entry["output"] = scores["str_list"]
-                elif "avg_score" in scores:
-                    score_val = scores.get("avg_score") or scores.get("pass_rate")
-                    if output_type == "Pass/Fail":
-                        metric_entry["output"] = (
-                            "Pass" if score_val and score_val > 0 else "Fail"
-                        )
-                    else:
-                        metric_entry["output"] = (
-                            round(score_val * 100, 2)
-                            if isinstance(score_val, (int, float))
-                            else score_val
-                        )
-                else:
-                    metric_entry["output"] = None
-            else:
-                metric_entry["output"] = scores
-            eval_outputs[config_id] = metric_entry
+        # ----- Eval scores: grouped eval_task -> eval -> {aggregate, spans} -----
+        # Same format and shared helpers as _retrieve_clickhouse (trace detail):
+        # fetch_grouped_eval_rows runs one CH query + batched PG lookups (only
+        # non-deleted rows); attach_grouped_eval_scores writes per-span
+        # eval_scores. The root conversation span gets the trace-level view
+        # (aggregate + span-wise across ALL spans); each child gets its own
+        # span scope.
+        eval_rows, rows_by_span, config_lookup, task_lookup = fetch_grouped_eval_rows(
+            analytics, trace_id
+        )
+        span_targets = [
+            (s["id"], s.get("name"), str(s["id"]) == root_span_id, s)
+            for s in observation_span
+        ]
+        trace_level_scores = attach_grouped_eval_scores(
+            span_targets, eval_rows, rows_by_span, config_lookup, task_lookup
+        )
 
         # Duration from span attributes
         attrs_num = row.get("attrs_number") or {}
@@ -3397,7 +3215,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "recording": recording,
             "call_metadata": metadata,
             "observation_span": observation_span,
-            "eval_outputs": eval_outputs,
+            # Grouped eval_task -> eval -> {aggregate, spans} (same format as
+            # the trace-detail endpoint). Trace-level scope (all spans); each
+            # span in observation_span also carries its own eval_scores.
+            "eval_scores": trace_level_scores,
             "turn_count": voice_metrics.get("turn_count"),
             "talk_ratio": voice_metrics.get("talk_ratio"),
             "agent_talk_percentage": voice_metrics.get("agent_talk_percentage"),

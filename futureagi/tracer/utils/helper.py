@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 import pandas as pd
+import structlog
 from rest_framework import serializers
 
 from model_hub.models.choices import AnnotationTypeChoices, DataTypeChoices
@@ -17,6 +18,8 @@ from tracer.utils.constants import (
     SPAN_ATTR_ALLOWED_OPS,
 )
 from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass
@@ -573,6 +576,158 @@ def build_task_grouped_eval_scores(
         )
 
     return {"scope": scope, "eval_tasks": eval_tasks}
+
+
+def fetch_grouped_eval_rows(analytics, trace_id):
+    """Fetch non-deleted span-level eval rows for a trace + the batched name
+    lookups needed to group them.
+
+    Shared by the trace-detail and voice-call-detail endpoints. Runs ONE CH
+    query against the eval-logger table plus two batched PG lookups (config
+    names/output/choices via ``select_related`` — no extra query; task names) —
+    soft-deleted rows, configs and tasks are all excluded. Trace/session-level
+    rows (no ``observation_span_id``) are skipped. Any CH/PG failure is logged
+    and returns empty structures (non-fatal).
+
+    Returns ``(eval_rows, rows_by_span, config_lookup, task_lookup)``:
+      * ``eval_rows``    — normalised dicts (``span_id``, ``eval_config_id``,
+        ``eval_task_id``, ``output_float``/``bool``/``str``/``str_list``,
+        ``error``, ``explanation``)
+      * ``rows_by_span`` — ``{span_id: [rows]}``
+      * ``config_lookup``— ``{config_id: {"name", "output", "choices"}}``
+      * ``task_lookup``  — ``{eval_task_id: name}``
+    """
+    from tracer.models.eval_task import EvalTask
+    from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+
+    eval_rows: list[dict] = []
+    rows_by_span: dict[str, list[dict]] = {}
+    config_lookup: dict[str, dict] = {}
+    task_lookup: dict[str, str] = {}
+    try:
+        eval_table, eval_nd = eval_logger_source()
+        eval_query = f"""
+        SELECT
+            toString(observation_span_id) AS span_id,
+            toString(custom_eval_config_id) AS eval_config_id,
+            eval_task_id,
+            output_float,
+            output_bool,
+            output_str,
+            output_str_list,
+            error,
+            eval_explanation
+        FROM {eval_table} FINAL
+        WHERE trace_id = %(trace_id)s
+          AND {eval_nd}
+        """
+        eval_result = analytics.execute_ch_query(
+            eval_query, {"trace_id": str(trace_id)}, timeout_ms=30000
+        )
+
+        # Collect unique config + task IDs for batched name lookups.
+        config_ids_set = set()
+        task_ids_set = set()
+        for row in eval_result.data:
+            if not row.get("span_id"):
+                continue  # span-level evals only (skip trace/session rows)
+            cid = row.get("eval_config_id", "")
+            if cid:
+                config_ids_set.add(cid)
+            tid = row.get("eval_task_id")
+            if tid:
+                task_ids_set.add(str(tid))
+
+        if config_ids_set:
+            configs = CustomEvalConfig.objects.filter(
+                id__in=list(config_ids_set), deleted=False
+            ).select_related("eval_template")
+            config_lookup = {
+                str(c.id): {
+                    # Prefer the CustomEvalConfig's user-given name, fall back
+                    # to the template name only if unset.
+                    "name": c.name
+                    or (c.eval_template.name if c.eval_template else str(c.id)),
+                    "output": (
+                        (c.eval_template.config or {}).get(
+                            "output", EvalOutputType.SCORE.value
+                        )
+                        if c.eval_template
+                        else EvalOutputType.SCORE.value
+                    ),
+                    "choices": (
+                        (c.eval_template.choices or []) if c.eval_template else []
+                    ),
+                }
+                for c in configs
+            }
+
+        if task_ids_set:
+            task_lookup = {
+                str(tid): name
+                for tid, name in EvalTask.objects.filter(
+                    id__in=task_ids_set, deleted=False
+                ).values_list("id", "name")
+            }
+
+        # Normalise rows once; bucket by span for per-span child structures.
+        for row in eval_result.data:
+            sid = row.get("span_id", "")
+            cid = row.get("eval_config_id", "")
+            if not sid or not cid or cid not in config_lookup:
+                continue
+            tid = row.get("eval_task_id")
+            normalized = {
+                "span_id": sid,
+                "eval_config_id": cid,
+                "eval_task_id": str(tid) if tid else None,
+                "output_float": row.get("output_float"),
+                "output_bool": row.get("output_bool"),
+                "output_str": row.get("output_str"),
+                "output_str_list": row.get("output_str_list"),
+                "error": row.get("error"),
+                "explanation": row.get("eval_explanation") or None,
+            }
+            eval_rows.append(normalized)
+            rows_by_span.setdefault(sid, []).append(normalized)
+    except Exception as e:
+        logger.warning("fetch_grouped_eval_rows_failed", error=str(e))
+
+    return eval_rows, rows_by_span, config_lookup, task_lookup
+
+
+def attach_grouped_eval_scores(
+    span_targets, eval_rows, rows_by_span, config_lookup, task_lookup
+):
+    """Attach grouped ``eval_scores`` to span target dicts (in place) and
+    return the trace-level structure.
+
+    Shared by the trace-detail and voice-call-detail endpoints so the "root
+    span gets the trace view, every other span gets its own scope" wiring lives
+    in one place. ``span_targets`` is an iterable of
+    ``(span_id, span_name, is_root, target)`` where ``target`` is the dict that
+    receives ``target['eval_scores']``. Root spans (``is_root`` true) get the
+    trace-level view (aggregate + span-wise across ALL spans); every other span
+    gets the same structure scoped to just itself. The trace-level structure is
+    returned so callers can also surface it at the top level.
+    """
+    span_targets = list(span_targets)
+    span_name_map = {str(sid): name for sid, name, _is_root, _t in span_targets}
+    trace_level = build_task_grouped_eval_scores(
+        eval_rows, config_lookup, task_lookup, span_name_map, "trace"
+    )
+    for sid, _name, is_root, target in span_targets:
+        if is_root:
+            target["eval_scores"] = trace_level
+        else:
+            target["eval_scores"] = build_task_grouped_eval_scores(
+                rows_by_span.get(str(sid), []),
+                config_lookup,
+                task_lookup,
+                span_name_map,
+                "span",
+            )
+    return trace_level
 
 
 def build_eval_task_map(discovery_rows, alive_config_ids):
