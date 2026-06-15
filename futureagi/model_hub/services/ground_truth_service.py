@@ -70,7 +70,6 @@ class GroundTruthService:
             "embeddings_stale": embeddings_stale,
         }
 
-
     ALLOWED_ROLE_KEYS = frozenset(
         {"output", "explanation", "expected_output", "reasoning", "reason"}
     )
@@ -129,11 +128,9 @@ class GroundTruthService:
             # dataset into a non-terminal state. Role-mapping changes
             # never set this themselves.
             "embeddings_stale": bool(
-                gt.embedded_row_count > 0
-                and gt.embedding_status != "completed"
+                gt.embedded_row_count > 0 and gt.embedding_status != "completed"
             ),
         }
-
 
     @staticmethod
     def update_setup(
@@ -244,7 +241,6 @@ class GroundTruthService:
             "config": template_config["ground_truth"],
         }
 
-
     @staticmethod
     def resolve_preview_examples(
         *, eval_template: EvalTemplate, eval_inputs: dict[str, Any]
@@ -298,7 +294,6 @@ class GroundTruthService:
             )
             return None
 
-
     @staticmethod
     def embed_dataset(*, gt: EvalGroundTruth) -> EmbedDatasetResult:
         """Embed every row of ``gt`` into the CH ``ground_truths`` table.
@@ -337,9 +332,7 @@ class GroundTruthService:
 
         gt.embedding_status = "processing"
         gt.embedded_row_count = 0
-        gt.save(
-            update_fields=["embedding_status", "embedded_row_count", "updated_at"]
-        )
+        gt.save(update_fields=["embedding_status", "embedded_row_count", "updated_at"])
 
         logger.info(
             "ground_truth_embed_start",
@@ -397,7 +390,6 @@ class GroundTruthService:
             status="completed",
         )
 
-
     @staticmethod
     def retrieve_few_shot(
         *,
@@ -441,7 +433,6 @@ class GroundTruthService:
         )
         matches = retrieve_ground_truth_fewshots(request)
         return [match.row for match in matches]
-
 
     @staticmethod
     def search(
@@ -497,7 +488,6 @@ class GroundTruthService:
             "results": results,
             "total": len(results),
         }
-
 
     @staticmethod
     def validate_output(
@@ -610,9 +600,7 @@ def _mark_failed(gt: EvalGroundTruth, reason: str) -> EmbedDatasetResult:
     """Persist a failed embed pass on the PG row and return the typed result."""
     gt.embedding_status = "failed"
     gt.embedded_row_count = 0
-    gt.save(
-        update_fields=["embedding_status", "embedded_row_count", "updated_at"]
-    )
+    gt.save(update_fields=["embedding_status", "embedded_row_count", "updated_at"])
     logger.warning(
         "ground_truth_embed_marked_failed",
         ground_truth_id=str(gt.id),
