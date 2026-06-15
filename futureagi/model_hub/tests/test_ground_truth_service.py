@@ -15,7 +15,6 @@ from model_hub.services.ground_truth_service import (
     ServiceError,
 )
 
-EmbeddingStatus = EvalGroundTruth.EmbeddingStatus
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -49,7 +48,7 @@ class _FakeGT:
     columns: list[str] = field(default_factory=list)
     variable_mapping: dict[str, Any] = field(default_factory=dict)
     role_mapping: dict[str, Any] = field(default_factory=dict)
-    embedding_status: str = EmbeddingStatus.PENDING
+    embedding_status: str = EvalGroundTruth.EmbeddingStatus.PENDING
     embedded_row_count: int = 0
     data: list[dict[str, Any]] = field(default_factory=list)
     eval_template_id: str = "tpl-fake"
@@ -69,7 +68,7 @@ class _FakeGT:
 
 
 def test_update_variable_mapping_persists_with_no_stale_when_never_embedded():
-    gt = _FakeGT(columns=["question", "answer"], embedding_status=EmbeddingStatus.PENDING)
+    gt = _FakeGT(columns=["question", "answer"], embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING)
 
     result = GroundTruthService.update_variable_mapping(
         gt=gt, variable_mapping={"q": "question"}
@@ -78,7 +77,7 @@ def test_update_variable_mapping_persists_with_no_stale_when_never_embedded():
     assert result == {
         "id": "gt-fake",
         "variable_mapping": {"q": "question"},
-        "embedding_status": EmbeddingStatus.PENDING,
+        "embedding_status": EvalGroundTruth.EmbeddingStatus.PENDING,
         "embeddings_stale": False,
     }
     assert gt.variable_mapping == {"q": "question"}
@@ -92,7 +91,7 @@ def test_update_variable_mapping_flips_completed_to_pending_on_change():
     gt = _FakeGT(
         columns=["a", "b"],
         variable_mapping={"x": "a"},
-        embedding_status=EmbeddingStatus.COMPLETED,
+        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
     )
 
     result = GroundTruthService.update_variable_mapping(
@@ -100,7 +99,7 @@ def test_update_variable_mapping_flips_completed_to_pending_on_change():
     )
 
     assert result["embeddings_stale"] is True
-    assert gt.embedding_status == EmbeddingStatus.PENDING
+    assert gt.embedding_status == EvalGroundTruth.EmbeddingStatus.PENDING
     assert "embedding_status" in gt.save_calls[0]
 
 
@@ -108,7 +107,7 @@ def test_update_variable_mapping_idempotent_save_keeps_status():
     gt = _FakeGT(
         columns=["a"],
         variable_mapping={"x": "a"},
-        embedding_status=EmbeddingStatus.COMPLETED,
+        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
     )
 
     result = GroundTruthService.update_variable_mapping(
@@ -116,7 +115,7 @@ def test_update_variable_mapping_idempotent_save_keeps_status():
     )
 
     assert result["embeddings_stale"] is False
-    assert gt.embedding_status == EmbeddingStatus.COMPLETED
+    assert gt.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
 
 
 def test_update_variable_mapping_rejects_unknown_column():
@@ -159,9 +158,9 @@ def test_embed_dataset_fails_when_no_rows():
     gt = _FakeGT(data=[], variable_mapping={"q": "question"})
     result = GroundTruthService.embed_dataset(gt=gt)
     assert isinstance(result, EmbedDatasetResult)
-    assert result.status == EmbeddingStatus.FAILED
+    assert result.status == EvalGroundTruth.EmbeddingStatus.FAILED
     assert "no rows" in (result.error or "").lower()
-    assert gt.embedding_status == EmbeddingStatus.FAILED
+    assert gt.embedding_status == EvalGroundTruth.EmbeddingStatus.FAILED
 
 
 def test_embed_dataset_fails_when_no_mapped_columns():
@@ -170,7 +169,7 @@ def test_embed_dataset_fails_when_no_mapped_columns():
         variable_mapping={},
     )
     result = GroundTruthService.embed_dataset(gt=gt)
-    assert result.status == EmbeddingStatus.FAILED
+    assert result.status == EvalGroundTruth.EmbeddingStatus.FAILED
     assert "mapping" in (result.error or "").lower()
 
 
@@ -188,9 +187,9 @@ def test_embed_dataset_marks_failed_when_writer_raises():
     ):
         result = GroundTruthService.embed_dataset(gt=gt)
 
-    assert result.status == EmbeddingStatus.FAILED
+    assert result.status == EvalGroundTruth.EmbeddingStatus.FAILED
     assert "ch unreachable" in (result.error or "")
-    assert gt.embedding_status == EmbeddingStatus.FAILED
+    assert gt.embedding_status == EvalGroundTruth.EmbeddingStatus.FAILED
 
 
 def test_embed_dataset_marks_completed_on_success():
@@ -206,10 +205,10 @@ def test_embed_dataset_marks_completed_on_success():
     ):
         result = GroundTruthService.embed_dataset(gt=gt)
 
-    assert result.status == EmbeddingStatus.COMPLETED
+    assert result.status == EvalGroundTruth.EmbeddingStatus.COMPLETED
     assert result.rows_embedded == 2
     assert gt.embedded_row_count == 2
-    assert gt.embedding_status == EmbeddingStatus.COMPLETED
+    assert gt.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -218,7 +217,7 @@ def test_embed_dataset_marks_completed_on_success():
 
 
 def test_retrieve_few_shot_short_circuits_when_not_completed():
-    gt = _FakeGT(embedding_status=EmbeddingStatus.PENDING, variable_mapping={"q": "q"})
+    gt = _FakeGT(embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING, variable_mapping={"q": "q"})
     rows = GroundTruthService.retrieve_few_shot(
         gt=gt, inputs={"q": "hi"}, max_results=3
     )
@@ -226,7 +225,7 @@ def test_retrieve_few_shot_short_circuits_when_not_completed():
 
 
 def test_retrieve_few_shot_short_circuits_when_mapping_missing():
-    gt = _FakeGT(embedding_status=EmbeddingStatus.COMPLETED, variable_mapping={})
+    gt = _FakeGT(embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED, variable_mapping={})
     rows = GroundTruthService.retrieve_few_shot(
         gt=gt, inputs={"q": "hi"}, max_results=3
     )
@@ -235,7 +234,7 @@ def test_retrieve_few_shot_short_circuits_when_mapping_missing():
 
 def test_retrieve_few_shot_calls_embedding_manager_and_strips_storage_keys():
     gt = _FakeGT(
-        embedding_status=EmbeddingStatus.COMPLETED,
+        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
         variable_mapping={"q": "question"},
     )
 
@@ -268,7 +267,7 @@ def test_retrieve_few_shot_calls_embedding_manager_and_strips_storage_keys():
 
 
 def test_search_rejects_when_not_completed():
-    gt = _FakeGT(embedding_status=EmbeddingStatus.PROCESSING, variable_mapping={"q": "q"})
+    gt = _FakeGT(embedding_status=EvalGroundTruth.EmbeddingStatus.PROCESSING, variable_mapping={"q": "q"})
     result = GroundTruthService.search(
         gt=gt, inputs={"q": "hi"}, query=None, max_results=3
     )
@@ -277,7 +276,7 @@ def test_search_rejects_when_not_completed():
 
 
 def test_search_rejects_empty_input():
-    gt = _FakeGT(embedding_status=EmbeddingStatus.COMPLETED, variable_mapping={"q": "q"})
+    gt = _FakeGT(embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED, variable_mapping={"q": "q"})
     result = GroundTruthService.search(
         gt=gt, inputs=None, query="   ", max_results=3
     )
@@ -287,7 +286,7 @@ def test_search_rejects_empty_input():
 
 def test_search_dispatches_to_helper_with_inputs():
     gt = _FakeGT(
-        embedding_status=EmbeddingStatus.COMPLETED,
+        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
         variable_mapping={"q": "question"},
     )
     with patch.object(
@@ -303,7 +302,7 @@ def test_search_dispatches_to_helper_with_inputs():
 
 def test_search_legacy_query_fans_out_to_all_mapped_vars():
     gt = _FakeGT(
-        embedding_status=EmbeddingStatus.COMPLETED,
+        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
         variable_mapping={"q": "question", "a": "answer"},
     )
     with patch.object(

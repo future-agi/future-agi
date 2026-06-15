@@ -18,7 +18,6 @@ from model_hub.models.evals_metric import (
 )
 from tfc.constants.roles import OrganizationRoles
 
-EmbeddingStatus = EvalGroundTruth.EmbeddingStatus
 
 
 @pytest.fixture
@@ -116,7 +115,7 @@ def create_same_org_other_workspace_ground_truth(organization, user):
         columns=["input", "expected"],
         data=[{"input": "secret", "expected": "hidden"}],
         row_count=1,
-        embedding_status=EmbeddingStatus.COMPLETED,
+        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
         organization=organization,
         workspace=other_workspace,
     )
@@ -155,7 +154,7 @@ class TestGroundTruthUploadAPI:
         assert result["name"] == "my-ground-truth"
         assert result["row_count"] == 3
         assert result["columns"] == ["input", "expected"]
-        assert result["embedding_status"] == EmbeddingStatus.PENDING
+        assert result["embedding_status"] == EvalGroundTruth.EmbeddingStatus.PENDING
 
     def test_upload_csv_file(self, auth_client, eval_template):
         csv_content = (
@@ -306,7 +305,7 @@ class TestGroundTruthListAPI:
         item = response.data["result"]["items"][0]
         assert item["name"] == "test-gt"
         assert item["row_count"] == 3
-        assert item["embedding_status"] == EmbeddingStatus.PENDING
+        assert item["embedding_status"] == EvalGroundTruth.EmbeddingStatus.PENDING
 
     def test_list_rejects_other_org_template(self, auth_client):
         other_template, _ = create_other_org_ground_truth()
@@ -440,7 +439,7 @@ class TestGroundTruthRoleMappingAPI:
         in the few-shot prompt. Changing which column supplies the label
         must NOT force a re-embed of the (otherwise valid) vectors."""
         ground_truth.role_mapping = {"output": "score"}
-        ground_truth.embedding_status = EmbeddingStatus.COMPLETED
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.COMPLETED
         ground_truth.embedded_row_count = 3
         ground_truth.save(
             update_fields=[
@@ -458,7 +457,7 @@ class TestGroundTruthRoleMappingAPI:
         assert response.status_code == 200
         result = response.data["result"]
         assert result["embeddings_stale"] is False
-        assert result["embedding_status"] == EmbeddingStatus.COMPLETED
+        assert result["embedding_status"] == EvalGroundTruth.EmbeddingStatus.COMPLETED
 
 
 # =========================================================================
@@ -678,7 +677,7 @@ class TestGroundTruthStatusAPI:
         response = auth_client.get(self._url(ground_truth.id))
         assert response.status_code == 200
         result = response.data["result"]
-        assert result["embedding_status"] == EmbeddingStatus.PENDING
+        assert result["embedding_status"] == EvalGroundTruth.EmbeddingStatus.PENDING
         assert result["total_rows"] == 3
         assert result["embedded_row_count"] == 0
         assert result["progress_percent"] == 0.0
@@ -855,7 +854,7 @@ class TestGroundTruthSearchAPI:
     def test_search_returns_similar_rows(
         self, auth_client, ground_truth, monkeypatch
     ):
-        ground_truth.embedding_status = EmbeddingStatus.COMPLETED
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.COMPLETED
         ground_truth.embedded_row_count = 3
         ground_truth.save(
             update_fields=["embedding_status", "embedded_row_count", "updated_at"]
@@ -919,7 +918,7 @@ class TestGroundTruthSearchAPI:
         dict the eval runner would, not a flattened query string. The
         view must accept it and the response must echo it back so the FE
         knows the request was processed in the new shape."""
-        ground_truth.embedding_status = EmbeddingStatus.COMPLETED
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.COMPLETED
         ground_truth.embedded_row_count = 1
         ground_truth.variable_mapping = {"q": "input"}
         ground_truth.save(
@@ -955,7 +954,7 @@ class TestGroundTruthSearchAPI:
     def test_search_rejects_when_both_query_and_inputs_missing(
         self, auth_client, ground_truth
     ):
-        ground_truth.embedding_status = EmbeddingStatus.COMPLETED
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.COMPLETED
         ground_truth.save(update_fields=["embedding_status", "updated_at"])
         response = auth_client.post(
             self._url(ground_truth.id), {"max_results": 1}, format="json"
@@ -1009,7 +1008,7 @@ class TestGroundTruthEmbedAPI:
         assert response.data["message"] == "No data rows to embed."
 
     def test_embed_rejects_processing_ground_truth(self, auth_client, ground_truth):
-        ground_truth.embedding_status = EmbeddingStatus.PROCESSING
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.PROCESSING
         ground_truth.save(update_fields=["embedding_status", "updated_at"])
 
         response = auth_client.post(self._url(ground_truth.id), {}, format="json")
@@ -1029,7 +1028,7 @@ class TestGroundTruthEmbedAPI:
             "tfc.temporal.ground_truth.client.trigger_embedding_generation",
             fake_trigger_embedding_generation,
         )
-        ground_truth.embedding_status = EmbeddingStatus.FAILED
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.FAILED
         ground_truth.embedded_row_count = 2
         ground_truth.save(
             update_fields=["embedding_status", "embedded_row_count", "updated_at"]
@@ -1040,10 +1039,10 @@ class TestGroundTruthEmbedAPI:
         assert response.status_code == 200, response.data
         result = response.data["result"]
         assert result["id"] == str(ground_truth.id)
-        assert result["embedding_status"] == EmbeddingStatus.PENDING
+        assert result["embedding_status"] == EvalGroundTruth.EmbeddingStatus.PENDING
         assert calls == [str(ground_truth.id)]
         ground_truth.refresh_from_db()
-        assert ground_truth.embedding_status == EmbeddingStatus.PENDING
+        assert ground_truth.embedding_status == EvalGroundTruth.EmbeddingStatus.PENDING
         assert ground_truth.embedded_row_count == 0
 
     def test_embed_marks_failed_when_workflow_dispatch_fails(
@@ -1056,7 +1055,7 @@ class TestGroundTruthEmbedAPI:
             "tfc.temporal.ground_truth.client.trigger_embedding_generation",
             fake_trigger_embedding_generation,
         )
-        ground_truth.embedding_status = EmbeddingStatus.COMPLETED
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.COMPLETED
         ground_truth.embedded_row_count = 2
         ground_truth.save(
             update_fields=["embedding_status", "embedded_row_count", "updated_at"]
@@ -1067,7 +1066,7 @@ class TestGroundTruthEmbedAPI:
         assert response.status_code == 400
         assert response.data["message"] == "Failed to trigger embedding generation."
         ground_truth.refresh_from_db()
-        assert ground_truth.embedding_status == EmbeddingStatus.FAILED
+        assert ground_truth.embedding_status == EvalGroundTruth.EmbeddingStatus.FAILED
         assert ground_truth.embedded_row_count == 0
 
     def test_embed_rejects_same_org_other_workspace_ground_truth(
