@@ -1181,3 +1181,99 @@ class TestOrgRoleUpdateWorkspaceAccess:
         ws_ids = {ws["workspace_id"] for ws in entry.get("workspaces", [])}
         assert str(workspace.id) in ws_ids
         assert str(second_workspace.id) not in ws_ids
+
+    # Invalid input: workspace_access must not reference a workspace from a
+    # different organization. Without this guard, the endpoint would silently
+    # create a WorkspaceMembership row pointing at a foreign workspace — a
+    # privilege-boundary violation. Should be rejected at the boundary, not
+    # absorbed into a wrong-write.
+
+    def test_workspace_access_with_foreign_org_workspace_is_rejected(
+        self, auth_client, organization, workspace
+    ):
+        # A workspace in a different organization.
+        other_org = Organization.objects.create(name="Other Test Org")
+        other_org_creator = _make_user(
+            other_org, "wsacc-otherorg-owner@futureagi.com", "Owner", Level.OWNER
+        )
+        foreign_workspace = Workspace.objects.create(
+            name="Foreign Workspace",
+            organization=other_org,
+            is_active=True,
+            created_by=other_org_creator,
+        )
+
+        target = _make_user(
+            organization, "wsacc-foreign@futureagi.com", "Member", Level.MEMBER
+        )
+        _add_ws_membership(target, workspace, organization, Level.WORKSPACE_MEMBER)
+
+        resp = self._update_role(
+            auth_client,
+            {
+                "user_id": str(target.id),
+                "org_level": Level.VIEWER,
+                "workspace_access": [
+                    {
+                        "workspace_id": str(foreign_workspace.id),
+                        "level": Level.WORKSPACE_VIEWER,
+                    },
+                ],
+            },
+        )
+
+        # The boundary must refuse this and not write a row.
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST, resp.json()
+        assert not WorkspaceMembership.all_objects.filter(
+            user=target, workspace=foreign_workspace
+        ).exists()
+        # And the actor's own workspace must be untouched — partial commit
+        # would be the worst possible failure mode.
+        active = self._ws_member_ids(target, organization)
+        assert workspace.id in active
+
+    # Idempotency: replaying the same role-update payload must produce the
+    # same final state and no spurious revocations on the second call. This
+    # pins the "exclude already-soft-deleted rows" guard in the revoke filter
+    # — without it, the second call would re-tick deleted_at and pollute the
+    # audit log.
+
+    def test_role_update_is_idempotent_on_replay(
+        self, auth_client, organization, workspace, second_workspace
+    ):
+        target = _make_user(
+            organization, "wsacc-idem@futureagi.com", "Member", Level.MEMBER
+        )
+        _add_ws_membership(target, workspace, organization, Level.WORKSPACE_MEMBER)
+        _add_ws_membership(
+            target, second_workspace, organization, Level.WORKSPACE_MEMBER
+        )
+
+        payload = {
+            "user_id": str(target.id),
+            "org_level": Level.VIEWER,
+            "workspace_access": [
+                {"workspace_id": str(workspace.id), "level": Level.WORKSPACE_VIEWER}
+            ],
+        }
+
+        first = self._update_role(auth_client, payload)
+        assert first.status_code == status.HTTP_200_OK, first.json()
+        assert (
+            first.json()["result"]["changes"].get("revoked_workspaces") == 1
+        ), first.json()
+
+        # Replay the exact same payload.
+        second = self._update_role(auth_client, payload)
+        assert second.status_code == status.HTTP_200_OK, second.json()
+
+        # Final state is unchanged.
+        active = self._ws_member_ids(target, organization)
+        assert workspace.id in active
+        assert second_workspace.id not in active
+
+        # No spurious revoke on the replay — second_workspace was already
+        # revoked, so the revoke filter must skip it.
+        assert (
+            second.json()["result"]["changes"].get("revoked_workspaces", 0) == 0
+        ), second.json()
