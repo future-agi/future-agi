@@ -14,7 +14,7 @@ import {
 import { menuIcons } from "src/utils/MenuIconSet/svgIcons";
 import {
   useAddColumnApiCallStore,
-  useAddEvaluationFeebackStore,
+  useAddDevelopEvalFeedbackStore,
   useConditionalNodeStore,
   useExtractEntitiesStore,
   useDeleteColumnStore,
@@ -311,7 +311,7 @@ export const getColumnConfig = ({
   isViewerRole = false,
 }) => {
   const setFeedBack =
-    useAddEvaluationFeebackStore.getState().setAddEvaluationFeeback;
+    useAddDevelopEvalFeedbackStore.getState().setAddDevelopEvalFeedbackTarget;
 
   const setImprovement = useImprovePromptStore.getState().setImprovePrompt;
 

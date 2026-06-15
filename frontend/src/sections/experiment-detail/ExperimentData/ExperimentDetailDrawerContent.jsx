@@ -31,8 +31,8 @@ import NumericCell from "src/sections/common/DevelopCellRenderer/EvaluateCellRen
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
 import AgentFlowRenderer from "./AgentFlowRenderer";
-import { useAddEvaluationFeebackStore } from "src/sections/develop-detail/states";
-import AddEvaluationFeeback from "src/sections/develop-detail/DataTab/AddEvaluationFeeback/AddEvaluationFeeback";
+import { useAddDevelopEvalFeedbackStore } from "src/sections/develop-detail/states";
+import AddDevelopEvalFeedbackDrawer from "src/sections/develop-detail/DataTab/AddEvaluationFeedback/AddDevelopEvalFeedbackDrawer";
 
 // Skeleton loader for loading states
 const SkeletonLoader = () => (
@@ -161,7 +161,7 @@ export default function ExperimentDetailDrawerContent({
   const theme = useTheme();
   const agTheme = useAgThemeWith(EXPERIMENT_DRAWER_THEME_PARAMS);
   const resizableRowRef = useRef(null);
-  const { setAddEvaluationFeeback } = useAddEvaluationFeebackStore();
+  const { setAddDevelopEvalFeedbackTarget } = useAddDevelopEvalFeedbackStore();
 
   // Column grouping logic - separates individual columns from dataset columns
   const { individualCols: _individualCols, datasetCols } = useMemo(() => {
@@ -1045,18 +1045,23 @@ export default function ExperimentDetailDrawerContent({
           isRefetching={isPending}
           onAddFeedbackClick={(evalData) => {
             if (!evalData?.group?.id || !evalData?.id) return;
-            setAddEvaluationFeeback({
+            setAddDevelopEvalFeedbackTarget({
               ...evalData,
-              userEvalMetricId: evalData?.group?.id,
-              sourceId: evalData?.id,
-              rowData: { rowId: row?.rowId },
+              user_eval_metric_id: evalData?.group?.id,
+              source_id: evalData?.id,
+              // `row` here is the FE-shaped datapoint row used across this
+              // experiment drawer (has `rowId`, `cellValue`, `cellDiffValue`
+              // — see :902-910). We rewrap as `row_data.row_id` so the
+              // wrapper sees the same snake_case envelope every other
+              // dispatcher uses.
+              row_data: { row_id: row?.rowId },
             });
             setOpenDetailRow(null);
           }}
         />
       )}
 
-      <AddEvaluationFeeback module="experiment" onRefreshGrid={refreshGrid} />
+      <AddDevelopEvalFeedbackDrawer module="experiment" onRefreshGrid={refreshGrid} />
     </>
   );
 }

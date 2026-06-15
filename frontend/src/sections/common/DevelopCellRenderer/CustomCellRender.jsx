@@ -215,7 +215,7 @@ const CustomCellRender = (props) => {
                       column.feedBackClick({
                         ...cellData,
                         ...column,
-                        rowData: props?.data,
+                        row_data: props?.data,
                       });
                     }}
                   >

@@ -204,10 +204,10 @@ export const useDeleteColumnStore = create((set) => ({
   setDeleteColumn: (value) => set(() => ({ deleteColumn: value })),
 }));
 
-export const useAddEvaluationFeebackStore = create((set) => ({
-  addEvaluationFeeback: null,
-  setAddEvaluationFeeback: (value) =>
-    set(() => ({ addEvaluationFeeback: value })),
+export const useAddDevelopEvalFeedbackStore = create((set) => ({
+  addDevelopEvalFeedbackTarget: null,
+  setAddDevelopEvalFeedbackTarget: (value) =>
+    set(() => ({ addDevelopEvalFeedbackTarget: value })),
 }));
 
 export const useImprovePromptStore = create((set) => ({
@@ -339,7 +339,7 @@ export const resetAllStates = () => {
   useEditColumnNameStore.getState().setEditColumnName(null);
   useEditColumnTypeStore.getState().setEditColumnType(null);
   useDeleteColumnStore.getState().setDeleteColumn(null);
-  useAddEvaluationFeebackStore.getState().setAddEvaluationFeeback(null);
+  useAddDevelopEvalFeedbackStore.getState().setAddDevelopEvalFeedbackTarget(null);
   useImprovePromptStore.getState().setImprovePrompt(null);
   useEditCellStore.getState().setEditCell(null);
 
