@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -233,11 +234,55 @@ def apply_file(client, sf: SchemaFile, applied_by: str, *,
     return len(statements)
 
 
+_DB_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def ensure_database(args) -> int:
+    """CREATE DATABASE IF NOT EXISTS for the target db.
+
+    Uses a bootstrap connection with NO `database=` (clickhouse_connect then
+    targets the server-side `default` db, which always exists) — a client
+    bound to a missing db fails its first command with UNKNOWN_DATABASE (81).
+    Returns 0 on success/skip, 1 on invalid identifier.
+    """
+    db = args.ch_database
+    if not _DB_NAME_RE.match(db):
+        log.error("invalid_database_name", database=db)
+        return 1
+    if db == "default":
+        return 0  # always exists; also avoids needing CREATE grants
+    bootstrap = clickhouse_connect.get_client(
+        host=args.ch_host,
+        port=args.ch_http_port,
+        username=args.ch_user,
+        password=args.ch_password,
+        send_receive_timeout=120,
+    )
+    # Replicated mode: the database must exist on every replica BEFORE
+    # ensure_versions_table's ON CLUSTER table DDL fans out.
+    on_cluster = f" ON CLUSTER '{args.cluster}'" if args.replicated else ""
+    try:
+        bootstrap.command(f"CREATE DATABASE IF NOT EXISTS `{db}`{on_cluster}")
+        log.info("database_ensured", database=db, replicated=args.replicated)
+    except Exception as e:
+        # e.g. user lacks CREATE DATABASE grant but the db was pre-provisioned
+        # (prod). Proceed — the real connect below fails loudly if it's
+        # genuinely missing.
+        log.warning("database_ensure_failed", database=db, err=str(e))
+    finally:
+        bootstrap.close()
+    return 0
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────────────────────────────────────
 def main(argv: list[str] | None = None) -> int:
     args = build_argparser().parse_args(argv)
+
+    rc = ensure_database(args)
+    if rc:
+        return rc
 
     log.info("connect", host=args.ch_host, port=args.ch_http_port, database=args.ch_database)
     client = clickhouse_connect.get_client(
