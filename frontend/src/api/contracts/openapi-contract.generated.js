@@ -50446,6 +50446,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Eval group",
           "type": "string",
           "readOnly": true
+        },
+        "pinned_version": {
+          "title": "Pinned version",
+          "description": "Pin to a specific template version for runtime.",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
         }
       }
     },
