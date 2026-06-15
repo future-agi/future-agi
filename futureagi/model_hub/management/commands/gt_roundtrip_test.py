@@ -150,7 +150,7 @@ class Command(BaseCommand):
         if inspect:
             for r in rows:
                 self.stdout.write(
-                    f"  match: q={r.get('question','')[:40]!r} verdict={r.get('verdict')}"
+                    f"  match: q={r.get('question', '')[:40]!r} verdict={r.get('verdict')}"
                 )
 
     def _case_retrieve_cross_tenant_is_zero(
@@ -161,9 +161,7 @@ class Command(BaseCommand):
         # check; we don't persist this - we just want the helper's
         # tenant filter to gate the CH read.
         original_org_id = fx.gt.organization_id
-        other = Organization.objects.create(
-            name=f"rt-other-{uuid.uuid4().hex[:6]}"
-        )
+        other = Organization.objects.create(name=f"rt-other-{uuid.uuid4().hex[:6]}")
         fx.gt.organization_id = other.id
         try:
             rows = GroundTruthService.retrieve_few_shot(
@@ -350,9 +348,7 @@ class Command(BaseCommand):
             )
         except Exception as exc:
             self.stdout.write(
-                self.style.WARNING(
-                    f"  CH cleanup failed (ignored): {exc!r}"
-                )
+                self.style.WARNING(f"  CH cleanup failed (ignored): {exc!r}")
             )
         finally:
             db.close()

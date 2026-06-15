@@ -50,7 +50,6 @@ def has_usable_inputs_for_gt(
     return False
 
 
-
 def load_ground_truth_config(eval_template) -> dict | None:
     """Return the GT config dict from the template, or ``None``.
 
@@ -83,16 +82,13 @@ def get_label_columns(role_mapping: dict | None) -> tuple[str, str]:
                 return candidate
         return ""
 
-    output = _first_str(
-        role_mapping.get("output"), role_mapping.get("expected_output")
-    )
+    output = _first_str(role_mapping.get("output"), role_mapping.get("expected_output"))
     explanation = _first_str(
         role_mapping.get("explanation"),
         role_mapping.get("reasoning"),
         role_mapping.get("reason"),
     )
     return output, explanation
-
 
 
 def _parse_score(value: Any) -> float | None:
@@ -154,7 +150,6 @@ def validate_output_value(
         return True, None
 
     return True, None
-
 
 
 def get_ground_truth_few_shot_examples(
@@ -277,7 +272,6 @@ def inject_ground_truth_context(
     return mapped
 
 
-
 def format_few_shot_examples(
     examples: list[dict],
     *,
@@ -324,9 +318,7 @@ def _iter_inputs(example: dict, variable_mapping: dict | None):
                 yield tmpl_var, target, example[target]
 
 
-def _format_structured(
-    examples, variable_mapping, output_column, explanation_column
-):
+def _format_structured(examples, variable_mapping, output_column, explanation_column):
     lines = ["--- Reference Examples (scored by human experts) ---", ""]
     for i, example in enumerate(examples, 1):
         lines.append(f"Example {i}:")
@@ -336,9 +328,7 @@ def _format_structured(
         if output_column and output_column in example:
             lines.append(f"  Eval Output: {example[output_column]}")
         if explanation_column and explanation_column in example:
-            lines.append(
-                f"  Eval Output Explanation: {example[explanation_column]}"
-            )
+            lines.append(f"  Eval Output Explanation: {example[explanation_column]}")
         lines.append("")
     lines.append("--- End Reference Examples ---")
     return "\n".join(lines)
