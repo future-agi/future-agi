@@ -828,12 +828,17 @@ services:
       peerdb-temporal:
         condition: service_healthy
     environment:
-      - TEMPORAL_CLI_ADDRESS=peerdb-temporal:7233
+      - TEMPORAL_ADDRESS=peerdb-temporal:7233
+    # `tctl` was removed from current temporalio/admin-tools images — the old
+    # entrypoint failed silently and mirrors then died with "no mapping
+    # defined for search attribute MirrorName". The trailing list|grep makes
+    # a registration failure fail this container (peerdb-init gates on it).
     entrypoint: >
       /bin/sh -c "
-      echo 'Registering MirrorName search attribute...' &&
-      echo Y | tctl admin cluster add-search-attributes --name MirrorName --type Text 2>/dev/null;
-      echo 'Done (may already exist)'
+      echo 'Registering MirrorName search attribute...';
+      temporal operator search-attribute create --name MirrorName --type Text --namespace default ||
+      echo 'create failed (may already exist)';
+      temporal operator search-attribute list --namespace default | grep MirrorName
       "
 
   peerdb-init:
