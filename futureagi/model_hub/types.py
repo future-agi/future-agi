@@ -569,12 +569,7 @@ class GroundTruthConfigRequest(BaseModel):
 
 
 class GroundTruthSearchRequest(BaseModel):
-    """Request for POST /model-hub/ground-truth/{id}/search/
-
-    Supports both legacy single-text-box callers (``query``) and the
-    multi-variable Test Retrieval flow (``inputs`` dict). One of the two
-    must be provided.
-    """
+    """Request for POST /model-hub/ground-truth/{id}/search/"""
 
     query: str = ""
     inputs: dict[str, object] | None = None

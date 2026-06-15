@@ -1255,6 +1255,41 @@ class EmbeddingManager:
 
             db_client.drop_table(f"{table_name}_{i}")
 
+    def soft_delete_vectors(
+        self,
+        table_name: str,
+        eval_id: str,
+        organization_id: str,
+        workspace_id: str | None = None,
+    ) -> None:
+        """Mark vectors scoped by (eval_id, organization_id, workspace_id) as deleted.
+
+        ``ALTER ... UPDATE`` is async on MergeTree; the mutation is queued
+        and reads filter ``deleted=0`` so old rows fall out as it catches up.
+        """
+        self.db_client.create_table(table_name)
+        clauses = [
+            f"eval_id = '{eval_id}'",
+            "has(metadata.key, 'organization_id')",
+            f"metadata.value[indexOf(metadata.key, 'organization_id')] = '{organization_id}'",
+        ]
+        if workspace_id:
+            clauses.append("has(metadata.key, 'workspace_id')")
+            clauses.append(
+                f"metadata.value[indexOf(metadata.key, 'workspace_id')] = '{workspace_id}'"
+            )
+        where = " AND ".join(clauses)
+        self.db_client.client.execute(
+            f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE {where}"
+        )
+        logger.info(
+            "vectors_soft_deleted",
+            table_name=table_name,
+            eval_id=eval_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
+
     def delete_chunks(
         self, file_id: str, kb_id: str, table_name: str, organization_id: str
     ) -> None:

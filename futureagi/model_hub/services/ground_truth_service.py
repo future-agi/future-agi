@@ -358,8 +358,8 @@ class GroundTruthService:
         )
 
         manager = EmbeddingManager()
-        _soft_delete_prior_vectors(
-            manager=manager,
+        manager.soft_delete_vectors(
+            table_name=GROUND_TRUTH_TABLE_NAME,
             eval_id=eval_id,
             organization_id=organization_id,
             workspace_id=workspace_id,
@@ -481,9 +481,6 @@ class GroundTruthService:
         inputs: dict[str, Any] | None,
         query: str | None,
         max_results: int,
-        # Kept for API compatibility; per-column intersection already
-        # gates noise. Honoured only if the underlying retrieval helper
-        # is extended to surface similarity (TODO cross-feature).
         similarity_threshold: float = 0.0,  # noqa: ARG004
     ) -> dict[str, Any] | ServiceError:
         if gt.embedding_status != EmbeddingStatus.COMPLETED:
@@ -504,9 +501,7 @@ class GroundTruthService:
                     "dict matching the rule prompt's template variables.",
                     code="EMPTY_INPUT",
                 )
-            # Legacy single-text-box callers: project the query string
-            # onto every mapped template variable so per-column search
-            # still has something to compare against.
+            # Project the legacy single-text query onto every mapped variable.
             mapped = _flatten_variable_mapping(gt.variable_mapping)
             if not mapped:
                 return ServiceError(
@@ -589,8 +584,7 @@ def _flatten_variable_mapping(
 
 
 def _organization_id_or_raise(gt: EvalGroundTruth) -> str:
-    """Tenant-scoped CH writes require an organization. Refuse to embed
-    a row without one - the alternative is a silent cross-tenant leak."""
+    """Refuse to embed a row without an organization; silent cross-tenant leak otherwise."""
     organization_id = getattr(gt, "organization_id", None) or (
         gt.organization.id if getattr(gt, "organization", None) else None
     )
@@ -626,52 +620,3 @@ def _mark_failed(gt: EvalGroundTruth, reason: str) -> EmbedDatasetResult:
     )
 
 
-def _soft_delete_prior_vectors(
-    *,
-    manager,
-    eval_id: str,
-    organization_id: str,
-    workspace_id: str | None,
-) -> None:
-    """Mark any existing CH rows for this (eval, org, workspace) as deleted.
-
-    The CH writer doesn't dedup on its own - re-running the embed pass
-    would accumulate stale vectors otherwise. Soft-delete via
-    ``ALTER … UPDATE deleted=1`` keeps the historical data recoverable
-    if we ever need to audit.
-    """
-    from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
-    from agentic_eval.core.embeddings.embedding_manager import (
-        GROUND_TRUTH_TABLE_NAME,
-    )
-
-    db = ClickHouseVectorDB()
-    try:
-        db.create_table(GROUND_TRUTH_TABLE_NAME)
-        clauses = [
-            f"eval_id = '{eval_id}'",
-            "has(metadata.key, 'organization_id')",
-            f"metadata.value[indexOf(metadata.key, 'organization_id')] = '{organization_id}'",
-        ]
-        if workspace_id:
-            clauses.append("has(metadata.key, 'workspace_id')")
-            clauses.append(
-                f"metadata.value[indexOf(metadata.key, 'workspace_id')] = '{workspace_id}'"
-            )
-        where = " AND ".join(clauses)
-        # ``ALTER ... UPDATE`` is async on MergeTree; this returns once
-        # the mutation is queued. Subsequent inserts use fresh UUIDs so
-        # there is no item_id collision with the soft-deleted rows; reads
-        # filter ``deleted=0`` so old rows fall out as the mutation
-        # catches up.
-        db.client.execute(
-            f"ALTER TABLE {GROUND_TRUTH_TABLE_NAME} UPDATE deleted = 1 WHERE {where}"
-        )
-        logger.info(
-            "ground_truth_prior_vectors_soft_deleted",
-            eval_id=eval_id,
-            organization_id=organization_id,
-            workspace_id=workspace_id,
-        )
-    finally:
-        db.close()
