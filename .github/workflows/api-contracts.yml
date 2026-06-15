@@ -77,17 +77,53 @@ on:
 
 jobs:
   frontend-contracts:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
+    env:
+      EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
+      EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Require private EE checkout token
+        working-directory: .
+        run: |
+          if [ -z "${EE_REPO_READ_TOKEN}" ]; then
+            echo "::error::EE_REPO_READ_TOKEN is required for frontend contract CI because the runtime Management API contract debt report includes Enterprise routes."
+            exit 1
+          fi
+
+      - name: Checkout EE package
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/ee
+          path: futureagi/ee
+          token: ${{ env.EE_REPO_READ_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Use matching EE branch when available
+        working-directory: futureagi/ee
+        run: |
+          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
+            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
+            git checkout --detach FETCH_HEAD
+            echo "Using EE branch ${EE_REPO_BRANCH}"
+          else
+            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
+          fi
+
+      - name: Drop EE checkout credentials
+        working-directory: futureagi/ee
+        run: git config --unset-all http.https://github.com/.extraheader || true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20.17"
+          node-version: "22.18"
           cache: "yarn"
           cache-dependency-path: frontend/yarn.lock
 
@@ -128,7 +164,7 @@ jobs:
       redis:
         image: redis:7
         ports:
-          - 6379:6379
+          - 16379:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -144,11 +180,48 @@ jobs:
       PG_TEST_DB: test_tfc_test
       PG_USER: postgres
       PG_PASSWORD: postgres
+      CH_HOST: localhost
+      CH_PORT: 19000
+      CH_DATABASE: test_tfc
+      CH25_HOST: localhost
+      CH25_HTTP_PORT: 18123
+      CH25_TCP_PORT: 19000
+      CH25_DATABASE: test_tfc
+      CH_USE_REPLICATED_ENGINES: "false"
+      CH25_DROP_LEGACY_CDC_CHAIN: "true"
+      REDIS_URL: redis://localhost:6379/0
+      REDIS_LOCK_URL: redis://localhost:6379/2
       TESTING: "false"
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Start ClickHouse test service
+        run: |
+          docker run -d \
+            --name futureagi-api-contracts-clickhouse \
+            --ulimit nofile=262144:262144 \
+            -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+            -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+            -e CLICKHOUSE_DB=test_tfc \
+            -p 18123:8123 \
+            -p 19000:9000 \
+            -v "$PWD/.ci/clickhouse-test-config.xml:/etc/clickhouse-server/config.d/test-overrides.xml:ro" \
+            -v "$PWD/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/001_storage_policy.xml:ro" \
+            clickhouse/clickhouse-server:25.3-alpine
+
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:18123/ping >/dev/null; then
+              echo "ClickHouse is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs futureagi-api-contracts-clickhouse
+          echo "::error::ClickHouse did not become ready on localhost:18123"
+          exit 1
 
       - name: Require private EE checkout token
         working-directory: .
@@ -193,6 +266,15 @@ jobs:
       - name: Install backend dependencies
         run: uv sync --frozen
 
+      - name: Apply ClickHouse test schema
+        run: >
+          uv run python -m tracer.services.clickhouse.v2.apply_schema
+          --schema-dir tracer/services/clickhouse/v2/schema
+          --ch-host localhost
+          --ch-http-port 18123
+          --ch-user default
+          --ch-database test_tfc
+
       - name: Check generated Swagger schema
         working-directory: .
         run: |
@@ -203,6 +285,8 @@ jobs:
           git diff --exit-code api_contracts/openapi/swagger.json
 
       - name: Run annotation/filter contract tests
+        env:
+          TESTING: "true"
         run: >
           uv run pytest -q --tb=line
           tracer/tests/test_filter_contract.py

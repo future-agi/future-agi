@@ -211,7 +211,7 @@ func (ks *KeyStore) Authenticate(rawKey string) *APIKey {
 	key, ok := ks.byHash[hash]
 	ks.mu.RUnlock()
 
-	if !ok {
+	if !ok || !key.IsActive() {
 		return nil
 	}
 	// Best-effort last-used timestamp — atomic pointer swap, no write lock needed.

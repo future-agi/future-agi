@@ -240,8 +240,9 @@ def _compute_span_aggregation(base_qs):
 
 
 logger = structlog.get_logger(__name__)
-from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import EmptyRequestSerializer
+from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.custom_eval_config import CustomEvalConfig
@@ -249,6 +250,12 @@ from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, Ru
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.serializers.eval_task import (
+    EvalTaskCreateResponseSerializer,
+    EvalTaskDeleteRequestSerializer,
+    EvalTaskIdQuerySerializer,
+    EvalTaskMessageResponseSerializer,
+    EvalTaskUpdateRequestSerializer,
+    EvalTaskUpdateResponseSerializer,
     EditEvalTaskSerializer,
     EvalTaskListQuerySerializer,
     EvalTaskListWithProjectNameQuerySerializer,
@@ -266,10 +273,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     serializer_class = EvalTaskSerializer
 
     def _get_request_organization(self):
-        return (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        # Returns None for unauthenticated requests (e.g. drf-yasg's fake view
+        # during OpenAPI generation) instead of raising on AnonymousUser, which
+        # would otherwise silently drop request bodies from the generated schema.
+        org = getattr(self.request, "organization", None)
+        if org is not None:
+            return org
+        user = getattr(self.request, "user", None)
+        if user is None or not user.is_authenticated:
+            return None
+        return getattr(user, "organization", None)
 
     def _project_workspace_scope_q(self, organization_id):
         workspace = getattr(self.request, "workspace", None)
@@ -290,14 +303,20 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         return Q(project__workspace=workspace)
 
     def _scope_eval_task_queryset(self, queryset):
-        organization_id = self._get_request_organization().id
+        organization = self._get_request_organization()
+        if organization is None:
+            return queryset.none()
+        organization_id = organization.id
         return queryset.filter(
             project__organization_id=organization_id,
             project__deleted=False,
         ).filter(self._project_workspace_scope_q(organization_id))
 
     def _scope_project_queryset(self, queryset):
-        organization_id = self._get_request_organization().id
+        organization = self._get_request_organization()
+        if organization is None:
+            return queryset.none()
+        organization_id = organization.id
         workspace = getattr(self.request, "workspace", None)
         queryset = queryset.filter(organization_id=organization_id, deleted=False)
         if not workspace:
@@ -314,7 +333,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         return queryset.filter(workspace=workspace)
 
     def _scope_custom_eval_config_queryset(self, queryset, project_id=None):
-        organization_id = self._get_request_organization().id
+        organization = self._get_request_organization()
+        if organization is None:
+            return queryset.none()
+        organization_id = organization.id
         queryset = queryset.filter(
             deleted=False,
             project__organization_id=organization_id,
@@ -350,8 +372,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 Project.objects.all()
             )
         if "evals" in fields:
-            fields["evals"].queryset = (
-                self._scope_custom_eval_config_queryset(CustomEvalConfig.objects.all())
+            fields["evals"].queryset = self._scope_custom_eval_config_queryset(
+                CustomEvalConfig.objects.all()
             )
         return serializer
 
@@ -376,6 +398,19 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
         return queryset
 
+    @validated_request(request_serializer=EvalTaskSerializer)
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    @validated_request(
+        request_serializer=EvalTaskSerializer,
+        partial_request_validation=True,
+        strict_request_validation=False,
+    )
+    def partial_update(self, request, *args, **kwargs):
+        kwargs["partial"] = True
+        return super().update(request, *args, **kwargs)
+
     def perform_destroy(self, instance):
         # Cascade soft-delete to the task's loggers and eval results so they
         # don't outlive the deleted task (mirrors mark_eval_tasks_deleted).
@@ -388,15 +423,22 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         )
         instance.delete()
 
+    @validated_request(
+        request_serializer=EvalTaskSerializer,
+        responses={200: EvalTaskCreateResponseSerializer},
+    )
     def create(self, request, *args, **kwargs):
         try:
             data = request.data
             data["status"] = EvalTaskStatus.PENDING
             filters = data.get("filters", {})
             project_id = data.get("project")
-            if project_id and not self._scope_project_queryset(
-                Project.objects.all()
-            ).filter(id=project_id).exists():
+            if (
+                project_id
+                and not self._scope_project_queryset(Project.objects.all())
+                .filter(id=project_id)
+                .exists()
+            ):
                 return self._gm.bad_request("Project not found")
             if project_id:
                 filters["project_id"] = project_id
@@ -411,8 +453,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             )
             if invalid_eval_ids:
                 return self._gm.bad_request(
-                    "Eval configs not found for project: "
-                    + ", ".join(invalid_eval_ids)
+                    "Eval configs not found for project: " + ", ".join(invalid_eval_ids)
                 )
             eval_task = serializer.save()
 
@@ -464,6 +505,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     "id": str(eval_task["id"]),
                     "name": eval_task["name"],
                     "status": eval_task["status"],
+                    "run_type": eval_task.get("run_type"),
                     "filters_applied": eval_task["filters"],
                     "created_at": eval_task["created_at"],
                     "evals_applied": eval_names,
@@ -532,7 +574,13 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # Pass/fail counts — cheap aggregate, two indexed COUNTs.
             counts = EvalLogger.objects.filter(eval_task_id=eval_task_id).aggregate(
                 errors_count=Count("id", filter=Q(error=True)),
-                success_count=Count("id", filter=Q(error=False)),
+                success_count=Count(
+                    "id", filter=Q(error=False, skipped_reason__isnull=True)
+                ),
+                # Skipped: the eval never ran (e.g. a mapped span attribute
+                # was absent). Counted separately so it stays out of the
+                # success and failure tallies.
+                skipped_count=Count("id", filter=Q(skipped_reason__isnull=False)),
                 # Partial-input warnings live in
                 # output_metadata.warnings as a JSON array. has_key on
                 # the JSONField gives us a cheap "any warnings?" filter
@@ -632,13 +680,18 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 reverse=True,
             )[: self._WARNING_GROUPS_LIMIT]
 
-            total_count = counts["errors_count"] + counts["success_count"]
+            total_count = (
+                counts["errors_count"]
+                + counts["success_count"]
+                + counts["skipped_count"]
+            )
 
             result = {
                 "start_time": eval_task.start_time,
                 "end_time": eval_task.end_time,
                 "errors_count": counts["errors_count"],
                 "success_count": counts["success_count"],
+                "skipped_count": counts["skipped_count"],
                 "warnings_count": counts["warnings_count"],
                 "total_count": total_count,
                 "error_groups": error_groups,
@@ -711,6 +764,14 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # Soft-deleted rows are excluded (intentional departure from the
             # legacy path) so rollups reflect the user's current view of
             # the data. ``period`` is not applied — these are task-wide.
+            #
+            # Spans-only semantics: session-target rows (``observation_span_id
+            # IS NULL``) are excluded from both aggregations so the row set
+            # is consistent whether or not a date range is supplied.
+            #
+            # Optional ``start_date`` / ``end_date`` (ISO-8601) scope the
+            # rollup to spans whose ``observation_span.created_at`` falls
+            # in the range.
             eval_aggregation = _truthy(
                 self.request.query_params.get("eval_aggregation")
             )
@@ -721,10 +782,26 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 agg_base_qs = EvalLogger.objects.filter(
                     eval_task_id=str(eval_task_id),
                     deleted=False,
+                    observation_span_id__isnull=False,
                 )
                 if eval_id_filter:
                     agg_base_qs = agg_base_qs.filter(
                         custom_eval_config_id=eval_id_filter
+                    )
+
+                start_date_str = self.request.query_params.get("start_date")
+                end_date_str = self.request.query_params.get("end_date")
+                if start_date_str:
+                    agg_base_qs = agg_base_qs.filter(
+                        observation_span__created_at__gte=datetime.fromisoformat(
+                            start_date_str
+                        )
+                    )
+                if end_date_str:
+                    agg_base_qs = agg_base_qs.filter(
+                        observation_span__created_at__lte=datetime.fromisoformat(
+                            end_date_str
+                        )
                     )
 
                 agg_response = {"eval_task_id": str(eval_task_id)}
@@ -1089,6 +1166,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=EvalTaskDeleteRequestSerializer,
+        responses={200: EvalTaskMessageResponseSerializer},
+    )
     @action(detail=False, methods=["post"])
     def mark_eval_tasks_deleted(self, request, *args, **kwargs):
         try:
@@ -1136,6 +1217,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             traceback.print_exc()
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        query_serializer=EvalTaskIdQuerySerializer,
+        responses={200: EvalTaskMessageResponseSerializer},
+    )
     @action(detail=False, methods=["post"])
     def pause_eval_task(self, request, *args, **kwargs):
         try:
@@ -1167,6 +1253,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             traceback.print_exc()
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        query_serializer=EvalTaskIdQuerySerializer,
+        responses={200: EvalTaskMessageResponseSerializer},
+    )
     @action(detail=False, methods=["post"])
     def unpause_eval_task(self, request, *args, **kwargs):
         try:
@@ -1234,6 +1325,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     "name": eval_task.name,
                     "project_name": eval_task.project.name,
                     "status": eval_task.status,
+                    "run_type": eval_task.run_type,
                     "filters_applied": eval_task.filters,
                     "created_at": eval_task.created_at,
                     "evals_applied": [eval.name for eval in eval_task.evals.all()],
@@ -1286,6 +1378,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             traceback.print_exc()
             return self._gm.bad_request(f"error fetching the traces list {str(e)}")
 
+    @validated_request(
+        request_serializer=EvalTaskUpdateRequestSerializer,
+        responses={200: EvalTaskUpdateResponseSerializer},
+    )
     @action(detail=False, methods=["patch"])
     def update_eval_task(self, request, *args, **kwargs):
         """
@@ -1524,9 +1620,68 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             )
             filters = update_fields.get("filters") or eval_task.filters
 
-            # Validate filters and get total spans count
-            parsed_filters = parsing_evaltask_filters(filters)
-            total_spans = ObservationSpan.objects.filter(parsed_filters).count()
+            # Validate filters and get total spans count.
+            #
+            # CH25 migration (D-027): spans live in ClickHouse. The reader
+            # exposes a narrow ``count_with_filters`` (project_id /
+            # trace_ids / observation_type / session_id / created_at_*)
+            # that matches the keys ``parsing_evaltask_filters_for_ch``
+            # emits. Routing the keep-PG ``parsing_evaltask_filters → Q``
+            # through CH in full would require a Q→CH translator; here
+            # we only need a count so the narrow companion is sufficient.
+            #
+            # session_id filter semantics: ``parsing_evaltask_filters`` on
+            # the PG side materializes ``Trace.objects.filter(session_id=)
+            # .values_list("id")`` and filters by ``trace_id__in=…``. The
+            # CH spans table denormalizes ``trace_session_id`` onto every
+            # row, so the reader's ``session_id`` kwarg (which becomes
+            # ``trace_session_id = %s``) is the direct equivalent — no PG
+            # Trace round-trip needed.
+            #
+            # span_attributes_filters guard: ``_for_ch`` IGNORES
+            # span_attributes_filters because translating JSON-field Q
+            # objects to CH typed-Map predicates needs the v2 FilterEngine.
+            # If a caller passed them, ``count_with_filters`` would
+            # otherwise OVERCOUNT (running with the looser filter set
+            # only), inflating ``target_sample_size`` against the legacy
+            # PG denominator. Fall back to PG for that case so the count
+            # is tight; remove the fallback once the v2 FilterEngine
+            # ships CH attribute-filter support.
+            # CH25-TODO(span_attributes_filters_for_ch): wire a v2-
+            # FilterEngine-backed ``count_with_attr_filters`` so 100% of
+            # evaltask filter shapes route through CH.
+            from tracer.services.clickhouse.v2 import get_reader
+            from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+            has_span_attr_filters = bool(
+                filters
+                and isinstance(filters, dict)
+                and filters.get("span_attributes_filters")
+            )
+            # Tenant gate: force-scope by the eval_task's own project_id
+            # regardless of what the edit payload's ``filters`` carry.
+            # The PG ``parsing_evaltask_filters`` honors ``project_id``
+            # if present in ``filters`` but does NOT inject the
+            # eval_task's project_id when absent — which means an edit
+            # payload that omits or rewrites ``filters.project_id``
+            # produces an untenanted count (and an over-sampled rerun).
+            # Codex P1 (mid-views-chunk review).
+            tenant_project_id = str(eval_task.project_id)
+            if has_span_attr_filters:
+                # PG fallback (KEEP-PG until the v2 FilterEngine lands).
+                parsed_filters, parsed_filter_anns = parsing_evaltask_filters(filters)
+                parsed_filters &= Q(project_id=tenant_project_id)
+                total_spans = (ObservationSpan.objects.annotate(**parsed_filter_anns)
+                .filter(parsed_filters)
+                .count())
+            else:
+                ch_kwargs = CHSpanReader.parsing_evaltask_filters_for_ch(filters or {})
+                # Override any caller-supplied project_id with the
+                # eval_task's project_id — defense-in-depth against an
+                # edit payload that swaps it out.
+                ch_kwargs["project_id"] = tenant_project_id
+                with get_reader() as reader:
+                    total_spans = reader.count_with_filters(**ch_kwargs)
 
             if total_spans == 0:
                 logger.warning(
@@ -1661,11 +1816,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             if not eval_id:
                 return self._gm.bad_request("eval_id is required")
 
-            queryset = (
-                self._scope_eval_task_queryset(
-                    EvalTask.objects.select_related("project").prefetch_related("evals")
-                ).get(id=eval_id)
-            )
+            queryset = self._scope_eval_task_queryset(
+                EvalTask.objects.select_related("project").prefetch_related("evals")
+            ).get(id=eval_id)
 
             # Build rich eval objects so the frontend can render eval cards
             # with name, mapping, model, template info — not just bare UUIDs.

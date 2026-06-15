@@ -182,7 +182,8 @@ class TestFilterSerializerContracts:
         assert not serializer.is_valid()
         assert "filters" in serializer.errors
 
-    def test_eval_task_filters_reject_scalar_observation_type(self):
+    def test_eval_task_filters_coerce_scalar_observation_type_to_list(self):
+        """Scalar observation_type is coerced to a list for convenience."""
         serializer = EditEvalTaskSerializer(
             data={
                 "edit_type": "edit_rerun",
@@ -190,8 +191,8 @@ class TestFilterSerializerContracts:
             }
         )
 
-        assert not serializer.is_valid()
-        assert "filters" in serializer.errors
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["filters"]["observation_type"] == ["llm"]
 
     def test_dashboard_filter_values_query_requires_explicit_source_choices(self):
         serializer = DashboardFilterValuesQuerySerializer(
@@ -649,6 +650,14 @@ class TestFilterSerializerContracts:
 
         assert not serializer.is_valid()
         assert "sort_params" in serializer.errors
+
+    def test_project_version_export_request_defaults_omitted_run_ids(self):
+        serializer = ProjectVersionExportSerializer(
+            data={"project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f"}
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["runs_ids"] == []
 
     def test_project_user_metrics_request_rejects_legacy_filters(self):
         serializer = ProjectUserMetricsRequestSerializer(

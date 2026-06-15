@@ -35,6 +35,35 @@ const defaultFilter = {
   },
 };
 
+const normalizeColumnConfig = (column = {}) => ({
+  ...column,
+  isVisible: column.isVisible ?? column.is_visible,
+  groupBy: column.groupBy ?? column.group_by,
+  outputType: column.outputType ?? column.output_type,
+  reverseOutput: column.reverseOutput ?? column.reverse_output,
+  annotationLabelType:
+    column.annotationLabelType ?? column.annotation_label_type,
+  choicesMap: column.choicesMap ?? column.choices_map,
+  evalTemplateId: column.evalTemplateId ?? column.eval_template_id,
+  sourceField: column.sourceField ?? column.source_field,
+  parentEvalId: column.parentEvalId ?? column.parent_eval_id,
+});
+
+const normalizeSpanListPayload = (payload = {}) => {
+  const metadata = payload.metadata || {};
+
+  return {
+    columnConfig: (
+      payload.columnConfig ||
+      payload.column_config ||
+      payload.config ||
+      []
+    ).map(normalizeColumnConfig),
+    table: payload.table || [],
+    totalRows: metadata.totalRows ?? metadata.total_rows ?? 0,
+  };
+};
+
 const SpanTab = React.forwardRef(
   (
     {
@@ -42,7 +71,6 @@ const SpanTab = React.forwardRef(
       setColumns,
       setTraceDetailDrawerOpen,
       filterOpen,
-      selectedTraceIds,
       setFilterOpen,
       setIsFilterApplied,
     },
@@ -266,25 +294,23 @@ const SpanTab = React.forwardRef(
               {
                 params: {
                   filters: JSON.stringify(debouncedValidatedFilters),
-                  project: projectId,
                   project_version_id: runId,
                   page_number: pageNumber,
                   page_size: 10,
-                  trace_ids: selectedTraceIds.join(","),
                 },
               },
             );
-            const res = results?.data?.result;
-            const columns = res?.columnConfig?.map((o) => ({
+            const res = normalizeSpanListPayload(results?.data?.result);
+            const columns = res.columnConfig.map((o) => ({
               ...o,
               id: o.id,
             }));
             setColumns(columns);
 
-            params.api.totalRowCount = res?.metadata?.totalRows;
+            params.api.totalRowCount = res.totalRows;
             params.success({
-              rowData: res?.table,
-              totalRows: res?.metadata?.totalRows,
+              rowData: res.table,
+              totalRows: res.totalRows,
             });
           } catch (error) {
             params.fail();
@@ -294,12 +320,12 @@ const SpanTab = React.forwardRef(
           return data.rowId;
         },
       }),
-      [debouncedValidatedFilters, selectedTraceIds],
+      [debouncedValidatedFilters, runId, setColumns],
     );
 
     useEffect(() => {
       return () => resetMetricIds();
-    }, []);
+    }, [resetMetricIds]);
 
     return (
       <>
@@ -381,7 +407,6 @@ SpanTab.propTypes = {
   setColumns: PropTypes.func,
   setTraceDetailDrawerOpen: PropTypes.func,
   filterOpen: PropTypes.bool,
-  selectedTraceIds: PropTypes.array,
   setFilterOpen: PropTypes.func,
   setIsFilterApplied: PropTypes.func,
 };

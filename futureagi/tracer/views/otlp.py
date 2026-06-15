@@ -28,6 +28,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.views import APIView
 
+from accounts.authentication import APIKeyAuthentication, LangfuseBasicAuthentication
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.payload_storage import PAYLOAD_DEFAULT_TTL, payload_storage
@@ -105,6 +106,7 @@ class OTLPTraceView(APIView):
     - partial_success field for rejected spans
     """
 
+    authentication_classes = [LangfuseBasicAuthentication, APIKeyAuthentication]
     permission_classes = [IsAuthenticated]
     # Disable DRF parsers - we handle parsing ourselves for OTLP compliance
     parser_classes = []

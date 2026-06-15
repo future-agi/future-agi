@@ -43,13 +43,24 @@ import { setRecaptchaExecutor } from "./utils/recaptchaService";
 import { AudioPlaybackProvider } from "./components/custom-audio/context-provider/AudioPlaybackContext";
 
 // ----------------------------------------------------------------------
-const extractErrorMessage = (result) => {
+const _extractParts = (result) => {
+  if (result == null || result === "") return "";
   if (typeof result === "string") return result;
-  if (Array.isArray(result)) return result.join(", ");
-  if (result && typeof result === "object")
-    return Object.values(result).flat().join(", ");
-  return "Something went wrong";
+  if (Array.isArray(result)) {
+    return [...new Set(result.map(_extractParts).filter(Boolean))].join(", ");
+  }
+  if (typeof result === "object") {
+    if (result.details && typeof result.details === "object") {
+      return _extractParts(result.details);
+    }
+    return [
+      ...new Set(Object.values(result).map(_extractParts).filter(Boolean)),
+    ].join(", ");
+  }
+  return String(result);
 };
+
+const extractErrorMessage = (result) => _extractParts(result) || "Something went wrong";
 
 const handleError = (error, variable, context, mutation) => {
   if (error?.statusCode == RESPONSE_CODES.LIMIT_REACHED) return;

@@ -28,6 +28,18 @@ from tfc.settings.settings import MINIO_URL, UPLOAD_BUCKET_NAME
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.storage_client import ensure_bucket, get_object_url, get_storage_client
 
+
+def get_compare_local_root():
+    return os.getenv("COMPARE_DATASET_LOCAL_ROOT") or os.path.join("media", "compare")
+
+
+def get_compare_local_dir(compare_id):
+    return os.path.join(get_compare_local_root(), str(compare_id))
+
+
+def get_compare_metadata_path(compare_id):
+    return os.path.join(get_compare_local_dir(compare_id), "metadata.json")
+
 # Map raw format names from detect_audio_format() (ffmpeg) to proper MIME types.
 # Shared by upload_audio_to_s3() and upload_audio_to_s3_duration().
 _FORMAT_TO_MIME = {
@@ -524,7 +536,11 @@ def upload_image_to_s3(
                     traceback.print_exc()
                     raise ValueError(get_error_message("INVALID_BASE64_STRING")) from e
 
-        img = Image.open(BytesIO(img_bytes))
+        try:
+            img = Image.open(BytesIO(img_bytes))
+        except Image.UnidentifiedImageError as e:
+            logger.warning(f"Skipping image upload: payload is not a valid image file: {str(e)}")
+            raise ValueError(get_error_message("INVALID_IMAGE")) from e
         format_detected = img.format
         if format_detected:
             format_detected = format_detected.lower()
@@ -594,7 +610,12 @@ def detect_audio_format(audio_bytes):
         stderr=subprocess.PIPE,
     )
 
-    stdout, stderr = process.communicate(input=audio_bytes)
+    try:
+        stdout, stderr = process.communicate(input=audio_bytes, timeout=10)
+    except subprocess.TimeoutExpired as e:
+        process.kill()
+        process.communicate()
+        raise TimeoutError("Audio format detection timed out (exceeded 10s)") from e
 
     if process.returncode != 0:
         raise Exception(f"FFmpeg Error: {stderr.decode('utf-8')}")
@@ -629,12 +650,21 @@ def convert_to_mp3(audio_bytes):
             stderr=subprocess.PIPE,
         )
 
-        stdout, stderr = process.communicate(input=audio_bytes)
+        try:
+            stdout, stderr = process.communicate(input=audio_bytes, timeout=60)
+        except subprocess.TimeoutExpired as e:
+            process.kill()
+            process.communicate()
+            raise TimeoutError(
+                "Audio conversion timed out (exceeded 60s for 50MB max input)"
+            ) from e
 
         if process.returncode != 0:
             raise Exception(f"FFmpeg Conversion Error: {stderr.decode('utf-8')}")
 
         return stdout, "mp3"
+    except TimeoutError:
+        raise
     except Exception as e:
         traceback.print_exc()
         raise ValueError(get_storage_error_message("UNABLE_TO_PROCESS_AUDIO")) from e

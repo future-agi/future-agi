@@ -23,6 +23,27 @@ def test_accounts_error_serializer_accepts_common_error_envelope():
     }
 
 
+def test_accounts_error_serializer_accepts_structured_login_result():
+    serializer = AccountsErrorResponseSerializer(
+        data={
+            "status": False,
+            "code": "LOGIN_INVALID_CREDENTIALS",
+            "detail": "Invalid credentials",
+            "result": {
+                "error": "Invalid credentials",
+                "error_code": "LOGIN_INVALID_CREDENTIALS",
+                "remaining_attempts": 4,
+            },
+        }
+    )
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["result"]["error_code"] == (
+        "LOGIN_INVALID_CREDENTIALS"
+    )
+    assert serializer.validated_data["result"]["remaining_attempts"] == 4
+
+
 def test_accounts_empty_request_serializer_rejects_non_empty_body():
     serializer = AccountsEmptyRequestSerializer(data={"unexpected": True})
 

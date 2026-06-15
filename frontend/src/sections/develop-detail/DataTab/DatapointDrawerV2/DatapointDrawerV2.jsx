@@ -275,19 +275,28 @@ const DatapointDrawerChild = () => {
     { eval_type: "user" },
     "dataset",
   );
-  const evalTypeBySourceId = useMemo(() => {
+  const evalMetaBySourceId = useMemo(() => {
     const map = {};
     (savedEvalsData?.evals || []).forEach((e) => {
       const key = e.id || e.user_eval_id;
-      if (key) map[key] = e.eval_type || e.evalType;
+      if (key)
+        map[key] = {
+          evalType: e.eval_type || e.evalType,
+          templateType: e.template_type || e.templateType,
+        };
     });
     return map;
   }, [savedEvalsData]);
   const isCodeEvalColumn = (col) => {
     const sourceId = col?.sourceId || col?.source_id;
-    return evalTypeBySourceId[sourceId] === "code";
+    return evalMetaBySourceId[sourceId]?.evalType === "code";
   };
   const evalOpenIsCode = isCodeEvalColumn(column?.col);
+
+  const isCompositeEval =
+    evalMetaBySourceId[column?.col?.sourceId || column?.col?.source_id]
+      ?.templateType === "composite";
+
 
   const runEvalData = useMemo(() => {
     const evalColumns = allColumns.filter((i) => i.originType === "evaluation");
@@ -803,7 +812,9 @@ const DatapointDrawerChild = () => {
                                 }}
                               />
                             </ShowComponent>
-                            <ShowComponent condition={(finalArray?.length ?? 0) > 0}>
+                            <ShowComponent
+                              condition={(finalArray?.length ?? 0) > 0}
+                            >
                               {finalArray?.map((val) => (
                                 <Chip
                                   key={val}
@@ -899,9 +910,8 @@ const DatapointDrawerChild = () => {
                     )}
                   </Box>
                 </Box>
-                {/* Code evals don't produce model traces for the localizer
-                    to introspect — hide the section entirely. */}
-                {!evalOpenIsCode && (
+               
+                {!evalOpenIsCode && !isCompositeEval && (
                   <ErrorLocalizationCellSection
                     evalOpen={evalOpen}
                     onAnalysisLoaded={(details) => {

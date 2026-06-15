@@ -513,7 +513,7 @@ class AddVectorDBColumnView(APIView):
             dataset.column_config = column_config
             dataset.save(update_fields=["column_order", "column_config"])
 
-            # Ensure config is JSON serializable
+            # Ensure config is JSON serializable (validated_data may contain UUIDs)
             serializable_config = json.loads(json.dumps(config, default=str))
             Column.objects.filter(id=new_column.id).update(
                 status=StatusType.RUNNING.value
@@ -705,7 +705,7 @@ class ClassifyColumnView(APIView):
         try:
             close_old_connections()
             if not cell.value:
-                return None
+                return None, None
 
             prompt = (
                 f"Classify the following text into exactly one of these labels: {', '.join(labels)}.\n\n"

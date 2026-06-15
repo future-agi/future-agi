@@ -15,11 +15,15 @@ Supports four metric types:
 
 import logging
 import re
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from tracer.services.clickhouse.query_builders.expressions import (
     annotation_numeric_value_expr,
+)
+from tracer.services.clickhouse.v2.id_remap_sql import (
+    remap_left_join,
+    resolved_id_expr,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,7 +43,7 @@ def _sanitize_attr_key(key: str) -> str:
 # Metric resolution tables
 # ---------------------------------------------------------------------------
 
-SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
+SYSTEM_METRICS: dict[str, tuple[str, str]] = {
     "project": ("spans", "project_id"),
     "latency": ("spans", "latency_ms"),
     "error_rate": ("spans", "CASE WHEN status='ERROR' THEN 1.0 ELSE 0.0 END"),
@@ -73,7 +77,7 @@ SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
     "tag": ("spans", "tags"),
 }
 
-METRIC_UNITS: Dict[str, str] = {
+METRIC_UNITS: dict[str, str] = {
     "latency": "ms",
     "error_rate": "%",
     "tokens": "tokens",
@@ -153,7 +157,7 @@ def rescale_rate_to_percent(agg_expr: str, aggregation: str) -> str:
     return agg_expr
 
 
-AGGREGATIONS: Dict[str, str] = {
+AGGREGATIONS: dict[str, str] = {
     "avg": "avg({col})",
     "median": "quantile(0.5)({col})",
     "max": "max({col})",
@@ -169,7 +173,7 @@ AGGREGATIONS: Dict[str, str] = {
     "sum": "sum({col})",
 }
 
-FILTER_OPERATORS: Dict[str, str] = {
+FILTER_OPERATORS: dict[str, str] = {
     "less_than": "< %({prefix}{idx}_val)s",
     "greater_than": "> %({prefix}{idx}_val)s",
     "equal_to": "= %({prefix}{idx}_val)s",
@@ -186,7 +190,7 @@ FILTER_OPERATORS: Dict[str, str] = {
     "is_not_numeric": "= 0",
 }
 
-PRESET_RANGES: Dict[str, Optional[timedelta]] = {
+PRESET_RANGES: dict[str, timedelta | None] = {
     "30m": timedelta(minutes=30),
     "6h": timedelta(hours=6),
     "today": None,
@@ -198,7 +202,7 @@ PRESET_RANGES: Dict[str, Optional[timedelta]] = {
     "12M": timedelta(days=365),
 }
 
-GRANULARITY_TO_CH: Dict[str, str] = {
+GRANULARITY_TO_CH: dict[str, str] = {
     "minute": "toStartOfMinute",
     "hour": "toStartOfHour",
     "day": "toStartOfDay",
@@ -225,6 +229,119 @@ def _prefix_spans_columns(clause: str) -> str:
     return clause
 
 
+# ---------------------------------------------------------------------------
+# P3b step1.5 — id-remap resolution of the spans source (DESIGN §3 / §10.1,
+# id_remap_sql, schema 019_id_remap.sql)
+# ---------------------------------------------------------------------------
+#
+# The dashboard counts `end_user_id` / `trace_session_id` over RAW span rows:
+#   • `user_count` / `session_count` → `uniq(end_user_id)` / `uniq(trace_session_id)`
+#   • the `user` / `session` / `user_id_type` breakdowns → GROUP BY a column
+#     expression derived from those ids (`toString(trace_session_id)`,
+#     `dictGetOrDefault('enduser_dict','user_id', end_user_id, …)`).
+# A cross-cutover STRADDLER (an identity with both old random-uuid4 spans AND
+# new deterministic-UUIDv5 spans) therefore OVER-counts (two distinct ids in a
+# `uniq`) and SPLITS into two breakdown buckets (the new id misses the curated
+# `enduser_dict`, falling back to its raw UUID string — a different label than
+# the old id's `user_id`). To fix this we resolve each span's id through the
+# id-remap SURVIVOR MAP BEFORE it is counted / grouped / dict-looked-up.
+#
+# The map is many-to-one (NULL-type enduser dupes / rename-bug sessions collapse
+# several old ids onto one new id), so resolution maps EVERY id — each old AND
+# the shared new — to ONE canonical survivor old per new_id group (the
+# argMin-string old; see id_remap_sql). A straddler AND a many-old→one-new
+# consolidation group thus both collapse to ONE id with NO fan-out (the gate-C2
+# bug a naive `= new_id` join hit). We LEFT JOIN the derived survivor map on
+# `spans.<id> = <alias>.any_id` and resolve to `<alias>.survivor_id` via the
+# zero-uuid-guarded `resolved_id_expr` (see id_remap_sql for why a bare COALESCE
+# breaks — CH fills the unmatched LEFT-JOIN side with the column DEFAULT, the
+# zero-uuid, NOT NULL).
+#
+# Rather than restructure every flat dashboard query into CTEs, we swap the bare
+# `spans` table reference for a DERIVED TABLE that re-projects the two ids as
+# their resolved values under the SAME column names (`SELECT * EXCEPT(end_user_id,
+# trace_session_id), <resolved_eu> AS end_user_id, <resolved_ts> AS
+# trace_session_id FROM spans LEFT JOIN … LEFT JOIN …`). Aliasing the subquery
+# back to the original name (`spans` or `s`) means every downstream column
+# reference, WHERE predicate, GROUP BY and `uniq()` is byte-identical — only the
+# two id columns now carry resolved values. This is the "thin outer layer"
+# id_remap_sql is designed for.
+#
+# GATE B (byte-identical result-set pre/post on the all-old-id 1:1 baseline):
+# pre-flip EVERY span carries an old id, and a non-consolidated old is its OWN
+# survivor (argMin of a singleton group), so the survivor map resolves it to
+# itself, the LEFT JOINs add nothing, and `resolved_id_expr` returns each span's
+# own id unchanged (the gate-B island has no consolidation groups). The
+# derived table is then a transparent pass-through — same rows, same id values,
+# same result set. `SELECT * EXCEPT(...)` only reorders the two id columns to the
+# end of the row tuple; the dashboard queries SELECT explicit output columns
+# (`time_bucket`, `breakdown_value`, `value`), so the OUTPUT result set is
+# unaffected by underlying column order.
+#
+# Applied ONLY when the query actually references an id (the metric is a
+# user/session count or dimension, or a breakdown/filter is by user/session) —
+# id-free metrics (latency, tokens, cost, …) keep the bare `spans` source, so
+# the change is scoped to exactly the queries that can split a straddler.
+
+# Metric / breakdown / filter names whose SQL touches `end_user_id` or
+# `trace_session_id` (and therefore need the resolved spans source).
+_ID_RESOLVED_NAMES = frozenset(
+    {
+        "user_count",
+        "session_count",
+        "user",
+        "session",
+        "user_id_type",
+    }
+)
+
+
+# Spans columns that are MATERIALIZED/ALIAS in the CH25 schema AND referenced by
+# the dashboard's column maps — these are DROPPED by `SELECT sp.*` (ClickHouse
+# omits MATERIALIZED/ALIAS columns from `*`), so the derived table must re-project
+# them explicitly or an outer reference errors ("Unknown identifier"). `trace_name`
+# (MATERIALIZED: dictGet trace_dict name) is the dashboard's `service_name`
+# dimension (SYSTEM_METRICS / _BREAKDOWN_COL_MAP / _STRING_FILTER_COL). Named
+# explicitly it IS selectable (only `*` skips it) and `*` won't duplicate it. The
+# v2 rewriter leaves `trace_name` untouched. (`_peerdb_is_deleted` is ALSO an
+# ALIAS, but the dashboard only uses it in WHERE where the v2 rewrite maps it to
+# the real `is_deleted` column, which `sp.*` keeps — so it needs no re-projection.)
+_MATERIALIZED_DASHBOARD_COLS = ("trace_name",)
+
+
+def _resolved_spans_source(alias: str | None = None) -> str:
+    """Return a `spans` source SQL fragment with `end_user_id` / `trace_session_id`
+    resolved new→old through the id-remap (P3b step1.5, see id_remap_sql).
+
+    ``alias`` is the table alias the surrounding query uses for spans (``"s"``
+    for the JOINed/annotation-breakdown shapes, ``None`` for the flat
+    ``FROM spans`` shapes which reference columns bare). The returned fragment is
+    a parenthesised derived table aliased to ``alias or "spans"`` so every
+    downstream reference is unchanged.
+
+    The inner subquery joins the remap under DISTINCT aliases (``eu_remap`` /
+    ``ts_remap``) hanging off the SAME inner span row ``sp`` — the default
+    ``id_remap`` alias would collide across the two joins. MATERIALIZED columns
+    the dashboard reads (``trace_name``) are re-projected explicitly because
+    ``sp.*`` drops them (see ``_MATERIALIZED_DASHBOARD_COLS``).
+    """
+    out_alias = alias or "spans"
+    eu_join = remap_left_join("sp.end_user_id", "end_user_id_remap", "eu_remap")
+    ts_join = remap_left_join(
+        "sp.trace_session_id", "trace_session_id_remap", "ts_remap"
+    )
+    resolved_eu = resolved_id_expr("sp.end_user_id", "eu_remap")
+    resolved_ts = resolved_id_expr("sp.trace_session_id", "ts_remap")
+    materialized = "".join(f"sp.{c} AS {c}, " for c in _MATERIALIZED_DASHBOARD_COLS)
+    return (
+        "(SELECT sp.* EXCEPT (end_user_id, trace_session_id), "
+        f"{materialized}"
+        f"{resolved_eu} AS end_user_id, "
+        f"{resolved_ts} AS trace_session_id "
+        f"FROM spans AS sp {eu_join} {ts_join}) AS {out_alias}"
+    )
+
+
 class DashboardQueryBuilder:
     """Translates a widget query_config into ClickHouse SQL.
 
@@ -246,14 +363,14 @@ class DashboardQueryBuilder:
     # Time range
     # ------------------------------------------------------------------
 
-    def parse_time_range(self) -> Tuple[datetime, datetime]:
+    def parse_time_range(self) -> tuple[datetime, datetime]:
         """Parse time range from preset or custom start/end."""
         tr = self.config.get("time_range") or self.config.get("timeRange") or {}
         preset = tr.get("preset")
         custom_start = tr.get("custom_start")
         custom_end = tr.get("custom_end")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if custom_start and custom_end:
             return _parse_dt(custom_start), _parse_dt(custom_end)
@@ -278,7 +395,7 @@ class DashboardQueryBuilder:
     # Single-metric query
     # ------------------------------------------------------------------
 
-    def build_metric_query(self, metric: dict) -> Tuple[str, dict]:
+    def build_metric_query(self, metric: dict) -> tuple[str, dict]:
         """Build ClickHouse SQL for a single metric.
 
         Returns:
@@ -292,7 +409,7 @@ class DashboardQueryBuilder:
         start_date, end_date = self.parse_time_range()
         bucket_fn = GRANULARITY_TO_CH.get(self.granularity, "toStartOfDay")
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "project_ids": self.project_ids,
             "start_date": start_date,
             "end_date": end_date,
@@ -322,6 +439,58 @@ class DashboardQueryBuilder:
             raise ValueError(f"Unknown metric type: {metric_type}")
 
     # ------------------------------------------------------------------
+    # P3b step1.5 — does this query touch an id that needs remap resolution?
+    # ------------------------------------------------------------------
+
+    def _names_reference_id(self, *names: str | None) -> bool:
+        """True if any of ``names`` (a metric/breakdown/filter id or name) is one
+        of the user/session metrics whose SQL references `end_user_id` /
+        `trace_session_id` (see ``_ID_RESOLVED_NAMES`` / ``_resolved_spans_source``).
+        """
+        return any(
+            (n or "").lower() in _ID_RESOLVED_NAMES for n in names if n is not None
+        )
+
+    def _query_references_id(
+        self, metric_name: str | None, per_metric_filters: list[dict]
+    ) -> bool:
+        """True if THIS metric's query references `end_user_id` /
+        `trace_session_id` — via the metric itself, any breakdown, or any
+        (global or per-metric) filter — and therefore needs the id-remap-resolved
+        spans source so a cross-cutover straddler does not split (P3b step1.5).
+        """
+        if self._names_reference_id(metric_name):
+            return True
+        for bd in self.breakdowns:
+            if bd.get("type", "system_metric") != "system_metric":
+                continue
+            if self._names_reference_id(bd.get("name"), bd.get("id")):
+                return True
+        for f in self.global_filters + (per_metric_filters or []):
+            f_type = f.get("metric_type") or f.get("type", "")
+            if f_type and f_type != "system_metric":
+                continue
+            if self._names_reference_id(
+                f.get("metric_name"), f.get("name"), f.get("id")
+            ):
+                return True
+        return False
+
+    def _spans_source(
+        self, metric_name: str | None, per_metric_filters: list[dict], alias: str
+    ) -> str:
+        """Return the spans FROM/JOIN source for the given alias — the id-remap
+        resolved derived table when the query references an id, else the bare
+        table (so id-free metrics stay byte-identical with zero added joins).
+
+        ``alias`` is ``"spans"`` for the flat ``FROM spans`` shapes (the derived
+        table is aliased back to ``spans``) or ``"s"`` for the JOINed shapes.
+        """
+        if self._query_references_id(metric_name, per_metric_filters):
+            return _resolved_spans_source(None if alias == "spans" else alias)
+        return "spans" if alias == "spans" else f"spans AS {alias}"
+
+    # ------------------------------------------------------------------
     # System metric
     # ------------------------------------------------------------------
 
@@ -330,9 +499,9 @@ class DashboardQueryBuilder:
         metric_name: str,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         # Normalize: saved widgets may have capitalized names (e.g. "Latency")
         metric_name = metric_name.lower() if metric_name else metric_name
         if metric_name not in SYSTEM_METRICS:
@@ -387,6 +556,15 @@ class DashboardQueryBuilder:
         if subquery_clauses[0]:
             all_where += subquery_clauses[0]
 
+        # P3b step1.5 — resolve the spans source new→old (id_remap) when this
+        # query references `end_user_id` / `trace_session_id` (the metric is a
+        # user/session count or dimension, or a breakdown/filter is by
+        # user/session); else keep the bare table (byte-identical no-op). The
+        # derived table is aliased back to `spans` / `s`, so every column ref,
+        # WHERE, GROUP BY and `uniq()` below is unchanged.
+        spans_flat = self._spans_source(metric_name, per_metric_filters, "spans")
+        spans_joined = self._spans_source(metric_name, per_metric_filters, "s")
+
         # Resolve all breakdowns (supports multiple, including annotation JOINs)
         bd_infos = self._resolve_all_breakdowns(params)
         has_annotation_bd = any(b["type"] == "annotation" for b in bd_infos)
@@ -418,7 +596,7 @@ class DashboardQueryBuilder:
                     f"SELECT {bucket_fn}(s.start_time) AS time_bucket,\n"
                     f"       {bd_select},\n"
                     f"       {agg_with_alias} AS value\n"
-                    f"FROM spans AS s\n"
+                    f"FROM {spans_joined}\n"
                     f"{join_str}\n"
                     f"WHERE {where_str}\n"
                     f"GROUP BY time_bucket, breakdown_value\n"
@@ -432,7 +610,7 @@ class DashboardQueryBuilder:
                 ]
                 query = (
                     f"SELECT {', '.join(select_parts_with_bd)}\n"
-                    f"FROM spans\n"
+                    f"FROM {spans_flat}\n"
                     f"WHERE {' AND '.join(all_where)}\n"
                     f"GROUP BY time_bucket, breakdown_value\n"
                     f"ORDER BY time_bucket, breakdown_value"
@@ -440,7 +618,7 @@ class DashboardQueryBuilder:
         else:
             query = (
                 f"SELECT {', '.join(select_parts)}\n"
-                f"FROM spans\n"
+                f"FROM {spans_flat}\n"
                 f"WHERE {' AND '.join(all_where)}\n"
                 f"GROUP BY {', '.join(group_parts)}\n"
                 f"ORDER BY {', '.join(order_parts)}"
@@ -456,9 +634,9 @@ class DashboardQueryBuilder:
         metric: dict,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         """Build eval metric query against usage_apicalllog (central eval table).
 
         All eval executions (tracer, dataset, simulation, SDK, playground) write
@@ -508,7 +686,7 @@ class DashboardQueryBuilder:
         # Unified score: 1.0 for pass (string or numeric), else eval_score
         _unified_score = f"if({_is_pass}, 1.0, e.eval_score)"
 
-        _EVAL_AGGREGATIONS: Dict[str, str] = {
+        _EVAL_AGGREGATIONS: dict[str, str] = {
             "pass_rate": f"countIf({_is_pass}) / nullIf(count(), 0)",
             "fail_rate": f"countIf({_is_fail}) / nullIf(count(), 0)",
             "pass_count": f"countIf({_is_pass})",
@@ -575,7 +753,7 @@ class DashboardQueryBuilder:
                 # Name resolution happens in the view layer via PG lookup,
                 # so we just return the UUID here.
                 bd_expr = (
-                    "if(e.eval_dataset_id = '', '(no dataset)', " "e.eval_dataset_id)"
+                    "if(e.eval_dataset_id = '', '(no dataset)', e.eval_dataset_id)"
                 )
 
             # Trace dimension breakdowns → JOIN spans
@@ -642,8 +820,7 @@ class DashboardQueryBuilder:
                 if ev_tid == eval_template_id:
                     if bd_output_type in ("PASS_FAIL", "CHOICE", "CHOICES"):
                         bd_expr = (
-                            "if(e.eval_output_str = '', '(not set)', "
-                            "e.eval_output_str)"
+                            "if(e.eval_output_str = '', '(not set)', e.eval_output_str)"
                         )
                     else:
                         bd_expr = (
@@ -741,8 +918,14 @@ class DashboardQueryBuilder:
 
         # --- Build JOINs ---
         if need_spans_join:
+            # P3b step1.5 — when the spans JOIN is driven by a user / session
+            # breakdown or filter, resolve the joined spans' ids new→old
+            # (id_remap) so a straddler buckets/filters under its OLD id. Other
+            # span dimensions (model, status, …) keep the bare table — same
+            # byte-identical no-op guarantee, just no added remap joins.
+            spans_joined = self._spans_source(None, per_metric_filters, "s")
             joins.append(
-                f"LEFT JOIN spans AS s ON s.trace_id = {_trace_id_expr} "
+                f"LEFT JOIN {spans_joined} ON s.trace_id = {_trace_id_expr} "
                 f"AND s.parent_span_id = '' "
                 f"AND s._peerdb_is_deleted = 0"
             )
@@ -784,9 +967,9 @@ class DashboardQueryBuilder:
         metric: dict,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         # The metric "name" is the annotation label UUID
         label_id = metric.get("label_id") or metric.get("name", "")
         params["annotation_label_id"] = label_id
@@ -817,9 +1000,7 @@ class DashboardQueryBuilder:
             # Stored as {"value": "up"|"down"} — percentage of "up".
             # countIf already skips NULL/missing rows, but we still want
             # the denominator to exclude rows where the key is absent.
-            col_expr = (
-                "JSONExtract(a.value, 'value', 'Nullable(String)')"
-            )
+            col_expr = "JSONExtract(a.value, 'value', 'Nullable(String)')"
             agg_expr = (
                 f"countIf({col_expr} = 'up') * 100.0 / "
                 f"greatest(countIf({col_expr} IS NOT NULL), 1)"
@@ -855,10 +1036,10 @@ class DashboardQueryBuilder:
                 "AND a.observation_span_id IN ("
                 "SELECT id FROM spans "
                 "WHERE project_id IN %(project_ids)s "
-                "AND _peerdb_is_deleted = 0))"
+                "AND is_deleted = 0))"
                 ")"
             ),
-            "a._peerdb_is_deleted = 0",
+            "a.is_deleted = 0",
             "a.deleted = 0",
             "a.created_at >= %(start_date)s",
             "a.created_at < %(end_date)s",
@@ -883,9 +1064,9 @@ class DashboardQueryBuilder:
         metric: dict,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         attr_key = _sanitize_attr_key(metric.get("attribute_key", ""))
         attr_type = metric.get("attribute_type", "number")
 
@@ -921,9 +1102,14 @@ class DashboardQueryBuilder:
         if subquery_clauses[0]:
             all_where += subquery_clauses[0]
 
+        # P3b step1.5 — a custom-attribute metric is never an id, but its
+        # breakdown / filter can be by user / session; resolve the spans source
+        # new→old in that case so the breakdown does not split a straddler.
+        spans_flat = self._spans_source(None, per_metric_filters, "spans")
+
         query = (
             f"SELECT {', '.join(select_parts)}\n"
-            f"FROM spans\n"
+            f"FROM {spans_flat}\n"
             f"WHERE {' AND '.join(all_where)}\n"
             f"GROUP BY {', '.join(group_parts)}\n"
             f"ORDER BY {', '.join(order_parts)}"
@@ -934,7 +1120,7 @@ class DashboardQueryBuilder:
     # Build all queries
     # ------------------------------------------------------------------
 
-    def build_all_queries(self) -> List[Tuple[str, dict, dict]]:
+    def build_all_queries(self) -> list[tuple[str, dict, dict]]:
         """Build queries for all metrics.
 
         Returns:
@@ -960,8 +1146,8 @@ class DashboardQueryBuilder:
 
     def format_results(
         self,
-        metric_results: List[Tuple[dict, List[dict]]],
-        project_name_map: Optional[Dict[str, str]] = None,
+        metric_results: list[tuple[dict, list[dict]]],
+        project_name_map: dict[str, str] | None = None,
     ) -> dict:
         """Format raw ClickHouse results into the response format.
 
@@ -990,7 +1176,7 @@ class DashboardQueryBuilder:
 
             # Group rows by breakdown value if present
             # Use a dict of {iso_timestamp: value} for easy merging
-            series_data: Dict[str, Dict[str, Any]] = {}
+            series_data: dict[str, dict[str, Any]] = {}
             for row in rows:
                 breakdown_key = str(row.get("breakdown_value", "total"))
                 # Resolve project UUID to name if breaking down by project
@@ -1011,9 +1197,9 @@ class DashboardQueryBuilder:
                     # CH may return date or naive datetime; convert to
                     # timezone-aware datetime so keys match _generate_time_buckets
                     if isinstance(ts, date) and not isinstance(ts, datetime):
-                        ts = datetime(ts.year, ts.month, ts.day, tzinfo=timezone.utc)
+                        ts = datetime(ts.year, ts.month, ts.day, tzinfo=UTC)
                     elif hasattr(ts, "tzinfo") and ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
+                        ts = ts.replace(tzinfo=UTC)
                     ts = ts.isoformat()
                 val = row.get("value")
                 if isinstance(val, float):
@@ -1083,8 +1269,17 @@ class DashboardQueryBuilder:
         "span_kind": "observation_type",
         "provider": "provider",
         "session": "toString(trace_session_id)",
-        "user": "dictGetOrDefault('enduser_dict', 'user_id', end_user_id, toString(end_user_id))",
-        "user_id_type": "dictGetOrDefault('enduser_dict', 'user_id_type', end_user_id, '')",
+        # P3b step2 precondition — LABEL source cut legacy `enduser_dict` → v2
+        # `end_users_dict` (017). The committed step1.5 slice resolves the span's
+        # `end_user_id` new→old BEFORE this lookup (so the count/group is correct
+        # for straddlers) but left the label dict as the legacy CDC dict; that
+        # dict stops getting new users once step2 drops the PG get_or_create →
+        # PG→CDC chain. `end_users_dict` is kept fresh by the P3a-ii ingest dual-
+        # write, so a post-step2 new user resolves here where the legacy dict
+        # would fall back to the raw UUID. Same key (`end_user_id`) + attrs
+        # (`user_id`/`user_id_type`) → byte-identical pre-flip (gate B).
+        "user": "dictGetOrDefault('end_users_dict', 'user_id', end_user_id, toString(end_user_id))",
+        "user_id_type": "dictGetOrDefault('end_users_dict', 'user_id_type', end_user_id, '')",
         "prompt_name": "dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
         "prompt_version": "concat(dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''), ' v', dictGetOrDefault('prompt_dict', 'template_version', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''))",
         "prompt_label": "dictGetOrDefault('prompt_label_dict', 'name', ifNull(prompt_label_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
@@ -1234,8 +1429,7 @@ class DashboardQueryBuilder:
                     )
                 elif output_type in ("CHOICE", "CHOICES"):
                     val_expr = (
-                        f"if({alias}.id IS NULL, '(not set)', "
-                        f"{alias}.eval_output_str)"
+                        f"if({alias}.id IS NULL, '(not set)', {alias}.eval_output_str)"
                     )
                 else:
                     # SCORE: show as percentage
@@ -1257,7 +1451,7 @@ class DashboardQueryBuilder:
 
         return result
 
-    def _breakdown_select(self) -> Optional[str]:
+    def _breakdown_select(self) -> str | None:
         """Return the SQL expression for the first breakdown, or None.
         Kept for backward compat — delegates to _resolve_all_breakdowns for single breakdown.
         """
@@ -1276,9 +1470,9 @@ class DashboardQueryBuilder:
         self,
         table: str,
         time_col: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[List[str], dict]:
+    ) -> tuple[list[str], dict]:
         """Build base WHERE clauses for spans-based queries."""
         clauses = [
             "project_id IN %(project_ids)s",
@@ -1297,8 +1491,10 @@ class DashboardQueryBuilder:
             "span_kind": "observation_type",
             "provider": "provider",
             "session": "toString(trace_session_id)",
-            "user": "dictGetOrDefault('enduser_dict', 'user_id', end_user_id, toString(end_user_id))",
-            "user_id_type": "dictGetOrDefault('enduser_dict', 'user_id_type', end_user_id, '')",
+            # P3b step2 precondition — LABEL source cut legacy `enduser_dict` →
+            # v2 `end_users_dict` (017), same rationale as `_BREAKDOWN_COL_MAP`.
+            "user": "dictGetOrDefault('end_users_dict', 'user_id', end_user_id, toString(end_user_id))",
+            "user_id_type": "dictGetOrDefault('end_users_dict', 'user_id_type', end_user_id, '')",
             "prompt_name": "dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
             "prompt_version": "concat(dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''), ' v', dictGetOrDefault('prompt_dict', 'template_version', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''))",
             "prompt_label": "dictGetOrDefault('prompt_label_dict', 'name', ifNull(prompt_label_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
@@ -1402,13 +1598,13 @@ class DashboardQueryBuilder:
 
     def _build_subquery_filters(
         self,
-        filters: List[dict],
+        filters: list[dict],
         params: dict,
         prefix: str,
-    ) -> Tuple[List[str], dict]:
+    ) -> tuple[list[str], dict]:
         """Build IN-subquery clauses for eval/annotation metric filters on spans."""
-        clauses: List[str] = []
-        extra_params: Dict[str, Any] = {}
+        clauses: list[str] = []
+        extra_params: dict[str, Any] = {}
         idx = 0
 
         for f in filters:
@@ -1498,7 +1694,7 @@ class DashboardQueryBuilder:
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
-_OPERATOR_SYMBOLS: Dict[str, str] = {
+_OPERATOR_SYMBOLS: dict[str, str] = {
     "less_than": "<",
     "greater_than": ">",
     "equal_to": "=",
@@ -1514,13 +1710,13 @@ _OPERATOR_SYMBOLS: Dict[str, str] = {
 
 def _generate_time_buckets(
     start: datetime, end: datetime, granularity: str
-) -> List[str]:
+) -> list[str]:
     """Generate all time bucket ISO strings between *start* and *end*.
 
     Mirrors the ClickHouse ``toStartOf*`` bucketing so that the response
     includes every expected bucket — even those with no data (filled with null).
     """
-    buckets: List[str] = []
+    buckets: list[str] = []
     if granularity == "minute":
         cur = start.replace(second=0, microsecond=0)
         delta = timedelta(minutes=1)
@@ -1563,7 +1759,7 @@ def _generate_time_buckets(
     return buckets
 
 
-def _get_operator_symbol(op: str) -> Optional[str]:
+def _get_operator_symbol(op: str) -> str | None:
     """Return the SQL operator symbol for a filter operator name."""
     return _OPERATOR_SYMBOLS.get(op)
 
@@ -1574,7 +1770,7 @@ def _parse_dt(val: Any) -> datetime:
     Always returns a timezone-aware (UTC) datetime so that callers
     produce consistent isoformat strings (with ``+00:00`` suffix).
     """
-    dt: Optional[datetime] = None
+    dt: datetime | None = None
     if isinstance(val, datetime):
         dt = val
     elif isinstance(val, str):
@@ -1596,10 +1792,10 @@ def _parse_dt(val: Any) -> datetime:
                 except ValueError:
                     continue
     if dt is None:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     # Ensure timezone-aware (UTC)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 

@@ -170,6 +170,14 @@ function enumSchema(values) {
 function schemaToZod(schema, options = {}) {
   if (!schema || typeof schema !== "object") return z.any();
 
+  if (schema["x-string-or-object"]) {
+    const { "x-string-or-object": _extension, ...objectSchema } = schema;
+    return nullableIfNeeded(
+      z.union([z.string(), objectSchemaToZod(objectSchema, options)]),
+      schema,
+    );
+  }
+
   if (schema["x-json-value"]) {
     return nullableIfNeeded(z.any(), schema);
   }
@@ -265,6 +273,9 @@ function objectSchemaToZod(schema, options) {
 
   const shape = Object.fromEntries(
     keys.map((key) => {
+      if (options.requestBody && properties[key]?.readOnly) {
+        return [key, z.any().optional()];
+      }
       let field = schemaToZod(properties[key], options);
       if (!required.has(key)) field = field.optional();
       return [key, field];
@@ -403,6 +414,7 @@ export function validateContractedRequestConfig(config) {
   if (requestBody) {
     const schema = schemaToZod(requestBody, {
       coercePrimitives: isFormLikeBody(config.data),
+      requestBody: true,
     });
     const parsed = schema.safeParse(
       parseMaybeJsonBody(config.data, config.headers),

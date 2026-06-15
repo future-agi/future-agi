@@ -42,6 +42,11 @@ class Command(BaseCommand):
         limit = options["limit"]
         project_id = options.get("project_id")
 
+        # CH25-TODO: KEEP-PG. Backfill management command — both reads
+        # and writes operate on PG by design (PG is the dual-write
+        # source of truth; CH receives the updated span_attributes via
+        # PeerDB CDC after span.save()). Migrating the read leg to CH
+        # would require a parallel CH-write path which doesn't exist.
         qs = ObservationSpan.objects.filter(observation_type="conversation")
 
         if project_id:

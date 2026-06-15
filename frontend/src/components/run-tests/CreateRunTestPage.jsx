@@ -2229,7 +2229,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                             ? "text.primary"
                             : index <= activeStep
                               ? "primary.main"
-                              : "text.disabled"
+                              : "text.secondary"
                         }
                         sx={{
                           textAlign: "center",

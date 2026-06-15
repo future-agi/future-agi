@@ -1674,6 +1674,9 @@ class TestExecutionRerunResultSerializer(serializers.Serializer):
         child=serializers.UUIDField(), read_only=True
     )
     failed_reruns = serializers.ListField(child=serializers.DictField(), read_only=True)
+    dispatch_error = serializers.CharField(
+        required=False, allow_null=True, read_only=True
+    )
     skipped = serializers.BooleanField(required=False, read_only=True)
     reason = serializers.CharField(required=False, read_only=True)
 

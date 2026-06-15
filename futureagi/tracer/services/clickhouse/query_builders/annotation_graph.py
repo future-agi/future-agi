@@ -21,7 +21,11 @@ from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.expressions import (
     annotation_numeric_value_expr,
 )
-from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+# CH-direct: use the v2 filter builder (rewrites span_attr_* -> attrs_*) since
+# this graph reads the v2 `spans` table. Aliased to keep the call sites unchanged.
+from tracer.services.clickhouse.v2.query_builders.filters import (
+    ClickHouseFilterBuilderV2 as ClickHouseFilterBuilder,
+)
 
 
 class AnnotationGraphQueryBuilder(BaseQueryBuilder):
@@ -166,7 +170,7 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
             SELECT DISTINCT {select_expr}
             FROM spans
             WHERE project_id = %(project_id)s
-              AND _peerdb_is_deleted = 0
+              AND is_deleted = 0
               AND start_time >= %(start_date)s
               AND start_time < %(end_date)s
               {extra_clause}
@@ -199,7 +203,7 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
             {bucket_fn}(created_at) AS time_bucket,
             avg({nullable_expr}) AS value
         FROM {self.TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
+        WHERE is_deleted = 0
           AND deleted = 0
           AND label_id = toUUID(%(label_id)s)
           AND created_at >= %(start_date)s
@@ -231,7 +235,7 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
             {bucket_fn}(created_at) AS time_bucket,
             avg(CASE WHEN JSONExtractString(value, 'value') = %(bool_match)s THEN 100.0 ELSE 0.0 END) AS value
         FROM {self.TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
+        WHERE is_deleted = 0
           AND deleted = 0
           AND label_id = toUUID(%(label_id)s)
           AND created_at >= %(start_date)s
@@ -265,7 +269,7 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
                 END
             ) AS value
         FROM {self.TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
+        WHERE is_deleted = 0
           AND deleted = 0
           AND label_id = toUUID(%(label_id)s)
           AND created_at >= %(start_date)s
@@ -284,7 +288,7 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
             {bucket_fn}(created_at) AS time_bucket,
             count() AS value
         FROM {self.TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
+        WHERE is_deleted = 0
           AND deleted = 0
           AND label_id = toUUID(%(label_id)s)
           AND created_at >= %(start_date)s

@@ -1212,6 +1212,7 @@ const TraceDetailDrawerV2 = ({
                   onClose={() => setSelectedSpanId(null)}
                   onAction={handleAction}
                   onSelectSpan={handleSelectSpan}
+                  drawerOpen={open}
                 />
               </Box>
             )}
@@ -1294,6 +1295,7 @@ const TraceDetailDrawerV2 = ({
                   onClose={() => setSelectedSpanId(null)}
                   onAction={handleAction}
                   onSelectSpan={handleSelectSpan}
+                  drawerOpen={open}
                 />
               ) : (
                 /* Summary when no span selected */

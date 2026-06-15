@@ -688,6 +688,7 @@ class TestMessageHandling:
 @pytest.mark.integration
 @pytest.mark.live_llm
 @pytest.mark.external
+@pytest.mark.django_db
 class TestOpenAILiveIntegration:
     """Live integration tests for OpenAI models."""
 
@@ -704,8 +705,8 @@ class TestOpenAILiveIntegration:
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
-        mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
         mock_custom_model.DoesNotExist = Exception
+        mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
 
         mock_api_key_entry = Mock()
         mock_api_key_entry.key = api_keys["openai"]
@@ -731,7 +732,10 @@ class TestOpenAILiveIntegration:
         result = run_prompt.litellm_response()
 
         assert result is not None
-        assert "response" in result or "content" in str(result).lower()
+        # litellm_response returns a (response_text, metadata) tuple; assert the
+        # model produced non-empty response text.
+        response_text = result[0] if isinstance(result, tuple) else result
+        assert response_text
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
@@ -740,8 +744,8 @@ class TestOpenAILiveIntegration:
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
-        mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
         mock_custom_model.DoesNotExist = Exception
+        mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
 
         mock_api_key_entry = Mock()
         mock_api_key_entry.key = api_keys["openai"]
@@ -780,6 +784,7 @@ class TestOpenAILiveIntegration:
 @pytest.mark.integration
 @pytest.mark.live_llm
 @pytest.mark.external
+@pytest.mark.django_db
 class TestAnthropicLiveIntegration:
     """Live integration tests for Anthropic models."""
 
@@ -796,8 +801,8 @@ class TestAnthropicLiveIntegration:
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
-        mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
         mock_custom_model.DoesNotExist = Exception
+        mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
 
         mock_api_key_entry = Mock()
         mock_api_key_entry.key = api_keys["anthropic"]
@@ -806,7 +811,7 @@ class TestAnthropicLiveIntegration:
         mock_api_key.objects.get.return_value = mock_api_key_entry
 
         run_prompt = RunPrompt(
-            model="claude-3-5-haiku-20241022",  # Using Haiku for cost efficiency
+            model="claude-haiku-4-5-20251001",  # Using current Haiku for cost efficiency
             messages=simple_messages,
             organization_id=mock_organization_id,
             output_format="text",
@@ -814,7 +819,8 @@ class TestAnthropicLiveIntegration:
             frequency_penalty=0.0,
             presence_penalty=0.0,
             max_tokens=100,
-            top_p=1.0,
+            # claude 4.x rejects temperature and top_p together; send temperature only
+            top_p=None,
             response_format=None,
             tool_choice=None,
             tools=None,
@@ -831,6 +837,7 @@ class TestAnthropicLiveIntegration:
 @pytest.mark.integration
 @pytest.mark.live_llm
 @pytest.mark.external
+@pytest.mark.django_db
 class TestGroqLiveIntegration:
     """Live integration tests for Groq models."""
 
@@ -847,8 +854,8 @@ class TestGroqLiveIntegration:
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
-        mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
         mock_custom_model.DoesNotExist = Exception
+        mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
 
         mock_api_key_entry = Mock()
         mock_api_key_entry.key = api_keys["groq"]
@@ -882,6 +889,7 @@ class TestGroqLiveIntegration:
 @pytest.mark.integration
 @pytest.mark.live_llm
 @pytest.mark.external
+@pytest.mark.django_db
 class TestXAILiveIntegration:
     """Live integration tests for xAI models."""
 
@@ -898,8 +906,8 @@ class TestXAILiveIntegration:
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
-        mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
         mock_custom_model.DoesNotExist = Exception
+        mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
 
         mock_api_key_entry = Mock()
         mock_api_key_entry.key = api_keys["xai"]
@@ -908,13 +916,14 @@ class TestXAILiveIntegration:
         mock_api_key.objects.get.return_value = mock_api_key_entry
 
         run_prompt = RunPrompt(
-            model="xai/grok-beta",
+            model="xai/grok-3",
             messages=simple_messages,
             organization_id=mock_organization_id,
             output_format="text",
             temperature=0.7,
-            frequency_penalty=0.0,
-            presence_penalty=0.0,
+            # grok-3 rejects presence/frequency penalty params
+            frequency_penalty=None,
+            presence_penalty=None,
             max_tokens=100,
             top_p=1.0,
             response_format=None,
@@ -949,8 +958,8 @@ class TestPerplexityLiveIntegration:
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
-        mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
         mock_custom_model.DoesNotExist = Exception
+        mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
 
         mock_api_key_entry = Mock()
         mock_api_key_entry.key = api_keys["perplexity"]
@@ -1119,6 +1128,42 @@ class TestAvailableModels:
         assert AVAILABLE_MODELS is not None
         assert len(AVAILABLE_MODELS) > 0
 
+    def test_oss_catalog_excludes_ee_only_models(self):
+        """Test that OSS metadata does not expose private EE-only model aliases."""
+        from agentic_eval.core_evals.run_prompt.available_models import OSS_AVAILABLE_MODELS
+
+        model_names = {m["model_name"] for m in OSS_AVAILABLE_MODELS}
+
+        assert "turing_large" not in model_names
+        assert "protect_toxicity" not in model_names
+        assert not any(
+            name.startswith("bedrock/arn:aws:bedrock:")
+            for name in model_names
+        )
+
+    def test_oss_public_catalog_keeps_pricing_metadata(self):
+        """Test that public model pricing stays with the OSS catalog."""
+        from agentic_eval.core_evals.run_prompt.available_models import OSS_AVAILABLE_MODELS
+
+        gpt4o = next(
+            model for model in OSS_AVAILABLE_MODELS
+            if model["model_name"] == "gpt-4o"
+        )
+
+        assert gpt4o["pricing"] == {
+            "input_per_1M_tokens": 5,
+            "output_per_1M_tokens": 15,
+        }
+
+    def test_runtime_catalog_appends_ee_only_models_when_available(self):
+        """Test that EE installs still expose private evaluator models at runtime."""
+        from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+
+        model_names = {m["model_name"] for m in AVAILABLE_MODELS}
+
+        assert "turing_large" in model_names
+        assert "protect_toxicity" in model_names
+
     def test_openai_models_present(self):
         """Test that OpenAI models are present."""
         from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
@@ -1138,7 +1183,7 @@ class TestAvailableModels:
         """Test that reasoning models have fields_not_allowed configured."""
         from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 
-        reasoning_model_names = ["o1", "o1-mini", "o3-mini", "o3"]
+        reasoning_model_names = ["o1", "o3-mini", "o3", "o4-mini"]
         for model in AVAILABLE_MODELS:
             if model["model_name"] in reasoning_model_names:
                 assert "fields_not_allowed" in model, f"Model {model['model_name']} should have fields_not_allowed"
@@ -1148,7 +1193,7 @@ class TestAvailableModels:
         from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 
         model_names = [m["model_name"] for m in AVAILABLE_MODELS]
-        azure_reasoning_models = ["azure/o1", "azure/o1-mini", "azure/o3-mini"]
+        azure_reasoning_models = ["azure/o1", "azure/o3-mini"]
 
         for model in azure_reasoning_models:
             assert model in model_names, f"Azure model {model} should be present"

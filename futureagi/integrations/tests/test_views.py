@@ -738,9 +738,7 @@ class TestSyncLogListAPI:
     def test_rejects_invalid_connection_id(self, auth_client):
         resp = auth_client.get(self.URL, {"connection_id": "not-a-uuid"})
         assert resp.status_code == http_status.HTTP_400_BAD_REQUEST
-        assert resp.json()["details"]["connection_id"] == [
-            "Must be a valid UUID."
-        ]
+        assert resp.json()["details"]["connection_id"] == ["Must be a valid UUID."]
 
     def test_excludes_other_workspace_logs(
         self,
@@ -777,12 +775,88 @@ class TestSyncLogListAPI:
             completed_at=datetime.now(UTC) - timedelta(minutes=1),
         )
 
-        resp = auth_client.get(
-            self.URL, {"connection_id": str(other_connection.id)}
-        )
+        resp = auth_client.get(self.URL, {"connection_id": str(other_connection.id)})
 
         assert resp.status_code == http_status.HTTP_200_OK
         assert _result(resp)["metadata"]["total_count"] == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.api
+class TestSyncLogDetailAPI:
+    URL = "/integrations/sync-logs/"
+
+    def detail_url(self, sync_log_id):
+        return f"{self.URL}{sync_log_id}/"
+
+    def test_read_sync_log_detail(self, auth_client, sync_log, integration_connection):
+        resp = auth_client.get(self.detail_url(sync_log.id))
+
+        assert resp.status_code == http_status.HTTP_200_OK
+        data = _result(resp)
+        assert data["id"] == str(sync_log.id)
+        assert data["connection"] == str(integration_connection.id)
+        assert data["status"] == SyncStatus.SUCCESS
+        assert data["traces_fetched"] == 10
+        assert data["traces_created"] == 8
+        assert data["traces_updated"] == 2
+        assert data["spans_synced"] == 25
+        assert data["scores_synced"] == 5
+
+    def test_read_missing_sync_log_returns_404(self, auth_client):
+        resp = auth_client.get(self.detail_url(uuid.uuid4()))
+
+        assert resp.status_code == http_status.HTTP_404_NOT_FOUND
+
+    def test_read_hides_log_when_connection_deleted(
+        self, auth_client, sync_log, integration_connection
+    ):
+        integration_connection.deleted = True
+        integration_connection.save(update_fields=["deleted"])
+
+        resp = auth_client.get(self.detail_url(sync_log.id))
+
+        assert resp.status_code == http_status.HTTP_404_NOT_FOUND
+
+    def test_read_excludes_other_workspace_logs(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        encrypted_credentials,
+    ):
+        other_workspace = Workspace.objects.create(
+            name="Other Integration Detail Workspace",
+            organization=organization,
+            created_by=user,
+            is_default=False,
+        )
+        other_connection = IntegrationConnection.no_workspace_objects.create(
+            organization=organization,
+            workspace=other_workspace,
+            created_by=user,
+            platform=IntegrationPlatform.LANGFUSE,
+            display_name="Other Workspace Langfuse",
+            host_url="https://langfuse.example.com",
+            encrypted_credentials=encrypted_credentials,
+            external_project_name="other-workspace-project",
+            status=ConnectionStatus.ACTIVE,
+            sync_interval_seconds=300,
+            backfill_completed=True,
+        )
+        now = datetime.now(UTC)
+        other_log = SyncLog.objects.create(
+            connection=other_connection,
+            status=SyncStatus.SUCCESS,
+            started_at=now - timedelta(minutes=2),
+            completed_at=now - timedelta(minutes=1),
+        )
+
+        resp = auth_client.get(self.detail_url(other_log.id))
+
+        assert resp.status_code == http_status.HTTP_404_NOT_FOUND
+
 
 # ---------------------------------------------------------------------------
 # Action-only platforms (Linear, etc.) — one live row per (org, workspace)

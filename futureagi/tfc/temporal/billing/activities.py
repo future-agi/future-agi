@@ -1,12 +1,10 @@
-"""Temporal activities for billing operations.
+"""Temporal activities for billing — dunning, invoice gen, monthly closing.
 
-Two scheduled activities:
-- report_stripe_usage_activity: hourly, reports pre-calculated usage costs to Stripe
-- run_dunning_checks_activity: daily, processes dunning steps for past_due orgs
-
-Pattern: @activity.defn (async) with close_old_connections + sync_to_async.
-Errors re-raised for Temporal retry.
+Stripe meter events fire at invoice-close (see invoice_generation.py);
+no hourly catch-up. Errors re-raise so Temporal applies its retry policy.
 """
+
+from datetime import datetime
 
 from asgiref.sync import sync_to_async
 from django.db import close_old_connections
@@ -19,45 +17,7 @@ from tfc.temporal.billing.types import (
     MonthlyClosingOutput,
     MonthlyInvoiceInput,
     MonthlyInvoiceOutput,
-    StripeUsageReportInput,
-    StripeUsageReportOutput,
 )
-
-# ── Stripe Usage Reporting (hourly) ───────────────────────────────────────
-
-
-@activity.defn(name="report_stripe_usage_activity")
-async def report_stripe_usage_activity(
-    input: StripeUsageReportInput,
-) -> StripeUsageReportOutput:
-    """Report metered usage to Stripe for all paid orgs.
-
-    Re-raises on failure so Temporal applies retry policy.
-    """
-    close_old_connections()
-    try:
-        count = await sync_to_async(_report_stripe_usage_sync, thread_sensitive=False)(
-            input.period
-        )
-        activity.logger.info(f"Stripe usage reported: {count} records")
-        return StripeUsageReportOutput(records_reported=count, status="COMPLETED")
-    finally:
-        close_old_connections()
-
-
-def _report_stripe_usage_sync(period: str) -> int:
-    """Sync wrapper — calls existing report_all_usage_to_stripe."""
-    close_old_connections()
-    try:
-        try:
-            from ee.usage.tasks.stripe_reporting import report_all_usage_to_stripe
-        except ImportError:
-            report_all_usage_to_stripe = None
-
-        return report_all_usage_to_stripe()
-    finally:
-        close_old_connections()
-
 
 # ── Dunning Checks (daily) ────────────────────────────────────────────────
 
@@ -85,8 +45,6 @@ def _run_dunning_checks_sync() -> int:
     """Sync wrapper — processes all past_due orgs."""
     close_old_connections()
     try:
-        from datetime import datetime
-
         try:
             from ee.usage.models.usage import OrganizationSubscription
         except ImportError:
@@ -161,8 +119,6 @@ def _generate_monthly_invoices_sync(
     Delegates to ``InvoiceGenerationService`` so the CLI, Temporal schedule,
     and admin "Generate Invoice" page all share identical logic.
     """
-    from datetime import datetime
-
     try:
         from ee.usage.services.invoice_generation import InvoiceGenerationService
     except ImportError:
@@ -185,6 +141,7 @@ def _generate_monthly_invoices_sync(
             skip_stripe=False,
             skip_email=False,
             stdout=lambda msg: activity.logger.info(msg),
+            on_progress=activity.heartbeat,
         )
         return result.created, result.skipped, result.errors
     finally:
@@ -204,41 +161,58 @@ def _run_monthly_reset_sync(period: str) -> None:
         close_old_connections()
 
 
+def _parse_period(period: str) -> datetime:
+    """Parse a ``YYYY-MM`` period string into a ``datetime`` (day=1)."""
+    return datetime.strptime(period, "%Y-%m")
+
+
+def _next_period_str(period: str) -> str:
+    """``'2026-05' → '2026-06'``."""
+    d = _parse_period(period)
+    if d.month == 12:
+        return f"{d.year + 1}-01"
+    return f"{d.year}-{d.month + 1:02d}"
+
+
 @activity.defn(name="monthly_closing_activity")
 async def monthly_closing_activity(
     input: MonthlyClosingInput,
 ) -> MonthlyClosingOutput:
-    """Flush Redis usage to DB, then generate invoices for the same period.
-
-    Reset must precede invoice generation: the invoice-gen idempotency gate
-    skips orgs that already have an Invoice row for the period, so a retry
-    can't recover events still buffered in Redis at fire time.
-
-    ``input.period`` MUST be a non-empty ``YYYY-MM`` string, derived from
-    ``workflow.now()`` in ``MonthlyClosingWorkflow``. No wall-clock
-    fallback — see the workflow docstring for why.
+    """Reset then invoice. ``input.period`` is the period being closed
+    (arrears); we derive the period being billed (advance) by adding one
+    month. Reset must run first — BillingEngine reads the just-flushed
+    UsageSummary for the closed period as the arrears half of the new
+    invoice.
     """
     close_old_connections()
     try:
-        period = input.period
-        if not period or len(period) != 7 or period[4] != "-":
+        period_closed = input.period
+        try:
+            _parse_period(period_closed or "")
+        except (TypeError, ValueError):
             raise ValueError(
-                f"monthly_closing_activity requires YYYY-MM period, got {period!r}"
+                f"monthly_closing_activity requires YYYY-MM period, got {period_closed!r}"
             )
-        activity.logger.info(f"monthly_closing_start period={period}")
+        period_billed = _next_period_str(period_closed)
+        activity.logger.info(
+            f"monthly_closing_start closed={period_closed} billed={period_billed}"
+        )
 
-        await sync_to_async(_run_monthly_reset_sync, thread_sensitive=False)(period)
+        await sync_to_async(_run_monthly_reset_sync, thread_sensitive=False)(
+            period_closed
+        )
 
         created, skipped, errors = await sync_to_async(
             _generate_monthly_invoices_sync, thread_sensitive=False
-        )(period, "")
+        )(period_billed, "")
         activity.logger.info(
-            f"monthly_closing_done period={period} "
+            f"monthly_closing_done closed={period_closed} billed={period_billed} "
             f"created={created} skipped={skipped} errors={errors}"
         )
 
         return MonthlyClosingOutput(
-            period=period,
+            period=period_billed,
+            closed_period=period_closed,
             invoices_created=created,
             invoices_skipped=skipped,
             errors=errors,

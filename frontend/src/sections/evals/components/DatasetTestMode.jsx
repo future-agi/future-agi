@@ -14,6 +14,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { TreeView, TreeItem } from "@mui/lab";
 import PropTypes from "prop-types";
 import React, {
@@ -33,6 +34,7 @@ import EvalResultDisplay from "./EvalResultDisplay";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
+import { unwrapCellValue } from "./datasetCellValue";
 
 const DATASET_PAGE_SIZE = 25;
 
@@ -362,7 +364,14 @@ function renderTreeNode(node, onSelect) {
   );
 }
 
-function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
+function ColumnTreeSelect({
+  columnNames,
+  value,
+  onChange,
+  isUnmapped,
+  disabled = false,
+  disabledTooltip = "",
+}) {
   const [open, setOpen] = useState(false);
   const [typing, setTyping] = useState(false);
   const anchorRef = useRef(null);
@@ -402,30 +411,37 @@ function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
     setTyping(false);
   };
 
-  return (
-    <Box sx={{ flex: 1 }}>
-      <TextField
-        ref={anchorRef}
-        size="small"
-        fullWidth
-        value={value}
-        placeholder="Select column"
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          setTyping(true);
-          onChange(e.target.value);
-          if (!open) setOpen(true);
-        }}
-        autoComplete="off"
-        inputProps={{
-          autoComplete: "off",
-          autoCorrect: "off",
-          spellCheck: false,
-        }}
-        InputProps={{
-          sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },
-          endAdornment: (
-            <InputAdornment position="end">
+  const textField = (
+    <TextField
+      ref={anchorRef}
+      size="small"
+      fullWidth
+      value={value}
+      placeholder={disabled ? "Loading columns..." : "Select column"}
+      disabled={disabled}
+      onFocus={() => {
+        if (disabled) return;
+        setOpen(true);
+      }}
+      onChange={(e) => {
+        if (disabled) return;
+        setTyping(true);
+        onChange(e.target.value);
+        if (!open) setOpen(true);
+      }}
+      autoComplete="off"
+      inputProps={{
+        autoComplete: "off",
+        autoCorrect: "off",
+        spellCheck: false,
+      }}
+      InputProps={{
+        sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },
+        endAdornment: (
+          <InputAdornment position="end">
+            {disabled ? (
+              <CircularProgress size={14} />
+            ) : (
               <Iconify
                 icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
                 width={16}
@@ -435,18 +451,35 @@ function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
                   setTyping(false);
                 }}
               />
-            </InputAdornment>
-          ),
-        }}
-        sx={{
-          ...(isUnmapped && {
-            "& .MuiOutlinedInput-notchedOutline": {
-              borderColor: "warning.main",
-            },
-          }),
-        }}
-      />
-      {open && filtered.length > 0 && (
+            )}
+          </InputAdornment>
+        ),
+      }}
+      sx={{
+        ...(isUnmapped && {
+          "& .MuiOutlinedInput-notchedOutline": { borderColor: "warning.main" },
+        }),
+      }}
+    />
+  );
+
+  return (
+    <Box sx={{ flex: 1 }}>
+      {disabled && disabledTooltip ? (
+        <CustomTooltip
+          show
+          type="black"
+          size="small"
+          title={disabledTooltip}
+          placement="top"
+          arrow
+        >
+          <Box>{textField}</Box>
+        </CustomTooltip>
+      ) : (
+        textField
+      )}
+      {!disabled && open && filtered.length > 0 && (
         <Popper
           open
           anchorEl={anchorRef.current}
@@ -778,7 +811,7 @@ const DatasetTestMode = React.forwardRef(
         )
         .map((col) => {
           const cell = currentRow[col.id];
-          const value = cell?.cell_value ?? cell ?? "";
+          const value = unwrapCellValue(cell);
           // Don't pre-stringify objects/arrays — coercing them via
           // String(value) produces the literal text "[object Object]"
           // which then fails the downstream JSON.parse check, falls
@@ -864,7 +897,7 @@ const DatasetTestMode = React.forwardRef(
         const schemaPaths = jsonSchemas?.[c.id]?.keys || [];
         const cell = currentRow?.[c.id];
         const runtimePaths = cell
-          ? extractKeysFromValue(cell?.cell_value ?? cell)
+          ? extractKeysFromValue(unwrapCellValue(cell))
           : [];
         const allPaths = new Set([...schemaPaths, ...runtimePaths]);
         allPaths.forEach((path) => {
@@ -1058,7 +1091,7 @@ const DatasetTestMode = React.forwardRef(
               const col = columns.find((c) => c.name === baseName);
               if (col) {
                 const cell = currentRow[col.id];
-                let cellValue = cell?.cell_value ?? cell ?? "";
+                let cellValue = unwrapCellValue(cell);
                 if (jsonPath) {
                   const resolved = resolveNestedValue(cellValue, jsonPath);
                   if (resolved !== undefined && resolved !== null) {
@@ -1087,7 +1120,7 @@ const DatasetTestMode = React.forwardRef(
               )
               .forEach((col) => {
                 const cell = currentRow[col.id];
-                const val = cell?.cell_value ?? cell ?? "";
+                const val = unwrapCellValue(cell);
                 const valStr =
                   typeof val === "object" ? JSON.stringify(val) : String(val);
                 rowContext[col.name] = valStr;
@@ -1329,6 +1362,8 @@ const DatasetTestMode = React.forwardRef(
               onChange={(_, newValue) => {
                 setSelectedDataset(newValue);
                 setSelectedDatasetId(newValue?.id || "");
+                setMapping({});
+                setColumns([]);
               }}
               onInputChange={(_, newInput, reason) => {
                 if (reason === "input") setDatasetSearch(newInput);
@@ -1448,7 +1483,7 @@ const DatasetTestMode = React.forwardRef(
               >
                 No rows in this dataset
               </Typography>
-              <Typography variant="caption" color="text.disabled">
+              <Typography variant="caption" color="text.secondary">
                 Add rows to the dataset before running a test
               </Typography>
             </Box>
@@ -1644,7 +1679,7 @@ const DatasetTestMode = React.forwardRef(
               {filteredCells.length === 0 && (
                 <Typography
                   variant="caption"
-                  color="text.disabled"
+                  color="text.secondary"
                   sx={{ py: 2, textAlign: "center", display: "block" }}
                 >
                   No columns match your search
@@ -1733,6 +1768,8 @@ const DatasetTestMode = React.forwardRef(
                       }))
                     }
                     isUnmapped={isUnmapped}
+                    disabled={!isWorkbenchMode && loadingData}
+                    disabledTooltip="Columns are being fetched"
                   />
                 </Box>
               );
