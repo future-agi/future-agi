@@ -38,7 +38,6 @@ from model_hub.models.evals_metric import (
     UserEvalMetric,
 )
 
-EmbeddingStatus = EvalGroundTruth.EmbeddingStatus
 from model_hub.models.run_prompt import PromptEvalConfig
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
@@ -4413,7 +4412,7 @@ class GroundTruthListView(APIView):
             for gt in gts:
                 stale = bool(
                     gt.embedded_row_count > 0
-                    and gt.embedding_status != EmbeddingStatus.COMPLETED
+                    and gt.embedding_status != EvalGroundTruth.EmbeddingStatus.COMPLETED
                 )
                 items.append(
                     GroundTruthItem(
@@ -4539,7 +4538,7 @@ class GroundTruthUploadView(APIView):
                 row_count=len(data),
                 variable_mapping=variable_mapping,
                 role_mapping=role_mapping,
-                embedding_status=EmbeddingStatus.PENDING,
+                embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING,
                 organization=organization,
                 workspace=getattr(request, "workspace", None),
             )
@@ -4673,7 +4672,7 @@ class GroundTruthStatusView(APIView):
             total = gt.row_count or 0
             embedded = gt.embedded_row_count or 0
             progress = (embedded / total * 100) if total > 0 else 0.0
-            stale = bool(embedded > 0 and gt.embedding_status != EmbeddingStatus.COMPLETED)
+            stale = bool(embedded > 0 and gt.embedding_status != EvalGroundTruth.EmbeddingStatus.COMPLETED)
 
             response = GroundTruthStatusResponse(
                 id=str(gt.id),
@@ -4798,7 +4797,7 @@ class GroundTruthTriggerEmbeddingView(APIView):
             except EvalGroundTruth.DoesNotExist:
                 return self._gm.not_found("Ground truth not found.")
 
-            if gt.embedding_status == EmbeddingStatus.PROCESSING:
+            if gt.embedding_status == EvalGroundTruth.EmbeddingStatus.PROCESSING:
                 return self._gm.bad_request(
                     "Embedding generation is already in progress."
                 )
@@ -4807,7 +4806,7 @@ class GroundTruthTriggerEmbeddingView(APIView):
                 return self._gm.bad_request("No data rows to embed.")
 
             # Reset status
-            gt.embedding_status = EmbeddingStatus.PENDING
+            gt.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING
             gt.embedded_row_count = 0
             gt.save(
                 update_fields=["embedding_status", "embedded_row_count", "updated_at"]
@@ -4827,14 +4826,14 @@ class GroundTruthTriggerEmbeddingView(APIView):
                 workflow_run_id = "scheduled"
 
             if workflow_run_id is None:
-                gt.embedding_status = EmbeddingStatus.FAILED
+                gt.embedding_status = EvalGroundTruth.EmbeddingStatus.FAILED
                 gt.save(update_fields=["embedding_status", "updated_at"])
                 return self._gm.bad_request("Failed to trigger embedding generation.")
 
             return self._gm.success_response(
                 {
                     "id": str(gt.id),
-                    "embedding_status": EmbeddingStatus.PENDING,
+                    "embedding_status": EvalGroundTruth.EmbeddingStatus.PENDING,
                     "message": "Embedding generation triggered.",
                 }
             )

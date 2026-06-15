@@ -11,7 +11,6 @@ from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
 from model_hub.models.evals_metric import EvalGroundTruth, EvalTemplate
 from model_hub.utils.eval_input_validation import is_empty_value
 
-EmbeddingStatus = EvalGroundTruth.EmbeddingStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -105,8 +104,8 @@ class GroundTruthService:
             gt.variable_mapping = variable_mapping
             gt.role_mapping = role_mapping
             gt_update_fields = ["variable_mapping", "role_mapping", "updated_at"]
-            if variable_mapping_changed and gt.embedding_status == EmbeddingStatus.COMPLETED:
-                gt.embedding_status = EmbeddingStatus.PENDING
+            if variable_mapping_changed and gt.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED:
+                gt.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING
                 gt_update_fields.append("embedding_status")
                 embeddings_stale = True
             gt.save(update_fields=gt_update_fields)
@@ -198,7 +197,7 @@ class GroundTruthService:
 
         if (
             eval_type_id == LlmEvalTypeId.CUSTOM_PROMPT_EVAL.value
-            and gt.embedding_status == EmbeddingStatus.COMPLETED
+            and gt.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
         ):
             examples = GroundTruthService.retrieve_few_shot(
                 gt=gt,
@@ -304,7 +303,7 @@ class GroundTruthService:
         workspace_id = _workspace_id_or_none(gt)
         eval_id = str(gt.eval_template_id)
 
-        gt.embedding_status = EmbeddingStatus.PROCESSING
+        gt.embedding_status = EvalGroundTruth.EmbeddingStatus.PROCESSING
         gt.embedded_row_count = 0
         gt.save(update_fields=["embedding_status", "embedded_row_count", "updated_at"])
 
@@ -345,7 +344,7 @@ class GroundTruthService:
 
         rows_embedded = len(data)
         gt.embedded_row_count = rows_embedded
-        gt.embedding_status = EmbeddingStatus.COMPLETED
+        gt.embedding_status = EvalGroundTruth.EmbeddingStatus.COMPLETED
         gt.save(
             update_fields=[
                 "embedding_status",
@@ -361,7 +360,7 @@ class GroundTruthService:
         return EmbedDatasetResult(
             ground_truth_id=str(gt.id),
             rows_embedded=rows_embedded,
-            status=EmbeddingStatus.COMPLETED,
+            status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
         )
 
     @staticmethod
@@ -372,7 +371,7 @@ class GroundTruthService:
         max_results: int = 3,
     ) -> list[dict[str, Any]]:
         """Return GT example rows most similar to ``inputs``."""
-        if gt.embedding_status != EmbeddingStatus.COMPLETED:
+        if gt.embedding_status != EvalGroundTruth.EmbeddingStatus.COMPLETED:
             logger.debug(
                 "ground_truth_retrieve_skipped_not_ready",
                 ground_truth_id=str(gt.id),
@@ -444,7 +443,7 @@ class GroundTruthService:
         max_results: int,
         similarity_threshold: float = 0.0,  # noqa: ARG004
     ) -> dict[str, Any] | ServiceError:
-        if gt.embedding_status != EmbeddingStatus.COMPLETED:
+        if gt.embedding_status != EvalGroundTruth.EmbeddingStatus.COMPLETED:
             return ServiceError(
                 f"Embeddings not ready. Status: {gt.embedding_status}. "
                 "Wait for embedding generation to complete.",
@@ -565,7 +564,7 @@ def _workspace_id_or_none(gt: EvalGroundTruth) -> str | None:
 
 def _mark_failed(gt: EvalGroundTruth, reason: str) -> EmbedDatasetResult:
     """Persist a failed embed pass on the PG row and return the typed result."""
-    gt.embedding_status = EmbeddingStatus.FAILED
+    gt.embedding_status = EvalGroundTruth.EmbeddingStatus.FAILED
     gt.embedded_row_count = 0
     gt.save(update_fields=["embedding_status", "embedded_row_count", "updated_at"])
     logger.warning(
@@ -576,7 +575,7 @@ def _mark_failed(gt: EvalGroundTruth, reason: str) -> EmbedDatasetResult:
     return EmbedDatasetResult(
         ground_truth_id=str(gt.id),
         rows_embedded=0,
-        status=EmbeddingStatus.FAILED,
+        status=EvalGroundTruth.EmbeddingStatus.FAILED,
         error=reason,
     )
 

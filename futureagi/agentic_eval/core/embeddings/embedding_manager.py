@@ -1262,11 +1262,7 @@ class EmbeddingManager:
         organization_id: str,
         workspace_id: str | None = None,
     ) -> None:
-        """Mark vectors scoped by (eval_id, organization_id, workspace_id) as deleted.
-
-        ``ALTER ... UPDATE`` is async on MergeTree; the mutation is queued
-        and reads filter ``deleted=0`` so old rows fall out as it catches up.
-        """
+        """Mark vectors as deleted; ALTER UPDATE is async, reads filter deleted=0."""
         table_exists = self.db_client.client.execute(
             f"EXISTS TABLE {table_name}"
         )[0][0]

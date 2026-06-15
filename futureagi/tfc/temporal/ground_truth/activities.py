@@ -10,7 +10,6 @@ from tfc.temporal.ground_truth.types import (
     GenerateEmbeddingsOutput,
 )
 
-EmbeddingStatus = EvalGroundTruth.EmbeddingStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -28,7 +27,7 @@ def _run_embed_dataset(ground_truth_id: str) -> GenerateEmbeddingsOutput:
         return GenerateEmbeddingsOutput(
             ground_truth_id=ground_truth_id,
             rows_embedded=0,
-            status=EmbeddingStatus.FAILED,
+            status=EvalGroundTruth.EmbeddingStatus.FAILED,
             error="Ground truth not found",
         )
 
@@ -71,7 +70,7 @@ async def generate_ground_truth_embeddings_activity(
         return GenerateEmbeddingsOutput(
             ground_truth_id=input.ground_truth_id,
             rows_embedded=0,
-            status=EmbeddingStatus.FAILED,
+            status=EvalGroundTruth.EmbeddingStatus.FAILED,
             error=str(exc),
         )
 
@@ -94,7 +93,7 @@ def _force_mark_failed(ground_truth_id: str, reason: str) -> None:
         from model_hub.models.evals_metric import EvalGroundTruth
 
         gt = EvalGroundTruth.objects.get(id=ground_truth_id)
-        gt.embedding_status = EmbeddingStatus.FAILED
+        gt.embedding_status = EvalGroundTruth.EmbeddingStatus.FAILED
         gt.save(update_fields=["embedding_status", "updated_at"])
     except Exception:
         logger.warning(
