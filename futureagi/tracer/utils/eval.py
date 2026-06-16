@@ -3614,13 +3614,7 @@ def rerun_single(
     eval_task_id=None,
     feedback_id=None,
 ):
-    """Soft-delete the prior EvalLogger for this row and re-dispatch.
-
-    Shared by submit_feedback_action_type (single-row recalc) and the
-    batch RecalculateEvalTaskWorkflow that ships in a follow-up PR.
-
-    TODO(BE-3): drop the "follow-up PR" wording once the workflow is wired.
-    """
+    """Soft-delete the prior EvalLogger for this row and re-dispatch."""
     if target_type == EvalTargetType.SPAN:
         EvalLogger.objects.filter(
             observation_span_id=observation_span_id,

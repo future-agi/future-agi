@@ -100,6 +100,10 @@ from tracer.services.clickhouse.graph_dispatch import (
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.create_otel_span import create_single_otel_span
+from tfc.temporal.eval_logger_recalculate.client import (
+    start_recalculate_eval_task_workflow,
+)
+from tfc.temporal.eval_logger_recalculate.types import RecalculateTarget
 from tracer.utils.eval import rerun_single
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
@@ -1292,12 +1296,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             custom_eval_config_id = validated_data.get("custom_eval_config_id")
             feedback_id = validated_data.get("feedback_id")
 
-            # TODO(BE-3): batch path replaces this block.
-            # When action_type == FeedbackActionType.RETUNE_RECALCULATE,
-            # gather sibling EvalLoggers sharing eval_task_id, soft-delete
-            # them, start RecalculateEvalTaskWorkflow, return
-            # recalculated_count = len(siblings).
-
             if target_type == EvalTargetType.SPAN:
                 anchor_id = observation_span_id
             elif target_type == EvalTargetType.TRACE:
@@ -1397,6 +1395,56 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 )
                 track_mixpanel_event(
                     MixpanelEvents.EVAL_RUN_COMPLETED.value, properties
+                )
+
+            elif action_type == FeedbackActionType.RETUNE_RECALCULATE:
+                if not eval_logger.eval_task_id:
+                    return self._gm.custom_error_response(
+                        HTTP_400_BAD_REQUEST,
+                        "Eval result is not part of an eval task — cannot batch recalculate.",
+                        code="no_eval_task",
+                    )
+
+                # Siblings = every live EvalLogger this user's eval config wrote
+                # under the same eval_task_id. EvalTask is the natural batch unit:
+                # one task → many rows (mixed span/trace/session). The workflow
+                # reruns each row in its target-type's runner.
+                sibling_qs = EvalLogger.objects.filter(
+                    eval_task_id=eval_logger.eval_task_id,
+                    custom_eval_config_id=custom_eval_config.id,
+                    deleted=False,
+                ).values(
+                    "target_type",
+                    "observation_span_id",
+                    "trace_id",
+                    "trace_session_id",
+                )
+                targets = [
+                    RecalculateTarget(
+                        target_type=row["target_type"],
+                        observation_span_id=(
+                            str(row["observation_span_id"])
+                            if row["observation_span_id"]
+                            else None
+                        ),
+                        trace_id=(
+                            str(row["trace_id"]) if row["trace_id"] else None
+                        ),
+                        trace_session_id=(
+                            str(row["trace_session_id"])
+                            if row["trace_session_id"]
+                            else None
+                        ),
+                    )
+                    for row in sibling_qs
+                ]
+                recalculated_count = len(targets)
+
+                start_recalculate_eval_task_workflow(
+                    eval_task_id=str(eval_logger.eval_task_id),
+                    custom_eval_config_id=str(custom_eval_config.id),
+                    targets=targets,
+                    feedback_id=str(feedback_id) if feedback_id else None,
                 )
 
             return self._gm.success_response(

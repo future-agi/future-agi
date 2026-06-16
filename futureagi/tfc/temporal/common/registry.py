@@ -197,6 +197,23 @@ def _ensure_workflows_registered() -> None:
             "could_not_load_evaluation_workflows", error=str(e)
         )
 
+    # Register eval-logger batch recalculate workflow for tasks_s queue
+    try:
+        from tfc.temporal.eval_logger_recalculate.workflows import (
+            RecalculateEvalTaskWorkflow,
+        )
+
+        register_for_queues(
+            queues=["tasks_s", "default"],
+            workflows=[RecalculateEvalTaskWorkflow],
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning(
+            "could_not_load_recalculate_eval_task_workflow", error=str(e)
+        )
+
     # Register ground truth embedding workflows for tasks_xl queue
     try:
         from tfc.temporal.ground_truth.workflows import (
@@ -415,6 +432,27 @@ def _ensure_activities_registered() -> None:
         log.info("registered_evaluation_activities", queues=["tasks_s", "default"])
     except ImportError as e:
         log.warning("could_not_load_evaluation_activities", error=str(e))
+
+    # Register eval-logger batch recalculate activities for tasks_s queue
+    try:
+        from tfc.temporal.eval_logger_recalculate.activities import (
+            dispatch_rerun_activity,
+            soft_delete_sibling_eval_loggers_activity,
+        )
+
+        register_for_queues(
+            queues=["tasks_s", "default"],
+            activities=[
+                soft_delete_sibling_eval_loggers_activity,
+                dispatch_rerun_activity,
+            ],
+        )
+        log.info(
+            "registered_recalculate_eval_task_activities",
+            queues=["tasks_s", "default"],
+        )
+    except ImportError as e:
+        log.warning("could_not_load_recalculate_eval_task_activities", error=str(e))
 
     # Register ground truth embedding activities for tasks_xl queue
     try:
