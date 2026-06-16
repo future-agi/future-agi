@@ -47,7 +47,7 @@ dependencies = [
     "numpy==1.26.4",
     "hdbscan",
     "librosa==0.10.1",
-    "soundfile==0.12.1",
+    "soundfile==0.14.0",
     "pydub==0.25.1",
     "ffmpeg-python",
     "wav2clip==0.1.0",

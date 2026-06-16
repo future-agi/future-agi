@@ -6622,21 +6622,14 @@ class EvalPlayGroundFeedbackAPIView(APIView):
             )
             # print(f"[FEEDBACK] Storing embedding for eval_id={log.source_id} org_id={org_for_embedding} required_keys={required_keys} row_dict_keys={list(row_dict.keys())} feedback_value='{value}' feedback_comment='{explanation}'", flush=True)
             embedding_manager = EmbeddingManager()
-            try:
-                embedding_manager.data_formatter(
-                    eval_id=str(log.source_id),
-                    row_dict=row_dict,
-                    inputs_formater=required_keys,
-                    insert=True,
-                    organization_id=org_for_embedding,
-                    workspace_id=None,
-                )
-            except Exception:
-                import traceback
-
-                traceback.print_exc()
-            finally:
-                embedding_manager.close()
+            embedding_manager.parallel_process_metadata(
+                eval_id=str(log.source_id),
+                metadatas=row_dict,
+                inputs_formater=required_keys,
+                organization_id=org_for_embedding,
+                workspace_id=None,
+            )
+            embedding_manager.close()
 
             if action_type == "retune":
                 message = "Metric queued for retuning"

@@ -899,7 +899,6 @@ class EmbeddingManager:
             except:
                 traceback.print_exc()
             # print(f"[FEEDBACK QUERY] retrieve_rag_based_examples: returned {len(results)} results", flush=True)
-
         except Exception as e:
             traceback.print_exc()
             logger.exception(f"Error in retrieve_rag_based_examples: {e}")
@@ -1143,13 +1142,18 @@ class EmbeddingManager:
         return img_base64_str
 
     def decode_path(self, encoded_path: str) -> str:
+        # URL-safe alphabet: standard base64 emits '+' and '/', and the
+        # metadata sanitizer (sanitize_sql_value) strips '/', '+' and '=',
+        # which corrupts encoded image/audio URLs. URL-safe base64 uses '-'/'_'
+        # (both survive the sanitizer); '=' padding is stripped but re-added
+        # here before decoding.
         padding = len(encoded_path) % 4
         if padding:
             encoded_path += "=" * (4 - padding)
-        return base64.b64decode(encoded_path.encode()).decode()
+        return base64.urlsafe_b64decode(encoded_path.encode()).decode()
 
     def encode_path(self, path: str) -> str:
-        return base64.b64encode(str(path).encode()).decode()
+        return base64.urlsafe_b64encode(str(path).encode()).decode()
 
     def process_examples(
         self, dpp_examples, inputs, feedback_col_name, corrected_label_col_name
