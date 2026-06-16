@@ -13,6 +13,7 @@ import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import logger from "src/utils/logger";
 import DrawerHeader from "./DrawerHeader";
 import DrawerToolbar from "./DrawerToolbar";
 import TraceDisplayPanel, { DEFAULT_VIEW_CONFIG } from "./TraceDisplayPanel";
@@ -675,8 +676,8 @@ const TraceDetailDrawerV2 = ({
                         match.is_available ?? match.isAvailable ?? false,
                     };
                   }
-                } catch {
-                  /* leave unresolved -> model stays unset */
+                } catch (err) {
+                  logger.warn("workbench model catalog lookup failed", err);
                 }
               }
               const configuration = {
