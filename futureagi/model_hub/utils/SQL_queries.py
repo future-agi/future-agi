@@ -1561,7 +1561,7 @@ base AS (
         ) AS row_avg_cost
     FROM tracer_observation_span os
     INNER JOIN model_hub_promptversion pv ON os.prompt_version_id = pv.id
-    INNER JOIN model_hub_promptlabel pl ON os.prompt_label_id = pl.id
+    LEFT JOIN model_hub_promptlabel pl ON os.prompt_label_id = pl.id
     WHERE
         pv.original_template_id = %s
         AND pv.deleted = FALSE

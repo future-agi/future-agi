@@ -413,41 +413,48 @@ def _fetch_prompt_versions(
             )
             prompt_template_label = prompt_details.get("prompt_template_label", None)
 
-            if prompt_template_name and prompt_template_label:
+            if prompt_template_name:
                 filters = {
                     "original_template__name": prompt_template_name,
                     "original_template__organization": organization_id,
-                    "labels__name": prompt_template_label,
                 }
 
                 if prompt_template_version:
                     filters["template_version"] = prompt_template_version
+
+                if prompt_template_label:
+                    filters["labels__name"] = prompt_template_label
 
                 prompt_version_filters.append(filters)
 
     if not prompt_version_filters or len(prompt_version_filters) == 0:
         return {}
 
-    # Use a cache to avoid redundant queries for the same filter set
+    # Use a cache to avoid redundant queries for the same filter set.
+    # prompt_label_id is optional — when the SDK didn't pass template_label,
+    # we still resolve prompt_version_id so the span shows up in metrics
+    # (LEFT-joined to label in the metrics CTE).
     prompt_versions_cache = {}
     for filters in prompt_version_filters:
         key = tuple(sorted(filters.items()))
         if key not in prompt_versions_cache:
             prompt_version = PromptVersion.objects.filter(**filters).first()
             if prompt_version:
-                # Fetch the required prompt_label with the specific name
+                prompt_label_id = None
                 label_name = filters.get("labels__name")
-                prompt_labels_ids = prompt_version.labels.through.objects.filter(
-                    promptversion_id=prompt_version,
-                ).values_list("promptlabel_id", flat=True)
-
-                req_label = PromptLabel.no_workspace_objects.filter(
-                    id__in=prompt_labels_ids, name=label_name
-                ).first()
+                if label_name:
+                    prompt_labels_ids = prompt_version.labels.through.objects.filter(
+                        promptversion_id=prompt_version,
+                    ).values_list("promptlabel_id", flat=True)
+                    req_label = PromptLabel.no_workspace_objects.filter(
+                        id__in=prompt_labels_ids, name=label_name
+                    ).first()
+                    if req_label:
+                        prompt_label_id = str(req_label.id)
 
                 prompt_versions_cache[key] = {
                     "prompt_version_id": str(prompt_version.id),
-                    "prompt_label_id": str(req_label.id),
+                    "prompt_label_id": prompt_label_id,
                 }
 
     return prompt_versions_cache
@@ -557,15 +564,17 @@ def _link_prompt_version(
         prompt_template_version = prompt_details.get("prompt_template_version", None)
         prompt_template_label = prompt_details.get("prompt_template_label", None)
 
-        if prompt_template_name and prompt_template_label:
+        if prompt_template_name:
             filters = {
                 "original_template__name": prompt_template_name,
                 "original_template__organization": organization_id,
-                "labels__name": prompt_template_label,
             }
 
             if prompt_template_version:
                 filters["template_version"] = prompt_template_version
+
+            if prompt_template_label:
+                filters["labels__name"] = prompt_template_label
 
             key = tuple(sorted(filters.items()))
             if (
