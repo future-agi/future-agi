@@ -15,6 +15,8 @@ from tracer.utils.constants import (
     NO_VALUE_OPS,
     RANGE_OPS,
     SPAN_ATTR_ALLOWED_OPS,
+    TEXT_MULTI_VALUE_OPS,
+    TEXT_NEGATIVE_OPS,
     FilterType,
 )
 
@@ -735,9 +737,49 @@ class ClickHouseFilterBuilder:
                 )
             return [value_coercer(v) for v in filter_value]
 
+        # Text ops accept either a single value or a list. Lists keep list
+        # shape so _span_attr_inner can emit polarity-correct multi-clause SQL.
+        if filter_op in TEXT_MULTI_VALUE_OPS and isinstance(filter_value, list):
+            if not filter_value:
+                raise ValueError(
+                    f"{filter_op!r} requires a non-empty list, got {filter_value!r}"
+                )
+            return [value_coercer(v) for v in filter_value]
+
         if filter_value is None:
             raise ValueError(f"{filter_op!r} requires a value, got None")
         return value_coercer(filter_value)
+
+    # SQL pieces per text op when value is a list.
+    # (sql_op, pattern_fn) — pattern_fn turns a value into the parameter payload.
+    _TEXT_OP_PIECES: Dict[str, Tuple[str, Callable[[Any], Any]]] = {
+        "equals":       ("=",        lambda v: v),
+        "not_equals":   ("!=",       lambda v: v),
+        "contains":     ("LIKE",     lambda v: f"%{v}%"),
+        "not_contains": ("NOT LIKE", lambda v: f"%{v}%"),
+        "starts_with":  ("LIKE",     lambda v: f"{v}%"),
+        "ends_with":    ("LIKE",     lambda v: f"%{v}"),
+    }
+
+    def _compose_text_multi_value(
+        self,
+        column_access: str,
+        exists_predicate: str,
+        filter_op: str,
+        values: List[Any],
+    ) -> str:
+        """Compose an N-clause text predicate. Positive ops OR-join, negative AND-join."""
+        sql_op, pattern_fn = self._TEXT_OP_PIECES[filter_op]
+        clauses: List[str] = []
+        for v in values:
+            param = self._next_param("attr")
+            self._params[param] = pattern_fn(v)
+            clauses.append(f"{column_access} {sql_op} %({param})s")
+
+        if filter_op in TEXT_NEGATIVE_OPS:
+            return f"{exists_predicate} AND " + " AND ".join(clauses)
+        joined = clauses[0] if len(clauses) == 1 else "(" + " OR ".join(clauses) + ")"
+        return f"{exists_predicate} AND {joined}"
 
     def _span_attr_inner(
         self,
@@ -769,6 +811,11 @@ class ClickHouseFilterBuilder:
             return f"NOT {exists_predicate}"
         if filter_op == "is_not_null":
             return exists_predicate
+
+        if filter_op in TEXT_MULTI_VALUE_OPS and isinstance(normalized_value, list):
+            return self._compose_text_multi_value(
+                column_access, exists_predicate, filter_op, normalized_value
+            )
 
         if filter_op == "equals":
             param = self._next_param("attr")
