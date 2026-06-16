@@ -80,6 +80,8 @@ const escapeCsvField = (field) => {
   return str;
 };
 
+const SAVED_NAV_DELAY_MS = 400;
+
 const TIME_PRESETS = [
   { label: "Custom", value: "custom" },
   { label: "30 mins", value: "30m" },
@@ -2084,7 +2086,8 @@ export default function WidgetEditorView() {
       clearTimeout(saveNavTimerRef.current);
       saveNavTimerRef.current = setTimeout(() => {
         navigate(paths.dashboard.dashboards.detail(dashboardId));
-      }, 400);
+        setSaveStatus("idle");
+      }, SAVED_NAV_DELAY_MS);
     } catch {
       setSaveStatus("idle");
       enqueueSnackbar(`Failed to ${isEditing ? "update" : "create"} widget`, {
