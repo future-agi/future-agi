@@ -569,7 +569,20 @@ class EmbeddingManager:
                             embedding_vector = embedding_vector.tolist()
 
                     vectors.append(embedding_vector)
-                    metadata_list.append(mod_dict)
+
+                    if table_name == GROUND_TRUTH_TABLE_NAME:
+                        stored = {
+                            "item_id": row_dict["item_id"],
+                            "column_name": str(inp),
+                            "input_type": str(input_dict[inp]),
+                        }
+                        if organization_id:
+                            stored["organization_id"] = str(organization_id)
+                        if workspace_id:
+                            stored["workspace_id"] = str(workspace_id)
+                        metadata_list.append(stored)
+                    else:
+                        metadata_list.append(mod_dict)
 
                 except IndexError:
                     logger.exception(
@@ -1007,13 +1020,19 @@ class EmbeddingManager:
                     continue
                     
                 # print(f"[FEEDBACK AVG_RAG] input[{n}]: col={input_cols[n]} type={self.input_types[n]} query={str(inp)[:100]} eval_id={eval_id} org={organization_id} ws={workspace_id}", flush=True)
+                if table_name == GROUND_TRUTH_TABLE_NAME:
+                    meta_col = "column_name"
+                    per_input_filter = {"column_name": input_cols[n]}
+                else:
+                    meta_col = input_cols[n]
+                    per_input_filter = {}
                 x = self.retrieve_rag_based_examples(
                     inp,
                     table_name,
                     eval_id,
-                    input_cols[n],
+                    meta_col,
                     input_type=self.input_types[n],
-                    filter_by={},
+                    filter_by=per_input_filter,
                     top_k=20,
                     threshold=threshold,
                     syn_data_flag=syn_data_flag,

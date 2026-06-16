@@ -63,6 +63,74 @@ class _FakeGT:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# upload
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_upload_rejects_file_above_size_limit():
+    big_file = type("F", (), {"size": 10**9, "name": "big.csv"})()
+    with patch(
+        "model_hub.utils.ground_truth_parser.MAX_FILE_SIZE_BYTES", 1024
+    ):
+        result = GroundTruthService.upload(
+            eval_template=_FakeTemplate(),
+            request_data={},
+            uploaded_file=big_file,
+            organization=_FakeOrg(),
+            workspace=_FakeWorkspace(),
+        )
+    assert isinstance(result, ServiceError)
+    assert result.code == "FILE_TOO_LARGE"
+
+
+def test_upload_json_body_rejects_missing_columns():
+    result = GroundTruthService.upload(
+        eval_template=_FakeTemplate(),
+        request_data={"name": "x", "columns": [], "data": []},
+        uploaded_file=None,
+        organization=_FakeOrg(),
+        workspace=_FakeWorkspace(),
+    )
+    assert isinstance(result, ServiceError)
+    assert result.code == "MISSING_COLUMNS"
+
+
+def test_upload_json_body_stamps_item_ids_and_persists():
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return type("GT", (), kwargs)()
+
+    with patch(
+        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.create",
+        side_effect=fake_create,
+    ):
+        GroundTruthService.upload(
+            eval_template=_FakeTemplate(),
+            request_data={
+                "name": "ds",
+                "description": "",
+                "file_name": "ds.csv",
+                "columns": ["q", "a"],
+                "data": [{"q": "hi", "a": "yo"}, {"q": "ho", "a": "yo"}],
+                "variable_mapping": {"q": "q"},
+                "role_mapping": {"output": "a"},
+            },
+            uploaded_file=None,
+            organization=_FakeOrg(),
+            workspace=_FakeWorkspace(),
+        )
+
+    stamped = captured["data"]
+    assert len(stamped) == 2
+    assert all(len(row["item_id"]) == 32 for row in stamped)
+    assert stamped[0]["item_id"] != stamped[1]["item_id"]
+    assert captured["row_count"] == 2
+    assert captured["embedding_status"] == EvalGroundTruth.EmbeddingStatus.PENDING
+
+
+# ─────────────────────────────────────────────────────────────────────
 # embed_dataset
 # ─────────────────────────────────────────────────────────────────────
 
@@ -221,33 +289,85 @@ def test_retrieve_few_shot_short_circuits_when_mapping_missing():
     assert rows == []
 
 
-def test_retrieve_few_shot_calls_embedding_manager_and_strips_storage_keys():
+def test_retrieve_few_shot_hydrates_canonical_rows_from_pg_by_item_id():
     gt = _FakeGT(
         embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
         variable_mapping={"q": "question"},
+        data=[
+            {"item_id": "abc123", "question": "hi", "verdict": "Pass"},
+            {"item_id": "def456", "question": "yo", "verdict": "Fail"},
+        ],
     )
 
-    raw_group = [
-        {
-            "item_id": "1",
-            "index_column": "question",
-            "input_type": "text",
-            "question": "hi",
-            "verdict": "Pass",
-        }
+    raw_groups = [
+        [{"item_id": "abc123", "column_name": "question", "input_type": "text"}],
+        [{"item_id": "def456", "column_name": "question", "input_type": "text"}],
     ]
 
     with patch(
         "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager"
     ) as mock_manager_cls:
         mock_manager = mock_manager_cls.return_value
-        mock_manager.retrieve_avg_rag_based_examples.return_value = [raw_group]
+        mock_manager.retrieve_avg_rag_based_examples.return_value = raw_groups
         rows = GroundTruthService.retrieve_few_shot(
             gt=gt, inputs={"q": "hi"}, max_results=2
         )
 
     mock_manager.retrieve_avg_rag_based_examples.assert_called_once()
+    assert rows == [
+        {"question": "hi", "verdict": "Pass"},
+        {"question": "yo", "verdict": "Fail"},
+    ]
+
+
+def test_retrieve_few_shot_skips_match_when_item_id_missing_from_pg():
+    gt = _FakeGT(
+        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
+        variable_mapping={"q": "question"},
+        data=[{"item_id": "abc123", "question": "hi", "verdict": "Pass"}],
+    )
+
+    raw_groups = [
+        [{"item_id": "abc123", "column_name": "question", "input_type": "text"}],
+        [{"item_id": "gone999", "column_name": "question", "input_type": "text"}],
+    ]
+
+    with patch(
+        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager"
+    ) as mock_manager_cls:
+        mock_manager = mock_manager_cls.return_value
+        mock_manager.retrieve_avg_rag_based_examples.return_value = raw_groups
+        rows = GroundTruthService.retrieve_few_shot(
+            gt=gt, inputs={"q": "hi"}, max_results=5
+        )
+
     assert rows == [{"question": "hi", "verdict": "Pass"}]
+
+
+def test_retrieve_few_shot_dedups_same_item_id_across_groups():
+    gt = _FakeGT(
+        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
+        variable_mapping={"q": "question", "ctx": "context"},
+        data=[{"item_id": "abc123", "question": "hi", "context": "polite", "verdict": "Pass"}],
+    )
+
+    raw_groups = [
+        [{"item_id": "abc123", "column_name": "question", "input_type": "text"}],
+        [{"item_id": "abc123", "column_name": "context", "input_type": "text"}],
+    ]
+
+    with patch(
+        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager"
+    ) as mock_manager_cls:
+        mock_manager = mock_manager_cls.return_value
+        mock_manager.retrieve_avg_rag_based_examples.return_value = raw_groups
+        rows = GroundTruthService.retrieve_few_shot(
+            gt=gt, inputs={"q": "hi"}, max_results=5
+        )
+
+    assert rows == [
+        {"question": "hi", "context": "polite", "verdict": "Pass"}
+    ]
 
 
 # ─────────────────────────────────────────────────────────────────────

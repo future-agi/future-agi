@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +37,80 @@ class GroundTruthService:
     ALLOWED_ROLE_KEYS = frozenset(
         {"output", "explanation", "expected_output", "reasoning", "reason"}
     )
+
+    @staticmethod
+    def upload(
+        *,
+        eval_template: EvalTemplate,
+        request_data: dict[str, Any],
+        uploaded_file: Any,
+        organization: Any,
+        workspace: Any,
+    ) -> EvalGroundTruth | ServiceError:
+        from model_hub.types import GroundTruthUploadRequest
+        from model_hub.utils.ground_truth_parser import (
+            MAX_FILE_SIZE_BYTES,
+            parse_ground_truth_file,
+        )
+        from tfc.utils.errors import format_request_error
+
+        if uploaded_file:
+            if uploaded_file.size > MAX_FILE_SIZE_BYTES:
+                return ServiceError(
+                    "File exceeds maximum size of 50MB.", code="FILE_TOO_LARGE"
+                )
+            try:
+                columns, data = parse_ground_truth_file(
+                    uploaded_file, uploaded_file.name
+                )
+            except ValueError as exc:
+                return ServiceError(str(exc), code="INVALID_FILE")
+            name = (
+                request_data.get("name")
+                or uploaded_file.name.rsplit(".", 1)[0]
+            )
+            description = request_data.get("description", "")
+            file_name = uploaded_file.name
+            variable_mapping = request_data.get("variable_mapping")
+            role_mapping = request_data.get("role_mapping")
+        else:
+            try:
+                req = GroundTruthUploadRequest(**request_data)
+            except Exception as exc:
+                return ServiceError(
+                    format_request_error(exc), code="INVALID_REQUEST"
+                )
+            if not req.columns:
+                return ServiceError(
+                    "Columns list is required.", code="MISSING_COLUMNS"
+                )
+            name = req.name
+            description = req.description
+            file_name = req.file_name
+            columns = req.columns
+            data = req.data
+            variable_mapping = req.variable_mapping
+            role_mapping = req.role_mapping
+
+        stamped = [
+            {**row, "item_id": uuid.uuid4().hex}
+            for row in (data or [])
+            if isinstance(row, dict)
+        ]
+        return EvalGroundTruth.objects.create(
+            eval_template=eval_template,
+            name=name,
+            description=description,
+            file_name=file_name,
+            columns=columns,
+            data=stamped,
+            row_count=len(stamped),
+            variable_mapping=variable_mapping,
+            role_mapping=role_mapping,
+            embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING,
+            organization=organization,
+            workspace=workspace,
+        )
 
     @staticmethod
     def update_setup(
@@ -428,16 +503,22 @@ class GroundTruthService:
             top_k=max_results,
         )
 
-        # Each item-group from CH has one row per mapped input column of the
-        # same source row; collapse back to one source-row dict.
+        item_index = _build_item_index(gt.data or [])
         matches: list[dict[str, Any]] = []
+        seen: set[str] = set()
         for group in raw or []:
             if not group:
                 continue
-            canonical = dict(group[0])
-            for storage_key in ("item_id", "index_column", "input_type"):
-                canonical.pop(storage_key, None)
+            item_id = str(group[0].get("item_id") or "")
+            if not item_id or item_id in seen:
+                continue
+            canonical_src = item_index.get(item_id)
+            if canonical_src is None:
+                continue
+            canonical = dict(canonical_src)
+            canonical.pop("item_id", None)
             matches.append(canonical)
+            seen.add(item_id)
 
         logger.info(
             "ground_truth_fewshots_retrieved",
@@ -574,6 +655,14 @@ def _workspace_id_or_none(gt: EvalGroundTruth) -> str | None:
         gt.workspace.id if getattr(gt, "workspace", None) else None
     )
     return str(workspace_id) if workspace_id else None
+
+
+def _build_item_index(data: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        str(row["item_id"]): row
+        for row in (data or [])
+        if isinstance(row, dict) and row.get("item_id")
+    }
 
 
 def _mark_failed(gt: EvalGroundTruth, reason: str) -> EmbedDatasetResult:

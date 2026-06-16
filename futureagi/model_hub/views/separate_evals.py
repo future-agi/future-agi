@@ -4467,96 +4467,37 @@ class GroundTruthUploadView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, template_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
+        from model_hub.services.ground_truth_service import (
+            GroundTruthService,
+            ServiceError,
+        )
         from model_hub.types import GroundTruthUploadResponse
 
         try:
-            organization = _request_organization(request)
-
-            try:
-                template = _get_accessible_eval_template_for_request(
-                    template_id, request
-                )
-            except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
-
-            request_data = request.validated_data
-            uploaded_file = request_data.get("file")
-
-            if uploaded_file:
-                # --- File upload mode ---
-                from model_hub.utils.ground_truth_parser import (
-                    MAX_FILE_SIZE_BYTES,
-                    parse_ground_truth_file,
-                )
-
-                if uploaded_file.size > MAX_FILE_SIZE_BYTES:
-                    return self._gm.bad_request("File exceeds maximum size of 50MB.")
-
-                name = request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
-                description = request_data.get("description", "")
-
-                try:
-                    columns, data = parse_ground_truth_file(
-                        uploaded_file, uploaded_file.name
-                    )
-                except ValueError as e:
-                    return self._gm.bad_request(str(e))
-
-                file_name = uploaded_file.name
-                variable_mapping = request_data.get("variable_mapping")
-                role_mapping = request_data.get("role_mapping")
-            else:
-                # --- JSON body mode (backwards compatible) ---
-                from model_hub.types import GroundTruthUploadRequest
-
-                try:
-                    req = GroundTruthUploadRequest(**request_data)
-                except Exception as e:
-                    from tfc.utils.errors import format_request_error
-
-                    return self._gm.bad_request(format_request_error(e))
-
-                if not req.columns:
-                    return self._gm.bad_request("Columns list is required.")
-
-                name = req.name
-                description = req.description
-                file_name = req.file_name
-                columns = req.columns
-                data = req.data
-                variable_mapping = req.variable_mapping
-                role_mapping = req.role_mapping
-
-            gt = EvalGroundTruth.objects.create(
-                eval_template=template,
-                name=name,
-                description=description,
-                file_name=file_name,
-                columns=columns,
-                data=data,
-                row_count=len(data),
-                variable_mapping=variable_mapping,
-                role_mapping=role_mapping,
-                embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING,
-                organization=organization,
-                workspace=getattr(request, "workspace", None),
+            template = _get_accessible_eval_template_for_request(
+                template_id, request
             )
+        except EvalTemplate.DoesNotExist:
+            return self._gm.not_found("Eval template not found.")
 
-            response = GroundTruthUploadResponse(
-                id=str(gt.id),
-                name=gt.name,
-                row_count=gt.row_count,
-                columns=gt.columns,
-                embedding_status=gt.embedding_status,
-            )
-            return self._gm.success_response(response.model_dump())
+        result = GroundTruthService.upload(
+            eval_template=template,
+            request_data=request.validated_data,
+            uploaded_file=request.validated_data.get("file"),
+            organization=_request_organization(request),
+            workspace=getattr(request, "workspace", None),
+        )
+        if isinstance(result, ServiceError):
+            return self._gm.bad_request(result.message)
 
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthUploadView: {str(e)}\n{traceback.format_exc()}"
-            )
-            return self._gm.bad_request(str(e))
+        response = GroundTruthUploadResponse(
+            id=str(result.id),
+            name=result.name,
+            row_count=result.row_count,
+            columns=result.columns,
+            embedding_status=result.embedding_status,
+        )
+        return self._gm.success_response(response.model_dump())
 
 
 class GroundTruthSetupView(APIView):
