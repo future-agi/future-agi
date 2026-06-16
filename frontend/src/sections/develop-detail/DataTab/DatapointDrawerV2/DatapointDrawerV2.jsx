@@ -368,8 +368,8 @@ const DatapointDrawerChild = () => {
       return null;
     }
   });
-  const evalValueInfos = evalOpen?.value_infos ?? evalOpen?.valueInfos;
-  const evalCellValue = evalOpen?.cell_value ?? evalOpen?.cellValue;
+  const evalValueInfos = evalOpen?.value_infos
+  const evalCellValue = evalOpen?.cell_value 
   const evalOutput = evalValueInfos?.output;
 
   const loading = false;
@@ -1298,7 +1298,7 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
   useEffect(() => {
     onAnalysisLoadedRef.current = onAnalysisLoaded;
   }, [onAnalysisLoaded]);
-  const valueInfos = evalOpen?.value_infos ?? evalOpen?.valueInfos;
+  const valueInfos = evalOpen?.value_infos 
   const inlineAnalysis = valueInfos?.error_analysis;
   const hasInlineAnalysis = !!(
     inlineAnalysis &&
