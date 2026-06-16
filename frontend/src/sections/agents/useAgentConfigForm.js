@@ -99,6 +99,7 @@ export const useAgentSubmit = ({
           ? `+${data.countryCode}${data.contactNumber.trim()}`
           : data.contactNumber.trim();
         payload.contact_number = fullContactNumber;
+        delete payload.country_code;
         delete payload.model;
         delete payload.model_details;
 

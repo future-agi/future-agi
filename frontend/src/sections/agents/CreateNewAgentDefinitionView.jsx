@@ -187,6 +187,7 @@ const CreateNewAgentDefinitionView = () => {
           delete payload.livekit_config_json;
           delete payload.livekit_max_concurrency;
         }
+        delete payload.country_code;
         delete payload.model;
         delete payload.model_details;
       } else {
