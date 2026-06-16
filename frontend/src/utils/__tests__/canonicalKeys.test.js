@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canonicalKeys, canonicalEntries, canonicalValues } from "../utils";
+import { canonicalKeys, canonicalEntries, canonicalValues, canonicalizeDeep } from "../utils";
 
 // Helper that simulates a legacy object containing both canonical keys and
 // old alias keys so iteration sees both.
@@ -92,5 +92,36 @@ describe("canonicalKeys / canonicalEntries / canonicalValues", () => {
     const obj = withAliases({ tone_17_apr_2026: { neutral: 10 } });
     expect(Object.keys(obj)).toContain("tone17Apr2026");
     expect(canonicalKeys(obj)).toEqual(["tone_17_apr_2026"]);
+  });
+});
+
+describe("canonicalizeDeep", () => {
+  it("strips camelCase aliases from nested metadata objects", () => {
+    const metadata = withAliases({
+      user_id: "u1",
+      nested: withAliases({ request_count: 3 }),
+    });
+    expect(canonicalizeDeep(metadata)).toEqual({
+      user_id: "u1",
+      nested: { request_count: 3 },
+    });
+  });
+
+  it("preserves genuine camelCase keys and primitives", () => {
+    const metadata = { id: 1, name: "test", count: 0 };
+    expect(canonicalizeDeep(metadata)).toEqual(metadata);
+  });
+
+  it("handles arrays and null leaves", () => {
+    const metadata = withAliases({
+      tags: ["a", "b"],
+      optional: null,
+      user_id: 1,
+    });
+    expect(canonicalizeDeep(metadata)).toEqual({
+      tags: ["a", "b"],
+      optional: null,
+      user_id: 1,
+    });
   });
 });

@@ -26,6 +26,7 @@ import { useAnalyticsOverview } from "../analytics/hooks/useAnalyticsOverview";
 import { useAnalyticsUsage } from "../analytics/hooks/useAnalyticsUsage";
 import { val } from "../utils/analyticsHelpers";
 import { formatCost, formatDateTime as formatDate } from "../utils/formatters";
+import { canonicalKeys, canonicalizeDeep } from "src/utils/utils";
 
 const STATUS_COLORS = {
   active: "success",
@@ -282,7 +283,7 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
             </Box>
 
             {/* Metadata */}
-            {keyData.metadata && Object.keys(keyData.metadata).length > 0 && (
+            {keyData.metadata && canonicalKeys(keyData.metadata).length > 0 && (
               <Box>
                 <Typography variant="subtitle2" mb={1}>
                   Metadata
@@ -298,7 +299,7 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
                     overflowX: "auto",
                   }}
                 >
-                  {JSON.stringify(keyData.metadata, null, 2)}
+                  {JSON.stringify(canonicalizeDeep(keyData.metadata), null, 2)}
                 </Box>
               </Box>
             )}

@@ -26,6 +26,7 @@ import {
   formatCost,
   formatTokens,
 } from "../utils/formatters";
+import { canonicalKeys, canonicalizeDeep } from "src/utils/utils";
 
 function formatMs(val) {
   if (val == null) return "\u2014";
@@ -136,7 +137,7 @@ const SessionDetailDrawer = ({ sessionId, open, onClose }) => {
               </Card>
             </Stack>
 
-            {session.metadata && Object.keys(session.metadata).length > 0 && (
+            {session.metadata && canonicalKeys(session.metadata).length > 0 && (
               <Box mb={3}>
                 <Typography variant="subtitle2" mb={1}>
                   Metadata
@@ -151,7 +152,7 @@ const SessionDetailDrawer = ({ sessionId, open, onClose }) => {
                       whiteSpace: "pre-wrap",
                     }}
                   >
-                    {JSON.stringify(session.metadata, null, 2)}
+                    {JSON.stringify(canonicalizeDeep(session.metadata), null, 2)}
                   </Typography>
                 </Card>
               </Box>
