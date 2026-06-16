@@ -139,7 +139,7 @@ class ModelConfigs:
 
     CLAUDE_4_5_SONNET_BEDROCK_ARN: Final[ModelConfig] = ModelConfig(
         provider=LiteLlmProvider.AWS_BEDROCK_ANTHROPIC.value,
-        model_name=os.environ.get("BEDROCK_SONNET_ARN", ""),
+        model_name=os.environ.get("BEDROCK_SONNET_ARN") or os.environ.get("TURING_SMALL_MODEL", ""),
         temperature=0.2,
         max_tokens=8100,
     )
