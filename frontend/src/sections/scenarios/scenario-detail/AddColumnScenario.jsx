@@ -66,7 +66,7 @@ const AddColumnScenario = ({ open, onClose, datasetId, scenarioId }) => {
     onSuccess: () => {
       enqueueSnackbar("Columns added successfully");
       handleClose();
-      refreshGrid();
+      refreshGrid({ purge: true });
     },
   });
 

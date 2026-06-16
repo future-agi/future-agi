@@ -35,7 +35,7 @@ const AddRowUsingAiForm = ({ scenarioId, onClose }) => {
       axios.post(endpoints.scenarios.addRowUsingAi(scenarioId), data),
     onSuccess: () => {
       enqueueSnackbar("Rows added successfully", { variant: "success" });
-      refreshGrid();
+      refreshGrid({ purge: true });
       onClose();
     },
   });
