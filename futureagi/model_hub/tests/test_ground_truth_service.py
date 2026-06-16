@@ -124,6 +124,82 @@ def test_embed_dataset_marks_completed_on_success():
     assert gt.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
 
 
+def test_embed_dataset_forwards_progress_callback_to_manager():
+    """The service must pass a ``progress_callback`` into
+    ``parallel_process_metadata`` so the embed manager can tick the live
+    row count from inside its worker threads."""
+    gt = _FakeGT(
+        data=[{"q": "hi"}, {"q": "yo"}, {"q": "lo"}],
+        variable_mapping={"q": "q"},
+    )
+
+    captured = {}
+
+    def fake_process(*_args, **kwargs):
+        captured["progress_callback"] = kwargs.get("progress_callback")
+
+    with patch(
+        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
+    ), patch(
+        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
+        side_effect=fake_process,
+    ):
+        GroundTruthService.embed_dataset(gt=gt)
+
+    assert callable(captured.get("progress_callback")), (
+        "embed_dataset must forward a progress_callback to the manager"
+    )
+
+
+def test_embed_dataset_progress_callback_persists_row_count_via_update():
+    """The callback must update ``embedded_row_count`` through Django's
+    queryset update (not a stale in-memory model save) so concurrent
+    worker writes do not race the activity-level snapshot."""
+    gt = _FakeGT(
+        data=[{"q": "hi"}, {"q": "yo"}, {"q": "lo"}],
+        variable_mapping={"q": "q"},
+    )
+
+    captured = {}
+    update_calls = []
+
+    def fake_process(*_args, **kwargs):
+        captured["progress_callback"] = kwargs.get("progress_callback")
+
+    class _Queryset:
+        def update(self, **values):
+            update_calls.append(values)
+
+    def fake_filter(**filter_kwargs):
+        update_calls.append(("filter", filter_kwargs))
+        return _Queryset()
+
+    with patch(
+        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.soft_delete_vectors"
+    ), patch(
+        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata",
+        side_effect=fake_process,
+    ), patch(
+        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
+        side_effect=fake_filter,
+    ):
+        GroundTruthService.embed_dataset(gt=gt)
+        cb = captured["progress_callback"]
+        cb(1)
+        cb(2)
+        cb(3)
+
+    filter_payloads = [c for c in update_calls if isinstance(c, tuple) and c[0] == "filter"]
+    update_payloads = [c for c in update_calls if isinstance(c, dict)]
+    assert len(filter_payloads) == 3
+    assert all(c[1]["id"] == "gt-fake" for c in filter_payloads)
+    assert update_payloads == [
+        {"embedded_row_count": 1},
+        {"embedded_row_count": 2},
+        {"embedded_row_count": 3},
+    ]
+
+
 # ─────────────────────────────────────────────────────────────────────
 # retrieve_few_shot
 # ─────────────────────────────────────────────────────────────────────

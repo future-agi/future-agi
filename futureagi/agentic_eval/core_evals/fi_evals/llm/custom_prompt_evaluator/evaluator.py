@@ -306,9 +306,10 @@ class CustomPromptEvaluator(LLM):
             image_urls=kwargs.get("image_urls"),
         )
 
-        # Build final content: text + media blocks
-        if media_blocks:
-            user_content = [{"type": "text", "text": user_text}] + media_blocks
+        gt_blocks = kwargs.get("ground_truth_blocks") or []
+
+        if media_blocks or gt_blocks:
+            user_content = [{"type": "text", "text": user_text}] + media_blocks + gt_blocks
         else:
             user_content = user_text
 
@@ -336,27 +337,6 @@ class CustomPromptEvaluator(LLM):
                     messages.append({"role": "user", "content": example["input"]})
                 if example.get("output"):
                     messages.append({"role": "assistant", "content": example["output"]})
-
-        # Ground truth few-shot injection (Phase 9)
-        # These are dynamically retrieved examples similar to the current input,
-        # injected as calibration context for the judge.
-        gt_few_shot = kwargs.get("ground_truth_few_shot")
-        if gt_few_shot and isinstance(gt_few_shot, str) and gt_few_shot.strip():
-            messages.append({
-                "role": "user",
-                "content": (
-                    "Before evaluating, review these reference examples that show "
-                    "how similar cases were scored by human experts. Use them as "
-                    "calibration for your scoring:\n\n" + gt_few_shot
-                ),
-            })
-            messages.append({
-                "role": "assistant",
-                "content": (
-                    "I've reviewed the reference examples and will use them as "
-                    "calibration for consistent scoring. I'll now evaluate the case."
-                ),
-            })
 
         # Add additional message chain (user/assistant turns from the editor)
         if self._messages:

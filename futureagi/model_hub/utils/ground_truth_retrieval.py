@@ -59,28 +59,106 @@ def get_label_columns(role_mapping: dict | None) -> tuple[str, str]:
     return output, explanation
 
 
-def format_few_shot_examples(
+def detect_input_column_types(
+    examples: list[dict],
+    variable_mapping: dict | None,
+) -> dict[str, str]:
+    """Return ``{gt_column: modality}`` for the mapped input columns.
+
+    Modality detection is expensive (sniff fallback can hit the network),
+    so we run it once over the first non-empty example and reuse the
+    result. All rows in a GT dataset share the same column types, so a
+    single pass is correct.
+    """
+    if not examples:
+        return {}
+    from agentic_eval.core.utils.llm_payloads import detect_and_build_media_blocks
+
+    sample = examples[0]
+    sample_keys = sorted({
+        col for _var, col, _val in _iter_inputs(sample, variable_mapping)
+    })
+    sample_inputs = {k: sample.get(k) for k in sample_keys if sample.get(k)}
+    if not sample_inputs:
+        return {}
+    try:
+        _, key_types = detect_and_build_media_blocks(
+            inputs=sample_inputs,
+            required_keys=list(sample_inputs.keys()),
+        )
+    except Exception:
+        return {}
+    return {col: modality for col, modality in key_types.items() if modality}
+
+
+def build_ground_truth_blocks(
     examples: list[dict],
     *,
     variable_mapping: dict | None,
-    output_column: str | None = None,
-    explanation_column: str | None = None,
-    injection_format: str = "structured",
-) -> str:
-    """Render GT examples as a prompt block for the LLM judge."""
+    role_mapping: dict | None,
+) -> list[dict]:
+    """Render retrieved GT rows as OpenAI content blocks wrapped in delimiter tags."""
     if not examples:
-        return ""
-    if injection_format == "xml":
-        return _format_xml(
-            examples, variable_mapping, output_column, explanation_column
-        )
-    if injection_format == "conversational":
-        return _format_conversational(
-            examples, variable_mapping, output_column, explanation_column
-        )
-    return _format_structured(
-        examples, variable_mapping, output_column, explanation_column
-    )
+        return []
+
+    from agentic_eval.core.utils.llm_payloads import build_media_content_block
+
+    output_col, explanation_col = get_label_columns(role_mapping)
+    key_types = detect_input_column_types(examples, variable_mapping)
+
+    blocks: list[dict] = [
+        {
+            "type": "text",
+            "text": (
+                "Reference examples from past evaluations of similar inputs "
+                "follow. Each <example_N> contains one past input row (its "
+                "fields wrapped in <field_name>...</field_name> tags matching "
+                "the input you are judging), the verdict an expert assigned "
+                "to that row in <eval_output>, and their reasoning in "
+                "<eval_explanation> when available. Use them to calibrate "
+                "your own judgment for the current input. Do not copy them "
+                "into your output."
+            ),
+        },
+        {"type": "text", "text": "<ground_truth_reference_examples>"},
+    ]
+    for i, example in enumerate(examples, 1):
+        blocks.append({"type": "text", "text": f"<example_{i}>"})
+        for tmpl_var, col, val in _iter_inputs(example, variable_mapping):
+            modality = key_types.get(col)
+            if modality in {"image", "audio"} and val:
+                try:
+                    blocks.extend(
+                        build_media_content_block(val, modality, tmpl_var)
+                    )
+                except Exception:
+                    # Defensive: a single bad URL shouldn't kill the whole block.
+                    blocks.append({
+                        "type": "text",
+                        "text": f"<{tmpl_var}>{val}</{tmpl_var}>",
+                    })
+            else:
+                blocks.append({
+                    "type": "text",
+                    "text": f"<{tmpl_var}>{val}</{tmpl_var}>",
+                })
+        if output_col and output_col in example:
+            blocks.append({
+                "type": "text",
+                "text": f"<eval_output>{example[output_col]}</eval_output>",
+            })
+        if explanation_col and explanation_col in example:
+            blocks.append({
+                "type": "text",
+                "text": (
+                    f"<eval_explanation>"
+                    f"{example[explanation_col]}"
+                    f"</eval_explanation>"
+                ),
+            })
+        blocks.append({"type": "text", "text": f"</example_{i}>"})
+    blocks.append({"type": "text", "text": "</ground_truth_reference_examples>"})
+    return blocks
 
 
 def _iter_inputs(
@@ -96,73 +174,3 @@ def _iter_inputs(
         for target in targets:
             if target in example:
                 yield tmpl_var, target, example[target]
-
-
-def _format_structured(
-    examples: list[dict],
-    variable_mapping: dict | None,
-    output_column: str | None,
-    explanation_column: str | None,
-) -> str:
-    lines = ["--- Reference Examples (scored by human experts) ---", ""]
-    for i, example in enumerate(examples, 1):
-        lines.append(f"Example {i}:")
-        for tmpl_var, _target, val in _iter_inputs(example, variable_mapping):
-            label = tmpl_var.replace("_", " ").title()
-            lines.append(f"  {label}: {val}")
-        if output_column and output_column in example:
-            lines.append(f"  Eval Output: {example[output_column]}")
-        if explanation_column and explanation_column in example:
-            lines.append(f"  Eval Output Explanation: {example[explanation_column]}")
-        lines.append("")
-    lines.append("--- End Reference Examples ---")
-    return "\n".join(lines)
-
-
-def _format_conversational(
-    examples: list[dict],
-    variable_mapping: dict | None,
-    output_column: str | None,
-    explanation_column: str | None,
-) -> str:
-    lines = []
-    for i, example in enumerate(examples, 1):
-        case_parts: list[str] = []
-        for tmpl_var, _target, val in _iter_inputs(example, variable_mapping):
-            case_parts.append(f"{tmpl_var.replace('_', ' ').title()}: {val}")
-        if case_parts:
-            lines.append(f"Example {i}: " + " | ".join(case_parts))
-        judgement: list[str] = []
-        if output_column and output_column in example:
-            judgement.append(f"Eval Output: {example[output_column]}")
-        if explanation_column and explanation_column in example:
-            judgement.append(f"Explanation: {example[explanation_column]}")
-        if judgement:
-            lines.append("Expert judgment: " + " | ".join(judgement))
-        lines.append("")
-    return "\n".join(lines)
-
-
-def _format_xml(
-    examples: list[dict],
-    variable_mapping: dict | None,
-    output_column: str | None,
-    explanation_column: str | None,
-) -> str:
-    lines = ["<reference_examples>"]
-    for example in examples:
-        attr = ""
-        if output_column and output_column in example:
-            attr = f' eval_output="{example[output_column]}"'
-        lines.append(f"  <example{attr}>")
-        for tmpl_var, _target, val in _iter_inputs(example, variable_mapping):
-            lines.append(f"    <{tmpl_var}>{val}</{tmpl_var}>")
-        if explanation_column and explanation_column in example:
-            lines.append(
-                f"    <eval_output_explanation>"
-                f"{example[explanation_column]}"
-                f"</eval_output_explanation>"
-            )
-        lines.append("  </example>")
-    lines.append("</reference_examples>")
-    return "\n".join(lines)

@@ -11,6 +11,7 @@ import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
+import { InlineAudio } from "src/components/inline-audio/inline-row-audio";
 import CompositeResultView from "./CompositeResultView";
 import { canonicalEntries } from "src/utils/utils";
 import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
@@ -763,10 +764,69 @@ const GroundTruthExamplesPanel = ({ examples }) => {
   );
 };
 
+const GroundTruthFieldLabel = ({ children }) => (
+  <Box
+    component="span"
+    sx={{ fontWeight: 600, color: "text.secondary", mr: 0.75 }}
+  >
+    {children}:
+  </Box>
+);
+
+// Render one labeled GT field. Modality is supplied by the BE
+// (entry.column_types) so we don't re-detect on the client.
+const GroundTruthField = ({ label, value, modality }) => {
+  if (modality === "image") {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
+        <Typography variant="caption" component="div" sx={{ fontSize: "11px" }}>
+          <GroundTruthFieldLabel>{label}</GroundTruthFieldLabel>
+        </Typography>
+        <Box
+          component="img"
+          src={value}
+          alt={label}
+          loading="lazy"
+          sx={{
+            maxWidth: 240,
+            maxHeight: 160,
+            borderRadius: 0.5,
+            border: 1,
+            borderColor: "divider",
+            objectFit: "contain",
+            bgcolor: "background.neutral",
+          }}
+        />
+      </Box>
+    );
+  }
+  if (modality === "audio") {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
+        <Typography variant="caption" component="div" sx={{ fontSize: "11px" }}>
+          <GroundTruthFieldLabel>{label}</GroundTruthFieldLabel>
+        </Typography>
+        <InlineAudio src={value} />
+      </Box>
+    );
+  }
+  return (
+    <Typography
+      variant="caption"
+      component="div"
+      sx={{ fontSize: "11px", wordBreak: "break-word", lineHeight: 1.5 }}
+    >
+      <GroundTruthFieldLabel>{label}</GroundTruthFieldLabel>
+      {String(value)}
+    </Typography>
+  );
+};
+
 const GroundTruthExampleCard = ({ index, entry }) => {
   const row = entry?.row || {};
   const variableMapping = entry?.variable_mapping || {};
   const roleMapping = entry?.role_mapping || {};
+  const columnTypes = entry?.column_types || {};
 
   const outputCol =
     roleMapping.output || roleMapping.expected_output || "";
@@ -781,22 +841,6 @@ const GroundTruthExampleCard = ({ index, entry }) => {
       const cols = Array.isArray(value) ? value : [value];
       return cols.filter(Boolean).map((col) => ({ tmplVar, col }));
     },
-  );
-
-  const renderField = (label, value) => (
-    <Typography
-      variant="caption"
-      component="div"
-      sx={{ fontSize: "11px", wordBreak: "break-word", lineHeight: 1.5 }}
-    >
-      <Box
-        component="span"
-        sx={{ fontWeight: 600, color: "text.secondary", mr: 0.75 }}
-      >
-        {label}:
-      </Box>
-      {String(value)}
-    </Typography>
   );
 
   return (
@@ -829,9 +873,12 @@ const GroundTruthExampleCard = ({ index, entry }) => {
             const v = row[col];
             if (v === undefined || v === null || v === "") return null;
             return (
-              <React.Fragment key={`${tmplVar}-${col}`}>
-                {renderField(tmplVar, v)}
-              </React.Fragment>
+              <GroundTruthField
+                key={`${tmplVar}-${col}`}
+                label={tmplVar}
+                value={v}
+                modality={columnTypes[col]}
+              />
             );
           })
           .filter(Boolean);
@@ -845,9 +892,18 @@ const GroundTruthExampleCard = ({ index, entry }) => {
           <>
             {renderedInputs}
             {showDivider && <Divider sx={{ my: 0.25 }} />}
-            {hasReferenceOutput &&
-              renderField("Reference output", row[outputCol])}
-            {hasExplanation && renderField("Explanation", row[explanationCol])}
+            {hasReferenceOutput && (
+              <GroundTruthField
+                label="Reference output"
+                value={row[outputCol]}
+              />
+            )}
+            {hasExplanation && (
+              <GroundTruthField
+                label="Explanation"
+                value={row[explanationCol]}
+              />
+            )}
           </>
         );
       })()}

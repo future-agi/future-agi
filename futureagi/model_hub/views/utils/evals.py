@@ -292,7 +292,7 @@ def run_eval_func(
 
         from model_hub.services.ground_truth_service import GroundTruthService
 
-        GroundTruthService.inject_context(_run_kwargs, template, eval_type_id=eval_id)
+        GroundTruthService.inject_context(_run_kwargs, template)
 
         # Preprocess inputs for code evals that need external data (e.g. CLIP embeddings)
         if _is_code_eval:

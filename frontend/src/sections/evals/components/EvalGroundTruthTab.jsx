@@ -126,6 +126,65 @@ const shallowEqual = (a, b) => {
   return aKeys.every((k) => a[k] === b[k]);
 };
 
+// Minimal RFC 4180 CSV parser: comma-separated, double-quote escaped fields
+// (including embedded commas, newlines, and "" escapes). First row is the
+// header. Returns { columns, rows }, where rows are dicts keyed by header.
+const parseCsvText = (text) => {
+  const src = text.replace(/^\uFEFF/, "");
+  const records = [];
+  let field = "";
+  let row = [];
+  let inQuotes = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (src[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += c;
+      }
+      continue;
+    }
+    if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && src[i + 1] === "\n") i++;
+      row.push(field);
+      records.push(row);
+      field = "";
+      row = [];
+    } else {
+      field += c;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    records.push(row);
+  }
+  const nonEmpty = records.filter(
+    (r) => !(r.length === 1 && r[0] === ""),
+  );
+  if (nonEmpty.length === 0) return { columns: [], rows: [] };
+  const [header, ...body] = nonEmpty;
+  const columns = header.map((c) => c.trim());
+  const rows = body.map((r) => {
+    const obj = {};
+    columns.forEach((col, idx) => {
+      obj[col] = r[idx] ?? "";
+    });
+    return obj;
+  });
+  return { columns, rows };
+};
+
 const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
   const { enqueueSnackbar } = useSnackbar();
   const upload = useUploadGroundTruth(templateId);
@@ -210,14 +269,40 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
 
   const handleFileUpload = useCallback(async () => {
     if (!file || !name) return;
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("name", name);
-    if (Object.keys(variableMapping).length > 0) {
-      fd.append("variable_mapping", JSON.stringify(variableMapping));
-    }
+    const lowerName = file.name.toLowerCase();
+    const isCsv = lowerName.endsWith(".csv");
+    const isJson = lowerName.endsWith(".json");
     try {
-      await upload.mutateAsync(fd);
+      let payload;
+      if (isCsv || isJson) {
+        // Parse client-side and send as JSON body so structured fields
+        // (variable_mapping, role_mapping) travel as real objects rather
+        // than JSON-encoded strings inside multipart.
+        const text = await file.text();
+        let columns;
+        let data;
+        if (isCsv) {
+          const parsed = parseCsvText(text);
+          columns = parsed.columns;
+          data = parsed.rows;
+        } else {
+          const parsed = JSON.parse(text);
+          const arr = Array.isArray(parsed) ? parsed : parsed.data || [parsed];
+          columns = arr.length > 0 ? Object.keys(arr[0]) : [];
+          data = arr;
+        }
+        payload = { name, file_name: file.name, columns, data };
+        if (Object.keys(variableMapping).length > 0) {
+          payload.variable_mapping = variableMapping;
+        }
+      } else {
+        // Binary uploads (xlsx/xls) still go via multipart; users set the
+        // variable mapping post-upload from the GT setup screen.
+        payload = new FormData();
+        payload.append("file", file);
+        payload.append("name", name);
+      }
+      await upload.mutateAsync(payload);
       enqueueSnackbar("Dataset uploaded successfully", { variant: "success" });
       handleClose();
     } catch (err) {

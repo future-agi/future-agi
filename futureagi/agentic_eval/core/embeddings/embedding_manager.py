@@ -616,6 +616,7 @@ class EmbeddingManager:
         batch_size=50,
         organization_id=None,
         workspace_id=None,
+        progress_callback=None,
     ):
         if table_name == FEEDBACK_TABLE_NAME:
             db_client = ClickHouseVectorDB()
@@ -630,41 +631,89 @@ class EmbeddingManager:
                 workspace_id=workspace_id,
             )
         else:
+            progress_lock = threading.Lock()
+            rows_done = [0]
+
+            def _bump_progress(n_rows):
+                if not progress_callback:
+                    return
+                with progress_lock:
+                    rows_done[0] += n_rows
+                    snapshot = rows_done[0]
+                try:
+                    progress_callback(snapshot)
+                except Exception as cb_exc:
+                    logger.warning(
+                        "embedding_progress_callback_failed",
+                        rows_done=snapshot,
+                        error=str(cb_exc),
+                    )
+
             def process_batch(batch):
-                vectors_batch = []
-                metadata_batch = []
+                # Write each row's vectors immediately so partial progress
+                # survives a mid-batch activity death (e.g. Temporal heartbeat
+                # timeout). Each persisted row also ticks progress_callback.
+                inserted_ids = []
                 db_client = ClickHouseVectorDB()
 
                 try:
                     db_client.create_table(table_name)
                     for metadata in batch:
-                        vectors, metadata_list = self.data_formatter(
-                            row_dict=metadata,
-                            inputs_formater=inputs_formater,
-                            table_name=table_name,
-                            eval_id=eval_id,
-                            organization_id=organization_id,
-                            workspace_id=workspace_id,
-                        )
-                        if vectors and metadata_list:
-                            vectors_batch.extend(vectors)
-                            metadata_batch.extend(metadata_list)
+                        try:
+                            vectors, metadata_list = self.data_formatter(
+                                row_dict=metadata,
+                                inputs_formater=inputs_formater,
+                                table_name=table_name,
+                                eval_id=eval_id,
+                                organization_id=organization_id,
+                                workspace_id=workspace_id,
+                            )
+                        except Exception as row_exc:
+                            logger.error(
+                                "embedding_row_format_failed",
+                                table_name=table_name,
+                                eval_id=eval_id,
+                                error=str(row_exc),
+                            )
+                            continue
 
-                    if vectors_batch and metadata_batch:
-                        return db_client.bulk_upsert_vectors(
-                            table_name=table_name,
-                            eval_id=eval_id,
-                            vectors=vectors_batch,
-                            metadata_list=metadata_batch,
-                            unique_keys=["item_id"],
-                        )
+                        if not (vectors and metadata_list):
+                            continue
+
+                        try:
+                            new_ids = db_client.bulk_upsert_vectors(
+                                table_name=table_name,
+                                eval_id=eval_id,
+                                vectors=vectors,
+                                metadata_list=metadata_list,
+                                unique_keys=["item_id"],
+                            )
+                        except Exception as upsert_exc:
+                            logger.error(
+                                "embedding_row_upsert_failed",
+                                table_name=table_name,
+                                eval_id=eval_id,
+                                error=str(upsert_exc),
+                            )
+                            continue
+
+                        inserted_ids.extend(new_ids or [])
+                        _bump_progress(1)
                 finally:
                     db_client.close()
-                return []
+                return inserted_ids
 
-            # Split metadatas into batches
+            # Dynamic batch_size: for small datasets, split so every row
+            # gets its own worker thread instead of running serially in one
+            # batch. Cap at the original 50 for large datasets.
+            max_workers = 20
+            effective_batch_size = max(
+                1, min(batch_size, -(-len(metadatas) // max_workers))
+            ) if metadatas else batch_size
+
             batches = [
-                metadatas[i : i + batch_size] for i in range(0, len(metadatas), batch_size)
+                metadatas[i : i + effective_batch_size]
+                for i in range(0, len(metadatas), effective_batch_size)
             ]
 
             all_item_ids = []
@@ -673,7 +722,7 @@ class EmbeddingManager:
             # Wrap function with OTel context propagation for thread safety
             wrapped_process_batch = wrap_for_thread(process_batch)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_batch = {
                     executor.submit(wrapped_process_batch, batch): batch for batch in batches
                 }

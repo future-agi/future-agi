@@ -7,7 +7,6 @@ from typing import Any
 
 import structlog
 
-from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
 from model_hub.models.evals_metric import EvalGroundTruth, EvalTemplate
 from model_hub.utils.eval_input_validation import is_empty_value
 
@@ -156,17 +155,17 @@ class GroundTruthService:
     def inject_context(
         mapped: dict,
         eval_template: EvalTemplate,
-        eval_type_id: str = "",
     ) -> dict:
-        """Mutate ``mapped`` with GT context when the template has GT enabled.
+        """Mutate ``mapped`` with retrieved GT content blocks when GT is enabled.
 
-        ``CustomPromptEvaluator`` path: inject ``ground_truth_few_shot``
-        (formatted text). Other evaluator paths (agent tool): inject
-        ``ground_truth_config`` so the agent can expose the search tool.
+        Single path for every evaluator: retrieve similar GT rows, build
+        OpenAI content blocks (text inline, image / audio as media blocks,
+        wrapped in delimiter tags), and attach as ``ground_truth_blocks``.
+        Evaluators read the kwarg and concatenate into their content array
+        without adding their own framing.
         """
         from model_hub.utils.ground_truth_retrieval import (
-            format_few_shot_examples,
-            get_label_columns,
+            build_ground_truth_blocks,
             has_usable_inputs_for_gt,
         )
 
@@ -183,49 +182,38 @@ class GroundTruthService:
         if gt is None:
             return mapped
 
+        if gt.embedding_status != EvalGroundTruth.EmbeddingStatus.COMPLETED:
+            return mapped
+
         if not has_usable_inputs_for_gt(gt.variable_mapping, mapped):
             logger.debug(
                 "ground_truth_skipped_no_usable_inputs",
                 gt_id=str(gt.id),
-                eval_type_id=eval_type_id,
                 template_id=str(getattr(eval_template, "id", "") or ""),
             )
             return mapped
 
-        gt_config = dict(gt_config)
-        gt_config["embedding_status"] = gt.embedding_status
-
-        if (
-            eval_type_id == LlmEvalTypeId.CUSTOM_PROMPT_EVAL.value
-            and gt.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
-        ):
-            examples = GroundTruthService.retrieve_few_shot(
-                gt=gt,
-                inputs=mapped,
-                max_results=int(gt_config.get("max_examples", 3)),
-            )
-            if examples:
-                output_col, explanation_col = get_label_columns(gt.role_mapping)
-                mapped["ground_truth_few_shot"] = format_few_shot_examples(
-                    examples,
-                    variable_mapping=gt.variable_mapping,
-                    output_column=output_col,
-                    explanation_column=explanation_col,
-                    injection_format=gt_config.get("injection_format", "structured"),
-                )
-            logger.debug(
-                "ground_truth_custom_prompt_injected",
-                gt_id=str(gt.id),
-                examples_count=len(examples),
-            )
+        examples = GroundTruthService.retrieve_few_shot(
+            gt=gt,
+            inputs=mapped,
+            max_results=int(gt_config.get("max_examples", 3)),
+        )
+        if not examples:
             return mapped
 
-        mapped["ground_truth_config"] = gt_config
-        logger.debug(
-            "ground_truth_agent_config_injected",
-            gt_id=str(gt.id),
-            eval_type_id=eval_type_id,
+        blocks = build_ground_truth_blocks(
+            examples,
+            variable_mapping=gt.variable_mapping,
+            role_mapping=gt.role_mapping,
         )
+        if blocks:
+            mapped["ground_truth_blocks"] = blocks
+            logger.debug(
+                "ground_truth_blocks_injected",
+                gt_id=str(gt.id),
+                examples_count=len(examples),
+                block_count=len(blocks),
+            )
         return mapped
 
     @staticmethod
@@ -263,11 +251,17 @@ class GroundTruthService:
 
             variable_mapping = gt.variable_mapping or {}
             role_mapping = gt.role_mapping or {}
+            from model_hub.utils.ground_truth_retrieval import (
+                detect_input_column_types,
+            )
+
+            column_types = detect_input_column_types(rows, variable_mapping)
             return [
                 {
                     "row": row,
                     "variable_mapping": variable_mapping,
                     "role_mapping": role_mapping,
+                    "column_types": column_types,
                 }
                 for row in rows
             ]
@@ -325,6 +319,25 @@ class GroundTruthService:
             workspace_id=workspace_id,
         )
 
+        gt_id_for_callback = gt.id
+
+        def _persist_progress(rows_done: int) -> None:
+            # Live row counter — FE polls /status/ and renders this. Updates
+            # via fresh queryset so concurrent worker writes do not race the
+            # in-memory ``gt`` snapshot. Best-effort: a save failure here must
+            # not abort the embed; we log and continue.
+            try:
+                EvalGroundTruth.objects.filter(id=gt_id_for_callback).update(
+                    embedded_row_count=rows_done,
+                )
+            except Exception as save_exc:
+                logger.warning(
+                    "ground_truth_progress_persist_failed",
+                    ground_truth_id=str(gt_id_for_callback),
+                    rows_done=rows_done,
+                    error=str(save_exc),
+                )
+
         try:
             manager.parallel_process_metadata(
                 eval_id=eval_id,
@@ -333,6 +346,7 @@ class GroundTruthService:
                 table_name=GROUND_TRUTH_TABLE_NAME,
                 organization_id=organization_id,
                 workspace_id=workspace_id,
+                progress_callback=_persist_progress,
             )
         except Exception as exc:
             logger.exception(

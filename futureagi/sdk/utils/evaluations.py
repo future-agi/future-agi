@@ -177,9 +177,7 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
     try:
         from model_hub.services.ground_truth_service import GroundTruthService
 
-        GroundTruthService.inject_context(
-            gt_inputs, eval_template, eval_type_id=eval_type_id or ""
-        )
+        GroundTruthService.inject_context(gt_inputs, eval_template)
     except Exception as e:
         logger.warning(
             f"Standalone Eval | Ground truth injection failed (non-fatal): {e}"

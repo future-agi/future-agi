@@ -14,7 +14,8 @@ import pytest
 
 from model_hub.utils.eval_input_validation import is_empty_value
 from model_hub.utils.ground_truth_retrieval import (
-    format_few_shot_examples,
+    build_ground_truth_blocks,
+    detect_input_column_types,
     get_label_columns,
     has_usable_inputs_for_gt,
 )
@@ -152,59 +153,116 @@ def test_label_cols_list_value_picks_first():
 
 
 # ─────────────────────────────────────────────────────────────────────
-# format_few_shot_examples
+# build_ground_truth_blocks
 # ─────────────────────────────────────────────────────────────────────
 
 
-def test_format_empty_returns_empty_string():
-    assert format_few_shot_examples([], variable_mapping=None) == ""
-    assert format_few_shot_examples([], variable_mapping={"q": "col"}) == ""
+def _texts(blocks):
+    return [b["text"] for b in blocks if b.get("type") == "text"]
 
 
-def test_format_structured_includes_inputs_and_labels():
-    text = format_few_shot_examples(
+def test_detect_input_column_types_empty():
+    assert detect_input_column_types([], {"q": "q_col"}) == {}
+    assert detect_input_column_types([{"q_col": "hi"}], None) == {}
+
+
+def test_detect_input_column_types_stamps_modalities(monkeypatch):
+    def fake_detect(*_args, **_kwargs):
+        return [], {"img_col": "image", "q_col": "text", "noisy_col": ""}
+
+    monkeypatch.setattr(
+        "agentic_eval.core.utils.llm_payloads.detect_and_build_media_blocks",
+        fake_detect,
+    )
+    types = detect_input_column_types(
+        [{"img_col": "https://x/y.png", "q_col": "hi"}],
+        {"screenshot": "img_col", "question": "q_col"},
+    )
+    assert types == {"img_col": "image", "q_col": "text"}
+
+
+def test_build_ground_truth_blocks_empty():
+    assert build_ground_truth_blocks(
+        [], variable_mapping=None, role_mapping=None
+    ) == []
+
+
+def test_build_ground_truth_blocks_text_only_wraps_in_delimiters():
+    blocks = build_ground_truth_blocks(
         [{"q": "hi", "verdict": "Pass", "reason": "polite"}],
         variable_mapping={"question": "q"},
-        output_column="verdict",
-        explanation_column="reason",
+        role_mapping={"output": "verdict", "explanation": "reason"},
     )
-    assert "Question: hi" in text
-    assert "Eval Output: Pass" in text
-    assert "Eval Output Explanation: polite" in text
+    texts = _texts(blocks)
+    assert "calibrate" in texts[0].lower()
+    assert texts[1] == "<ground_truth_reference_examples>"
+    assert texts[-1] == "</ground_truth_reference_examples>"
+    assert "<example_1>" in texts
+    assert "</example_1>" in texts
+    assert "<question>hi</question>" in texts
+    assert "<eval_output>Pass</eval_output>" in texts
+    assert "<eval_explanation>polite</eval_explanation>" in texts
 
 
-def test_format_structured_omits_explanation_when_not_mapped():
-    text = format_few_shot_examples(
+def test_build_ground_truth_blocks_omits_explanation_when_not_mapped():
+    blocks = build_ground_truth_blocks(
         [{"q": "hi", "verdict": "Pass"}],
         variable_mapping={"question": "q"},
-        output_column="verdict",
-        explanation_column="",
+        role_mapping={"output": "verdict"},
     )
-    assert "Eval Output: Pass" in text
-    assert "Explanation" not in text
+    texts = _texts(blocks)
+    assert "<eval_output>Pass</eval_output>" in texts
+    # The preamble mentions <eval_explanation> by name; we only care that
+    # no per-row explanation tag was emitted for this example.
+    assert not any(t.startswith("<eval_explanation>") for t in texts)
 
 
-def test_format_conversational_shape():
-    text = format_few_shot_examples(
-        [{"q": "hi", "verdict": "Pass"}],
+def test_build_ground_truth_blocks_image_column_emits_image_url_block(monkeypatch):
+    # Patch the shared detector so we don't hit the network for the sniff
+    # fallback; pretend the image column was detected via the fast regex.
+    import model_hub.utils.ground_truth_retrieval as gt_mod
+
+    def fake_detect(*_args, **_kwargs):
+        return [], {"img_col": "image"}
+
+    monkeypatch.setattr(
+        "agentic_eval.core.utils.llm_payloads.detect_and_build_media_blocks",
+        fake_detect,
+    )
+
+    def fake_media(value, media_type, key):
+        return [
+            {"type": "text", "text": f"<{key}>"},
+            {"type": "image_url", "image_url": {"url": value}},
+            {"type": "text", "text": f"</{key}>"},
+        ]
+
+    monkeypatch.setattr(
+        "agentic_eval.core.utils.llm_payloads.build_media_content_block",
+        fake_media,
+    )
+
+    blocks = build_ground_truth_blocks(
+        [{"img_col": "https://example.com/a.png", "verdict": "Pass"}],
+        variable_mapping={"screenshot": "img_col"},
+        role_mapping={"output": "verdict"},
+    )
+    image_blocks = [b for b in blocks if b.get("type") == "image_url"]
+    assert len(image_blocks) == 1
+    assert image_blocks[0]["image_url"]["url"] == "https://example.com/a.png"
+
+
+def test_build_ground_truth_blocks_multiple_examples_keep_per_example_wrappers():
+    blocks = build_ground_truth_blocks(
+        [
+            {"q": "first", "verdict": "Pass"},
+            {"q": "second", "verdict": "Fail"},
+        ],
         variable_mapping={"question": "q"},
-        output_column="verdict",
-        explanation_column="",
-        injection_format="conversational",
+        role_mapping={"output": "verdict"},
     )
-    assert "Example 1: Question: hi" in text
-    assert "Expert judgment: Eval Output: Pass" in text
-
-
-def test_format_xml_shape():
-    text = format_few_shot_examples(
-        [{"q": "hi", "verdict": "Pass", "r": "ok"}],
-        variable_mapping={"question": "q"},
-        output_column="verdict",
-        explanation_column="r",
-        injection_format="xml",
-    )
-    assert "<reference_examples>" in text
-    assert '<example eval_output="Pass">' in text
-    assert "<question>hi</question>" in text
-    assert "<eval_output_explanation>ok</eval_output_explanation>" in text
+    texts = _texts(blocks)
+    assert texts.count("<example_1>") == 1
+    assert texts.count("<example_2>") == 1
+    assert "<question>first</question>" in texts
+    assert "<question>second</question>" in texts
