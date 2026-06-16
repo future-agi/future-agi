@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from tfc.utils.serializer_fields import JsonValueField
 
 from agent_playground.models.choices import (
     RESERVED_NAME_RE,
@@ -297,7 +298,7 @@ class PromptTemplateDataSerializer(serializers.Serializer):
         allow_empty=False,
         help_text="Array of message objects with id, role, and content array",
     )
-    response_format = serializers.JSONField(
+    response_format = JsonValueField(
         required=False,
         default="text",
         help_text=(

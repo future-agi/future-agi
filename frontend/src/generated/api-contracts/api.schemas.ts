@@ -1932,7 +1932,7 @@ export interface MessageApi {
 }
 
 /**
- * LLM output format: 'text' (plain text), 'json' (free-form JSON), 'json_schema' (structured with schema), UUID string (saved schema reference), or object with 'id' field (prompt playground format). See class docstring for details.
+ * Any valid JSON value.
  */
 export type PromptTemplateDataApiResponseFormat = { [key: string]: unknown };
 
@@ -1956,7 +1956,7 @@ export interface PromptTemplateDataApi {
   prompt_version_id?: string;
   /** Array of message objects with id, role, and content array */
   messages: MessageApi[];
-  /** LLM output format: 'text' (plain text), 'json' (free-form JSON), 'json_schema' (structured with schema), UUID string (saved schema reference), or object with 'id' field (prompt playground format). See class docstring for details. */
+  /** Any valid JSON value. */
   response_format?: PromptTemplateDataApiResponseFormat;
   /** JSON Schema (Draft 7) for structured outputs. Required when response_format='json_schema'. Example: {'type': 'object', 'properties': {...}, 'required': [...]} */
   response_schema?: PromptTemplateDataApiResponseSchema;
@@ -6919,6 +6919,9 @@ export type ColumnConfigResultApiPromptConfig = { [key: string]: unknown };
 
 export type ColumnConfigResultApiMessages = { [key: string]: unknown };
 
+/**
+ * Any valid JSON value.
+ */
 export type ColumnConfigResultApiResponseFormat = { [key: string]: unknown };
 
 export type ColumnConfigResultApiOptimizedKPrompts = { [key: string]: unknown };
@@ -6948,6 +6951,7 @@ export interface ColumnConfigResultApi {
   presence_penalty?: number;
   max_tokens?: number;
   top_p?: number;
+  /** Any valid JSON value. */
   response_format?: ColumnConfigResultApiResponseFormat;
   tool_choice?: string;
   tools?: string[];
@@ -8138,12 +8142,18 @@ export const PromptConfigApiOutputFormat = {
   image: 'image',
 } as const;
 
-export type PromptConfigApiRunPromptConfig = {[key: string]: string};
-
-export type PromptConfigApiMessagesItem = {[key: string]: string};
+/**
+ * Any valid JSON value.
+ */
+export type PromptConfigApiRunPromptConfig = { [key: string]: unknown };
 
 /**
- * JSON schema for response format if required. Can be a JSON object or string. Defaults to None.
+ * Any valid JSON value.
+ */
+export type PromptConfigApiMessagesItem = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
  */
 export type PromptConfigApiResponseFormat = { [key: string]: unknown };
 
@@ -8152,6 +8162,7 @@ export type PromptConfigApiToolsItem = {[key: string]: string};
 export interface PromptConfigApi {
   /** @maxLength 255 */
   model?: string;
+  /** Any valid JSON value. */
   run_prompt_config?: PromptConfigApiRunPromptConfig;
   /** List of messages with format [{'role': 'user/assistant', 'content': 'text'}] */
   messages?: PromptConfigApiMessagesItem[];
@@ -8185,7 +8196,7 @@ export interface PromptConfigApi {
      * @maximum 1
      */
   top_p?: number;
-  /** JSON schema for response format if required. Can be a JSON object or string. Defaults to None. */
+  /** Any valid JSON value. */
   response_format?: PromptConfigApiResponseFormat;
   /** Tool selection mode: 'auto' or 'required'. */
   tool_choice?: PromptConfigApiToolChoice;
@@ -12671,7 +12682,7 @@ export const LitellmApiOutputFormat = {
 } as const;
 
 /**
- * JSON schema for response format if required. Defaults to None.
+ * Any valid JSON value.
  */
 export type LitellmApiResponseFormat = { [key: string]: unknown };
 
@@ -12739,7 +12750,7 @@ export interface LitellmApi {
      * @maximum 1
      */
   top_p?: number;
-  /** JSON schema for response format if required. Defaults to None. */
+  /** Any valid JSON value. */
   response_format?: LitellmApiResponseFormat;
   /** Tool selection mode: 'auto' or 'required'. */
   tool_choice?: LitellmApiToolChoice;

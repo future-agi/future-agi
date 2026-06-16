@@ -58600,8 +58600,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "description": "JSON schema for response format if required. Defaults to None.",
-          "type": "object"
+          "description": "Any valid JSON value.",
+          "type": "object",
+          "x-json-value": true
         },
         "tool_choice": {
           "title": "Tool choice",
@@ -75312,20 +75313,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "run_prompt_config": {
           "title": "Run prompt config",
           "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          }
+          "x-json-value": true,
+          "description": "Any valid JSON value."
         },
         "messages": {
           "description": "List of messages with format [{'role': 'user/assistant', 'content': 'text'}]",
           "type": "array",
           "items": {
             "type": "object",
-            "additionalProperties": {
-              "type": "string",
-              "x-nullable": true
-            }
+            "x-json-value": true,
+            "description": "Any valid JSON value."
           }
         },
         "temperature": {
@@ -75370,9 +75367,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "description": "JSON schema for response format if required. Can be a JSON object or string. Defaults to None.",
+          "description": "Any valid JSON value.",
           "type": "object",
-          "x-nullable": true
+          "x-nullable": true,
+          "x-json-value": true
         },
         "tool_choice": {
           "title": "Tool choice",
@@ -77234,7 +77232,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "type": "object"
+          "type": "object",
+          "x-json-value": true,
+          "description": "Any valid JSON value."
         },
         "tool_choice": {
           "title": "Tool choice",
@@ -77839,9 +77839,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "description": "LLM output format: 'text' (plain text), 'json' (free-form JSON), 'json_schema' (structured with schema), UUID string (saved schema reference), or object with 'id' field (prompt playground format). See class docstring for details.",
+          "description": "Any valid JSON value.",
           "type": "object",
-          "default": "text"
+          "default": "text",
+          "x-json-value": true
         },
         "response_schema": {
           "title": "Response schema",
