@@ -191,6 +191,13 @@ const EvaluationData = () => {
             }
             reject(err);
           },
+          onClose: (event) => {
+            if (event?.code === 4003 || event?.code === 4004) {
+              reject(new Error(event?.reason || "Permission denied"));
+            } else {
+              reject(new Error("Stream connection closed unexpectedly"));
+            }
+          },
         });
         activeSocketsRef.current[payload.run_index] = socket;
       });
@@ -231,6 +238,12 @@ const EvaluationData = () => {
     (event) => {
       try {
         const wsData = event;
+        if (wsData?.type === "error") {
+          enqueueSnackbar(wsData?.message || "Something went wrong", {
+            variant: "error",
+          });
+          return;
+        }
         if (wsData?.type !== "run_prompt") {
           return;
         }
