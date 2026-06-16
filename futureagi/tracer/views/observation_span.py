@@ -91,6 +91,7 @@ from tracer.serializers.observation_span import (
     SubmitFeedbackSerializer,
 )
 from tracer.serializers.trace import TraceSerializer
+from tracer.serializers.trace_session import TraceSessionFeedbackSerializer
 from tracer.services.clickhouse.graph_dispatch import (
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
@@ -99,10 +100,7 @@ from tracer.services.clickhouse.graph_dispatch import (
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.create_otel_span import create_single_otel_span
-from tracer.utils.eval import (
-    evaluate_observation_span,
-    evaluate_observation_span_observe,
-)
+from tracer.utils.eval import rerun_single
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
     FieldConfig,
@@ -1116,27 +1114,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             validated_data = request.validated_data
             target_type = validated_data["target_type"]
             observation_span_id = validated_data.get("observation_span_id") or None
+            trace_id = validated_data.get("trace_id")
+            trace_session_id = validated_data.get("trace_session_id")
             custom_eval_config_id = validated_data.get("custom_eval_config_id")
             feedback_value = validated_data.get("feedback_value")
             feedback_explanation = validated_data.get("feedback_explanation")
             feedback_improvement = validated_data.get("feedback_improvement")
-
-            # Trace + session anchors land in a follow-up; reject for now.
-            if target_type != EvalTargetType.SPAN:
-                return self._gm.custom_error_response(
-                    HTTP_400_BAD_REQUEST,
-                    f"target_type='{target_type}' feedback not yet supported",
-                    code="not_supported",
-                )
-
-            try:
-                observation_span = ObservationSpan.objects.get(
-                    _project_workspace_scope_q(request),
-                    id=observation_span_id,
-                    project__organization=_get_request_organization(request),
-                )
-            except ObservationSpan.DoesNotExist:
-                return self._gm.not_found("Observation span not found")
 
             try:
                 custom_eval_config = CustomEvalConfig.objects.get(
@@ -1147,14 +1130,82 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             except CustomEvalConfig.DoesNotExist:
                 return self._gm.not_found("Custom eval config not found")
 
-            try:
-                eval_logger = EvalLogger.objects.get(
-                    observation_span=observation_span,
-                    custom_eval_config_id=custom_eval_config_id,
-                    deleted=False,
+            if target_type == EvalTargetType.SPAN:
+                try:
+                    observation_span = ObservationSpan.objects.get(
+                        _project_workspace_scope_q(request),
+                        id=observation_span_id,
+                        project__organization=_get_request_organization(request),
+                    )
+                except ObservationSpan.DoesNotExist:
+                    return self._gm.not_found("Observation span not found")
+                try:
+                    eval_logger = EvalLogger.objects.get(
+                        observation_span=observation_span,
+                        custom_eval_config=custom_eval_config,
+                        target_type=EvalTargetType.SPAN,
+                        deleted=False,
+                    )
+                except EvalLogger.DoesNotExist:
+                    return self._gm.not_found("No eval associated with this span")
+                source_id = str(observation_span.id)
+                project = observation_span.project
+                trace = Trace.objects.get(id=observation_span.trace.id)
+                embedding_row_dict = TraceSerializer(trace).data
+                embedding_inputs = [observation_span.id]
+
+            elif target_type == EvalTargetType.TRACE:
+                try:
+                    trace = Trace.objects.get(
+                        _project_workspace_scope_q(request),
+                        id=trace_id,
+                        project__organization=_get_request_organization(request),
+                    )
+                except Trace.DoesNotExist:
+                    return self._gm.not_found("Trace not found")
+                try:
+                    eval_logger = EvalLogger.objects.get(
+                        trace=trace,
+                        custom_eval_config=custom_eval_config,
+                        target_type=EvalTargetType.TRACE,
+                        deleted=False,
+                    )
+                except EvalLogger.DoesNotExist:
+                    return self._gm.not_found("No eval associated with this trace")
+                source_id = str(trace.id)
+                project = trace.project
+                embedding_row_dict = TraceSerializer(trace).data
+                embedding_inputs = [trace.id]
+
+            elif target_type == EvalTargetType.SESSION:
+                try:
+                    trace_session = TraceSession.objects.get(
+                        _project_workspace_scope_q(request),
+                        id=trace_session_id,
+                        project__organization=_get_request_organization(request),
+                    )
+                except TraceSession.DoesNotExist:
+                    return self._gm.not_found("Trace session not found")
+                try:
+                    eval_logger = EvalLogger.objects.get(
+                        trace_session=trace_session,
+                        custom_eval_config=custom_eval_config,
+                        target_type=EvalTargetType.SESSION,
+                        deleted=False,
+                    )
+                except EvalLogger.DoesNotExist:
+                    return self._gm.not_found("No eval associated with this session")
+                source_id = str(trace_session.id)
+                project = trace_session.project
+                embedding_row_dict = TraceSessionFeedbackSerializer(
+                    trace_session, context={"request": request}
+                ).data
+                embedding_inputs = [trace_session.id]
+
+            else:
+                return self._gm.internal_server_error_response(
+                    f"Unhandled target_type={target_type!r}"
                 )
-            except EvalLogger.DoesNotExist:
-                return self._gm.not_found("No eval associated with this span")
 
             if eval_logger.error:
                 return self._gm.custom_error_response(
@@ -1166,38 +1217,25 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             eval_template = custom_eval_config.eval_template
 
             feedback = Feedback.objects.create(
-                source=(
-                    FeedbackSourceChoices.EXPERIMENT.value
-                    if observation_span.project_version
-                    else FeedbackSourceChoices.OBSERVE.value
-                ),
-                source_id=observation_span_id,
+                source=FeedbackSourceChoices.OBSERVE.value,
+                source_id=source_id,
                 value=feedback_value,
                 explanation=feedback_explanation,
                 eval_template=eval_template,
                 feedback_improvement=feedback_improvement,
                 user=request.user,
                 custom_eval_config_id=custom_eval_config_id,
-                organization=observation_span.project.organization,
-                workspace=observation_span.project.workspace,
+                organization=project.organization,
+                workspace=project.workspace,
             )
 
-            trace = Trace.objects.get(id=observation_span.trace.id)
-            trace_data = TraceSerializer(trace).data
-
-            # get_fewshots = RAG()
             embedding_manager = EmbeddingManager()
-
             embedding_manager.data_formatter(
                 eval_id=eval_template.id,
-                row_dict=trace_data,
-                inputs_formater=[observation_span.id],
-                organization_id=observation_span.project.organization.id,
-                workspace_id=(
-                    observation_span.project.workspace.id
-                    if observation_span.project.workspace
-                    else None
-                ),
+                row_dict=embedding_row_dict,
+                inputs_formater=embedding_inputs,
+                organization_id=project.organization.id,
+                workspace_id=project.workspace.id if project.workspace else None,
             )
             embedding_manager.close()
 
@@ -1248,17 +1286,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             validated_data = request.validated_data
             target_type = validated_data["target_type"]
             observation_span_id = validated_data.get("observation_span_id") or None
+            trace_id = validated_data.get("trace_id")
+            trace_session_id = validated_data.get("trace_session_id")
             action_type = validated_data.get("action_type")
             custom_eval_config_id = validated_data.get("custom_eval_config_id")
             feedback_id = validated_data.get("feedback_id")
-
-            # Trace + session anchors land in a follow-up; reject for now.
-            if target_type != EvalTargetType.SPAN:
-                return self._gm.custom_error_response(
-                    HTTP_400_BAD_REQUEST,
-                    f"target_type='{target_type}' feedback not yet supported",
-                    code="not_supported",
-                )
 
             # TODO(BE-3): batch path replaces this block.
             # When action_type == FeedbackActionType.RETUNE_RECALCULATE,
@@ -1266,23 +1298,24 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # them, start RecalculateEvalTaskWorkflow, return
             # recalculated_count = len(siblings).
 
+            if target_type == EvalTargetType.SPAN:
+                anchor_id = observation_span_id
+            elif target_type == EvalTargetType.TRACE:
+                anchor_id = str(trace_id) if trace_id else None
+            elif target_type == EvalTargetType.SESSION:
+                anchor_id = str(trace_session_id) if trace_session_id else None
+            else:
+                return self._gm.internal_server_error_response(
+                    f"Unhandled target_type={target_type!r}"
+                )
             try:
                 feedback = Feedback.objects.get(
-                    id=feedback_id, user=request.user, source_id=observation_span_id
+                    id=feedback_id, user=request.user, source_id=anchor_id
                 )
                 feedback.action_type = action_type
                 feedback.save(update_fields=["action_type"])
             except Feedback.DoesNotExist:
                 return self._gm.not_found("Feedback not found")
-
-            try:
-                observation_span = ObservationSpan.objects.get(
-                    _project_workspace_scope_q(request),
-                    id=observation_span_id,
-                    project__organization=_get_request_organization(request),
-                )
-            except ObservationSpan.DoesNotExist:
-                return self._gm.not_found("Observation span not found")
 
             try:
                 custom_eval_config = CustomEvalConfig.objects.get(
@@ -1293,67 +1326,70 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             except CustomEvalConfig.DoesNotExist:
                 return self._gm.not_found("Custom eval config not found")
 
+            eval_logger_filter = {
+                "custom_eval_config": custom_eval_config,
+                "target_type": target_type,
+                "deleted": False,
+            }
+            if target_type == EvalTargetType.SPAN:
+                eval_logger_filter["observation_span_id"] = observation_span_id
+            elif target_type == EvalTargetType.TRACE:
+                eval_logger_filter["trace_id"] = trace_id
+            elif target_type == EvalTargetType.SESSION:
+                eval_logger_filter["trace_session_id"] = trace_session_id
+            else:
+                return self._gm.internal_server_error_response(
+                    f"Unhandled target_type={target_type!r}"
+                )
+
+            try:
+                eval_logger = EvalLogger.objects.get(**eval_logger_filter)
+            except EvalLogger.DoesNotExist:
+                return self._gm.not_found(f"No {target_type}-level eval found")
+
+            if eval_logger.error:
+                return self._gm.custom_error_response(
+                    HTTP_409_CONFLICT,
+                    "Cannot submit feedback on an errored eval",
+                    code="errored_eval",
+                )
+
             recalculated_count = 0
             if action_type == FeedbackActionType.RETUNE:
                 pass  ### This is coz we are using mapping_fields fxn in utils
 
             elif action_type == FeedbackActionType.RECALCULATE:
-                try:
-                    eval_logger = EvalLogger.objects.get(
-                        observation_span=observation_span,
-                        custom_eval_config=custom_eval_config,
-                        deleted=False,
-                    )
-                except EvalLogger.DoesNotExist:
-                    return self._gm.not_found("No eval associated with this span")
+                eval_task_id = eval_logger.eval_task_id
 
-                if eval_logger.error:
-                    return self._gm.custom_error_response(
-                        HTTP_409_CONFLICT,
-                        "Cannot submit feedback on an errored eval",
-                        code="errored_eval",
-                    )
-
-                task_id = eval_logger.eval_task_id
-
-                eval_logger.deleted = True
-                eval_logger.deleted_at = timezone.now()
-                eval_logger.save(update_fields=["deleted", "deleted_at"])
-
+                mixpanel_span = (
+                    eval_logger.observation_span if eval_logger.observation_span_id
+                    else None
+                )
                 properties = get_mixpanel_properties(
                     user=request.user,
-                    span=observation_span,
+                    span=mixpanel_span,
                     eval=custom_eval_config.eval_template,
                     count=1,
                     type=MixpanelTypes.FEEDBACK.value,
                 )
                 track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
 
-                if observation_span.project_version:
-                    status = evaluate_observation_span(
-                        str(observation_span.id),
-                        str(custom_eval_config.id),
-                        task_id,
-                        feedback_id,
-                    )
-                else:
-                    status = evaluate_observation_span_observe(
-                        str(observation_span.id),
-                        str(custom_eval_config.id),
-                        task_id,
-                        feedback_id,
-                    )
+                status = rerun_single(
+                    target_type=target_type,
+                    observation_span_id=observation_span_id,
+                    trace_id=trace_id,
+                    trace_session_id=trace_session_id,
+                    custom_eval_config_id=str(custom_eval_config.id),
+                    eval_task_id=eval_task_id,
+                    feedback_id=feedback_id,
+                )
 
-                if status:
-                    count = 1
-                    failed = 0
-                else:
-                    failed = 1
-                    count = 0
+                count = 1 if status else 0
+                failed = 0 if status else 1
                 recalculated_count = count
                 properties = get_mixpanel_properties(
                     user=request.user,
-                    span=observation_span,
+                    span=mixpanel_span,
                     eval=custom_eval_config.eval_template,
                     count=count,
                     failed=failed,
