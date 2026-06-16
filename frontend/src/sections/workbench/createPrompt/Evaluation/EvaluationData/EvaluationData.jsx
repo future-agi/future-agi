@@ -174,6 +174,10 @@ const EvaluationData = () => {
      */
     mutationFn: (payload) => {
       return new Promise((resolve, reject) => {
+        if (!promptStreamUrl) {
+          reject(new Error("Stream URL not ready. Please try again."));
+          return;
+        }
         // @ts-ignore
         const socket = runPromptOverSocket({
           url: promptStreamUrl,
