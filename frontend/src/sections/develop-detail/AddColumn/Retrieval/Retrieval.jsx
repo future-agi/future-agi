@@ -17,7 +17,7 @@ import { LoadingButton } from "@mui/lab";
 import PreviewAddColumn from "../PreviewAddColumn";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import { useRetrievalStore } from "../../states";
+import { useRetrievalStore , useRerunDependentColumnsStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
@@ -37,6 +37,7 @@ export const RetrievalChild = ({
   editId,
 }) => {
   const { refreshGrid } = useDevelopDetailContext();
+  const { setRerunDependentColumns } = useRerunDependentColumnsStore();
   // Using individual store
 
   const { control, handleSubmit, watch, reset } = useForm({
@@ -122,7 +123,19 @@ export const RetrievalChild = ({
       });
       refreshGrid();
       onClose();
-    },
+    
+      try {
+        axios.get(endpoints.develop.addColumns.getDependentColumns(editId)).then((res) => {
+          if (res.data?.result?.dependents?.length > 0) {
+            setRerunDependentColumns({
+              sourceColumnId: editId,
+              dependents: res.data.result.dependents,
+            });
+          }
+        });
+      } catch (err) {
+        console.error("Failed to check dependent columns", err);
+      }},
   });
 
   const transformFormToApi = (formValues) => {

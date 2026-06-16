@@ -20,7 +20,7 @@ import PreviewAddColumn from "../PreviewAddColumn";
 import { LoadingButton } from "@mui/lab";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import { useAddColumnApiCallStore } from "../../states";
+import { useAddColumnApiCallStore , useRerunDependentColumnsStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import { useDatasetColumnConfig, useGetJsonColumnSchema } from "src/api/develop/develop-detail";
 import { ShowComponent } from "src/components/show";
@@ -66,6 +66,7 @@ export const AddColumnApiCallChild = ({
   const { dataset } = useParams();
 
   const { refreshGrid } = useDevelopDetailContext();
+  const { setRerunDependentColumns } = useRerunDependentColumnsStore();
   const queryClient = useQueryClient();
 
   const allColumns = useDatasetColumnConfig(dataset);
@@ -122,7 +123,19 @@ export const AddColumnApiCallChild = ({
       loadedEditIdRef.current = null;
       refreshGrid();
       onClose();
-    },
+    
+      try {
+        axios.get(endpoints.develop.addColumns.getDependentColumns(editId)).then((res) => {
+          if (res.data?.result?.dependents?.length > 0) {
+            setRerunDependentColumns({
+              sourceColumnId: editId,
+              dependents: res.data.result.dependents,
+            });
+          }
+        });
+      } catch (err) {
+        console.error("Failed to check dependent columns", err);
+      }},
     onError: () => {
       enqueueSnackbar("Failed to update API Call column", {
         variant: "error",

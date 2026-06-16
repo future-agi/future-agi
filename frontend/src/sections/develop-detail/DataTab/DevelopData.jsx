@@ -31,6 +31,7 @@ import { getColumnConfig, getTypeDefinitions } from "./common";
 import "./developDataGrid.css";
 import DatapointDrawer from "./DatapointDrawer/DatapointDrawer";
 import ConfirmDeleteColumn from "./DeleteColumn";
+import RerunDependentColumns from "./RerunDependentColumns";
 import SingleImageViewerProvider from "../Common/SingleImageViewer/SingleImageViewerProvider";
 import AddRowData from "./AddRowData";
 import AddEvaluationFeeback from "./AddEvaluationFeeback/AddEvaluationFeeback";
@@ -1083,6 +1084,7 @@ const DevelopData = React.forwardRef(
           column={editColumnType}
           reset={reset}
         />
+        <RerunDependentColumns />
         <ConfirmDeleteColumn
           open={Boolean(deleteColumn)}
           onClose={() => setDeleteColumn(null)}
