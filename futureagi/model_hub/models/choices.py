@@ -325,6 +325,22 @@ class FeedbackSourceChoices(Enum):
         return [(tag.value, tag.name.replace("_", " ").title()) for tag in cls]
 
 
+class FeedbackActionType(str, Enum):
+    """Follow-up action on a Feedback row: persist only, rerun this eval, or rerun the whole eval task."""
+
+    RETUNE = "retune"
+    RECALCULATE = "recalculate"
+    RETUNE_RECALCULATE = "retune_recalculate"
+
+    @classmethod
+    def get_choices(cls):
+        return [
+            (cls.RETUNE.value, "Re-tune"),
+            (cls.RECALCULATE.value, "Re-calculate for this row"),
+            (cls.RETUNE_RECALCULATE.value, "Re-tune and re-calculate for this eval run"),
+        ]
+
+
 class EvalSourceChoices(Enum):
     EVALUATION = "evaluation"
     EXPERIMENT = "experiment"

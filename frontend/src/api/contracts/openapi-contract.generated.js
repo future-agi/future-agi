@@ -33166,15 +33166,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/observation-span/submit_feedback/": {
       "post": {
         "operationId": "tracer_observation-span_submit_feedback",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/ObservationSpan"
+          "$ref": "#/definitions/SubmitFeedback"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/ObservationSpan"
+          "200": {
+            "$ref": "#/definitions/SubmitFeedbackResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/ApiDetailErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiDetailErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -33185,15 +33203,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/observation-span/submit_feedback_action_type/": {
       "post": {
         "operationId": "tracer_observation-span_submit_feedback_action_type",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/ObservationSpan"
+          "$ref": "#/definitions/SubmitFeedbackActionType"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/ObservationSpan"
+          "200": {
+            "$ref": "#/definitions/SubmitFeedbackActionTypeResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/ApiDetailErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiDetailErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -69508,6 +69544,169 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Item notes",
           "type": "string",
           "x-nullable": true
+        }
+      }
+    },
+    "SubmitFeedback": {
+      "required": [
+        "target_type",
+        "custom_eval_config_id",
+        "feedback_value"
+      ],
+      "type": "object",
+      "properties": {
+        "target_type": {
+          "title": "Target type",
+          "type": "string",
+          "enum": [
+            "span",
+            "trace",
+            "session"
+          ]
+        },
+        "observation_span_id": {
+          "title": "Observation span id",
+          "type": "string"
+        },
+        "trace_id": {
+          "title": "Trace id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "trace_session_id": {
+          "title": "Trace session id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "custom_eval_config_id": {
+          "title": "Custom eval config id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "feedback_value": {
+          "title": "Feedback value",
+          "type": "string",
+          "minLength": 1
+        },
+        "feedback_explanation": {
+          "title": "Feedback explanation",
+          "type": "string",
+          "maxLength": 5000
+        },
+        "feedback_improvement": {
+          "title": "Feedback improvement",
+          "type": "string",
+          "maxLength": 5000
+        }
+      }
+    },
+    "SubmitFeedbackActionType": {
+      "required": [
+        "target_type",
+        "action_type",
+        "custom_eval_config_id",
+        "feedback_id"
+      ],
+      "type": "object",
+      "properties": {
+        "target_type": {
+          "title": "Target type",
+          "type": "string",
+          "enum": [
+            "span",
+            "trace",
+            "session"
+          ]
+        },
+        "observation_span_id": {
+          "title": "Observation span id",
+          "type": "string"
+        },
+        "trace_id": {
+          "title": "Trace id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "trace_session_id": {
+          "title": "Trace session id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "action_type": {
+          "title": "Action type",
+          "type": "string",
+          "enum": [
+            "retune",
+            "recalculate",
+            "retune_recalculate"
+          ]
+        },
+        "custom_eval_config_id": {
+          "title": "Custom eval config id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "feedback_id": {
+          "title": "Feedback id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "SubmitFeedbackActionTypeResponse": {
+      "required": [
+        "status",
+        "feedback_id",
+        "action_type",
+        "target_type"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "minLength": 1
+        },
+        "feedback_id": {
+          "title": "Feedback id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "action_type": {
+          "title": "Action type",
+          "type": "string",
+          "enum": [
+            "retune",
+            "recalculate",
+            "retune_recalculate"
+          ]
+        },
+        "target_type": {
+          "title": "Target type",
+          "type": "string",
+          "enum": [
+            "span",
+            "trace",
+            "session"
+          ]
+        },
+        "recalculated_count": {
+          "title": "Recalculated count",
+          "type": "integer",
+          "default": 0
+        }
+      }
+    },
+    "SubmitFeedbackResponse": {
+      "required": [
+        "feedback_id"
+      ],
+      "type": "object",
+      "properties": {
+        "feedback_id": {
+          "title": "Feedback id",
+          "type": "string",
+          "format": "uuid"
         }
       }
     },
