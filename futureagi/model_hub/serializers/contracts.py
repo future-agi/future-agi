@@ -2459,7 +2459,6 @@ class GroundTruthSetupRequestSerializer(serializers.Serializer):
     )
     role_mapping = GroundTruthRoleMappingSerializer()
     max_examples = serializers.IntegerField(min_value=1, max_value=20)
-    similarity_threshold = serializers.FloatField(min_value=0, max_value=1)
     injection_format = serializers.ChoiceField(
         choices=["structured", "conversational", "xml"],
         required=False,

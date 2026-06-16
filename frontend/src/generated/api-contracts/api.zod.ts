@@ -22027,9 +22027,6 @@ export const ModelHubGroundTruthSetupUpdateParams = zod.object({
 
 export const modelHubGroundTruthSetupUpdateBodyMaxExamplesMax = 20;
 
-export const modelHubGroundTruthSetupUpdateBodySimilarityThresholdMin = 0;
-export const modelHubGroundTruthSetupUpdateBodySimilarityThresholdMax = 1;
-
 export const modelHubGroundTruthSetupUpdateBodyInjectionFormatDefault = `structured`;
 export const modelHubGroundTruthSetupUpdateBodyEnabledDefault = true;
 
@@ -22043,7 +22040,6 @@ export const ModelHubGroundTruthSetupUpdateBody = zod.object({
   "reason": zod.string().min(1).optional().describe('Legacy alias for `explanation`.')
 }),
   "max_examples": zod.number().min(1).max(modelHubGroundTruthSetupUpdateBodyMaxExamplesMax),
-  "similarity_threshold": zod.number().min(modelHubGroundTruthSetupUpdateBodySimilarityThresholdMin).max(modelHubGroundTruthSetupUpdateBodySimilarityThresholdMax),
   "injection_format": zod.enum(['structured', 'conversational', 'xml']).default(modelHubGroundTruthSetupUpdateBodyInjectionFormatDefault),
   "enabled": zod.boolean().default(modelHubGroundTruthSetupUpdateBodyEnabledDefault).describe('Whether this template should inject GT few-shot examples at run time. Default True for back-compat with older FE clients; current FE always sends explicitly.')
 })

@@ -56973,8 +56973,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "required": [
         "variable_mapping",
         "role_mapping",
-        "max_examples",
-        "similarity_threshold"
+        "max_examples"
       ],
       "type": "object",
       "properties": {
@@ -56992,12 +56991,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "integer",
           "maximum": 20,
           "minimum": 1
-        },
-        "similarity_threshold": {
-          "title": "Similarity threshold",
-          "type": "number",
-          "maximum": 1,
-          "minimum": 0
         },
         "injection_format": {
           "title": "Injection format",

@@ -11426,11 +11426,6 @@ export interface GroundTruthSetupRequestApi {
      * @maximum 20
      */
   max_examples: number;
-  /**
-     * @minimum 0
-     * @maximum 1
-     */
-  similarity_threshold: number;
   injection_format?: GroundTruthSetupRequestApiInjectionFormat;
   /** Whether this template should inject GT few-shot examples at run time. Default True for back-compat with older FE clients; current FE always sends explicitly. */
   enabled?: boolean;

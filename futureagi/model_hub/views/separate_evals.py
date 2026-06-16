@@ -4577,7 +4577,6 @@ class GroundTruthSetupView(APIView):
             variable_mapping=data.get("variable_mapping") or {},
             role_mapping=data.get("role_mapping") or {},
             max_examples=int(data.get("max_examples")),
-            similarity_threshold=float(data.get("similarity_threshold")),
             injection_format=data.get("injection_format", "structured"),
             enabled=bool(data.get("enabled", True)),
         )

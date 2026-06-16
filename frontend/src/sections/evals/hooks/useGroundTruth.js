@@ -118,7 +118,6 @@ export function useSaveGroundTruthSetup(templateId) {
       variableMapping,
       roleMapping,
       maxExamples,
-      similarityThreshold,
       injectionFormat = "structured",
       enabled,
     }) => {
@@ -128,7 +127,6 @@ export function useSaveGroundTruthSetup(templateId) {
           variable_mapping: variableMapping,
           role_mapping: roleMapping,
           max_examples: maxExamples,
-          similarity_threshold: similarityThreshold,
           injection_format: injectionFormat,
           enabled,
         },

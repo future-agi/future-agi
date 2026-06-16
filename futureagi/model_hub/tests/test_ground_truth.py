@@ -347,7 +347,6 @@ class TestGroundTruthSetupAPI:
             "variable_mapping": {"input": "input"},
             "role_mapping": {"output": "score", "explanation": "notes"},
             "max_examples": 3,
-            "similarity_threshold": 0.7,
             "enabled": enabled,
         }
 
@@ -375,7 +374,7 @@ class TestGroundTruthSetupAPI:
         assert template_gt_config["enabled"] is True
         assert template_gt_config["ground_truth_id"] == str(ground_truth.id)
         assert template_gt_config["max_examples"] == 3
-        assert template_gt_config["similarity_threshold"] == 0.7
+        assert "similarity_threshold" not in template_gt_config
 
     def test_setup_persists_enabled_false_for_pause_without_delete(
         self, auth_client, ground_truth

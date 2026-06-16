@@ -1138,10 +1138,6 @@ const GroundTruthSetupForm = ({
   const persistedConfig = templateConfig.ground_truth || {};
   const persistedMaxExamples =
     persistedConfig.maxExamples ?? persistedConfig.max_examples ?? 3;
-  const persistedSimilarity =
-    persistedConfig.similarityThreshold ??
-    persistedConfig.similarity_threshold ??
-    0.7;
   // Default to disabled until the user opts in; only flip on once a valid
   // setup has been saved at least once. ``enabled === undefined`` (legacy
   // configs) reads as off.
@@ -1153,7 +1149,6 @@ const GroundTruthSetupForm = ({
     initialExplanationColumn,
   );
   const [maxExamples, setMaxExamples] = useState(persistedMaxExamples);
-  const [similarity, setSimilarity] = useState(persistedSimilarity);
   const [enabled, setEnabled] = useState(persistedEnabled);
 
   // Resync local state whenever the persisted snapshot changes (post-save
@@ -1165,7 +1160,6 @@ const GroundTruthSetupForm = ({
     [initialExplanationColumn],
   );
   useEffect(() => setMaxExamples(persistedMaxExamples), [persistedMaxExamples]);
-  useEffect(() => setSimilarity(persistedSimilarity), [persistedSimilarity]);
   useEffect(() => setEnabled(persistedEnabled), [persistedEnabled]);
 
   const save = useSaveGroundTruthSetup(template?.id);
@@ -1175,7 +1169,6 @@ const GroundTruthSetupForm = ({
     outputColumn !== initialOutputColumn ||
     explanationColumn !== initialExplanationColumn ||
     Number(maxExamples) !== Number(persistedMaxExamples) ||
-    Number(similarity) !== Number(persistedSimilarity) ||
     enabled !== persistedEnabled;
 
   const canSave = Boolean(outputColumn) && !save.isPending;
@@ -1188,7 +1181,6 @@ const GroundTruthSetupForm = ({
       variableMapping: normalizeMapping(varMapping),
       roleMapping: role,
       maxExamples: Number(maxExamples),
-      similarityThreshold: Number(similarity),
       enabled,
     });
   };
@@ -1354,15 +1346,17 @@ const GroundTruthSetupForm = ({
           variant="caption"
           sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
         >
-          The labeled answer the evaluator compares its result against.
+          The expected answer the evaluator should converge toward for each
+          example.
         </Typography>
-        <Typography
-          variant="caption"
-          sx={{ color: "warning.dark", fontSize: "11px", mt: -0.25 }}
-        >
-          Ensure values in this column match the template's expected output
-          type (pass/fail, score 0-1, or one of the configured choices).
-        </Typography>
+        {referenceHint && (
+          <Typography
+            variant="caption"
+            sx={{ color: "warning.dark", fontSize: "11px", mt: -0.25 }}
+          >
+            Values in this column must match the eval's output type. {referenceHint}
+          </Typography>
+        )}
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Typography variant="caption" sx={labelColSx}>
             Output column *
@@ -1391,19 +1385,6 @@ const GroundTruthSetupForm = ({
             ))}
           </TextField>
         </Box>
-        {referenceHint && (
-          <Typography
-            variant="caption"
-            sx={{
-              color: "text.secondary",
-              fontSize: "11px",
-              lineHeight: 1.4,
-              pl: "138px",
-            }}
-          >
-            {referenceHint}
-          </Typography>
-        )}
 
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Typography variant="caption" sx={labelColSx}>
@@ -1441,14 +1422,14 @@ const GroundTruthSetupForm = ({
           variant="caption"
           sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
         >
-          At eval time, the closest matching rows are injected as few-shot
-          calibration.
+          On each eval run, the rows most similar to the input are attached
+          to the judge prompt as calibration examples.
         </Typography>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
           <Tooltip
             placement="top"
             arrow
-            title="How many examples to show the judge. More = better calibration, slower runs."
+            title="How many of the closest matching rows are shown to the judge. More examples sharpen calibration but slow down each run."
           >
             <Typography variant="caption" sx={labelColSx}>
               Examples shown ⓘ
@@ -1469,32 +1450,6 @@ const GroundTruthSetupForm = ({
             size="small"
             label={maxExamples}
             sx={{ minWidth: 36, height: 22, fontSize: "11px" }}
-          />
-        </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <Tooltip
-            placement="top"
-            arrow
-            title="How close an example must be to count. Higher = stricter match."
-          >
-            <Typography variant="caption" sx={labelColSx}>
-              Match strictness ⓘ
-            </Typography>
-          </Tooltip>
-          <Slider
-            size="small"
-            value={Number(similarity)}
-            onChange={(_, v) => setSimilarity(v)}
-            min={0}
-            max={1}
-            step={0.05}
-            valueLabelDisplay="auto"
-            sx={{ flex: 1 }}
-          />
-          <Chip
-            size="small"
-            label={Number(similarity).toFixed(2)}
-            sx={{ minWidth: 44, height: 22, fontSize: "11px" }}
           />
         </Box>
       </Box>

@@ -84,7 +84,6 @@ class GroundTruthService:
         variable_mapping: dict[str, Any],
         role_mapping: dict[str, Any],
         max_examples: int,
-        similarity_threshold: float,
         injection_format: str = "structured",
         enabled: bool = True,
     ) -> dict[str, Any] | ServiceError:
@@ -104,11 +103,6 @@ class GroundTruthService:
             return ServiceError(
                 "max_examples must be between 1 and 20.",
                 code="INVALID_MAX_EXAMPLES",
-            )
-        if not (0.0 <= float(similarity_threshold) <= 1.0):
-            return ServiceError(
-                "similarity_threshold must be between 0 and 1.",
-                code="INVALID_SIMILARITY_THRESHOLD",
             )
 
         invalid_roles = {
@@ -153,7 +147,6 @@ class GroundTruthService:
                 "enabled": bool(enabled),
                 "ground_truth_id": str(gt.id),
                 "max_examples": int(max_examples),
-                "similarity_threshold": float(similarity_threshold),
                 "injection_format": injection_format,
             }
             eval_template.config = template_config
