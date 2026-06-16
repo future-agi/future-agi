@@ -57,6 +57,20 @@ GRANULARITY_DELTA = {
 
 ALLOWED_GRANULARITIES = set(TRUNC_MAP.keys())
 
+# The frontend (UsageCharts.computeGranularity) sends duration-style buckets
+# such as "5m" / "15m" / "1h" / "6h" / "1d" based on the selected range. The
+# backend buckets by Django Trunc units, so map each duration to the closest
+# supported unit. Without this every frontend value falls outside
+# ALLOWED_GRANULARITIES and silently degrades to "hour", which squeezes a wide
+# range (e.g. 30 days) into hour buckets and renders the chart as a sliver.
+GRANULARITY_ALIASES = {
+    "5m": "minute",
+    "15m": "minute",
+    "1h": "hour",
+    "6h": "hour",
+    "1d": "day",
+}
+
 MAX_PERCENTILE_SAMPLE = 50_000
 
 
@@ -78,6 +92,10 @@ def parse_time_range(query_params):
     if period_start > period_end:
         period_start, period_end = period_end, period_start
 
+    # Normalize duration-style aliases (e.g. "6h") to a supported Trunc unit
+    # before validating, so the frontend's buckets are honored instead of
+    # silently collapsing to "hour".
+    granularity = GRANULARITY_ALIASES.get(granularity, granularity)
     if granularity not in ALLOWED_GRANULARITIES:
         granularity = "hour"
 
