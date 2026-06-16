@@ -153,8 +153,11 @@ const EvalRollupSection = ({
         ) : (
           filteredTasks.map((task) => (
             <Box key={task.eval_task_id || task.eval_task_name}>
-              <TaskHeader name={task.eval_task_name} />
-              {task.evals.map((ev) =>
+              <TaskHeader
+                name={task.eval_task_name}
+                rowType={task.evals?.[0]?.target_type}
+              />
+              {task?.evals?.map((ev) =>
                 scope === "span" ? (
                   <EvalSingleRow
                     key={ev.eval_config_id}

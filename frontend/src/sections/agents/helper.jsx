@@ -9,8 +9,6 @@ import TalkRatioCell from "./CallLogs/TalkRatioCell";
 import { evalCellChips } from "src/sections/projects/LLMTracing/evalCellModel";
 import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
-// Voice detail API is still pending — keep its dummy fallback until it lands.
-import VOICE_CALL_DETAIL_DUMMY from "./CallLogs/__dummy__/voiceCallDetailDummy.json";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { Box, Skeleton } from "@mui/material";
@@ -901,13 +899,7 @@ export const useVoiceCallDetail = (traceId, enabled = false) => {
         })
         .catch(() => ({ data: { result: null } })),
     enabled: !!traceId && enabled,
-    // DEV DUMMY: local has no voice calls, so fall back to a static detail
-    // (eval_task_name on each eval) so the drawer renders grouped evals.
-    select: (data) =>
-      data?.data?.result || {
-        ...VOICE_CALL_DETAIL_DUMMY.result,
-        trace_id: traceId,
-      },
+    select: (data) => data?.data?.result || null,
     staleTime: 5 * 60 * 1000,
     meta: { errorHandled: true },
   });

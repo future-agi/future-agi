@@ -2,6 +2,7 @@ import {
   resolveEvalKind,
   EVAL_KIND,
   choiceTone,
+  scoreTone,
 } from "src/sections/projects/LLMTracing/evalCellModel";
 
 export const NAME_W = "42%";
@@ -33,7 +34,10 @@ export const spanResultChip = (span, outputType) => {
     if (span.value === "fail") return { label: "Fail", tone: "fail" };
     return { label: "—", tone: "plain" };
   }
-  return { label: span.value != null ? `${span.value}%` : "—", tone: "plain" };
+  return {
+    label: span.value != null ? `${span.value}%` : "—",
+    tone: typeof span.value === "number" ? scoreTone(span.value) : "plain",
+  };
 };
 
 // Choices have nothing to "fix", so they always count as passed.
