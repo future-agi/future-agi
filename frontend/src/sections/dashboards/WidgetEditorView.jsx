@@ -65,6 +65,7 @@ import {
   getSeriesAverage,
   getSuggestedUnitConfig,
 } from "./widgetUtils";
+import { WIDGET_TEMPLATES } from "./WidgetTemplates";
 
 const escapeCsvField = (field) => {
   const str = String(field ?? "");
@@ -1935,6 +1936,46 @@ export default function WidgetEditorView() {
   };
 
   const [saveStatus, setSaveStatus] = useState("idle"); // "idle" | "saving" | "saved"
+
+  const handleApplyTemplate = (template) => {
+  setChartName(template.chartName ?? "");
+  setChartDescription(template.chartDescription ?? "");
+  setTimePreset(template.timePreset ?? "30D");
+  setGranularity(template.granularity ?? "day");
+  setChartType(template.chartType ?? "line");
+  setMetrics(template.metrics ?? []);
+  setFilters(template.filters ?? []);
+  setBreakdowns(template.breakdowns ?? []);
+  setAxisConfig({
+    leftY: {
+      visible: true,
+      label: "",
+      unit: "",
+      prefixSuffix: "prefix",
+      abbreviation: true,
+      decimals: DEFAULT_DECIMALS,
+      min: "",
+      max: "",
+      outOfBounds: "visible",
+      scale: "linear",
+    },
+    rightY: {
+      visible: false,
+      label: "",
+      unit: "",
+      prefixSuffix: "prefix",
+      abbreviation: true,
+      decimals: DEFAULT_DECIMALS,
+      min: "",
+      max: "",
+      outOfBounds: "hidden",
+      scale: "linear",
+    },
+    xAxis: { visible: true, label: "" },
+    seriesAxis: {},
+  });
+  setAutoAppliedLeftAxisUnit(null);
+};
 
   const handleSave = async () => {
     if (metrics.length === 0) {
@@ -4423,6 +4464,49 @@ export default function WidgetEditorView() {
             <Box
               sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
             >
+            {!isEditing && (
+  <Box>
+    <FormControl fullWidth size="small">
+      <Select
+        value=""
+        displayEmpty
+        onChange={(e) => {
+          const tpl = WIDGET_TEMPLATES.find((t) => t.id === e.target.value);
+          if (tpl) handleApplyTemplate(tpl);
+        }}
+        renderValue={() => (
+          <Stack direction="row" alignItems="center" gap={0.75}>
+            <Iconify icon="mdi:view-grid-plus-outline" width={16} sx={{ color: "text.secondary" }} />
+            <Typography variant="body2" sx={{ color: "text.secondary", fontSize: "13px" }}>
+              Start from a template
+            </Typography>
+          </Stack>
+        )}
+        sx={{ "& .MuiSelect-select": { py: 1 } }}
+      >
+        {WIDGET_TEMPLATES.map((tpl) => (
+          <MenuItem key={tpl.id} value={tpl.id}>
+            <Stack direction="row" alignItems="flex-start" gap={1.5} sx={{ py: 0.25 }}>
+              <Iconify icon={tpl.icon} width={18} sx={{ mt: 0.2, flexShrink: 0, color: "primary.main" }} />
+              <Box>
+                <Typography variant="body2" fontWeight={600} sx={{ fontSize: "13px" }}>
+                  {tpl.name}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: "11px" }}>
+                  {tpl.description}
+                </Typography>
+              </Box>
+            </Stack>
+          </MenuItem>
+        ))}
+        </Select>
+      </FormControl>
+      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: "block", fontSize: "11px" }}>
+        or build from scratch below
+      </Typography>
+    </Box>
+    )}
+
               {/* Metric section */}
               <Box>
                 <Tooltip
