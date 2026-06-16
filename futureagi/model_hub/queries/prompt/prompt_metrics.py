@@ -247,7 +247,6 @@ def fetch_prompt_metrics_span_query(
             prompt_version__original_template=prompt_template,
             prompt_version__deleted=False,
             prompt_version_id__isnull=False,
-            prompt_label_id__isnull=False,
         )
         .select_related("prompt_version", "project", "prompt_label")
         .prefetch_related("prompt_version__labels", "eval_logs__custom_eval_config")
