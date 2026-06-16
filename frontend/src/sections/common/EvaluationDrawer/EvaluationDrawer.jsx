@@ -467,7 +467,7 @@ const EvaluationDrawerChild = ({
           )}
         </Collapse>
         <Collapse
-          in={visibleSection === "config"}
+          in={visibleSection === "config" && module !== "workbench"}
           orientation="horizontal"
           sx={{ height: "100%" }}
           unmountOnExit
