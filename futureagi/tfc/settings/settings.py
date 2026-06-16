@@ -801,7 +801,7 @@ CLICKHOUSE_V2 = {
     "CH25_TCP_PORT":  os.getenv("CH25_TCP_PORT", "9000"),
     "CH25_USER":      os.getenv("CH25_USER", "default"),
     "CH25_PASSWORD":  os.getenv("CH25_PASSWORD", ""),
-    "CH25_DATABASE":  os.getenv("CH25_DATABASE", "default"),
+    "CH25_DATABASE":  os.getenv("CH25_DATABASE", "futureagi"),
     # ─── Per-query-type routing for the shadow-mode rollout ──────────────────
     # Comma-separated query type names. See tracer/services/clickhouse/v2/shadow.py
     # for RoutingMode definitions. Anything not listed defaults to V1_ONLY.
