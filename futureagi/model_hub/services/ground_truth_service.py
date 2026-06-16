@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -56,19 +55,15 @@ class GroundTruthService:
         organization: Organization,
         workspace: Workspace | None,
     ) -> EvalGroundTruth:
-        stamped = [
-            {**row, "item_id": uuid.uuid4().hex}
-            for row in (data or [])
-            if isinstance(row, dict)
-        ]
+        rows = [row for row in (data or []) if isinstance(row, dict)]
         return EvalGroundTruth.objects.create(
             eval_template=eval_template,
             name=name,
             description=description,
             file_name=file_name,
             columns=columns,
-            data=stamped,
-            row_count=len(stamped),
+            data=rows,
+            row_count=len(rows),
             variable_mapping=variable_mapping,
             role_mapping=role_mapping,
             embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING,
@@ -478,7 +473,8 @@ class GroundTruthService:
             EmbeddingManager,
         )
 
-        raw = EmbeddingManager().retrieve_avg_rag_based_examples(
+        manager = EmbeddingManager()
+        raw = manager.retrieve_avg_rag_based_examples(
             eval_id=str(gt.eval_template_id),
             inputs=values,
             input_cols=cols,
@@ -488,22 +484,14 @@ class GroundTruthService:
             top_k=max_results,
         )
 
-        item_index = _build_item_index(gt.data or [])
+        dataset_columns = set(gt.columns or [])
         matches: list[dict[str, Any]] = []
-        seen: set[str] = set()
         for group in raw or []:
             if not group:
                 continue
-            item_id = str(group[0].get("item_id") or "")
-            if not item_id or item_id in seen:
-                continue
-            canonical_src = item_index.get(item_id)
-            if canonical_src is None:
-                continue
-            canonical = dict(canonical_src)
-            canonical.pop("item_id", None)
-            matches.append(canonical)
-            seen.add(item_id)
+            row = _row_from_ch_metadata(group[0], dataset_columns, manager)
+            if row:
+                matches.append(row)
 
         logger.info(
             "ground_truth_fewshots_retrieved",
@@ -642,12 +630,38 @@ def _workspace_id_or_none(gt: EvalGroundTruth) -> str | None:
     return str(workspace_id) if workspace_id else None
 
 
-def _build_item_index(data: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {
-        str(row["item_id"]): row
-        for row in (data or [])
-        if isinstance(row, dict) and row.get("item_id")
+_INTERNAL_CH_KEYS = frozenset(
+    {
+        "item_id",
+        "input_type",
+        "index_column",
+        "organization_id",
+        "workspace_id",
     }
+)
+
+
+def _row_from_ch_metadata(
+    meta: dict[str, Any],
+    dataset_columns: set[str],
+    manager,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {}
+    for key, value in (meta or {}).items():
+        if key in _INTERNAL_CH_KEYS:
+            continue
+        if dataset_columns and key not in dataset_columns:
+            continue
+        if isinstance(value, str) and value:
+            try:
+                decoded = manager.decode_path(value)
+            except Exception:
+                decoded = value
+            if decoded.startswith(("http://", "https://", "s3://")):
+                row[key] = decoded
+                continue
+        row[key] = value
+    return row
 
 
 def _mark_failed(gt: EvalGroundTruth, reason: str) -> EmbedDatasetResult:

@@ -570,19 +570,7 @@ class EmbeddingManager:
 
                     vectors.append(embedding_vector)
 
-                    if table_name == GROUND_TRUTH_TABLE_NAME:
-                        stored = {
-                            "item_id": row_dict["item_id"],
-                            "column_name": str(inp),
-                            "input_type": str(input_dict[inp]),
-                        }
-                        if organization_id:
-                            stored["organization_id"] = str(organization_id)
-                        if workspace_id:
-                            stored["workspace_id"] = str(workspace_id)
-                        metadata_list.append(stored)
-                    else:
-                        metadata_list.append(mod_dict)
+                    metadata_list.append(mod_dict)
 
                 except IndexError:
                     logger.exception(
@@ -1224,10 +1212,10 @@ class EmbeddingManager:
         padding = len(encoded_path) % 4
         if padding:
             encoded_path += "=" * (4 - padding)
-        return base64.b64decode(encoded_path.encode()).decode()
+        return base64.urlsafe_b64decode(encoded_path.encode()).decode()
 
     def encode_path(self, path: str) -> str:
-        return base64.b64encode(str(path).encode()).decode()
+        return base64.urlsafe_b64encode(str(path).encode()).decode()
 
     def process_examples(
         self, dpp_examples, inputs, feedback_col_name, corrected_label_col_name

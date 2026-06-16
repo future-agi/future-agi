@@ -73,7 +73,7 @@ class _FakeGT:
 # ─────────────────────────────────────────────────────────────────────
 
 
-def test_create_from_upload_stamps_item_ids_and_persists():
+def test_create_from_upload_persists_rows_verbatim():
     captured = {}
 
     def fake_create(**kwargs):
@@ -97,10 +97,9 @@ def test_create_from_upload_stamps_item_ids_and_persists():
             workspace=_FakeWorkspace(),
         )
 
-    stamped = captured["data"]
-    assert len(stamped) == 2
-    assert all(len(row["item_id"]) == 32 for row in stamped)
-    assert stamped[0]["item_id"] != stamped[1]["item_id"]
+    stored = captured["data"]
+    assert stored == [{"q": "hi", "a": "yo"}, {"q": "ho", "a": "yo"}]
+    assert all("item_id" not in row for row in stored)
     assert captured["row_count"] == 2
     assert captured["embedding_status"] == EvalGroundTruth.EmbeddingStatus.PENDING
 
@@ -322,19 +321,42 @@ def test_retrieve_few_shot_short_circuits_when_mapping_missing():
     assert rows == []
 
 
-def test_retrieve_few_shot_hydrates_canonical_rows_from_pg_by_item_id():
+def test_retrieve_few_shot_builds_rows_from_ch_metadata():
+    import base64
+
+    encoded_url = base64.urlsafe_b64encode(
+        b"http://example.com/cat.png"
+    ).decode().rstrip("=")
     gt = _FakeGT(
         embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
-        variable_mapping={"q": "question"},
-        data=[
-            {"item_id": "abc123", "question": "hi", "verdict": "Pass"},
-            {"item_id": "def456", "question": "yo", "verdict": "Fail"},
-        ],
+        variable_mapping={"q": "question", "img": "image"},
+        columns=["question", "image", "verdict"],
     )
 
     raw_groups = [
-        [{"item_id": "abc123", "column_name": "question", "input_type": "text"}],
-        [{"item_id": "def456", "column_name": "question", "input_type": "text"}],
+        [
+            {
+                "question": "what is this",
+                "image": encoded_url,
+                "verdict": "Pass",
+                "item_id": "abc",
+                "input_type": "image",
+                "index_column": "<binary>",
+                "organization_id": "org",
+                "workspace_id": "ws",
+            }
+        ],
+        [
+            {
+                "question": "yo",
+                "image": encoded_url,
+                "verdict": "Fail",
+                "item_id": "def",
+                "input_type": "text",
+                "organization_id": "org",
+                "workspace_id": "ws",
+            }
+        ],
     ]
 
     with patch(
@@ -342,64 +364,53 @@ def test_retrieve_few_shot_hydrates_canonical_rows_from_pg_by_item_id():
     ) as mock_manager_cls:
         mock_manager = mock_manager_cls.return_value
         mock_manager.retrieve_avg_rag_based_examples.return_value = raw_groups
+        mock_manager.decode_path.side_effect = lambda v: base64.urlsafe_b64decode(
+            v + "=" * (-len(v) % 4)
+        ).decode()
         rows = GroundTruthService.retrieve_few_shot(
-            gt=gt, inputs={"q": "hi"}, max_results=2
+            gt=gt, inputs={"q": "hi"}, max_results=5
         )
 
-    mock_manager.retrieve_avg_rag_based_examples.assert_called_once()
+    assert rows == [
+        {
+            "question": "what is this",
+            "image": "http://example.com/cat.png",
+            "verdict": "Pass",
+        },
+        {
+            "question": "yo",
+            "image": "http://example.com/cat.png",
+            "verdict": "Fail",
+        },
+    ]
+
+
+def test_retrieve_few_shot_skips_empty_groups():
+    gt = _FakeGT(
+        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
+        variable_mapping={"q": "question"},
+        columns=["question", "verdict"],
+    )
+
+    raw_groups = [
+        [{"question": "hi", "verdict": "Pass", "item_id": "abc"}],
+        [],
+        [{"question": "yo", "verdict": "Fail", "item_id": "def"}],
+    ]
+
+    with patch(
+        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager"
+    ) as mock_manager_cls:
+        mock_manager = mock_manager_cls.return_value
+        mock_manager.retrieve_avg_rag_based_examples.return_value = raw_groups
+        mock_manager.decode_path.side_effect = Exception("not encoded")
+        rows = GroundTruthService.retrieve_few_shot(
+            gt=gt, inputs={"q": "hi"}, max_results=5
+        )
+
     assert rows == [
         {"question": "hi", "verdict": "Pass"},
         {"question": "yo", "verdict": "Fail"},
-    ]
-
-
-def test_retrieve_few_shot_skips_match_when_item_id_missing_from_pg():
-    gt = _FakeGT(
-        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
-        variable_mapping={"q": "question"},
-        data=[{"item_id": "abc123", "question": "hi", "verdict": "Pass"}],
-    )
-
-    raw_groups = [
-        [{"item_id": "abc123", "column_name": "question", "input_type": "text"}],
-        [{"item_id": "gone999", "column_name": "question", "input_type": "text"}],
-    ]
-
-    with patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager"
-    ) as mock_manager_cls:
-        mock_manager = mock_manager_cls.return_value
-        mock_manager.retrieve_avg_rag_based_examples.return_value = raw_groups
-        rows = GroundTruthService.retrieve_few_shot(
-            gt=gt, inputs={"q": "hi"}, max_results=5
-        )
-
-    assert rows == [{"question": "hi", "verdict": "Pass"}]
-
-
-def test_retrieve_few_shot_dedups_same_item_id_across_groups():
-    gt = _FakeGT(
-        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
-        variable_mapping={"q": "question", "ctx": "context"},
-        data=[{"item_id": "abc123", "question": "hi", "context": "polite", "verdict": "Pass"}],
-    )
-
-    raw_groups = [
-        [{"item_id": "abc123", "column_name": "question", "input_type": "text"}],
-        [{"item_id": "abc123", "column_name": "context", "input_type": "text"}],
-    ]
-
-    with patch(
-        "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager"
-    ) as mock_manager_cls:
-        mock_manager = mock_manager_cls.return_value
-        mock_manager.retrieve_avg_rag_based_examples.return_value = raw_groups
-        rows = GroundTruthService.retrieve_few_shot(
-            gt=gt, inputs={"q": "hi"}, max_results=5
-        )
-
-    assert rows == [
-        {"question": "hi", "context": "polite", "verdict": "Pass"}
     ]
 
 
