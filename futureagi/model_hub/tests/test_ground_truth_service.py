@@ -63,39 +63,11 @@ class _FakeGT:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# upload
+# create_from_upload
 # ─────────────────────────────────────────────────────────────────────
 
 
-def test_upload_rejects_file_above_size_limit():
-    big_file = type("F", (), {"size": 10**9, "name": "big.csv"})()
-    with patch(
-        "model_hub.utils.ground_truth_parser.MAX_FILE_SIZE_BYTES", 1024
-    ):
-        result = GroundTruthService.upload(
-            eval_template=_FakeTemplate(),
-            request_data={},
-            uploaded_file=big_file,
-            organization=_FakeOrg(),
-            workspace=_FakeWorkspace(),
-        )
-    assert isinstance(result, ServiceError)
-    assert result.code == "FILE_TOO_LARGE"
-
-
-def test_upload_json_body_rejects_missing_columns():
-    result = GroundTruthService.upload(
-        eval_template=_FakeTemplate(),
-        request_data={"name": "x", "columns": [], "data": []},
-        uploaded_file=None,
-        organization=_FakeOrg(),
-        workspace=_FakeWorkspace(),
-    )
-    assert isinstance(result, ServiceError)
-    assert result.code == "MISSING_COLUMNS"
-
-
-def test_upload_json_body_stamps_item_ids_and_persists():
+def test_create_from_upload_stamps_item_ids_and_persists():
     captured = {}
 
     def fake_create(**kwargs):
@@ -106,18 +78,15 @@ def test_upload_json_body_stamps_item_ids_and_persists():
         "model_hub.services.ground_truth_service.EvalGroundTruth.objects.create",
         side_effect=fake_create,
     ):
-        GroundTruthService.upload(
+        GroundTruthService.create_from_upload(
             eval_template=_FakeTemplate(),
-            request_data={
-                "name": "ds",
-                "description": "",
-                "file_name": "ds.csv",
-                "columns": ["q", "a"],
-                "data": [{"q": "hi", "a": "yo"}, {"q": "ho", "a": "yo"}],
-                "variable_mapping": {"q": "q"},
-                "role_mapping": {"output": "a"},
-            },
-            uploaded_file=None,
+            name="ds",
+            description="",
+            file_name="ds.csv",
+            columns=["q", "a"],
+            data=[{"q": "hi", "a": "yo"}, {"q": "ho", "a": "yo"}],
+            variable_mapping={"q": "q"},
+            role_mapping={"output": "a"},
             organization=_FakeOrg(),
             workspace=_FakeWorkspace(),
         )
