@@ -81,6 +81,7 @@ from model_hub.views.dynamic_columns import (
     GetOperationConfigView,
     PreviewDatasetOperationView,
     RerunOperationView,
+    GetDependentColumnsView,
 )
 from model_hub.views.eval_group import EvalGroupView
 from model_hub.views.eval_runner import (
@@ -1211,6 +1212,11 @@ urlpatterns = [
         "columns/<uuid:column_id>/rerun-operation/",
         RerunOperationView.as_view(),
         name="rerun-operation",
+    ),
+    path(
+        "columns/<uuid:column_id>/dependents/",
+        GetDependentColumnsView.as_view(),
+        name="get-dependent-columns",
     ),
     # Derived Variables endpoints
     path(
