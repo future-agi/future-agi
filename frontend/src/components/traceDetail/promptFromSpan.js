@@ -1,10 +1,7 @@
-// Build a prompt-workbench draft (messages + model + params) from a trace span,
-// normalizing the various message shapes different SDKs emit.
-
 const INPUT_MESSAGE_PREFIXES = [
-  "llm.input_messages", // FutureAGI canonical (snake_case)
-  "llm.inputMessages", // legacy OpenInference (camelCase)
-  "gen_ai.input.messages", // OTEL GenAI
+  "llm.input_messages",
+  "llm.inputMessages",
+  "gen_ai.input.messages",
 ];
 
 const MODEL_KEYS = [
@@ -14,7 +11,12 @@ const MODEL_KEYS = [
   "ls_model_name",
 ];
 
-const PROVIDER_KEYS = ["gen_ai.provider.name", "gen_ai.system", "llm.provider"];
+const PROVIDER_KEYS = [
+  "gen_ai.provider.name",
+  "gen_ai.system",
+  "llm.provider",
+  "ls_provider",
+];
 
 const REQUEST_PARAM_KEYS = {
   temperature: "temperature",
@@ -168,19 +170,24 @@ function fromObjectInput(input) {
   return [];
 }
 
+// span.input is {} when there's no structured input; don't let it shadow input.value.
+function isEmpty(v) {
+  if (v == null) return true;
+  if (typeof v === "string") return v.trim() === "";
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === "object") return Object.keys(v).length === 0;
+  return false;
+}
+
 export function normalizeMessagesFromSpan(span) {
   const attrs = span?.span_attributes || span?.eval_attributes || {};
   let messages = fromFlattenedAttrs(attrs);
   if (!messages.length) messages = fromArrayAttr(attrs);
-  if (!messages.length)
-    messages = fromObjectInput(span?.input ?? attrs["input.value"]);
-  // Plain-text input → one user turn; an unparseable object is left empty
-  // rather than dumped into the prompt (the original bug).
-  if (!messages.length) {
-    const raw = span?.input;
-    if (typeof raw === "string" && raw.trim()) {
-      messages = [{ role: "user", content: raw }];
-    }
+  const input = !isEmpty(span?.input) ? span.input : attrs["input.value"];
+  if (!messages.length) messages = fromObjectInput(input);
+  // Plain text → one user turn (don't dump an unparseable blob — the original bug).
+  if (!messages.length && typeof input === "string" && input.trim()) {
+    messages = [{ role: "user", content: input }];
   }
   return messages;
 }
@@ -189,6 +196,8 @@ export function extractModelFromSpan(span) {
   const attrs = span?.span_attributes || span?.eval_attributes || {};
   if (span?.model) return span.model;
   for (const key of MODEL_KEYS) if (attrs[key]) return attrs[key];
+  const body = parsedRequestBody(span);
+  if (typeof body?.model === "string" && body.model) return body.model;
   return "";
 }
 
@@ -196,6 +205,8 @@ export function extractProviderFromSpan(span) {
   const attrs = span?.span_attributes || span?.eval_attributes || {};
   if (span?.provider) return span.provider;
   for (const key of PROVIDER_KEYS) if (attrs[key]) return attrs[key];
+  const params = parseMaybe(attrs["gen_ai.request.parameters"]);
+  if (params?.model_provider) return params.model_provider;
   return "";
 }
 
@@ -212,6 +223,29 @@ function parseMaybe(value) {
   return null;
 }
 
+// SDKs that log the full request as input.value keep model/params inside it.
+function parsedRequestBody(span) {
+  const attrs = span?.span_attributes || span?.eval_attributes || {};
+  const input = !isEmpty(span?.input) ? span.input : attrs["input.value"];
+  const parsed = parseMaybe(input);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed
+    : null;
+}
+
+// Derive text/json — an unset format makes the workbench selector default to JSON.
+export function extractResponseFormatFromSpan(span) {
+  const attrs = span?.span_attributes || span?.eval_attributes || {};
+  let rf = parsedRequestBody(span)?.response_format;
+  if (rf == null) rf = attrs["gen_ai.request.response_format"];
+  const parsed = parseMaybe(rf) ?? rf;
+  if (parsed == null) return "text";
+  const type = typeof parsed === "object" ? parsed.type : parsed;
+  return typeof type === "string" && type.toLowerCase().includes("json")
+    ? "json"
+    : "text";
+}
+
 // Whitelisted numeric model params; transport/junk keys are dropped.
 export function extractParamsFromSpan(span) {
   const attrs = span?.span_attributes || span?.eval_attributes || {};
@@ -222,7 +256,8 @@ export function extractParamsFromSpan(span) {
   }
   const blob =
     parseMaybe(attrs["gen_ai.request.parameters"]) ||
-    parseMaybe(span?.model_parameters);
+    parseMaybe(span?.model_parameters) ||
+    parsedRequestBody(span);
   if (blob && typeof blob === "object") {
     for (const [k, v] of Object.entries(blob)) {
       const name = REQUEST_PARAM_KEYS[k];
@@ -260,5 +295,6 @@ export function buildPromptConfigFromSpan(span) {
     model: extractModelFromSpan(span),
     provider: extractProviderFromSpan(span),
     parameters: extractParamsFromSpan(span),
+    responseFormat: extractResponseFormatFromSpan(span),
   };
 }

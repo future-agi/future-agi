@@ -608,28 +608,100 @@ const TraceDetailDrawerV2 = ({
             navigate(
               `/dashboard/workbench/create/${promptTemplateId}?tab=Playground`,
             );
-          } else {
-            const { messages, variableNames, model, provider, parameters } =
-              buildPromptConfigFromSpan(span);
-            const configuration = {
-              ...parameters,
-              output_format: "string",
-              ...(model && {
-                model,
-                model_detail: {
-                  model_name: model,
-                  ...(provider && { providers: provider }),
-                },
-              }),
-            };
-            createPromptDraft({
-              name: "",
-              prompt_config: [{ configuration, messages }],
-              ...(Object.keys(variableNames).length > 0 && {
-                variable_names: variableNames,
-              }),
-            });
+            break;
           }
+          const {
+            messages,
+            variableNames,
+            model,
+            provider,
+            parameters,
+            responseFormat,
+          } = buildPromptConfigFromSpan(span);
+          (async () => {
+            try {
+              // Resolve the trace model to one catalog entry; set it only when sure
+              // (exact or unique provider-scoped match), else leave it unset so the
+              // "Select a model" flow handles it instead of a half-recognized model.
+              let resolved = null;
+              if (model) {
+                try {
+                  const data =
+                    (
+                      await axios.get(endpoints.develop.modelList, {
+                        params: { search: model },
+                      })
+                    )?.data || {};
+                  const results = data.results || [];
+                  const nameOf = (m) => m.model_name ?? m.modelName ?? "";
+                  const provOf = (m) =>
+                    (m.providers ?? m.provider ?? "").toLowerCase();
+                  // Catalog ids are LiteLLM-prefixed (vertex_ai/…, bedrock/<region>/…);
+                  // the trace emits the provider-native id.
+                  const baseName = (n) => n.slice(n.lastIndexOf("/") + 1);
+                  const wantProv = provider?.toLowerCase();
+
+                  // Exact model_name, preferring the trace's provider.
+                  let match =
+                    (wantProv &&
+                      results.find(
+                        (m) => nameOf(m) === model && provOf(m) === wantProv,
+                      )) ||
+                    results.find((m) => nameOf(m) === model);
+
+                  // Else a unique prefix-stripped match within the provider;
+                  // ambiguous (e.g. multi-region Bedrock) stays unresolved.
+                  if (!match && !data.next) {
+                    let cands = results.filter(
+                      (m) => baseName(nameOf(m)) === model,
+                    );
+                    if (wantProv) {
+                      const byProv = cands.filter(
+                        (m) => provOf(m) === wantProv,
+                      );
+                      if (byProv.length) cands = byProv;
+                    }
+                    if (cands.length === 1) [match] = cands;
+                  }
+
+                  if (match) {
+                    resolved = {
+                      model_name: nameOf(match),
+                      providers:
+                        match.providers ?? match.provider ?? provider ?? "",
+                      logoUrl: match.logo_url ?? match.logoUrl ?? "",
+                      type: match.type ?? match.mode ?? match.model_type ?? "",
+                      isAvailable:
+                        match.is_available ?? match.isAvailable ?? false,
+                    };
+                  }
+                } catch {
+                  /* leave unresolved -> model stays unset */
+                }
+              }
+              const configuration = {
+                ...parameters,
+                output_format: "string",
+                // Set explicitly — the selector defaults to JSON when unset.
+                response_format: responseFormat,
+                ...(resolved && {
+                  model: resolved.model_name,
+                  model_detail: resolved,
+                }),
+              };
+              createPromptDraft({
+                name: "",
+                prompt_config: [{ configuration, messages }],
+                ...(Object.keys(variableNames).length > 0 && {
+                  variable_names: variableNames,
+                }),
+              });
+            } catch {
+              enqueueSnackbar("Failed to create prompt. Please try again.", {
+                variant: "error",
+              });
+            }
+          })();
           break;
         }
         case "playground":
