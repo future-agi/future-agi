@@ -18,14 +18,6 @@ func FromContext(ctx context.Context) *ResolveResult {
 	return v
 }
 
-type apiKeyCtxKey struct{}
-
-// APIKeyFromContext retrieves the raw API key from context.
-func APIKeyFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(apiKeyCtxKey{}).(string)
-	return v
-}
-
 type cacheKeyCtxKey struct{}
 
 // CacheKeyFromContext retrieves the hashed cache key from context.
@@ -55,7 +47,7 @@ func (a *Authenticator) GRPCInterceptor() grpc.UnaryServerInterceptor {
 
 		result, err := a.Authenticate(ctx, apiKey, secretKey)
 		if err != nil {
-			if errors.Is(err, ErrUnauthenticated) || errors.Is(err, ErrKeyDisabled) {
+			if errors.Is(err, ErrUnauthenticated) {
 				a.log.Warn("grpc auth failed", "err", err)
 				return nil, status.Error(codes.Unauthenticated, "authentication failed")
 			}
@@ -64,7 +56,6 @@ func (a *Authenticator) GRPCInterceptor() grpc.UnaryServerInterceptor {
 		}
 
 		ctx = context.WithValue(ctx, contextKey{}, result)
-		ctx = context.WithValue(ctx, apiKeyCtxKey{}, apiKey)
 		ctx = context.WithValue(ctx, cacheKeyCtxKey{}, CacheKey(apiKey, secretKey))
 		return handler(ctx, req)
 	}

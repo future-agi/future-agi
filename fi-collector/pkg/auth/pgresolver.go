@@ -197,13 +197,18 @@ func (r *PGResolver) GetOrCreateProject(ctx context.Context, orgID, workspaceID,
 
 	newID := uuid.New().String()
 
+	// DO UPDATE SET updated_at = now() (no-op touch) ensures RETURNING id fires
+	// even on conflict, giving us the existing row's ID without a second query.
+	// DO NOTHING would return no row, forcing a fallback SELECT that can't
+	// scope by workspace_id + trace_type and may return the wrong project when
+	// an org has two projects with the same name in different workspaces.
 	const insertQ = `
 		INSERT INTO tracer_project (
 			id, name, organization_id, workspace_id, trace_type,
 			model_type, source, tags, deleted, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, 'GenerativeLLM', 'prototype', '[]', false, now(), now())
 		ON CONFLICT (name, trace_type, organization_id, workspace_id) WHERE NOT deleted
-		DO NOTHING
+		DO UPDATE SET updated_at = EXCLUDED.updated_at
 		RETURNING id`
 
 	var wsPtr *string
@@ -214,16 +219,6 @@ func (r *PGResolver) GetOrCreateProject(ctx context.Context, orgID, workspaceID,
 	var returnedID string
 	err := r.write.QueryRow(ctx, insertQ, newID, name, orgID, wsPtr, traceType).Scan(&returnedID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			resolved, resolveErr := r.ResolveProjects(ctx, orgID, []string{name})
-			if resolveErr != nil {
-				return "", resolveErr
-			}
-			if id, ok := resolved[name]; ok {
-				return id, nil
-			}
-			return "", fmt.Errorf("project %q not found after conflict", name)
-		}
 		return "", fmt.Errorf("create project: %w", err)
 	}
 	return returnedID, nil

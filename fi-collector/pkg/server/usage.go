@@ -9,17 +9,15 @@ import (
 
 func (s *Server) emitUsage(ctx context.Context, traces ptrace.Traces, payloadBytes int64) {
 	result := auth.FromContext(ctx)
-	if result == nil || s.usage == nil {
+	if result == nil {
 		return
 	}
-	numSpans := traces.SpanCount()
-	numTraces := countDistinctTraces(traces)
-	s.usage.EmitIngestion(result.OrgID, numTraces, numSpans, payloadBytes)
+	s.usage.EmitIngestion(result.OrgID, countDistinctTraces(traces), traces.SpanCount(), payloadBytes)
 }
 
 func (s *Server) checkUsage(ctx context.Context) (auth.CheckResult, bool) {
 	result := auth.FromContext(ctx)
-	if result == nil || s.metering == nil {
+	if result == nil {
 		return auth.CheckResult{Allowed: true}, true
 	}
 	check := s.metering.CheckUsage(ctx, result.OrgID, "tracing_event", 1)

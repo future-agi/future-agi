@@ -49,12 +49,12 @@ type Config struct {
 // the only difference: gRPC uses the generated stub; HTTP accepts
 // `application/x-protobuf` and `application/json` per the OTLP/HTTP spec.
 type Server struct {
-	cfg     Config
-	writer  *chwriter.Writer
-	curated *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
+	cfg      Config
+	writer   *chwriter.Writer
+	curated  *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
 	auth     *auth.Authenticator
-	usage    *auth.UsageEmitter
-	metering *auth.Metering
+	usage    UsageEmitter
+	metering Metering
 	log      *slog.Logger
 	grpc    *grpc.Server
 	httpd   *http.Server
@@ -95,7 +95,7 @@ func WithLogger(l *slog.Logger) Option { return Option{log: l} }
 // At least one of GRPCAddr / HTTPAddr must be non-empty or Run returns an
 // error. We default both ON because every supported SDK picks one of them;
 // disabling either is an opt-in deployment choice.
-func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator, usage *auth.UsageEmitter, metering *auth.Metering, opts ...Option) *Server {
+func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator, usage UsageEmitter, metering Metering, opts ...Option) *Server {
 	if cfg.GRPCAddr == "" {
 		cfg.GRPCAddr = ":4317"
 	}
@@ -241,7 +241,7 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 		ck := auth.CacheKeyFromContext(ctx)
 		dropped, err := auth.StampResourceAttrs(ctx, h.s.auth, ck, req.Traces(), result)
 		if err != nil {
-			return ptraceotlp.NewExportResponse(), status.Errorf(codes.Internal, "auth stamp: %v", err)
+			return ptraceotlp.NewExportResponse(), status.Errorf(codes.InvalidArgument, "auth stamp: %v", err)
 		}
 		if dropped > 0 {
 			h.s.log.Warn("dropped ResourceSpans with unresolvable project", "dropped", dropped)
@@ -331,7 +331,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		ck := auth.CacheKeyFromContext(r.Context())
 		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
 		if err != nil {
-			http.Error(w, "auth stamp: "+err.Error(), http.StatusServiceUnavailable)
+			http.Error(w, "auth stamp: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		if dropped > 0 {

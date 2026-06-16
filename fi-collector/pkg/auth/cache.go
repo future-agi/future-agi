@@ -67,17 +67,6 @@ func (c *cache) putPositive(key string, result *ResolveResult) {
 	})
 }
 
-// addProjects merges newly resolved projects into an existing cache entry.
-// Size returns the number of entries currently in the cache.
-func (c *cache) Size() int {
-	n := 0
-	c.m.Range(func(_, _ any) bool {
-		n++
-		return true
-	})
-	return n
-}
-
 func (c *cache) addProjects(key string, projects map[string]string) {
 	val, ok := c.m.Load(key)
 	if !ok {

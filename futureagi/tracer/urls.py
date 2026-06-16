@@ -30,7 +30,6 @@ from tracer.views.feed import (
     FeedTrendsView,
     LinearTeamsView,
 )
-from tracer.views.http_otlp import OTLPTraceHTTPView
 from tracer.views.imagine_analysis import ImagineAnalysisView
 from tracer.views.monitor import UserAlertMonitorLogView, UserAlertMonitorView
 from tracer.views.observability_provider import (
@@ -38,7 +37,7 @@ from tracer.views.observability_provider import (
     WebhookHandlerView,
 )
 from tracer.views.observation_span import ObservationSpanView
-from tracer.views.otlp import OTLPHealthView, OTLPTraceView
+from tracer.views.otlp import OTLPHealthView
 from tracer.views.project import ProjectView
 from tracer.views.project_version import ProjectVersionView
 from tracer.views.replay_session import ReplaySessionView

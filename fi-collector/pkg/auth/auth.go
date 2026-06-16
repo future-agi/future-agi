@@ -10,43 +10,35 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 )
 
+const revocationChannel = "fi:auth:revoke"
+
 var (
 	ErrUnauthenticated = errors.New("invalid or missing API key")
-	ErrKeyDisabled     = errors.New("API key is disabled")
-	ErrNoProject       = errors.New("project could not be resolved")
 )
-
-// Stats exposes auth metrics for the /metrics endpoint.
-type Stats struct {
-	CacheHits   int64
-	CacheMisses int64
-	StaleServes int64
-	Denied      int64
-	PGErrors    int64
-	CacheSize   int
-}
 
 // Authenticator is the top-level auth facade. Safe for concurrent use.
 type Authenticator struct {
-	cfg      Config
-	pg       *PGResolver
-	cache    *cache
-	sfKey    singleflight.Group // dedup concurrent key lookups
-	sfProj   singleflight.Group // dedup concurrent project lookups
-	log      *slog.Logger
-	stats    Stats
+	cfg    Config
+	pg     *PGResolver
+	cache  *cache
+	rdb    *redis.Client
+	sfKey  singleflight.Group // dedup concurrent key lookups
+	sfProj singleflight.Group // dedup concurrent project lookups
+	log    *slog.Logger
 }
 
 // New creates an Authenticator. If cfg.Enabled is false, returns nil
 // (all interceptor/middleware checks become no-ops).
-func New(ctx context.Context, cfg Config, log *slog.Logger) (*Authenticator, error) {
+// rdb is optional — when non-nil, WatchRevocations can be called to enable
+// instant cache eviction on key disable/delete.
+func New(ctx context.Context, cfg Config, rdb *redis.Client, log *slog.Logger) (*Authenticator, error) {
 	if !cfg.IsEnabled() {
 		return nil, nil
 	}
@@ -61,8 +53,33 @@ func New(ctx context.Context, cfg Config, log *slog.Logger) (*Authenticator, err
 		cfg:   cfg,
 		pg:    pg,
 		cache: newCache(cfg.CacheTTL, cfg.WarmTTL),
+		rdb:   rdb,
 		log:   log,
 	}, nil
+}
+
+// WatchRevocations subscribes to the Redis revocation channel and evicts
+// disabled/deleted keys from the local cache immediately. Blocks until ctx
+// is cancelled — call in a goroutine. No-op if Redis is not configured.
+func (a *Authenticator) WatchRevocations(ctx context.Context) {
+	if a == nil || a.rdb == nil {
+		return
+	}
+	pubsub := a.rdb.Subscribe(ctx, revocationChannel)
+	defer pubsub.Close()
+
+	for {
+		select {
+		case msg, ok := <-pubsub.Channel():
+			if !ok {
+				return
+			}
+			a.cache.m.Delete(msg.Payload)
+			a.log.Debug("revoked key evicted from cache", "cache_key", msg.Payload[:8]+"…")
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // PGRead returns the read connection pool for direct queries (e.g. metering).
@@ -80,18 +97,6 @@ func (a *Authenticator) Close() {
 	}
 }
 
-// Snapshot returns a copy of current stats.
-func (a *Authenticator) Snapshot() Stats {
-	return Stats{
-		CacheHits:   atomic.LoadInt64(&a.stats.CacheHits),
-		CacheMisses: atomic.LoadInt64(&a.stats.CacheMisses),
-		StaleServes: atomic.LoadInt64(&a.stats.StaleServes),
-		Denied:      atomic.LoadInt64(&a.stats.Denied),
-		PGErrors:    atomic.LoadInt64(&a.stats.PGErrors),
-		CacheSize:   a.cache.Size(),
-	}
-}
-
 // Authenticate validates an API key pair and returns the resolve result.
 // On cache hit, returns immediately. On miss, queries PG (deduplicated
 // by singleflight). Returns ErrUnauthenticated for invalid keys.
@@ -105,11 +110,9 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 	entry, status := a.cache.get(ck)
 	switch status {
 	case "fresh":
-		atomic.AddInt64(&a.stats.CacheHits, 1)
 		return entry.result, nil
 
 	case "warm":
-		atomic.AddInt64(&a.stats.StaleServes, 1)
 		// Singleflight dedup — 10K concurrent warm hits = 1 PG query, not 10K goroutines
 		go a.sfKey.Do(ck+":refresh", func() (any, error) {
 			a.refreshKey(context.Background(), apiKey, secretKey)
@@ -119,14 +122,12 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 	}
 
 	// cache miss — resolve from PG
-	atomic.AddInt64(&a.stats.CacheMisses, 1)
 	val, err, _ := a.sfKey.Do(ck, func() (any, error) {
 		sfCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		return a.pg.ValidateKey(sfCtx, apiKey, secretKey)
 	})
 	if err != nil {
-		atomic.AddInt64(&a.stats.PGErrors, 1)
 		return nil, fmt.Errorf("auth resolve: %w", err)
 	}
 
@@ -134,7 +135,6 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 	if result == nil {
 		// Don't cache invalid keys — avoids unbounded memory from scanners.
 		// Trade-off: invalid keys always hit PG, but singleflight deduplicates.
-		atomic.AddInt64(&a.stats.Denied, 1)
 		return nil, ErrUnauthenticated
 	}
 
@@ -158,7 +158,6 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 	// Batch resolve from PG read pool
 	resolved, err := a.pg.ResolveProjects(ctx, result.OrgID, missing)
 	if err != nil {
-		atomic.AddInt64(&a.stats.PGErrors, 1)
 		return fmt.Errorf("resolve projects: %w", err)
 	}
 

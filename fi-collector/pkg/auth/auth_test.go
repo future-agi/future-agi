@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -164,8 +167,10 @@ func TestCacheExpiryPastWarmTTL(t *testing.T) {
 		t.Fatalf("expected miss after warm TTL expiry, got %q", st)
 	}
 
-	if c.Size() != 0 {
-		t.Fatalf("expected cache size 0 after expiry, got %d", c.Size())
+	var count int
+	c.m.Range(func(_, _ any) bool { count++; return true })
+	if count != 0 {
+		t.Fatalf("expected cache size 0 after expiry, got %d", count)
 	}
 }
 
@@ -225,15 +230,19 @@ func TestCachePutPositiveOverwrites(t *testing.T) {
 func TestCacheSize(t *testing.T) {
 	c := newCache(5*time.Minute, 1*time.Hour)
 
-	if c.Size() != 0 {
-		t.Fatalf("empty cache size = %d, want 0", c.Size())
+	var count int
+	c.m.Range(func(_, _ any) bool { count++; return true })
+	if count != 0 {
+		t.Fatalf("empty cache size = %d, want 0", count)
 	}
 
 	c.putPositive("k1", &ResolveResult{OrgID: "o1", Projects: map[string]string{}})
 	c.putPositive("k2", &ResolveResult{OrgID: "o2", Projects: map[string]string{}})
 
-	if c.Size() != 2 {
-		t.Fatalf("cache size = %d, want 2", c.Size())
+	count = 0
+	c.m.Range(func(_, _ any) bool { count++; return true })
+	if count != 2 {
+		t.Fatalf("cache size = %d, want 2", count)
 	}
 }
 
@@ -394,12 +403,10 @@ func TestHTTPMiddlewareContextValues(t *testing.T) {
 	a.cache.putPositive(ck, result)
 
 	var gotResult *ResolveResult
-	var gotAPIKey string
 	var gotCacheKey string
 
 	handler := a.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotResult = FromContext(r.Context())
-		gotAPIKey = APIKeyFromContext(r.Context())
 		gotCacheKey = CacheKeyFromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -416,11 +423,79 @@ func TestHTTPMiddlewareContextValues(t *testing.T) {
 	if gotResult == nil || gotResult.OrgID != "org-ctx" {
 		t.Errorf("FromContext returned %v, want result with OrgID=org-ctx", gotResult)
 	}
-	if gotAPIKey != apiKey {
-		t.Errorf("APIKeyFromContext = %q, want %q", gotAPIKey, apiKey)
-	}
 	if gotCacheKey != ck {
 		t.Errorf("CacheKeyFromContext = %q, want %q", gotCacheKey, ck)
+	}
+}
+
+func TestHTTPMiddlewareBasicAuth(t *testing.T) {
+	apiKey := "basic-api-key"
+	secretKey := "basic-secret-key"
+	ck := CacheKey(apiKey, secretKey)
+
+	a := &Authenticator{
+		cache: newCache(5*time.Minute, 1*time.Hour),
+		log:   slog.Default(),
+	}
+	result := &ResolveResult{OrgID: "org-basic", Projects: map[string]string{}}
+	a.cache.putPositive(ck, result)
+
+	var gotResult *ResolveResult
+	handler := a.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotResult = FromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	encoded := base64.StdEncoding.EncodeToString([]byte(apiKey + ":" + secretKey))
+	req := httptest.NewRequest("POST", "/v1/traces", nil)
+	req.Header.Set("Authorization", "Basic "+encoded)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotResult == nil || gotResult.OrgID != "org-basic" {
+		t.Errorf("FromContext = %v, want OrgID=org-basic", gotResult)
+	}
+}
+
+func TestExtractCredentialsNativeHeaders(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1/traces", nil)
+	req.Header.Set("X-Api-Key", "k1")
+	req.Header.Set("X-Secret-Key", "s1")
+	api, sec := extractCredentials(req)
+	if api != "k1" || sec != "s1" {
+		t.Errorf("got (%q, %q), want (k1, s1)", api, sec)
+	}
+}
+
+func TestExtractCredentialsBasicAuth(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1/traces", nil)
+	encoded := base64.StdEncoding.EncodeToString([]byte("mykey:mysecret"))
+	req.Header.Set("Authorization", "Basic "+encoded)
+	api, sec := extractCredentials(req)
+	if api != "mykey" || sec != "mysecret" {
+		t.Errorf("got (%q, %q), want (mykey, mysecret)", api, sec)
+	}
+}
+
+func TestExtractCredentialsSecretWithColon(t *testing.T) {
+	// secret_key may contain colons — SplitN(..., 2) handles this
+	req := httptest.NewRequest("POST", "/v1/traces", nil)
+	encoded := base64.StdEncoding.EncodeToString([]byte("mykey:sec:ret"))
+	req.Header.Set("Authorization", "Basic "+encoded)
+	api, sec := extractCredentials(req)
+	if api != "mykey" || sec != "sec:ret" {
+		t.Errorf("got (%q, %q), want (mykey, sec:ret)", api, sec)
+	}
+}
+
+func TestExtractCredentialsNoneProvided(t *testing.T) {
+	req := httptest.NewRequest("POST", "/v1/traces", nil)
+	api, sec := extractCredentials(req)
+	if api != "" || sec != "" {
+		t.Errorf("got (%q, %q), want empty", api, sec)
 	}
 }
 
@@ -540,12 +615,10 @@ func TestGRPCInterceptorContextValues(t *testing.T) {
 	interceptor := a.GRPCInterceptor()
 
 	var gotResult *ResolveResult
-	var gotAPIKey string
 	var gotCacheKey string
 
 	handler := func(ctx context.Context, req any) (any, error) {
 		gotResult = FromContext(ctx)
-		gotAPIKey = APIKeyFromContext(ctx)
 		gotCacheKey = CacheKeyFromContext(ctx)
 		return "ok", nil
 	}
@@ -563,9 +636,6 @@ func TestGRPCInterceptorContextValues(t *testing.T) {
 	if gotResult == nil || gotResult.OrgID != "org-grpc" {
 		t.Errorf("FromContext returned %v, want result with OrgID=org-grpc", gotResult)
 	}
-	if gotAPIKey != apiKey {
-		t.Errorf("APIKeyFromContext = %q, want %q", gotAPIKey, apiKey)
-	}
 	if gotCacheKey != ck {
 		t.Errorf("CacheKeyFromContext = %q, want %q", gotCacheKey, ck)
 	}
@@ -578,12 +648,6 @@ func TestGRPCInterceptorContextValues(t *testing.T) {
 func TestFromContextEmpty(t *testing.T) {
 	if r := FromContext(context.Background()); r != nil {
 		t.Errorf("FromContext on empty ctx = %v, want nil", r)
-	}
-}
-
-func TestAPIKeyFromContextEmpty(t *testing.T) {
-	if k := APIKeyFromContext(context.Background()); k != "" {
-		t.Errorf("APIKeyFromContext on empty ctx = %q, want empty", k)
 	}
 }
 
@@ -618,6 +682,8 @@ func TestStampResourceAttrsNilResult(t *testing.T) {
 }
 
 func TestStampResourceAttrsAlreadyHasProjectID(t *testing.T) {
+	// A span with only fi.project_id and no project_name must be rejected;
+	// client-supplied fi.project_id is not trusted.
 	a := &Authenticator{
 		cache: newCache(5*time.Minute, 1*time.Hour),
 		log:   slog.Default(),
@@ -635,20 +701,9 @@ func TestStampResourceAttrsAlreadyHasProjectID(t *testing.T) {
 	rs.Resource().Attributes().PutStr("fi.project_id", "pre-existing-id")
 	rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty().SetName("span-1")
 
-	dropped, err := StampResourceAttrs(context.Background(), a, ck, traces, result)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if dropped != 0 {
-		t.Errorf("dropped = %d, want 0", dropped)
-	}
-
-	raw := traces.ResourceSpans().At(0).Resource().Attributes().AsRaw()
-	if raw["fi.project_id"] != "pre-existing-id" {
-		t.Errorf("fi.project_id = %v, want pre-existing-id", raw["fi.project_id"])
-	}
-	if _, ok := raw["fi.org_id"]; ok {
-		t.Error("fi.org_id should not be set when fi.project_id is already present")
+	_, err := StampResourceAttrs(context.Background(), a, ck, traces, result)
+	if err == nil {
+		t.Fatal("expected error: span has fi.project_id but no project_name")
 	}
 }
 
@@ -711,14 +766,18 @@ func TestStampResourceAttrsValidProjectName(t *testing.T) {
 }
 
 func TestStampResourceAttrsMixedSpans(t *testing.T) {
+	// Two ResourceSpans: one with a resolvable project, one with an unresolvable
+	// project — the unresolvable one should be dropped.
 	a := &Authenticator{
 		cache: newCache(5*time.Minute, 1*time.Hour),
 		log:   slog.Default(),
 	}
 
+	// Both projects are known to the auth result — "projB" has an empty ID
+	// which simulates a project that resolved to nothing (will be dropped).
 	result := &ResolveResult{
 		OrgID:    "org-mixed",
-		Projects: map[string]string{"projA": "id-A"},
+		Projects: map[string]string{"projA": "id-A", "projB": ""},
 	}
 	ck := "stamp-mixed-key"
 	a.cache.putPositive(ck, result)
@@ -726,32 +785,27 @@ func TestStampResourceAttrsMixedSpans(t *testing.T) {
 	traces := ptrace.NewTraces()
 
 	rs0 := traces.ResourceSpans().AppendEmpty()
-	rs0.Resource().Attributes().PutStr("fi.project_id", "already-set")
+	rs0.Resource().Attributes().PutStr("project_name", "projA")
 	rs0.ScopeSpans().AppendEmpty().Spans().AppendEmpty().SetName("span-0")
 
 	rs1 := traces.ResourceSpans().AppendEmpty()
-	rs1.Resource().Attributes().PutStr("project_name", "projA")
+	rs1.Resource().Attributes().PutStr("project_name", "projB")
 	rs1.ScopeSpans().AppendEmpty().Spans().AppendEmpty().SetName("span-1")
 
 	dropped, err := StampResourceAttrs(context.Background(), a, ck, traces, result)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if dropped != 0 {
-		t.Errorf("dropped = %d, want 0", dropped)
+	if dropped != 1 {
+		t.Errorf("dropped = %d, want 1 (projB unresolvable)", dropped)
 	}
 
 	raw0 := traces.ResourceSpans().At(0).Resource().Attributes().AsRaw()
-	if raw0["fi.project_id"] != "already-set" {
-		t.Errorf("rs0 fi.project_id = %v, want already-set", raw0["fi.project_id"])
+	if raw0["fi.project_id"] != "id-A" {
+		t.Errorf("rs0 fi.project_id = %v, want id-A", raw0["fi.project_id"])
 	}
-
-	raw1 := traces.ResourceSpans().At(1).Resource().Attributes().AsRaw()
-	if raw1["fi.project_id"] != "id-A" {
-		t.Errorf("rs1 fi.project_id = %v, want id-A", raw1["fi.project_id"])
-	}
-	if raw1["fi.org_id"] != "org-mixed" {
-		t.Errorf("rs1 fi.org_id = %v, want org-mixed", raw1["fi.org_id"])
+	if raw0["fi.org_id"] != "org-mixed" {
+		t.Errorf("rs0 fi.org_id = %v, want org-mixed", raw0["fi.org_id"])
 	}
 }
 
@@ -878,25 +932,6 @@ func TestUsageEmitterEmitIngestionNil(t *testing.T) {
 	u.EmitIngestion("org-1", 10, 50, 1024)
 }
 
-// ---------------------------------------------------------------------------
-// Snapshot
-// ---------------------------------------------------------------------------
-
-func TestSnapshotReturnsStats(t *testing.T) {
-	a := &Authenticator{
-		cache: newCache(5*time.Minute, 1*time.Hour),
-		log:   slog.Default(),
-	}
-
-	stats := a.Snapshot()
-	if stats.CacheHits != 0 || stats.CacheMisses != 0 || stats.StaleServes != 0 ||
-		stats.Denied != 0 || stats.PGErrors != 0 {
-		t.Errorf("fresh authenticator should have zero stats, got %+v", stats)
-	}
-	if stats.CacheSize != 0 {
-		t.Errorf("CacheSize = %d, want 0", stats.CacheSize)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // formatIndices
@@ -907,6 +942,137 @@ func TestFormatIndicesShort(t *testing.T) {
 	want := "[0 3 7]"
 	if got != want {
 		t.Errorf("formatIndices = %q, want %q", got, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// WatchRevocations
+// ---------------------------------------------------------------------------
+
+func TestWatchRevocationsNilAuthenticator(t *testing.T) {
+	// Must not panic.
+	var a *Authenticator
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	a.WatchRevocations(ctx) // returns immediately
+}
+
+func TestWatchRevocationsNilRdb(t *testing.T) {
+	a := &Authenticator{
+		cache: newCache(5*time.Minute, 1*time.Hour),
+		log:   slog.Default(),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	a.WatchRevocations(ctx) // returns immediately — no rdb
+}
+
+func TestWatchRevocationsEvictsOnPublish(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+
+	apiKey, secretKey := "evict-api-key", "evict-secret-key"
+	ck := CacheKey(apiKey, secretKey)
+
+	a := &Authenticator{
+		cache: newCache(5*time.Minute, 1*time.Hour),
+		rdb:   rdb,
+		log:   slog.Default(),
+	}
+	a.cache.putPositive(ck, &ResolveResult{OrgID: "org-evict", Projects: map[string]string{}})
+
+	if _, status := a.cache.get(ck); status != "fresh" {
+		t.Fatal("expected fresh cache entry before revocation")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start watcher first, then wait for the subscription to register before publishing.
+	go a.WatchRevocations(ctx)
+	time.Sleep(100 * time.Millisecond)
+
+	if err := rdb.Publish(ctx, revocationChannel, ck).Err(); err != nil {
+		t.Fatalf("publish failed: %v", err)
+	}
+
+	// Poll for eviction.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, status := a.cache.get(ck); status == "miss" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("cache entry was not evicted after revocation publish")
+}
+
+func TestWatchRevocationsExitsOnContextCancel(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+
+	a := &Authenticator{
+		cache: newCache(5*time.Minute, 1*time.Hour),
+		rdb:   rdb,
+		log:   slog.Default(),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		a.WatchRevocations(ctx)
+		close(done)
+	}()
+
+	cancel()
+
+	select {
+	case <-done:
+		// WatchRevocations exited cleanly.
+	case <-time.After(2 * time.Second):
+		t.Fatal("WatchRevocations did not exit after context cancellation")
+	}
+}
+
+func TestWatchRevocationsIgnoresUnrelatedKeys(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+
+	ck := CacheKey("key-a", "secret-a")
+	otherCK := CacheKey("key-b", "secret-b")
+
+	a := &Authenticator{
+		cache: newCache(5*time.Minute, 1*time.Hour),
+		rdb:   rdb,
+		log:   slog.Default(),
+	}
+	a.cache.putPositive(ck, &ResolveResult{OrgID: "org-a", Projects: map[string]string{}})
+	a.cache.putPositive(otherCK, &ResolveResult{OrgID: "org-b", Projects: map[string]string{}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go a.WatchRevocations(ctx)
+	time.Sleep(100 * time.Millisecond)
+
+	// Revoke only key-a.
+	if err := rdb.Publish(ctx, revocationChannel, ck).Err(); err != nil {
+		t.Fatalf("publish failed: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// key-a should be evicted.
+	if _, status := a.cache.get(ck); status != "miss" {
+		t.Error("key-a should have been evicted")
+	}
+	// key-b must remain.
+	if _, status := a.cache.get(otherCK); status != "fresh" {
+		t.Error("key-b should still be fresh")
 	}
 }
 
