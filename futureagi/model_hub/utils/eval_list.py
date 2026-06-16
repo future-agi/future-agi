@@ -416,11 +416,15 @@ def build_eval_list_queryset(
                     combined |= p
                 qs = qs.filter(combined)
 
-        # Tags filter
+        # Tags filter — case-insensitive via variant expansion so GIN index
+        # on eval_tags is preserved. Covers lower/upper/title — all real-world
+        # cases for tag values (e.g. "code", "CODE", "Code").
         if _f("tags"):
-            qs = qs.filter(eval_tags__overlap=_f("tags"))
+            expanded = {v for t in _f("tags") for v in (t, t.lower(), t.upper(), t.title())}
+            qs = qs.filter(eval_tags__overlap=list(expanded))
         if _f("tags_not"):
-            qs = qs.exclude(eval_tags__overlap=_f("tags_not"))
+            expanded_not = {v for t in _f("tags_not") for v in (t, t.lower(), t.upper(), t.title())}
+            qs = qs.exclude(eval_tags__overlap=list(expanded_not))
 
         # Template type filter (single/composite)
         if _f("template_type"):
