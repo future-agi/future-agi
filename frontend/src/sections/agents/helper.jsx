@@ -11,6 +11,7 @@ import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResul
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import logger from "src/utils/logger";
 import { Box, Skeleton } from "@mui/material";
 import { AGENT_TYPES, isLiveKitProvider } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
@@ -897,7 +898,10 @@ export const useVoiceCallDetail = (traceId, enabled = false) => {
         .get(endpoints.project.getVoiceCallDetail, {
           params: { trace_id: traceId },
         })
-        .catch(() => ({ data: { result: null } })),
+        .catch((err) => {
+          logger.error("voice_call_detail fetch failed", err);
+          return { data: { result: null } };
+        }),
     enabled: !!traceId && enabled,
     select: (data) => data?.data?.result || null,
     staleTime: 5 * 60 * 1000,
