@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { getDateRange, resolveGlobalDateRange } from "../dashboardDateRange";
+import {
+  getDateRange,
+  resolveGlobalDateRange,
+  buildTimeRangePayload,
+  resolveInitialTimeRange,
+  toTimeRangePayload,
+  DEFAULT_DATE_PRESET,
+} from "../dashboardDateRange";
 
 const NOW = new Date("2026-06-15T10:30:00.000Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -109,5 +116,109 @@ describe("resolveGlobalDateRange", () => {
     expect(resolveGlobalDateRange("7D", [d, d], NOW)).toEqual(
       getDateRange("7D", NOW),
     );
+  });
+
+  it("custom with a malformed date → null (no Invalid Date crash)", () => {
+    const good = new Date("2026-03-26T00:00:00.000Z");
+    expect(
+      resolveGlobalDateRange("custom", [good, new Date("nope")], NOW),
+    ).toBeNull();
+  });
+});
+
+describe("buildTimeRangePayload", () => {
+  it("custom range with valid dates → { custom_start, custom_end }", () => {
+    const start = new Date("2026-03-26T00:00:00.000Z");
+    const end = new Date("2026-04-29T00:00:00.000Z");
+    expect(buildTimeRangePayload("custom", [start, end])).toEqual({
+      custom_start: start.toISOString(),
+      custom_end: end.toISOString(),
+    });
+  });
+
+  it("a contract preset → { preset }", () => {
+    expect(buildTimeRangePayload("7D")).toEqual({ preset: "7D" });
+  });
+
+  it("custom without a range → falls back to the default preset", () => {
+    expect(buildTimeRangePayload("custom", null)).toEqual({
+      preset: DEFAULT_DATE_PRESET,
+    });
+  });
+
+  it("custom with a malformed date → falls back to the default preset", () => {
+    const good = new Date("2026-03-26T00:00:00.000Z");
+    expect(buildTimeRangePayload("custom", [good, new Date("nope")])).toEqual({
+      preset: DEFAULT_DATE_PRESET,
+    });
+  });
+
+  it("an off-contract preset → normalized to the default (no off-enum value ships)", () => {
+    expect(buildTimeRangePayload("not-a-preset")).toEqual({
+      preset: DEFAULT_DATE_PRESET,
+    });
+  });
+});
+
+describe("resolveInitialTimeRange", () => {
+  it("saved custom range (no url preset) → custom UI state with Date objects", () => {
+    const saved = {
+      custom_start: "2026-03-26T00:00:00.000Z",
+      custom_end: "2026-04-29T00:00:00.000Z",
+    };
+    const r = resolveInitialTimeRange(saved, null);
+    expect(r.timePreset).toBe("custom");
+    expect(r.customDateRange[0].toISOString()).toBe(saved.custom_start);
+    expect(r.customDateRange[1].toISOString()).toBe(saved.custom_end);
+  });
+
+  it("url preset overrides a saved custom range", () => {
+    const saved = {
+      custom_start: "2026-03-26T00:00:00.000Z",
+      custom_end: "2026-04-29T00:00:00.000Z",
+    };
+    expect(resolveInitialTimeRange(saved, "7D")).toEqual({
+      timePreset: "7D",
+      customDateRange: null,
+    });
+  });
+
+  it("saved preset (no custom) → preset UI state", () => {
+    expect(resolveInitialTimeRange({ preset: "3M" }, null)).toEqual({
+      timePreset: "3M",
+      customDateRange: null,
+    });
+  });
+
+  it("nothing saved → default preset", () => {
+    expect(resolveInitialTimeRange(null, null)).toEqual({
+      timePreset: DEFAULT_DATE_PRESET,
+      customDateRange: null,
+    });
+  });
+
+  it("malformed saved custom range → default preset (no Invalid Date crash)", () => {
+    const saved = { custom_start: "garbage", custom_end: "also-garbage" };
+    expect(resolveInitialTimeRange(saved, null)).toEqual({
+      timePreset: DEFAULT_DATE_PRESET,
+      customDateRange: null,
+    });
+  });
+});
+
+describe("toTimeRangePayload", () => {
+  it("maps { start, end } → { custom_start, custom_end }", () => {
+    expect(
+      toTimeRangePayload({ start: "2026-01-01T00:00:00.000Z", end: "2026-02-01T00:00:00.000Z" }),
+    ).toEqual({
+      custom_start: "2026-01-01T00:00:00.000Z",
+      custom_end: "2026-02-01T00:00:00.000Z",
+    });
+  });
+
+  it("null / incomplete range → null", () => {
+    expect(toTimeRangePayload(null)).toBeNull();
+    expect(toTimeRangePayload({ start: "x" })).toBeNull();
+    expect(toTimeRangePayload({ end: "x" })).toBeNull();
   });
 });
