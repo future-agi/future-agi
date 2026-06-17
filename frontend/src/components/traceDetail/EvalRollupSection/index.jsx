@@ -20,6 +20,7 @@ const EvalRollupSection = ({
   emptyMessage,
   onSelectSpan,
   onFixWithFalcon,
+  showGlyph = true,
 }) => {
   const [search, setSearch] = useState("");
   const scope = evalScores?.scope === "span" ? "span" : "trace";
@@ -156,6 +157,7 @@ const EvalRollupSection = ({
               <TaskHeader
                 name={task.eval_task_name}
                 rowType={task.evals?.[0]?.target_type}
+                showGlyph={showGlyph}
               />
               {task?.evals?.map((ev) =>
                 scope === "span" ? (
@@ -186,6 +188,7 @@ EvalRollupSection.propTypes = {
   emptyMessage: PropTypes.string,
   onSelectSpan: PropTypes.func,
   onFixWithFalcon: PropTypes.func,
+  showGlyph: PropTypes.bool,
 };
 
 export default EvalRollupSection;

@@ -8,7 +8,7 @@ import { getGlyphMeta } from "src/sections/projects/LLMTracing/evalTaskGrouping"
 
 // Task group header — tasks icon + name, with the shared T/S glyph (getGlyphMeta)
 // at the right end, matching the trace grid's EvalTaskGroupHeader.
-const TaskHeader = ({ name, rowType }) => {
+const TaskHeader = ({ name, rowType, showGlyph = true }) => {
   const glyph = getGlyphMeta(rowType);
   return (
     <Box
@@ -33,7 +33,7 @@ const TaskHeader = ({ name, rowType }) => {
           {name}
         </Typography>
       </Box>
-      {glyph && (
+      {showGlyph && glyph && (
         <CustomTooltip show title={glyph.label} arrow placement="left" size="small">
           <Box
             sx={{
@@ -59,6 +59,7 @@ const TaskHeader = ({ name, rowType }) => {
 TaskHeader.propTypes = {
   name: PropTypes.string,
   rowType: PropTypes.string,
+  showGlyph: PropTypes.bool,
 };
 
 export default TaskHeader;

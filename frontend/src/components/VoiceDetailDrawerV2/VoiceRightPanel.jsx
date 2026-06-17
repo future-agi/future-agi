@@ -415,6 +415,7 @@ const VoiceRightPanel = ({
             <EvalRollupSection
               evalScores={groupedEvalScores}
               emptyMessage="No evaluations for this call"
+              showGlyph={false}
               onFixWithFalcon={({
                 level,
                 ev,
