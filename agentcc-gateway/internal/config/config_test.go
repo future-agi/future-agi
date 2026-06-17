@@ -171,14 +171,19 @@ func TestLoadFromEnvAuthFailsClosedWhenKeyPresent(t *testing.T) {
 	if !cfg.Auth.Enabled {
 		t.Fatal("auth must be enabled when AGENTCC_INTERNAL_API_KEY is set, even with AGENTCC_AUTH_ENABLED=false")
 	}
-	seeded := false
-	for _, k := range cfg.Auth.Keys {
-		if k.Key == "test-internal-key" {
-			seeded = true
+	var seeded *AuthKeyConfig
+	for i := range cfg.Auth.Keys {
+		if cfg.Auth.Keys[i].Key == "test-internal-key" {
+			seeded = &cfg.Auth.Keys[i]
 		}
 	}
-	if !seeded {
+	if seeded == nil {
 		t.Fatal("internal API key must be seeded into the key store")
+	}
+	// Must be typed "internal": a byok key (the keystore default) is barred from
+	// the global providers, so the backend would authenticate then 403 its own route.
+	if seeded.KeyType != "internal" {
+		t.Fatalf("seeded key KeyType = %q, want \"internal\"", seeded.KeyType)
 	}
 }
 
@@ -192,5 +197,34 @@ func TestLoadFromEnvAuthToggleHonoredWhenNoKey(t *testing.T) {
 
 	if cfg.Auth.Enabled {
 		t.Fatal("auth should stay off when no key is set and the toggle is false")
+	}
+}
+
+// An explicit config.yaml entry for the same key must not be clobbered by the
+// env seed — the keystore is last-write-wins by hash, so a duplicate would
+// override (and could re-type) the operator's entry.
+func TestLoadFromEnvDoesNotClobberExplicitInternalKey(t *testing.T) {
+	t.Setenv("AGENTCC_INTERNAL_API_KEY", "test-internal-key")
+
+	cfg := DefaultConfig()
+	cfg.Auth.Keys = []AuthKeyConfig{{
+		Name:    "ops-configured",
+		Key:     "test-internal-key",
+		Owner:   "ops",
+		KeyType: "internal",
+	}}
+	loadFromEnv(cfg)
+
+	n := 0
+	for _, k := range cfg.Auth.Keys {
+		if k.Key == "test-internal-key" {
+			n++
+			if k.Name != "ops-configured" {
+				t.Fatalf("explicit config entry overwritten: Name = %q, want \"ops-configured\"", k.Name)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("got %d entries for the key, want 1 (env seed must not duplicate an explicit config key)", n)
 	}
 }
