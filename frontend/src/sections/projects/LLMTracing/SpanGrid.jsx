@@ -27,6 +27,7 @@ import { buildColumnBlocks } from "./evalTaskGrouping";
 import EvalTaskGroupHeader from "./Renderers/EvalTaskGroupHeader";
 import CustomTraceRenderer from "./Renderers/CustomTraceRenderer";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
+import EvalResultChips from "./Renderers/EvalResultChips";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { statusBar } from "src/components/run-insights/traces-tab/common";
 import LLMTracingSpanDetailDrawer from "./LLMTracingSpanDetailDrawer";
@@ -110,11 +111,21 @@ const getSpanListColumnDefs = (col) => {
     },
     cellRendererSelector: (params) => {
       const value = params.value;
+      const column = params?.colDef?.context?.sourceColumn;
+      // Chips for object-valued eval cells (pass/fail or choice counts);
+      // scalar score cells fall through to the default renderer.
+      if (
+        column?.groupBy === "Evaluation Metrics" &&
+        value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value)
+      ) {
+        return { component: EvalResultChips };
+      }
       if (isCellValueEmpty(value)) {
         // No renderer for empty values
         return null;
       }
-      const column = params?.colDef?.context?.sourceColumn;
       const colId = column?.id;
 
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
@@ -132,12 +143,29 @@ const getSpanListColumnDefs = (col) => {
     },
     cellStyle: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
+      const isEvalMetric =
+        params?.colDef?.context?.sourceColumn?.groupBy === "Evaluation Metrics";
+      const structured =
+        isEvalMetric &&
+        value &&
+        typeof value === "object" &&
+        !Array.isArray(value);
+      if (isCellValueEmpty(value) && !structured) {
         return {
           display: "flex",
           alignItems: "center",
           height: "100%",
           justifyContent: "center",
+        };
+      }
+      if (isEvalMetric) {
+        return {
+          display: "flex",
+          height: "100%",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          padding: 0,
+          overflow: "hidden",
         };
       }
     },
