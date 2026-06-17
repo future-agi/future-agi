@@ -174,14 +174,9 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
     )
 
     gt_inputs = dict(inputs) if inputs else {}
-    try:
-        from model_hub.services.ground_truth_service import GroundTruthService
+    from model_hub.services.ground_truth_service import GroundTruthService
 
-        GroundTruthService.inject_context(gt_inputs, eval_template)
-    except Exception as e:
-        logger.warning(
-            f"Standalone Eval | Ground truth injection failed (non-fatal): {e}"
-        )
+    GroundTruthService.inject_context(gt_inputs, eval_template)
 
     # --- Cost tracking (caller-side, before engine call) ---
     api_call_log_row = _log_and_deduct_cost_for_standalone_eval(

@@ -535,17 +535,38 @@ def test_resolve_preview_examples_returns_empty_list_when_enabled_but_no_matches
     assert result == []
 
 
-def test_resolve_preview_examples_swallows_exceptions_returning_none():
-    """Retrieval failures do not bubble up to the eval verdict."""
+def test_resolve_preview_examples_swallows_database_error_returning_none():
+    """Transient store failures during retrieval do not tank the eval response."""
+    from django.db import DatabaseError
+
     template = _FakeTemplate()
+    gt = _FakeGT(variable_mapping={"q": "input"}, role_mapping={"output": "answer"})
     with patch(
         "model_hub.services.ground_truth_service.GroundTruthService.load_config",
-        side_effect=RuntimeError("boom"),
+        return_value={"ground_truth_id": "gt-1", "max_examples": 3},
+    ), patch(
+        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter"
+    ) as _filter, patch(
+        "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
+        side_effect=DatabaseError("ch down"),
     ):
+        _filter.return_value.only.return_value.first.return_value = gt
         result = GroundTruthService.resolve_preview_examples(
             eval_template=template, eval_inputs={"q": "hi"}
         )
     assert result is None
+
+
+def test_resolve_preview_examples_propagates_programmer_errors():
+    """Non-recoverable failures (config load, ORM misuse) must propagate."""
+    template = _FakeTemplate()
+    with patch(
+        "model_hub.services.ground_truth_service.GroundTruthService.load_config",
+        side_effect=RuntimeError("boom"),
+    ), pytest.raises(RuntimeError, match="boom"):
+        GroundTruthService.resolve_preview_examples(
+            eval_template=template, eval_inputs={"q": "hi"}
+        )
 
 
 def test_resolve_preview_examples_enriches_rows_with_mappings():

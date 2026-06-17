@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from django.db import DatabaseError
 
 from model_hub.models.evals_metric import EvalGroundTruth, EvalTemplate
 from model_hub.utils.eval_input_validation import is_empty_value
@@ -259,25 +260,28 @@ class GroundTruthService:
         *, eval_template: EvalTemplate, eval_inputs: dict[str, Any]
     ) -> list[dict[str, Any]] | None:
         """Return retrieved GT rows for the playground; None when disabled."""
-        try:
-            gt_config = GroundTruthService.load_config(eval_template)
-            if not gt_config:
-                return None
-            if not isinstance(eval_inputs, dict) or not eval_inputs:
-                return None
+        gt_config = GroundTruthService.load_config(eval_template)
+        if not gt_config:
+            return None
+        if not isinstance(eval_inputs, dict) or not eval_inputs:
+            return None
 
-            gt = (
-                EvalGroundTruth.objects.filter(
-                    eval_template=eval_template,
-                    id=gt_config.get("ground_truth_id"),
-                    deleted=False,
-                )
-                .only("variable_mapping", "role_mapping", "embedding_status")
-                .first()
+        gt = (
+            EvalGroundTruth.objects.filter(
+                eval_template=eval_template,
+                id=gt_config.get("ground_truth_id"),
+                deleted=False,
             )
-            if gt is None:
-                return []
+            .only("variable_mapping", "role_mapping", "embedding_status")
+            .first()
+        )
+        if gt is None:
+            return []
 
+        # Retrieval reaches PG + CH. Soft-fail this call only — a transient
+        # store failure should not tank the eval-run response; programmer
+        # errors above (malformed config, bad ORM call) still propagate.
+        try:
             rows = (
                 GroundTruthService.retrieve_few_shot(
                     gt=gt,
@@ -286,30 +290,30 @@ class GroundTruthService:
                 )
                 or []
             )
-
-            variable_mapping = gt.variable_mapping or {}
-            role_mapping = gt.role_mapping or {}
-            from model_hub.utils.ground_truth_retrieval import (
-                detect_input_column_types,
-            )
-
-            column_types = detect_input_column_types(rows, variable_mapping)
-            return [
-                {
-                    "row": row,
-                    "variable_mapping": variable_mapping,
-                    "role_mapping": role_mapping,
-                    "column_types": column_types,
-                }
-                for row in rows
-            ]
-        except Exception as exc:
+        except (DatabaseError, ConnectionError) as exc:
             logger.warning(
                 "preview_ground_truth_examples_lookup_failed",
                 template_id=str(getattr(eval_template, "id", "") or ""),
                 error=str(exc),
             )
             return None
+
+        variable_mapping = gt.variable_mapping or {}
+        role_mapping = gt.role_mapping or {}
+        from model_hub.utils.ground_truth_retrieval import (
+            detect_input_column_types,
+        )
+
+        column_types = detect_input_column_types(rows, variable_mapping)
+        return [
+            {
+                "row": row,
+                "variable_mapping": variable_mapping,
+                "role_mapping": role_mapping,
+                "column_types": column_types,
+            }
+            for row in rows
+        ]
 
     @staticmethod
     def embed_dataset(*, gt: EvalGroundTruth) -> EmbedDatasetResult:

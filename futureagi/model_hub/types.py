@@ -7,9 +7,6 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from model_hub.models.evals_metric import EvalGroundTruth
-
-
 
 @dataclass
 class ConversionResult:
@@ -440,7 +437,7 @@ class CompositeChildResult(BaseModel):
     output: Any = None
     reason: str | None = None
     output_type: str | None = None
-    status: str = EvalGroundTruth.EmbeddingStatus.COMPLETED
+    status: str = "completed"
     error: str | None = None
     log_id: str | None = None
     weight: float = 1.0
@@ -496,7 +493,7 @@ class GroundTruthItem(BaseModel):
     row_count: int
     variable_mapping: dict[str, MappingValue] | None = None
     role_mapping: dict[str, MappingValue] | None = None
-    embedding_status: str = EvalGroundTruth.EmbeddingStatus.PENDING
+    embedding_status: str = "pending"
     embedded_row_count: int = 0
     storage_type: str = "db"
     created_at: str = ""
@@ -518,7 +515,7 @@ class GroundTruthUploadResponse(BaseModel):
     name: str
     row_count: int
     columns: list[str]
-    embedding_status: str = EvalGroundTruth.EmbeddingStatus.PENDING
+    embedding_status: str = "pending"
 
 
 class GroundTruthDataResponse(BaseModel):
@@ -611,7 +608,7 @@ class TraceEvalResponse(BaseModel):
     score: float | None = None
     passed: bool | None = None
     reason: str | None = None
-    status: str = EvalGroundTruth.EmbeddingStatus.COMPLETED
+    status: str = "completed"
 
 
 # =============================================================================

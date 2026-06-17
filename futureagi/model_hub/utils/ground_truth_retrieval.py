@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, Iterator
 
 import structlog
@@ -21,32 +20,6 @@ GT_CALIBRATION_INSTRUCTION = (
     "required output format; never copy literal output values, scores, or "
     "labels from the examples."
 )
-
-
-def _truncate(value: Any, n: int = 200) -> Any:
-    """Shorten huge block payloads for log readability."""
-    if isinstance(value, str):
-        return value if len(value) <= n else value[:n] + f"...<+{len(value) - n}>"
-    return value
-
-
-def _preview_blocks(blocks: list[dict]) -> list[dict]:
-    """Compact, log-safe preview of OpenAI content blocks."""
-    out = []
-    for b in blocks:
-        t = b.get("type")
-        if t == "text":
-            out.append({"type": "text", "text": _truncate(b.get("text", ""), 240)})
-        elif t == "image_url":
-            url = b.get("image_url", {}).get("url", "")
-            out.append({"type": "image_url", "url": _truncate(url, 120)})
-        elif t == "input_audio":
-            data_len = len(b.get("input_audio", {}).get("data", ""))
-            fmt = b.get("input_audio", {}).get("format", "")
-            out.append({"type": "input_audio", "format": fmt, "data_len": data_len})
-        else:
-            out.append({"type": t})
-    return out
 
 
 def has_usable_inputs_for_gt(
@@ -139,14 +112,7 @@ def build_ground_truth_blocks(
     variable_mapping: dict | None,
     role_mapping: dict | None,
 ) -> list[dict]:
-    """Render retrieved GT rows as OpenAI content blocks wrapped in delimiter tags."""
-    logger.info(
-        "DBG_gt_build_blocks_start",
-        examples_count=len(examples) if examples else 0,
-        variable_mapping=variable_mapping,
-        role_mapping=role_mapping,
-        first_example_keys=sorted(examples[0].keys()) if examples else [],
-    )
+    """Render retrieved GT rows as labelled per-example content blocks."""
     if not examples:
         return []
 
@@ -154,12 +120,6 @@ def build_ground_truth_blocks(
 
     output_col, explanation_col = get_label_columns(role_mapping)
     key_types = detect_input_column_types(examples, variable_mapping)
-    logger.info(
-        "DBG_gt_build_blocks_detected",
-        column_types=key_types,
-        output_col=output_col,
-        explanation_col=explanation_col,
-    )
 
     # Per-example labelled framing. Header matches GT_CALIBRATION_INSTRUCTION.
     blocks: list[dict] = []
@@ -188,15 +148,6 @@ def build_ground_truth_blocks(
                 "type": "text",
                 "text": f"Explanation: {example[explanation_col]}",
             })
-    logger.info(
-        "DBG_gt_build_blocks_done",
-        total_blocks=len(blocks),
-        block_types_count={
-            t: sum(1 for b in blocks if b.get("type") == t)
-            for t in {b.get("type") for b in blocks}
-        },
-        blocks_preview=_preview_blocks(blocks),
-    )
     return blocks
 
 
