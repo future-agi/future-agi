@@ -37,7 +37,6 @@ const EvalTaskGroupHeader = ({ displayName, rowType }) => {
         <CustomTooltip show title={glyph.label} arrow placement="top" size="small">
           <span
             style={{
-              marginLeft: "auto",
               flexShrink: 0,
               fontSize: "10px",
               fontWeight: 700,
