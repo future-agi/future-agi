@@ -68239,7 +68239,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "api",
             "auto",
             "imported"
-          ]
+          ],
+          "default": "human"
         },
         "notes": {
           "title": "Notes",

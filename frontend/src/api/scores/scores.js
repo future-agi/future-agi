@@ -131,9 +131,11 @@ export const useBulkCreateScores = () => {
       const payload = {
         source_type: sourceType,
         source_id: sourceId,
-        scores,
+        scores: scores.map((s) => ({
+          ...s,
+          score_source: scoreSource || "human",
+        })),
         notes: notes || "",
-        score_source: scoreSource || "human",
       };
       // queue_item_id is the queue review context the caller wants the
       // scores attributed to. Required for per-queue scoring (one score

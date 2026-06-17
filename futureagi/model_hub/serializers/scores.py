@@ -23,6 +23,8 @@ class ScoreSerializer(serializers.ModelSerializer):
     )
     source_id = serializers.SerializerMethodField()
     queue_id = serializers.SerializerMethodField()
+    score_source = serializers.ChoiceField(choices=ScoreSource.get_choices(),default="human")
+
 
     class Meta:
         model = Score
