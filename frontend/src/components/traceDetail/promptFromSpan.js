@@ -43,24 +43,26 @@ function parseTemplateVariables(attrs) {
   return null;
 }
 
+const MIN_TEMPLATIZE_LEN = 2;
+
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // Replace resolved variable values in text with {{varName}} placeholders.
 // Longer values first so a value that is a substring of another isn't clobbered.
 function templatizeText(text, variables) {
   if (!text || !variables) return text;
   let result = text;
   const entries = Object.entries(variables)
-    .filter(([, val]) => val != null && String(val).length > 0)
+    .filter(([, val]) => val != null && String(val).trim().length >= MIN_TEMPLATIZE_LEN)
     .sort((a, b) => String(b[1]).length - String(a[1]).length);
   for (const [name, value] of entries) {
     const strVal = String(value);
-    let idx = result.indexOf(strVal);
-    while (idx !== -1) {
-      result =
-        result.slice(0, idx) +
-        `{{${name}}}` +
-        result.slice(idx + strVal.length);
-      idx = result.indexOf(strVal, idx + `{{${name}}}`.length);
-    }
+    const left = /\w/.test(strVal[0]) ? "\\b" : "";
+    const right = /\w/.test(strVal[strVal.length - 1]) ? "\\b" : "";
+    const re = new RegExp(`${left}${escapeRegExp(strVal)}${right}`, "g");
+    result = result.replace(re, () => `{{${name}}}`);
   }
   return result;
 }
@@ -86,14 +88,31 @@ function stringifyContent(content) {
   return String(content);
 }
 
+// Map provider role vocab onto the workbench's user/assistant/system.
+function normalizeRole(role) {
+  if (typeof role !== "string") return role;
+  const r = role.toLowerCase();
+  if (r === "model" || r === "chatbot" || r === "ai") return "assistant";
+  if (r === "human") return "user";
+  return r;
+}
+
 function normalizeMessageObject(msg) {
   if (!msg || typeof msg !== "object") return null;
   const role = msg.role || msg.message?.role;
+  const rawContent =
+    msg.content ??
+    (typeof msg.message === "string" ? msg.message : msg.message?.content);
+  const rawParts = Array.isArray(msg.parts)
+    ? msg.parts
+    : Array.isArray(msg.message?.parts)
+      ? msg.message.parts
+      : null;
   let content;
-  if (msg.content != null) content = stringifyContent(msg.content);
-  else if (Array.isArray(msg.parts)) content = stringifyContent(msg.parts);
+  if (rawContent != null) content = stringifyContent(rawContent);
+  else if (rawParts) content = stringifyContent(rawParts);
   else content = "";
-  return role ? { role, content } : null;
+  return role ? { role: normalizeRole(role), content } : null;
 }
 
 function fromFlattenedAttrs(attrs) {
@@ -137,18 +156,27 @@ function fromFlattenedAttrs(attrs) {
             .map((k) => m.parts[k])
             .join("\n")
         : stringifyContent(m.content);
-      return m.role ? { role: m.role, content } : null;
+      return m.role ? { role: normalizeRole(m.role), content } : null;
     })
     .filter(Boolean);
 }
 
 function fromArrayAttr(attrs) {
   for (const prefix of INPUT_MESSAGE_PREFIXES) {
-    const value = attrs[prefix];
+    const value = parseMaybe(attrs[prefix]) ?? attrs[prefix];
     if (Array.isArray(value))
       return value.map(normalizeMessageObject).filter(Boolean);
   }
   return [];
+}
+
+// Many shapes keep the system prompt in a sibling field (Gemini config.system_instruction,
+// OpenAI Responses instructions, Cohere preamble) rather than in the turn list.
+function prependSystem(messages, sys) {
+  const sysText = sys ? stringifyContent(sys.parts ?? sys) : "";
+  if (sysText && !messages.some((m) => m.role === "system"))
+    messages.unshift({ role: "system", content: sysText });
+  return messages;
 }
 
 function fromObjectInput(input) {
@@ -166,7 +194,30 @@ function fromObjectInput(input) {
   if (Array.isArray(data.messages))
     return data.messages.map(normalizeMessageObject).filter(Boolean);
   if (Array.isArray(data.contents))
-    return data.contents.map(normalizeMessageObject).filter(Boolean);
+    return prependSystem(
+      data.contents.map(normalizeMessageObject).filter(Boolean),
+      data.config?.system_instruction ?? data.system_instruction,
+    );
+  if (Array.isArray(data.input))
+    return prependSystem(
+      data.input.map(normalizeMessageObject).filter(Boolean),
+      data.instructions,
+    );
+  if (typeof data.input === "string" && data.input.trim())
+    return prependSystem(
+      [{ role: "user", content: data.input }],
+      data.instructions,
+    );
+  if (Array.isArray(data.chat_history)) {
+    const messages = data.chat_history
+      .map(normalizeMessageObject)
+      .filter(Boolean);
+    if (typeof data.message === "string" && data.message.trim())
+      messages.push({ role: "user", content: data.message });
+    return prependSystem(messages, data.preamble);
+  }
+  if (typeof data.prompt === "string" && data.prompt.trim())
+    return [{ role: "user", content: data.prompt }];
   return [];
 }
 
@@ -185,8 +236,13 @@ export function normalizeMessagesFromSpan(span) {
   if (!messages.length) messages = fromArrayAttr(attrs);
   const input = !isEmpty(span?.input) ? span.input : attrs["input.value"];
   if (!messages.length) messages = fromObjectInput(input);
-  // Plain text → one user turn (don't dump an unparseable blob — the original bug).
-  if (!messages.length && typeof input === "string" && input.trim()) {
+  // Plain text → one user turn, but not a stringified JSON blob (the original bug).
+  if (
+    !messages.length &&
+    typeof input === "string" &&
+    input.trim() &&
+    parseMaybe(input) == null
+  ) {
     messages = [{ role: "user", content: input }];
   }
   return messages;
@@ -195,7 +251,10 @@ export function normalizeMessagesFromSpan(span) {
 export function extractModelFromSpan(span) {
   const attrs = span?.span_attributes || span?.eval_attributes || {};
   if (span?.model) return span.model;
-  for (const key of MODEL_KEYS) if (attrs[key]) return attrs[key];
+  for (const key of MODEL_KEYS) {
+    const v = attrs[key];
+    if (typeof v === "string" && v) return v;
+  }
   const body = parsedRequestBody(span);
   if (typeof body?.model === "string" && body.model) return body.model;
   return "";
@@ -246,13 +305,24 @@ export function extractResponseFormatFromSpan(span) {
     : "text";
 }
 
+// OTel/flattened attrs are stringly-typed ("0.7"); coerce so string-numerics
+// aren't silently dropped. Non-numeric junk (a model name, "true") → null.
+function toNumber(v) {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
 // Whitelisted numeric model params; transport/junk keys are dropped.
 export function extractParamsFromSpan(span) {
   const attrs = span?.span_attributes || span?.eval_attributes || {};
   const out = {};
   for (const [reqKey, name] of Object.entries(REQUEST_PARAM_KEYS)) {
-    const v = attrs[`gen_ai.request.${reqKey}`];
-    if (typeof v === "number") out[name] = v;
+    const n = toNumber(attrs[`gen_ai.request.${reqKey}`]);
+    if (n != null && out[name] == null) out[name] = n;
   }
   const blob =
     parseMaybe(attrs["gen_ai.request.parameters"]) ||
@@ -261,7 +331,8 @@ export function extractParamsFromSpan(span) {
   if (blob && typeof blob === "object") {
     for (const [k, v] of Object.entries(blob)) {
       const name = REQUEST_PARAM_KEYS[k];
-      if (name && typeof v === "number" && out[name] == null) out[name] = v;
+      const n = toNumber(v);
+      if (name && n != null && out[name] == null) out[name] = n;
     }
   }
   return out;

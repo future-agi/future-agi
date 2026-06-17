@@ -13,6 +13,8 @@ import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { modelCatalogQuery } from "src/api/model/model";
+import { getOutputFormatFromCatalogType } from "src/sections/develop-detail/RunPrompt/common";
 import logger from "src/utils/logger";
 import DrawerHeader from "./DrawerHeader";
 import DrawerToolbar from "./DrawerToolbar";
@@ -51,6 +53,8 @@ import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import useImagineStore from "src/components/imagine/useImagineStore";
 
 const PANEL_WIDTH = "60vw";
+
+const CREATE_PROMPT_ERROR = "Failed to create prompt. Please try again.";
 
 const SPAN_FILTER_DEFAULT = {
   columnId: "",
@@ -108,7 +112,7 @@ const TraceDetailDrawerV2 = ({
         }
       },
       onError: () => {
-        enqueueSnackbar("Failed to create prompt. Please try again.", {
+        enqueueSnackbar(CREATE_PROMPT_ERROR, {
           variant: "error",
         });
       },
@@ -628,15 +632,11 @@ const TraceDetailDrawerV2 = ({
               if (model) {
                 try {
                   const data =
-                    (
-                      await axios.get(endpoints.develop.modelList, {
-                        params: { search: model },
-                      })
-                    )?.data || {};
+                    (await queryClient.fetchQuery(modelCatalogQuery(model))) ||
+                    {};
                   const results = data.results || [];
-                  const nameOf = (m) => m.model_name ?? m.modelName ?? "";
-                  const provOf = (m) =>
-                    (m.providers ?? m.provider ?? "").toLowerCase();
+                  const nameOf = (m) => m.model_name ?? "";
+                  const provOf = (m) => (m.providers ?? "").toLowerCase();
                   // Catalog ids are LiteLLM-prefixed (vertex_ai/…, bedrock/<region>/…);
                   // the trace emits the provider-native id.
                   const baseName = (n) => n.slice(n.lastIndexOf("/") + 1);
@@ -668,12 +668,10 @@ const TraceDetailDrawerV2 = ({
                   if (match) {
                     resolved = {
                       model_name: nameOf(match),
-                      providers:
-                        match.providers ?? match.provider ?? provider ?? "",
-                      logoUrl: match.logo_url ?? match.logoUrl ?? "",
-                      type: match.type ?? match.mode ?? match.model_type ?? "",
-                      isAvailable:
-                        match.is_available ?? match.isAvailable ?? false,
+                      providers: match.providers ?? provider ?? "",
+                      logoUrl: match.logo_url ?? "",
+                      type: match.type ?? "",
+                      isAvailable: match.is_available ?? false,
                     };
                   }
                 } catch (err) {
@@ -682,7 +680,7 @@ const TraceDetailDrawerV2 = ({
               }
               const configuration = {
                 ...parameters,
-                output_format: "string",
+                output_format: getOutputFormatFromCatalogType(resolved?.type),
                 // Set explicitly — the selector defaults to JSON when unset.
                 response_format: responseFormat,
                 ...(resolved && {
@@ -698,7 +696,7 @@ const TraceDetailDrawerV2 = ({
                 }),
               });
             } catch {
-              enqueueSnackbar("Failed to create prompt. Please try again.", {
+              enqueueSnackbar(CREATE_PROMPT_ERROR, {
                 variant: "error",
               });
             }
@@ -725,6 +723,7 @@ const TraceDetailDrawerV2 = ({
       createGraphFromTrace,
       traceId,
       actionsAnchorEl,
+      queryClient,
     ],
   );
 
