@@ -13,8 +13,8 @@ from model_hub.utils.prompt_migration import config_to_prompt_messages
 def maybe_pin_new_version(eval_metric, request_data, user, organization, workspace):
     """Create and pin a new EvalTemplateVersion if config actually changed.
 
-    Returns the new version if created, None if skipped (no changes or
-    snapshot matches the currently pinned version).
+    Mutates eval_metric.pinned_version in place. The caller is responsible
+    for persisting eval_metric via save().
     """
     from model_hub.models.choices import OwnerChoices
 
@@ -77,5 +77,3 @@ def maybe_pin_new_version(eval_metric, request_data, user, organization, workspa
         workspace=workspace,
     )
     eval_metric.pinned_version = ver
-
-    return ver

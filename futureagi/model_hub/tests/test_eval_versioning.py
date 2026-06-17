@@ -1613,3 +1613,100 @@ class TestEvalTypeColumnAlignmentAfterRestore:
         # Column and config must agree after restore
         assert template.config["eval_type_id"] == "CustomPromptEvaluator"
         assert template.eval_type == "llm"
+
+
+# =============================================================================
+# Unit: maybe_pin_new_version service (TH-5173 / PR #772)
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestMaybePinNewVersion:
+    """Regression tests for the version-pinning service.
+
+    Covers the three cases Nikhil asked for:
+    1. Editing system_prompt creates a new version and pins it with a snapshot
+       that matches the saved config.
+    2. Bare rerun (no config in request) skips version creation.
+    3. prepare_eval_config prefers config over template when key is present,
+       even if the value is empty string.
+    """
+
+    def _make_uem(self, organization, workspace, user, template, config=None):
+        from model_hub.models.evals_metric import UserEvalMetric
+        from model_hub.models.develop_dataset import Dataset
+        ds = Dataset.no_workspace_objects.create(
+            name="test-ds",
+            organization=organization,
+            workspace=workspace,
+        )
+        return UserEvalMetric.objects.create(
+            name="test-binding",
+            template=template,
+            dataset=ds,
+            organization=organization,
+            workspace=workspace,
+            config=config or {},
+        )
+
+    def test_system_prompt_edit_creates_version_with_matching_snapshot(
+        self, organization, workspace, user, user_template
+    ):
+        """Editing system_prompt must create a new version whose snapshot
+        matches the config that will be persisted to the binding."""
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+        uem = self._make_uem(organization, workspace, user, user_template)
+
+        request_data = {
+            "config": {
+                "config": {"system_prompt": "new system prompt"},
+            }
+        }
+        maybe_pin_new_version(
+            uem, request_data, user=user,
+            organization=organization, workspace=workspace,
+        )
+
+        assert uem.pinned_version is not None
+        snapshot = uem.pinned_version.config_snapshot or {}
+        assert snapshot.get("system_prompt") == "new system prompt"
+
+    def test_bare_rerun_skips_version_creation(
+        self, organization, workspace, user, user_template
+    ):
+        """A bare rerun request (no config changes) must not create a version."""
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+        uem = self._make_uem(organization, workspace, user, user_template)
+        before = uem.pinned_version
+
+        maybe_pin_new_version(
+            uem, {"run": True},  # no "config" key
+            user=user, organization=organization, workspace=workspace,
+        )
+
+        assert uem.pinned_version == before  # unchanged
+
+    def test_prepare_eval_config_preserves_empty_rule_prompt(
+        self, organization, workspace, user, user_template
+    ):
+        """Clearing rule_prompt to '' must not fall back to the template prompt."""
+        from evaluations.engine.instance import prepare_eval_config
+        import types
+
+        # Template has a real prompt
+        user_template.config["eval_type_id"] = "AgentEvaluator"
+        user_template.config["rule_prompt"] = "original template prompt"
+        user_template.save()
+
+        # User explicitly clears the prompt to ""
+        config = {"rule_prompt": "", "eval_type_id": "AgentEvaluator"}
+        result_config, _ = prepare_eval_config(
+            user_template, config, model="turing_large",
+            organization_id=str(organization.id),
+        )
+
+        assert result_config.get("rule_prompt") == "", (
+            "Empty string should be preserved, not replaced with template prompt"
+        )
