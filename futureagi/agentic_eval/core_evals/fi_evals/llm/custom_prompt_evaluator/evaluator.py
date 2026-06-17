@@ -23,6 +23,7 @@ logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 
 from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
+from model_hub.utils.ground_truth_retrieval import GT_CALIBRATION_INSTRUCTION
 
 # Maximum chars of context that get injected into the eval prompt. Larger
 # values let huge transcripts/raw_logs flow in fully, at the cost of higher
@@ -308,13 +309,44 @@ class CustomPromptEvaluator(LLM):
 
         gt_blocks = kwargs.get("ground_truth_blocks") or []
 
+        # GT exemplars first, then the case text, then case media.
         if media_blocks or gt_blocks:
-            user_content = [{"type": "text", "text": user_text}] + media_blocks + gt_blocks
+            user_content = (
+                gt_blocks
+                + [{"type": "text", "text": user_text}]
+                + media_blocks
+            )
         else:
             user_content = user_text
 
-        # Build system message: use custom system_prompt if provided, else generated
+        # ── DBG: dump the rendered user payload (local-only) ───────────────
+        def _dbg_preview_block(b):
+            t = b.get("type") if isinstance(b, dict) else None
+            if t == "text":
+                txt = b.get("text", "")
+                return {"type": "text", "text": txt[:300] + (f"...<+{len(txt) - 300}>" if len(txt) > 300 else "")}
+            if t == "image_url":
+                u = b.get("image_url", {}).get("url", "")
+                return {"type": "image_url", "url": u[:120] + (f"...<+{len(u) - 120}>" if len(u) > 120 else "")}
+            if t == "input_audio":
+                d = b.get("input_audio", {}).get("data", "")
+                return {"type": "input_audio", "format": b.get("input_audio", {}).get("format", ""), "data_len": len(d)}
+            return {"type": t}
+
+        logger.info(
+            "DBG_cpe_user_content",
+            user_text_preview=user_text[:600] + (f"...<+{len(user_text) - 600}>" if len(user_text) > 600 else ""),
+            media_block_count=len(media_blocks),
+            gt_block_count=len(gt_blocks),
+            user_content_kind="list" if isinstance(user_content, list) else "text",
+            user_content_len=len(user_content) if isinstance(user_content, list) else len(str(user_content)),
+            user_content_preview=[_dbg_preview_block(b) for b in (user_content if isinstance(user_content, list) else [{"type": "text", "text": user_content}])],
+        )
+
+        # Build system message: use custom system_prompt if provided, else generated.
         system_content = self.system_prompt if self.system_prompt else self._system_message()
+        if gt_blocks:
+            system_content = (system_content or "") + "\n\n" + GT_CALIBRATION_INSTRUCTION
 
         messages = [
             {

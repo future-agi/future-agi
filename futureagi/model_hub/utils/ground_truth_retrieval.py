@@ -2,9 +2,51 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Iterator
 
+import structlog
+
 from model_hub.utils.eval_input_validation import is_empty_value
+
+logger = structlog.get_logger(__name__)
+
+
+# Appended to the judge's system prompt when GT exemplars are attached.
+# The "## Reference example N" marker matches what build_ground_truth_blocks emits.
+GT_CALIBRATION_INSTRUCTION = (
+    "Reference examples appear in the user message under "
+    "'## Reference example N'. Treat them only as calibration for your "
+    "reasoning and decision policy. Your final output MUST conform to the "
+    "required output format; never copy literal output values, scores, or "
+    "labels from the examples."
+)
+
+
+def _truncate(value: Any, n: int = 200) -> Any:
+    """Shorten huge block payloads for log readability."""
+    if isinstance(value, str):
+        return value if len(value) <= n else value[:n] + f"...<+{len(value) - n}>"
+    return value
+
+
+def _preview_blocks(blocks: list[dict]) -> list[dict]:
+    """Compact, log-safe preview of OpenAI content blocks."""
+    out = []
+    for b in blocks:
+        t = b.get("type")
+        if t == "text":
+            out.append({"type": "text", "text": _truncate(b.get("text", ""), 240)})
+        elif t == "image_url":
+            url = b.get("image_url", {}).get("url", "")
+            out.append({"type": "image_url", "url": _truncate(url, 120)})
+        elif t == "input_audio":
+            data_len = len(b.get("input_audio", {}).get("data", ""))
+            fmt = b.get("input_audio", {}).get("format", "")
+            out.append({"type": "input_audio", "format": fmt, "data_len": data_len})
+        else:
+            out.append({"type": t})
+    return out
 
 
 def has_usable_inputs_for_gt(
@@ -98,6 +140,13 @@ def build_ground_truth_blocks(
     role_mapping: dict | None,
 ) -> list[dict]:
     """Render retrieved GT rows as OpenAI content blocks wrapped in delimiter tags."""
+    logger.info(
+        "DBG_gt_build_blocks_start",
+        examples_count=len(examples) if examples else 0,
+        variable_mapping=variable_mapping,
+        role_mapping=role_mapping,
+        first_example_keys=sorted(examples[0].keys()) if examples else [],
+    )
     if not examples:
         return []
 
@@ -105,59 +154,49 @@ def build_ground_truth_blocks(
 
     output_col, explanation_col = get_label_columns(role_mapping)
     key_types = detect_input_column_types(examples, variable_mapping)
+    logger.info(
+        "DBG_gt_build_blocks_detected",
+        column_types=key_types,
+        output_col=output_col,
+        explanation_col=explanation_col,
+    )
 
-    blocks: list[dict] = [
-        {
-            "type": "text",
-            "text": (
-                "Reference examples from past evaluations of similar inputs "
-                "follow. Each <example_N> contains one past input row (its "
-                "fields wrapped in <field_name>...</field_name> tags matching "
-                "the input you are judging), the verdict an expert assigned "
-                "to that row in <eval_output>, and their reasoning in "
-                "<eval_explanation> when available. Use them to calibrate "
-                "your own judgment for the current input. Do not copy them "
-                "into your output."
-            ),
-        },
-        {"type": "text", "text": "<ground_truth_reference_examples>"},
-    ]
+    # Per-example labelled framing. Header matches GT_CALIBRATION_INSTRUCTION.
+    blocks: list[dict] = []
     for i, example in enumerate(examples, 1):
-        blocks.append({"type": "text", "text": f"<example_{i}>"})
+        blocks.append({"type": "text", "text": f"## Reference example {i}"})
+        blocks.append({"type": "text", "text": "Inputs:"})
         for tmpl_var, col, val in _iter_inputs(example, variable_mapping):
             modality = key_types.get(col)
             if modality in {"image", "audio"} and val:
+                blocks.append({"type": "text", "text": f"- {tmpl_var}:"})
                 try:
                     blocks.extend(
                         build_media_content_block(val, modality, tmpl_var)
                     )
                 except Exception:
-                    # Defensive: a single bad URL shouldn't kill the whole block.
-                    blocks.append({
-                        "type": "text",
-                        "text": f"<{tmpl_var}>{val}</{tmpl_var}>",
-                    })
+                    blocks.append({"type": "text", "text": f"  {val}"})
             else:
-                blocks.append({
-                    "type": "text",
-                    "text": f"<{tmpl_var}>{val}</{tmpl_var}>",
-                })
+                blocks.append({"type": "text", "text": f"- {tmpl_var}: {val}"})
         if output_col and output_col in example:
             blocks.append({
                 "type": "text",
-                "text": f"<eval_output>{example[output_col]}</eval_output>",
+                "text": f"Expected output: {example[output_col]}",
             })
         if explanation_col and explanation_col in example:
             blocks.append({
                 "type": "text",
-                "text": (
-                    f"<eval_explanation>"
-                    f"{example[explanation_col]}"
-                    f"</eval_explanation>"
-                ),
+                "text": f"Explanation: {example[explanation_col]}",
             })
-        blocks.append({"type": "text", "text": f"</example_{i}>"})
-    blocks.append({"type": "text", "text": "</ground_truth_reference_examples>"})
+    logger.info(
+        "DBG_gt_build_blocks_done",
+        total_blocks=len(blocks),
+        block_types_count={
+            t: sum(1 for b in blocks if b.get("type") == t)
+            for t in {b.get("type") for b in blocks}
+        },
+        blocks_preview=_preview_blocks(blocks),
+    )
     return blocks
 
 

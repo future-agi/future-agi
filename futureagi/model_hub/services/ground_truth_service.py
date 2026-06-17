@@ -634,6 +634,7 @@ _INTERNAL_CH_KEYS = frozenset(
     {
         "item_id",
         "input_type",
+        "column_name",
         "index_column",
         "organization_id",
         "workspace_id",

@@ -187,21 +187,18 @@ def test_build_ground_truth_blocks_empty():
     ) == []
 
 
-def test_build_ground_truth_blocks_text_only_wraps_in_delimiters():
+def test_build_ground_truth_blocks_text_only_uses_labelled_framing():
     blocks = build_ground_truth_blocks(
         [{"q": "hi", "verdict": "Pass", "reason": "polite"}],
         variable_mapping={"question": "q"},
         role_mapping={"output": "verdict", "explanation": "reason"},
     )
     texts = _texts(blocks)
-    assert "calibrate" in texts[0].lower()
-    assert texts[1] == "<ground_truth_reference_examples>"
-    assert texts[-1] == "</ground_truth_reference_examples>"
-    assert "<example_1>" in texts
-    assert "</example_1>" in texts
-    assert "<question>hi</question>" in texts
-    assert "<eval_output>Pass</eval_output>" in texts
-    assert "<eval_explanation>polite</eval_explanation>" in texts
+    assert texts[0] == "## Reference example 1"
+    assert "Inputs:" in texts
+    assert "- question: hi" in texts
+    assert "Expected output: Pass" in texts
+    assert "Explanation: polite" in texts
 
 
 def test_build_ground_truth_blocks_omits_explanation_when_not_mapped():
@@ -211,10 +208,8 @@ def test_build_ground_truth_blocks_omits_explanation_when_not_mapped():
         role_mapping={"output": "verdict"},
     )
     texts = _texts(blocks)
-    assert "<eval_output>Pass</eval_output>" in texts
-    # The preamble mentions <eval_explanation> by name; we only care that
-    # no per-row explanation tag was emitted for this example.
-    assert not any(t.startswith("<eval_explanation>") for t in texts)
+    assert "Expected output: Pass" in texts
+    assert not any(t.startswith("Explanation:") for t in texts)
 
 
 def test_build_ground_truth_blocks_image_column_emits_image_url_block(monkeypatch):
@@ -252,7 +247,7 @@ def test_build_ground_truth_blocks_image_column_emits_image_url_block(monkeypatc
     assert image_blocks[0]["image_url"]["url"] == "https://example.com/a.png"
 
 
-def test_build_ground_truth_blocks_multiple_examples_keep_per_example_wrappers():
+def test_build_ground_truth_blocks_multiple_examples_keep_per_example_headers():
     blocks = build_ground_truth_blocks(
         [
             {"q": "first", "verdict": "Pass"},
@@ -262,7 +257,7 @@ def test_build_ground_truth_blocks_multiple_examples_keep_per_example_wrappers()
         role_mapping={"output": "verdict"},
     )
     texts = _texts(blocks)
-    assert texts.count("<example_1>") == 1
-    assert texts.count("<example_2>") == 1
-    assert "<question>first</question>" in texts
-    assert "<question>second</question>" in texts
+    assert texts.count("## Reference example 1") == 1
+    assert texts.count("## Reference example 2") == 1
+    assert "- question: first" in texts
+    assert "- question: second" in texts
