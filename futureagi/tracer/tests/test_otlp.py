@@ -24,6 +24,17 @@ from opentelemetry.proto.trace.v1.trace_pb2 import (
 )
 from rest_framework import status
 
+AUTH_REQUIRED_STATUS_CODES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+)
+
+
+@pytest.fixture(autouse=True)
+def mock_payload_storage_store():
+    with patch("tracer.views.otlp.payload_storage.store", return_value="payload-key"):
+        yield
+
 
 def create_test_otlp_request(num_spans: int = 1) -> ExportTraceServiceRequest:
     """Create a test OTLP ExportTraceServiceRequest with sample spans."""
@@ -97,7 +108,7 @@ class TestOTLPTraceEndpointAuth:
             data=b"",
             content_type="application/x-protobuf",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_post_traces_with_trailing_slash_unauthenticated(self, api_client):
         """Trailing slash endpoint also requires auth."""
@@ -106,7 +117,7 @@ class TestOTLPTraceEndpointAuth:
             data=b"",
             content_type="application/x-protobuf",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
 
 @pytest.mark.integration

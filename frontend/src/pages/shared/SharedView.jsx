@@ -1,9 +1,18 @@
 import React, { useState, useCallback, useMemo } from "react";
 import { useParams } from "react-router";
-import { Alert, Box, CircularProgress, Typography } from "@mui/material";
+import PropTypes from "prop-types";
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Divider,
+  Stack,
+  Typography,
+} from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import { useResolveSharedLink } from "src/api/shared-links";
-import DrawerToolbar from "src/components/traceDetail/DrawerToolbar";
 import TraceTreeV2 from "src/components/traceDetail/TraceTreeV2";
 import SpanDetailPane from "src/components/traceDetail/SpanDetailPane";
 import {
@@ -12,7 +21,6 @@ import {
   formatCost,
 } from "src/sections/projects/LLMTracing/formatters";
 import Iconify from "src/components/iconify";
-import { enqueueSnackbar } from "notistack";
 import SharedVoiceView from "./SharedVoiceView";
 import { isVoiceCall } from "./sharedViewHelpers";
 
@@ -170,7 +178,11 @@ export default function SharedView() {
             ? `Shared Voice Call — ${resourceId?.substring(0, 8) || "..."}`
             : isTrace
               ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
-              : "Shared Resource"}
+              : resourceType === "dashboard"
+                ? `Shared Dashboard — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
+                : resourceType === "project"
+                  ? `Shared Project — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
+                  : "Shared Resource"}
         </title>
       </Helmet>
 
@@ -198,7 +210,15 @@ export default function SharedView() {
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Iconify
-              icon={isVoice ? "mdi:phone-outline" : "mdi:share-variant-outline"}
+              icon={
+                isVoice
+                  ? "mdi:phone-outline"
+                  : resourceType === "dashboard"
+                    ? "mdi:view-dashboard-outline"
+                    : resourceType === "project"
+                      ? "mdi:folder-outline"
+                      : "mdi:share-variant-outline"
+              }
               width={20}
               sx={{ color: "primary.main" }}
             />
@@ -207,7 +227,11 @@ export default function SharedView() {
             >
               {isVoice
                 ? "Shared voice call"
-                : `Shared ${resourceType || "resource"}`}
+                : resourceType === "dashboard"
+                  ? "Shared dashboard"
+                  : resourceType === "project"
+                    ? "Shared project"
+                    : `Shared ${resourceType || "resource"}`}
             </Typography>
             {resourceId && (
               <Typography
@@ -368,8 +392,12 @@ export default function SharedView() {
               )}
             </Box>
           </Box>
+        ) : resourceType === "dashboard" ? (
+          <SharedDashboardView dashboard={resourceData} />
+        ) : resourceType === "project" ? (
+          <SharedProjectView project={resourceData} />
         ) : (
-          /* Non-trace resource — just show the raw data */
+          /* Unsupported resource type — keep a bounded debug payload visible. */
           <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>
             <Alert severity="info" sx={{ mb: 2 }}>
               Viewing shared {resourceType}
@@ -389,3 +417,399 @@ export default function SharedView() {
     </>
   );
 }
+
+function SharedProjectView({ project }) {
+  const projectUrl = project?.url_path || null;
+  const traceType = project?.trace_type || "project";
+  const modelType = project?.model_type || null;
+
+  return (
+    <Box
+      sx={{
+        flex: 1,
+        overflow: "auto",
+        bgcolor: "background.default",
+      }}
+    >
+      <Box sx={{ maxWidth: 900, mx: "auto", px: { xs: 2, md: 4 }, py: 4 }}>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={2}
+          alignItems={{ xs: "flex-start", sm: "center" }}
+          justifyContent="space-between"
+          sx={{ mb: 3 }}
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              component="h1"
+              sx={{
+                fontSize: { xs: 22, md: 28 },
+                fontWeight: 700,
+                color: "text.primary",
+                wordBreak: "break-word",
+              }}
+            >
+              {project?.name || "Untitled project"}
+            </Typography>
+            <Stack
+              direction="row"
+              spacing={1}
+              useFlexGap
+              flexWrap="wrap"
+              sx={{ mt: 1 }}
+            >
+              <Chip size="small" label={traceType} />
+              {modelType && (
+                <Chip size="small" variant="outlined" label={modelType} />
+              )}
+            </Stack>
+          </Box>
+          {projectUrl && (
+            <Button
+              href={projectUrl}
+              variant="contained"
+              startIcon={<Iconify icon="mdi:open-in-new" width={16} />}
+              sx={{ flexShrink: 0 }}
+            >
+              Open project
+            </Button>
+          )}
+        </Stack>
+
+        <Box
+          sx={{
+            bgcolor: "background.paper",
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 1,
+            overflow: "hidden",
+          }}
+        >
+          <Box sx={{ p: 2.5 }}>
+            <Typography
+              sx={{ fontSize: 13, fontWeight: 700, color: "text.primary" }}
+            >
+              Project details
+            </Typography>
+          </Box>
+          <Divider />
+          <Box
+            sx={{
+              p: 2.5,
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "repeat(2, minmax(0, 1fr))",
+              },
+              gap: 2,
+            }}
+          >
+            <WidgetStat label="Project ID" value={project?.id || "—"} />
+            <WidgetStat label="Workspace" value={project?.workspace || "—"} />
+            <WidgetStat label="Created" value={project?.created_at || "—"} />
+            <WidgetStat label="Updated" value={project?.updated_at || "—"} />
+          </Box>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+function SharedDashboardView({ dashboard }) {
+  const widgets = dashboard?.widgets || [];
+  const widgetCount = dashboard?.widget_count ?? widgets.length;
+
+  return (
+    <Box
+      sx={{
+        flex: 1,
+        overflow: "auto",
+        bgcolor: "background.default",
+      }}
+    >
+      <Box sx={{ maxWidth: 1200, mx: "auto", px: { xs: 2, md: 4 }, py: 3 }}>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={2}
+          alignItems={{ xs: "flex-start", sm: "center" }}
+          justifyContent="space-between"
+          sx={{ mb: 3 }}
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              component="h1"
+              sx={{
+                fontSize: { xs: 22, md: 28 },
+                fontWeight: 700,
+                color: "text.primary",
+                wordBreak: "break-word",
+              }}
+            >
+              {dashboard?.name || "Untitled dashboard"}
+            </Typography>
+            {dashboard?.description && (
+              <Typography
+                sx={{
+                  mt: 0.75,
+                  fontSize: 14,
+                  color: "text.secondary",
+                  maxWidth: 760,
+                }}
+              >
+                {dashboard.description}
+              </Typography>
+            )}
+          </Box>
+          <Chip
+            size="small"
+            variant="outlined"
+            icon={<Iconify icon="mdi:view-grid-outline" width={16} />}
+            label={`${widgetCount} ${widgetCount === 1 ? "widget" : "widgets"}`}
+            sx={{ flexShrink: 0 }}
+          />
+        </Stack>
+
+        {widgets.length ? (
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                md: "repeat(2, minmax(0, 1fr))",
+              },
+              gap: 2,
+            }}
+          >
+            {widgets.map((widget) => (
+              <DashboardWidgetPreview key={widget.id} widget={widget} />
+            ))}
+          </Box>
+        ) : (
+          <Box
+            sx={{
+              py: 8,
+              px: 2,
+              textAlign: "center",
+              bgcolor: "background.paper",
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 1,
+            }}
+          >
+            <Iconify
+              icon="mdi:view-dashboard-outline"
+              width={40}
+              sx={{ color: "text.disabled", mb: 1 }}
+            />
+            <Typography sx={{ fontSize: 14, color: "text.secondary" }}>
+              No widgets in this dashboard
+            </Typography>
+          </Box>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+function DashboardWidgetPreview({ widget }) {
+  const chartType = widget?.chart_config?.chart_type || "chart";
+  const metrics = Array.isArray(widget?.query_config?.metrics)
+    ? widget.query_config.metrics
+    : [];
+  const timeRange =
+    widget?.query_config?.time_range?.preset ||
+    widget?.query_config?.timeRange?.preset ||
+    null;
+
+  return (
+    <Box
+      sx={{
+        bgcolor: "background.paper",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        minHeight: 220,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
+      <Box sx={{ p: 2 }}>
+        <Stack
+          direction="row"
+          spacing={1.5}
+          alignItems="flex-start"
+          justifyContent="space-between"
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              sx={{
+                fontSize: 15,
+                fontWeight: 700,
+                color: "text.primary",
+                wordBreak: "break-word",
+              }}
+            >
+              {widget?.name || "Untitled widget"}
+            </Typography>
+            {widget?.description && (
+              <Typography
+                sx={{
+                  mt: 0.5,
+                  fontSize: 12,
+                  color: "text.secondary",
+                  wordBreak: "break-word",
+                }}
+              >
+                {widget.description}
+              </Typography>
+            )}
+          </Box>
+          <Chip size="small" label={chartTypeLabel(chartType)} />
+        </Stack>
+      </Box>
+
+      <Divider />
+
+      <Box
+        sx={{
+          p: 2,
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 1,
+        }}
+      >
+        <WidgetStat label="Width" value={widget?.width ?? "—"} />
+        <WidgetStat label="Height" value={widget?.height ?? "—"} />
+        <WidgetStat label="Range" value={timeRange || "—"} />
+      </Box>
+
+      <Box sx={{ px: 2, pb: 2, flex: 1 }}>
+        <Typography
+          sx={{
+            mb: 1,
+            fontSize: 11,
+            fontWeight: 700,
+            color: "text.secondary",
+            textTransform: "uppercase",
+          }}
+        >
+          Metrics
+        </Typography>
+        {metrics.length ? (
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+            {metrics.map((metric, index) => (
+              <Chip
+                key={`${metric.name || metric.id || "metric"}-${index}`}
+                size="small"
+                variant="outlined"
+                label={metricLabel(metric)}
+              />
+            ))}
+          </Stack>
+        ) : (
+          <Typography sx={{ fontSize: 13, color: "text.disabled" }}>
+            No metrics configured
+          </Typography>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+function WidgetStat({ label, value }) {
+  return (
+    <Box>
+      <Typography
+        sx={{
+          fontSize: 11,
+          fontWeight: 700,
+          color: "text.disabled",
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </Typography>
+      <Typography
+        sx={{
+          fontSize: 13,
+          fontWeight: 600,
+          color: "text.primary",
+          wordBreak: "break-word",
+        }}
+      >
+        {value}
+      </Typography>
+    </Box>
+  );
+}
+
+function chartTypeLabel(value) {
+  return String(value || "chart").replaceAll("_", " ");
+}
+
+function metricLabel(metric) {
+  const name =
+    metric.display_name || metric.displayName || metric.name || metric.id;
+  const aggregation = metric.aggregation;
+  return aggregation ? `${aggregation} ${name}` : name;
+}
+
+const dashboardWidgetShape = PropTypes.shape({
+  id: PropTypes.string,
+  name: PropTypes.string,
+  description: PropTypes.string,
+  width: PropTypes.number,
+  height: PropTypes.number,
+  query_config: PropTypes.shape({
+    metrics: PropTypes.arrayOf(
+      PropTypes.shape({
+        id: PropTypes.string,
+        name: PropTypes.string,
+        display_name: PropTypes.string,
+        displayName: PropTypes.string,
+        aggregation: PropTypes.string,
+      }),
+    ),
+    time_range: PropTypes.shape({
+      preset: PropTypes.string,
+    }),
+    timeRange: PropTypes.shape({
+      preset: PropTypes.string,
+    }),
+  }),
+  chart_config: PropTypes.shape({
+    chart_type: PropTypes.string,
+  }),
+});
+
+SharedProjectView.propTypes = {
+  project: PropTypes.shape({
+    id: PropTypes.string,
+    name: PropTypes.string,
+    trace_type: PropTypes.string,
+    model_type: PropTypes.string,
+    workspace: PropTypes.string,
+    created_at: PropTypes.string,
+    updated_at: PropTypes.string,
+    url_path: PropTypes.string,
+  }),
+};
+
+SharedDashboardView.propTypes = {
+  dashboard: PropTypes.shape({
+    name: PropTypes.string,
+    description: PropTypes.string,
+    widget_count: PropTypes.number,
+    widgets: PropTypes.arrayOf(dashboardWidgetShape),
+  }),
+};
+
+DashboardWidgetPreview.propTypes = {
+  widget: dashboardWidgetShape,
+};
+
+WidgetStat.propTypes = {
+  label: PropTypes.string.isRequired,
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+};

@@ -6,7 +6,7 @@ Validates the eval_scores restructuring (grouped ``eval_task -> eval ->
 * a top-level trace-scoped ``eval_scores`` object,
 * every ``observation_span`` carries its own ``eval_scores`` (root conversation
   span -> ``scope="trace"``, children -> ``scope="span"``),
-* the legacy flat ``eval_outputs`` dict is gone.
+* the DEPRECATED flat ``eval_outputs`` dict kept additively (doc 02).
 
 Eval *aggregation* (avg / pass-fail / choice counts) is covered by the helper
 unit tests in ``test_trace_detail_eval_scores.py``. The test ClickHouse has no
@@ -70,11 +70,13 @@ class TestVoiceCallDetailEvalScores:
         assert resp.status_code == 200
         data = _result(resp)
 
-        # Legacy flat dict replaced by the grouped eval_scores object.
-        assert "eval_outputs" not in data
+        # New grouped eval_scores object...
         assert isinstance(data.get("eval_scores"), dict)
         assert data["eval_scores"]["scope"] == "trace"
         assert isinstance(data["eval_scores"]["eval_tasks"], list)
+        # ...with the DEPRECATED flat eval_outputs kept additively (doc 02).
+        assert "eval_outputs" in data
+        assert isinstance(data["eval_outputs"], dict)
 
         # Every span carries its own eval_scores; scopes follow root vs child.
         spans = data["observation_span"]

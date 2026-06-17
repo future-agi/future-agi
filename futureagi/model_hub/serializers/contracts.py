@@ -3,11 +3,13 @@ import json
 from rest_framework import serializers
 
 from model_hub.constants import MAX_EMPTY_DATASET_ROWS
+from model_hub.models.choices import ModelTypes
 from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetKbSerializer,
     OptimizeDatasetSerializer,
 )
 from model_hub.serializers.performance_report import PerformanceReportSerializer
+from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
 from tracer.serializers.filters import (
     SortParamField,
     StrictInputSerializer,
@@ -16,7 +18,6 @@ from tracer.serializers.filters import (
     json_object_query_param_field,
     parse_filter_list_payload,
 )
-from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
 
 
 class ModelHubEmptyRequestSerializer(StrictInputSerializer):
@@ -1062,6 +1063,7 @@ class PerformanceDetailsRequestSerializer(StrictInputSerializer):
 class PerformanceExportRequestSerializer(StrictInputSerializer):
     dataset = PerformanceDatasetSerializer()
     filters = PerformanceFilterSerializer(many=True, required=False, default=list)
+    page = serializers.IntegerField(required=False, min_value=1)
     start_date = serializers.CharField()
     end_date = serializers.CharField()
 
@@ -2200,6 +2202,7 @@ class CompositeEvalCreateRequestSerializer(serializers.Serializer):
     )
     child_weights = serializers.JSONField(required=False, allow_null=True)
     child_pinned_versions = serializers.JSONField(required=False, allow_null=True)
+    child_configs = serializers.JSONField(required=False, allow_null=True)
     composite_child_axis = serializers.ChoiceField(
         choices=["", "pass_fail", "percentage", "choices", "code"],
         required=False,
@@ -2234,6 +2237,7 @@ class CompositeEvalUpdateRequestSerializer(serializers.Serializer):
     )
     child_weights = serializers.JSONField(required=False, allow_null=True)
     child_pinned_versions = serializers.JSONField(required=False, allow_null=True)
+    child_configs = serializers.JSONField(required=False, allow_null=True)
     composite_child_axis = serializers.ChoiceField(
         choices=["", "pass_fail", "percentage", "choices", "code"],
         required=False,
@@ -2270,6 +2274,7 @@ class CompositeEvalAdhocExecuteRequestSerializer(CompositeEvalExecuteRequestSeri
         default="",
     )
     child_weights = serializers.JSONField(required=False, allow_null=True)
+    child_configs = serializers.JSONField(required=False, allow_null=True)
     pass_threshold = serializers.FloatField(required=False, default=0.5)
 
 
@@ -2281,6 +2286,7 @@ class CompositeChildItemSerializer(serializers.Serializer):
     pinned_version_id = serializers.UUIDField(required=False, allow_null=True)
     pinned_version_number = serializers.IntegerField(required=False, allow_null=True)
     weight = serializers.FloatField(required=False)
+    config = serializers.JSONField(required=False, default=dict)
     required_keys = serializers.ListField(
         child=serializers.CharField(),
         required=False,
@@ -2747,6 +2753,12 @@ class CreateEmptyDatasetRequestSerializer(serializers.Serializer):
     row = serializers.IntegerField(
         required=False, min_value=0, max_value=MAX_EMPTY_DATASET_ROWS
     )
+
+    def validate_model_type(self, value):
+        canonical = ModelTypes.coerce_value(value)
+        if canonical and canonical not in {tag.value for tag in ModelTypes}:
+            raise serializers.ValidationError(f'"{value}" is not a valid choice.')
+        return canonical
 
 
 class ManualDatasetCreateRequestSerializer(serializers.Serializer):

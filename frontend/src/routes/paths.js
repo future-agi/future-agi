@@ -38,6 +38,10 @@ export const paths = {
       integrations: `${ROOTS.DASHBOARD}/settings/integrations`,
       integrationDetail: (id) =>
         `${ROOTS.DASHBOARD}/settings/integrations/${id}`,
+      workspaceIntegrations: (workspaceId) =>
+        `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations`,
+      workspaceIntegrationDetail: (workspaceId, id) =>
+        `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations/${id}`,
       mcpServer: `${ROOTS.DASHBOARD}/settings/mcp-server`,
       falconAIConnectors: `${ROOTS.DASHBOARD}/settings/falcon-ai-connectors`,
       orgSettings: `${ROOTS.DASHBOARD}/settings/org-settings`,

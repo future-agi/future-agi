@@ -48,7 +48,7 @@ const PersonaCreateEditDrawer = ({
                 Create Persona
               </Typography>
               <Typography
-                color={"text.disabled"}
+                color={"text.secondary"}
                 variant="s1"
                 fontWeight={"fontWeightRegular"}
               >

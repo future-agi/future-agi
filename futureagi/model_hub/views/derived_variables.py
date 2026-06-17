@@ -25,12 +25,25 @@ from model_hub.services.derived_variable_service import (
     get_derived_variable_schema,
     update_prompt_version_derived_variables,
 )
+from model_hub.utils.workspace_scope import (
+    request_organization,
+    request_workspace_filter,
+)
 from tfc.utils.api_contracts import validated_api_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
 _gm = GeneralMethods()
+
+
+def _prompt_version_queryset(request, prompt_id):
+    return PromptVersion.no_workspace_objects.filter(
+        request_workspace_filter(request, field_name="original_template__workspace"),
+        original_template_id=prompt_id,
+        original_template__organization=request_organization(request),
+        original_template__deleted=False,
+    )
 
 
 @swagger_auto_schema(
@@ -71,22 +84,14 @@ def get_prompt_derived_variables(request, prompt_id):
         column_name = request.query_params.get("column_name")
 
         # Get the prompt version
-        filters = {
-            "original_template_id": prompt_id,
-            "original_template__organization": getattr(request, "organization", None)
-            or request.user.organization,
-            "deleted": False,
-        }
-
+        queryset = _prompt_version_queryset(request, prompt_id)
         if version:
-            filters["template_version"] = version
+            queryset = queryset.filter(template_version=version)
 
-        prompt_version = (
-            PromptVersion.objects.filter(**filters).order_by("-created_at").first()
-        )
+        prompt_version = queryset.order_by("-created_at").first()
 
         if not prompt_version:
-            return _gm.not_found_response("Prompt version not found")
+            return _gm.not_found("Prompt version not found")
 
         # Get derived variables
         all_derived = get_all_derived_variables(prompt_version)
@@ -148,22 +153,14 @@ def get_derived_variable_schema_view(request, prompt_id, column_name):
     try:
         version = request.query_params.get("version")
 
-        filters = {
-            "original_template_id": prompt_id,
-            "original_template__organization": getattr(request, "organization", None)
-            or request.user.organization,
-            "deleted": False,
-        }
-
+        queryset = _prompt_version_queryset(request, prompt_id)
         if version:
-            filters["template_version"] = version
+            queryset = queryset.filter(template_version=version)
 
-        prompt_version = (
-            PromptVersion.objects.filter(**filters).order_by("-created_at").first()
-        )
+        prompt_version = queryset.order_by("-created_at").first()
 
         if not prompt_version:
-            return _gm.not_found_response("Prompt version not found")
+            return _gm.not_found("Prompt version not found")
 
         schema = get_derived_variable_schema(prompt_version, column_name)
 
@@ -228,16 +225,16 @@ def extract_derived_variables(request, prompt_id):
         if not version:
             return _gm.bad_request("Version is required")
 
-        prompt_version = PromptVersion.objects.filter(
-            original_template_id=prompt_id,
-            original_template__organization=getattr(request, "organization", None)
-            or request.user.organization,
-            template_version=version,
-            deleted=False,
-        ).first()
+        prompt_version = (
+            _prompt_version_queryset(request, prompt_id)
+            .filter(
+                template_version=version,
+            )
+            .first()
+        )
 
         if not prompt_version:
-            return _gm.not_found_response("Prompt version not found")
+            return _gm.not_found("Prompt version not found")
 
         # Extract and update derived variables
         result = update_prompt_version_derived_variables(

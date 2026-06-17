@@ -387,8 +387,23 @@ const CellRenderer = (props) => {
 
   if (columnKey === "keyName" || columnKey === "key_name") {
     return (
-      <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-        {value}{" "}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          height: "100%",
+          minWidth: 0,
+          width: "100%",
+        }}
+      >
+        <Typography
+          component="span"
+          noWrap
+          typography="s2"
+          sx={{ minWidth: 0, flex: "0 1 auto" }}
+        >
+          {value}
+        </Typography>
         {!props?.data?.enabled && (
           <Chip
             label="Disabled"
@@ -396,6 +411,7 @@ const CellRenderer = (props) => {
               padding: "4px 8px",
               borderRadius: "4px",
               ml: 1,
+              flexShrink: 0,
               color: "text.primary",
               height: "26px",
               backgroundColor: "background.neutral",

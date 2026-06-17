@@ -267,6 +267,7 @@ export default function EELicensesPage() {
     mutationFn: (id) =>
       axios.post(
         apiPath("/usage/ee/licenses/{grant_id}/revoke/", { grant_id: id }),
+        {},
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ee-licenses"] });
@@ -367,7 +368,7 @@ export default function EELicensesPage() {
           <Typography variant="subtitle1" color="text.secondary">
             No licenses yet
           </Typography>
-          <Typography variant="body2" color="text.disabled" mb={2}>
+          <Typography variant="body2" color="text.secondary" mb={2}>
             Generate a license key to unlock EE features on your self-hosted
             instance.
           </Typography>
@@ -441,7 +442,7 @@ export default function EELicensesPage() {
                 }
               >
                 <MenuItem value="monthly">Monthly</MenuItem>
-                <MenuItem value="annual">Annual (save ~17%)</MenuItem>
+                <MenuItem value="yearly">Annual (save ~17%)</MenuItem>
               </Select>
             </FormControl>
 

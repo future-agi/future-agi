@@ -126,7 +126,7 @@ const SessionEvalsList = ({ sessionId }) => {
         <Typography variant="body2" color="text.secondary">
           No session-level evaluations yet.
         </Typography>
-        <Typography variant="caption" color="text.disabled" textAlign="center">
+        <Typography variant="caption" color="text.secondary" textAlign="center">
           Configure a task with row type{" "}
           <Box component="span" sx={{ fontWeight: 600 }}>
             Sessions

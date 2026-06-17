@@ -151,6 +151,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
+  const [multiChoice, setMultiChoice] = useState(false);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [templateFormat, setTemplateFormat] = useState("mustache");
@@ -428,6 +429,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           rawRunConfig.choiceScores ??
           evalData?.choice_scores ??
           evalData?.choiceScores,
+        multi_choice:
+          rawRunConfig.multi_choice ??
+          rawRunConfig.multiChoice ??
+          evalData?.multi_choice ??
+          evalData?.multiChoice,
         params: rawRunConfig.params ?? evalData?.params,
         messages: rawRunConfig.messages ?? evalData?.messages,
       };
@@ -469,6 +475,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       // Prefer user's saved run_config overrides (edit flow) over template defaults
       setPassThreshold(config.pass_threshold ?? fullEval.pass_threshold ?? 0.5);
       setChoiceScores(config.choice_scores || fullEval.choice_scores || {});
+      setMultiChoice(config.multi_choice ?? fullEval.multi_choice ?? false);
       // Messages: use config.messages if present, otherwise build from
       // instructions — but only for llm/agent evals, since code evals
       // don't have a prompt to seed into a system message.
@@ -548,7 +555,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       // the name to where the eval was created (dataset / experiment /
       // workbench / …); the timestamp avoids collisions on the backend
       // uniqueness check for same-source same-day repeats.
-      if (isEditMode) {
+      if (isEditMode || source === "composite") {
         setEvalName(evalData?.name || fullEval.name || "");
       } else {
         const baseName =
@@ -882,9 +889,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
     // In edit mode: evalData.name is the saved instance name — skip
     // fullEval.name (template name) so it never overwrites the instance name.
-    const resolvedName = isEditMode
-      ? evalName || evalData?.name
-      : evalName || fullEval?.name || evalData?.name;
+    const resolvedName =
+      source === "composite"
+        ? fullEval?.name || evalData?.name || evalName
+        : isEditMode
+          ? evalName || evalData?.name
+          : evalName || fullEval?.name || evalData?.name;
 
     if (templateType === "composite") {
       // Composite metrics don't carry prompt/model/output-type/choice-score
@@ -926,6 +936,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       messages,
       pass_threshold: passThreshold,
       choice_scores: choiceScores,
+      multi_choice: multiChoice,
       // Code-eval static params (function_params_schema inputs, e.g.
       // min_words / max_words). Persisted so the backend writes them onto
       // UserEvalMetric.config.params and future runs can read them via
@@ -962,6 +973,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     fewShotExamples,
     passThreshold,
     choiceScores,
+    multiChoice,
     codeParams,
     agentMode,
     useInternet,
@@ -1477,7 +1489,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     Code evaluator returns a score between 0 and 1. Set a pass
                     threshold below.
                   </Typography>
-                  <Typography variant="subtitle2"  sx={{ mb: 0.5,color:"text.primary" }}>
+                  <Typography
+                    variant="subtitle2"
+                    sx={{ mb: 0.5, color: "text.primary" }}
+                  >
                     Pass Threshold
                   </Typography>
                   <Typography
@@ -1522,6 +1537,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   choiceScores={choiceScores}
                   onChoiceScoresChange={(v) => {
                     setChoiceScores(v);
+                    setIsDirty(true);
+                  }}
+                  multiChoice={multiChoice}
+                  onMultiChoiceChange={(v) => {
+                    setMultiChoice(v);
                     setIsDirty(true);
                   }}
                   passThreshold={passThreshold}
@@ -1672,6 +1692,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
+                    hasDataInjection={hasDataInjection}
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     initialMapping={evalData?.mapping}
                     {...compositeSourceModeProps}
@@ -1715,6 +1736,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
+                    hasDataInjection={hasDataInjection}
                     initialProjectId={sourceId}
                     initialRowType={sourceRowType}
                     initialMapping={evalData?.mapping}
@@ -1768,49 +1790,51 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   />
                 )}
 
-                {source !== "composite" && visibleCodeParamEntries.length > 0 && (
-                  <Box sx={{ mt: 2 }}>
-                    <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                      Parameters
-                    </Typography>
-                    {visibleCodeParamEntries.map(([key, schema]) => (
-                      <TextField
-                        key={key}
-                        fullWidth
-                        size="small"
-                        type={
-                          schema?.type === "integer" || schema?.type === "number"
-                            ? "number"
-                            : "text"
-                        }
-                        label={key}
-                        value={codeParams[key] ?? ""}
-                        onChange={(e) => {
-                          // BE's `type: number` schema rejects strings; coerce here.
-                          const raw = e.target.value;
-                          const isNumeric =
+                {source !== "composite" &&
+                  visibleCodeParamEntries.length > 0 && (
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                        Parameters
+                      </Typography>
+                      {visibleCodeParamEntries.map(([key, schema]) => (
+                        <TextField
+                          key={key}
+                          fullWidth
+                          size="small"
+                          type={
                             schema?.type === "integer" ||
-                            schema?.type === "number";
-                          let next = raw;
-                          if (isNumeric && raw !== "") {
-                            const n = Number(raw);
-                            if (!Number.isNaN(n)) next = n;
+                            schema?.type === "number"
+                              ? "number"
+                              : "text"
                           }
-                          handleCodeParamChange(key, next);
-                        }}
-                        helperText={
-                          configParamsDesc?.[key] || schema?.description || ""
-                        }
-                        placeholder={
-                          schema?.nullable
-                            ? "optional"
-                            : String(schema?.default ?? "")
-                        }
-                        sx={{ mb: 1 }}
-                      />
-                    ))}
-                  </Box>
-                )}
+                          label={key}
+                          value={codeParams[key] ?? ""}
+                          onChange={(e) => {
+                            // BE's `type: number` schema rejects strings; coerce here.
+                            const raw = e.target.value;
+                            const isNumeric =
+                              schema?.type === "integer" ||
+                              schema?.type === "number";
+                            let next = raw;
+                            if (isNumeric && raw !== "") {
+                              const n = Number(raw);
+                              if (!Number.isNaN(n)) next = n;
+                            }
+                            handleCodeParamChange(key, next);
+                          }}
+                          helperText={
+                            configParamsDesc?.[key] || schema?.description || ""
+                          }
+                          placeholder={
+                            schema?.nullable
+                              ? "optional"
+                              : String(schema?.default ?? "")
+                          }
+                          sx={{ mb: 1 }}
+                        />
+                      ))}
+                    </Box>
+                  )}
               </Box>
             </Box>
           }
@@ -1865,12 +1889,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             settings only. */}
         {source !== "composite" &&
           !sourceReady &&
-          !hasDataInjection &&
           !testError &&
           !testPassed && (
             <Typography
               variant="caption"
-              color="text.disabled"
+              color="text.secondary"
               sx={{ mr: "auto", fontSize: "11px" }}
             >
               Map all variables to enable testing & adding
@@ -2028,14 +2051,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 : `Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) before ${actionLabel}.`;
           }
 
-          // Non-composite flows additionally require the full source config
-          // (name / output type / etc.) to be valid.
-          if (
-            !addDisabled &&
-            source !== "composite" &&
-            !sourceReady &&
-            !hasDataInjection
-          ) {
+          if (!addDisabled && source !== "composite" && !sourceReady) {
             addDisabled = true;
             addDisabledReason = `Map all variables before ${actionLabel}.`;
           }

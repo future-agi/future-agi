@@ -560,7 +560,7 @@ const FallbacksSection = () => {
               </Typography>
               <Typography
                 variant="body2"
-                color="text.disabled"
+                color="text.secondary"
                 textAlign="center"
                 maxWidth={460}
               >

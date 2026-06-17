@@ -23,6 +23,7 @@ from agent_playground.models.node_template import NodeTemplate
 from agent_playground.utils.version_content import update_version_content
 from model_hub.models.choices import DatasetSourceChoices
 from model_hub.models.develop_dataset import Dataset
+from tracer.models.observation_span import ObservationSpan
 from tracer.models.trace import Trace
 
 logger = structlog.get_logger(__name__)
@@ -58,7 +59,12 @@ def _chspan_to_legacy_dict(span) -> dict[str, Any]:
     span_attributes.update(span.attrs_number or {})
     span_attributes.update(span.attrs_bool or {})
     for k, v in extra.items():
-        if k not in ("model_parameters", "input_images", "eval_input", "eval_attributes"):
+        if k not in (
+            "model_parameters",
+            "input_images",
+            "eval_input",
+            "eval_attributes",
+        ):
             span_attributes[k] = v
 
     def _decode_json(s):
@@ -82,6 +88,35 @@ def _chspan_to_legacy_dict(span) -> dict[str, Any]:
     }
 
 
+def _legacy_spans_from_postgres(trace_id: str) -> list[dict[str, Any]]:
+    return list(
+        ObservationSpan.no_workspace_objects.filter(trace_id=trace_id, deleted=False)
+        .order_by("start_time")
+        .values(
+            "id",
+            "name",
+            "observation_type",
+            "parent_span_id",
+            "input",
+            "output",
+            "model",
+            "model_parameters",
+            "span_attributes",
+        )
+    )
+
+
+def _legacy_spans_from_clickhouse(trace_id: str) -> list[dict[str, Any]]:
+    from tracer.services.clickhouse.v2 import get_reader
+
+    with get_reader() as reader:
+        # list_by_trace orders by start_time, id — matching the prior
+        # `.order_by("start_time")` (ties on start_time previously broke
+        # by row order; here they break by id, which is stable).
+        chspans = reader.list_by_trace(trace_id)
+    return [_chspan_to_legacy_dict(s) for s in chspans]
+
+
 def convert_trace_to_graph(
     trace: Trace,
     user,
@@ -96,16 +131,19 @@ def convert_trace_to_graph(
 
     Returns the created (Graph, GraphVersion) tuple.
     """
-    from tracer.services.clickhouse.v2 import get_reader
-
     trace_id = str(trace.id)
 
-    with get_reader() as reader:
-        # list_by_trace orders by start_time, id — matching the prior
-        # `.order_by("start_time")` (ties on start_time previously broke
-        # by row order; here they break by id, which is stable).
-        chspans = reader.list_by_trace(trace_id)
-    spans = [_chspan_to_legacy_dict(s) for s in chspans]
+    try:
+        spans = _legacy_spans_from_clickhouse(trace_id)
+    except Exception:
+        logger.warning(
+            "trace_to_graph_clickhouse_failed, falling back to postgres",
+            trace_id=trace_id,
+            exc_info=True,
+        )
+        spans = []
+    if not spans:
+        spans = _legacy_spans_from_postgres(trace_id)
 
     llm_spans = [s for s in spans if s["observation_type"] == "llm"]
     if not llm_spans:
@@ -129,7 +167,7 @@ def convert_trace_to_graph(
     except NodeTemplate.DoesNotExist:
         raise ValidationError(
             "llm_prompt node template not found. Run seed_node_templates."
-        )
+        ) from None
 
     # Generate node names — use parent agent name when LLM span name is generic
     raw_names = []

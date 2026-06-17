@@ -165,7 +165,7 @@ const DataMenuList = ({
       trackEvent(Events.addRowToDatasetSuccessful, {
         [PropertyName.method]: "new dataset",
       });
-      onCreateDatasetRows();
+      onCreateDatasetRows(watchedDatasetName);
     } else {
       setTargetDatasetId(selectedDatasetId);
       const selectedDataset = datasetList?.find(
@@ -180,7 +180,7 @@ const DataMenuList = ({
           select_all: selectAll,
         },
       });
-      onMergeRows();
+      onMergeRows(selectedDatasetId);
     }
     handleClose();
   };

@@ -253,9 +253,7 @@ class TestAnnotationsLabelsViewSet:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_list_annotation_labels_rejects_invalid_boolean_query(
-        self, auth_client
-    ):
+    def test_list_annotation_labels_rejects_invalid_boolean_query(self, auth_client):
         """Boolean query params should be validated instead of silently coerced."""
         response = auth_client.get(
             "/model-hub/annotations-labels/?include_usage_count=maybe"
@@ -954,8 +952,9 @@ class TestUserViewSet:
         """Test listing users in an organization."""
         response = auth_client.get(f"/model-hub/organizations/{organization.id}/users/")
         assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert len(data) >= 1
+        rows = response.json()["results"]
+        assert [row["email"] for row in rows] == [user.email]
+        assert rows[0]["id"] == str(user.id)
 
     def test_list_users_filter_active(self, auth_client, organization, user):
         """Test filtering users by is_active=true."""
@@ -963,27 +962,105 @@ class TestUserViewSet:
             f"/model-hub/organizations/{organization.id}/users/?is_active=true"
         )
         assert response.status_code == status.HTTP_200_OK
+        rows = response.json()["results"]
+        assert [row["id"] for row in rows] == [str(user.id)]
 
     def test_list_users_filter_inactive(self, auth_client, organization, user):
         """Test filtering users by is_active=false."""
         response = auth_client.get(
             f"/model-hub/organizations/{organization.id}/users/?is_active=false"
         )
-        # Can return 200 or 500 depending on implementation
-        assert response.status_code in [
-            status.HTTP_200_OK,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ]
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["results"] == []
+
+    def test_list_users_search_matches_name_or_email(
+        self, auth_client, organization, user
+    ):
+        response = auth_client.get(
+            f"/model-hub/organizations/{organization.id}/users/?search={user.email}"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert [row["id"] for row in response.json()["results"]] == [str(user.id)]
+
+    def test_list_users_search_no_match_returns_empty_page(
+        self, auth_client, organization
+    ):
+        response = auth_client.get(
+            f"/model-hub/organizations/{organization.id}/users/?search=no-such-user"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["results"] == []
 
     def test_list_users_nonexistent_organization(self, auth_client):
         """Test listing users for non-existent organization."""
         fake_org_id = uuid.uuid4()
         response = auth_client.get(f"/model-hub/organizations/{fake_org_id}/users/")
-        # Can return 404 or 500 depending on error handling
-        assert response.status_code in [
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ]
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_list_users_rejects_cross_organization_path(
+        self, auth_client, other_organization, other_org_user
+    ):
+        from accounts.models.organization_membership import OrganizationMembership
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        OrganizationMembership.no_workspace_objects.create(
+            user=other_org_user,
+            organization=other_organization,
+            role=OrganizationRoles.MEMBER,
+            level=Level.MEMBER,
+            is_active=True,
+        )
+
+        response = auth_client.get(
+            f"/model-hub/organizations/{other_organization.id}/users/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert User.objects.filter(id=other_org_user.id).exists()
+
+    def test_retrieve_user_scoped_to_requested_organization(
+        self, auth_client, organization, user
+    ):
+        response = auth_client.get(
+            f"/model-hub/organizations/{organization.id}/users/{user.id}/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["email"] == user.email
+
+    @pytest.mark.parametrize(
+        "method,payload",
+        [
+            ("post", {"email": "new-org-route@example.com", "name": "New Route User"}),
+            ("put", {"email": "changed@example.com", "name": "Changed Name"}),
+            ("patch", {"name": "Changed Name"}),
+            ("delete", None),
+        ],
+    )
+    def test_authenticated_user_mutations_are_disabled(
+        self, auth_client, organization, user, method, payload
+    ):
+        path = f"/model-hub/organizations/{organization.id}/users/"
+        if method != "post":
+            path = f"{path}{user.id}/"
+        before_count = User.objects.count()
+
+        request = getattr(auth_client, method)
+        response = (
+            request(path, payload, format="json")
+            if payload is not None
+            else request(path)
+        )
+
+        assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
+        user.refresh_from_db()
+        assert user.email == "test@example.com"
+        assert user.name == "Test User"
+        assert user.is_active is True
+        assert User.objects.count() == before_count
 
     def test_list_users_includes_new_rbac_org_member_without_legacy_user_org(
         self, auth_client, organization
@@ -1015,7 +1092,7 @@ class TestUserViewSet:
         assert str(new_user.id) in {str(row["id"]) for row in rows}
 
     def test_workspace_member_queryset_includes_new_rbac_user_without_manual_fk(
-        self, organization, workspace
+        self, organization, workspace, user
     ):
         """Queue settings uses workspace membership, not the legacy User.organization FK."""
         from accounts.models.organization_membership import OrganizationMembership
@@ -1048,14 +1125,14 @@ class TestUserViewSet:
 
         view = UserViewSet()
         view.kwargs = {"organization_id": str(organization.id)}
-        view.request = SimpleNamespace(query_params={}, workspace=workspace)
+        view.request = SimpleNamespace(query_params={}, workspace=workspace, user=user)
 
         assert str(new_user.id) in {
             str(user_id) for user_id in view.get_queryset().values_list("id", flat=True)
         }
 
     def test_workspace_member_queryset_includes_org_admin_auto_access_user(
-        self, organization, workspace
+        self, organization, workspace, user
     ):
         """Org Admin+ users appear in queue settings even without explicit WS rows."""
         from accounts.models.organization_membership import OrganizationMembership
@@ -1079,7 +1156,7 @@ class TestUserViewSet:
 
         view = UserViewSet()
         view.kwargs = {"organization_id": str(organization.id)}
-        view.request = SimpleNamespace(query_params={}, workspace=workspace)
+        view.request = SimpleNamespace(query_params={}, workspace=workspace, user=user)
 
         assert str(admin_user.id) in {
             str(user_id) for user_id in view.get_queryset().values_list("id", flat=True)

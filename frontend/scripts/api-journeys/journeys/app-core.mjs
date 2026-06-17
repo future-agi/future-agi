@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
+import { createHmac, randomUUID } from "node:crypto";
+import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import {
@@ -16,6 +18,22 @@ import {
 } from "../lib/api-client.mjs";
 
 const execFileAsync = promisify(execFile);
+
+let appCoreRequestCounter = 0;
+
+function nextAppCoreClientIp() {
+  appCoreRequestCounter += 1;
+  const third = 80 + (appCoreRequestCounter % 40);
+  const fourth = 20 + (appCoreRequestCounter % 200);
+  return `198.${third}.13.${fourth}`;
+}
+
+function isPositiveIntegerId(value) {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0;
+  }
+  return /^[1-9]\d*$/.test(String(value || ""));
+}
 
 export const appCoreJourneys = [
   {
@@ -52,7 +70,9 @@ export const appCoreJourneys = [
           query: { page_number: 0, page_size: 10 },
         }),
       );
-      assert(projects.length > 0, "Observe project list returned no projects.");
+      if (!projects.length) {
+        skip("No observe project exists for this account/workspace.");
+      }
 
       const personas = await client.get(apiPath("/simulate/api/personas/"), {
         query: { limit: 5 },
@@ -205,7 +225,8 @@ export const appCoreJourneys = [
         "Authenticated context did not resolve a workspace id.",
       );
 
-      const list = await client.get(apiPath("/tracer/project/"), {
+      const marker = runId.replace(/[^a-z0-9-]/gi, "").slice(0, 20);
+      let list = await client.get(apiPath("/tracer/project/"), {
         query: {
           project_type: "experiment",
           page_number: 0,
@@ -214,7 +235,55 @@ export const appCoreJourneys = [
           sort_direction: "desc",
         },
       });
-      const projects = Array.isArray(list?.projects) ? list.projects : [];
+      let projects = Array.isArray(list?.projects) ? list.projects : [];
+      if (!projects.length) {
+        const seedProjectName = `api journey prototype seed ${marker}`;
+        const createdSeedProject = await client.post(
+          apiPath("/tracer/project/"),
+          {
+            name: seedProjectName,
+            model_type: "GenerativeLLM",
+            trace_type: "experiment",
+            metadata: { api_journey: "PRT-API-001-seed", run_id: runId },
+          },
+        );
+        const seedProjectId = createdSeedProject.project_id;
+        assert(
+          isUuid(seedProjectId),
+          "Prototype project seed create did not return project_id.",
+        );
+        const seedRun = await createProjectVersionJourneyRun({
+          client,
+          projectId: seedProjectId,
+          name: `api journey prototype seed run ${marker}`,
+          metadata: { seed: true, run_id: runId },
+        });
+        await seedProjectVersionJourneyTraceAndSpan({
+          client,
+          projectId: seedProjectId,
+          projectVersionId: seedRun.id,
+          marker,
+          label: "seed",
+          latencyMs: 123,
+          cost: 0.0042,
+        });
+        cleanup.defer("hard delete disposable prototype seed project", () =>
+          hardDeleteProjectVersionJourneyArtifacts({
+            projectId: seedProjectId,
+            projectName: seedProjectName,
+          }),
+        );
+        list = await client.get(apiPath("/tracer/project/"), {
+          query: {
+            project_type: "experiment",
+            page_number: 0,
+            page_size: 10,
+            sort_by: "created_at",
+            sort_direction: "desc",
+          },
+        });
+        projects = Array.isArray(list?.projects) ? list.projects : [];
+      }
       assert(projects.length > 0, "Prototype project list returned no rows.");
       assert(
         Number(list.total_count || 0) >= projects.length,
@@ -356,7 +425,6 @@ export const appCoreJourneys = [
         "Invalid prototype SDK project_type unexpectedly succeeded.",
       );
 
-      const marker = runId.replace(/[^a-z0-9-]/gi, "").slice(0, 20);
       const projectName = `api journey prototype ${marker}`;
       const updatedProjectName = `${projectName} updated`;
       const created = await client.post(apiPath("/tracer/project/"), {
@@ -1579,14 +1647,24 @@ export const appCoreJourneys = [
         "Accepted invite did not activate workspace membership.",
       );
 
-      const roleUpdated = await client.post(
-        apiPath("/accounts/organization/members/role/"),
-        {
-          user_id: tokenInfo.user_id,
-          org_level: 3,
-          workspace_access: [{ workspace_id: workspaceId, level: 1 }],
-        },
-      );
+      let roleUpdated;
+      try {
+        roleUpdated = await client.post(
+          apiPath("/accounts/organization/members/role/"),
+          {
+            user_id: tokenInfo.user_id,
+            org_level: 3,
+            workspace_access: [{ workspace_id: workspaceId, level: 1 }],
+          },
+        );
+      } catch (error) {
+        if (isEntitlementDeniedError(error, "custom_roles")) {
+          skip(
+            "Custom role updates are entitlement-blocked in this workspace.",
+          );
+        }
+        throw error;
+      }
       assert(
         roleUpdated?.changes?.org_level?.new === 3,
         "Org member role update did not report the new org level.",
@@ -2319,6 +2397,1924 @@ export const appCoreJourneys = [
     },
   },
   {
+    id: "CORE-API-040",
+    title:
+      "Disposable TOTP and recovery-code lifecycle rejects orphan recovery codes",
+    tags: [
+      "core",
+      "accounts",
+      "settings",
+      "security",
+      "2fa",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({
+      client,
+      user,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      apiBase,
+      evidence,
+    }) {
+      requireMutations();
+      if (!isOrgOwner(user)) {
+        skip(
+          "Current user is not an org owner; disposable 2FA account setup is unsafe.",
+        );
+      }
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const marker = runId.replace(/[^a-z0-9-]/gi, "").slice(0, 20);
+      const email = `api.journey.2fa.${marker}@futureagi.local`.toLowerCase();
+      const password = `ApiJourney${marker.slice(0, 8)}123!`;
+
+      cleanup.defer("delete disposable 2FA user artifacts", () =>
+        deleteDisposableRbacUserArtifacts(email),
+      );
+
+      const invited = await client.post(
+        apiPath("/accounts/organization/invite/"),
+        {
+          emails: [email],
+          org_level: 3,
+          workspace_access: [{ workspace_id: workspaceId, level: 3 }],
+        },
+      );
+      assert(
+        asArray(invited?.invited).includes(email),
+        "Disposable 2FA invite did not report the email as invited.",
+      );
+
+      const tokenInfo = await resolveInviteAcceptanceToken(email);
+      assert(
+        isUuid(tokenInfo.user_id),
+        "Disposable 2FA invite token resolver did not return a user id.",
+      );
+      const acceptPath = apiPath(
+        "/accounts/accept-invitation/{uidb64}/{token}/",
+        {
+          uidb64: tokenInfo.uidb64,
+          token: tokenInfo.token,
+        },
+      );
+      const accepted = await unauthenticatedApiRequest(
+        apiBase,
+        "POST",
+        acceptPath,
+        {
+          new_password: password,
+          repeat_password: password,
+        },
+      );
+      assert(
+        typeof accepted?.access === "string" && accepted.access.length > 20,
+        "Disposable 2FA invite accept did not return an access token.",
+      );
+
+      const twoFactorClient = createApiClient({
+        apiBase,
+        accessToken: accepted.access,
+        organizationId,
+        workspaceId,
+      });
+      const disposableUserInfo = await twoFactorClient.get(
+        apiPath("/accounts/user-info/"),
+      );
+      const disposableUserId =
+        currentUserId(disposableUserInfo) || tokenInfo.user_id;
+      assert(
+        disposableUserId === tokenInfo.user_id,
+        "Disposable 2FA user-info did not match the accepted invite user.",
+      );
+
+      let audit = await loadTwoFactorLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.active_totp_count === 0 && audit.active_recovery_code_count === 0,
+        "Disposable 2FA user started with existing auth-factor rows.",
+      );
+
+      const initialStatus = await twoFactorClient.get(
+        apiPath("/accounts/2fa/status/"),
+        { unwrap: false },
+      );
+      assert(
+        initialStatus?.two_factor_enabled === false,
+        "Initial disposable 2FA status was not disabled.",
+      );
+      assert(
+        initialStatus?.methods?.totp?.enabled === false,
+        "Initial disposable TOTP status was not disabled.",
+      );
+      assert(
+        initialStatus?.recovery_codes_remaining === null,
+        "Initial disposable 2FA status should not expose recovery codes.",
+      );
+
+      const orphanRegenerate = await expectApiError(
+        () =>
+          twoFactorClient.post(
+            apiPath("/accounts/2fa/recovery-codes/regenerate/"),
+            { password },
+          ),
+        [400],
+        "Recovery-code regeneration unexpectedly succeeded before any 2FA method existed.",
+      );
+      assert(
+        errorText(orphanRegenerate)
+          .toLowerCase()
+          .includes("two-factor authentication method"),
+        "No-2FA recovery-code regeneration error did not explain the blocked state.",
+      );
+      audit = await loadTwoFactorLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.active_recovery_code_count === 0,
+        "No-2FA recovery-code regeneration still created recovery codes.",
+      );
+
+      const setupUnknown = await expectApiError(
+        () =>
+          twoFactorClient.post(apiPath("/accounts/2fa/totp/setup/"), {
+            code: "123456",
+          }),
+        [400],
+        "TOTP setup with an unexpected request body succeeded.",
+      );
+      assert(
+        errorText(setupUnknown).toLowerCase().includes("unknown field"),
+        "TOTP setup unknown-field error did not include field validation.",
+      );
+
+      const setup = await twoFactorClient.post(
+        apiPath("/accounts/2fa/totp/setup/"),
+      );
+      assert(
+        String(setup?.qr_code || "").startsWith("data:image/png;base64,"),
+        "TOTP setup did not return a QR code data URI.",
+      );
+      assert(
+        /^[A-Z2-7]{32}$/.test(String(setup?.secret || "")),
+        "TOTP setup did not return a base32 secret.",
+      );
+      assert(
+        String(setup?.provisioning_uri || "").startsWith("otpauth://totp/"),
+        "TOTP setup did not return an otpauth provisioning URI.",
+      );
+
+      audit = await loadTwoFactorLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.active_totp_count === 1 && audit.unconfirmed_totp_count === 1,
+        "TOTP setup did not create exactly one unconfirmed device.",
+      );
+      assert(
+        audit.active_recovery_code_count === 0,
+        "TOTP setup created recovery codes before confirmation.",
+      );
+
+      const invalidConfirm = await expectApiError(
+        () =>
+          twoFactorClient.post(apiPath("/accounts/2fa/totp/confirm/"), {
+            code: "000000",
+          }),
+        [400],
+        "Invalid TOTP confirmation unexpectedly succeeded.",
+      );
+
+      const confirm = await twoFactorClient.post(
+        apiPath("/accounts/2fa/totp/confirm/"),
+        {
+          code: generateTotpCode(setup.secret),
+        },
+      );
+      assert(confirm?.success === true, "TOTP confirmation did not succeed.");
+      assert(
+        Array.isArray(confirm?.recovery_codes) &&
+          confirm.recovery_codes.length === 10,
+        "TOTP confirmation did not return ten recovery codes.",
+      );
+      assert(
+        new Set(confirm.recovery_codes).size === 10 &&
+          confirm.recovery_codes.every((code) =>
+            /^[a-z2-9]{4}-[a-z2-9]{4}$/.test(String(code)),
+          ),
+        "TOTP confirmation returned malformed or duplicate recovery codes.",
+      );
+
+      const confirmedStatus = await twoFactorClient.get(
+        apiPath("/accounts/2fa/status/"),
+        { unwrap: false },
+      );
+      assert(
+        confirmedStatus?.two_factor_enabled === true &&
+          confirmedStatus?.methods?.totp?.enabled === true,
+        "Confirmed TOTP status did not report enabled 2FA.",
+      );
+      assert(
+        confirmedStatus?.recovery_codes_remaining === 10,
+        "Confirmed TOTP status did not report ten remaining recovery codes.",
+      );
+      const recoveryCount = await twoFactorClient.get(
+        apiPath("/accounts/2fa/recovery-codes/"),
+        { unwrap: false },
+      );
+      assert(
+        recoveryCount?.remaining === 10,
+        "Recovery-code count endpoint did not report ten remaining codes.",
+      );
+
+      const regenerateUnknown = await expectApiError(
+        () =>
+          twoFactorClient.post(
+            apiPath("/accounts/2fa/recovery-codes/regenerate/"),
+            {
+              code: generateTotpCode(setup.secret),
+              recoveryCodes: true,
+            },
+          ),
+        [400],
+        "Recovery-code regeneration accepted an unknown camelCase field.",
+      );
+      assert(
+        errorText(regenerateUnknown).toLowerCase().includes("unknown field"),
+        "Recovery-code regeneration unknown-field error did not include field validation.",
+      );
+      audit = await loadTwoFactorLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.unused_recovery_code_count === 10,
+        "Unknown-field recovery-code regeneration rotated or consumed codes.",
+      );
+
+      const regenerated = await twoFactorClient.post(
+        apiPath("/accounts/2fa/recovery-codes/regenerate/"),
+        {
+          code: generateTotpCode(setup.secret),
+        },
+      );
+      assert(
+        Array.isArray(regenerated?.recovery_codes) &&
+          regenerated.recovery_codes.length === 10,
+        "Recovery-code regeneration did not return ten new codes.",
+      );
+
+      const disableUnknown = await expectApiError(
+        () =>
+          twoFactorClient.delete(apiPath("/accounts/2fa/totp/"), {
+            body: {
+              code: regenerated.recovery_codes[0],
+              totpCode: regenerated.recovery_codes[0],
+            },
+          }),
+        [400],
+        "TOTP disable accepted an unknown camelCase field.",
+      );
+      assert(
+        errorText(disableUnknown).toLowerCase().includes("unknown field"),
+        "TOTP disable unknown-field error did not include field validation.",
+      );
+      audit = await loadTwoFactorLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.confirmed_totp_count === 1 &&
+          audit.unused_recovery_code_count === 10,
+        "Unknown-field TOTP disable consumed recovery codes or removed the device.",
+      );
+
+      const disabled = await twoFactorClient.delete(
+        apiPath("/accounts/2fa/totp/"),
+        {
+          body: { code: regenerated.recovery_codes[0] },
+        },
+      );
+      assert(
+        disabled?.success === true,
+        "TOTP disable did not return success.",
+      );
+
+      const disabledStatus = await twoFactorClient.get(
+        apiPath("/accounts/2fa/status/"),
+        { unwrap: false },
+      );
+      assert(
+        disabledStatus?.two_factor_enabled === false &&
+          disabledStatus?.methods?.totp?.enabled === false,
+        "TOTP disable did not clear the 2FA status.",
+      );
+      assert(
+        disabledStatus?.recovery_codes_remaining === null,
+        "TOTP disable left recovery-code status visible for a no-2FA user.",
+      );
+      audit = await loadTwoFactorLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.active_totp_count === 0 && audit.active_recovery_code_count === 0,
+        "TOTP disable did not clean up TOTP and recovery-code rows.",
+      );
+
+      await deleteDisposableRbacUserArtifacts(email);
+      const cleanupAudit = await loadLegacyTeamMemberAudit({
+        email,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        cleanupAudit.user_count === 0,
+        "Disposable 2FA user row remained after cleanup.",
+      );
+
+      evidence.push({
+        email,
+        user_id: disposableUserId,
+        no_2fa_regenerate_status: orphanRegenerate.status,
+        setup_unknown_status: setupUnknown.status,
+        invalid_confirm_status: invalidConfirm.status,
+        recovery_count_status: recoveryCount.remaining,
+        regenerate_unknown_status: regenerateUnknown.status,
+        disable_unknown_status: disableUnknown.status,
+        recovery_codes_returned: confirm.recovery_codes.length,
+        regenerated_codes_returned: regenerated.recovery_codes.length,
+        final_totp_count: audit.active_totp_count,
+        final_recovery_code_count: audit.active_recovery_code_count,
+        cleanup_user_count: cleanupAudit.user_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-041",
+    title:
+      "Disposable admin organization 2FA policy lifecycle restores enforcement state",
+    tags: [
+      "core",
+      "accounts",
+      "settings",
+      "security",
+      "2fa",
+      "organization",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({
+      client,
+      user,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      apiBase,
+      evidence,
+    }) {
+      requireMutations();
+      if (!isOrgOwner(user)) {
+        skip(
+          "Current user is not an org owner; disposable org 2FA policy admin setup is unsafe.",
+        );
+      }
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const originalPolicy = await loadOrganizationTwoFactorPolicyDbAudit({
+        organizationId,
+      });
+      assert(
+        originalPolicy?.organization_id === organizationId,
+        "Organization 2FA policy DB audit did not resolve the active organization.",
+      );
+      cleanup.defer("restore organization 2FA policy", () =>
+        restoreOrganizationTwoFactorPolicyDbState(originalPolicy),
+      );
+
+      await restoreOrganizationTwoFactorPolicyDbState({
+        organization_id: organizationId,
+        require_2fa: false,
+        require_2fa_grace_period_days: 7,
+        require_2fa_enforced_at: null,
+      });
+      let policyAudit = await loadOrganizationTwoFactorPolicyDbAudit({
+        organizationId,
+      });
+      assert(
+        policyAudit.require_2fa === false &&
+          policyAudit.require_2fa_grace_period_days === 7 &&
+          policyAudit.require_2fa_enforced_at === null,
+        "Organization 2FA policy baseline did not reset before the lifecycle run.",
+      );
+
+      const marker = runId.replace(/[^a-z0-9-]/gi, "").slice(0, 20);
+      const email =
+        `api.journey.org-2fa.${marker}@futureagi.local`.toLowerCase();
+      const password = `ApiJourney${marker.slice(0, 8)}123!`;
+
+      cleanup.defer("delete disposable org 2FA policy admin", () =>
+        deleteDisposableRbacUserArtifacts(email),
+      );
+
+      const invited = await client.post(
+        apiPath("/accounts/organization/invite/"),
+        {
+          emails: [email],
+          org_level: 8,
+          workspace_access: [{ workspace_id: workspaceId, level: 8 }],
+        },
+      );
+      assert(
+        asArray(invited?.invited).includes(email),
+        "Disposable org 2FA policy invite did not report the email as invited.",
+      );
+
+      const tokenInfo = await resolveInviteAcceptanceToken(email);
+      assert(
+        isUuid(tokenInfo.user_id),
+        "Disposable org 2FA policy invite token resolver did not return a user id.",
+      );
+      const accepted = await unauthenticatedApiRequest(
+        apiBase,
+        "POST",
+        apiPath("/accounts/accept-invitation/{uidb64}/{token}/", {
+          uidb64: tokenInfo.uidb64,
+          token: tokenInfo.token,
+        }),
+        {
+          new_password: password,
+          repeat_password: password,
+        },
+      );
+      assert(
+        typeof accepted?.access === "string" && accepted.access.length > 20,
+        "Disposable org 2FA policy invite accept did not return an access token.",
+      );
+
+      const adminClient = createApiClient({
+        apiBase,
+        accessToken: accepted.access,
+        organizationId,
+        workspaceId,
+      });
+      const adminUserInfo = await adminClient.get(
+        apiPath("/accounts/user-info/"),
+      );
+      const adminUserId = currentUserId(adminUserInfo) || tokenInfo.user_id;
+      assert(
+        adminUserId === tokenInfo.user_id,
+        "Disposable org 2FA policy admin user-info did not match the accepted invite user.",
+      );
+
+      const initialPolicy = await adminClient.get(
+        apiPath("/accounts/organization/2fa-policy/"),
+        { unwrap: false },
+      );
+      assert(
+        initialPolicy?.require_2fa === false &&
+          initialPolicy?.require_2fa_grace_period_days === 7 &&
+          initialPolicy?.require_2fa_enforced_at === null,
+        "Initial organization 2FA policy API response did not match the reset baseline.",
+      );
+
+      const unknownPolicy = await expectApiError(
+        () =>
+          adminClient.put(apiPath("/accounts/organization/2fa-policy/"), {
+            require2fa: true,
+            gracePeriodDays: 14,
+          }),
+        [400],
+        "Organization 2FA policy accepted unknown camelCase request fields.",
+      );
+      assert(
+        errorText(unknownPolicy).toLowerCase().includes("unknown field"),
+        "Organization 2FA policy unknown-field error did not include field validation.",
+      );
+      policyAudit = await loadOrganizationTwoFactorPolicyDbAudit({
+        organizationId,
+      });
+      assert(
+        policyAudit.require_2fa === false &&
+          policyAudit.require_2fa_grace_period_days === 7 &&
+          policyAudit.require_2fa_enforced_at === null,
+        "Unknown-field organization 2FA policy update changed DB state.",
+      );
+
+      const outOfRangeGrace = await expectApiError(
+        () =>
+          adminClient.put(apiPath("/accounts/organization/2fa-policy/"), {
+            require_2fa: false,
+            require_2fa_grace_period_days: 31,
+          }),
+        [400],
+        "Organization 2FA policy accepted a grace period above the API contract maximum.",
+      );
+      assert(
+        errorText(outOfRangeGrace).includes("30") ||
+          errorText(outOfRangeGrace)
+            .toLowerCase()
+            .includes("grace_period_days"),
+        "Out-of-range organization 2FA policy error did not mention the grace-period bound.",
+      );
+
+      const enableWithoutActor2fa = await expectApiError(
+        () =>
+          adminClient.put(apiPath("/accounts/organization/2fa-policy/"), {
+            require_2fa: true,
+            require_2fa_grace_period_days: 14,
+          }),
+        [400],
+        "Organization 2FA policy enabled before the actor had 2FA.",
+      );
+      assert(
+        errorText(enableWithoutActor2fa)
+          .toLowerCase()
+          .includes("enable two-factor authentication"),
+        "No-actor-2FA policy enable error did not explain the prerequisite.",
+      );
+      policyAudit = await loadOrganizationTwoFactorPolicyDbAudit({
+        organizationId,
+      });
+      assert(
+        policyAudit.require_2fa === false &&
+          policyAudit.require_2fa_enforced_at === null,
+        "Failed no-actor-2FA policy enable changed DB state.",
+      );
+
+      const setup = await adminClient.post(
+        apiPath("/accounts/2fa/totp/setup/"),
+      );
+      assert(
+        /^[A-Z2-7]{32}$/.test(String(setup?.secret || "")),
+        "Disposable org 2FA policy admin TOTP setup did not return a base32 secret.",
+      );
+      const confirm = await adminClient.post(
+        apiPath("/accounts/2fa/totp/confirm/"),
+        {
+          code: generateTotpCode(setup.secret),
+        },
+      );
+      assert(
+        confirm?.success === true,
+        "Disposable org 2FA policy admin TOTP confirmation did not succeed.",
+      );
+
+      const enabledPolicy = await adminClient.put(
+        apiPath("/accounts/organization/2fa-policy/"),
+        {
+          require_2fa: true,
+          require_2fa_grace_period_days: 14,
+        },
+      );
+      assert(
+        enabledPolicy?.require_2fa === true &&
+          enabledPolicy?.require_2fa_grace_period_days === 14 &&
+          typeof enabledPolicy?.require_2fa_enforced_at === "string",
+        "Organization 2FA policy enable did not return enabled state and enforcement timestamp.",
+      );
+      policyAudit = await loadOrganizationTwoFactorPolicyDbAudit({
+        organizationId,
+      });
+      assert(
+        policyAudit.require_2fa === true &&
+          policyAudit.require_2fa_grace_period_days === 14 &&
+          policyAudit.require_2fa_enforced_at !== null,
+        "Organization 2FA policy enable did not persist DB state.",
+      );
+
+      const updatedPolicy = await adminClient.put(
+        apiPath("/accounts/organization/2fa-policy/"),
+        {
+          require_2fa: true,
+          require_2fa_grace_period_days: 9,
+        },
+      );
+      assert(
+        updatedPolicy?.require_2fa === true &&
+          updatedPolicy?.require_2fa_grace_period_days === 9 &&
+          updatedPolicy?.require_2fa_enforced_at ===
+            enabledPolicy.require_2fa_enforced_at,
+        "Organization 2FA policy grace update changed the original enforcement timestamp.",
+      );
+
+      const compliantUserInfo = await adminClient.get(
+        apiPath("/accounts/user-info/"),
+      );
+      assert(
+        compliantUserInfo?.org_2fa_required !== true,
+        "2FA-compliant disposable admin was still marked as org_2fa_required.",
+      );
+
+      const disabledPolicy = await adminClient.put(
+        apiPath("/accounts/organization/2fa-policy/"),
+        {
+          require_2fa: false,
+          require_2fa_grace_period_days: 6,
+        },
+      );
+      assert(
+        disabledPolicy?.require_2fa === false &&
+          disabledPolicy?.require_2fa_grace_period_days === 6 &&
+          disabledPolicy?.require_2fa_enforced_at === null,
+        "Organization 2FA policy disable did not clear enforcement timestamp.",
+      );
+      policyAudit = await loadOrganizationTwoFactorPolicyDbAudit({
+        organizationId,
+      });
+      assert(
+        policyAudit.require_2fa === false &&
+          policyAudit.require_2fa_grace_period_days === 6 &&
+          policyAudit.require_2fa_enforced_at === null,
+        "Organization 2FA policy disable did not persist cleared DB state.",
+      );
+
+      await restoreOrganizationTwoFactorPolicyDbState(originalPolicy);
+      await deleteDisposableRbacUserArtifacts(email);
+      const cleanupAudit = await loadLegacyTeamMemberAudit({
+        email,
+        organizationId,
+        workspaceId,
+      });
+      const restoredPolicy = await loadOrganizationTwoFactorPolicyDbAudit({
+        organizationId,
+      });
+      assert(
+        cleanupAudit.user_count === 0,
+        "Disposable org 2FA policy admin row remained after cleanup.",
+      );
+      assert(
+        restoredPolicy.require_2fa === originalPolicy.require_2fa &&
+          restoredPolicy.require_2fa_grace_period_days ===
+            originalPolicy.require_2fa_grace_period_days &&
+          restoredPolicy.require_2fa_enforced_at ===
+            originalPolicy.require_2fa_enforced_at,
+        "Organization 2FA policy did not restore to the original DB state.",
+      );
+
+      evidence.push({
+        email,
+        user_id: adminUserId,
+        unknown_field_status: unknownPolicy.status,
+        out_of_range_status: outOfRangeGrace.status,
+        enable_without_actor_2fa_status: enableWithoutActor2fa.status,
+        enabled_grace_days: enabledPolicy.require_2fa_grace_period_days,
+        updated_grace_days: updatedPolicy.require_2fa_grace_period_days,
+        disabled_grace_days: disabledPolicy.require_2fa_grace_period_days,
+        disabled_enforced_at: disabledPolicy.require_2fa_enforced_at,
+        restored_require_2fa: restoredPolicy.require_2fa,
+        cleanup_user_count: cleanupAudit.user_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-042",
+    title:
+      "Disposable passkey list, rename, delete, and passwordless guards restore 2FA state",
+    tags: [
+      "core",
+      "accounts",
+      "settings",
+      "security",
+      "passkeys",
+      "2fa",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({
+      client,
+      user,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      apiBase,
+      evidence,
+    }) {
+      requireMutations();
+      if (!isOrgOwner(user)) {
+        skip(
+          "Current user is not an org owner; disposable passkey account setup is unsafe.",
+        );
+      }
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const marker = runId.replace(/[^a-z0-9-]/gi, "").slice(0, 20);
+      const email =
+        `api.journey.passkeys.${marker}@futureagi.local`.toLowerCase();
+      const password = `ApiJourney${marker.slice(0, 8)}123!`;
+
+      cleanup.defer("delete disposable passkey user artifacts", () =>
+        deleteDisposableRbacUserArtifacts(email),
+      );
+
+      const invited = await client.post(
+        apiPath("/accounts/organization/invite/"),
+        {
+          emails: [email],
+          org_level: 1,
+          workspace_access: [{ workspace_id: workspaceId, level: 1 }],
+        },
+      );
+      assert(
+        asArray(invited?.invited).includes(email),
+        "Disposable passkey invite did not report the email as invited.",
+      );
+
+      const tokenInfo = await resolveInviteAcceptanceToken(email);
+      assert(
+        isUuid(tokenInfo.user_id),
+        "Disposable passkey invite token resolver did not return a user id.",
+      );
+      const accepted = await unauthenticatedApiRequest(
+        apiBase,
+        "POST",
+        apiPath("/accounts/accept-invitation/{uidb64}/{token}/", {
+          uidb64: tokenInfo.uidb64,
+          token: tokenInfo.token,
+        }),
+        {
+          new_password: password,
+          repeat_password: password,
+        },
+      );
+      assert(
+        typeof accepted?.access === "string" && accepted.access.length > 20,
+        "Disposable passkey invite accept did not return an access token.",
+      );
+
+      const passkeyClient = createApiClient({
+        apiBase,
+        accessToken: accepted.access,
+        organizationId,
+        workspaceId,
+      });
+      const disposableUserInfo = await passkeyClient.get(
+        apiPath("/accounts/user-info/"),
+      );
+      const disposableUserId =
+        currentUserId(disposableUserInfo) || tokenInfo.user_id;
+      assert(
+        disposableUserId === tokenInfo.user_id,
+        "Disposable passkey user-info did not match the accepted invite user.",
+      );
+
+      let status = await passkeyClient.get(apiPath("/accounts/2fa/status/"), {
+        unwrap: false,
+      });
+      assert(
+        status?.two_factor_enabled === false &&
+          status?.methods?.passkey?.enabled === false &&
+          status?.methods?.passkey?.count === 0,
+        "Initial disposable passkey status was not disabled.",
+      );
+
+      const registerOptionsUnknown = await expectApiError(
+        () =>
+          passkeyClient.post(apiPath("/accounts/passkey/register/options/"), {
+            deviceName: "legacy camel alias",
+          }),
+        [400],
+        "Passkey registration options accepted an unknown request field.",
+      );
+      assert(
+        errorText(registerOptionsUnknown)
+          .toLowerCase()
+          .includes("unknown field"),
+        "Passkey registration options unknown-field error did not include field validation.",
+      );
+
+      let audit = await loadPasskeyLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.active_passkey_count === 0 &&
+          audit.active_recovery_code_count === 0,
+        "Initial passkey DB audit found active factors before setup.",
+      );
+
+      const passkeyOneId = randomUUID();
+      const passkeyTwoId = randomUUID();
+      const recoveryCodeId = randomUUID();
+      const credentialOne = Buffer.from(`core-api-042-${marker}-one`).toString(
+        "base64url",
+      );
+      const credentialTwo = Buffer.from(`core-api-042-${marker}-two`).toString(
+        "base64url",
+      );
+
+      await createPasskeyLifecycleDbFixture({
+        userId: disposableUserId,
+        passkeyId: passkeyOneId,
+        name: `Journey laptop ${marker}`,
+        credentialId: credentialOne,
+      });
+      await createPasskeyLifecycleDbFixture({
+        userId: disposableUserId,
+        passkeyId: passkeyTwoId,
+        name: `Journey phone ${marker}`,
+        credentialId: credentialTwo,
+      });
+      await createPasskeyRecoveryCodeDbFixture({
+        userId: disposableUserId,
+        recoveryCodeId,
+        codeHash: `api-journey-passkey-hash-${marker}`,
+      });
+
+      audit = await loadPasskeyLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.active_passkey_count === 2 &&
+          audit.active_recovery_code_count === 1,
+        "Passkey DB fixtures did not create two active credentials plus one recovery code.",
+      );
+
+      const registrationOptions = await passkeyClient.post(
+        apiPath("/accounts/passkey/register/options/"),
+      );
+      assert(
+        typeof registrationOptions?.challenge === "string" &&
+          registrationOptions.challenge.length > 10,
+        "Passkey registration options did not return a WebAuthn challenge.",
+      );
+      const excludedCredentialIds = asArray(
+        registrationOptions?.excludeCredentials,
+      ).map((credential) => credential?.id);
+      assert(
+        excludedCredentialIds.includes(credentialOne) &&
+          excludedCredentialIds.includes(credentialTwo),
+        "Passkey registration options did not exclude existing active credentials.",
+      );
+
+      const registerVerifyBogus = await expectApiError(
+        () =>
+          passkeyClient.post(apiPath("/accounts/passkey/register/verify/"), {
+            credential: {
+              id: "bogus-registration-id",
+              rawId: "bogus-registration-id",
+              type: "public-key",
+              response: {
+                clientDataJSON: "bogus",
+                attestationObject: "bogus",
+              },
+            },
+            name: `Journey bogus ${marker}`,
+          }),
+        [400],
+        "Bogus passkey registration verification unexpectedly succeeded.",
+      );
+      assert(
+        errorText(registerVerifyBogus)
+          .toLowerCase()
+          .includes("failed to register passkey"),
+        "Bogus passkey registration verification did not return the bounded error.",
+      );
+      audit = await loadPasskeyLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.active_passkey_count === 2 &&
+          audit.active_recovery_code_count === 1,
+        "Bogus passkey registration verification mutated DB factor state.",
+      );
+
+      const passkeys = asArray(
+        await passkeyClient.get(apiPath("/accounts/passkeys/")),
+      );
+      assert(
+        passkeys.length === 2,
+        "Passkey list did not return the two active disposable credentials.",
+      );
+      const passkeyNames = new Set(passkeys.map((passkey) => passkey.name));
+      assert(
+        passkeyNames.has(`Journey laptop ${marker}`) &&
+          passkeyNames.has(`Journey phone ${marker}`),
+        "Passkey list did not include both seeded credential names.",
+      );
+      for (const passkey of passkeys) {
+        assert(isUuid(passkey.id), "Passkey list returned a non-UUID id.");
+        assert(
+          !Object.prototype.hasOwnProperty.call(passkey, "credential_id") &&
+            !Object.prototype.hasOwnProperty.call(passkey, "public_key") &&
+            !Object.prototype.hasOwnProperty.call(passkey, "deleted"),
+          "Passkey list leaked credential internals or soft-delete fields.",
+        );
+      }
+
+      status = await passkeyClient.get(apiPath("/accounts/2fa/status/"), {
+        unwrap: false,
+      });
+      assert(
+        status?.two_factor_enabled === true &&
+          status?.methods?.passkey?.enabled === true &&
+          status?.methods?.passkey?.count === 2 &&
+          status?.recovery_codes_remaining === 1,
+        "Passkey-backed 2FA status did not report two passkeys and one recovery code.",
+      );
+
+      const staleDetailGet = await expectApiError(
+        () =>
+          passkeyClient.get(
+            apiPath("/accounts/passkeys/{id}/", { id: passkeyOneId }),
+          ),
+        [405],
+        "Stale passkey detail GET unexpectedly succeeded.",
+      );
+      assert(
+        errorText(staleDetailGet).toLowerCase().includes("method"),
+        "Stale passkey detail GET did not return a method-not-allowed response.",
+      );
+
+      const renameUnknown = await expectApiError(
+        () =>
+          passkeyClient.patch(
+            apiPath("/accounts/passkeys/{id}/", { id: passkeyOneId }),
+            {
+              name: `Journey laptop renamed ${marker}`,
+              displayName: "legacy camel alias",
+            },
+          ),
+        [400],
+        "Passkey rename accepted an unknown request field.",
+      );
+      assert(
+        errorText(renameUnknown).toLowerCase().includes("unknown field"),
+        "Passkey rename unknown-field error did not include field validation.",
+      );
+      audit = await loadPasskeyLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.active_passkey_names.includes(`Journey laptop ${marker}`),
+        "Unknown-field passkey rename changed the credential name.",
+      );
+
+      const renamed = await passkeyClient.patch(
+        apiPath("/accounts/passkeys/{id}/", { id: passkeyOneId }),
+        {
+          name: `Journey laptop renamed ${marker}`,
+        },
+      );
+      assert(
+        renamed?.id === passkeyOneId &&
+          renamed?.name === `Journey laptop renamed ${marker}`,
+        "Passkey rename did not return the updated id/name pair.",
+      );
+      audit = await loadPasskeyLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.active_passkey_names.includes(`Journey laptop renamed ${marker}`),
+        "Passkey rename did not persist the updated DB name.",
+      );
+
+      const authOptionsUnknown = await expectApiError(
+        () =>
+          passkeyClient.post(
+            apiPath("/accounts/passkey/authenticate/options/"),
+            { email },
+          ),
+        [400],
+        "Passwordless passkey options accepted an unknown request field.",
+      );
+      assert(
+        errorText(authOptionsUnknown).toLowerCase().includes("unknown field"),
+        "Passwordless passkey options unknown-field error did not include field validation.",
+      );
+
+      const authOptions = await passkeyClient.post(
+        apiPath("/accounts/passkey/authenticate/options/"),
+      );
+      assert(
+        typeof authOptions?.challenge === "string" &&
+          isUuid(authOptions?.session_id),
+        "Passwordless passkey options did not return challenge plus session_id.",
+      );
+
+      const authVerifyBogus = await expectApiError(
+        () =>
+          passkeyClient.post(
+            apiPath("/accounts/passkey/authenticate/verify/"),
+            {
+              session_id: authOptions.session_id,
+              credential: {
+                id: credentialOne,
+                rawId: credentialOne,
+                type: "public-key",
+                response: {
+                  authenticatorData: "bogus",
+                  clientDataJSON: "bogus",
+                  signature: "bogus",
+                },
+              },
+            },
+          ),
+        [400],
+        "Bogus passwordless passkey verification unexpectedly succeeded.",
+      );
+      assert(
+        errorText(authVerifyBogus).toLowerCase().includes("passkey"),
+        "Bogus passwordless passkey verification did not return a passkey error.",
+      );
+      audit = await loadPasskeyLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.max_sign_count === 0 && audit.last_used_count === 0,
+        "Bogus passwordless passkey verification updated usage metadata.",
+      );
+
+      const missingPasskeyDelete = await expectApiError(
+        () =>
+          passkeyClient.delete(
+            apiPath("/accounts/passkeys/{id}/", {
+              id: "00000000-0000-0000-0000-000000000000",
+            }),
+          ),
+        [404],
+        "Missing passkey delete unexpectedly succeeded.",
+      );
+      assert(
+        errorText(missingPasskeyDelete).toLowerCase().includes("not found"),
+        "Missing passkey delete did not return a not-found error.",
+      );
+
+      await passkeyClient.delete(
+        apiPath("/accounts/passkeys/{id}/", { id: passkeyOneId }),
+      );
+      audit = await loadPasskeyLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.active_passkey_count === 1 &&
+          audit.deleted_passkey_count === 1 &&
+          audit.active_recovery_code_count === 1,
+        "Deleting one of two passkeys did not preserve the remaining 2FA recovery state.",
+      );
+
+      const afterFirstDelete = asArray(
+        await passkeyClient.get(apiPath("/accounts/passkeys/")),
+      );
+      assert(
+        afterFirstDelete.length === 1 &&
+          afterFirstDelete[0]?.id === passkeyTwoId,
+        "Passkey list did not hide the first soft-deleted credential.",
+      );
+
+      await passkeyClient.delete(
+        apiPath("/accounts/passkeys/{id}/", { id: passkeyTwoId }),
+      );
+      audit = await loadPasskeyLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        audit.active_passkey_count === 0 &&
+          audit.deleted_passkey_count === 2 &&
+          audit.active_recovery_code_count === 0,
+        "Deleting the final passkey did not clear active passkeys and recovery codes.",
+      );
+
+      status = await passkeyClient.get(apiPath("/accounts/2fa/status/"), {
+        unwrap: false,
+      });
+      assert(
+        status?.two_factor_enabled === false &&
+          status?.methods?.passkey?.enabled === false &&
+          status?.methods?.passkey?.count === 0 &&
+          status?.recovery_codes_remaining === null,
+        "Final passkey delete did not clear 2FA status.",
+      );
+
+      const repeatDelete = await expectApiError(
+        () =>
+          passkeyClient.delete(
+            apiPath("/accounts/passkeys/{id}/", { id: passkeyTwoId }),
+          ),
+        [404],
+        "Repeated passkey delete unexpectedly succeeded after soft delete.",
+      );
+      assert(
+        errorText(repeatDelete).toLowerCase().includes("not found"),
+        "Repeated passkey delete did not return a not-found error.",
+      );
+
+      await deleteDisposableRbacUserArtifacts(email);
+      const cleanupAudit = await loadLegacyTeamMemberAudit({
+        email,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        cleanupAudit.user_count === 0,
+        "Disposable passkey user row remained after cleanup.",
+      );
+
+      evidence.push({
+        email,
+        user_id: disposableUserId,
+        register_options_unknown_status: registerOptionsUnknown.status,
+        excluded_credential_count: excludedCredentialIds.length,
+        register_verify_bogus_status: registerVerifyBogus.status,
+        listed_passkey_count: passkeys.length,
+        stale_detail_get_status: staleDetailGet.status,
+        rename_unknown_status: renameUnknown.status,
+        auth_options_unknown_status: authOptionsUnknown.status,
+        auth_verify_bogus_status: authVerifyBogus.status,
+        missing_delete_status: missingPasskeyDelete.status,
+        repeat_delete_status: repeatDelete.status,
+        final_active_passkey_count: audit.active_passkey_count,
+        final_active_recovery_code_count: audit.active_recovery_code_count,
+        cleanup_user_count: cleanupAudit.user_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-043",
+    title:
+      "Disposable 2FA login challenge issues tokens only after TOTP or recovery verification",
+    tags: [
+      "core",
+      "accounts",
+      "auth",
+      "security",
+      "2fa",
+      "passkeys",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({
+      client,
+      user,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      apiBase,
+      evidence,
+    }) {
+      requireMutations();
+      if (!isOrgOwner(user)) {
+        skip(
+          "Current user is not an org owner; disposable 2FA login setup is unsafe.",
+        );
+      }
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const marker = runId.replace(/[^a-z0-9-]/gi, "").slice(0, 20);
+      const email =
+        `api.journey.2fa.login.${marker}@futureagi.local`.toLowerCase();
+      const password = `ApiJourney${marker.slice(0, 8)}123!`;
+      const passkeyId = randomUUID();
+      const credentialId = Buffer.from(`core-api-043-${marker}`).toString(
+        "base64url",
+      );
+
+      cleanup.defer("delete disposable 2FA login user artifacts", () =>
+        deleteDisposableRbacUserArtifacts(email),
+      );
+
+      const invited = await client.post(
+        apiPath("/accounts/organization/invite/"),
+        {
+          emails: [email],
+          org_level: 1,
+          workspace_access: [{ workspace_id: workspaceId, level: 1 }],
+        },
+      );
+      assert(
+        asArray(invited?.invited).includes(email),
+        "Disposable 2FA login invite did not report the email as invited.",
+      );
+
+      const tokenInfo = await resolveInviteAcceptanceToken(email);
+      assert(
+        isUuid(tokenInfo.user_id),
+        "Disposable 2FA login invite token resolver did not return a user id.",
+      );
+      const accepted = await unauthenticatedApiRequest(
+        apiBase,
+        "POST",
+        apiPath("/accounts/accept-invitation/{uidb64}/{token}/", {
+          uidb64: tokenInfo.uidb64,
+          token: tokenInfo.token,
+        }),
+        {
+          new_password: password,
+          repeat_password: password,
+        },
+      );
+      assert(
+        typeof accepted?.access === "string" && accepted.access.length > 20,
+        "Disposable 2FA login invite accept did not return an access token.",
+      );
+
+      const disposableClient = createApiClient({
+        apiBase,
+        accessToken: accepted.access,
+        organizationId,
+        workspaceId,
+      });
+      const disposableUserInfo = await disposableClient.get(
+        apiPath("/accounts/user-info/"),
+      );
+      const disposableUserId =
+        currentUserId(disposableUserInfo) || tokenInfo.user_id;
+      assert(
+        disposableUserId === tokenInfo.user_id,
+        "Disposable 2FA login user-info did not match the accepted invite user.",
+      );
+
+      const setup = await disposableClient.post(
+        apiPath("/accounts/2fa/totp/setup/"),
+      );
+      assert(
+        /^[A-Z2-7]{32}$/.test(String(setup?.secret || "")),
+        "Disposable 2FA login TOTP setup did not return a base32 secret.",
+      );
+      const confirmed = await disposableClient.post(
+        apiPath("/accounts/2fa/totp/confirm/"),
+        {
+          code: generateTotpCode(setup.secret),
+        },
+      );
+      assert(
+        Array.isArray(confirmed?.recovery_codes) &&
+          confirmed.recovery_codes.length === 10,
+        "Disposable 2FA login confirmation did not return ten recovery codes.",
+      );
+
+      await createPasskeyLifecycleDbFixture({
+        userId: disposableUserId,
+        passkeyId,
+        name: `Journey 2FA login key ${marker}`,
+        credentialId,
+      });
+
+      let factorAudit = await loadTwoFactorLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        factorAudit.confirmed_totp_count === 1 &&
+          factorAudit.unused_recovery_code_count === 10 &&
+          factorAudit.passkey_count === 1,
+        "Disposable 2FA login account did not have the expected confirmed TOTP, passkey, and recovery-code state.",
+      );
+
+      const loginClient = createApiClient({ apiBase });
+      const loginRequestOptions = {
+        headers: { "X-Forwarded-For": nextAppCoreClientIp() },
+      };
+      let tokenAudit = await loadLegacyTeamMemberAudit({
+        email,
+        organizationId,
+        workspaceId,
+      });
+      const initialAccessTokenCount = tokenAudit.active_access_token_count;
+      const initialRefreshTokenCount = tokenAudit.active_refresh_token_count;
+      const initialTotalAccessTokenCount = tokenAudit.total_access_token_count;
+      const initialTotalRefreshTokenCount =
+        tokenAudit.total_refresh_token_count;
+
+      const challenge = await loginClient.post(
+        apiPath("/accounts/token/"),
+        {
+          email: email.toUpperCase(),
+          password,
+          remember_me: true,
+        },
+        loginRequestOptions,
+      );
+      assert(
+        challenge?.requires_two_factor === true &&
+          isUuid(challenge?.challenge_token),
+        "2FA-enabled login did not return a challenge token.",
+      );
+      assert(
+        asArray(challenge?.methods).includes("totp") &&
+          asArray(challenge?.methods).includes("passkey") &&
+          asArray(challenge?.methods).includes("recovery"),
+        "2FA login challenge did not advertise all enabled methods.",
+      );
+      assert(
+        !challenge.access && !challenge.refresh,
+        "2FA login challenge leaked JWT tokens before factor verification.",
+      );
+      tokenAudit = await loadLegacyTeamMemberAudit({
+        email,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        tokenAudit.total_access_token_count === initialTotalAccessTokenCount &&
+          tokenAudit.total_refresh_token_count ===
+            initialTotalRefreshTokenCount,
+        "2FA login challenge created auth tokens before factor verification.",
+      );
+
+      const totpUnknown = await expectApiError(
+        () =>
+          loginClient.post(apiPath("/accounts/2fa/verify/totp/"), {
+            challenge_token: challenge.challenge_token,
+            code: generateTotpCode(setup.secret),
+            totpCode: generateTotpCode(setup.secret),
+          }),
+        [400],
+        "2FA TOTP verification accepted an unknown camelCase field.",
+      );
+      assert(
+        errorText(totpUnknown).toLowerCase().includes("unknown field"),
+        "2FA TOTP unknown-field error did not include field validation.",
+      );
+
+      const invalidTotp = await expectApiError(
+        () =>
+          loginClient.post(apiPath("/accounts/2fa/verify/totp/"), {
+            challenge_token: challenge.challenge_token,
+            code: "000000",
+          }),
+        [400],
+        "Invalid 2FA TOTP verification unexpectedly succeeded.",
+      );
+      assert(
+        errorText(invalidTotp).toLowerCase().includes("invalid code"),
+        "Invalid 2FA TOTP verification did not return the bounded invalid-code error.",
+      );
+      tokenAudit = await loadLegacyTeamMemberAudit({
+        email,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        tokenAudit.total_access_token_count === initialTotalAccessTokenCount &&
+          tokenAudit.total_refresh_token_count ===
+            initialTotalRefreshTokenCount,
+        "Invalid 2FA TOTP verification created auth tokens.",
+      );
+
+      const passkeyOptionsUnknown = await expectApiError(
+        () =>
+          loginClient.post(apiPath("/accounts/2fa/verify/passkey/options/"), {
+            challenge_token: challenge.challenge_token,
+            sessionId: "legacy-camel-alias",
+          }),
+        [400],
+        "2FA passkey options accepted an unknown camelCase field.",
+      );
+      assert(
+        errorText(passkeyOptionsUnknown)
+          .toLowerCase()
+          .includes("unknown field"),
+        "2FA passkey options unknown-field error did not include field validation.",
+      );
+
+      const passkeyOptions = await loginClient.post(
+        apiPath("/accounts/2fa/verify/passkey/options/"),
+        {
+          challenge_token: challenge.challenge_token,
+        },
+      );
+      assert(
+        typeof passkeyOptions?.challenge === "string" &&
+          isUuid(passkeyOptions?.session_id),
+        "2FA passkey options did not return challenge plus session_id.",
+      );
+      const allowedCredentialIds = asArray(
+        passkeyOptions?.allowCredentials,
+      ).map((credential) => credential?.id);
+      assert(
+        allowedCredentialIds.includes(credentialId),
+        "2FA passkey options did not allow the seeded disposable credential.",
+      );
+
+      const passkeyVerifyBogus = await expectApiError(
+        () =>
+          loginClient.post(apiPath("/accounts/2fa/verify/passkey/"), {
+            challenge_token: challenge.challenge_token,
+            session_id: passkeyOptions.session_id,
+            credential: {
+              id: credentialId,
+              rawId: credentialId,
+              type: "public-key",
+              response: {
+                authenticatorData: "bogus",
+                clientDataJSON: "bogus",
+                signature: "bogus",
+              },
+            },
+          }),
+        [400],
+        "Bogus 2FA passkey verification unexpectedly succeeded.",
+      );
+      assert(
+        errorText(passkeyVerifyBogus).toLowerCase().includes("passkey"),
+        "Bogus 2FA passkey verification did not return a bounded passkey error.",
+      );
+      const passkeyAudit = await loadPasskeyLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        passkeyAudit.max_sign_count === 0 && passkeyAudit.last_used_count === 0,
+        "Bogus 2FA passkey verification updated credential usage metadata.",
+      );
+
+      const totpTokens = await loginClient.post(
+        apiPath("/accounts/2fa/verify/totp/"),
+        {
+          challenge_token: challenge.challenge_token,
+          code: generateTotpCode(setup.secret),
+        },
+      );
+      assert(
+        typeof totpTokens?.access === "string" &&
+          typeof totpTokens?.refresh === "string" &&
+          !totpTokens.requires_two_factor,
+        "Valid 2FA TOTP verification did not return an access/refresh token pair.",
+      );
+      tokenAudit = await loadLegacyTeamMemberAudit({
+        email,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        tokenAudit.active_access_token_count >= initialAccessTokenCount + 1 &&
+          tokenAudit.total_access_token_count >=
+            initialTotalAccessTokenCount + 1 &&
+          tokenAudit.total_refresh_token_count >=
+            initialTotalRefreshTokenCount + 1 &&
+          tokenAudit.active_refresh_token_count >= 1,
+        "Valid 2FA TOTP verification did not persist auth tokens.",
+      );
+
+      const repeatTotp = await expectApiError(
+        () =>
+          loginClient.post(apiPath("/accounts/2fa/verify/totp/"), {
+            challenge_token: challenge.challenge_token,
+            code: generateTotpCode(setup.secret),
+          }),
+        [400],
+        "2FA TOTP challenge token was reusable after successful verification.",
+      );
+      assert(
+        errorText(repeatTotp).toLowerCase().includes("expired"),
+        "2FA TOTP challenge reuse did not report an invalid or expired session.",
+      );
+
+      const recoveryChallenge = await loginClient.post(
+        apiPath("/accounts/token/"),
+        {
+          email,
+          password,
+        },
+        loginRequestOptions,
+      );
+      assert(
+        recoveryChallenge?.requires_two_factor === true &&
+          isUuid(recoveryChallenge?.challenge_token),
+        "Second 2FA login did not return a recovery challenge token.",
+      );
+
+      const recoveryUnknown = await expectApiError(
+        () =>
+          loginClient.post(apiPath("/accounts/2fa/verify/recovery/"), {
+            challenge_token: recoveryChallenge.challenge_token,
+            code: confirmed.recovery_codes[0],
+            recoveryCode: confirmed.recovery_codes[0],
+          }),
+        [400],
+        "2FA recovery verification accepted an unknown camelCase field.",
+      );
+      assert(
+        errorText(recoveryUnknown).toLowerCase().includes("unknown field"),
+        "2FA recovery unknown-field error did not include field validation.",
+      );
+
+      const beforeRecoveryTokenAudit = tokenAudit;
+      const recoveryTokens = await loginClient.post(
+        apiPath("/accounts/2fa/verify/recovery/"),
+        {
+          challenge_token: recoveryChallenge.challenge_token,
+          code: confirmed.recovery_codes[0],
+        },
+      );
+      assert(
+        typeof recoveryTokens?.access === "string" &&
+          typeof recoveryTokens?.refresh === "string",
+        "Valid 2FA recovery-code verification did not return token pair.",
+      );
+      factorAudit = await loadTwoFactorLifecycleDbAudit({
+        userId: disposableUserId,
+      });
+      assert(
+        factorAudit.used_recovery_code_count === 1 &&
+          factorAudit.unused_recovery_code_count === 9,
+        "2FA recovery-code verification did not consume exactly one code.",
+      );
+      tokenAudit = await loadLegacyTeamMemberAudit({
+        email,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        tokenAudit.total_access_token_count >=
+          beforeRecoveryTokenAudit.total_access_token_count + 1 &&
+          tokenAudit.total_refresh_token_count >=
+            beforeRecoveryTokenAudit.total_refresh_token_count + 1 &&
+          tokenAudit.active_refresh_token_count >= 1,
+        "Valid 2FA recovery-code verification did not persist auth tokens.",
+      );
+
+      const usedRecoveryChallenge = await loginClient.post(
+        apiPath("/accounts/token/"),
+        {
+          email,
+          password,
+        },
+      );
+      const usedRecovery = await expectApiError(
+        () =>
+          loginClient.post(apiPath("/accounts/2fa/verify/recovery/"), {
+            challenge_token: usedRecoveryChallenge.challenge_token,
+            code: confirmed.recovery_codes[0],
+          }),
+        [400],
+        "Previously used 2FA recovery code unexpectedly succeeded.",
+      );
+      assert(
+        errorText(usedRecovery).toLowerCase().includes("already used"),
+        "Used 2FA recovery-code error did not report used-code state.",
+      );
+      const finalTotpReplayWaitMs = 31_000;
+      await delay(finalTotpReplayWaitMs);
+      await loginClient.post(apiPath("/accounts/2fa/verify/totp/"), {
+        challenge_token: usedRecoveryChallenge.challenge_token,
+        code: generateTotpCode(setup.secret),
+      });
+      tokenAudit = await loadLegacyTeamMemberAudit({
+        email,
+        organizationId,
+        workspaceId,
+      });
+
+      await deleteDisposableRbacUserArtifacts(email);
+      const cleanupAudit = await loadLegacyTeamMemberAudit({
+        email,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        cleanupAudit.user_count === 0,
+        "Disposable 2FA login user row remained after cleanup.",
+      );
+
+      evidence.push({
+        email,
+        user_id: disposableUserId,
+        advertised_methods: challenge.methods,
+        totp_unknown_status: totpUnknown.status,
+        invalid_totp_status: invalidTotp.status,
+        passkey_options_unknown_status: passkeyOptionsUnknown.status,
+        passkey_allowed_credential_count: allowedCredentialIds.length,
+        passkey_verify_bogus_status: passkeyVerifyBogus.status,
+        repeat_totp_status: repeatTotp.status,
+        recovery_unknown_status: recoveryUnknown.status,
+        used_recovery_status: usedRecovery.status,
+        used_recovery_code_count: factorAudit.used_recovery_code_count,
+        unused_recovery_code_count: factorAudit.unused_recovery_code_count,
+        initial_access_token_count: initialAccessTokenCount,
+        final_access_token_count: tokenAudit.active_access_token_count,
+        final_total_access_token_count: tokenAudit.total_access_token_count,
+        final_total_refresh_token_count: tokenAudit.total_refresh_token_count,
+        final_totp_replay_wait_ms: finalTotpReplayWaitMs,
+        cleanup_user_count: cleanupAudit.user_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-044",
+    title:
+      "Disposable invited user saves onboarding, logs out, and refreshes after access invalidation",
+    tags: [
+      "core",
+      "accounts",
+      "auth",
+      "onboarding",
+      "session",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({
+      client,
+      user,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      apiBase,
+      evidence,
+    }) {
+      requireMutations();
+      if (!isOrgOwner(user)) {
+        skip(
+          "Current user is not an org owner; disposable onboarding/logout setup is unsafe.",
+        );
+      }
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const marker = runId.replace(/[^a-z0-9-]/gi, "").slice(0, 20);
+      const email =
+        `api.journey.onboarding.logout.${marker}@futureagi.local`.toLowerCase();
+      const password = `ApiJourney${marker.slice(0, 8)}123!`;
+      const onboardingRole = "ML Engineer";
+      const onboardingGoals = ["Evaluations", "Prompt Management"];
+
+      cleanup.defer("delete disposable onboarding/logout user artifacts", () =>
+        deleteDisposableRbacUserArtifacts(email),
+      );
+
+      const invited = await client.post(
+        apiPath("/accounts/organization/invite/"),
+        {
+          emails: [email],
+          org_level: 1,
+          workspace_access: [{ workspace_id: workspaceId, level: 1 }],
+        },
+      );
+      assert(
+        asArray(invited?.invited).includes(email),
+        "Disposable onboarding/logout invite did not report the email as invited.",
+      );
+
+      const tokenInfo = await resolveInviteAcceptanceToken(email);
+      assert(
+        isUuid(tokenInfo.user_id),
+        "Disposable onboarding/logout invite token resolver did not return a user id.",
+      );
+      const accepted = await unauthenticatedApiRequest(
+        apiBase,
+        "POST",
+        apiPath("/accounts/accept-invitation/{uidb64}/{token}/", {
+          uidb64: tokenInfo.uidb64,
+          token: tokenInfo.token,
+        }),
+        {
+          new_password: password,
+          repeat_password: password,
+        },
+      );
+      assert(
+        typeof accepted?.access === "string" && accepted.access.length > 20,
+        "Disposable onboarding/logout invite accept did not return an access token.",
+      );
+      assert(
+        typeof accepted?.refresh === "string" && accepted.refresh.length > 20,
+        "Disposable onboarding/logout invite accept did not return a refresh token.",
+      );
+
+      const onboardingClient = createApiClient({
+        apiBase,
+        accessToken: accepted.access,
+        organizationId,
+        workspaceId,
+      });
+      const disposableUserInfo = await onboardingClient.get(
+        apiPath("/accounts/user-info/"),
+      );
+      const disposableUserId =
+        currentUserId(disposableUserInfo) || tokenInfo.user_id;
+      assert(
+        disposableUserId === tokenInfo.user_id,
+        "Disposable onboarding/logout user-info did not match the accepted invite user.",
+      );
+
+      let audit = await loadOnboardingLogoutDbAudit(email);
+      assert(
+        audit.user_count === 1 &&
+          !audit.role &&
+          Array.isArray(audit.goals) &&
+          audit.goals.length === 0 &&
+          !audit.onboarding_completed_at,
+        "Disposable onboarding/logout user started with unexpected onboarding DB state.",
+      );
+
+      const initialOnboarding = await onboardingClient.get(
+        apiPath("/accounts/onboarding/"),
+      );
+      assert(
+        initialOnboarding?.role === "" &&
+          Array.isArray(initialOnboarding?.goals) &&
+          initialOnboarding.goals.length === 0 &&
+          initialOnboarding.completed === false,
+        "Initial onboarding readback did not return the expected incomplete state.",
+      );
+
+      const unknownField = await expectApiError(
+        () =>
+          onboardingClient.post(apiPath("/accounts/onboarding/"), {
+            role: onboardingRole,
+            goals: onboardingGoals,
+            selectedGoals: ["legacy camel alias"],
+          }),
+        [400],
+        "Onboarding accepted an unknown camelCase request field.",
+      );
+      assert(
+        errorText(unknownField).toLowerCase().includes("unknown field"),
+        "Onboarding unknown-field error did not include field validation.",
+      );
+      audit = await loadOnboardingLogoutDbAudit(email);
+      assert(
+        !audit.role &&
+          Array.isArray(audit.goals) &&
+          audit.goals.length === 0 &&
+          !audit.onboarding_completed_at,
+        "Onboarding unknown-field guard mutated user onboarding DB state.",
+      );
+
+      const missingRole = await expectApiError(
+        () =>
+          onboardingClient.post(apiPath("/accounts/onboarding/"), {
+            goals: onboardingGoals,
+          }),
+        [400],
+        "Onboarding accepted a payload without role.",
+      );
+      assert(
+        errorText(missingRole).toLowerCase().includes("role"),
+        "Onboarding missing-role error did not mention role validation.",
+      );
+
+      const blankRole = await expectApiError(
+        () =>
+          onboardingClient.post(apiPath("/accounts/onboarding/"), {
+            role: "   ",
+            goals: onboardingGoals,
+          }),
+        [400],
+        "Onboarding accepted a blank role.",
+      );
+      assert(
+        errorText(blankRole).toLowerCase().includes("role"),
+        "Onboarding blank-role error did not mention role validation.",
+      );
+
+      const saved = await onboardingClient.post(
+        apiPath("/accounts/onboarding/"),
+        {
+          role: onboardingRole,
+          goals: onboardingGoals,
+        },
+      );
+      assert(
+        String(saved?.message || "").includes("saved") &&
+          saved?.data?.role === onboardingRole,
+        "Onboarding save did not return the saved role payload.",
+      );
+      assertGroupSetsEqual(
+        saved?.data?.goals,
+        onboardingGoals,
+        "Onboarding save did not return the saved goals.",
+      );
+
+      const savedReadback = await onboardingClient.get(
+        apiPath("/accounts/onboarding/"),
+      );
+      assert(
+        savedReadback?.role === onboardingRole &&
+          savedReadback.completed === true,
+        "Saved onboarding readback did not mark onboarding complete.",
+      );
+      assertGroupSetsEqual(
+        savedReadback?.goals,
+        onboardingGoals,
+        "Saved onboarding readback returned different goals.",
+      );
+      audit = await loadOnboardingLogoutDbAudit(email);
+      assert(
+        audit.role === onboardingRole &&
+          audit.onboarding_completed_at &&
+          audit.active_access_token_count >= 1 &&
+          audit.active_refresh_token_count >= 1,
+        "Onboarding save did not persist expected DB state or token rows.",
+      );
+      assertGroupSetsEqual(
+        audit.goals,
+        onboardingGoals,
+        "Onboarding DB audit returned different goals.",
+      );
+
+      const preLogoutAudit = audit;
+      const logout = await onboardingClient.post(apiPath("/accounts/logout/"));
+      assert(
+        String(logout?.message || "")
+          .toLowerCase()
+          .includes("logged out"),
+        "Logout did not return the expected success message.",
+      );
+
+      const oldAccessUserInfo = await expectApiError(
+        () => onboardingClient.get(apiPath("/accounts/user-info/")),
+        [401, 403],
+        "Logged-out access token still authenticated to user-info.",
+      );
+      audit = await loadOnboardingLogoutDbAudit(email);
+      assert(
+        audit.inactive_access_token_count >=
+          preLogoutAudit.inactive_access_token_count + 1,
+        "Logout did not mark the current access token inactive.",
+      );
+
+      const refreshed = await createApiClient({ apiBase }).post(
+        apiPath("/accounts/token/refresh/"),
+        {
+          refresh: accepted.refresh,
+        },
+      );
+      assert(
+        typeof refreshed?.access === "string" && refreshed.access.length > 20,
+        "Refresh token did not mint a new access token after logout.",
+      );
+      const refreshedClient = createApiClient({
+        apiBase,
+        accessToken: refreshed.access,
+        organizationId,
+        workspaceId,
+      });
+      const refreshedUserInfo = await refreshedClient.get(
+        apiPath("/accounts/user-info/"),
+      );
+      assert(
+        currentUserId(refreshedUserInfo) === disposableUserId,
+        "Refreshed access token authenticated as a different user.",
+      );
+      audit = await loadOnboardingLogoutDbAudit(email);
+      assert(
+        audit.active_access_token_count >= 1 &&
+          audit.active_refresh_token_count >= 1,
+        "Refresh after logout did not preserve expected active token state.",
+      );
+
+      await deleteDisposableRbacUserArtifacts(email);
+      const cleanupAudit = await loadOnboardingLogoutDbAudit(email);
+      assert(
+        cleanupAudit.user_count === 0,
+        "Disposable onboarding/logout user row remained after cleanup.",
+      );
+
+      evidence.push({
+        email,
+        user_id: disposableUserId,
+        initial_completed: initialOnboarding.completed,
+        unknown_field_status: unknownField.status,
+        missing_role_status: missingRole.status,
+        blank_role_status: blankRole.status,
+        saved_completed: savedReadback.completed,
+        logout_message: logout.message,
+        old_access_status: oldAccessUserInfo.status,
+        inactive_access_token_count: audit.inactive_access_token_count,
+        active_access_token_count: audit.active_access_token_count,
+        active_refresh_token_count: audit.active_refresh_token_count,
+        cleanup_user_count: cleanupAudit.user_count,
+      });
+    },
+  },
+  {
     id: "CORE-API-007",
     title:
       "Workspace display name revert, workspace list, and member list contracts",
@@ -2400,6 +4396,10 @@ export const appCoreJourneys = [
         originalAudit.active_member_count > 0,
         "Workspace DB audit did not find any active workspace members.",
       );
+      assert(
+        Number(originalAudit.current_user_org_level ?? 0) >= 15,
+        "Legacy workspace create/delete alias coverage requires an organization owner.",
+      );
 
       cleanup.defer("restore workspace display name", async () => {
         try {
@@ -2420,6 +4420,233 @@ export const appCoreJourneys = [
       });
 
       const marker = runId.replace(/[^a-z0-9-]/gi, "").slice(0, 12);
+      const legacyWorkspaceName = `api-journey-workspace-${marker}`;
+      const legacyWorkspaceDisplayName = `API Journey Workspace ${marker}`;
+      const legacyWorkspaceUpdatedName = `API Journey Workspace Updated ${marker}`;
+      const legacyWorkspaceDescription = `Disposable workspace alias coverage ${marker}`;
+      cleanup.defer("delete disposable legacy workspace artifacts", () =>
+        deleteDisposableWorkspaceArtifacts({
+          organizationId,
+          workspaceName: legacyWorkspaceName,
+        }),
+      );
+
+      let legacyWorkspaceAudit = await loadLegacyWorkspaceAliasDbAudit({
+        organizationId,
+        workspaceName: legacyWorkspaceName,
+      });
+      assert(
+        legacyWorkspaceAudit.workspace_count === 0,
+        "Legacy workspace alias coverage started with disposable workspace residue.",
+      );
+
+      const collectionPutError = await expectApiError(
+        () =>
+          client.put(apiPath("/accounts/workspaces/"), {
+            display_name: "Generated collection alias should not update",
+          }),
+        [400],
+        "Generated workspace collection PUT alias did not fail closed.",
+      );
+      assert(
+        errorText(collectionPutError).toLowerCase().includes("workspace_id"),
+        "Workspace collection PUT alias error did not mention workspace_id.",
+      );
+
+      const collectionDeleteError = await expectApiError(
+        () => client.delete(apiPath("/accounts/workspaces/")),
+        [400],
+        "Generated workspace collection DELETE alias did not fail closed.",
+      );
+      assert(
+        errorText(collectionDeleteError).toLowerCase().includes("workspace_id"),
+        "Workspace collection DELETE alias error did not mention workspace_id.",
+      );
+
+      const detailPostError = await expectApiError(
+        () =>
+          client.post(
+            apiPath("/accounts/workspaces/{workspace_id}/", {
+              workspace_id: workspaceId,
+            }),
+            {
+              name: legacyWorkspaceName,
+              display_name: legacyWorkspaceDisplayName,
+              emails: [],
+            },
+          ),
+        [400],
+        "Generated workspace detail POST alias created or accepted a workspace.",
+      );
+      assert(
+        errorText(detailPostError).toLowerCase().includes("detail post"),
+        "Workspace detail POST alias error did not identify the unsupported alias.",
+      );
+
+      const membersCollectionDeleteError = await expectApiError(
+        () =>
+          client.delete(
+            apiPath("/accounts/workspaces/{workspace_id}/members/", {
+              workspace_id: workspaceId,
+            }),
+          ),
+        [400],
+        "Generated workspace members collection DELETE alias did not fail closed.",
+      );
+      assert(
+        errorText(membersCollectionDeleteError)
+          .toLowerCase()
+          .includes("member_id"),
+        "Workspace members collection DELETE alias error did not mention member_id.",
+      );
+
+      const memberDetailPostError = await expectApiError(
+        () =>
+          client.post(
+            apiPath(
+              "/accounts/workspaces/{workspace_id}/members/{member_id}/",
+              {
+                workspace_id: workspaceId,
+                member_id: userId,
+              },
+            ),
+            { users: [{ email, role: "workspace_admin" }] },
+          ),
+        [400],
+        "Generated workspace member detail POST alias accepted a member add body.",
+      );
+      assert(
+        errorText(memberDetailPostError).toLowerCase().includes("detail post"),
+        "Workspace member detail POST alias error did not identify the unsupported alias.",
+      );
+
+      legacyWorkspaceAudit = await loadLegacyWorkspaceAliasDbAudit({
+        organizationId,
+        workspaceName: legacyWorkspaceName,
+      });
+      assert(
+        legacyWorkspaceAudit.workspace_count === 0,
+        "Generated workspace alias guards created a disposable workspace.",
+      );
+
+      const createdWorkspaceResponse = await client.post(
+        apiPath("/accounts/workspaces/"),
+        {
+          name: legacyWorkspaceName,
+          display_name: legacyWorkspaceDisplayName,
+          description: legacyWorkspaceDescription,
+          emails: [],
+        },
+      );
+      const createdWorkspace = createdWorkspaceResponse?.workspace;
+      const createdWorkspaceId = createdWorkspace?.id;
+      assert(
+        isUuid(createdWorkspaceId),
+        "Legacy workspace create response did not include a workspace id.",
+      );
+      cleanup.defer("delete disposable legacy workspace by id", () =>
+        deleteDisposableWorkspaceArtifacts({
+          organizationId,
+          workspaceName: legacyWorkspaceName,
+          workspaceId: createdWorkspaceId,
+        }),
+      );
+
+      legacyWorkspaceAudit = await loadLegacyWorkspaceAliasDbAudit({
+        organizationId,
+        workspaceName: legacyWorkspaceName,
+        workspaceId: createdWorkspaceId,
+      });
+      assert(
+        legacyWorkspaceAudit.active_workspace_count === 1 &&
+          legacyWorkspaceAudit.active_membership_count === 1,
+        "Legacy workspace create did not persist one active workspace and creator membership.",
+      );
+
+      const legacyWorkspaceList = await client.get(
+        apiPath("/accounts/workspaces/"),
+      );
+      const legacyListRows = asArray(legacyWorkspaceList?.workspaces);
+      assert(
+        legacyListRows.some((row) => row?.id === createdWorkspaceId),
+        "Legacy workspace list did not include the disposable workspace.",
+      );
+
+      const legacyWorkspaceDetail = await client.get(
+        apiPath("/accounts/workspaces/{workspace_id}/", {
+          workspace_id: createdWorkspaceId,
+        }),
+      );
+      const legacyDetailRows = asArray(legacyWorkspaceDetail?.workspaces);
+      assert(
+        legacyDetailRows.length === 1 &&
+          legacyDetailRows[0]?.id === createdWorkspaceId,
+        "Legacy workspace detail alias did not filter to the requested workspace.",
+      );
+
+      const legacyWorkspaceMembers = await client.get(
+        apiPath("/accounts/workspaces/{workspace_id}/members/", {
+          workspace_id: createdWorkspaceId,
+        }),
+      );
+      const legacyCreatedMembers = asArray(legacyWorkspaceMembers?.members);
+      assert(
+        findUserRow(legacyCreatedMembers, userId, email),
+        "Legacy workspace members list did not include the workspace creator.",
+      );
+
+      const legacyWorkspaceMemberDetail = await client.get(
+        apiPath("/accounts/workspaces/{workspace_id}/members/{member_id}/", {
+          workspace_id: createdWorkspaceId,
+          member_id: userId,
+        }),
+      );
+      const legacyMemberDetailRows = asArray(
+        legacyWorkspaceMemberDetail?.members,
+      );
+      assert(
+        legacyMemberDetailRows.length === 1 &&
+          findUserRow(legacyMemberDetailRows, userId, email),
+        "Legacy workspace member detail alias did not filter to the requested user.",
+      );
+
+      const updatedLegacyWorkspace = await client.put(
+        apiPath("/accounts/workspaces/{workspace_id}/", {
+          workspace_id: createdWorkspaceId,
+        }),
+        {
+          display_name: legacyWorkspaceUpdatedName,
+          description: `${legacyWorkspaceDescription} updated`,
+        },
+      );
+      assert(
+        updatedLegacyWorkspace?.workspace?.display_name ===
+          legacyWorkspaceUpdatedName,
+        "Legacy workspace update did not return the updated display name.",
+      );
+
+      const deletedLegacyWorkspace = await client.delete(
+        apiPath("/accounts/workspaces/{workspace_id}/", {
+          workspace_id: createdWorkspaceId,
+        }),
+      );
+      assert(
+        String(deletedLegacyWorkspace?.message || "")
+          .toLowerCase()
+          .includes("deleted"),
+        "Legacy workspace delete did not return a deleted message.",
+      );
+      legacyWorkspaceAudit = await loadLegacyWorkspaceAliasDbAudit({
+        organizationId,
+        workspaceName: legacyWorkspaceName,
+        workspaceId: createdWorkspaceId,
+      });
+      assert(
+        legacyWorkspaceAudit.active_workspace_count === 0 &&
+          legacyWorkspaceAudit.active_membership_count === 0,
+        "Legacy workspace delete did not deactivate workspace and memberships.",
+      );
+
       const updatedDisplayName = `${originalDisplayName} API ${marker}`.slice(
         0,
         120,
@@ -2531,6 +4758,20 @@ export const appCoreJourneys = [
         rbac_search_count: rbacMembers.length,
         current_user_ws_level: rbacCurrentUser.ws_level,
         current_user_org_level: rbacCurrentUser.org_level,
+        legacy_collection_put_status: collectionPutError.status,
+        legacy_collection_delete_status: collectionDeleteError.status,
+        legacy_detail_post_status: detailPostError.status,
+        legacy_members_collection_delete_status:
+          membersCollectionDeleteError.status,
+        legacy_member_detail_post_status: memberDetailPostError.status,
+        legacy_workspace_id: createdWorkspaceId,
+        legacy_workspace_list_matches: legacyListRows.filter(
+          (row) => row?.id === createdWorkspaceId,
+        ).length,
+        legacy_workspace_deleted_active_count:
+          legacyWorkspaceAudit.active_workspace_count,
+        legacy_workspace_deleted_active_membership_count:
+          legacyWorkspaceAudit.active_membership_count,
       });
     },
   },
@@ -2774,6 +5015,1593 @@ export const appCoreJourneys = [
     },
   },
   {
+    id: "CORE-API-027",
+    title:
+      "Legacy organization usage summary and API call count preserve org-month contracts",
+    tags: [
+      "core",
+      "settings",
+      "usage",
+      "billing",
+      "legacy",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({
+      client,
+      user,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      requireMutations();
+      const userInfo = await client.get(apiPath("/accounts/user-info/"));
+      const userId = currentUserId(userInfo) || currentUserId(user);
+      assert(
+        isUuid(userId),
+        "Authenticated user-info did not include a valid user id.",
+      );
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const now = new Date();
+      const currentMonth = now.getUTCMonth() + 1;
+      const currentYear = now.getUTCFullYear();
+      const currentUsageSummary = await client.get(
+        apiPath("/usage/usage-summary/"),
+        {
+          query: { month: currentMonth, year: currentYear },
+        },
+      );
+      assertUsageSummaryPayload(
+        currentUsageSummary,
+        "current organization usage summary",
+      );
+
+      const missingYearError = await expectApiError(
+        () =>
+          client.get(apiPath("/usage/usage-summary/"), {
+            query: { month: currentMonth },
+          }),
+        [400],
+        "Organization usage summary accepted month without year.",
+      );
+      assert(
+        errorText(missingYearError).toLowerCase().includes("both") &&
+          errorText(missingYearError).toLowerCase().includes("month"),
+        "Month/year pair error did not mention the paired month/year requirement.",
+      );
+
+      const invalidSummaryMonthError = await expectApiError(
+        () =>
+          client.get(apiPath("/usage/usage-summary/"), {
+            query: { month: 13, year: currentYear },
+          }),
+        [400],
+        "Organization usage summary accepted an invalid month.",
+      );
+      assert(
+        errorText(invalidSummaryMonthError).toLowerCase().includes("month"),
+        "Invalid organization usage month error did not identify month.",
+      );
+
+      const unknownSummaryQueryError = await expectApiError(
+        () =>
+          client.get(apiPath("/usage/usage-summary/"), {
+            query: { month: currentMonth, year: currentYear, legacy: 1 },
+          }),
+        [400],
+        "Organization usage summary accepted an unknown query field.",
+      );
+      assert(
+        errorText(unknownSummaryQueryError)
+          .toLowerCase()
+          .includes("unknown field"),
+        "Organization usage summary unknown-query error did not mention unknown field.",
+      );
+
+      const invalidCallTypeError = await expectApiError(
+        () =>
+          client.get(apiPath("/usage/api-call-count/"), {
+            query: {
+              month: currentMonth,
+              year: currentYear,
+              api_call_type: "api_journey_invalid",
+            },
+          }),
+        [400],
+        "API call count accepted an invalid api_call_type.",
+      );
+      assert(
+        errorText(invalidCallTypeError).toLowerCase().includes("api call type"),
+        "Invalid API call type error did not identify api_call_type.",
+      );
+
+      const unknownCallCountQueryError = await expectApiError(
+        () =>
+          client.get(apiPath("/usage/api-call-count/"), {
+            query: {
+              month: currentMonth,
+              year: currentYear,
+              api_call_type: "dataset_evaluation",
+              legacy: 1,
+            },
+          }),
+        [400],
+        "API call count accepted an unknown query field.",
+      );
+      assert(
+        errorText(unknownCallCountQueryError)
+          .toLowerCase()
+          .includes("unknown field"),
+        "API call count unknown-query error did not mention unknown field.",
+      );
+
+      const boundaryQuery = { month: 4, year: 2026 };
+      const apiCallType = await ensureUsageApiCallType({
+        name: "dataset_evaluation",
+        description: "Dataset Evaluation",
+      });
+      const beforeBoundarySummary = await client.get(
+        apiPath("/usage/usage-summary/"),
+        {
+          query: boundaryQuery,
+        },
+      );
+      assertUsageSummaryPayload(
+        beforeBoundarySummary,
+        "before-seed organization usage summary",
+      );
+      const beforeCallCount = await client.get(
+        apiPath("/usage/api-call-count/"),
+        {
+          query: { ...boundaryQuery, api_call_type: "dataset_evaluation" },
+        },
+      );
+      assertApiCallCountPayload(beforeCallCount, "before-seed API call count");
+      const beforeDay30Tokens = apiCallCountDay(beforeCallCount, 30);
+
+      const marker = runId.replace(/[^a-z0-9-]/gi, "").slice(0, 20);
+      const boundary = await seedWorkspaceUsageBoundaryData({
+        marker,
+        organizationId,
+        userId,
+      });
+      cleanup.defer("delete disposable legacy usage boundary data", () =>
+        deleteWorkspaceUsageBoundaryData({
+          workspaceId: boundary.workspace_id,
+          sourceIdPrefix: boundary.source_id_prefix,
+        }),
+      );
+      assert(
+        boundary.workspace_id !== workspaceId,
+        "Disposable usage boundary workspace unexpectedly matched active workspace.",
+      );
+
+      const boundaryAudit = await loadWorkspaceUsageBoundaryDbAudit({
+        workspaceId: boundary.workspace_id,
+        sourceIdPrefix: boundary.source_id_prefix,
+        targetMonth: boundary.target_month,
+        targetYear: boundary.target_year,
+      });
+      assert(
+        boundaryAudit.month_log_count === 1 &&
+          boundaryAudit.next_month_log_count === 1,
+        "DB audit did not create one in-month and one next-month usage log.",
+      );
+      assert(
+        numbersClose(
+          boundaryAudit.month_deducted_cost,
+          boundary.expected_month_cost,
+        ),
+        "DB audit in-month usage cost did not match seed data.",
+      );
+
+      const afterBoundarySummary = await client.get(
+        apiPath("/usage/usage-summary/"),
+        {
+          query: boundaryQuery,
+        },
+      );
+      assertUsageSummaryPayload(
+        afterBoundarySummary,
+        "after-seed organization usage summary",
+      );
+      assert(
+        afterBoundarySummary.totals.evaluations.count ===
+          beforeBoundarySummary.totals.evaluations.count + 1,
+        "Organization usage summary did not include exactly one seeded evaluation log.",
+      );
+      assert(
+        numbersClose(
+          afterBoundarySummary.totals.evaluations.cost,
+          beforeBoundarySummary.totals.evaluations.cost +
+            boundary.expected_month_cost,
+        ),
+        "Organization usage summary did not include the seeded evaluation cost.",
+      );
+      assert(
+        afterBoundarySummary.totals.credits_used.count ===
+          beforeBoundarySummary.totals.credits_used.count + 1,
+        "Organization usage summary credits_used count did not include the seeded log.",
+      );
+      assert(
+        numbersClose(
+          afterBoundarySummary.totals.credits_used.cost,
+          beforeBoundarySummary.totals.credits_used.cost +
+            boundary.expected_month_cost,
+        ),
+        "Organization usage summary credits_used cost did not isolate the seeded month.",
+      );
+
+      const afterCallCount = await client.get(
+        apiPath("/usage/api-call-count/"),
+        {
+          query: { ...boundaryQuery, api_call_type: "dataset_evaluation" },
+        },
+      );
+      assertApiCallCountPayload(afterCallCount, "after-seed API call count");
+      const afterDay30Tokens = apiCallCountDay(afterCallCount, 30);
+      assert(
+        afterDay30Tokens === beforeDay30Tokens + boundary.expected_month_tokens,
+        "API call count did not include the seeded non-active-workspace token count.",
+      );
+
+      await deleteWorkspaceUsageBoundaryData({
+        workspaceId: boundary.workspace_id,
+        sourceIdPrefix: boundary.source_id_prefix,
+      });
+      const cleanupAudit = await loadWorkspaceUsageBoundaryDbAudit({
+        workspaceId: boundary.workspace_id,
+        sourceIdPrefix: boundary.source_id_prefix,
+        targetMonth: boundary.target_month,
+        targetYear: boundary.target_year,
+      });
+      assert(
+        cleanupAudit.total_log_count === 0,
+        "Disposable legacy usage logs remained after cleanup.",
+      );
+      assert(
+        cleanupAudit.workspace_count === 0,
+        "Disposable legacy usage workspace remained after cleanup.",
+      );
+      const cleanupCallCount = await client.get(
+        apiPath("/usage/api-call-count/"),
+        {
+          query: { ...boundaryQuery, api_call_type: "dataset_evaluation" },
+        },
+      );
+      assert(
+        apiCallCountDay(cleanupCallCount, 30) === beforeDay30Tokens,
+        "API call count did not return to the pre-seed day-30 token count after cleanup.",
+      );
+
+      evidence.push({
+        workspace_id: workspaceId,
+        current_month: currentMonth,
+        current_year: currentYear,
+        organization_name: currentUsageSummary.organization_name,
+        total_workspaces_count: currentUsageSummary.total_workspaces_count,
+        missing_year_status: missingYearError.status,
+        invalid_summary_month_status: invalidSummaryMonthError.status,
+        unknown_summary_query_status: unknownSummaryQueryError.status,
+        invalid_call_type_status: invalidCallTypeError.status,
+        unknown_call_count_query_status: unknownCallCountQueryError.status,
+        boundary_workspace_id: boundary.workspace_id,
+        boundary_month: `${boundary.target_year}-${String(boundary.target_month).padStart(2, "0")}`,
+        boundary_db_month_cost: boundaryAudit.month_deducted_cost,
+        boundary_db_next_month_cost: boundaryAudit.next_month_deducted_cost,
+        api_call_type_created: apiCallType.created,
+        before_summary_eval_count:
+          beforeBoundarySummary.totals.evaluations.count,
+        after_summary_eval_count: afterBoundarySummary.totals.evaluations.count,
+        before_day_30_tokens: beforeDay30Tokens,
+        after_day_30_tokens: afterDay30Tokens,
+        cleanup_log_count: cleanupAudit.total_log_count,
+        cleanup_workspace_count: cleanupAudit.workspace_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-028",
+    title:
+      "Legacy wallet balance and auto-reload settings preserve billing persistence contracts",
+    tags: [
+      "core",
+      "settings",
+      "usage",
+      "billing",
+      "legacy",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({ client, cleanup, organizationId, evidence }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+
+      const prepared = await prepareLegacyWalletAutoReloadDbState({
+        organizationId,
+      });
+      cleanup.defer("restore legacy wallet auto-reload state", () =>
+        restoreLegacyWalletAutoReloadDbState(prepared),
+      );
+      const seed = prepared.seed;
+      const beforeAudit = await loadLegacyWalletAutoReloadDbAudit({
+        organizationId,
+      });
+      assertLegacyWalletAutoReloadDbAudit(beforeAudit, {
+        walletBalance: Number(seed.wallet_balance),
+        autoReloadEnabled: seed.auto_recharge_enabled,
+        autoReloadAmount: Number(seed.auto_recharge_amount),
+        autoReloadThreshold: Number(seed.auto_recharge_threshold),
+      });
+
+      const walletBefore = await client.get(
+        apiPath("/usage/get-wallet-balance/"),
+      );
+      const walletBeforeBalance = assertWalletBalancePayload(
+        walletBefore,
+        "wallet balance before auto-reload update",
+      );
+      assert(
+        numbersClose(walletBeforeBalance, Number(seed.wallet_balance)),
+        "Wallet balance endpoint did not match the seeded DB balance.",
+      );
+
+      const settingsBefore = await client.get(
+        apiPath("/usage/get-auto-reload-settings/"),
+      );
+      const parsedBeforeSettings = assertAutoReloadSettingsPayload(
+        settingsBefore,
+        "auto-reload settings before update",
+      );
+      assert(
+        parsedBeforeSettings.enabled === seed.auto_recharge_enabled,
+        "Auto-reload settings endpoint did not match seeded enabled state.",
+      );
+      assert(
+        numbersClose(
+          parsedBeforeSettings.amount,
+          Number(seed.auto_recharge_amount),
+        ) &&
+          numbersClose(
+            parsedBeforeSettings.threshold,
+            Number(seed.auto_recharge_threshold),
+          ),
+        "Auto-reload settings endpoint did not match seeded amount/threshold.",
+      );
+
+      const unknownFieldError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/update-auto-reload-settings/"), {
+            autoreload_enabled: false,
+            autoreload_walletamount: "41.00",
+            autoreload_walletthreshold: "7.00",
+            legacy: true,
+          }),
+        [400],
+        "Auto-reload update accepted an unknown request field.",
+      );
+      assert(
+        errorText(unknownFieldError).toLowerCase().includes("unknown field"),
+        "Auto-reload unknown-field error did not mention unknown field.",
+      );
+
+      const missingThresholdError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/update-auto-reload-settings/"), {
+            autoreload_enabled: false,
+            autoreload_walletamount: "41.00",
+          }),
+        [400],
+        "Auto-reload update accepted a request without threshold.",
+      );
+      assert(
+        errorText(missingThresholdError)
+          .toLowerCase()
+          .includes("autoreload_walletthreshold"),
+        "Auto-reload missing-threshold error did not identify the threshold field.",
+      );
+
+      const guardedAudit = await loadLegacyWalletAutoReloadDbAudit({
+        organizationId,
+      });
+      assertLegacyWalletAutoReloadDbAudit(guardedAudit, {
+        walletBalance: Number(seed.wallet_balance),
+        autoReloadEnabled: seed.auto_recharge_enabled,
+        autoReloadAmount: Number(seed.auto_recharge_amount),
+        autoReloadThreshold: Number(seed.auto_recharge_threshold),
+      });
+
+      const updatePayload = {
+        autoreload_enabled: false,
+        autoreload_walletamount: "43.75",
+        autoreload_walletthreshold: "8.25",
+      };
+      const update = await client.post(
+        apiPath("/usage/update-auto-reload-settings/"),
+        updatePayload,
+      );
+      assertAutoReloadUpdatePayload(update, "auto-reload update response");
+
+      const settingsAfter = await client.get(
+        apiPath("/usage/get-auto-reload-settings/"),
+      );
+      const parsedAfterSettings = assertAutoReloadSettingsPayload(
+        settingsAfter,
+        "auto-reload settings after update",
+      );
+      assert(
+        parsedAfterSettings.enabled === false &&
+          numbersClose(parsedAfterSettings.amount, 43.75) &&
+          numbersClose(parsedAfterSettings.threshold, 8.25),
+        "Auto-reload settings endpoint did not read back the updated disabled settings.",
+      );
+
+      const walletAfter = await client.get(
+        apiPath("/usage/get-wallet-balance/"),
+      );
+      const walletAfterBalance = assertWalletBalancePayload(
+        walletAfter,
+        "wallet balance after disabled auto-reload update",
+      );
+      assert(
+        numbersClose(walletAfterBalance, walletBeforeBalance),
+        "Disabled auto-reload update changed wallet balance.",
+      );
+
+      const afterAudit = await loadLegacyWalletAutoReloadDbAudit({
+        organizationId,
+      });
+      assertLegacyWalletAutoReloadDbAudit(afterAudit, {
+        walletBalance: Number(seed.wallet_balance),
+        autoReloadEnabled: false,
+        autoReloadAmount: 43.75,
+        autoReloadThreshold: 8.25,
+      });
+
+      const restoreResult =
+        await restoreLegacyWalletAutoReloadDbState(prepared);
+      const restoredAudit = await loadLegacyWalletAutoReloadDbAudit({
+        organizationId,
+      });
+      if (prepared.original && !prepared.original.deleted) {
+        assertLegacyWalletAutoReloadDbAudit(restoredAudit, {
+          walletBalance: Number(prepared.original.wallet_balance),
+          autoReloadEnabled: prepared.original.auto_recharge_enabled,
+          autoReloadAmount: Number(prepared.original.auto_recharge_amount),
+          autoReloadThreshold: Number(
+            prepared.original.auto_recharge_threshold,
+          ),
+        });
+      } else {
+        assert(
+          restoredAudit.active_subscription_count === 0,
+          "Legacy billing subscription was active after restoring an inactive/missing original.",
+        );
+      }
+
+      evidence.push({
+        organization_id: organizationId,
+        subscription_id: prepared.subscription_id,
+        subscription_preexisted: Boolean(prepared.original),
+        seeded_wallet_balance: seed.wallet_balance,
+        wallet_before: walletBeforeBalance,
+        unknown_field_status: unknownFieldError.status,
+        missing_threshold_status: missingThresholdError.status,
+        updated_auto_recharge_amount: parsedAfterSettings.amount,
+        updated_auto_recharge_threshold: parsedAfterSettings.threshold,
+        wallet_after: walletAfterBalance,
+        restore_mode: restoreResult.mode,
+        restored_active_subscription_count:
+          restoredAudit.active_subscription_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-029",
+    title:
+      "Legacy subscription plans expose plan catalog and current subscription",
+    tags: [
+      "core",
+      "settings",
+      "usage",
+      "billing",
+      "legacy",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({ client, cleanup, organizationId, evidence }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+
+      const prepared = await prepareLegacySubscriptionPlansDbState({
+        organizationId,
+      });
+      cleanup.defer("restore legacy subscription plans state", () =>
+        restoreLegacySubscriptionPlansDbState(prepared),
+      );
+
+      const beforeAudit = await loadLegacySubscriptionPlansDbAudit({
+        organizationId,
+      });
+      assertLegacySubscriptionPlansDbAudit(
+        beforeAudit,
+        "legacy subscription plans before API call",
+      );
+
+      const plans = await client.get(apiPath("/usage/subscription-plans/"));
+      const parsedPlans = assertSubscriptionPlansPayload(
+        plans,
+        "legacy subscription plans",
+      );
+      assert(
+        parsedPlans.currentSubscription === beforeAudit.current_subscription,
+        "Subscription plans current_subscription did not match the active DB subscription tier.",
+      );
+
+      const afterAudit = await loadLegacySubscriptionPlansDbAudit({
+        organizationId,
+      });
+      assertLegacySubscriptionPlansDbAudit(
+        afterAudit,
+        "legacy subscription plans after API call",
+      );
+      assert(
+        afterAudit.current_subscription === beforeAudit.current_subscription,
+        "Subscription plans GET changed the current subscription tier.",
+      );
+
+      const restoreResult =
+        await restoreLegacySubscriptionPlansDbState(prepared);
+      const restoredAudit = await loadLegacySubscriptionPlansDbAudit({
+        organizationId,
+      });
+      if (prepared.original && !prepared.original.deleted) {
+        assertLegacySubscriptionPlansDbAudit(
+          restoredAudit,
+          "legacy subscription plans after restore",
+        );
+        assert(
+          restoredAudit.current_subscription ===
+            prepared.original.subscription_tier_name,
+          "Legacy subscription plans restore did not restore the original subscription tier.",
+        );
+      } else {
+        assert(
+          restoredAudit.active_subscription_count === 0,
+          "Legacy subscription plans restore left an active subscription that was absent before the journey.",
+        );
+      }
+
+      evidence.push({
+        organization_id: organizationId,
+        subscription_id: prepared.subscription_id,
+        subscription_preexisted: Boolean(prepared.original),
+        current_subscription: parsedPlans.currentSubscription,
+        plan_count: parsedPlans.planCount,
+        plan_names: parsedPlans.planNames,
+        active_subscription_count_after_read:
+          afterAudit.active_subscription_count,
+        restore_mode: restoreResult.mode,
+        restored_active_subscription_count:
+          restoredAudit.active_subscription_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-030",
+    title:
+      "Legacy billing profile update persists locally without Stripe side effects",
+    tags: [
+      "core",
+      "settings",
+      "usage",
+      "billing",
+      "legacy",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({ client, cleanup, organizationId, evidence }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+
+      const prepared = await prepareLegacyBillingDetailsDbState({
+        organizationId,
+      });
+      cleanup.defer("restore legacy billing details state", () =>
+        restoreLegacyBillingDetailsDbState(prepared),
+      );
+      const seed = prepared.seed;
+      const updatePayload = {
+        name: "Legacy Billing Updated",
+        email: "legacy-updated@example.com",
+        company: "Updated Co",
+        billing_address1: "2 Updated Ave",
+        billing_address2: "Suite 300",
+        city: "Updated City",
+        state: "UC",
+        country: "US",
+        postal_code: "20002",
+        tax_id: "UPDATED-TAX",
+      };
+
+      const detailsBefore = await client.get(
+        apiPath("/usage/get-billing-details/"),
+        { unwrap: false },
+      );
+      assertLegacyBillingDetailsPayload(
+        detailsBefore,
+        "legacy billing details before update",
+        seed,
+      );
+
+      const beforeAudit = await loadLegacyBillingDetailsDbAudit({
+        organizationId,
+      });
+      assertLegacyBillingDetailsDbAudit(
+        beforeAudit,
+        seed,
+        "legacy billing details before update DB audit",
+      );
+
+      const unknownFieldError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/update-billing-details/"), {
+            ...updatePayload,
+            legacy: true,
+          }),
+        [400],
+        "Billing details update accepted an unknown request field.",
+      );
+      assert(
+        errorText(unknownFieldError).toLowerCase().includes("unknown field"),
+        "Billing details unknown-field error did not mention unknown field.",
+      );
+
+      const invalidEmailError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/update-billing-details/"), {
+            ...updatePayload,
+            email: "not-an-email",
+          }),
+        [400],
+        "Billing details update accepted an invalid email address.",
+      );
+      assert(
+        errorText(invalidEmailError).toLowerCase().includes("email"),
+        "Billing details invalid-email error did not mention email.",
+      );
+
+      const guardedAudit = await loadLegacyBillingDetailsDbAudit({
+        organizationId,
+      });
+      assertLegacyBillingDetailsDbAudit(
+        guardedAudit,
+        seed,
+        "legacy billing details after guarded failures DB audit",
+      );
+
+      const update = await client.post(
+        apiPath("/usage/update-billing-details/"),
+        updatePayload,
+      );
+      assertLegacyBillingUpdatePayload(
+        update,
+        "legacy billing details update response",
+      );
+
+      const detailsAfter = await client.get(
+        apiPath("/usage/get-billing-details/"),
+        { unwrap: false },
+      );
+      assertLegacyBillingDetailsPayload(
+        detailsAfter,
+        "legacy billing details after update",
+        updatePayload,
+      );
+
+      const afterAudit = await loadLegacyBillingDetailsDbAudit({
+        organizationId,
+      });
+      assertLegacyBillingDetailsDbAudit(
+        afterAudit,
+        updatePayload,
+        "legacy billing details after update DB audit",
+      );
+
+      const restoreResult = await restoreLegacyBillingDetailsDbState(prepared);
+      const restoredAudit = await loadLegacyBillingDetailsDbAudit({
+        organizationId,
+      });
+      if (prepared.original_billing && !prepared.original_billing.deleted) {
+        assertLegacyBillingDetailsDbAudit(
+          restoredAudit,
+          prepared.original_billing_api,
+          "legacy billing details after restore DB audit",
+          { expectSubscription: false, expectNoStripeCustomer: false },
+        );
+      } else {
+        assert(
+          restoredAudit.billing_count === 0,
+          "Legacy billing details restore left an active billing row that was absent before the journey.",
+        );
+      }
+      if (
+        prepared.original_subscription &&
+        !prepared.original_subscription.deleted
+      ) {
+        assert(
+          restoredAudit.active_subscription_count === 1,
+          "Legacy billing details restore did not restore the original active subscription.",
+        );
+      } else {
+        assert(
+          restoredAudit.active_subscription_count === 0,
+          "Legacy billing details restore left an active subscription that was absent before the journey.",
+        );
+      }
+
+      evidence.push({
+        organization_id: organizationId,
+        billing_id: prepared.billing_id,
+        subscription_id: prepared.subscription_id,
+        billing_preexisted: Boolean(prepared.original_billing),
+        subscription_preexisted: Boolean(prepared.original_subscription),
+        unknown_field_status: unknownFieldError.status,
+        invalid_email_status: invalidEmailError.status,
+        updated_email: detailsAfter.billing_info.email,
+        stripe_customer_id_test_after_update:
+          afterAudit.stripe_customer_id_test,
+        stripe_customer_id_live_after_update:
+          afterAudit.stripe_customer_id_live,
+        restore_mode: restoreResult.mode,
+        billing_restore_mode: restoreResult.billing_mode,
+        subscription_restore_mode: restoreResult.subscription_mode,
+        restored_billing_count: restoredAudit.billing_count,
+        restored_active_subscription_count:
+          restoredAudit.active_subscription_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-031",
+    title:
+      "Legacy payment method and invoice reads stay local without Stripe customers",
+    tags: [
+      "core",
+      "settings",
+      "usage",
+      "billing",
+      "legacy",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({ client, cleanup, organizationId, evidence }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+
+      const prepared = await prepareLegacyPaymentMethodInvoiceDbState({
+        organizationId,
+      });
+      cleanup.defer("restore legacy payment method invoice state", () =>
+        restoreLegacyPaymentMethodInvoiceDbState(prepared),
+      );
+
+      const beforeAudit = await loadLegacyPaymentMethodInvoiceDbAudit({
+        organizationId,
+      });
+      assertLegacyPaymentMethodInvoiceDbAudit(
+        beforeAudit,
+        "legacy payment method invoice reads before API calls",
+      );
+
+      const unknownLast4Query = await expectApiError(
+        () =>
+          client.get(apiPath("/usage/get-last-four-digits/"), {
+            query: { legacy: true },
+          }),
+        [400],
+        "Last-four-digits read accepted an unknown query field.",
+      );
+      assert(
+        errorText(unknownLast4Query).toLowerCase().includes("unknown field"),
+        "Last-four-digits unknown-query error did not mention unknown field.",
+      );
+
+      const last4 = await client.get(apiPath("/usage/get-last-four-digits/"));
+      const parsedLast4 = assertLegacyLastFourDigitsPayload(
+        last4,
+        "legacy last-four-digits read without Stripe customer",
+      );
+      assert(
+        parsedLast4 === null,
+        "Legacy last-four-digits read returned a card suffix without a stored Stripe customer id.",
+      );
+
+      const invalidInvoicesPage = await expectApiError(
+        () =>
+          client.get(apiPath("/usage/get-customer-invoices/"), {
+            query: { page: 0, page_size: 10 },
+          }),
+        [400],
+        "Customer invoices accepted an invalid page query.",
+      );
+      assert(
+        errorText(invalidInvoicesPage).toLowerCase().includes("page"),
+        "Customer invoices invalid-page error did not mention page.",
+      );
+
+      const unknownInvoicesQuery = await expectApiError(
+        () =>
+          client.get(apiPath("/usage/get-customer-invoices/"), {
+            query: { page: 1, page_size: 10, legacy: true },
+          }),
+        [400],
+        "Customer invoices accepted an unknown query field.",
+      );
+      assert(
+        errorText(unknownInvoicesQuery).toLowerCase().includes("unknown field"),
+        "Customer invoices unknown-query error did not mention unknown field.",
+      );
+
+      const invoices = await client.get(
+        apiPath("/usage/get-customer-invoices/"),
+        {
+          query: { page: 1, page_size: 10 },
+        },
+      );
+      const parsedInvoices = assertLegacyCustomerInvoicesPayload(
+        invoices,
+        "legacy customer invoices read without Stripe customer",
+      );
+      assert(
+        parsedInvoices.invoices.length === 0 && parsedInvoices.total === 0,
+        "Legacy customer invoices returned rows without a stored Stripe customer id.",
+      );
+
+      const afterAudit = await loadLegacyPaymentMethodInvoiceDbAudit({
+        organizationId,
+      });
+      assertLegacyPaymentMethodInvoiceDbAudit(
+        afterAudit,
+        "legacy payment method invoice reads after API calls",
+      );
+
+      const restoreResult =
+        await restoreLegacyPaymentMethodInvoiceDbState(prepared);
+      const restoredAudit = await loadLegacyPaymentMethodInvoiceDbAudit({
+        organizationId,
+      });
+      if (prepared.original && !prepared.original.deleted) {
+        assert(
+          restoredAudit.active_subscription_count === 1,
+          "Legacy payment method restore did not restore the original active subscription.",
+        );
+        assert(
+          restoredAudit.stripe_customer_id_test ===
+            prepared.original.stripe_customer_id_test &&
+            restoredAudit.stripe_customer_id_live ===
+              prepared.original.stripe_customer_id_live &&
+            restoredAudit.payment_method_id ===
+              prepared.original.payment_method_id,
+          "Legacy payment method restore did not restore Stripe/payment method identifiers.",
+        );
+      } else {
+        assert(
+          restoredAudit.active_subscription_count === 0,
+          "Legacy payment method restore left an active subscription that was absent before the journey.",
+        );
+      }
+
+      evidence.push({
+        organization_id: organizationId,
+        subscription_id: prepared.subscription_id,
+        subscription_preexisted: Boolean(prepared.original),
+        unknown_last4_query_status: unknownLast4Query.status,
+        invalid_invoices_page_status: invalidInvoicesPage.status,
+        unknown_invoices_query_status: unknownInvoicesQuery.status,
+        last4: parsedLast4,
+        invoice_count: parsedInvoices.invoices.length,
+        invoice_total: parsedInvoices.total,
+        stripe_customer_id_test_after_reads: afterAudit.stripe_customer_id_test,
+        stripe_customer_id_live_after_reads: afterAudit.stripe_customer_id_live,
+        payment_method_id_after_reads: afterAudit.payment_method_id,
+        restore_mode: restoreResult.mode,
+        restored_active_subscription_count:
+          restoredAudit.active_subscription_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-032",
+    title:
+      "Legacy pricing card details validate strictly and fail bounded when pricing is unavailable",
+    tags: [
+      "core",
+      "settings",
+      "usage",
+      "billing",
+      "legacy",
+      "safe",
+      "db-audit",
+    ],
+    async run({ client, organizationId, evidence }) {
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+
+      const beforeAudit = await loadLegacyPricingCardDetailsDbAudit({
+        organizationId,
+      });
+      assertLegacyPricingCardDetailsDbAudit(
+        beforeAudit,
+        "legacy pricing card before API calls",
+      );
+
+      const unknownFieldError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/pricing-card-details/"), {
+            legacy: true,
+          }),
+        [400],
+        "Pricing card details accepted an unknown request field.",
+      );
+      assert(
+        errorText(unknownFieldError).toLowerCase().includes("unknown field"),
+        "Pricing card details unknown-field error did not mention unknown field.",
+      );
+      assertNoBillingCheckoutPayload(
+        unknownFieldError.body,
+        "legacy pricing card unknown-field error",
+      );
+      assertNoFullPaymentCardLeak(
+        unknownFieldError.body,
+        "legacy pricing card unknown-field error",
+      );
+
+      let validCallOutcome;
+      try {
+        const pricing = await client.post(
+          apiPath("/usage/pricing-card-details/"),
+          {},
+        );
+        const parsedPricing = assertLegacyPricingCardDetailsPayload(
+          pricing,
+          "legacy pricing card details",
+        );
+        validCallOutcome = {
+          status: 200,
+          monthly_price: parsedPricing.monthlyPrice,
+          yearly_price: parsedPricing.yearlyPrice,
+          discount_percentage: parsedPricing.discountPercentage,
+          custom_price: parsedPricing.customPrice,
+        };
+      } catch (error) {
+        assert(
+          error?.status === 400,
+          "Pricing card details failed with an unbounded status.",
+        );
+        assertBoundedPricingCardDetailsError(
+          error,
+          "legacy pricing card details valid body",
+        );
+        validCallOutcome = {
+          status: error.status,
+          code: error.body?.code,
+          detail: error.body?.detail || error.body?.message || null,
+        };
+      }
+
+      const afterAudit = await loadLegacyPricingCardDetailsDbAudit({
+        organizationId,
+      });
+      assertLegacyPricingCardDetailsDbAudit(
+        afterAudit,
+        "legacy pricing card after API calls",
+      );
+      assert(
+        JSON.stringify(afterAudit) === JSON.stringify(beforeAudit),
+        "Legacy pricing card details mutated subscription or tier state.",
+      );
+
+      evidence.push({
+        organization_id: organizationId,
+        unknown_field_status: unknownFieldError.status,
+        valid_call_status: validCallOutcome.status,
+        valid_call_code: validCallOutcome.code || null,
+        business_tier_count: beforeAudit.business_tier_count,
+        business_yearly_tier_count: beforeAudit.business_yearly_tier_count,
+        business_price_configured:
+          beforeAudit.business_price_configured_count > 0,
+        business_yearly_price_configured:
+          beforeAudit.business_yearly_price_configured_count > 0,
+        custom_subscription_configured:
+          beforeAudit.custom_subscription_configured,
+      });
+    },
+  },
+  {
+    id: "CORE-API-033",
+    title:
+      "Legacy invoice download validates strictly without creating Stripe customers",
+    tags: [
+      "core",
+      "settings",
+      "usage",
+      "billing",
+      "legacy",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({ client, cleanup, organizationId, evidence }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+
+      const prepared = await prepareLegacyPaymentMethodInvoiceDbState({
+        organizationId,
+      });
+      cleanup.defer("restore legacy invoice download state", () =>
+        restoreLegacyPaymentMethodInvoiceDbState(prepared),
+      );
+
+      const beforeAudit = await loadLegacyPaymentMethodInvoiceDbAudit({
+        organizationId,
+      });
+      assertLegacyPaymentMethodInvoiceDbAudit(
+        beforeAudit,
+        "legacy invoice download before API calls",
+      );
+
+      const missingInvoiceIdError = await expectApiError(
+        () => client.post(apiPath("/usage/download-invoice/"), {}),
+        [400],
+        "Download invoice accepted a missing invoice_id.",
+      );
+      assert(
+        errorText(missingInvoiceIdError).toLowerCase().includes("invoice_id"),
+        "Download invoice missing-id error did not mention invoice_id.",
+      );
+      assertNoBillingCheckoutPayload(
+        missingInvoiceIdError.body,
+        "legacy invoice download missing-id error",
+      );
+      assertNoFullPaymentCardLeak(
+        missingInvoiceIdError.body,
+        "legacy invoice download missing-id error",
+      );
+
+      const unknownFieldError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/download-invoice/"), {
+            invoice_id: "in_api_journey_unknown",
+            legacy: true,
+          }),
+        [400],
+        "Download invoice accepted an unknown request field.",
+      );
+      assert(
+        errorText(unknownFieldError).toLowerCase().includes("unknown field"),
+        "Download invoice unknown-field error did not mention unknown field.",
+      );
+      assertNoBillingCheckoutPayload(
+        unknownFieldError.body,
+        "legacy invoice download unknown-field error",
+      );
+      assertNoFullPaymentCardLeak(
+        unknownFieldError.body,
+        "legacy invoice download unknown-field error",
+      );
+
+      const noCustomerError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/download-invoice/"), {
+            invoice_id: "in_api_journey_no_customer",
+          }),
+        [400],
+        "Download invoice created or used Stripe state without a stored customer id.",
+      );
+      assertBoundedDownloadInvoiceError(
+        noCustomerError,
+        "legacy invoice download without stored customer",
+      );
+
+      const afterAudit = await loadLegacyPaymentMethodInvoiceDbAudit({
+        organizationId,
+      });
+      assertLegacyPaymentMethodInvoiceDbAudit(
+        afterAudit,
+        "legacy invoice download after API calls",
+      );
+      assert(
+        JSON.stringify(afterAudit) === JSON.stringify(beforeAudit),
+        "Legacy invoice download mutated subscription, Stripe customer, or payment state.",
+      );
+
+      const restoreResult =
+        await restoreLegacyPaymentMethodInvoiceDbState(prepared);
+      const restoredAudit = await loadLegacyPaymentMethodInvoiceDbAudit({
+        organizationId,
+      });
+      if (prepared.original && !prepared.original.deleted) {
+        assert(
+          restoredAudit.active_subscription_count === 1,
+          "Legacy invoice download restore did not restore the original active subscription.",
+        );
+        assert(
+          restoredAudit.stripe_customer_id_test ===
+            prepared.original.stripe_customer_id_test &&
+            restoredAudit.stripe_customer_id_live ===
+              prepared.original.stripe_customer_id_live &&
+            restoredAudit.payment_method_id ===
+              prepared.original.payment_method_id,
+          "Legacy invoice download restore did not restore Stripe/payment method identifiers.",
+        );
+      } else {
+        assert(
+          restoredAudit.active_subscription_count === 0,
+          "Legacy invoice download restore left an active subscription that was absent before the journey.",
+        );
+      }
+
+      evidence.push({
+        organization_id: organizationId,
+        subscription_id: prepared.subscription_id,
+        subscription_preexisted: Boolean(prepared.original),
+        missing_invoice_id_status: missingInvoiceIdError.status,
+        unknown_field_status: unknownFieldError.status,
+        no_customer_status: noCustomerError.status,
+        no_customer_code: noCustomerError.body?.code || null,
+        stripe_customer_id_test_after_call: afterAudit.stripe_customer_id_test,
+        stripe_customer_id_live_after_call: afterAudit.stripe_customer_id_live,
+        payment_method_id_after_call: afterAudit.payment_method_id,
+        restore_mode: restoreResult.mode,
+        restored_active_subscription_count:
+          restoredAudit.active_subscription_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-034",
+    title:
+      "Billing v2 payment-method reads stay empty without Stripe customer side effects",
+    tags: [
+      "core",
+      "settings",
+      "usage",
+      "billing",
+      "payment-methods",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({ client, cleanup, organizationId, evidence }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+
+      const prepared = await prepareLegacyPaymentMethodInvoiceDbState({
+        organizationId,
+      });
+      cleanup.defer("restore billing v2 payment-method state", () =>
+        restoreLegacyPaymentMethodInvoiceDbState(prepared),
+      );
+
+      const beforeAudit = await loadLegacyPaymentMethodInvoiceDbAudit({
+        organizationId,
+      });
+      assertLegacyPaymentMethodInvoiceDbAudit(
+        beforeAudit,
+        "billing v2 payment methods before API calls",
+      );
+
+      const paymentMethods = asArray(
+        await client.get(apiPath("/usage/v2/payment-methods/")),
+      );
+      assert(
+        paymentMethods.length === 0,
+        "Billing v2 payment methods returned cards without a stored Stripe customer id.",
+      );
+      assertNoBillingCheckoutPayload(
+        paymentMethods,
+        "billing v2 payment methods no-customer read",
+      );
+      assertNoFullPaymentCardLeak(
+        paymentMethods,
+        "billing v2 payment methods no-customer read",
+      );
+
+      const setupIntentAliasMethods = asArray(
+        await client.get(apiPath("/usage/v2/payment-methods/setup-intent/")),
+      );
+      assert(
+        setupIntentAliasMethods.length === 0,
+        "Billing v2 setup-intent GET alias returned cards without a stored Stripe customer id.",
+      );
+      assertNoBillingCheckoutPayload(
+        setupIntentAliasMethods,
+        "billing v2 setup-intent GET alias no-customer read",
+      );
+      assertNoFullPaymentCardLeak(
+        setupIntentAliasMethods,
+        "billing v2 setup-intent GET alias no-customer read",
+      );
+
+      const createUnknownFieldError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/v2/payment-methods/"), {
+            legacy: true,
+          }),
+        [400],
+        "Billing v2 payment-method checkout accepted an unknown request field.",
+      );
+      assert(
+        errorText(createUnknownFieldError).toLowerCase().includes("legacy"),
+        "Billing v2 payment-method checkout unknown-field error did not mention the rejected field.",
+      );
+      assertNoBillingCheckoutPayload(
+        createUnknownFieldError.body,
+        "billing v2 payment-method checkout unknown-field error",
+      );
+      assertNoFullPaymentCardLeak(
+        createUnknownFieldError.body,
+        "billing v2 payment-method checkout unknown-field error",
+      );
+
+      const setupIntentCreateUnknownFieldError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/v2/payment-methods/setup-intent/"), {
+            legacy: true,
+          }),
+        [400],
+        "Billing v2 setup-intent checkout alias accepted an unknown request field.",
+      );
+      assert(
+        errorText(setupIntentCreateUnknownFieldError)
+          .toLowerCase()
+          .includes("legacy"),
+        "Billing v2 setup-intent checkout alias unknown-field error did not mention the rejected field.",
+      );
+      assertNoBillingCheckoutPayload(
+        setupIntentCreateUnknownFieldError.body,
+        "billing v2 setup-intent checkout alias unknown-field error",
+      );
+      assertNoFullPaymentCardLeak(
+        setupIntentCreateUnknownFieldError.body,
+        "billing v2 setup-intent checkout alias unknown-field error",
+      );
+
+      const confirmUnknownFieldError = await expectApiError(
+        () =>
+          client.put(apiPath("/usage/v2/payment-methods/"), {
+            sessionId: "cs_api_journey_unknown",
+          }),
+        [400],
+        "Billing v2 payment-method confirm accepted an unknown request field.",
+      );
+      assert(
+        errorText(confirmUnknownFieldError).toLowerCase().includes("sessionid"),
+        "Billing v2 payment-method confirm unknown-field error did not mention sessionId.",
+      );
+
+      const setupIntentConfirmUnknownFieldError = await expectApiError(
+        () =>
+          client.put(apiPath("/usage/v2/payment-methods/setup-intent/"), {
+            sessionId: "cs_api_journey_alias_unknown",
+          }),
+        [400],
+        "Billing v2 setup-intent confirm alias accepted an unknown request field.",
+      );
+      assert(
+        errorText(setupIntentConfirmUnknownFieldError)
+          .toLowerCase()
+          .includes("sessionid"),
+        "Billing v2 setup-intent confirm alias unknown-field error did not mention sessionId.",
+      );
+
+      const defaultUnknownFieldError = await expectApiError(
+        () =>
+          client.post(
+            apiPath("/usage/v2/payment-methods/{pm_id}/default/", {
+              pm_id: "pm_api_journey_unknown",
+            }),
+            { legacy: true },
+          ),
+        [400],
+        "Billing v2 default payment-method mutation accepted an unknown request field.",
+      );
+      assert(
+        errorText(defaultUnknownFieldError).toLowerCase().includes("legacy"),
+        "Billing v2 default payment-method unknown-field error did not mention the rejected field.",
+      );
+
+      const afterAudit = await loadLegacyPaymentMethodInvoiceDbAudit({
+        organizationId,
+      });
+      assertLegacyPaymentMethodInvoiceDbAudit(
+        afterAudit,
+        "billing v2 payment methods after API calls",
+      );
+      assert(
+        JSON.stringify(afterAudit) === JSON.stringify(beforeAudit),
+        "Billing v2 payment-method reads or guarded mutations changed Stripe/payment state.",
+      );
+
+      const restoreResult =
+        await restoreLegacyPaymentMethodInvoiceDbState(prepared);
+      const restoredAudit = await loadLegacyPaymentMethodInvoiceDbAudit({
+        organizationId,
+      });
+      if (prepared.original && !prepared.original.deleted) {
+        assert(
+          restoredAudit.active_subscription_count === 1,
+          "Billing v2 payment-method restore did not restore the original active subscription.",
+        );
+        assert(
+          restoredAudit.stripe_customer_id_test ===
+            prepared.original.stripe_customer_id_test &&
+            restoredAudit.stripe_customer_id_live ===
+              prepared.original.stripe_customer_id_live &&
+            restoredAudit.payment_method_id ===
+              prepared.original.payment_method_id,
+          "Billing v2 payment-method restore did not restore Stripe/payment method identifiers.",
+        );
+      } else {
+        assert(
+          restoredAudit.active_subscription_count === 0,
+          "Billing v2 payment-method restore left an active subscription that was absent before the journey.",
+        );
+      }
+
+      evidence.push({
+        organization_id: organizationId,
+        subscription_id: prepared.subscription_id,
+        subscription_preexisted: Boolean(prepared.original),
+        payment_method_count_without_customer: paymentMethods.length,
+        setup_intent_alias_count_without_customer:
+          setupIntentAliasMethods.length,
+        create_unknown_field_status: createUnknownFieldError.status,
+        setup_intent_create_unknown_field_status:
+          setupIntentCreateUnknownFieldError.status,
+        confirm_unknown_field_status: confirmUnknownFieldError.status,
+        setup_intent_confirm_unknown_field_status:
+          setupIntentConfirmUnknownFieldError.status,
+        default_unknown_field_status: defaultUnknownFieldError.status,
+        stripe_customer_id_test_after_calls: afterAudit.stripe_customer_id_test,
+        stripe_customer_id_live_after_calls: afterAudit.stripe_customer_id_live,
+        payment_method_id_after_calls: afterAudit.payment_method_id,
+        restore_mode: restoreResult.mode,
+        restored_active_subscription_count:
+          restoredAudit.active_subscription_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-036",
+    title:
+      "Billing v2 payment-method detail mutations avoid no-customer side effects",
+    tags: [
+      "core",
+      "settings",
+      "usage",
+      "billing",
+      "payment-methods",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({ client, cleanup, organizationId, evidence }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+
+      const prepared = await prepareLegacyPaymentMethodInvoiceDbState({
+        organizationId,
+      });
+      cleanup.defer("restore billing v2 payment-method detail state", () =>
+        restoreLegacyPaymentMethodInvoiceDbState(prepared),
+      );
+
+      const beforeAudit = await loadLegacyPaymentMethodInvoiceDbAudit({
+        organizationId,
+      });
+      assertLegacyPaymentMethodInvoiceDbAudit(
+        beforeAudit,
+        "billing v2 payment-method detail before API calls",
+      );
+
+      const postAliasUnknownFieldError = await expectApiError(
+        () =>
+          client.post(
+            apiPath("/usage/v2/payment-methods/{pm_id}/", {
+              pm_id: "pm_api_journey_alias",
+            }),
+            { legacy: true },
+          ),
+        [400],
+        "Billing v2 payment-method generated POST alias accepted an unknown request field.",
+      );
+      assert(
+        errorText(postAliasUnknownFieldError).toLowerCase().includes("legacy"),
+        "Billing v2 payment-method generated POST alias unknown-field error did not mention the rejected field.",
+      );
+      assertNoBillingCheckoutPayload(
+        postAliasUnknownFieldError.body,
+        "billing v2 payment-method generated POST alias unknown-field error",
+      );
+      assertNoFullPaymentCardLeak(
+        postAliasUnknownFieldError.body,
+        "billing v2 payment-method generated POST alias unknown-field error",
+      );
+
+      const deleteUnknownFieldError = await expectApiError(
+        () =>
+          client.delete(
+            apiPath("/usage/v2/payment-methods/{pm_id}/", {
+              pm_id: "pm_api_journey_delete",
+            }),
+            { body: { legacy: true } },
+          ),
+        [400],
+        "Billing v2 payment-method DELETE accepted an unknown request field.",
+      );
+      assert(
+        errorText(deleteUnknownFieldError).toLowerCase().includes("legacy"),
+        "Billing v2 payment-method DELETE unknown-field error did not mention the rejected field.",
+      );
+      assertNoBillingCheckoutPayload(
+        deleteUnknownFieldError.body,
+        "billing v2 payment-method DELETE unknown-field error",
+      );
+      assertNoFullPaymentCardLeak(
+        deleteUnknownFieldError.body,
+        "billing v2 payment-method DELETE unknown-field error",
+      );
+
+      const defaultDeleteUnknownFieldError = await expectApiError(
+        () =>
+          client.delete(
+            apiPath("/usage/v2/payment-methods/{pm_id}/default/", {
+              pm_id: "pm_api_journey_default_delete",
+            }),
+            { body: { legacy: true } },
+          ),
+        [400],
+        "Billing v2 payment-method default DELETE alias accepted an unknown request field.",
+      );
+      assert(
+        errorText(defaultDeleteUnknownFieldError)
+          .toLowerCase()
+          .includes("legacy"),
+        "Billing v2 payment-method default DELETE alias unknown-field error did not mention the rejected field.",
+      );
+
+      const deleteNoCustomerError = await expectApiError(
+        () =>
+          client.delete(
+            apiPath("/usage/v2/payment-methods/{pm_id}/", {
+              pm_id: "pm_api_journey_missing",
+            }),
+          ),
+        [400],
+        "Billing v2 payment-method DELETE without stored customer did not return a bounded 400.",
+      );
+      assert(
+        errorText(deleteNoCustomerError)
+          .toLowerCase()
+          .includes("stripe customer"),
+        "Billing v2 payment-method DELETE no-customer error did not explain missing stored customer state.",
+      );
+      assertNoBillingCheckoutPayload(
+        deleteNoCustomerError.body,
+        "billing v2 payment-method DELETE no-customer error",
+      );
+      assertNoFullPaymentCardLeak(
+        deleteNoCustomerError.body,
+        "billing v2 payment-method DELETE no-customer error",
+      );
+
+      const defaultDeleteNoCustomerError = await expectApiError(
+        () =>
+          client.delete(
+            apiPath("/usage/v2/payment-methods/{pm_id}/default/", {
+              pm_id: "pm_api_journey_missing",
+            }),
+          ),
+        [400],
+        "Billing v2 payment-method default DELETE alias without stored customer did not return a bounded 400.",
+      );
+      assert(
+        errorText(defaultDeleteNoCustomerError)
+          .toLowerCase()
+          .includes("stripe customer"),
+        "Billing v2 payment-method default DELETE no-customer error did not explain missing stored customer state.",
+      );
+
+      const afterAudit = await loadLegacyPaymentMethodInvoiceDbAudit({
+        organizationId,
+      });
+      assertLegacyPaymentMethodInvoiceDbAudit(
+        afterAudit,
+        "billing v2 payment-method detail after API calls",
+      );
+      assert(
+        JSON.stringify(afterAudit) === JSON.stringify(beforeAudit),
+        "Billing v2 payment-method detail guarded mutations changed Stripe/payment state.",
+      );
+
+      const restoreResult =
+        await restoreLegacyPaymentMethodInvoiceDbState(prepared);
+      const restoredAudit = await loadLegacyPaymentMethodInvoiceDbAudit({
+        organizationId,
+      });
+      if (prepared.original && !prepared.original.deleted) {
+        assert(
+          restoredAudit.active_subscription_count === 1,
+          "Billing v2 payment-method detail restore did not restore the original active subscription.",
+        );
+        assert(
+          restoredAudit.stripe_customer_id_test ===
+            prepared.original.stripe_customer_id_test &&
+            restoredAudit.stripe_customer_id_live ===
+              prepared.original.stripe_customer_id_live &&
+            restoredAudit.payment_method_id ===
+              prepared.original.payment_method_id,
+          "Billing v2 payment-method detail restore did not restore Stripe/payment method identifiers.",
+        );
+      } else {
+        assert(
+          restoredAudit.active_subscription_count === 0,
+          "Billing v2 payment-method detail restore left an active subscription that was absent before the journey.",
+        );
+      }
+
+      evidence.push({
+        organization_id: organizationId,
+        subscription_id: prepared.subscription_id,
+        subscription_preexisted: Boolean(prepared.original),
+        post_alias_unknown_field_status: postAliasUnknownFieldError.status,
+        delete_unknown_field_status: deleteUnknownFieldError.status,
+        default_delete_unknown_field_status:
+          defaultDeleteUnknownFieldError.status,
+        delete_no_customer_status: deleteNoCustomerError.status,
+        default_delete_no_customer_status: defaultDeleteNoCustomerError.status,
+        stripe_customer_id_test_after_calls: afterAudit.stripe_customer_id_test,
+        stripe_customer_id_live_after_calls: afterAudit.stripe_customer_id_live,
+        payment_method_id_after_calls: afterAudit.payment_method_id,
+        restore_mode: restoreResult.mode,
+        restored_active_subscription_count:
+          restoredAudit.active_subscription_count,
+      });
+    },
+  },
+  {
     id: "CORE-API-009",
     title:
       "Workspace integration list, detail masking, sync-log isolation, and cleanup",
@@ -3005,6 +6833,1010 @@ export const appCoreJourneys = [
         invalid_connection_status: invalidConnectionError.status,
         missing_detail_status: missingDetailError.status,
         db_encrypted_credentials_bytes: audit.encrypted_credentials_bytes,
+        cleanup_connection_count: cleanupAudit.connection_count,
+        cleanup_sync_log_count: cleanupAudit.sync_log_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-045",
+    title:
+      "Integration create and credential validation fail closed before persistence",
+    tags: [
+      "core",
+      "settings",
+      "integrations",
+      "mutating",
+      "data-integrity",
+      "credential-safety",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const marker = runId.replace(/[^a-z0-9-]/gi, "").slice(0, 20);
+      const displayName = `API Journey Integration Guard ${marker}`;
+      const externalProjectName = `api-journey-create-guard-${marker}`;
+      const newProjectName = `API Journey Integration Project ${marker}`;
+      const rawApiKey = `lin-api-journey-${marker}-secret`;
+      const auditParams = {
+        organizationId,
+        workspaceId,
+        displayName,
+        externalProjectName,
+        newProjectName,
+      };
+      cleanup.defer("delete disposable integration create guard residue", () =>
+        deleteIntegrationCreateGuardData(auditParams),
+      );
+
+      const beforeAudit = await loadIntegrationCreateGuardDbAudit(auditParams);
+      assert(
+        beforeAudit.connection_count === 0 &&
+          beforeAudit.project_count === 0 &&
+          beforeAudit.sync_log_count === 0,
+        "Integration create guard started with disposable residue.",
+      );
+
+      const validateUnknownFieldError = await expectApiError(
+        () =>
+          client.post(apiPath("/integrations/connections/validate/"), {
+            platform: "linear",
+            host_url: "https://api.linear.app",
+            credentials: { api_key: rawApiKey },
+            hostUrl: "https://api.linear.app",
+          }),
+        [400],
+        "Integration credential validation accepted a stale camelCase alias.",
+      );
+      assert(
+        errorText(validateUnknownFieldError).includes("hostUrl") ||
+          errorText(validateUnknownFieldError)
+            .toLowerCase()
+            .includes("unknown field"),
+        "Credential validation unknown-field error did not identify the stale alias.",
+      );
+      assertNoPayloadString(
+        validateUnknownFieldError.body,
+        rawApiKey,
+        "credential validation unknown-field error",
+      );
+
+      const validateMissingCredentialsError = await expectApiError(
+        () =>
+          client.post(apiPath("/integrations/connections/validate/"), {
+            platform: "linear",
+            host_url: "https://api.linear.app",
+            credentials: {},
+          }),
+        [400],
+        "Integration credential validation accepted missing Linear credentials.",
+      );
+      assert(
+        errorText(validateMissingCredentialsError)
+          .toLowerCase()
+          .includes("api key"),
+        "Credential validation missing-credential error did not explain API key requirement.",
+      );
+
+      const createAliasError = await expectApiError(
+        () =>
+          client.post(apiPath("/integrations/connections/"), {
+            platform: "linear",
+            host_url: "https://api.linear.app",
+            displayName,
+            credentials: { api_key: rawApiKey },
+            external_project_name: externalProjectName,
+            new_project_name: newProjectName,
+            backfill_option: "new_only",
+            sync_interval_seconds: 300,
+          }),
+        [400],
+        "Integration create accepted stale camelCase displayName.",
+      );
+      assert(
+        errorText(createAliasError).includes("displayName") ||
+          errorText(createAliasError).toLowerCase().includes("unknown field"),
+        "Integration create stale-alias error did not identify displayName.",
+      );
+      assertNoPayloadString(
+        createAliasError.body,
+        rawApiKey,
+        "integration create alias error",
+      );
+
+      const createInvalidIntervalError = await expectApiError(
+        () =>
+          client.post(apiPath("/integrations/connections/"), {
+            platform: "linear",
+            host_url: "https://api.linear.app",
+            display_name: displayName,
+            credentials: { api_key: rawApiKey },
+            external_project_name: externalProjectName,
+            new_project_name: newProjectName,
+            backfill_option: "new_only",
+            sync_interval_seconds: 59,
+          }),
+        [400],
+        "Integration create accepted an invalid sync interval before credential validation.",
+      );
+      assert(
+        errorText(createInvalidIntervalError)
+          .toLowerCase()
+          .includes("sync_interval_seconds") ||
+          errorText(createInvalidIntervalError).includes("60"),
+        "Integration create invalid-interval error did not mention the interval contract.",
+      );
+      assertNoPayloadString(
+        createInvalidIntervalError.body,
+        rawApiKey,
+        "integration create invalid-interval error",
+      );
+
+      const createMissingCredentialsError = await expectApiError(
+        () =>
+          client.post(apiPath("/integrations/connections/"), {
+            platform: "linear",
+            host_url: "https://api.linear.app",
+            display_name: displayName,
+            credentials: {},
+            external_project_name: externalProjectName,
+            new_project_name: newProjectName,
+            backfill_option: "new_only",
+            sync_interval_seconds: 300,
+          }),
+        [400],
+        "Integration create accepted missing Linear credentials.",
+      );
+      assert(
+        errorText(createMissingCredentialsError)
+          .toLowerCase()
+          .includes("api key"),
+        "Integration create missing-credential error did not explain API key requirement.",
+      );
+
+      const afterAudit = await loadIntegrationCreateGuardDbAudit(auditParams);
+      assert(
+        afterAudit.connection_count === 0,
+        "Integration create guards persisted a disposable connection row.",
+      );
+      assert(
+        afterAudit.project_count === 0,
+        "Integration create guards created a disposable project before credentials validated.",
+      );
+      assert(
+        afterAudit.sync_log_count === 0,
+        "Integration create guards created disposable sync logs.",
+      );
+
+      const cleanupAudit = await deleteIntegrationCreateGuardData(auditParams);
+
+      evidence.push({
+        validate_unknown_field_status: validateUnknownFieldError.status,
+        validate_missing_credentials_status:
+          validateMissingCredentialsError.status,
+        create_alias_status: createAliasError.status,
+        create_invalid_interval_status: createInvalidIntervalError.status,
+        create_missing_credentials_status: createMissingCredentialsError.status,
+        connection_count_after_calls: afterAudit.connection_count,
+        project_count_after_calls: afterAudit.project_count,
+        sync_log_count_after_calls: afterAudit.sync_log_count,
+        cleanup_deleted_connections: cleanupAudit.deleted_connections,
+        cleanup_deleted_projects: cleanupAudit.deleted_projects,
+      });
+    },
+  },
+  {
+    id: "CORE-API-037",
+    title:
+      "Billing v2 plan and add-on mutations fail closed before Stripe work",
+    tags: [
+      "core",
+      "settings",
+      "billing",
+      "pricing",
+      "addons",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({ client, cleanup, organizationId, evidence }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+
+      const prepared = await prepareBillingAddonMutationDbState({
+        organizationId,
+      });
+      cleanup.defer("restore billing v2 plan/add-on state", () =>
+        restoreBillingAddonMutationDbState(prepared),
+      );
+
+      const beforeAudit = await loadBillingAddonMutationDbAudit({
+        organizationId,
+      });
+      assertBillingAddonMutationAudit(
+        beforeAudit,
+        "billing v2 add-on before API calls",
+      );
+      assert(
+        beforeAudit.plan === "payg",
+        "Billing v2 add-on setup did not start from PAYG.",
+      );
+
+      const upgradeUnknownFieldError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/v2/upgrade-to-payg/"), {
+            legacy: true,
+          }),
+        [400],
+        "Billing v2 PAYG upgrade accepted an unknown request field.",
+      );
+      assert(
+        errorText(upgradeUnknownFieldError).toLowerCase().includes("legacy"),
+        "Billing v2 PAYG upgrade unknown-field error did not mention the rejected field.",
+      );
+      assertNoBillingCheckoutPayload(
+        upgradeUnknownFieldError.body,
+        "billing v2 PAYG upgrade unknown-field error",
+      );
+
+      const upgradeConfirmUnknownFieldError = await expectApiError(
+        () =>
+          client.put(apiPath("/usage/v2/upgrade-to-payg/"), {
+            sessionId: "cs_api_journey_legacy",
+          }),
+        [400],
+        "Billing v2 PAYG confirm accepted a legacy sessionId request field.",
+      );
+      assert(
+        errorText(upgradeConfirmUnknownFieldError)
+          .toLowerCase()
+          .includes("sessionid"),
+        "Billing v2 PAYG confirm unknown-field error did not mention sessionId.",
+      );
+
+      const downgradeUnknownFieldError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/v2/downgrade-to-free/"), {
+            legacy: true,
+          }),
+        [400],
+        "Billing v2 downgrade accepted an unknown request field.",
+      );
+      assert(
+        errorText(downgradeUnknownFieldError).toLowerCase().includes("legacy"),
+        "Billing v2 downgrade unknown-field error did not mention the rejected field.",
+      );
+
+      await setBillingAddonMutationDbState({
+        organizationId,
+        plan: "free",
+      });
+      const freeAddAddonError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/v2/add-addon/"), {
+            plan: "boost",
+          }),
+        [400],
+        "Billing v2 add-addon allowed a Free organization to add an add-on.",
+      );
+      assert(
+        errorText(freeAddAddonError).toLowerCase().includes("pay-as-you-go"),
+        "Billing v2 Free add-addon error did not mention PAYG.",
+      );
+
+      await setBillingAddonMutationDbState({
+        organizationId,
+        plan: "custom",
+      });
+      const customAddAddonError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/v2/addon/"), {
+            plan: "scale",
+          }),
+        [400],
+        "Billing v2 add-on allowed a Custom organization to add an add-on.",
+      );
+      assert(
+        errorText(customAddAddonError).toLowerCase().includes("custom"),
+        "Billing v2 Custom add-on error did not mention custom plans.",
+      );
+
+      await setBillingAddonMutationDbState({
+        organizationId,
+        plan: "payg",
+      });
+      const removeWithoutAddonError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/v2/remove-addon/"), {
+            plan: "payg",
+          }),
+        [400],
+        "Billing v2 remove-addon reported success without an active add-on.",
+      );
+      assert(
+        errorText(removeWithoutAddonError)
+          .toLowerCase()
+          .includes("no active add-on"),
+        "Billing v2 remove-addon no-add-on error did not explain the missing add-on.",
+      );
+
+      await setBillingAddonMutationDbState({
+        organizationId,
+        plan: "boost",
+      });
+      const removeWithoutStripeSubscriptionError = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/v2/remove-addon/"), {
+            plan: "boost",
+          }),
+        [400],
+        "Billing v2 remove-addon reported success without a Stripe subscription id.",
+      );
+      assert(
+        errorText(removeWithoutStripeSubscriptionError)
+          .toLowerCase()
+          .includes("stripe"),
+        "Billing v2 remove-addon no-subscription error did not mention Stripe.",
+      );
+
+      await setBillingAddonMutationDbState({
+        organizationId,
+        plan: "boost",
+        stripeSubscriptionId: "sub_api_journey_guard",
+      });
+      const removeDeleteUnknownFieldError = await expectApiError(
+        () =>
+          client.delete(apiPath("/usage/v2/remove-addon/"), {
+            body: { legacy: true },
+          }),
+        [400],
+        "Billing v2 remove-addon DELETE accepted an unknown request field.",
+      );
+      assert(
+        errorText(removeDeleteUnknownFieldError)
+          .toLowerCase()
+          .includes("legacy"),
+        "Billing v2 remove-addon DELETE unknown-field error did not mention the rejected field.",
+      );
+
+      const addDeleteAliasError = await expectApiError(
+        () => client.delete(apiPath("/usage/v2/add-addon/")),
+        [400],
+        "Billing v2 add-addon DELETE alias removed an add-on.",
+      );
+      assert(
+        errorText(addDeleteAliasError).includes("POST"),
+        "Billing v2 add-addon DELETE alias did not point callers to POST.",
+      );
+
+      const reinstateDeleteAliasError = await expectApiError(
+        () => client.delete(apiPath("/usage/v2/reinstate-addon/")),
+        [400],
+        "Billing v2 reinstate-addon DELETE alias removed an add-on.",
+      );
+      assert(
+        errorText(reinstateDeleteAliasError).includes("PUT"),
+        "Billing v2 reinstate-addon DELETE alias did not point callers to PUT.",
+      );
+
+      const addPutAliasError = await expectApiError(
+        () => client.put(apiPath("/usage/v2/add-addon/")),
+        [400],
+        "Billing v2 add-addon PUT alias reinstated an add-on.",
+      );
+      assert(
+        errorText(addPutAliasError).includes("POST"),
+        "Billing v2 add-addon PUT alias did not point callers to POST.",
+      );
+
+      const removePutAliasError = await expectApiError(
+        () => client.put(apiPath("/usage/v2/remove-addon/")),
+        [400],
+        "Billing v2 remove-addon PUT alias reinstated an add-on.",
+      );
+      assert(
+        errorText(removePutAliasError).includes("DELETE"),
+        "Billing v2 remove-addon PUT alias did not point callers to DELETE.",
+      );
+
+      const reinstatePostAliasError = await expectApiError(
+        () => client.post(apiPath("/usage/v2/reinstate-addon/")),
+        [400],
+        "Billing v2 reinstate-addon POST alias added an add-on.",
+      );
+      assert(
+        errorText(reinstatePostAliasError).includes("PUT"),
+        "Billing v2 reinstate-addon POST alias did not point callers to PUT.",
+      );
+
+      const reinstateUnknownFieldError = await expectApiError(
+        () =>
+          client.put(apiPath("/usage/v2/reinstate-addon/"), {
+            legacy: true,
+          }),
+        [400],
+        "Billing v2 reinstate-addon PUT accepted an unknown request field.",
+      );
+      assert(
+        errorText(reinstateUnknownFieldError).toLowerCase().includes("legacy"),
+        "Billing v2 reinstate-addon unknown-field error did not mention the rejected field.",
+      );
+
+      await setBillingAddonMutationDbState({
+        organizationId,
+        plan: "payg",
+      });
+      const downgradeResult = await client.post(
+        apiPath("/usage/v2/downgrade-to-free/"),
+      );
+      assert(
+        downgradeResult?.plan === "free",
+        "Billing v2 downgrade did not return the free plan.",
+      );
+
+      const afterAudit = await loadBillingAddonMutationDbAudit({
+        organizationId,
+      });
+      assertBillingAddonMutationAudit(
+        afterAudit,
+        "billing v2 add-on after API calls",
+      );
+      assert(
+        afterAudit.plan === "free",
+        "Billing v2 downgrade did not persist the free plan.",
+      );
+      assert(
+        afterAudit.stripe_subscription_id === null &&
+          afterAudit.stripe_fee_subscription_id === null &&
+          afterAudit.stripe_customer_id_test === null &&
+          afterAudit.stripe_customer_id_live === null &&
+          afterAudit.payment_method_id === null,
+        "Billing v2 guarded plan/add-on mutations created Stripe/payment state.",
+      );
+
+      const restoreResult = await restoreBillingAddonMutationDbState(prepared);
+      const restoredAudit = await loadBillingAddonMutationDbAudit({
+        organizationId,
+      });
+      if (prepared.original && !prepared.original.deleted) {
+        assert(
+          restoredAudit.active_subscription_count === 1,
+          "Billing v2 add-on restore did not restore the original active subscription.",
+        );
+        assert(
+          restoredAudit.plan === prepared.original.plan,
+          "Billing v2 add-on restore did not restore the original plan.",
+        );
+        assert(
+          restoredAudit.stripe_subscription_id ===
+            prepared.original.stripe_subscription_id,
+          "Billing v2 add-on restore did not restore the original Stripe subscription id.",
+        );
+      } else {
+        assert(
+          restoredAudit.active_subscription_count === 0,
+          "Billing v2 add-on restore left an active subscription that was absent before the journey.",
+        );
+      }
+
+      evidence.push({
+        subscription_id: prepared.subscription_id,
+        subscription_preexisted: Boolean(prepared.original),
+        upgrade_unknown_status: upgradeUnknownFieldError.status,
+        upgrade_confirm_unknown_status: upgradeConfirmUnknownFieldError.status,
+        downgrade_unknown_status: downgradeUnknownFieldError.status,
+        free_addon_status: freeAddAddonError.status,
+        custom_addon_status: customAddAddonError.status,
+        remove_without_addon_status: removeWithoutAddonError.status,
+        remove_without_stripe_status:
+          removeWithoutStripeSubscriptionError.status,
+        remove_delete_unknown_status: removeDeleteUnknownFieldError.status,
+        add_delete_alias_status: addDeleteAliasError.status,
+        reinstate_delete_alias_status: reinstateDeleteAliasError.status,
+        add_put_alias_status: addPutAliasError.status,
+        remove_put_alias_status: removePutAliasError.status,
+        reinstate_post_alias_status: reinstatePostAliasError.status,
+        reinstate_unknown_status: reinstateUnknownFieldError.status,
+        downgraded_plan: afterAudit.plan,
+        stripe_subscription_id_after_calls: afterAudit.stripe_subscription_id,
+        stripe_customer_id_test_after_calls: afterAudit.stripe_customer_id_test,
+        restore_mode: restoreResult.mode,
+        restored_plan: restoredAudit.plan,
+        restored_active_subscription_count:
+          restoredAudit.active_subscription_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-038",
+    title:
+      "Billing v2 usage analytics read summaries, series, and workspace breakdowns",
+    tags: [
+      "core",
+      "settings",
+      "billing",
+      "usage",
+      "analytics",
+      "data-integrity",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const marker = `api_journey_usage_v2_${runId}`;
+      const fixture = await prepareBillingUsageAnalyticsDbState({
+        marker,
+        organizationId,
+        workspaceId,
+      });
+      cleanup.defer("restore billing v2 usage analytics fixtures", () =>
+        restoreBillingUsageAnalyticsDbState(fixture),
+      );
+
+      const beforeAudit = await loadBillingUsageAnalyticsDbAudit({
+        marker,
+        organizationId,
+        workspaceId,
+        dimension: fixture.dimension,
+        periods: fixture.periods,
+      });
+      assertBillingUsageAnalyticsDbAudit(beforeAudit, fixture, "before calls");
+
+      const staleWorkspaceFilter = await expectApiError(
+        () =>
+          client.get(apiPath("/usage/v2/usage-overview/"), {
+            query: {
+              period: fixture.current_period,
+              workspace_id: workspaceId,
+            },
+          }),
+        [400],
+        "Billing v2 usage overview accepted a stale ignored workspace_id filter.",
+      );
+      assert(
+        errorText(staleWorkspaceFilter).toLowerCase().includes("workspace_id"),
+        "Billing v2 usage overview stale workspace_id error did not mention the field.",
+      );
+
+      const overview = await client.get(apiPath("/usage/v2/usage-overview/"), {
+        query: { period: fixture.current_period },
+      });
+      const overviewDimension = assertBillingUsageOverviewPayload(
+        overview,
+        "billing v2 usage overview",
+        {
+          period: fixture.current_period,
+          dimension: fixture.dimension,
+          expectedUsage: fixture.current_usage,
+          expectedUsageRaw: fixture.current_usage_raw,
+        },
+      );
+
+      const missingDimension = await expectApiError(
+        () =>
+          client.get(apiPath("/usage/v2/usage-time-series/"), {
+            query: { period: fixture.current_period },
+          }),
+        [400],
+        "Billing v2 usage time-series accepted a request without dimension.",
+      );
+      assert(
+        errorText(missingDimension).toLowerCase().includes("dimension"),
+        "Billing v2 usage time-series missing-dimension error did not mention dimension.",
+      );
+
+      const dailySeries = await client.get(
+        apiPath("/usage/v2/usage-time-series/"),
+        {
+          query: {
+            dimension: fixture.dimension,
+            period: fixture.current_period,
+          },
+        },
+      );
+      assertBillingUsageTimeSeriesPayload(
+        dailySeries,
+        "billing v2 daily usage time-series",
+        {
+          dimension: fixture.dimension,
+          period: fixture.current_period,
+          periodEnd: fixture.current_period,
+          points: fixture.daily_points,
+        },
+      );
+
+      const monthlySeries = await client.get(
+        apiPath("/usage/v2/usage-time-series/"),
+        {
+          query: {
+            dimension: fixture.dimension,
+            period: fixture.previous_period,
+            period_end: fixture.current_period,
+          },
+        },
+      );
+      assertBillingUsageTimeSeriesPayload(
+        monthlySeries,
+        "billing v2 monthly usage time-series",
+        {
+          dimension: fixture.dimension,
+          period: fixture.previous_period,
+          periodEnd: fixture.current_period,
+          points: fixture.monthly_points,
+        },
+      );
+
+      const invalidBreakdownPeriod = await expectApiError(
+        () =>
+          client.get(apiPath("/usage/v2/usage-workspace-breakdown/"), {
+            query: {
+              dimension: fixture.dimension,
+              period: "december",
+            },
+          }),
+        [400],
+        "Billing v2 usage workspace breakdown accepted an invalid period.",
+      );
+      assert(
+        errorText(invalidBreakdownPeriod).toLowerCase().includes("period"),
+        "Billing v2 usage workspace breakdown invalid-period error did not mention period.",
+      );
+
+      const breakdown = await client.get(
+        apiPath("/usage/v2/usage-workspace-breakdown/"),
+        {
+          query: {
+            dimension: fixture.dimension,
+            period: fixture.current_period,
+          },
+        },
+      );
+      assertBillingUsageWorkspaceBreakdownPayload(
+        breakdown,
+        "billing v2 workspace usage breakdown",
+        {
+          dimension: fixture.dimension,
+          period: fixture.current_period,
+          periodEnd: fixture.current_period,
+          workspaceId,
+          workspaceName: fixture.workspace_name,
+          workspaceUsage: fixture.workspace_usage,
+          defaultUsage: fixture.default_usage,
+        },
+      );
+
+      const afterAudit = await loadBillingUsageAnalyticsDbAudit({
+        marker,
+        organizationId,
+        workspaceId,
+        dimension: fixture.dimension,
+        periods: fixture.periods,
+      });
+      assertBillingUsageAnalyticsDbAudit(afterAudit, fixture, "after calls");
+
+      const restoreResult = await restoreBillingUsageAnalyticsDbState(fixture);
+      const cleanupAudit = await loadBillingUsageAnalyticsDbAudit({
+        marker,
+        organizationId,
+        workspaceId,
+        dimension: fixture.dimension,
+        periods: fixture.periods,
+      });
+      assertBillingUsageAnalyticsRestored(cleanupAudit, fixture);
+
+      evidence.push({
+        dimension: fixture.dimension,
+        current_period: fixture.current_period,
+        previous_period: fixture.previous_period,
+        overview_usage: overviewDimension.current_usage,
+        overview_usage_raw: overviewDimension.current_usage_raw,
+        daily_point_count: dailySeries.series.length,
+        monthly_point_count: monthlySeries.series.length,
+        workspace_breakdown_count: breakdown.workspaces.length,
+        stale_workspace_filter_status: staleWorkspaceFilter.status,
+        missing_dimension_status: missingDimension.status,
+        invalid_breakdown_period_status: invalidBreakdownPeriod.status,
+        seeded_event_count: beforeAudit.event_count,
+        cleanup_event_count: cleanupAudit.event_count,
+        restore_mode: restoreResult.mode,
+      });
+    },
+  },
+  {
+    id: "CORE-API-039",
+    title:
+      "Legacy billing checkout and portal sessions fail closed before Stripe side effects",
+    tags: [
+      "core",
+      "settings",
+      "billing",
+      "checkout",
+      "stripe",
+      "data-integrity",
+    ],
+    async run({ client, cleanup, organizationId, evidence }) {
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+
+      const fixture = await prepareLegacyStripeSessionDbState({
+        organizationId,
+      });
+      cleanup.defer("restore legacy Stripe session fixtures", () =>
+        restoreLegacyStripeSessionDbState(fixture),
+      );
+
+      const beforeAudit = await loadLegacyStripeSessionDbAudit({
+        organizationId,
+      });
+      assertLegacyStripeSessionDbAudit(
+        beforeAudit,
+        fixture,
+        "before guarded calls",
+      );
+
+      const checkoutUnknownField = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/create-checkout-session/"), {
+            legacy: true,
+          }),
+        [400],
+        "Legacy checkout session accepted an unknown request field.",
+      );
+      assert(
+        errorText(checkoutUnknownField).toLowerCase().includes("legacy"),
+        "Legacy checkout unknown-field error did not mention the rejected field.",
+      );
+
+      const checkoutDeletedTier = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/create-checkout-session/"), {
+            subscription_type: "basic",
+          }),
+        [400],
+        "Legacy checkout session used deleted tier price config.",
+      );
+      assert(
+        errorText(checkoutDeletedTier)
+          .toLowerCase()
+          .includes("subscription type"),
+        "Legacy checkout deleted-tier error did not mention subscription type.",
+      );
+
+      const portalUnknownField = await expectApiError(
+        () =>
+          client.post(apiPath("/usage/create-billing-portal-session/"), {
+            legacy: true,
+          }),
+        [400],
+        "Legacy billing portal session accepted an unknown request field.",
+      );
+      assert(
+        errorText(portalUnknownField).toLowerCase().includes("legacy"),
+        "Legacy billing portal unknown-field error did not mention the rejected field.",
+      );
+
+      const afterAudit = await loadLegacyStripeSessionDbAudit({
+        organizationId,
+      });
+      assertLegacyStripeSessionDbAudit(
+        afterAudit,
+        fixture,
+        "after guarded calls",
+      );
+      assert(
+        afterAudit.stripe_customer_id_test === null &&
+          afterAudit.stripe_customer_id_live === null &&
+          afterAudit.payment_method_id === null,
+        "Legacy guarded checkout/portal calls created Stripe or payment state.",
+      );
+
+      const restoreResult = await restoreLegacyStripeSessionDbState(fixture);
+      const restoredAudit = await loadLegacyStripeSessionDbAudit({
+        organizationId,
+      });
+      assertLegacyStripeSessionRestored(restoredAudit, fixture);
+
+      evidence.push({
+        checkout_unknown_status: checkoutUnknownField.status,
+        checkout_deleted_tier_status: checkoutDeletedTier.status,
+        portal_unknown_status: portalUnknownField.status,
+        original_business_tier_count: fixture.original_business_tier_count,
+        active_business_tier_count_during_run:
+          beforeAudit.active_business_tier_count,
+        stripe_customer_id_test_after_calls: afterAudit.stripe_customer_id_test,
+        stripe_customer_id_live_after_calls: afterAudit.stripe_customer_id_live,
+        payment_method_id_after_calls: afterAudit.payment_method_id,
+        restore_mode: restoreResult.mode,
+        restored_active_business_tier_count:
+          restoredAudit.active_business_tier_count,
+      });
+    },
+  },
+  {
+    id: "CORE-API-035",
+    title:
+      "Integration sync-log detail stays scoped and hidden after parent delete",
+    tags: [
+      "core",
+      "settings",
+      "integrations",
+      "sync-logs",
+      "mutating",
+      "data-integrity",
+    ],
+    async run({
+      client,
+      user,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      requireMutations();
+      const userInfo = await client.get(apiPath("/accounts/user-info/"));
+      const userId = currentUserId(userInfo) || currentUserId(user);
+      assert(
+        isUuid(userId),
+        "Authenticated user-info did not include a valid user id.",
+      );
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const marker = runId.replace(/[^a-z0-9-]/gi, "").slice(0, 20);
+      const seeded = await seedIntegrationConnectionData({
+        marker,
+        organizationId,
+        workspaceId,
+        userId,
+        displayNamePrefix: "API Journey Sync Log",
+      });
+      cleanup.defer("delete disposable integration sync-log detail data", () =>
+        deleteIntegrationConnectionData({ connectionId: seeded.connection_id }),
+      );
+
+      const syncLogDetail = await client.get(
+        apiPath("/integrations/sync-logs/{id}/", {
+          id: seeded.sync_log_id,
+        }),
+      );
+      assert(
+        syncLogDetail?.id === seeded.sync_log_id,
+        "Sync-log detail returned the wrong id.",
+      );
+      assert(
+        syncLogDetail.connection === seeded.connection_id,
+        "Sync-log detail returned the wrong connection id.",
+      );
+      assert(
+        syncLogDetail.status === "failed",
+        "Sync-log detail did not return the seeded failed status.",
+      );
+      assert(
+        syncLogDetail.traces_fetched === 7 &&
+          syncLogDetail.traces_created === 5 &&
+          syncLogDetail.traces_updated === 2,
+        "Sync-log detail trace counters did not match seeded values.",
+      );
+      assert(
+        syncLogDetail.spans_synced === 11 && syncLogDetail.scores_synced === 3,
+        "Sync-log detail span/score counters did not match seeded values.",
+      );
+      assert(
+        syncLogDetail.error_details?.type === "ApiJourneySeed",
+        "Sync-log detail did not preserve structured error details.",
+      );
+      assertNoCredentialLeak(syncLogDetail, seeded, "sync-log detail");
+
+      const missingLogError = await expectApiError(
+        () =>
+          client.get(
+            apiPath("/integrations/sync-logs/{id}/", {
+              id: randomUUID(),
+            }),
+          ),
+        [404],
+        "Missing sync-log detail unexpectedly succeeded.",
+      );
+
+      const deleted = await client.delete(
+        apiPath("/integrations/connections/{id}/", {
+          id: seeded.connection_id,
+        }),
+      );
+      assert(
+        deleted?.deleted === true,
+        "Integration delete did not return deleted=true.",
+      );
+
+      const deletedParentLogError = await expectApiError(
+        () =>
+          client.get(
+            apiPath("/integrations/sync-logs/{id}/", {
+              id: seeded.sync_log_id,
+            }),
+          ),
+        [404],
+        "Sync-log detail remained visible after parent connection delete.",
+      );
+
+      const deletedAudit = await loadIntegrationConnectionDbAudit({
+        connectionId: seeded.connection_id,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        deletedAudit.connection_count === 1 &&
+          deletedAudit.sync_log_count === 1,
+        "DB audit did not retain soft-deleted integration and sync-log rows.",
+      );
+      assert(
+        deletedAudit.deleted === true && deletedAudit.deleted_at_set === true,
+        "DB audit did not see the parent integration soft-delete.",
+      );
+
+      await deleteIntegrationConnectionData({
+        connectionId: seeded.connection_id,
+      });
+      const cleanupAudit = await loadIntegrationConnectionDbAudit({
+        connectionId: seeded.connection_id,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        cleanupAudit.connection_count === 0 &&
+          cleanupAudit.sync_log_count === 0,
+        "Disposable integration sync-log detail rows remained after cleanup.",
+      );
+
+      evidence.push({
+        connection_id: seeded.connection_id,
+        sync_log_id: seeded.sync_log_id,
+        status: syncLogDetail.status,
+        traces_fetched: syncLogDetail.traces_fetched,
+        spans_synced: syncLogDetail.spans_synced,
+        scores_synced: syncLogDetail.scores_synced,
+        missing_log_status: missingLogError.status,
+        deleted_parent_log_status: deletedParentLogError.status,
+        db_deleted_at_set: deletedAudit.deleted_at_set,
         cleanup_connection_count: cleanupAudit.connection_count,
         cleanup_sync_log_count: cleanupAudit.sync_log_count,
       });
@@ -3321,7 +8153,14 @@ export const appCoreJourneys = [
       "data-integrity",
       "safe",
     ],
-    async run({ client, organizationId, workspaceId, evidence }) {
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
       assert(
         isUuid(organizationId),
         "Authenticated context did not resolve an organization id.",
@@ -3331,22 +8170,98 @@ export const appCoreJourneys = [
         "Authenticated context did not resolve a workspace id.",
       );
 
-      const providerStatus = await client.get(
+      let providerStatus = await client.get(
         apiPath("/model-hub/develops/provider-status/"),
       );
-      const providers = Array.isArray(providerStatus?.providers)
+      let providers = Array.isArray(providerStatus?.providers)
         ? providerStatus.providers
         : [];
       assert(providers.length > 0, "Provider status did not return providers.");
       assertNoRawProviderSecretLeak(providerStatus, "provider status");
 
-      const configuredProviders = providers.filter(
+      let configuredProviders = providers.filter(
         (provider) => provider?.has_key,
       );
-      assert(
-        configuredProviders.length > 0,
-        "Provider status did not report any configured providers.",
-      );
+      if (!configuredProviders.length) {
+        if (!envFlag("API_JOURNEY_MUTATIONS")) {
+          evidence.push({
+            provider_count: providers.length,
+            configured_provider_count: 0,
+          });
+          skip(
+            "Provider status did not report any configured providers; set API_JOURNEY_MUTATIONS=1 to create a disposable provider key fixture.",
+          );
+        }
+
+        const existingKeys = asArray(
+          await client.get(apiPath("/model-hub/api-keys/")),
+        );
+        const existingProviders = new Set(
+          existingKeys.map((key) => key.provider).filter(Boolean),
+        );
+        const setupProvider =
+          providers.find(
+            (provider) =>
+              provider?.type === "text" &&
+              provider?.provider &&
+              !existingProviders.has(provider.provider),
+          )?.provider ||
+          ["rime", "lmnt", "cartesia", "hume", "neuphonic"].find(
+            (candidate) => !existingProviders.has(candidate),
+          );
+        assert(
+          setupProvider,
+          "No safe unconfigured provider candidate was available for CORE-API-010 setup.",
+        );
+
+        const rawSetupKey = `core-api-010-secret-${runId}`;
+        const setupKey = await client.post(apiPath("/model-hub/api-keys/"), {
+          provider: setupProvider,
+          key: rawSetupKey,
+        });
+        assert(setupKey?.id, "CORE-API-010 setup provider key lacked an id.");
+        assertProviderKeyResponseIsMaskedOnly(
+          setupKey,
+          "CORE-API-010 setup provider key create",
+          [rawSetupKey],
+        );
+        cleanup.defer("hard-delete CORE-API-010 provider key fixture", () =>
+          hardDeleteProviderApiKeyFixturesDb({
+            organizationId,
+            keyIds: [setupKey.id],
+          }),
+        );
+        cleanup.defer("delete CORE-API-010 provider key fixture", () =>
+          ignoreNotFound(() =>
+            client.delete(
+              apiPath("/model-hub/api-keys/{id}/", { id: setupKey.id }),
+            ),
+          ),
+        );
+
+        providerStatus = await client.get(
+          apiPath("/model-hub/develops/provider-status/"),
+        );
+        providers = Array.isArray(providerStatus?.providers)
+          ? providerStatus.providers
+          : [];
+        assertNoRawProviderSecretLeak(
+          providerStatus,
+          "provider status after disposable provider key setup",
+        );
+        configuredProviders = providers.filter((provider) => provider?.has_key);
+        assert(
+          configuredProviders.some(
+            (provider) => provider.provider === setupProvider,
+          ),
+          "Provider status did not mark the disposable setup provider as configured.",
+        );
+        evidence.push({
+          setup_provider: setupProvider,
+          setup_provider_key_id: setupKey.id,
+          setup_provider_created_for_empty_workspace: true,
+        });
+      }
       for (const provider of providers) {
         assertProviderStatusRow(provider);
       }
@@ -3455,7 +8370,14 @@ export const appCoreJourneys = [
       "data-integrity",
       "safe",
     ],
-    async run({ client, user, organizationId, workspaceId, evidence }) {
+    async run({
+      client,
+      user,
+      cleanup,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
       assert(
         isUuid(organizationId),
         "Authenticated context did not resolve an organization id.",
@@ -3464,6 +8386,13 @@ export const appCoreJourneys = [
         isUuid(workspaceId),
         "Authenticated context did not resolve a workspace id.",
       );
+      const stripeSafeState = await prepareLegacyPaymentMethodInvoiceDbState({
+        organizationId,
+      });
+      cleanup.defer("restore billing read-contract Stripe state", () =>
+        restoreLegacyPaymentMethodInvoiceDbState(stripeSafeState),
+      );
+
       const userInfo = await client.get(apiPath("/accounts/user-info/"));
       const email = currentUserEmail(userInfo) || currentUserEmail(user);
       assert(
@@ -5706,6 +10635,79 @@ export const appCoreJourneys = [
     },
   },
   {
+    id: "CORE-API-026",
+    title:
+      "Falcon quick-analysis authenticated validation contract and optional provider smoke",
+    tags: ["core", "falcon", "quick-analysis", "safe", "api-contract"],
+    async run({ client, evidence }) {
+      const missingPrompt = await expectApiError(
+        () => client.post(apiPath("/falcon-ai/quick-analysis/"), {}),
+        [400],
+        "Falcon quick-analysis accepted a missing prompt.",
+      );
+      const blankPrompt = await expectApiError(
+        () =>
+          client.post(apiPath("/falcon-ai/quick-analysis/"), {
+            prompt: "",
+          }),
+        [400],
+        "Falcon quick-analysis accepted a blank prompt.",
+      );
+      const invalidPromptShape = await expectApiError(
+        () =>
+          client.post(apiPath("/falcon-ai/quick-analysis/"), {
+            prompt: { text: "summarize this trace" },
+          }),
+        [400],
+        "Falcon quick-analysis accepted a non-string prompt.",
+      );
+      const tooLongPrompt = await expectApiError(
+        () =>
+          client.post(apiPath("/falcon-ai/quick-analysis/"), {
+            prompt: "x".repeat(8001),
+          }),
+        [400],
+        "Falcon quick-analysis accepted a prompt over 8000 characters.",
+      );
+      const unknownField = await expectApiError(
+        () =>
+          client.post(apiPath("/falcon-ai/quick-analysis/"), {
+            prompt: "Summarize this trace without provider work.",
+            contextPage: "/dashboard/observe",
+          }),
+        [400],
+        "Falcon quick-analysis accepted an unknown request field.",
+      );
+
+      assert(
+        unknownField.body?.details?.contextPage?.includes("Unknown field."),
+        `Falcon quick-analysis unknown-field response did not name contextPage: ${JSON.stringify(unknownField.body)}`,
+      );
+
+      let liveProviderSmoke = "skipped";
+      if (envFlag("API_JOURNEY_FALCON_QUICK_ANALYSIS_LIVE")) {
+        const live = await client.post(apiPath("/falcon-ai/quick-analysis/"), {
+          prompt: "Reply with the words quick analysis smoke.",
+        });
+        assert(
+          typeof live === "string" && live.trim().length > 0,
+          `Falcon quick-analysis live provider response was empty: ${JSON.stringify(live)}`,
+        );
+        liveProviderSmoke = "passed";
+      }
+
+      evidence.push({
+        missing_prompt_status: missingPrompt.status,
+        blank_prompt_status: blankPrompt.status,
+        invalid_prompt_shape_status: invalidPromptShape.status,
+        too_long_prompt_status: tooLongPrompt.status,
+        unknown_field_status: unknownField.status,
+        unknown_field_attr: unknownField.body?.attr || null,
+        live_provider_smoke: liveProviderSmoke,
+      });
+    },
+  },
+  {
     id: "CORE-API-019",
     title: "System organization key bootstrap readback and API-key auth",
     tags: ["core", "keys", "system-keys", "data-roundtrip", "security"],
@@ -6057,16 +11059,29 @@ export const appCoreJourneys = [
   {
     id: "CORE-API-003",
     title:
-      "Model provider API key create, retrieve, update, list, and delete lifecycle",
+      "Model provider API key text and JSON create, retrieve, update, list, and delete lifecycle",
     tags: ["core", "provider-keys", "mutating", "data-roundtrip"],
-    async run({ client, cleanup, runId, evidence }) {
+    async run({ client, cleanup, runId, organizationId, evidence }) {
       requireMutations();
+      const createdProviderKeyIds = [];
+      cleanup.defer("hard-delete model provider key fixtures", () =>
+        hardDeleteProviderApiKeyFixturesDb({
+          organizationId,
+          keyIds: createdProviderKeyIds,
+        }),
+      );
       const existingKeys = asArray(
         await client.get(apiPath("/model-hub/api-keys/")),
       );
       const existingProviders = new Set(
         existingKeys.map((key) => key.provider),
       );
+      const providerStatus = await client.get(
+        apiPath("/model-hub/develops/provider-status/"),
+      );
+      const providerRows = Array.isArray(providerStatus?.providers)
+        ? providerStatus.providers
+        : [];
       const provider = [
         "lmnt",
         "cartesia",
@@ -6086,12 +11101,29 @@ export const appCoreJourneys = [
           "Every safe provider-key candidate already exists; refusing to overwrite a real provider key.",
         );
       }
+      const jsonProvider =
+        providerRows.find(
+          (candidate) =>
+            candidate?.type === "json" &&
+            candidate?.provider &&
+            !existingProviders.has(candidate.provider),
+        )?.provider ||
+        ["azure", "bedrock", "sagemaker"].find(
+          (candidate) => !existingProviders.has(candidate),
+        );
+
+      const rawKey = `secret-${runId}`;
+      const rawUpdatedKey = `secret-updated-${runId}`;
 
       const created = await client.post(apiPath("/model-hub/api-keys/"), {
         provider,
-        key: `secret-${runId}`,
+        key: rawKey,
       });
       assert(created?.id, "Model provider key create did not return id.");
+      createdProviderKeyIds.push(created.id);
+      assertProviderKeyResponseIsMaskedOnly(created, "provider key create", [
+        rawKey,
+      ]);
       cleanup.defer("delete model provider key", () =>
         ignoreNotFound(() =>
           client.delete(
@@ -6111,23 +11143,32 @@ export const appCoreJourneys = [
         typeof detail.masked_actual_key === "string",
         "Provider key detail did not include a masked key.",
       );
+      assertProviderKeyResponseIsMaskedOnly(detail, "provider key detail", [
+        rawKey,
+      ]);
 
       const updated = await client.put(
         apiPath("/model-hub/api-keys/{id}/", { id: created.id }),
-        { provider, key: `secret-updated-${runId}` },
+        { provider, key: rawUpdatedKey },
       );
       assert(
         updated?.provider === provider,
         "Provider key update did not return the provider.",
       );
+      assertProviderKeyResponseIsMaskedOnly(updated, "provider key update", [
+        rawKey,
+        rawUpdatedKey,
+      ]);
 
       const listed = asArray(await client.get(apiPath("/model-hub/api-keys/")));
-      assert(
-        listed.some(
-          (key) => key.id === created.id && key.provider === provider,
-        ),
-        "Updated provider key was not visible in list.",
+      const listedKey = listed.find(
+        (key) => key.id === created.id && key.provider === provider,
       );
+      assert(listedKey, "Updated provider key was not visible in list.");
+      assertProviderKeyResponseIsMaskedOnly(listedKey, "provider key list", [
+        rawKey,
+        rawUpdatedKey,
+      ]);
 
       await client.delete(
         apiPath("/model-hub/api-keys/{id}/", { id: created.id }),
@@ -6140,7 +11181,1042 @@ export const appCoreJourneys = [
         "Deleted provider key was still visible in list.",
       );
 
-      evidence.push({ provider, provider_key_id: created.id });
+      let jsonProviderKeyId = null;
+      let jsonProviderSkipped = null;
+      if (jsonProvider) {
+        const jsonConfig = {
+          api_key: `secret-json-${runId}`,
+          api_base: `https://api-journey-${runId}.azure.example.test`,
+          api_version: "2024-05-01",
+        };
+        const jsonCreated = await client.post(apiPath("/model-hub/api-keys/"), {
+          provider: jsonProvider,
+          key: JSON.stringify(jsonConfig),
+        });
+        assert(jsonCreated?.id, "JSON provider key create did not return id.");
+        jsonProviderKeyId = jsonCreated.id;
+        createdProviderKeyIds.push(jsonCreated.id);
+        assertProviderKeyResponseIsMaskedOnly(
+          jsonCreated,
+          "JSON provider key create",
+          Object.values(jsonConfig),
+        );
+        cleanup.defer("delete JSON model provider key", () =>
+          ignoreNotFound(() =>
+            client.delete(
+              apiPath("/model-hub/api-keys/{id}/", {
+                id: jsonCreated.id,
+              }),
+            ),
+          ),
+        );
+
+        const updatedJsonConfig = {
+          api_key: `secret-json-updated-${runId}`,
+          api_base: `https://api-journey-updated-${runId}.azure.example.test`,
+          api_version: "2024-10-01",
+        };
+        const jsonUpdated = await client.put(
+          apiPath("/model-hub/api-keys/{id}/", { id: jsonCreated.id }),
+          { provider: jsonProvider, key: JSON.stringify(updatedJsonConfig) },
+        );
+        assert(
+          jsonUpdated?.provider === jsonProvider,
+          "JSON provider key update returned wrong provider.",
+        );
+        assert(
+          jsonUpdated?.masked_actual_key &&
+            typeof jsonUpdated.masked_actual_key === "object",
+          "JSON provider key update did not return a masked config object.",
+        );
+        assertProviderKeyResponseIsMaskedOnly(
+          jsonUpdated,
+          "JSON provider key update",
+          [...Object.values(jsonConfig), ...Object.values(updatedJsonConfig)],
+        );
+
+        const jsonPatched = await client.patch(
+          apiPath("/model-hub/api-keys/{id}/", { id: jsonCreated.id }),
+          { provider: jsonProvider },
+        );
+        assert(
+          jsonPatched?.masked_actual_key &&
+            typeof jsonPatched.masked_actual_key === "object",
+          "JSON provider metadata patch did not preserve masked config object.",
+        );
+        assertProviderKeyResponseIsMaskedOnly(
+          jsonPatched,
+          "JSON provider key patch",
+          [...Object.values(jsonConfig), ...Object.values(updatedJsonConfig)],
+        );
+
+        await client.delete(
+          apiPath("/model-hub/api-keys/{id}/", { id: jsonCreated.id }),
+        );
+        const afterJsonDelete = asArray(
+          await client.get(apiPath("/model-hub/api-keys/")),
+        );
+        assert(
+          !afterJsonDelete.some((key) => key.id === jsonCreated.id),
+          "Deleted JSON provider key was still visible in list.",
+        );
+      } else {
+        jsonProviderSkipped =
+          "No safe unconfigured JSON provider candidate was available.";
+      }
+
+      const hardCleanup = await hardDeleteProviderApiKeyFixturesDb({
+        organizationId,
+        keyIds: createdProviderKeyIds,
+      });
+
+      evidence.push({
+        provider,
+        provider_key_id: created.id,
+        json_provider: jsonProvider || null,
+        json_provider_key_id: jsonProviderKeyId,
+        json_provider_skipped: jsonProviderSkipped,
+        hard_cleanup_deleted_key_count: Number(
+          hardCleanup.deleted_key_count || 0,
+        ),
+        hard_cleanup_remaining_key_count: Number(
+          hardCleanup.remaining_key_count || 0,
+        ),
+      });
+    },
+  },
+  {
+    id: "CORE-API-021",
+    title:
+      "Model TTS voice create, retrieve, update, list, and delete workspace lifecycle",
+    tags: ["core", "tts-voices", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      user,
+      organizationId,
+      workspaceId,
+      runId,
+      evidence,
+    }) {
+      requireMutations();
+      const userId = currentUserId(user);
+      assert(userId, "Authenticated user info did not include a user id.");
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const marker = `api_journey_tts_voice_${runId}`;
+      const hidden = await seedTtsVoiceIsolationDb({
+        marker,
+        organizationId,
+        userId,
+      });
+      let createdId = null;
+      cleanup.defer("hard-delete TTS voice fixtures", () =>
+        hardDeleteTtsVoiceFixtureDb({
+          marker,
+          organizationId,
+          voiceIds: [createdId, hidden.voice_id].filter(Boolean),
+        }),
+      );
+
+      const created = await client.post(apiPath("/model-hub/tts-voices/"), {
+        name: hidden.name,
+        description: `${marker} active voice`,
+        voice_id: `${marker}-active-rime-voice`,
+        provider: "rime",
+        model: "arcana",
+      });
+      assert(isUuid(created?.id), "TTS voice create did not return an id.");
+      createdId = created.id;
+      assert(
+        created.name === hidden.name,
+        "TTS voice create returned the wrong name.",
+      );
+
+      let audit = await loadTtsVoiceDbAudit({
+        voiceId: createdId,
+        organizationId,
+      });
+      assert(
+        audit.workspace_id === workspaceId,
+        "Created TTS voice was not stored in the active workspace.",
+      );
+      assert(audit.deleted === false, "Created TTS voice was already deleted.");
+
+      const list = asArray(await client.get(apiPath("/model-hub/tts-voices/")));
+      assert(
+        list.some((voice) => voice.id === createdId),
+        "Created TTS voice was not visible in list.",
+      );
+      assert(
+        !list.some((voice) => voice.id === hidden.voice_id),
+        "Other-workspace TTS voice leaked into list.",
+      );
+
+      const detail = await client.get(
+        apiPath("/model-hub/tts-voices/{id}/", { id: createdId }),
+      );
+      assert(
+        detail?.id === createdId,
+        "TTS voice detail returned the wrong id.",
+      );
+
+      const otherWorkspaceDetail = await expectApiError(
+        () =>
+          client.get(
+            apiPath("/model-hub/tts-voices/{id}/", { id: hidden.voice_id }),
+          ),
+        [404],
+        "Other-workspace TTS voice detail unexpectedly succeeded.",
+      );
+
+      const duplicate = await expectApiError(
+        () =>
+          client.post(apiPath("/model-hub/tts-voices/"), {
+            name: hidden.name,
+            description: `${marker} duplicate active voice`,
+            voice_id: `${marker}-duplicate-rime-voice`,
+            provider: "rime",
+            model: "arcana",
+          }),
+        [400],
+        "Duplicate active-workspace TTS voice unexpectedly succeeded.",
+      );
+
+      const replaced = await client.put(
+        apiPath("/model-hub/tts-voices/{id}/", { id: createdId }),
+        {
+          name: `${marker} final voice`,
+          description: `${marker} final description`,
+          voice_id: `${marker}-final-rime-voice`,
+          provider: "rime",
+          model: "mist",
+        },
+      );
+      assert(
+        replaced?.name === `${marker} final voice`,
+        "TTS voice PUT did not return the replacement name.",
+      );
+      assert(replaced?.model === "mist", "TTS voice PUT did not update model.");
+
+      const patched = await client.patch(
+        apiPath("/model-hub/tts-voices/{id}/", { id: createdId }),
+        { description: `${marker} patched description` },
+      );
+      assert(
+        patched?.description === `${marker} patched description`,
+        "TTS voice PATCH did not update description.",
+      );
+
+      await client.delete(
+        apiPath("/model-hub/tts-voices/{id}/", { id: createdId }),
+      );
+      audit = await loadTtsVoiceDbAudit({ voiceId: createdId, organizationId });
+      assert(
+        audit.deleted === true,
+        "TTS voice delete did not soft-delete row.",
+      );
+      assert(
+        audit.deleted_at_set === true,
+        "TTS voice delete did not persist deleted_at.",
+      );
+
+      const deletedDetail = await expectApiError(
+        () =>
+          client.get(apiPath("/model-hub/tts-voices/{id}/", { id: createdId })),
+        [404],
+        "Deleted TTS voice detail unexpectedly succeeded.",
+      );
+
+      const afterDelete = asArray(
+        await client.get(apiPath("/model-hub/tts-voices/")),
+      );
+      assert(
+        !afterDelete.some((voice) => voice.id === createdId),
+        "Deleted TTS voice remained visible in list.",
+      );
+
+      evidence.push({
+        tts_voice_id: createdId,
+        workspace_id: audit.workspace_id,
+        hidden_workspace_id: hidden.workspace_id,
+        other_workspace_detail_status: otherWorkspaceDetail.status,
+        duplicate_status: duplicate.status,
+        deleted_detail_status: deletedDetail.status,
+        deleted_at_set: audit.deleted_at_set,
+      });
+    },
+  },
+  {
+    id: "CORE-API-022",
+    title:
+      "Model secret create, retrieve, update, list, and delete workspace lifecycle",
+    tags: [
+      "core",
+      "model-secrets",
+      "mutating",
+      "data-roundtrip",
+      "credential-safety",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      user,
+      organizationId,
+      workspaceId,
+      runId,
+      evidence,
+    }) {
+      requireMutations();
+      const userId = currentUserId(user);
+      assert(userId, "Authenticated user info did not include a user id.");
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const marker = `api_journey_model_secret_${runId}`;
+      const hidden = await seedModelSecretIsolationDb({
+        marker,
+        organizationId,
+        userId,
+      });
+      let createdId = null;
+      cleanup.defer("hard-delete model secret fixtures", () =>
+        hardDeleteModelSecretFixtureDb({
+          marker,
+          organizationId,
+          secretIds: [createdId, hidden.secret_id].filter(Boolean),
+        }),
+      );
+
+      const rawSecret = `${marker}-active-secret-value`;
+      const rotatedSecret = `${marker}-rotated-secret-value`;
+      const created = await client.post(apiPath("/model-hub/secrets/"), {
+        name: hidden.name,
+        description: `${marker} active secret`,
+        secret_type: "API_KEY",
+        key: rawSecret,
+      });
+      assert(isUuid(created?.id), "Model secret create did not return an id.");
+      createdId = created.id;
+      assertNoModelSecretLeak(created, "model secret create", [
+        rawSecret,
+        hidden.raw_secret,
+      ]);
+
+      let audit = await loadModelSecretDbAudit({
+        secretId: createdId,
+        organizationId,
+        rawSecret,
+      });
+      assert(
+        audit.workspace_id === workspaceId,
+        "Created model secret was not stored in the active workspace.",
+      );
+      assert(
+        audit.deleted === false,
+        "Created model secret was already deleted.",
+      );
+      assert(
+        audit.raw_secret_absent === true,
+        "Created model secret stored raw secret material.",
+      );
+      const initialKeyHash = audit.key_hash;
+
+      const list = asArray(await client.get(apiPath("/model-hub/secrets/")));
+      assert(
+        list.some((secret) => secret.id === createdId),
+        "Created model secret was not visible in list.",
+      );
+      assert(
+        !list.some((secret) => secret.id === hidden.secret_id),
+        "Other-workspace model secret leaked into list.",
+      );
+      assertNoModelSecretLeak(list, "model secret list", [
+        rawSecret,
+        hidden.raw_secret,
+      ]);
+
+      const detail = await client.get(
+        apiPath("/model-hub/secrets/{id}/", { id: createdId }),
+      );
+      assert(
+        detail?.id === createdId,
+        "Model secret detail returned wrong id.",
+      );
+      assertNoModelSecretLeak(detail, "model secret detail", [rawSecret]);
+
+      const otherWorkspaceDetail = await expectApiError(
+        () =>
+          client.get(
+            apiPath("/model-hub/secrets/{id}/", { id: hidden.secret_id }),
+          ),
+        [404],
+        "Other-workspace model secret detail unexpectedly succeeded.",
+      );
+
+      const patched = await client.patch(
+        apiPath("/model-hub/secrets/{id}/", { id: createdId }),
+        { description: `${marker} metadata-only patch` },
+      );
+      assert(
+        patched?.description === `${marker} metadata-only patch`,
+        "Model secret PATCH did not update description.",
+      );
+      assertNoModelSecretLeak(patched, "model secret patch", [rawSecret]);
+      audit = await loadModelSecretDbAudit({
+        secretId: createdId,
+        organizationId,
+        rawSecret,
+      });
+      assert(
+        audit.key_hash === initialKeyHash,
+        "Metadata-only PATCH changed the encrypted model secret.",
+      );
+
+      const replaced = await client.put(
+        apiPath("/model-hub/secrets/{id}/", { id: createdId }),
+        {
+          name: `${marker} final secret`,
+          description: `${marker} final description`,
+          secret_type: "TOKEN",
+          key: rotatedSecret,
+        },
+      );
+      assert(
+        replaced?.name === `${marker} final secret`,
+        "Model secret PUT did not return the replacement name.",
+      );
+      assert(
+        replaced?.secret_type === "TOKEN",
+        "Model secret PUT did not rotate type.",
+      );
+      assertNoModelSecretLeak(replaced, "model secret put", [
+        rawSecret,
+        rotatedSecret,
+      ]);
+      audit = await loadModelSecretDbAudit({
+        secretId: createdId,
+        organizationId,
+        rawSecret: rotatedSecret,
+      });
+      assert(
+        audit.key_hash !== initialKeyHash,
+        "Model secret PUT did not rotate the encrypted key.",
+      );
+      assert(
+        audit.raw_secret_absent === true,
+        "Rotated model secret stored raw secret material.",
+      );
+      const rotatedKeyHash = audit.key_hash;
+
+      await client.delete(
+        apiPath("/model-hub/secrets/{id}/", { id: createdId }),
+      );
+      audit = await loadModelSecretDbAudit({
+        secretId: createdId,
+        organizationId,
+        rawSecret: rotatedSecret,
+      });
+      assert(
+        audit.deleted === true,
+        "Model secret delete did not soft-delete row.",
+      );
+      assert(
+        audit.deleted_at_set === true,
+        "Model secret delete did not persist deleted_at.",
+      );
+      assert(
+        audit.key_hash === rotatedKeyHash,
+        "Model secret delete changed encrypted secret material.",
+      );
+
+      const deletedDetail = await expectApiError(
+        () =>
+          client.get(apiPath("/model-hub/secrets/{id}/", { id: createdId })),
+        [404],
+        "Deleted model secret detail unexpectedly succeeded.",
+      );
+
+      const afterDelete = asArray(
+        await client.get(apiPath("/model-hub/secrets/")),
+      );
+      assert(
+        !afterDelete.some((secret) => secret.id === createdId),
+        "Deleted model secret remained visible in list.",
+      );
+
+      evidence.push({
+        model_secret_id: createdId,
+        workspace_id: audit.workspace_id,
+        hidden_workspace_id: hidden.workspace_id,
+        other_workspace_detail_status: otherWorkspaceDetail.status,
+        deleted_detail_status: deletedDetail.status,
+        raw_secret_absent: audit.raw_secret_absent,
+        metadata_patch_preserved_key: true,
+        delete_preserved_key: true,
+        deleted_at_set: audit.deleted_at_set,
+      });
+    },
+  },
+  {
+    id: "CORE-API-023",
+    title:
+      "Model tool create, retrieve, update, list, and delete workspace lifecycle",
+    tags: ["core", "model-tools", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      user,
+      organizationId,
+      workspaceId,
+      runId,
+      evidence,
+    }) {
+      requireMutations();
+      const userId = currentUserId(user);
+      assert(userId, "Authenticated user info did not include a user id.");
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const marker = `api_journey_model_tool_${runId}`;
+      const hidden = await seedModelToolIsolationDb({
+        marker,
+        organizationId,
+        userId,
+      });
+      let createdId = null;
+      cleanup.defer("hard-delete model tool fixtures", () =>
+        hardDeleteModelToolFixtureDb({
+          marker,
+          organizationId,
+          toolIds: [createdId, hidden.tool_id].filter(Boolean),
+        }),
+      );
+
+      const created = await client.post(apiPath("/model-hub/tools/"), {
+        name: hidden.name,
+        description: `${marker} active tool`,
+        config: JSON.stringify(modelToolConfig()),
+        config_type: "json",
+      });
+      assert(isUuid(created?.id), "Model tool create did not return an id.");
+      createdId = created.id;
+      assert(
+        created?.config?.parameters?.properties?.value?.type === "string",
+        "Model tool create did not parse JSON config.",
+      );
+
+      let audit = await loadModelToolDbAudit({
+        toolId: createdId,
+        organizationId,
+      });
+      assert(
+        audit.workspace_id === workspaceId,
+        "Created model tool was not stored in the active workspace.",
+      );
+      assert(
+        audit.deleted === false,
+        "Created model tool was already deleted.",
+      );
+      assert(
+        audit.config_type === "json",
+        "Created model tool did not persist JSON config type.",
+      );
+      const initialConfigHash = audit.config_hash;
+
+      const list = asArray(await client.get(apiPath("/model-hub/tools/")));
+      assert(
+        list.some((tool) => tool.id === createdId),
+        "Created model tool was not visible in list.",
+      );
+      assert(
+        !list.some((tool) => tool.id === hidden.tool_id),
+        "Other-workspace model tool leaked into list.",
+      );
+
+      const detail = await client.get(
+        apiPath("/model-hub/tools/{id}/", { id: createdId }),
+      );
+      assert(detail?.id === createdId, "Model tool detail returned wrong id.");
+
+      const otherWorkspaceDetail = await expectApiError(
+        () =>
+          client.get(apiPath("/model-hub/tools/{id}/", { id: hidden.tool_id })),
+        [404],
+        "Other-workspace model tool detail unexpectedly succeeded.",
+      );
+
+      const duplicate = await expectApiError(
+        () =>
+          client.post(apiPath("/model-hub/tools/"), {
+            name: hidden.name,
+            description: `${marker} duplicate active tool`,
+            config: modelToolConfig(),
+            config_type: "json",
+          }),
+        [400],
+        "Duplicate active-workspace model tool unexpectedly succeeded.",
+      );
+
+      const patched = await client.patch(
+        apiPath("/model-hub/tools/{id}/", { id: createdId }),
+        { description: `${marker} metadata-only patch` },
+      );
+      assert(
+        patched?.description === `${marker} metadata-only patch`,
+        "Model tool PATCH did not update description.",
+      );
+      audit = await loadModelToolDbAudit({
+        toolId: createdId,
+        organizationId,
+      });
+      assert(
+        audit.config_hash === initialConfigHash,
+        "Metadata-only model tool PATCH changed config.",
+      );
+
+      const yamlPatched = await client.patch(
+        apiPath("/model-hub/tools/{id}/", { id: createdId }),
+        {
+          config_type: "yaml",
+          config: `
+parameters:
+  type: object
+  properties:
+    value:
+      type: number
+  required:
+    - value
+`,
+        },
+      );
+      assert(
+        yamlPatched?.config?.parameters?.properties?.value?.type === "number",
+        "Model tool PATCH did not parse YAML config.",
+      );
+
+      const replaced = await client.put(
+        apiPath("/model-hub/tools/{id}/", { id: createdId }),
+        {
+          name: `${marker} final tool`,
+          description: `${marker} final description`,
+          config: modelToolConfig("boolean"),
+          config_type: "json",
+        },
+      );
+      assert(
+        replaced?.name === `${marker} final tool`,
+        "Model tool PUT did not return replacement name.",
+      );
+      assert(
+        replaced?.config?.parameters?.properties?.value?.type === "boolean",
+        "Model tool PUT did not replace config.",
+      );
+
+      await client.delete(apiPath("/model-hub/tools/{id}/", { id: createdId }));
+      audit = await loadModelToolDbAudit({ toolId: createdId, organizationId });
+      assert(
+        audit.deleted === true,
+        "Model tool delete did not soft-delete row.",
+      );
+      assert(
+        audit.deleted_at_set === true,
+        "Model tool delete did not persist deleted_at.",
+      );
+
+      const deletedDetail = await expectApiError(
+        () => client.get(apiPath("/model-hub/tools/{id}/", { id: createdId })),
+        [404],
+        "Deleted model tool detail unexpectedly succeeded.",
+      );
+
+      const afterDelete = asArray(
+        await client.get(apiPath("/model-hub/tools/")),
+      );
+      assert(
+        !afterDelete.some((tool) => tool.id === createdId),
+        "Deleted model tool remained visible in list.",
+      );
+
+      evidence.push({
+        model_tool_id: createdId,
+        workspace_id: audit.workspace_id,
+        hidden_workspace_id: hidden.workspace_id,
+        other_workspace_detail_status: otherWorkspaceDetail.status,
+        duplicate_status: duplicate.status,
+        deleted_detail_status: deletedDetail.status,
+        metadata_patch_preserved_config: true,
+        deleted_at_set: audit.deleted_at_set,
+      });
+    },
+  },
+  {
+    id: "CORE-API-024",
+    title:
+      "Prompt upload-file media validation, storage extension, link roundtrip, and cleanup",
+    tags: [
+      "core",
+      "prompts",
+      "upload-file",
+      "mutating",
+      "storage",
+      "data-roundtrip",
+    ],
+    async run({
+      apiBase,
+      tokens,
+      organizationId,
+      workspaceId,
+      cleanup,
+      runId,
+      evidence,
+    }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+      assert(
+        tokens?.access,
+        "Prompt upload-file journey requires an access token.",
+      );
+
+      const marker = `api-journey-upload-file-${runId.replace(/[^a-z0-9]/gi, "-").toLowerCase()}`;
+      const uploadedObjects = [];
+      cleanup.defer("remove prompt upload-file MinIO objects", () =>
+        removeUploadFileMinioObjects(uploadedObjects),
+      );
+
+      const missingSource = await expectApiError(
+        () =>
+          multipartAppCoreRequest({
+            apiBase,
+            accessToken: tokens.access,
+            organizationId,
+            workspaceId,
+            method: "POST",
+            pathName: apiPath("/model-hub/upload-file/"),
+            fields: { type: "image" },
+          }),
+        [400],
+        "Prompt upload-file accepted a request without files or links.",
+      );
+
+      const pngBytes = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+        "base64",
+      );
+      const imageUpload = await multipartAppCoreRequest({
+        apiBase,
+        accessToken: tokens.access,
+        organizationId,
+        workspaceId,
+        method: "POST",
+        pathName: apiPath("/model-hub/upload-file/"),
+        fields: { type: "image" },
+        files: [
+          {
+            fieldName: "files",
+            fileName: `${marker}.png`,
+            content: pngBytes,
+            contentType: "image/png",
+          },
+        ],
+      });
+      assert(
+        Array.isArray(imageUpload) && imageUpload.length === 1,
+        `Prompt image upload response was not a single result row: ${JSON.stringify(imageUpload)}`,
+      );
+      const imageRow = imageUpload[0];
+      assert(
+        imageRow?.url &&
+          imageRow.file_name === `${marker}.png` &&
+          /\.png($|\?)/i.test(imageRow.url),
+        `Prompt image upload did not preserve file_name or URL extension: ${JSON.stringify(imageRow)}`,
+      );
+      uploadedObjects.push(uploadFileObjectFromUrl(imageRow.url));
+      await assertUploadFileMinioObjectsExist(uploadedObjects);
+
+      const linkUpload = await createApiClient({
+        apiBase,
+        accessToken: tokens.access,
+        organizationId,
+        workspaceId,
+      }).post(apiPath("/model-hub/upload-file/"), {
+        type: "image",
+        links: [imageRow.url],
+      });
+      assert(
+        Array.isArray(linkUpload) &&
+          linkUpload.length === 1 &&
+          linkUpload[0]?.url === imageRow.url &&
+          /\.png$/i.test(String(linkUpload[0]?.file_name || "")),
+        `Prompt image link upload did not roundtrip the stored URL/file_name: ${JSON.stringify(linkUpload)}`,
+      );
+
+      evidence.push({
+        missing_source_status: missingSource.status,
+        upload_url: imageRow.url,
+        upload_file_name: imageRow.file_name,
+        storage_bucket: uploadedObjects[0].bucket,
+        storage_key: uploadedObjects[0].key,
+        link_file_name: linkUpload[0].file_name,
+      });
+    },
+  },
+  {
+    id: "CORE-API-025",
+    title:
+      "Generated custom-model picker, detail, edit, baseline, default metric, and workspace guards",
+    tags: [
+      "core",
+      "settings",
+      "custom-models",
+      "mutating",
+      "data-roundtrip",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      user,
+      organizationId,
+      workspaceId,
+      runId,
+      evidence,
+    }) {
+      requireMutations();
+      const userId = currentUserId(user);
+      assert(userId, "Authenticated user info did not include a user id.");
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const marker = `api_journey_custom_model_${runId}`;
+      const fixture = await seedCustomModelGeneratedRoutesDb({
+        marker,
+        organizationId,
+        workspaceId,
+        userId,
+      });
+      cleanup.defer("hard-delete custom-model generated-route fixtures", () =>
+        hardDeleteCustomModelGeneratedRoutesDb({
+          marker,
+          organizationId,
+          customModelIds: [
+            fixture.active_model_id,
+            fixture.hidden_model_id,
+          ].filter(Boolean),
+          aiModelIds: [fixture.active_model_id].filter(Boolean),
+          metricIds: [fixture.metric_id].filter(Boolean),
+        }),
+      );
+
+      const pickerRows = asArray(
+        await client.get(apiPath("/model-hub/custom-models/list/"), {
+          query: { search_query: marker, limit: 20 },
+        }),
+      );
+      assert(
+        pickerRows.some((row) => row.id === fixture.active_model_id),
+        "Generated custom-model picker did not include the active workspace model.",
+      );
+      assert(
+        !pickerRows.some((row) => row.id === fixture.hidden_model_id),
+        "Generated custom-model picker leaked a same-org other-workspace model.",
+      );
+
+      const detail = await client.get(
+        apiPath("/model-hub/custom-models/{id}/", {
+          id: fixture.active_model_id,
+        }),
+      );
+      assert(
+        detail?.id === fixture.active_model_id,
+        "Generated custom-model detail returned the wrong id.",
+      );
+
+      const hiddenDetail = await expectApiError(
+        () =>
+          client.get(
+            apiPath("/model-hub/custom-models/{id}/", {
+              id: fixture.hidden_model_id,
+            }),
+          ),
+        [404],
+        "Same-org other-workspace custom-model detail unexpectedly succeeded.",
+      );
+
+      const updatedName = `${marker}_active_model_updated`;
+      const updated = await client.post(
+        apiPath("/model-hub/custom-models/{id}/", {
+          id: fixture.active_model_id,
+        }),
+        {
+          model_name: updatedName,
+          input_token_cost: 0.031,
+          output_token_cost: 0.041,
+        },
+      );
+      assert(
+        updated?.user_model_id === updatedName,
+        "Generated custom-model detail update returned the wrong model name.",
+      );
+
+      const hiddenUpdate = await expectApiError(
+        () =>
+          client.post(
+            apiPath("/model-hub/custom-models/{id}/", {
+              id: fixture.hidden_model_id,
+            }),
+            { model_name: `${marker}_hidden_hacked` },
+          ),
+        [404],
+        "Same-org other-workspace custom-model update unexpectedly succeeded.",
+      );
+
+      const editData = await client.get(
+        apiPath("/model-hub/custom_models/edit/"),
+        {
+          query: { id: fixture.active_model_id },
+        },
+      );
+      assert(
+        editData?.model_name === updatedName,
+        "Custom-model edit loader did not reflect the generated detail update.",
+      );
+
+      const hiddenEdit = await expectApiError(
+        () =>
+          client.get(apiPath("/model-hub/custom_models/edit/"), {
+            query: { id: fixture.hidden_model_id },
+          }),
+        [400],
+        "Same-org other-workspace custom-model edit load unexpectedly succeeded.",
+      );
+
+      const baseline = await client.post(
+        apiPath("/model-hub/custom_models/update-baseline/{id}/", {
+          id: fixture.active_model_id,
+        }),
+        { environment: "production", model_version: "v-core-api-025" },
+      );
+      assert(
+        baseline?.status === "success",
+        "Custom-model baseline update did not return success.",
+      );
+
+      const hiddenBaseline = await expectApiError(
+        () =>
+          client.post(
+            apiPath("/model-hub/custom_models/update-baseline/{id}/", {
+              id: fixture.hidden_model_id,
+            }),
+            { environment: "Production", model_version: "v-hidden" },
+          ),
+        [404],
+        "Same-org other-workspace custom-model baseline update unexpectedly succeeded.",
+      );
+
+      const missingMetric = await expectApiError(
+        () =>
+          client.post(
+            apiPath("/model-hub/custom_models/update-metric/{id}/", {
+              id: fixture.active_model_id,
+            }),
+            { metric_id: randomUUID() },
+          ),
+        [404],
+        "Custom-model default metric accepted a missing metric id.",
+      );
+
+      const metricUpdate = await client.post(
+        apiPath("/model-hub/custom_models/update-metric/{id}/", {
+          id: fixture.active_model_id,
+        }),
+        { metric_id: fixture.metric_id },
+      );
+      assert(
+        metricUpdate?.status === "success",
+        "Custom-model default metric update did not return success.",
+      );
+
+      const audit = await loadCustomModelGeneratedRoutesDbAudit({
+        activeModelId: fixture.active_model_id,
+        hiddenModelId: fixture.hidden_model_id,
+        metricId: fixture.metric_id,
+        organizationId,
+      });
+      assert(
+        audit.active_workspace_id === workspaceId,
+        "Custom-model active fixture was not in the active workspace.",
+      );
+      assert(
+        audit.hidden_workspace_id === fixture.hidden_workspace_id,
+        "Custom-model hidden fixture workspace changed unexpectedly.",
+      );
+      assert(
+        audit.active_user_model_id === updatedName,
+        "Custom-model detail update did not persist the new name.",
+      );
+      assert(
+        audit.active_baseline_environment === "Production" &&
+          audit.active_baseline_version === "v-core-api-025",
+        "Custom-model baseline update did not persist canonical values.",
+      );
+      assert(
+        audit.active_default_metric_id === fixture.metric_id,
+        "Custom-model default metric update did not persist.",
+      );
+      assert(
+        audit.hidden_user_model_id === fixture.hidden_name &&
+          audit.hidden_baseline_environment === null &&
+          audit.hidden_default_metric_id === null,
+        "Same-org other-workspace custom model was mutated.",
+      );
+
+      evidence.push({
+        custom_model_id: fixture.active_model_id,
+        hidden_custom_model_id: fixture.hidden_model_id,
+        hidden_workspace_id: fixture.hidden_workspace_id,
+        picker_rows: pickerRows.length,
+        hidden_detail_status: hiddenDetail.status,
+        hidden_update_status: hiddenUpdate.status,
+        hidden_edit_status: hiddenEdit.status,
+        hidden_baseline_status: hiddenBaseline.status,
+        missing_metric_status: missingMetric.status,
+        baseline_environment: audit.active_baseline_environment,
+        default_metric_id: audit.active_default_metric_id,
+      });
     },
   },
 ];
@@ -6392,6 +12468,67 @@ function assertUsageMetric(metric, label) {
   );
 }
 
+function assertUsageSummaryPayload(payload, label) {
+  assert(
+    String(payload?.organization_name || "").trim(),
+    `${label} did not include organization_name.`,
+  );
+  assert(
+    Number.isInteger(payload?.total_workspaces_count) &&
+      payload.total_workspaces_count >= 0,
+    `${label} did not include total_workspaces_count.`,
+  );
+  assert(
+    payload?.totals && typeof payload.totals === "object",
+    `${label} did not include totals.`,
+  );
+  for (const key of [
+    "credits_used",
+    "traces",
+    "evaluations",
+    "error_localizations",
+    "agent_compass",
+    "simulate",
+  ]) {
+    assertUsageMetric(payload.totals[key], `${label}.totals.${key}`);
+  }
+  assert(
+    typeof payload.totals.credits_used.total_credit === "number" &&
+      Number.isFinite(payload.totals.credits_used.total_credit),
+    `${label}.totals.credits_used did not include numeric total_credit.`,
+  );
+}
+
+function assertApiCallCountPayload(payload, label) {
+  const data = payload?.data;
+  assert(
+    data && typeof data === "object" && !Array.isArray(data),
+    `${label} did not include data object.`,
+  );
+  const entries = Object.entries(data);
+  assert(
+    entries.length >= 28 && entries.length <= 31,
+    `${label} did not include a day entry for each calendar day.`,
+  );
+  for (const [day, value] of entries) {
+    assert(/^\d+$/.test(day), `${label} included non-numeric day key ${day}.`);
+    assert(
+      Number.isInteger(value) && value >= 0,
+      `${label} included invalid token count for day ${day}.`,
+    );
+  }
+}
+
+function apiCallCountDay(payload, day) {
+  assertApiCallCountPayload(payload, "API call count payload");
+  const value = payload.data[String(day)];
+  assert(
+    Number.isInteger(value) && value >= 0,
+    `API call count payload did not include valid day ${day}.`,
+  );
+  return value;
+}
+
 function assertEvalSummaryPayload(payload, label) {
   const evaluations = asArray(payload?.evaluations);
   assert(
@@ -6445,6 +12582,17 @@ function assertNoPayloadString(payload, forbidden, label) {
     !JSON.stringify(payload ?? {}).includes(forbidden),
     `${label} leaked a forbidden credential value.`,
   );
+}
+
+function assertNoModelSecretLeak(payload, label, forbiddenValues = []) {
+  const text = JSON.stringify(payload ?? {});
+  assert(!text.includes('"key"'), `${label} exposed the raw key field.`);
+  for (const forbidden of forbiddenValues) {
+    assert(
+      !text.includes(forbidden),
+      `${label} leaked raw model secret material.`,
+    );
+  }
 }
 
 function assertProviderStatusRow(provider) {
@@ -6516,6 +12664,29 @@ function assertNoRawProviderSecretLeak(payload, label) {
   assert(
     !/"actual_key"|"actual_json"/.test(text),
     `${label} exposed decrypted key field names.`,
+  );
+}
+
+function assertProviderKeyResponseIsMaskedOnly(
+  payload,
+  label,
+  rawSecrets = [],
+) {
+  assertNoRawProviderSecretLeak(payload, label);
+  const text = JSON.stringify(payload ?? {});
+  for (const secret of rawSecrets) {
+    assert(
+      !text.includes(secret),
+      `${label} exposed raw provider key material.`,
+    );
+  }
+  assert(
+    !Object.prototype.hasOwnProperty.call(payload ?? {}, "key"),
+    `${label} exposed secret-bearing key field.`,
+  );
+  assert(
+    !Object.prototype.hasOwnProperty.call(payload ?? {}, "config_json"),
+    `${label} exposed secret-bearing config_json field.`,
   );
 }
 
@@ -6712,6 +12883,474 @@ function assertNoFullPaymentCardLeak(payload, label) {
   assert(
     !/"number"|"cvc"|"cvv"/i.test(text),
     `${label} exposed raw card field names.`,
+  );
+}
+
+function assertWalletBalancePayload(payload, label) {
+  assert(
+    Object.prototype.hasOwnProperty.call(payload || {}, "wallet_balance"),
+    `${label} omitted wallet_balance.`,
+  );
+  const balance = Number(payload.wallet_balance);
+  assert(
+    Number.isFinite(balance) && balance >= 0,
+    `${label} did not include a non-negative numeric wallet_balance.`,
+  );
+  assertNoBillingCheckoutPayload(payload, label);
+  assertNoFullPaymentCardLeak(payload, label);
+  return balance;
+}
+
+function assertAutoReloadSettingsPayload(payload, label) {
+  assert(payload?.status === "success", `${label} did not return success.`);
+  const data = payload?.data;
+  assert(
+    data && typeof data === "object" && !Array.isArray(data),
+    `${label} omitted data object.`,
+  );
+  assert(
+    typeof data.autoreload_enabled === "boolean",
+    `${label} omitted boolean autoreload_enabled.`,
+  );
+  const amount = Number(data.autoreload_wallet_amount);
+  const threshold = Number(data.autoreload_wallet_threshold);
+  assert(
+    Number.isFinite(amount) && amount >= 0,
+    `${label} did not include non-negative autoreload_wallet_amount.`,
+  );
+  assert(
+    Number.isFinite(threshold) && threshold >= 0,
+    `${label} did not include non-negative autoreload_wallet_threshold.`,
+  );
+  assertNoBillingCheckoutPayload(payload, label);
+  assertNoFullPaymentCardLeak(payload, label);
+  return {
+    enabled: data.autoreload_enabled,
+    amount,
+    threshold,
+  };
+}
+
+function assertAutoReloadUpdatePayload(payload, label) {
+  assert(payload?.status === "success", `${label} did not return success.`);
+  assert(
+    String(payload?.message || "")
+      .toLowerCase()
+      .includes("auto-reload settings updated"),
+    `${label} omitted the expected update message.`,
+  );
+  assertNoBillingCheckoutPayload(payload, label);
+  assertNoFullPaymentCardLeak(payload, label);
+}
+
+function legacyBillingDetailFields() {
+  return [
+    "name",
+    "email",
+    "company",
+    "billing_address1",
+    "billing_address2",
+    "city",
+    "state",
+    "country",
+    "postal_code",
+    "tax_id",
+  ];
+}
+
+function normalizedBillingValue(value) {
+  return value === undefined ? null : value;
+}
+
+function assertLegacyBillingDetailsPayload(payload, label, expected = null) {
+  assert(payload?.status === "success", `${label} did not return success.`);
+  const billingInfo = payload?.billing_info;
+  assert(
+    billingInfo &&
+      typeof billingInfo === "object" &&
+      !Array.isArray(billingInfo),
+    `${label} omitted billing_info object.`,
+  );
+  for (const fieldName of legacyBillingDetailFields()) {
+    assert(
+      Object.prototype.hasOwnProperty.call(billingInfo, fieldName),
+      `${label} omitted ${fieldName}.`,
+    );
+    if (expected) {
+      assert(
+        normalizedBillingValue(billingInfo[fieldName]) ===
+          normalizedBillingValue(expected[fieldName]),
+        `${label} ${fieldName} did not match expected billing details.`,
+      );
+    }
+  }
+  assertNoBillingCheckoutPayload(payload, label);
+  assertNoFullPaymentCardLeak(payload, label);
+  return billingInfo;
+}
+
+function assertLegacyBillingUpdatePayload(payload, label) {
+  const message = String(payload?.message || payload?.result?.message || "");
+  assert(
+    message.toLowerCase().includes("billing details updated successfully"),
+    `${label} omitted the expected update message.`,
+  );
+  assertNoBillingCheckoutPayload(payload, label);
+  assertNoFullPaymentCardLeak(payload, label);
+}
+
+function assertLegacyBillingDetailsDbAudit(
+  audit,
+  expected,
+  label,
+  { expectSubscription = true, expectNoStripeCustomer = true } = {},
+) {
+  assert(audit?.billing_count === 1, `${label} did not find one active row.`);
+  for (const fieldName of legacyBillingDetailFields()) {
+    assert(
+      normalizedBillingValue(audit[fieldName]) ===
+        normalizedBillingValue(expected[fieldName]),
+      `${label} ${fieldName} did not match expected billing details.`,
+    );
+  }
+  if (expectSubscription) {
+    assert(
+      audit.active_subscription_count === 1,
+      `${label} did not find one active subscription row.`,
+    );
+  }
+  if (expectNoStripeCustomer) {
+    assert(
+      audit.stripe_customer_id_test === null &&
+        audit.stripe_customer_id_live === null,
+      `${label} unexpectedly retained a Stripe customer id.`,
+    );
+  }
+}
+
+function assertLegacyLastFourDigitsPayload(payload, label) {
+  assert(
+    Object.prototype.hasOwnProperty.call(payload || {}, "last4"),
+    `${label} omitted last4.`,
+  );
+  assert(
+    payload.last4 === null || /^\d{4}$/.test(String(payload.last4)),
+    `${label} returned an invalid last4 value.`,
+  );
+  assertNoBillingCheckoutPayload(payload, label);
+  assertNoFullPaymentCardLeak(payload, label);
+  return payload.last4;
+}
+
+function assertLegacyCustomerInvoicesPayload(payload, label) {
+  const invoices = Array.isArray(payload?.invoices) ? payload.invoices : null;
+  assert(invoices, `${label} omitted invoices array.`);
+  assert(
+    Number.isInteger(payload?.total) && payload.total >= invoices.length,
+    `${label} omitted a valid total.`,
+  );
+  for (const invoice of invoices) {
+    assert(
+      String(invoice?.date || "").trim(),
+      `${label} invoice omitted date.`,
+    );
+    assert(String(invoice?.id || "").trim(), `${label} invoice omitted id.`);
+    assert(
+      typeof invoice?.is_invoice_available === "boolean",
+      `${label} invoice omitted is_invoice_available.`,
+    );
+    assert(
+      /^\d+(?:\.\d{2})$/.test(String(invoice?.amount || "")),
+      `${label} invoice omitted a decimal amount string.`,
+    );
+    assert(
+      String(invoice?.payment_type || "").trim(),
+      `${label} invoice omitted payment_type.`,
+    );
+    if (invoice.receipt_url) {
+      assert(
+        /^https?:\/\//.test(String(invoice.receipt_url)),
+        `${label} invoice receipt_url was not a URL.`,
+      );
+    }
+  }
+  assertNoBillingCheckoutPayload(payload, label);
+  assertNoFullPaymentCardLeak(payload, label);
+  return { invoices, total: payload.total };
+}
+
+function assertLegacyPricingCardDetailsPayload(payload, label) {
+  const monthlyPrice = Number(payload?.business_monthly_price);
+  const yearlyPrice = Number(payload?.business_yearly_price);
+  const discountPercentage = Number(payload?.discount_percentage);
+  const customPrice =
+    payload?.custom_price === null || payload?.custom_price === undefined
+      ? null
+      : Number(payload.custom_price);
+  assert(
+    Number.isFinite(monthlyPrice) && monthlyPrice > 0,
+    `${label} omitted a positive monthly business price.`,
+  );
+  assert(
+    Number.isFinite(yearlyPrice) && yearlyPrice > 0,
+    `${label} omitted a positive yearly business price.`,
+  );
+  assert(
+    Number.isInteger(discountPercentage),
+    `${label} omitted an integer discount percentage.`,
+  );
+  if (customPrice !== null) {
+    assert(
+      Number.isFinite(customPrice) && customPrice >= 0,
+      `${label} returned an invalid custom price.`,
+    );
+  }
+  assertNoBillingCheckoutPayload(payload, label);
+  assertNoFullPaymentCardLeak(payload, label);
+  return {
+    monthlyPrice,
+    yearlyPrice,
+    discountPercentage,
+    customPrice,
+  };
+}
+
+function assertBoundedPricingCardDetailsError(error, label) {
+  assert(error?.status === 400, `${label} did not return HTTP 400.`);
+  assert(
+    error.body?.status === false,
+    `${label} did not return a status:false error envelope.`,
+  );
+  assert(
+    error.body?.code === "invalid",
+    `${label} did not return code=invalid.`,
+  );
+  assert(
+    errorText(error).toLowerCase().includes("pricing card"),
+    `${label} error did not mention pricing card details.`,
+  );
+  assertNoBillingCheckoutPayload(error.body, `${label} error`);
+  assertNoFullPaymentCardLeak(error.body, `${label} error`);
+}
+
+function assertBoundedDownloadInvoiceError(error, label) {
+  assert(error?.status === 400, `${label} did not return HTTP 400.`);
+  assert(
+    error.body?.status === false,
+    `${label} did not return a status:false error envelope.`,
+  );
+  assert(
+    error.body?.code === "invalid",
+    `${label} did not return code=invalid.`,
+  );
+  const text = errorText(error).toLowerCase();
+  assert(
+    text.includes("stripe customer") || text.includes("invoice"),
+    `${label} error did not mention invoice or Stripe customer context.`,
+  );
+  assertNoBillingCheckoutPayload(error.body, `${label} error`);
+  assertNoFullPaymentCardLeak(error.body, `${label} error`);
+}
+
+function assertLegacyPricingCardDetailsDbAudit(audit, label) {
+  assert(
+    Number.isInteger(audit?.business_tier_count) &&
+      audit.business_tier_count >= 0,
+    `${label} omitted business tier count.`,
+  );
+  assert(
+    Number.isInteger(audit.business_yearly_tier_count) &&
+      audit.business_yearly_tier_count >= 0,
+    `${label} omitted business yearly tier count.`,
+  );
+  assert(
+    Number.isInteger(audit.business_price_configured_count) &&
+      audit.business_price_configured_count >= 0,
+    `${label} omitted configured business price count.`,
+  );
+  assert(
+    Number.isInteger(audit.business_yearly_price_configured_count) &&
+      audit.business_yearly_price_configured_count >= 0,
+    `${label} omitted configured business yearly price count.`,
+  );
+  assert(
+    Number.isInteger(audit.active_subscription_count) &&
+      audit.active_subscription_count >= 0,
+    `${label} omitted active subscription count.`,
+  );
+  assert(
+    typeof audit.custom_subscription_configured === "boolean",
+    `${label} omitted custom subscription configuration flag.`,
+  );
+}
+
+function assertLegacyPaymentMethodInvoiceDbAudit(audit, label) {
+  assert(
+    audit?.active_subscription_count === 1,
+    `${label} did not find one active subscription row.`,
+  );
+  assert(
+    audit.stripe_customer_id_test === null &&
+      audit.stripe_customer_id_live === null,
+    `${label} unexpectedly retained a Stripe customer id.`,
+  );
+  assert(
+    audit.payment_method_id === null,
+    `${label} unexpectedly retained a local payment method id.`,
+  );
+}
+
+function assertSubscriptionPlansPayload(payload, label) {
+  assert(payload?.status === "success", `${label} did not return success.`);
+  const data = payload?.data;
+  assert(
+    data && typeof data === "object" && !Array.isArray(data),
+    `${label} omitted data object.`,
+  );
+  const planNames = Object.keys(data).sort();
+  assert(planNames.length > 0, `${label} returned no plan rows.`);
+  const legacyPlanNames = ["free", "basic", "basic_yearly", "custom"];
+  assert(
+    legacyPlanNames.some((planName) =>
+      Object.prototype.hasOwnProperty.call(data, planName),
+    ),
+    `${label} did not include any known legacy plan keys.`,
+  );
+  for (const planName of planNames) {
+    assertLegacySubscriptionPlan(data[planName], planName, label);
+  }
+  const currentSubscription = String(payload.current_subscription || "").trim();
+  assert(
+    currentSubscription,
+    `${label} omitted current_subscription for the authenticated organization.`,
+  );
+  assertNoBillingCheckoutPayload(payload, label);
+  assertNoFullPaymentCardLeak(payload, label);
+  return {
+    currentSubscription,
+    planCount: planNames.length,
+    planNames,
+  };
+}
+
+function assertLegacySubscriptionPlan(plan, planName, label) {
+  assert(
+    plan && typeof plan === "object" && !Array.isArray(plan),
+    `${label}.${planName} was not an object.`,
+  );
+  assert(
+    String(plan.name || "").trim() === planName,
+    `${label}.${planName} name did not match its key.`,
+  );
+  assert(
+    String(plan.description || "").trim(),
+    `${label}.${planName} omitted description.`,
+  );
+  const walletRefillAmount = Number(plan.wallet_refill_amount);
+  assert(
+    Number.isFinite(walletRefillAmount) && walletRefillAmount >= 0,
+    `${label}.${planName} omitted non-negative wallet_refill_amount.`,
+  );
+  assertSubscriptionPlanResources(plan.resources, `${label}.${planName}`);
+  assertSubscriptionPlanRateLimits(plan.rate_limits, `${label}.${planName}`);
+  assert(
+    Array.isArray(plan.features) && plan.features.length > 0,
+    `${label}.${planName} omitted features array.`,
+  );
+}
+
+function assertSubscriptionPlanResources(resources, label) {
+  assert(
+    resources && typeof resources === "object" && !Array.isArray(resources),
+    `${label} omitted resources object.`,
+  );
+  for (const key of [
+    "datasets",
+    "rows",
+    "users",
+    "observe",
+    "knowledge_base",
+    "prototypes",
+  ]) {
+    assert(
+      Object.prototype.hasOwnProperty.call(resources, key),
+      `${label} resources omitted ${key}.`,
+    );
+    assert(
+      Number.isFinite(Number(resources[key])) && Number(resources[key]) >= 0,
+      `${label} resources.${key} was not a non-negative number.`,
+    );
+  }
+}
+
+function assertSubscriptionPlanRateLimits(rateLimits, label) {
+  assert(
+    rateLimits && typeof rateLimits === "object" && !Array.isArray(rateLimits),
+    `${label} omitted rate_limits object.`,
+  );
+  for (const key of [
+    "dataset_evaluation",
+    "dataset_protect",
+    "prompt_bench",
+    "auto_annotation",
+    "synthetic_data_generation",
+    "error_localizer",
+    "dataset_optimization",
+  ]) {
+    const row = rateLimits[key];
+    assert(
+      row && typeof row === "object" && !Array.isArray(row),
+      `${label} rate_limits omitted ${key}.`,
+    );
+    for (const windowName of ["minute", "hour", "day", "month"]) {
+      assert(
+        Object.prototype.hasOwnProperty.call(row, windowName),
+        `${label} rate_limits.${key} omitted ${windowName}.`,
+      );
+      assert(
+        Number.isFinite(Number(row[windowName])) &&
+          Number(row[windowName]) >= 0,
+        `${label} rate_limits.${key}.${windowName} was not a non-negative number.`,
+      );
+    }
+  }
+}
+
+function assertLegacyWalletAutoReloadDbAudit(audit, expected) {
+  assert(
+    audit?.active_subscription_count === 1,
+    "Legacy wallet DB audit did not find exactly one active subscription.",
+  );
+  assert(
+    numbersClose(audit.wallet_balance, expected.walletBalance),
+    "Legacy wallet DB audit wallet balance mismatch.",
+  );
+  assert(
+    audit.auto_recharge_enabled === expected.autoReloadEnabled,
+    "Legacy wallet DB audit auto-reload enabled mismatch.",
+  );
+  assert(
+    numbersClose(audit.auto_recharge_amount, expected.autoReloadAmount),
+    "Legacy wallet DB audit auto-reload amount mismatch.",
+  );
+  assert(
+    numbersClose(audit.auto_recharge_threshold, expected.autoReloadThreshold),
+    "Legacy wallet DB audit auto-reload threshold mismatch.",
+  );
+}
+
+function assertLegacySubscriptionPlansDbAudit(audit, label) {
+  assert(
+    audit?.active_subscription_count === 1,
+    `${label} did not find exactly one active subscription.`,
+  );
+  assert(
+    isPositiveIntegerId(audit.subscription_id),
+    `${label} did not return a valid subscription id.`,
+  );
+  assert(
+    String(audit.current_subscription || "").trim(),
+    `${label} did not return current subscription tier name.`,
   );
 }
 
@@ -6976,6 +13615,54 @@ async function expectApiError(fn, expectedStatuses, successMessage) {
 
 function errorText(error) {
   return [error?.message, JSON.stringify(error?.body || {})].join(" ");
+}
+
+function isEntitlementDeniedError(error, feature = "") {
+  const text = errorText(error).toLowerCase();
+  return (
+    error?.status === 402 &&
+    (text.includes("entitlement") || text.includes("license_feature_denied")) &&
+    (!feature || text.includes(feature.toLowerCase()))
+  );
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function generateTotpCode(secret, timestamp = Date.now()) {
+  const key = base32Decode(secret);
+  const counter = Math.floor(timestamp / 1000 / 30);
+  const counterBuffer = Buffer.alloc(8);
+  counterBuffer.writeUInt32BE(Math.floor(counter / 0x100000000), 0);
+  counterBuffer.writeUInt32BE(counter >>> 0, 4);
+  const digest = createHmac("sha1", key).update(counterBuffer).digest();
+  const offset = digest[digest.length - 1] & 0x0f;
+  const binary =
+    ((digest[offset] & 0x7f) << 24) |
+    ((digest[offset + 1] & 0xff) << 16) |
+    ((digest[offset + 2] & 0xff) << 8) |
+    (digest[offset + 3] & 0xff);
+  return String(binary % 1000000).padStart(6, "0");
+}
+
+function base32Decode(value) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const normalized = String(value || "")
+    .toUpperCase()
+    .replaceAll("=", "")
+    .replace(/\s+/g, "");
+  let bits = "";
+  for (const char of normalized) {
+    const index = alphabet.indexOf(char);
+    assert(index >= 0, `Invalid base32 TOTP secret character: ${char}`);
+    bits += index.toString(2).padStart(5, "0");
+  }
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    bytes.push(Number.parseInt(bits.slice(i, i + 8), 2));
+  }
+  return Buffer.from(bytes);
 }
 
 async function loadDeveloperSecretKeyDbAudit(keyId, organizationId) {
@@ -7821,8 +14508,54 @@ SELECT json_build_object(
   'active_access_token_count', (
     SELECT count(*) FROM auth_tokens WHERE auth_type = 'access' AND is_active = true
   ),
+  'total_access_token_count', (
+    SELECT count(*) FROM auth_tokens WHERE auth_type = 'access'
+  ),
   'active_refresh_token_count', (
     SELECT count(*) FROM auth_tokens WHERE auth_type = 'refresh' AND is_active = true
+  ),
+  'total_refresh_token_count', (
+    SELECT count(*) FROM auth_tokens WHERE auth_type = 'refresh'
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadOnboardingLogoutDbAudit(email) {
+  const sql = `
+WITH requested AS (
+  SELECT lower(${sqlTextLiteral(email)}) AS email
+),
+user_rows AS (
+  SELECT u.id, u.email, u.is_active, u.role, u.goals, u.config
+  FROM accounts_user u
+  JOIN requested r ON lower(u.email) = r.email
+),
+auth_tokens AS (
+  SELECT token.id, token.auth_type, token.is_active
+  FROM accounts_auth_token token
+  JOIN user_rows u ON token.user_id = u.id
+)
+SELECT json_build_object(
+  'email', (SELECT email FROM requested),
+  'user_count', (SELECT count(*) FROM user_rows),
+  'user_id', (SELECT id::text FROM user_rows LIMIT 1),
+  'user_active', (SELECT is_active FROM user_rows LIMIT 1),
+  'role', (SELECT role FROM user_rows LIMIT 1),
+  'goals', COALESCE((SELECT goals FROM user_rows LIMIT 1), '[]'::jsonb),
+  'onboarding_completed_at', (SELECT config->>'onboarding_completed_at' FROM user_rows LIMIT 1),
+  'active_access_token_count', (
+    SELECT count(*) FROM auth_tokens WHERE auth_type = 'access' AND is_active = true
+  ),
+  'inactive_access_token_count', (
+    SELECT count(*) FROM auth_tokens WHERE auth_type = 'access' AND is_active = false
+  ),
+  'active_refresh_token_count', (
+    SELECT count(*) FROM auth_tokens WHERE auth_type = 'refresh' AND is_active = true
+  ),
+  'inactive_refresh_token_count', (
+    SELECT count(*) FROM auth_tokens WHERE auth_type = 'refresh' AND is_active = false
   )
 );
 `;
@@ -7904,6 +14637,112 @@ SELECT json_build_object(
   return runPostgresJson(sql);
 }
 
+async function loadLegacyWorkspaceAliasDbAudit({
+  organizationId,
+  workspaceName,
+  workspaceId = null,
+}) {
+  const workspaceIdSql = workspaceId ? sqlUuid(workspaceId) : "NULL::uuid";
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    lower(${sqlTextLiteral(workspaceName)}) AS workspace_name,
+    ${workspaceIdSql} AS workspace_id
+),
+workspace_rows AS (
+  SELECT w.id, w.name, w.display_name, w.description, w.organization_id, w.is_active, w.is_default
+  FROM accounts_workspace w
+  JOIN requested r ON w.organization_id = r.organization_id
+  WHERE (r.workspace_id IS NOT NULL AND w.id = r.workspace_id)
+     OR (r.workspace_id IS NULL AND lower(w.name) = r.workspace_name)
+),
+membership_rows AS (
+  SELECT wm.id, wm.workspace_id, wm.user_id, wm.role, wm.is_active, wm.deleted
+  FROM accounts_workspacemembership wm
+  JOIN workspace_rows w ON wm.workspace_id = w.id
+)
+SELECT json_build_object(
+  'workspace_count', (SELECT count(*) FROM workspace_rows),
+  'active_workspace_count', (SELECT count(*) FROM workspace_rows WHERE is_active = true),
+  'inactive_workspace_count', (SELECT count(*) FROM workspace_rows WHERE is_active = false),
+  'workspace_id', (SELECT id::text FROM workspace_rows LIMIT 1),
+  'workspace_name', (SELECT name FROM workspace_rows LIMIT 1),
+  'workspace_display_name', (SELECT display_name FROM workspace_rows LIMIT 1),
+  'workspace_description', (SELECT description FROM workspace_rows LIMIT 1),
+  'membership_count', (SELECT count(*) FROM membership_rows),
+  'active_membership_count', (SELECT count(*) FROM membership_rows WHERE is_active = true AND deleted = false),
+  'inactive_membership_count', (SELECT count(*) FROM membership_rows WHERE is_active = false OR deleted = true)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function deleteDisposableWorkspaceArtifacts({
+  organizationId,
+  workspaceName,
+  workspaceId = null,
+}) {
+  const workspaceIdSql = workspaceId ? sqlUuid(workspaceId) : "NULL::uuid";
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    lower(${sqlTextLiteral(workspaceName)}) AS workspace_name,
+    ${workspaceIdSql} AS workspace_id
+),
+workspace_rows AS (
+  SELECT w.id
+  FROM accounts_workspace w
+  JOIN requested r ON w.organization_id = r.organization_id
+  WHERE (r.workspace_id IS NOT NULL AND w.id = r.workspace_id)
+     OR (r.workspace_id IS NULL AND lower(w.name) = r.workspace_name)
+),
+deleted_memberships AS (
+  DELETE FROM accounts_workspacemembership wm
+  USING workspace_rows w
+  WHERE wm.workspace_id = w.id
+  RETURNING wm.id
+),
+deleted_workspaces AS (
+  DELETE FROM accounts_workspace aw
+  USING workspace_rows w
+  WHERE aw.id = w.id
+  RETURNING aw.id
+)
+SELECT json_build_object(
+  'deleted_memberships', (SELECT count(*) FROM deleted_memberships),
+  'deleted_workspaces', (SELECT count(*) FROM deleted_workspaces),
+  'remaining_workspaces', (
+    SELECT count(*)
+    FROM accounts_workspace aw
+    JOIN requested r ON aw.organization_id = r.organization_id
+    WHERE (r.workspace_id IS NOT NULL AND aw.id = r.workspace_id)
+       OR (r.workspace_id IS NULL AND lower(aw.name) = r.workspace_name)
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function ensureUsageApiCallType({ name, description }) {
+  const script = `
+import json
+from ee.usage.models.usage import APICallType
+
+call_type, created = APICallType.objects.get_or_create(
+    name=${JSON.stringify(name)},
+    defaults={"description": ${JSON.stringify(description)}},
+)
+print(json.dumps({
+    "id": str(call_type.id),
+    "name": call_type.name,
+    "created": created,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
 async function seedWorkspaceUsageBoundaryData({
   marker,
   organizationId,
@@ -7964,7 +14803,9 @@ print(json.dumps({
     "target_month": 4,
     "target_year": 2026,
     "expected_month_cost": 0.5,
+    "expected_month_tokens": 100,
     "leaking_next_month_cost": 1.25,
+    "leaking_next_month_tokens": 100,
     "april_log_id": april_log_id,
     "may_log_id": may_log_id,
 }))
@@ -8052,6 +14893,1597 @@ SELECT json_build_object(
   return runPostgresJson(sql);
 }
 
+async function prepareLegacyWalletAutoReloadDbState({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Legacy wallet seed organization id must be a UUID.",
+  );
+  const script = `
+import json
+from decimal import Decimal
+from accounts.models.organization import Organization
+from ee.usage.models.usage import OrganizationSubscription
+from ee.usage.utils.usage_entries import create_organization_subscription_if_not_exists
+
+def decimal_to_string(value):
+    return None if value is None else str(value)
+
+def datetime_to_string(value):
+    return None if value is None else value.isoformat()
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+original = OrganizationSubscription.all_objects.filter(organization=organization).first()
+original_state = None
+if original is not None:
+    original_state = {
+        "id": str(original.id),
+        "subscription_tier_id": str(original.subscription_tier_id),
+        "wallet_refill_amount": decimal_to_string(original.wallet_refill_amount),
+        "wallet_balance": decimal_to_string(original.wallet_balance),
+        "auto_recharge_enabled": original.auto_recharge_enabled,
+        "auto_recharge_amount": decimal_to_string(original.auto_recharge_amount),
+        "auto_recharge_threshold": decimal_to_string(original.auto_recharge_threshold),
+        "deleted": original.deleted,
+        "deleted_at": datetime_to_string(original.deleted_at),
+    }
+
+subscription = create_organization_subscription_if_not_exists(organization)
+subscription.wallet_balance = Decimal("17.75")
+subscription.auto_recharge_enabled = False
+subscription.auto_recharge_amount = Decimal("31.25")
+subscription.auto_recharge_threshold = Decimal("6.50")
+subscription.save(
+    update_fields=[
+        "wallet_balance",
+        "auto_recharge_enabled",
+        "auto_recharge_amount",
+        "auto_recharge_threshold",
+    ]
+)
+print(json.dumps({
+    "organization_id": str(organization.id),
+    "subscription_id": str(subscription.id),
+    "original": original_state,
+    "seed": {
+        "wallet_balance": "17.75",
+        "auto_recharge_enabled": False,
+        "auto_recharge_amount": "31.25",
+        "auto_recharge_threshold": "6.50",
+    },
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadLegacyWalletAutoReloadDbAudit({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Legacy wallet audit organization id must be a UUID.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(organizationId)} AS organization_id
+),
+active_rows AS (
+  SELECT
+    sub.id,
+    sub.wallet_balance,
+    sub.auto_recharge_enabled,
+    sub.auto_recharge_amount,
+    sub.auto_recharge_threshold
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+  WHERE sub.deleted = false
+  ORDER BY sub.created_at DESC
+  LIMIT 1
+),
+all_rows AS (
+  SELECT sub.id
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+)
+SELECT json_build_object(
+  'active_subscription_count', (SELECT count(*) FROM active_rows),
+  'any_subscription_count', (SELECT count(*) FROM all_rows),
+  'subscription_id', (SELECT id::text FROM active_rows LIMIT 1),
+  'wallet_balance', (SELECT wallet_balance::float FROM active_rows LIMIT 1),
+  'auto_recharge_enabled', (SELECT auto_recharge_enabled FROM active_rows LIMIT 1),
+  'auto_recharge_amount', (SELECT auto_recharge_amount::float FROM active_rows LIMIT 1),
+  'auto_recharge_threshold', (SELECT auto_recharge_threshold::float FROM active_rows LIMIT 1)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function restoreLegacyWalletAutoReloadDbState(state) {
+  const stateJson = JSON.stringify(state || {});
+  const script = `
+import json
+from decimal import Decimal
+from django.utils.dateparse import parse_datetime
+from ee.usage.models.usage import OrganizationSubscription
+
+state = json.loads(${JSON.stringify(stateJson)})
+original = state.get("original")
+if original is None:
+    deleted_count, _ = OrganizationSubscription.all_objects.filter(
+        id=state["subscription_id"]
+    ).delete()
+    print(json.dumps({
+        "mode": "delete_created_subscription",
+        "deleted_count": deleted_count,
+    }))
+else:
+    subscription = OrganizationSubscription.all_objects.get(id=original["id"])
+    subscription.subscription_tier_id = original["subscription_tier_id"]
+    subscription.wallet_refill_amount = Decimal(original["wallet_refill_amount"])
+    subscription.wallet_balance = Decimal(original["wallet_balance"])
+    subscription.auto_recharge_enabled = original["auto_recharge_enabled"]
+    subscription.auto_recharge_amount = (
+        None
+        if original["auto_recharge_amount"] is None
+        else Decimal(original["auto_recharge_amount"])
+    )
+    subscription.auto_recharge_threshold = (
+        None
+        if original["auto_recharge_threshold"] is None
+        else Decimal(original["auto_recharge_threshold"])
+    )
+    subscription.deleted = original["deleted"]
+    subscription.deleted_at = (
+        None
+        if original["deleted_at"] is None
+        else parse_datetime(original["deleted_at"])
+    )
+    subscription.save(
+        update_fields=[
+            "subscription_tier",
+            "wallet_refill_amount",
+            "wallet_balance",
+            "auto_recharge_enabled",
+            "auto_recharge_amount",
+            "auto_recharge_threshold",
+            "deleted",
+            "deleted_at",
+        ]
+    )
+    print(json.dumps({
+        "mode": "restore_existing_subscription",
+        "subscription_id": str(subscription.id),
+        "deleted": subscription.deleted,
+    }))
+	`;
+  return runBackendShellJson(script);
+}
+
+async function prepareLegacySubscriptionPlansDbState({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Legacy subscription plans organization id must be a UUID.",
+  );
+  const script = `
+import json
+from django.core.serializers.json import DjangoJSONEncoder
+from accounts.models.organization import Organization
+from ee.usage.models.usage import OrganizationSubscription
+from ee.usage.utils.usage_entries import create_organization_subscription_if_not_exists
+
+def serialize_subscription(subscription):
+    data = {}
+    for field in OrganizationSubscription._meta.fields:
+        data[field.attname] = getattr(subscription, field.attname)
+    data["subscription_tier_name"] = subscription.subscription_tier.name
+    return data
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+original = (
+    OrganizationSubscription.all_objects.select_related("subscription_tier")
+    .filter(organization=organization)
+    .first()
+)
+original_state = (
+    serialize_subscription(original)
+    if original is not None
+    else None
+)
+subscription = create_organization_subscription_if_not_exists(organization)
+print(json.dumps({
+    "organization_id": str(organization.id),
+    "subscription_id": str(subscription.id),
+    "current_subscription": subscription.subscription_tier.name,
+    "original": original_state,
+}, cls=DjangoJSONEncoder))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadLegacySubscriptionPlansDbAudit({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Legacy subscription plans audit organization id must be a UUID.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(organizationId)} AS organization_id
+),
+active_rows AS (
+  SELECT
+    sub.id,
+    tier.name AS subscription_tier_name
+  FROM usage_organizationsubscription sub
+  JOIN usage_subscriptiontier tier ON tier.id = sub.subscription_tier_id
+  JOIN requested r ON sub.organization_id = r.organization_id
+  WHERE sub.deleted = false
+  ORDER BY sub.created_at DESC
+  LIMIT 1
+),
+all_rows AS (
+  SELECT sub.id
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+)
+SELECT json_build_object(
+  'active_subscription_count', (SELECT count(*) FROM active_rows),
+  'any_subscription_count', (SELECT count(*) FROM all_rows),
+  'subscription_id', (SELECT id::text FROM active_rows LIMIT 1),
+  'current_subscription', (SELECT subscription_tier_name FROM active_rows LIMIT 1)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function restoreLegacySubscriptionPlansDbState(state) {
+  const stateJson = JSON.stringify(state || {});
+  const script = `
+import json
+from ee.usage.models.usage import OrganizationSubscription
+
+state = json.loads(${JSON.stringify(stateJson)})
+original = state.get("original")
+if original is None:
+    deleted_count, _ = OrganizationSubscription.all_objects.filter(
+        id=state["subscription_id"]
+    ).delete()
+    print(json.dumps({
+        "mode": "delete_created_subscription",
+        "deleted_count": deleted_count,
+    }))
+else:
+    updates = {}
+    for field in OrganizationSubscription._meta.fields:
+        if field.attname == "id":
+            continue
+        value = original.get(field.attname)
+        if value is not None:
+            value = field.to_python(value)
+        updates[field.attname] = value
+    updated_count = OrganizationSubscription.all_objects.filter(
+        id=original["id"]
+    ).update(**updates)
+    print(json.dumps({
+        "mode": "restore_existing_subscription",
+        "subscription_id": original["id"],
+        "updated_count": updated_count,
+        "deleted": original["deleted"],
+    }))
+`;
+  return runBackendShellJson(script);
+}
+
+async function prepareLegacyBillingDetailsDbState({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Legacy billing details organization id must be a UUID.",
+  );
+  const script = `
+import json
+from django.core.serializers.json import DjangoJSONEncoder
+from accounts.models.organization import Organization
+from ee.usage.models.usage import OrganizationBilling, OrganizationSubscription
+from ee.usage.utils.usage_entries import create_organization_subscription_if_not_exists
+
+def serialize_model(model_cls, instance):
+    if instance is None:
+        return None
+    data = {}
+    for field in model_cls._meta.fields:
+        data[field.attname] = getattr(instance, field.attname)
+    return data
+
+def billing_api_shape(billing):
+    if billing is None:
+        return None
+    return {
+        "name": billing.billing_contact_name,
+        "email": billing.billing_contact_email,
+        "company": billing.company,
+        "billing_address1": billing.billing_address1,
+        "billing_address2": billing.billing_address2,
+        "city": billing.city,
+        "state": billing.state,
+        "country": billing.country,
+        "postal_code": billing.postal_code,
+        "tax_id": billing.tax_id,
+    }
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+original_billing = OrganizationBilling.all_objects.filter(
+    organization=organization
+).first()
+original_subscription = OrganizationSubscription.all_objects.filter(
+    organization=organization
+).first()
+
+seed = {
+    "name": "Legacy Billing Before",
+    "email": "legacy-before@example.com",
+    "company": "Before Co",
+    "billing_address1": "1 Before St",
+    "billing_address2": "Floor 1",
+    "city": "Before City",
+    "state": "BC",
+    "country": "US",
+    "postal_code": "10001",
+    "tax_id": "BEFORE-TAX",
+}
+
+billing, _ = OrganizationBilling.all_objects.update_or_create(
+    organization=organization,
+    defaults={
+        "billing_contact_name": seed["name"],
+        "billing_contact_email": seed["email"],
+        "company": seed["company"],
+        "billing_address1": seed["billing_address1"],
+        "billing_address2": seed["billing_address2"],
+        "city": seed["city"],
+        "state": seed["state"],
+        "country": seed["country"],
+        "postal_code": seed["postal_code"],
+        "tax_id": seed["tax_id"],
+        "deleted": False,
+        "deleted_at": None,
+    },
+)
+subscription = create_organization_subscription_if_not_exists(organization)
+subscription.stripe_customer_id_test = None
+subscription.stripe_customer_id_live = None
+subscription.deleted = False
+subscription.deleted_at = None
+subscription.save(
+    update_fields=[
+        "stripe_customer_id_test",
+        "stripe_customer_id_live",
+        "deleted",
+        "deleted_at",
+    ]
+)
+
+print(json.dumps({
+    "organization_id": str(organization.id),
+    "billing_id": str(billing.id),
+    "subscription_id": str(subscription.id),
+    "original_billing": serialize_model(OrganizationBilling, original_billing),
+    "original_billing_api": billing_api_shape(original_billing),
+    "original_subscription": serialize_model(
+        OrganizationSubscription,
+        original_subscription,
+    ),
+    "seed": seed,
+}, cls=DjangoJSONEncoder))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadLegacyBillingDetailsDbAudit({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Legacy billing details audit organization id must be a UUID.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(organizationId)} AS organization_id
+),
+active_billing_rows AS (
+  SELECT
+    billing.id,
+    billing.billing_contact_name AS name,
+    billing.billing_contact_email AS email,
+    billing.company,
+    billing.billing_address1,
+    billing.billing_address2,
+    billing.city,
+    billing.state,
+    billing.country,
+    billing.postal_code,
+    billing.tax_id
+  FROM usage_organizationbilling billing
+  JOIN requested r ON billing.organization_id = r.organization_id
+  WHERE billing.deleted = false
+  ORDER BY billing.created_at DESC
+  LIMIT 1
+),
+all_billing_rows AS (
+  SELECT billing.id
+  FROM usage_organizationbilling billing
+  JOIN requested r ON billing.organization_id = r.organization_id
+),
+active_subscription_rows AS (
+  SELECT
+    sub.id,
+    sub.stripe_customer_id_test,
+    sub.stripe_customer_id_live
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+  WHERE sub.deleted = false
+  ORDER BY sub.created_at DESC
+  LIMIT 1
+),
+all_subscription_rows AS (
+  SELECT sub.id
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+)
+SELECT json_build_object(
+  'billing_count', (SELECT count(*) FROM active_billing_rows),
+  'any_billing_count', (SELECT count(*) FROM all_billing_rows),
+  'billing_id', (SELECT id::text FROM active_billing_rows LIMIT 1),
+  'name', (SELECT name FROM active_billing_rows LIMIT 1),
+  'email', (SELECT email FROM active_billing_rows LIMIT 1),
+  'company', (SELECT company FROM active_billing_rows LIMIT 1),
+  'billing_address1', (SELECT billing_address1 FROM active_billing_rows LIMIT 1),
+  'billing_address2', (SELECT billing_address2 FROM active_billing_rows LIMIT 1),
+  'city', (SELECT city FROM active_billing_rows LIMIT 1),
+  'state', (SELECT state FROM active_billing_rows LIMIT 1),
+  'country', (SELECT country FROM active_billing_rows LIMIT 1),
+  'postal_code', (SELECT postal_code FROM active_billing_rows LIMIT 1),
+  'tax_id', (SELECT tax_id FROM active_billing_rows LIMIT 1),
+  'active_subscription_count', (SELECT count(*) FROM active_subscription_rows),
+  'any_subscription_count', (SELECT count(*) FROM all_subscription_rows),
+  'subscription_id', (SELECT id::text FROM active_subscription_rows LIMIT 1),
+  'stripe_customer_id_test', (
+    SELECT stripe_customer_id_test FROM active_subscription_rows LIMIT 1
+  ),
+  'stripe_customer_id_live', (
+    SELECT stripe_customer_id_live FROM active_subscription_rows LIMIT 1
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function restoreLegacyBillingDetailsDbState(state) {
+  const stateJson = JSON.stringify(state || {});
+  const script = `
+import json
+from ee.usage.models.usage import OrganizationBilling, OrganizationSubscription
+
+state = json.loads(${JSON.stringify(stateJson)})
+
+def restore_model(model_cls, original, created_id, delete_mode, restore_mode):
+    if original is None:
+        deleted_count, _ = model_cls.all_objects.filter(id=created_id).delete()
+        return {
+            "mode": delete_mode,
+            "deleted_count": deleted_count,
+        }
+    updates = {}
+    for field in model_cls._meta.fields:
+        if field.attname == "id":
+            continue
+        value = original.get(field.attname)
+        if value is not None:
+            value = field.to_python(value)
+        updates[field.attname] = value
+    updated_count = model_cls.all_objects.filter(id=original["id"]).update(
+        **updates
+    )
+    return {
+        "mode": restore_mode,
+        "id": original["id"],
+        "updated_count": updated_count,
+        "deleted": original["deleted"],
+    }
+
+billing_result = restore_model(
+    OrganizationBilling,
+    state.get("original_billing"),
+    state["billing_id"],
+    "delete_created_billing",
+    "restore_existing_billing",
+)
+subscription_result = restore_model(
+    OrganizationSubscription,
+    state.get("original_subscription"),
+    state["subscription_id"],
+    "delete_created_subscription",
+    "restore_existing_subscription",
+)
+print(json.dumps({
+    "mode": "restore_legacy_billing_details_state",
+    "billing_mode": billing_result["mode"],
+    "subscription_mode": subscription_result["mode"],
+    "billing": billing_result,
+    "subscription": subscription_result,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function prepareBillingAddonMutationDbState({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Billing add-on mutation organization id must be a UUID.",
+  );
+  const script = `
+import json
+from django.core.serializers.json import DjangoJSONEncoder
+from accounts.models.organization import Organization
+from ee.usage.models.usage import OrganizationSubscription
+from ee.usage.utils.usage_entries import create_organization_subscription_if_not_exists
+
+def serialize_subscription(subscription):
+    if subscription is None:
+        return None
+    data = {}
+    for field in OrganizationSubscription._meta.fields:
+        data[field.attname] = getattr(subscription, field.attname)
+    return data
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+original = OrganizationSubscription.all_objects.filter(
+    organization=organization
+).first()
+subscription = create_organization_subscription_if_not_exists(organization)
+subscription.plan = "payg"
+subscription.stripe_subscription_id = None
+subscription.stripe_fee_subscription_id = None
+subscription.stripe_customer_id_test = None
+subscription.stripe_customer_id_live = None
+subscription.payment_method_id = None
+subscription.deleted = False
+subscription.deleted_at = None
+subscription.save(
+    update_fields=[
+        "plan",
+        "stripe_subscription_id",
+        "stripe_fee_subscription_id",
+        "stripe_customer_id_test",
+        "stripe_customer_id_live",
+        "payment_method_id",
+        "deleted",
+        "deleted_at",
+    ]
+)
+print(json.dumps({
+    "organization_id": str(organization.id),
+    "subscription_id": str(subscription.id),
+    "original": serialize_subscription(original),
+}, cls=DjangoJSONEncoder))
+`;
+  return runBackendShellJson(script);
+}
+
+async function setBillingAddonMutationDbState({
+  organizationId,
+  plan,
+  stripeSubscriptionId = null,
+}) {
+  assert(
+    isUuid(organizationId),
+    "Billing add-on mutation organization id must be a UUID.",
+  );
+  assert(
+    ["free", "payg", "boost", "scale", "enterprise", "custom"].includes(plan),
+    "Billing add-on mutation plan must be a known plan.",
+  );
+  const stateJson = JSON.stringify({
+    plan,
+    stripe_subscription_id: stripeSubscriptionId,
+  });
+  const script = `
+import json
+from accounts.models.organization import Organization
+from ee.usage.utils.usage_entries import create_organization_subscription_if_not_exists
+
+state = json.loads(${JSON.stringify(stateJson)})
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+subscription = create_organization_subscription_if_not_exists(organization)
+subscription.plan = state["plan"]
+subscription.stripe_subscription_id = state.get("stripe_subscription_id")
+subscription.stripe_fee_subscription_id = None
+subscription.stripe_customer_id_test = None
+subscription.stripe_customer_id_live = None
+subscription.payment_method_id = None
+subscription.deleted = False
+subscription.deleted_at = None
+subscription.save(
+    update_fields=[
+        "plan",
+        "stripe_subscription_id",
+        "stripe_fee_subscription_id",
+        "stripe_customer_id_test",
+        "stripe_customer_id_live",
+        "payment_method_id",
+        "deleted",
+        "deleted_at",
+    ]
+)
+print(json.dumps({
+    "subscription_id": str(subscription.id),
+    "plan": subscription.plan,
+    "stripe_subscription_id": subscription.stripe_subscription_id,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadBillingAddonMutationDbAudit({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Billing add-on mutation audit organization id must be a UUID.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(organizationId)} AS organization_id
+),
+active_rows AS (
+  SELECT
+    sub.id,
+    sub.plan,
+    sub.stripe_subscription_id,
+    sub.stripe_fee_subscription_id,
+    sub.stripe_customer_id_test,
+    sub.stripe_customer_id_live,
+    sub.payment_method_id
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+  WHERE sub.deleted = false
+  ORDER BY sub.created_at DESC
+  LIMIT 1
+),
+all_rows AS (
+  SELECT sub.id
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+)
+SELECT json_build_object(
+  'active_subscription_count', (SELECT count(*) FROM active_rows),
+  'any_subscription_count', (SELECT count(*) FROM all_rows),
+  'subscription_id', (SELECT id::text FROM active_rows LIMIT 1),
+  'plan', (SELECT plan FROM active_rows LIMIT 1),
+  'stripe_subscription_id', (
+    SELECT stripe_subscription_id FROM active_rows LIMIT 1
+  ),
+  'stripe_fee_subscription_id', (
+    SELECT stripe_fee_subscription_id FROM active_rows LIMIT 1
+  ),
+  'stripe_customer_id_test', (
+    SELECT stripe_customer_id_test FROM active_rows LIMIT 1
+  ),
+  'stripe_customer_id_live', (
+    SELECT stripe_customer_id_live FROM active_rows LIMIT 1
+  ),
+  'payment_method_id', (SELECT payment_method_id FROM active_rows LIMIT 1)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+function assertBillingAddonMutationAudit(audit, label) {
+  assert(
+    Number.isInteger(audit?.active_subscription_count) &&
+      audit.active_subscription_count >= 0,
+    `${label} omitted active subscription count.`,
+  );
+  assert(
+    Number.isInteger(audit?.any_subscription_count) &&
+      audit.any_subscription_count >= audit.active_subscription_count,
+    `${label} omitted total subscription count.`,
+  );
+  if (audit.active_subscription_count === 0) return;
+  assert(
+    isPositiveIntegerId(audit.subscription_id),
+    `${label} omitted subscription id.`,
+  );
+  assert(
+    ["free", "payg", "boost", "scale", "enterprise", "custom"].includes(
+      audit.plan,
+    ),
+    `${label} returned unsupported plan ${audit.plan}.`,
+  );
+}
+
+function assertBillingUsageOverviewPayload(payload, label, expected) {
+  assert(
+    payload && typeof payload === "object" && !Array.isArray(payload),
+    `${label} omitted result object.`,
+  );
+  assert(payload.period === expected.period, `${label} returned wrong period.`);
+  assert(
+    String(payload.plan || "").trim(),
+    `${label} omitted current billing plan.`,
+  );
+  assert(
+    typeof payload.pending_cancel === "boolean",
+    `${label} omitted pending_cancel boolean.`,
+  );
+  assert(
+    Array.isArray(payload.dimensions) && payload.dimensions.length > 0,
+    `${label} omitted dimensions array.`,
+  );
+  const dimension = payload.dimensions.find(
+    (item) => item?.key === expected.dimension,
+  );
+  assert(dimension, `${label} omitted ${expected.dimension} dimension.`);
+  for (const key of [
+    "display_name",
+    "display_unit",
+    "current_usage",
+    "current_usage_raw",
+    "free_allowance",
+    "projected_usage",
+    "estimated_cost",
+    "usage_pct",
+  ]) {
+    assert(
+      Object.prototype.hasOwnProperty.call(dimension, key),
+      `${label}.${expected.dimension} omitted ${key}.`,
+    );
+  }
+  assert(
+    numbersClose(dimension.current_usage, expected.expectedUsage),
+    `${label}.${expected.dimension} current_usage did not match seeded summary.`,
+  );
+  assert(
+    numbersClose(dimension.current_usage_raw, expected.expectedUsageRaw),
+    `${label}.${expected.dimension} current_usage_raw did not match seeded summary.`,
+  );
+  assert(
+    Number(dimension.estimated_cost) >= 0,
+    `${label}.${expected.dimension} returned negative estimated_cost.`,
+  );
+  assertNoBillingCheckoutPayload(payload, label);
+  assertNoFullPaymentCardLeak(payload, label);
+  return dimension;
+}
+
+function assertBillingUsageTimeSeriesPayload(payload, label, expected) {
+  assert(
+    payload && typeof payload === "object" && !Array.isArray(payload),
+    `${label} omitted result object.`,
+  );
+  assert(
+    payload.dimension === expected.dimension,
+    `${label} returned wrong dimension.`,
+  );
+  assert(payload.period === expected.period, `${label} returned wrong period.`);
+  assert(
+    payload.period_end === expected.periodEnd,
+    `${label} returned wrong period_end.`,
+  );
+  assert(Array.isArray(payload.series), `${label} omitted series array.`);
+  const byDate = new Map(
+    payload.series.map((point) => [point.date, Number(point.usage)]),
+  );
+  for (const point of expected.points) {
+    assert(byDate.has(point.date), `${label} omitted ${point.date}.`);
+    assert(
+      numbersClose(byDate.get(point.date), point.usage),
+      `${label} ${point.date} usage did not match seeded usage.`,
+    );
+  }
+  assertNoBillingCheckoutPayload(payload, label);
+  assertNoFullPaymentCardLeak(payload, label);
+}
+
+function assertBillingUsageWorkspaceBreakdownPayload(payload, label, expected) {
+  assert(
+    payload && typeof payload === "object" && !Array.isArray(payload),
+    `${label} omitted result object.`,
+  );
+  assert(
+    payload.dimension === expected.dimension,
+    `${label} returned wrong dimension.`,
+  );
+  assert(payload.period === expected.period, `${label} returned wrong period.`);
+  assert(
+    payload.period_end === expected.periodEnd,
+    `${label} returned wrong period_end.`,
+  );
+  assert(
+    Array.isArray(payload.workspaces),
+    `${label} omitted workspaces array.`,
+  );
+  const workspaceRow = payload.workspaces.find(
+    (row) => row.workspace_id === expected.workspaceId,
+  );
+  assert(workspaceRow, `${label} omitted seeded workspace row.`);
+  assert(
+    workspaceRow.workspace_name === expected.workspaceName,
+    `${label} workspace row returned wrong workspace_name.`,
+  );
+  assert(
+    numbersClose(workspaceRow.usage, expected.workspaceUsage),
+    `${label} workspace row usage did not match seeded events.`,
+  );
+  const defaultRow = payload.workspaces.find(
+    (row) => row.workspace_id === null,
+  );
+  assert(defaultRow, `${label} omitted default/no-workspace row.`);
+  assert(
+    defaultRow.workspace_name === "Default",
+    `${label} no-workspace row did not use Default display name.`,
+  );
+  assert(
+    numbersClose(defaultRow.usage, expected.defaultUsage),
+    `${label} default row usage did not match seeded events.`,
+  );
+  assertNoBillingCheckoutPayload(payload, label);
+  assertNoFullPaymentCardLeak(payload, label);
+}
+
+function assertBillingUsageAnalyticsDbAudit(audit, fixture, label) {
+  assert(
+    audit?.summary_count === fixture.periods.length,
+    `Billing usage analytics ${label} did not find seeded summary periods.`,
+  );
+  assert(
+    numbersClose(audit.current_usage, fixture.current_usage),
+    `Billing usage analytics ${label} current summary mismatch.`,
+  );
+  assert(
+    numbersClose(audit.previous_usage, fixture.previous_usage),
+    `Billing usage analytics ${label} previous summary mismatch.`,
+  );
+  assert(
+    audit.event_count === fixture.seeded_event_count,
+    `Billing usage analytics ${label} event count mismatch.`,
+  );
+  assert(
+    numbersClose(audit.workspace_event_usage, fixture.workspace_usage),
+    `Billing usage analytics ${label} workspace event usage mismatch.`,
+  );
+  assert(
+    numbersClose(audit.default_event_usage, fixture.default_usage),
+    `Billing usage analytics ${label} default event usage mismatch.`,
+  );
+}
+
+function assertBillingUsageAnalyticsRestored(audit, fixture) {
+  const expectedSummaryCount = Object.values(
+    fixture.original_summaries || {},
+  ).filter((row) => row && !row.deleted).length;
+  assert(
+    audit.event_count === 0,
+    "Billing usage analytics restore left disposable event rows.",
+  );
+  assert(
+    audit.summary_count === expectedSummaryCount,
+    "Billing usage analytics restore did not restore original summary row count.",
+  );
+}
+
+async function restoreBillingAddonMutationDbState(state) {
+  const stateJson = JSON.stringify(state || {});
+  const script = `
+import json
+from ee.usage.models.usage import OrganizationSubscription
+
+state = json.loads(${JSON.stringify(stateJson)})
+original = state.get("original")
+if original is None:
+    deleted_count, _ = OrganizationSubscription.all_objects.filter(
+        id=state["subscription_id"]
+    ).delete()
+    print(json.dumps({
+        "mode": "delete_created_subscription",
+        "deleted_count": deleted_count,
+    }))
+else:
+    updates = {}
+    for field in OrganizationSubscription._meta.fields:
+        if field.attname == "id":
+            continue
+        value = original.get(field.attname)
+        if value is not None:
+            value = field.to_python(value)
+        updates[field.attname] = value
+    updated_count = OrganizationSubscription.all_objects.filter(
+        id=original["id"]
+    ).update(**updates)
+    print(json.dumps({
+        "mode": "restore_existing_subscription",
+        "subscription_id": original["id"],
+        "updated_count": updated_count,
+        "deleted": original["deleted"],
+    }))
+`;
+  return runBackendShellJson(script);
+}
+
+async function prepareBillingUsageAnalyticsDbState({
+  marker,
+  organizationId,
+  workspaceId,
+}) {
+  assert(
+    isUuid(organizationId),
+    "Billing usage analytics organization id must be a UUID.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "Billing usage analytics workspace id must be a UUID.",
+  );
+  const script = `
+import json
+from datetime import datetime, timezone
+from decimal import Decimal
+from uuid import uuid4
+from django.core.serializers.json import DjangoJSONEncoder
+from accounts.models.organization import Organization
+from accounts.models.workspace import Workspace
+from ee.usage.models.usage import OrganizationSubscription, UsageEventLog, UsageSummary
+
+marker = ${JSON.stringify(marker)}
+dimension = "ai_credits"
+current_period = "2099-12"
+previous_period = "2099-11"
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+workspace = Workspace.objects.get(id=${JSON.stringify(workspaceId)}, organization=organization)
+
+def serialize_model(model_cls, row):
+    if row is None:
+        return None
+    data = {}
+    for field in model_cls._meta.fields:
+        data[field.attname] = getattr(row, field.attname)
+    return data
+
+original_summaries = {}
+summary_ids = {}
+summary_values = {
+    previous_period: (Decimal("7.2500"), Decimal("7250.000000")),
+    current_period: (Decimal("12.5000"), Decimal("12500.000000")),
+}
+for period, (usage, usage_raw) in summary_values.items():
+    original = UsageSummary.all_objects.filter(
+        organization=organization,
+        dimension=dimension,
+        period=period,
+    ).first()
+    original_summaries[period] = serialize_model(UsageSummary, original)
+    summary = original or UsageSummary(organization=organization, dimension=dimension, period=period)
+    summary.total_usage = usage
+    summary.total_usage_raw = usage_raw
+    summary.reported_to_stripe = Decimal("0")
+    summary.last_flushed_at = datetime(2099, 12, 6, tzinfo=timezone.utc)
+    summary.deleted = False
+    summary.deleted_at = None
+    summary.save()
+    summary_ids[period] = str(summary.id)
+
+subscription = OrganizationSubscription.all_objects.filter(
+    organization=organization,
+    deleted=False,
+).order_by("-created_at").first()
+original_subscription = serialize_model(OrganizationSubscription, subscription)
+if subscription is not None:
+    subscription.stripe_subscription_id = None
+    subscription.stripe_fee_subscription_id = None
+    subscription.save(update_fields=["stripe_subscription_id", "stripe_fee_subscription_id"])
+
+UsageEventLog.objects.filter(organization=organization, event_type=marker).delete()
+events = [
+    (workspace, Decimal("2.5000"), datetime(2099, 12, 3, 10, tzinfo=timezone.utc)),
+    (workspace, Decimal("1.5000"), datetime(2099, 12, 3, 12, tzinfo=timezone.utc)),
+    (None, Decimal("4.0000"), datetime(2099, 12, 4, 10, tzinfo=timezone.utc)),
+]
+event_ids = []
+for event_workspace, amount, timestamp in events:
+    event = UsageEventLog.objects.create(
+        event_id=uuid4(),
+        organization=organization,
+        workspace=event_workspace,
+        event_type=marker,
+        dimension=dimension,
+        amount_raw=amount,
+        amount_display=amount,
+        period=current_period,
+        timestamp=timestamp,
+        properties={"api_journey": marker},
+    )
+    event_ids.append(str(event.id))
+
+print(json.dumps({
+    "marker": marker,
+    "organization_id": str(organization.id),
+    "workspace_id": str(workspace.id),
+    "workspace_name": workspace.name,
+    "dimension": dimension,
+    "current_period": current_period,
+    "previous_period": previous_period,
+    "periods": [previous_period, current_period],
+    "current_usage": 12.5,
+    "current_usage_raw": 12500.0,
+    "previous_usage": 7.25,
+    "workspace_usage": 4.0,
+    "default_usage": 4.0,
+    "seeded_event_count": len(event_ids),
+    "daily_points": [
+        {"date": "2099-12-03", "usage": 4.0},
+        {"date": "2099-12-04", "usage": 4.0},
+    ],
+    "monthly_points": [
+        {"date": "2099-11-01", "usage": 7.25},
+        {"date": "2099-12-01", "usage": 12.5},
+    ],
+    "summary_ids": summary_ids,
+    "event_ids": event_ids,
+    "original_summaries": original_summaries,
+    "original_subscription": original_subscription,
+}, cls=DjangoJSONEncoder))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadBillingUsageAnalyticsDbAudit({
+  marker,
+  organizationId,
+  workspaceId,
+  dimension,
+  periods,
+}) {
+  assert(
+    isUuid(organizationId),
+    "Billing usage analytics audit organization id must be a UUID.",
+  );
+  assert(
+    isUuid(workspaceId),
+    "Billing usage analytics audit workspace id must be a UUID.",
+  );
+  const periodArray = sqlTextArray(periods);
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlTextLiteral(dimension)} AS dimension,
+    ${sqlTextLiteral(marker)} AS marker,
+    ${periodArray} AS periods
+),
+summary_rows AS (
+  SELECT summary.period, summary.total_usage, summary.total_usage_raw
+  FROM usage_usagesummary summary
+  JOIN requested r ON summary.organization_id = r.organization_id
+  WHERE summary.dimension = r.dimension
+    AND summary.period = ANY(r.periods)
+    AND summary.deleted = false
+),
+event_rows AS (
+  SELECT event.workspace_id, event.amount_display
+  FROM usage_usageeventlog event
+  JOIN requested r ON event.organization_id = r.organization_id
+  WHERE event.dimension = r.dimension
+    AND event.period = r.periods[2]
+    AND event.event_type = r.marker
+),
+active_subscription AS (
+  SELECT stripe_subscription_id, stripe_fee_subscription_id
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+  WHERE sub.deleted = false
+  ORDER BY sub.created_at DESC
+  LIMIT 1
+)
+SELECT json_build_object(
+  'summary_count', (SELECT count(*) FROM summary_rows),
+  'previous_usage', COALESCE((
+    SELECT total_usage FROM summary_rows WHERE period = (SELECT periods[1] FROM requested)
+  ), 0),
+  'current_usage', COALESCE((
+    SELECT total_usage FROM summary_rows WHERE period = (SELECT periods[2] FROM requested)
+  ), 0),
+  'current_usage_raw', COALESCE((
+    SELECT total_usage_raw FROM summary_rows WHERE period = (SELECT periods[2] FROM requested)
+  ), 0),
+  'event_count', (SELECT count(*) FROM event_rows),
+  'workspace_event_usage', COALESCE((
+    SELECT sum(amount_display) FROM event_rows WHERE workspace_id = (SELECT workspace_id FROM requested)
+  ), 0),
+  'default_event_usage', COALESCE((
+    SELECT sum(amount_display) FROM event_rows WHERE workspace_id IS NULL
+  ), 0),
+  'stripe_subscription_id', (SELECT stripe_subscription_id FROM active_subscription),
+  'stripe_fee_subscription_id', (SELECT stripe_fee_subscription_id FROM active_subscription)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function restoreBillingUsageAnalyticsDbState(state) {
+  const stateJson = JSON.stringify(state || {});
+  const script = `
+import json
+from ee.usage.models.usage import OrganizationSubscription, UsageEventLog, UsageSummary
+
+state = json.loads(${JSON.stringify(stateJson)})
+marker = state.get("marker")
+if marker:
+    UsageEventLog.objects.filter(
+        organization_id=state["organization_id"],
+        event_type=marker,
+    ).delete()
+
+for period, original in (state.get("original_summaries") or {}).items():
+    summary_id = (state.get("summary_ids") or {}).get(period)
+    if original is None:
+        if summary_id:
+            UsageSummary.all_objects.filter(id=summary_id).delete()
+        continue
+    updates = {}
+    for field in UsageSummary._meta.fields:
+        if field.attname == "id":
+            continue
+        value = original.get(field.attname)
+        if value is not None:
+            value = field.to_python(value)
+        updates[field.attname] = value
+    UsageSummary.all_objects.filter(id=original["id"]).update(**updates)
+
+original_subscription = state.get("original_subscription")
+if original_subscription is not None:
+    updates = {}
+    for field in OrganizationSubscription._meta.fields:
+        if field.attname == "id":
+            continue
+        value = original_subscription.get(field.attname)
+        if value is not None:
+            value = field.to_python(value)
+        updates[field.attname] = value
+    OrganizationSubscription.all_objects.filter(
+        id=original_subscription["id"]
+    ).update(**updates)
+
+print(json.dumps({
+    "mode": "restore_billing_usage_analytics_state",
+    "marker": marker,
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function prepareLegacyStripeSessionDbState({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Legacy Stripe session organization id must be a UUID.",
+  );
+  const script = `
+import json
+from django.core.serializers.json import DjangoJSONEncoder
+from accounts.models.organization import Organization
+from ee.usage.models.usage import OrganizationSubscription, SubscriptionTier, SubscriptionTierChoices
+from ee.usage.utils.usage_entries import create_organization_subscription_if_not_exists
+
+def serialize_model(model_cls, row):
+    if row is None:
+        return None
+    data = {}
+    for field in model_cls._meta.fields:
+        data[field.attname] = getattr(row, field.attname)
+    return data
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+original_subscription = OrganizationSubscription.all_objects.filter(
+    organization=organization
+).first()
+subscription = create_organization_subscription_if_not_exists(organization)
+subscription.stripe_customer_id_test = None
+subscription.stripe_customer_id_live = None
+subscription.payment_method_id = None
+subscription.deleted = False
+subscription.deleted_at = None
+subscription.save(
+    update_fields=[
+        "stripe_customer_id_test",
+        "stripe_customer_id_live",
+        "payment_method_id",
+        "deleted",
+        "deleted_at",
+    ]
+)
+
+business_tiers = list(SubscriptionTier.all_objects.filter(
+    name=SubscriptionTierChoices.BUSINESS.value
+).order_by("created_at", "id"))
+original_business_tiers = [
+    serialize_model(SubscriptionTier, tier) for tier in business_tiers
+]
+for tier in business_tiers:
+    tier.deleted = True
+    tier.deleted_at = None
+    tier.stripe_price_id = "price_api_journey_deleted_basic"
+    tier.save(update_fields=["deleted", "deleted_at", "stripe_price_id"])
+
+print(json.dumps({
+    "organization_id": str(organization.id),
+    "subscription_id": str(subscription.id),
+    "original_subscription": serialize_model(
+        OrganizationSubscription,
+        original_subscription,
+    ),
+    "original_business_tiers": original_business_tiers,
+    "original_business_tier_count": len(original_business_tiers),
+}, cls=DjangoJSONEncoder))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadLegacyStripeSessionDbAudit({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Legacy Stripe session audit organization id must be a UUID.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(organizationId)} AS organization_id
+),
+active_subscription AS (
+  SELECT
+    sub.id,
+    sub.stripe_customer_id_test,
+    sub.stripe_customer_id_live,
+    sub.payment_method_id
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+  WHERE sub.deleted = false
+  ORDER BY sub.created_at DESC
+  LIMIT 1
+),
+all_subscription_rows AS (
+  SELECT sub.id
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+),
+active_business_tiers AS (
+  SELECT tier.id, tier.stripe_price_id
+  FROM usage_subscriptiontier tier
+  WHERE tier.name = 'basic'
+    AND tier.deleted = false
+),
+deleted_business_tiers AS (
+  SELECT tier.id, tier.stripe_price_id
+  FROM usage_subscriptiontier tier
+  WHERE tier.name = 'basic'
+    AND tier.deleted = true
+)
+SELECT json_build_object(
+  'active_subscription_count', (SELECT count(*) FROM active_subscription),
+  'any_subscription_count', (SELECT count(*) FROM all_subscription_rows),
+  'subscription_id', (SELECT id::text FROM active_subscription LIMIT 1),
+  'stripe_customer_id_test', (
+    SELECT stripe_customer_id_test FROM active_subscription LIMIT 1
+  ),
+  'stripe_customer_id_live', (
+    SELECT stripe_customer_id_live FROM active_subscription LIMIT 1
+  ),
+  'payment_method_id', (
+    SELECT payment_method_id FROM active_subscription LIMIT 1
+  ),
+  'active_business_tier_count', (
+    SELECT count(*) FROM active_business_tiers
+  ),
+  'deleted_business_tier_count', (
+    SELECT count(*) FROM deleted_business_tiers
+  ),
+  'deleted_business_price_configured_count', (
+    SELECT count(*) FROM deleted_business_tiers
+    WHERE nullif(stripe_price_id, '') IS NOT NULL
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+function assertLegacyStripeSessionDbAudit(audit, fixture, label) {
+  assert(
+    Number.isInteger(audit?.active_subscription_count) &&
+      audit.active_subscription_count === 1,
+    `Legacy Stripe session ${label} did not find one active subscription row.`,
+  );
+  assert(
+    isPositiveIntegerId(audit.subscription_id),
+    `Legacy Stripe session ${label} omitted subscription id.`,
+  );
+  assert(
+    Number.isInteger(audit?.active_business_tier_count),
+    `Legacy Stripe session ${label} omitted active business tier count.`,
+  );
+  assert(
+    Number.isInteger(audit?.deleted_business_tier_count),
+    `Legacy Stripe session ${label} omitted deleted business tier count.`,
+  );
+  if (fixture.original_business_tier_count > 0) {
+    assert(
+      audit.active_business_tier_count === 0,
+      `Legacy Stripe session ${label} left active business tiers during deleted-tier guard.`,
+    );
+    assert(
+      audit.deleted_business_price_configured_count >= 1,
+      `Legacy Stripe session ${label} did not configure a deleted tier price guard.`,
+    );
+  }
+}
+
+function assertLegacyStripeSessionRestored(audit, fixture) {
+  const originalActiveTierCount = (
+    fixture.original_business_tiers || []
+  ).filter((tier) => tier && !tier.deleted).length;
+  assert(
+    audit.active_business_tier_count === originalActiveTierCount,
+    "Legacy Stripe session restore did not restore active business tier count.",
+  );
+  const originalSubscription = fixture.original_subscription;
+  if (originalSubscription && !originalSubscription.deleted) {
+    assert(
+      audit.active_subscription_count === 1,
+      "Legacy Stripe session restore did not restore the active subscription row.",
+    );
+    assert(
+      audit.stripe_customer_id_test ===
+        (originalSubscription.stripe_customer_id_test || null),
+      "Legacy Stripe session restore did not restore test customer id.",
+    );
+    assert(
+      audit.stripe_customer_id_live ===
+        (originalSubscription.stripe_customer_id_live || null),
+      "Legacy Stripe session restore did not restore live customer id.",
+    );
+    assert(
+      audit.payment_method_id ===
+        (originalSubscription.payment_method_id || null),
+      "Legacy Stripe session restore did not restore payment method id.",
+    );
+  }
+}
+
+async function restoreLegacyStripeSessionDbState(state) {
+  const stateJson = JSON.stringify(state || {});
+  const script = `
+import json
+from ee.usage.models.usage import OrganizationSubscription, SubscriptionTier
+
+state = json.loads(${JSON.stringify(stateJson)})
+
+for original in state.get("original_business_tiers") or []:
+    updates = {}
+    for field in SubscriptionTier._meta.fields:
+        if field.attname == "id":
+            continue
+        value = original.get(field.attname)
+        if value is not None:
+            value = field.to_python(value)
+        updates[field.attname] = value
+    SubscriptionTier.all_objects.filter(id=original["id"]).update(**updates)
+
+original_subscription = state.get("original_subscription")
+if original_subscription is None:
+    deleted_count, _ = OrganizationSubscription.all_objects.filter(
+        id=state["subscription_id"]
+    ).delete()
+    subscription_mode = "delete_created_subscription"
+else:
+    updates = {}
+    for field in OrganizationSubscription._meta.fields:
+        if field.attname == "id":
+            continue
+        value = original_subscription.get(field.attname)
+        if value is not None:
+            value = field.to_python(value)
+        updates[field.attname] = value
+    deleted_count = 0
+    OrganizationSubscription.all_objects.filter(
+        id=original_subscription["id"]
+    ).update(**updates)
+    subscription_mode = "restore_existing_subscription"
+
+print(json.dumps({
+    "mode": "restore_legacy_stripe_session_state",
+    "subscription_mode": subscription_mode,
+    "deleted_subscription_count": deleted_count,
+    "restored_business_tier_count": len(state.get("original_business_tiers") or []),
+}))
+`;
+  return runBackendShellJson(script);
+}
+
+async function prepareLegacyPaymentMethodInvoiceDbState({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Legacy payment method invoice organization id must be a UUID.",
+  );
+  const script = `
+import json
+from django.core.serializers.json import DjangoJSONEncoder
+from accounts.models.organization import Organization
+from ee.usage.models.usage import OrganizationSubscription
+from ee.usage.utils.usage_entries import create_organization_subscription_if_not_exists
+
+def serialize_subscription(subscription):
+    if subscription is None:
+        return None
+    data = {}
+    for field in OrganizationSubscription._meta.fields:
+        data[field.attname] = getattr(subscription, field.attname)
+    return data
+
+organization = Organization.objects.get(id=${JSON.stringify(organizationId)})
+original = OrganizationSubscription.all_objects.filter(
+    organization=organization
+).first()
+subscription = create_organization_subscription_if_not_exists(organization)
+subscription.stripe_customer_id_test = None
+subscription.stripe_customer_id_live = None
+subscription.payment_method_id = None
+subscription.deleted = False
+subscription.deleted_at = None
+subscription.save(
+    update_fields=[
+        "stripe_customer_id_test",
+        "stripe_customer_id_live",
+        "payment_method_id",
+        "deleted",
+        "deleted_at",
+    ]
+)
+print(json.dumps({
+    "organization_id": str(organization.id),
+    "subscription_id": str(subscription.id),
+    "original": serialize_subscription(original),
+}, cls=DjangoJSONEncoder))
+`;
+  return runBackendShellJson(script);
+}
+
+async function loadLegacyPaymentMethodInvoiceDbAudit({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Legacy payment method invoice audit organization id must be a UUID.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(organizationId)} AS organization_id
+),
+active_rows AS (
+  SELECT
+    sub.id,
+    sub.stripe_customer_id_test,
+    sub.stripe_customer_id_live,
+    sub.payment_method_id
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+  WHERE sub.deleted = false
+  ORDER BY sub.created_at DESC
+  LIMIT 1
+),
+all_rows AS (
+  SELECT sub.id
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+)
+SELECT json_build_object(
+  'active_subscription_count', (SELECT count(*) FROM active_rows),
+  'any_subscription_count', (SELECT count(*) FROM all_rows),
+  'subscription_id', (SELECT id::text FROM active_rows LIMIT 1),
+  'stripe_customer_id_test', (
+    SELECT stripe_customer_id_test FROM active_rows LIMIT 1
+  ),
+  'stripe_customer_id_live', (
+    SELECT stripe_customer_id_live FROM active_rows LIMIT 1
+  ),
+  'payment_method_id', (SELECT payment_method_id FROM active_rows LIMIT 1)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadLegacyPricingCardDetailsDbAudit({ organizationId }) {
+  assert(
+    isUuid(organizationId),
+    "Legacy pricing card audit organization id must be a UUID.",
+  );
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(organizationId)} AS organization_id
+),
+active_subscription_rows AS (
+  SELECT
+    sub.id,
+    sub.custom_subscription_id
+  FROM usage_organizationsubscription sub
+  JOIN requested r ON sub.organization_id = r.organization_id
+  WHERE sub.deleted = false
+  ORDER BY sub.created_at DESC
+  LIMIT 1
+),
+business_tiers AS (
+  SELECT tier.id, tier.stripe_price_id
+  FROM usage_subscriptiontier tier
+  WHERE tier.deleted = false
+    AND tier.name = 'basic'
+),
+business_yearly_tiers AS (
+  SELECT tier.id, tier.stripe_price_id
+  FROM usage_subscriptiontier tier
+  WHERE tier.deleted = false
+    AND tier.name = 'basic_yearly'
+)
+SELECT json_build_object(
+  'business_tier_count', (SELECT count(*) FROM business_tiers),
+  'business_price_configured_count', (
+    SELECT count(*) FROM business_tiers
+    WHERE nullif(stripe_price_id, '') IS NOT NULL
+  ),
+  'business_yearly_tier_count', (
+    SELECT count(*) FROM business_yearly_tiers
+  ),
+  'business_yearly_price_configured_count', (
+    SELECT count(*) FROM business_yearly_tiers
+    WHERE nullif(stripe_price_id, '') IS NOT NULL
+  ),
+  'active_subscription_count', (
+    SELECT count(*) FROM active_subscription_rows
+  ),
+  'subscription_id', (
+    SELECT id::text FROM active_subscription_rows LIMIT 1
+  ),
+  'custom_subscription_configured', coalesce((
+    SELECT nullif(custom_subscription_id, '') IS NOT NULL
+    FROM active_subscription_rows
+    LIMIT 1
+  ), false)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function restoreLegacyPaymentMethodInvoiceDbState(state) {
+  const stateJson = JSON.stringify(state || {});
+  const script = `
+import json
+from ee.usage.models.usage import OrganizationSubscription
+
+state = json.loads(${JSON.stringify(stateJson)})
+original = state.get("original")
+if original is None:
+    deleted_count, _ = OrganizationSubscription.all_objects.filter(
+        id=state["subscription_id"]
+    ).delete()
+    print(json.dumps({
+        "mode": "delete_created_subscription",
+        "deleted_count": deleted_count,
+    }))
+else:
+    updates = {}
+    for field in OrganizationSubscription._meta.fields:
+        if field.attname == "id":
+            continue
+        value = original.get(field.attname)
+        if value is not None:
+            value = field.to_python(value)
+        updates[field.attname] = value
+    updated_count = OrganizationSubscription.all_objects.filter(
+        id=original["id"]
+    ).update(**updates)
+    print(json.dumps({
+        "mode": "restore_existing_subscription",
+        "subscription_id": original["id"],
+        "updated_count": updated_count,
+        "deleted": original["deleted"],
+    }))
+`;
+  return runBackendShellJson(script);
+}
+
 async function seedIntegrationConnectionData({
   marker,
   organizationId,
@@ -8093,7 +16525,16 @@ if ${includeProject ? "True" : "False"}:
         deleted=False,
     ).first()
     if project is None:
-        raise RuntimeError("No active project exists in the current workspace for integration seeding")
+        project = Project.no_workspace_objects.create(
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+            name=f"API Journey Integration Project ${marker}",
+            metadata={"api_journey": "integration-seed", "marker": ${JSON.stringify(marker)}},
+            tags=["api-journey"],
+        )
 credentials = {
     "public_key": ${JSON.stringify(publicKey)},
     "secret_key": ${JSON.stringify(secretKey)},
@@ -8224,6 +16665,113 @@ SELECT json_build_object(
   return runPostgresJson(sql);
 }
 
+async function loadIntegrationCreateGuardDbAudit({
+  organizationId,
+  workspaceId,
+  displayName,
+  externalProjectName,
+  newProjectName,
+}) {
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlTextLiteral(displayName)} AS display_name,
+    ${sqlTextLiteral(externalProjectName)} AS external_project_name,
+    ${sqlTextLiteral(newProjectName)} AS new_project_name
+),
+connection_rows AS (
+  SELECT connection.id
+  FROM integrations_connection connection
+  JOIN requested r
+    ON connection.organization_id = r.organization_id
+   AND connection.workspace_id = r.workspace_id
+  WHERE connection.platform = 'linear'
+    AND (
+      connection.display_name = r.display_name
+      OR connection.external_project_name = r.external_project_name
+    )
+),
+sync_log_rows AS (
+  SELECT log.id
+  FROM integrations_sync_log log
+  JOIN connection_rows connection ON log.connection_id = connection.id
+),
+project_rows AS (
+  SELECT project.id
+  FROM tracer_project project
+  JOIN requested r
+    ON project.organization_id = r.organization_id
+   AND project.workspace_id = r.workspace_id
+  WHERE project.name = r.new_project_name
+)
+SELECT json_build_object(
+  'connection_count', (SELECT count(*) FROM connection_rows),
+  'sync_log_count', (SELECT count(*) FROM sync_log_rows),
+  'project_count', (SELECT count(*) FROM project_rows)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function deleteIntegrationCreateGuardData({
+  organizationId,
+  workspaceId,
+  displayName,
+  externalProjectName,
+  newProjectName,
+}) {
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlTextLiteral(displayName)} AS display_name,
+    ${sqlTextLiteral(externalProjectName)} AS external_project_name,
+    ${sqlTextLiteral(newProjectName)} AS new_project_name
+),
+connection_rows AS (
+  SELECT connection.id
+  FROM integrations_connection connection
+  JOIN requested r
+    ON connection.organization_id = r.organization_id
+   AND connection.workspace_id = r.workspace_id
+  WHERE connection.platform = 'linear'
+    AND (
+      connection.display_name = r.display_name
+      OR connection.external_project_name = r.external_project_name
+    )
+),
+deleted_logs AS (
+  DELETE FROM integrations_sync_log log
+  USING connection_rows connection
+  WHERE log.connection_id = connection.id
+  RETURNING log.id
+),
+deleted_connections AS (
+  DELETE FROM integrations_connection connection
+  USING connection_rows row
+  WHERE connection.id = row.id
+  RETURNING connection.id
+),
+deleted_projects AS (
+  DELETE FROM tracer_project project
+  USING requested r
+  WHERE project.organization_id = r.organization_id
+    AND project.workspace_id = r.workspace_id
+    AND project.name = r.new_project_name
+  RETURNING project.id
+)
+SELECT json_build_object(
+  'deleted_logs', (SELECT count(*) FROM deleted_logs),
+  'deleted_connections', (SELECT count(*) FROM deleted_connections),
+  'deleted_projects', (SELECT count(*) FROM deleted_projects)
+);
+`;
+  return runPostgresJson(sql);
+}
+
 async function loadProviderKeyDbAudit({ organizationId, workspaceId }) {
   const sql = `
 WITH requested AS (
@@ -8274,6 +16822,837 @@ SELECT json_build_object(
   'key_field_count', (SELECT count(*) FROM scoped_keys WHERE key IS NOT NULL),
   'config_json_count', (SELECT count(*) FROM scoped_keys WHERE config_json IS NOT NULL),
   'provider_counts', COALESCE((SELECT jsonb_object_agg(provider, row_count) FROM provider_counts), '{}'::jsonb)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteProviderApiKeyFixturesDb({ organizationId, keyIds }) {
+  const ids = (keyIds || []).filter(Boolean);
+  if (!ids.length) {
+    return { deleted_key_count: 0, remaining_key_count: 0 };
+  }
+  const deleteSql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    unnest(${sqlUuidArray(ids)}) AS key_id
+),
+deleted AS (
+  DELETE FROM model_hub_apikey key
+  USING requested r
+  WHERE key.id = r.key_id
+    AND key.organization_id = r.organization_id
+  RETURNING key.id
+)
+SELECT json_build_object(
+  'deleted_key_count', (SELECT count(*) FROM deleted)
+);
+`;
+  const deleted = await runPostgresJson(deleteSql);
+  const remainingSql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(organizationId)} AS organization_id,
+    unnest(${sqlUuidArray(ids)}) AS key_id
+)
+SELECT json_build_object(
+  'remaining_key_count', count(*)
+)
+FROM model_hub_apikey key
+JOIN requested r
+  ON key.id = r.key_id
+ AND key.organization_id = r.organization_id;
+`;
+  const remaining = await runPostgresJson(remainingSql);
+  return { ...deleted, ...remaining };
+}
+
+async function seedCustomModelGeneratedRoutesDb({
+  marker,
+  organizationId,
+  workspaceId,
+  userId,
+}) {
+  const hiddenWorkspaceId = randomUUID();
+  const activeModelId = randomUUID();
+  const hiddenModelId = randomUUID();
+  const metricId = randomUUID();
+  const activeName = `${marker}_active_model`;
+  const hiddenName = `${marker}_hidden_model`;
+  const hiddenWorkspaceName = `${marker}_hidden_workspace`;
+  const metricName = `${marker}_metric`;
+  const sql = `
+WITH inserted_workspace AS (
+  INSERT INTO accounts_workspace (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    display_name,
+    description,
+    is_active,
+    is_default,
+    created_by_id,
+    organization_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(hiddenWorkspaceId)},
+    ${sqlTextLiteral(hiddenWorkspaceName)},
+    ${sqlTextLiteral(hiddenWorkspaceName)},
+    ${sqlTextLiteral("Temporary workspace for custom-model API journey.")},
+    true,
+    false,
+    ${sqlUuid(userId)},
+    ${sqlUuid(organizationId)}
+  )
+  RETURNING id
+),
+inserted_custom_models AS (
+  INSERT INTO model_hub_customaimodel (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    user_model_id,
+    key_config,
+    provider,
+    input_token_cost,
+    output_token_cost,
+    user_id,
+    organization_id,
+    workspace_id,
+    baseline_model_environment,
+    baseline_model_version,
+    default_metric_id
+  )
+  VALUES
+    (
+      NOW(),
+      NOW(),
+      false,
+      NULL,
+      ${sqlUuid(activeModelId)},
+      ${sqlTextLiteral(activeName)},
+      NULL,
+      'openai',
+      0.011,
+      0.021,
+      ${sqlUuid(userId)},
+      ${sqlUuid(organizationId)},
+      ${sqlUuid(workspaceId)},
+      NULL,
+      NULL,
+      NULL
+    ),
+    (
+      NOW(),
+      NOW(),
+      false,
+      NULL,
+      ${sqlUuid(hiddenModelId)},
+      ${sqlTextLiteral(hiddenName)},
+      NULL,
+      'openai',
+      0.012,
+      0.022,
+      ${sqlUuid(userId)},
+      ${sqlUuid(organizationId)},
+      ${sqlUuid(hiddenWorkspaceId)},
+      NULL,
+      NULL,
+      NULL
+    )
+  RETURNING id
+),
+inserted_ai_model AS (
+  INSERT INTO model_hub_aimodel (
+    id,
+    created_at,
+    user_model_id,
+    deleted,
+    model_type,
+    baseline_model_environment,
+    baseline_model_version,
+    organization_id,
+    workspace_id,
+    default_metric_id
+  )
+  VALUES (
+    ${sqlUuid(activeModelId)},
+    NOW(),
+    ${sqlTextLiteral(`${marker}_ai_model`)},
+    false,
+    'GenerativeLLM',
+    NULL,
+    NULL,
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)},
+    NULL
+  )
+  RETURNING id
+),
+inserted_metric AS (
+  INSERT INTO model_hub_metric (
+    id,
+    name,
+    created_at,
+    updated_at,
+    text_prompt,
+    criteria_breakdown,
+    model_id,
+    develop_id,
+    metric_type,
+    used_in,
+    evaluation_type,
+    datasets,
+    eval_rag_context,
+    eval_rag_output,
+    eval_prompt_template,
+    tags
+  )
+  VALUES (
+    ${sqlUuid(metricId)},
+    ${sqlTextLiteral(metricName)},
+    NOW(),
+    NOW(),
+    ${sqlTextLiteral("Score the custom-model output.")},
+    ARRAY[]::varchar[],
+    ${sqlUuid(activeModelId)},
+    NULL,
+    'WholeUserOutput',
+    'model',
+    'EvalOutput',
+    '[]'::jsonb,
+    false,
+    false,
+    false,
+    ARRAY[]::varchar[]
+  )
+  RETURNING id
+)
+SELECT json_build_object(
+  'active_model_id', ${sqlTextLiteral(activeModelId)},
+  'hidden_model_id', ${sqlTextLiteral(hiddenModelId)},
+  'hidden_workspace_id', ${sqlTextLiteral(hiddenWorkspaceId)},
+  'metric_id', ${sqlTextLiteral(metricId)},
+  'active_name', ${sqlTextLiteral(activeName)},
+  'hidden_name', ${sqlTextLiteral(hiddenName)},
+  'inserted_workspace_count', (SELECT count(*) FROM inserted_workspace),
+  'inserted_custom_model_count', (SELECT count(*) FROM inserted_custom_models),
+  'inserted_ai_model_count', (SELECT count(*) FROM inserted_ai_model),
+  'inserted_metric_count', (SELECT count(*) FROM inserted_metric)
+);
+`;
+  const seeded = await runPostgresJson(sql);
+  assert(
+    seeded.inserted_workspace_count === 1 &&
+      seeded.inserted_custom_model_count === 2 &&
+      seeded.inserted_ai_model_count === 1 &&
+      seeded.inserted_metric_count === 1,
+    `Custom-model fixture seed failed: ${JSON.stringify(seeded)}`,
+  );
+  return seeded;
+}
+
+async function loadCustomModelGeneratedRoutesDbAudit({
+  activeModelId,
+  hiddenModelId,
+  metricId,
+  organizationId,
+}) {
+  const sql = `
+WITH active_custom AS (
+  SELECT
+    custom.id,
+    custom.user_model_id,
+    custom.organization_id,
+    custom.workspace_id,
+    custom.baseline_model_environment,
+    custom.baseline_model_version,
+    custom.default_metric_id
+  FROM model_hub_customaimodel custom
+  WHERE custom.id = ${sqlUuid(activeModelId)}
+    AND custom.organization_id = ${sqlUuid(organizationId)}
+),
+hidden_custom AS (
+  SELECT
+    custom.id,
+    custom.user_model_id,
+    custom.organization_id,
+    custom.workspace_id,
+    custom.baseline_model_environment,
+    custom.baseline_model_version,
+    custom.default_metric_id
+  FROM model_hub_customaimodel custom
+  WHERE custom.id = ${sqlUuid(hiddenModelId)}
+    AND custom.organization_id = ${sqlUuid(organizationId)}
+),
+metric_row AS (
+  SELECT metric.id, metric.model_id
+  FROM model_hub_metric metric
+  WHERE metric.id = ${sqlUuid(metricId)}
+)
+SELECT json_build_object(
+  'active_exists', EXISTS(SELECT 1 FROM active_custom),
+  'hidden_exists', EXISTS(SELECT 1 FROM hidden_custom),
+  'active_user_model_id', (SELECT user_model_id FROM active_custom LIMIT 1),
+  'hidden_user_model_id', (SELECT user_model_id FROM hidden_custom LIMIT 1),
+  'active_workspace_id', (SELECT workspace_id::text FROM active_custom LIMIT 1),
+  'hidden_workspace_id', (SELECT workspace_id::text FROM hidden_custom LIMIT 1),
+  'active_baseline_environment', (SELECT baseline_model_environment FROM active_custom LIMIT 1),
+  'active_baseline_version', (SELECT baseline_model_version FROM active_custom LIMIT 1),
+  'hidden_baseline_environment', (SELECT baseline_model_environment FROM hidden_custom LIMIT 1),
+  'hidden_baseline_version', (SELECT baseline_model_version FROM hidden_custom LIMIT 1),
+  'active_default_metric_id', (SELECT default_metric_id::text FROM active_custom LIMIT 1),
+  'hidden_default_metric_id', (SELECT default_metric_id::text FROM hidden_custom LIMIT 1),
+  'metric_model_id', (SELECT model_id::text FROM metric_row LIMIT 1)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteCustomModelGeneratedRoutesDb({
+  marker,
+  organizationId,
+  customModelIds = [],
+  aiModelIds = [],
+  metricIds = [],
+}) {
+  const customIdPredicate = customModelIds.length
+    ? `OR custom.id = ANY(${sqlUuidArray(customModelIds)})`
+    : "";
+  const aiModelIdPredicate = aiModelIds.length
+    ? `OR model.id = ANY(${sqlUuidArray(aiModelIds)})`
+    : "";
+  const metricIdPredicate = metricIds.length
+    ? `OR metric.id = ANY(${sqlUuidArray(metricIds)})`
+    : "";
+  const sql = `
+WITH target_custom AS (
+  SELECT custom.id
+  FROM model_hub_customaimodel custom
+  WHERE custom.organization_id = ${sqlUuid(organizationId)}
+    AND (
+      custom.user_model_id LIKE ${sqlTextLiteral(`${marker}%`)}
+      ${customIdPredicate}
+    )
+),
+deleted_custom AS (
+  DELETE FROM model_hub_customaimodel custom
+  USING target_custom target
+  WHERE custom.id = target.id
+  RETURNING custom.id
+),
+target_metrics AS (
+  SELECT metric.id
+  FROM model_hub_metric metric
+  JOIN model_hub_aimodel model ON model.id = metric.model_id
+  WHERE model.organization_id = ${sqlUuid(organizationId)}
+    AND (
+      metric.name LIKE ${sqlTextLiteral(`${marker}%`)}
+      ${metricIdPredicate}
+    )
+),
+deleted_metrics AS (
+  DELETE FROM model_hub_metric metric
+  USING target_metrics target
+  WHERE metric.id = target.id
+  RETURNING metric.id
+),
+target_ai_models AS (
+  SELECT model.id
+  FROM model_hub_aimodel model
+  WHERE model.organization_id = ${sqlUuid(organizationId)}
+    AND (
+      model.user_model_id LIKE ${sqlTextLiteral(`${marker}%`)}
+      ${aiModelIdPredicate}
+    )
+),
+deleted_ai_models AS (
+  DELETE FROM model_hub_aimodel model
+  USING target_ai_models target
+  WHERE model.id = target.id
+  RETURNING model.id
+),
+target_workspaces AS (
+  SELECT id
+  FROM accounts_workspace
+  WHERE organization_id = ${sqlUuid(organizationId)}
+    AND name LIKE ${sqlTextLiteral(`${marker}%`)}
+),
+deleted_workspaces AS (
+  DELETE FROM accounts_workspace workspace
+  USING target_workspaces target
+  WHERE workspace.id = target.id
+  RETURNING workspace.id
+)
+SELECT json_build_object(
+  'deleted_custom_model_count', (SELECT count(*) FROM deleted_custom),
+  'deleted_metric_count', (SELECT count(*) FROM deleted_metrics),
+  'deleted_ai_model_count', (SELECT count(*) FROM deleted_ai_models),
+  'deleted_workspace_count', (SELECT count(*) FROM deleted_workspaces)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function seedTtsVoiceIsolationDb({ marker, organizationId, userId }) {
+  const workspaceId = randomUUID();
+  const voiceId = randomUUID();
+  const workspaceName = `${marker}-other-workspace`;
+  const voiceName = `${marker} shared voice`;
+  const sql = `
+WITH inserted_workspace AS (
+  INSERT INTO accounts_workspace (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    display_name,
+    description,
+    is_active,
+    is_default,
+    created_by_id,
+    organization_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(workspaceId)},
+    ${sqlTextLiteral(workspaceName)},
+    ${sqlTextLiteral(workspaceName)},
+    ${sqlTextLiteral("Temporary workspace for TTS voice API journey.")},
+    true,
+    false,
+    ${sqlUuid(userId)},
+    ${sqlUuid(organizationId)}
+  )
+  RETURNING id, name
+),
+inserted_voice AS (
+  INSERT INTO model_hub_ttsvoice (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    description,
+    voice_id,
+    provider,
+    model,
+    voice_type,
+    organization_id,
+    workspace_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(voiceId)},
+    ${sqlTextLiteral(voiceName)},
+    ${sqlTextLiteral("Other workspace TTS voice should not be visible.")},
+    ${sqlTextLiteral(`${marker}-other-rime-voice`)},
+    'rime',
+    'arcana',
+    'custom',
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)}
+  )
+  RETURNING id, name, workspace_id
+)
+SELECT json_build_object(
+  'workspace_id', (SELECT id::text FROM inserted_workspace LIMIT 1),
+  'workspace_name', (SELECT name FROM inserted_workspace LIMIT 1),
+  'voice_id', (SELECT id::text FROM inserted_voice LIMIT 1),
+  'name', (SELECT name FROM inserted_voice LIMIT 1)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadTtsVoiceDbAudit({ voiceId, organizationId }) {
+  const sql = `
+WITH voice_row AS (
+  SELECT id, organization_id, workspace_id, deleted, deleted_at
+  FROM model_hub_ttsvoice
+  WHERE id = ${sqlUuid(voiceId)}
+    AND organization_id = ${sqlUuid(organizationId)}
+)
+SELECT json_build_object(
+  'exists', EXISTS(SELECT 1 FROM voice_row),
+  'workspace_id', (SELECT workspace_id::text FROM voice_row LIMIT 1),
+  'deleted', COALESCE((SELECT deleted FROM voice_row LIMIT 1), false),
+  'deleted_at_set', COALESCE((SELECT deleted_at IS NOT NULL FROM voice_row LIMIT 1), false)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteTtsVoiceFixtureDb({
+  marker,
+  organizationId,
+  voiceIds = [],
+}) {
+  const idPredicate = voiceIds.length
+    ? `OR voice.id = ANY(${sqlUuidArray(voiceIds)})`
+    : "";
+  const sql = `
+WITH target_voices AS (
+  SELECT voice.id
+  FROM model_hub_ttsvoice voice
+  WHERE voice.organization_id = ${sqlUuid(organizationId)}
+    AND (
+      voice.name LIKE ${sqlTextLiteral(`${marker}%`)}
+      OR voice.voice_id LIKE ${sqlTextLiteral(`${marker}%`)}
+      ${idPredicate}
+    )
+),
+deleted_voices AS (
+  DELETE FROM model_hub_ttsvoice voice
+  USING target_voices target
+  WHERE voice.id = target.id
+  RETURNING voice.id
+),
+target_workspaces AS (
+  SELECT id
+  FROM accounts_workspace
+  WHERE organization_id = ${sqlUuid(organizationId)}
+    AND name LIKE ${sqlTextLiteral(`${marker}%`)}
+),
+deleted_workspaces AS (
+  DELETE FROM accounts_workspace workspace
+  USING target_workspaces target
+  WHERE workspace.id = target.id
+  RETURNING workspace.id
+)
+SELECT json_build_object(
+  'deleted_voice_count', (SELECT count(*) FROM deleted_voices),
+  'remaining_voice_count',
+    (SELECT count(*) FROM target_voices) - (SELECT count(*) FROM deleted_voices),
+  'deleted_workspace_count', (SELECT count(*) FROM deleted_workspaces),
+  'remaining_workspace_count',
+    (SELECT count(*) FROM target_workspaces) - (SELECT count(*) FROM deleted_workspaces)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function seedModelSecretIsolationDb({ marker, organizationId, userId }) {
+  const workspaceId = randomUUID();
+  const secretId = randomUUID();
+  const workspaceName = `${marker}-other-workspace`;
+  const secretName = `${marker} shared secret`;
+  const rawSecret = `${marker}-other-secret-value`;
+  const sql = `
+WITH inserted_workspace AS (
+  INSERT INTO accounts_workspace (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    display_name,
+    description,
+    is_active,
+    is_default,
+    created_by_id,
+    organization_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(workspaceId)},
+    ${sqlTextLiteral(workspaceName)},
+    ${sqlTextLiteral(workspaceName)},
+    ${sqlTextLiteral("Temporary workspace for model secret API journey.")},
+    true,
+    false,
+    ${sqlUuid(userId)},
+    ${sqlUuid(organizationId)}
+  )
+  RETURNING id, name
+),
+inserted_secret AS (
+  INSERT INTO secrets (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    description,
+    secret_type,
+    key,
+    organization_id,
+    workspace_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(secretId)},
+    ${sqlTextLiteral(secretName)},
+    ${sqlTextLiteral("Other workspace model secret should not be visible.")},
+    'API_KEY',
+    ${sqlTextLiteral(rawSecret)},
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)}
+  )
+  RETURNING id, name, workspace_id
+)
+SELECT json_build_object(
+  'workspace_id', (SELECT id::text FROM inserted_workspace LIMIT 1),
+  'workspace_name', (SELECT name FROM inserted_workspace LIMIT 1),
+  'secret_id', (SELECT id::text FROM inserted_secret LIMIT 1),
+  'name', (SELECT name FROM inserted_secret LIMIT 1),
+  'raw_secret', ${sqlTextLiteral(rawSecret)}
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadModelSecretDbAudit({ secretId, organizationId, rawSecret }) {
+  const sql = `
+WITH secret_row AS (
+  SELECT id, organization_id, workspace_id, key, deleted, deleted_at
+  FROM secrets
+  WHERE id = ${sqlUuid(secretId)}
+    AND organization_id = ${sqlUuid(organizationId)}
+)
+SELECT json_build_object(
+  'exists', EXISTS(SELECT 1 FROM secret_row),
+  'workspace_id', (SELECT workspace_id::text FROM secret_row LIMIT 1),
+  'deleted', COALESCE((SELECT deleted FROM secret_row LIMIT 1), false),
+  'deleted_at_set', COALESCE((SELECT deleted_at IS NOT NULL FROM secret_row LIMIT 1), false),
+  'key_hash', (SELECT md5(key) FROM secret_row LIMIT 1),
+  'raw_secret_absent',
+    COALESCE((SELECT position(${sqlTextLiteral(rawSecret)} in key) = 0 FROM secret_row LIMIT 1), false)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteModelSecretFixtureDb({
+  marker,
+  organizationId,
+  secretIds = [],
+}) {
+  const idPredicate = secretIds.length
+    ? `OR secret.id = ANY(${sqlUuidArray(secretIds)})`
+    : "";
+  const sql = `
+WITH target_secrets AS (
+  SELECT secret.id
+  FROM secrets secret
+  WHERE secret.organization_id = ${sqlUuid(organizationId)}
+    AND (
+      secret.name LIKE ${sqlTextLiteral(`${marker}%`)}
+      OR secret.key LIKE ${sqlTextLiteral(`${marker}%`)}
+      ${idPredicate}
+    )
+),
+deleted_secrets AS (
+  DELETE FROM secrets secret
+  USING target_secrets target
+  WHERE secret.id = target.id
+  RETURNING secret.id
+),
+target_workspaces AS (
+  SELECT id
+  FROM accounts_workspace
+  WHERE organization_id = ${sqlUuid(organizationId)}
+    AND name LIKE ${sqlTextLiteral(`${marker}%`)}
+),
+deleted_workspaces AS (
+  DELETE FROM accounts_workspace workspace
+  USING target_workspaces target
+  WHERE workspace.id = target.id
+  RETURNING workspace.id
+)
+SELECT json_build_object(
+  'deleted_secret_count', (SELECT count(*) FROM deleted_secrets),
+  'remaining_secret_count',
+    (SELECT count(*) FROM target_secrets) - (SELECT count(*) FROM deleted_secrets),
+  'deleted_workspace_count', (SELECT count(*) FROM deleted_workspaces),
+  'remaining_workspace_count',
+    (SELECT count(*) FROM target_workspaces) - (SELECT count(*) FROM deleted_workspaces)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+function modelToolConfig(propertyType = "string") {
+  return {
+    parameters: {
+      type: "object",
+      properties: {
+        value: {
+          type: propertyType,
+        },
+      },
+      required: ["value"],
+    },
+  };
+}
+
+async function seedModelToolIsolationDb({ marker, organizationId, userId }) {
+  const workspaceId = randomUUID();
+  const toolId = randomUUID();
+  const workspaceName = `${marker}-other-workspace`;
+  const toolName = `${marker} shared tool`;
+  const sql = `
+WITH inserted_workspace AS (
+  INSERT INTO accounts_workspace (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    display_name,
+    description,
+    is_active,
+    is_default,
+    created_by_id,
+    organization_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(workspaceId)},
+    ${sqlTextLiteral(workspaceName)},
+    ${sqlTextLiteral(workspaceName)},
+    ${sqlTextLiteral("Temporary workspace for model tool API journey.")},
+    true,
+    false,
+    ${sqlUuid(userId)},
+    ${sqlUuid(organizationId)}
+  )
+  RETURNING id, name
+),
+inserted_tool AS (
+  INSERT INTO model_hub_tools (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    description,
+    config,
+    organization_id,
+    workspace_id,
+    config_type
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(toolId)},
+    ${sqlTextLiteral(toolName)},
+    ${sqlTextLiteral("Other workspace model tool should not be visible.")},
+    ${sqlJson(modelToolConfig())},
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)},
+    'json'
+  )
+  RETURNING id, name, workspace_id
+)
+SELECT json_build_object(
+  'workspace_id', (SELECT id::text FROM inserted_workspace LIMIT 1),
+  'workspace_name', (SELECT name FROM inserted_workspace LIMIT 1),
+  'tool_id', (SELECT id::text FROM inserted_tool LIMIT 1),
+  'name', (SELECT name FROM inserted_tool LIMIT 1)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadModelToolDbAudit({ toolId, organizationId }) {
+  const sql = `
+WITH tool_row AS (
+  SELECT id, organization_id, workspace_id, config, config_type, deleted, deleted_at
+  FROM model_hub_tools
+  WHERE id = ${sqlUuid(toolId)}
+    AND organization_id = ${sqlUuid(organizationId)}
+)
+SELECT json_build_object(
+  'exists', EXISTS(SELECT 1 FROM tool_row),
+  'workspace_id', (SELECT workspace_id::text FROM tool_row LIMIT 1),
+  'deleted', COALESCE((SELECT deleted FROM tool_row LIMIT 1), false),
+  'deleted_at_set', COALESCE((SELECT deleted_at IS NOT NULL FROM tool_row LIMIT 1), false),
+  'config_type', (SELECT config_type FROM tool_row LIMIT 1),
+  'config_hash', (SELECT md5(config::text) FROM tool_row LIMIT 1)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteModelToolFixtureDb({
+  marker,
+  organizationId,
+  toolIds = [],
+}) {
+  const idPredicate = toolIds.length
+    ? `OR tool.id = ANY(${sqlUuidArray(toolIds)})`
+    : "";
+  const sql = `
+WITH target_tools AS (
+  SELECT tool.id
+  FROM model_hub_tools tool
+  WHERE tool.organization_id = ${sqlUuid(organizationId)}
+    AND (
+      tool.name LIKE ${sqlTextLiteral(`${marker}%`)}
+      OR tool.description LIKE ${sqlTextLiteral(`${marker}%`)}
+      ${idPredicate}
+    )
+),
+deleted_tools AS (
+  DELETE FROM model_hub_tools tool
+  USING target_tools target
+  WHERE tool.id = target.id
+  RETURNING tool.id
+),
+target_workspaces AS (
+  SELECT id
+  FROM accounts_workspace
+  WHERE organization_id = ${sqlUuid(organizationId)}
+    AND name LIKE ${sqlTextLiteral(`${marker}%`)}
+),
+deleted_workspaces AS (
+  DELETE FROM accounts_workspace workspace
+  USING target_workspaces target
+  WHERE workspace.id = target.id
+  RETURNING workspace.id
+)
+SELECT json_build_object(
+  'deleted_tool_count', (SELECT count(*) FROM deleted_tools),
+  'remaining_tool_count',
+    (SELECT count(*) FROM target_tools) - (SELECT count(*) FROM deleted_tools),
+  'deleted_workspace_count', (SELECT count(*) FROM deleted_workspaces),
+  'remaining_workspace_count',
+    (SELECT count(*) FROM target_workspaces) - (SELECT count(*) FROM deleted_workspaces)
 );
 `;
   return runPostgresJson(sql);
@@ -9877,6 +19256,20 @@ async function removeFalconMinioObjects(storageKeys) {
   await runFalconMinioCommand(["rm", "--force", ...targets]);
 }
 
+async function assertUploadFileMinioObjectsExist(objects) {
+  for (const object of objects || []) {
+    await runFalconMinioCommand(["stat", uploadFileMinioTarget(object)]);
+  }
+}
+
+async function removeUploadFileMinioObjects(objects) {
+  const targets = (objects || []).map((object) =>
+    uploadFileMinioTarget(object),
+  );
+  if (!targets.length) return;
+  await runFalconMinioCommand(["rm", "--force", ...targets]);
+}
+
 async function runFalconMinioCommand(args) {
   const container =
     process.env.API_JOURNEY_MINIO_CONTAINER || "futureagi-ws2-minio-1";
@@ -9892,6 +19285,20 @@ async function runFalconMinioCommand(args) {
 function falconMinioTarget(storageKey) {
   const bucket = process.env.API_JOURNEY_MINIO_BUCKET || "fi-content";
   return `local/${bucket}/${storageKey}`;
+}
+
+function uploadFileObjectFromUrl(url) {
+  const parsed = new URL(url);
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  assert(
+    parts.length >= 2,
+    `Upload-file URL did not include bucket and object key: ${url}`,
+  );
+  return { bucket: parts[0], key: parts.slice(1).join("/") };
+}
+
+function uploadFileMinioTarget(object) {
+  return `local/${object.bucket}/${object.key}`;
 }
 
 async function loadGetStartedFirstChecksDbAudit({
@@ -10080,6 +19487,240 @@ LEFT JOIN user_row ON true
 LEFT JOIN org_row ON true
 CROSS JOIN totp_counts
 CROSS JOIN passkey_counts;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadTwoFactorLifecycleDbAudit({ userId }) {
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(userId)} AS user_id
+),
+user_row AS (
+  SELECT u.id, u.email, u.is_active
+  FROM accounts_user u
+  JOIN requested r ON u.id = r.user_id
+),
+totp_rows AS (
+  SELECT device.id, device.confirmed, device.deleted
+  FROM accounts_user_totp_device device
+  JOIN requested r ON device.user_id = r.user_id
+),
+recovery_rows AS (
+  SELECT code.id, code.is_used, code.deleted
+  FROM accounts_recovery_code code
+  JOIN requested r ON code.user_id = r.user_id
+),
+passkey_rows AS (
+  SELECT credential.id, credential.deleted
+  FROM accounts_webauthn_credential credential
+  JOIN requested r ON credential.user_id = r.user_id
+)
+SELECT json_build_object(
+  'user_id', (SELECT id::text FROM user_row LIMIT 1),
+  'email', (SELECT email FROM user_row LIMIT 1),
+  'user_active', (SELECT is_active FROM user_row LIMIT 1),
+  'totp_count', (SELECT count(*) FROM totp_rows)::int,
+  'active_totp_count', (SELECT count(*) FROM totp_rows WHERE deleted = false)::int,
+  'confirmed_totp_count', (SELECT count(*) FROM totp_rows WHERE deleted = false AND confirmed = true)::int,
+  'unconfirmed_totp_count', (SELECT count(*) FROM totp_rows WHERE deleted = false AND confirmed = false)::int,
+  'recovery_code_count', (SELECT count(*) FROM recovery_rows)::int,
+  'active_recovery_code_count', (SELECT count(*) FROM recovery_rows WHERE deleted = false)::int,
+  'unused_recovery_code_count', (SELECT count(*) FROM recovery_rows WHERE deleted = false AND is_used = false)::int,
+  'used_recovery_code_count', (SELECT count(*) FROM recovery_rows WHERE deleted = false AND is_used = true)::int,
+  'passkey_count', (SELECT count(*) FROM passkey_rows WHERE deleted = false)::int
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function createPasskeyLifecycleDbFixture({
+  userId,
+  passkeyId,
+  name,
+  credentialId,
+  publicKey = "ZmFrZS1wdWJsaWMta2V5",
+}) {
+  assert(isUuid(userId), "Passkey fixture requires a user UUID.");
+  assert(isUuid(passkeyId), "Passkey fixture requires a passkey UUID.");
+  assert(name, "Passkey fixture requires a name.");
+  assert(credentialId, "Passkey fixture requires a credential id.");
+  const sql = `
+WITH inserted AS (
+  INSERT INTO accounts_webauthn_credential (
+    id,
+    user_id,
+    name,
+    credential_id,
+    public_key,
+    sign_count,
+    transports,
+    aaguid,
+    backup_eligible,
+    backup_state,
+    last_used_at,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at
+  )
+  VALUES (
+    ${sqlUuid(passkeyId)},
+    ${sqlUuid(userId)},
+    ${sqlTextLiteral(name)},
+    ${sqlTextLiteral(credentialId)},
+    ${sqlTextLiteral(publicKey)},
+    0,
+    ${sqlJson(["internal"])},
+    '00000000-0000-0000-0000-000000000000',
+    false,
+    false,
+    NULL,
+    NOW(),
+    NOW(),
+    false,
+    NULL
+  )
+  RETURNING id, name, credential_id, user_id
+)
+SELECT json_build_object(
+  'passkey_id', inserted.id::text,
+  'user_id', inserted.user_id::text,
+  'name', inserted.name,
+  'credential_id', inserted.credential_id
+)
+FROM inserted;
+`;
+  return runPostgresJson(sql);
+}
+
+async function createPasskeyRecoveryCodeDbFixture({
+  userId,
+  recoveryCodeId,
+  codeHash,
+}) {
+  assert(isUuid(userId), "Passkey recovery-code fixture requires a user UUID.");
+  assert(
+    isUuid(recoveryCodeId),
+    "Passkey recovery-code fixture requires a recovery-code UUID.",
+  );
+  assert(codeHash, "Passkey recovery-code fixture requires a hash.");
+  const sql = `
+WITH inserted AS (
+  INSERT INTO accounts_recovery_code (
+    id,
+    user_id,
+    code_hash,
+    is_used,
+    used_at,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at
+  )
+  VALUES (
+    ${sqlUuid(recoveryCodeId)},
+    ${sqlUuid(userId)},
+    ${sqlTextLiteral(codeHash)},
+    false,
+    NULL,
+    NOW(),
+    NOW(),
+    false,
+    NULL
+  )
+  RETURNING id, user_id
+)
+SELECT json_build_object(
+  'recovery_code_id', inserted.id::text,
+  'user_id', inserted.user_id::text
+)
+FROM inserted;
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadPasskeyLifecycleDbAudit({ userId }) {
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(userId)} AS user_id
+),
+passkey_rows AS (
+  SELECT credential.id, credential.name, credential.deleted, credential.sign_count, credential.last_used_at
+  FROM accounts_webauthn_credential credential
+  JOIN requested r ON credential.user_id = r.user_id
+),
+recovery_rows AS (
+  SELECT code.id, code.is_used, code.deleted
+  FROM accounts_recovery_code code
+  JOIN requested r ON code.user_id = r.user_id
+)
+SELECT json_build_object(
+  'user_id', (SELECT user_id::text FROM requested),
+  'passkey_count', (SELECT count(*) FROM passkey_rows)::int,
+  'active_passkey_count', (SELECT count(*) FROM passkey_rows WHERE deleted = false)::int,
+  'deleted_passkey_count', (SELECT count(*) FROM passkey_rows WHERE deleted = true)::int,
+  'active_passkey_ids', COALESCE((SELECT json_agg(id::text ORDER BY name) FROM passkey_rows WHERE deleted = false), '[]'::json),
+  'active_passkey_names', COALESCE((SELECT json_agg(name ORDER BY name) FROM passkey_rows WHERE deleted = false), '[]'::json),
+  'max_sign_count', COALESCE((SELECT max(sign_count) FROM passkey_rows), 0),
+  'last_used_count', (SELECT count(*) FROM passkey_rows WHERE last_used_at IS NOT NULL)::int,
+  'recovery_code_count', (SELECT count(*) FROM recovery_rows)::int,
+  'active_recovery_code_count', (SELECT count(*) FROM recovery_rows WHERE deleted = false)::int,
+  'unused_recovery_code_count', (SELECT count(*) FROM recovery_rows WHERE deleted = false AND is_used = false)::int
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadOrganizationTwoFactorPolicyDbAudit({ organizationId }) {
+  const sql = `
+SELECT json_build_object(
+  'organization_id', org.id::text,
+  'require_2fa', org.require_2fa,
+  'require_2fa_grace_period_days', org.require_2fa_grace_period_days,
+  'require_2fa_enforced_at', org.require_2fa_enforced_at
+)
+FROM accounts_organization org
+WHERE org.id = ${sqlUuid(organizationId)};
+`;
+  return runPostgresJson(sql);
+}
+
+async function restoreOrganizationTwoFactorPolicyDbState(state) {
+  const organizationId = state?.organization_id || state?.organizationId;
+  assert(
+    isUuid(organizationId),
+    "Organization 2FA policy restore requires an organization id.",
+  );
+  assert(
+    typeof state.require_2fa === "boolean",
+    "Organization 2FA policy restore requires require_2fa boolean state.",
+  );
+  const graceDays = Number(state.require_2fa_grace_period_days);
+  assert(
+    Number.isInteger(graceDays) && graceDays > 0,
+    "Organization 2FA policy restore requires positive integer grace days.",
+  );
+  const enforcedAt = state.require_2fa_enforced_at
+    ? `${sqlTextLiteral(state.require_2fa_enforced_at)}::timestamptz`
+    : "NULL";
+  const sql = `
+WITH updated AS (
+  UPDATE accounts_organization
+  SET
+    require_2fa = ${state.require_2fa ? "true" : "false"},
+    require_2fa_grace_period_days = ${graceDays},
+    require_2fa_enforced_at = ${enforcedAt}
+  WHERE id = ${sqlUuid(organizationId)}
+  RETURNING id, require_2fa, require_2fa_grace_period_days, require_2fa_enforced_at
+)
+SELECT json_build_object(
+  'organization_id', updated.id::text,
+  'require_2fa', updated.require_2fa,
+  'require_2fa_grace_period_days', updated.require_2fa_grace_period_days,
+  'require_2fa_enforced_at', updated.require_2fa_enforced_at
+)
+FROM updated;
 `;
   return runPostgresJson(sql);
 }
@@ -10291,25 +19932,52 @@ async function runBackendShellJson(script) {
     ));
   } else {
     const backendDir = process.env.API_JOURNEY_BACKEND_DIR || "futureagi";
-    ({ stdout } = await execFileAsync(
-      "uv",
-      ["run", "python", "manage.py", "shell", "-c", script],
-      {
-        cwd: backendDir,
-        env: {
-          ...process.env,
-          EE_LICENSE_KEY: process.env.EE_LICENSE_KEY || "test-license-key",
-          PGBOUNCER_HOST: process.env.PGBOUNCER_HOST || "127.0.0.1",
-          PGBOUNCER_PORT: process.env.PGBOUNCER_PORT || "5436",
-          REDIS_URL: process.env.REDIS_URL || "redis://127.0.0.1:6382/0",
-          REDIS_CACHE_URL:
-            process.env.REDIS_CACHE_URL || "redis://127.0.0.1:6382/0",
-          UV_PROJECT_ENVIRONMENT:
-            process.env.UV_PROJECT_ENVIRONMENT || ".venv-th5064-py311",
+    const backendEnv = {
+      ...process.env,
+      EE_LICENSE_KEY: process.env.EE_LICENSE_KEY || "test-license-key",
+      PGBOUNCER_HOST: process.env.PGBOUNCER_HOST || "127.0.0.1",
+      PGBOUNCER_PORT: process.env.PGBOUNCER_PORT || "5436",
+      REDIS_URL: process.env.REDIS_URL || "redis://127.0.0.1:6382/0",
+      REDIS_CACHE_URL:
+        process.env.REDIS_CACHE_URL || "redis://127.0.0.1:6382/0",
+      UV_PROJECT_ENVIRONMENT:
+        process.env.UV_PROJECT_ENVIRONMENT || ".venv-th5064-py311",
+    };
+    const backendPython = process.env.API_JOURNEY_BACKEND_PYTHON;
+    if (backendPython) {
+      const backendPythonPath = path.isAbsolute(backendPython)
+        ? backendPython
+        : path.resolve(backendDir, backendPython);
+      ({ stdout } = await execFileAsync(
+        backendPythonPath,
+        ["manage.py", "shell", "-c", script],
+        {
+          cwd: backendDir,
+          env: backendEnv,
+          maxBuffer: 20 * 1024 * 1024,
         },
-        maxBuffer: 20 * 1024 * 1024,
-      },
-    ));
+      ));
+    } else {
+      const command = [
+        'PATH="$PATH:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin"',
+        "if command -v uv >/dev/null 2>&1; then",
+        '  exec uv run python manage.py shell -c "$1"',
+        "elif [ -x .venv/bin/python ]; then",
+        '  exec .venv/bin/python manage.py shell -c "$1"',
+        "else",
+        '  exec python manage.py shell -c "$1"',
+        "fi",
+      ].join("\n");
+      ({ stdout } = await execFileAsync(
+        "sh",
+        ["-lc", command, "api-journey-backend-shell", script],
+        {
+          cwd: backendDir,
+          env: backendEnv,
+          maxBuffer: 20 * 1024 * 1024,
+        },
+      ));
+    }
   }
   const jsonLine = stdout
     .trim()
@@ -10320,10 +19988,20 @@ async function runBackendShellJson(script) {
   return JSON.parse(jsonLine);
 }
 
-async function unauthenticatedApiRequest(apiBase, method, pathName, body) {
+async function unauthenticatedApiRequest(
+  apiBase,
+  method,
+  pathName,
+  body,
+  options = {},
+) {
   const response = await fetch(new URL(pathName, apiBase), {
     method,
-    headers: body ? { "Content-Type": "application/json" } : {},
+    headers: {
+      "X-Forwarded-For": nextAppCoreClientIp(),
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(options.headers || {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await response.text();

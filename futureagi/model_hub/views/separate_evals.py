@@ -118,6 +118,7 @@ from model_hub.utils.function_eval_params import (
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
 from tfc.settings.settings import BASE_URL
 from tfc.telemetry import wrap_for_thread
@@ -137,8 +138,6 @@ except ImportError:
     UsageLimitExceeded = None
 
 logger = structlog.get_logger(__name__)
-
-from tfc.constants.api_calls import APICallStatusChoices  # noqa: E402
 
 try:
     from ee.usage.models.usage import APICallLog
@@ -208,11 +207,8 @@ def apply_filters(row_data, filters):
                 }
 
                 if filter_op not in text_ops:
-                    message = (
-                        "Invalid filter operation. \
-                        Allowed operations are: "
-                        + ", ".join(text_ops.keys())
-                    )
+                    message = "Invalid filter operation. \
+                        Allowed operations are: " + ", ".join(text_ops.keys())
                     raise ValueError(message)
 
                 result = []
@@ -1816,26 +1812,100 @@ class EvalTemplateBulkDeleteView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            templates_to_delete = list(
-                EvalTemplate.objects.filter(
+            from model_hub.models.develop_dataset import Cell, Column, Dataset
+
+            with transaction.atomic():
+                deleted_count = EvalTemplate.objects.filter(
                     id__in=req.template_ids,
                     organization=organization,
                     owner=OwnerChoices.USER.value,
                     deleted=False,
-                ).values_list("id", flat=True)
-            )
+                ).update(deleted=True, deleted_at=timezone.now())
 
-            now = timezone.now()
-            deleted_count = EvalTemplate.objects.filter(
-                id__in=templates_to_delete,
-                organization=organization,
-                owner=OwnerChoices.USER.value,
-                deleted=False,
-            ).update(deleted=True, deleted_at=now)
-            EvalSettings.objects.filter(
-                eval_id__in=templates_to_delete,
-                deleted=False,
-            ).update(deleted=True, deleted_at=now)
+                # Fetch all UserEvalMetrics bound to these templates
+                # Scoped to the requesting org to prevent cross-tenant cascade
+                metrics = list(
+                    UserEvalMetric.objects.filter(
+                        template_id__in=req.template_ids,
+                        organization=organization,
+                        deleted=False,
+                    ).values_list("id", "dataset_id")
+                )
+
+                if metrics:
+                    metric_ids = {str(m[0]) for m in metrics}
+                    dataset_ids = {m[1] for m in metrics}
+
+                    # Find eval result columns scoped by dataset (indexed)
+                    eval_cols = list(
+                        Column.objects.filter(
+                            dataset_id__in=dataset_ids,
+                            source=SourceChoices.EVALUATION.value,
+                            source_id__in=metric_ids,
+                            deleted=False,
+                        ).values_list("id", "dataset_id", flat=False)
+                    )
+
+                    # Build set of eval column IDs for dependent column lookup
+                    eval_col_ids = {row[0] for row in eval_cols}
+                    all_col_ids = set(eval_col_ids)
+
+                    # Find dependent columns (reason, tags) scoped by dataset
+                    if eval_col_ids:
+                        eval_col_suffixes = {
+                            f"{ecid}-sourceid-"
+                            for ecid in (str(eid) for eid in eval_col_ids)
+                        }
+                        dep_cols = list(
+                            Column.objects.filter(
+                                dataset_id__in=dataset_ids,
+                                source__in=[
+                                    SourceChoices.EVALUATION_REASON.value,
+                                    SourceChoices.EVALUATION_TAGS.value,
+                                ],
+                                deleted=False,
+                            ).values_list("id", "source_id")
+                        )
+                        for col_id, source_id in dep_cols:
+                            if source_id and any(
+                                sfx in source_id for sfx in eval_col_suffixes
+                            ):
+                                all_col_ids.add(col_id)
+
+                    if all_col_ids:
+                        # Bulk soft-delete cells
+                        Cell.objects.filter(
+                            column_id__in=all_col_ids, deleted=False
+                        ).update(deleted=True, deleted_at=timezone.now())
+
+                        # Bulk soft-delete columns
+                        Column.objects.filter(id__in=all_col_ids).update(
+                            deleted=True, deleted_at=timezone.now()
+                        )
+
+                        # Fix column_order per affected dataset
+                        col_id_strs = {str(c) for c in all_col_ids}
+                        affected_datasets = list(
+                            Dataset.objects.filter(id__in=dataset_ids)
+                        )
+                        datasets_to_update = []
+                        for ds in affected_datasets:
+                            if ds.column_order:
+                                new_order = [
+                                    c for c in ds.column_order if c not in col_id_strs
+                                ]
+                                if len(new_order) != len(ds.column_order):
+                                    ds.column_order = new_order
+                                    datasets_to_update.append(ds)
+                        if datasets_to_update:
+                            Dataset.objects.bulk_update(
+                                datasets_to_update, ["column_order"]
+                            )
+
+                    # Soft-delete the metrics themselves
+                    UserEvalMetric.objects.filter(
+                        id__in=[m[0] for m in metrics]
+                    ).update(deleted=True, deleted_at=timezone.now())
 
             response = BulkDeleteResponse(deleted_count=deleted_count)
             return self._gm.success_response(response.model_dump())
@@ -3544,11 +3614,12 @@ class CompositeEvalDetailView(APIView):
         from model_hub.utils.eval_list import derive_eval_type
 
         try:
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
             try:
-                parent = _get_accessible_composite_template(template_id, organization)
+                parent = _get_accessible_eval_template_for_request(
+                    template_id,
+                    request,
+                    template_type="composite",
+                )
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Composite eval template not found.")
 
@@ -6625,6 +6696,7 @@ class UpdateEvalTemplateView(APIView):
             org = getattr(request, "organization", None) or request.user.organization
 
             validated_data = request.validated_data
+            raw_data = request.data
 
             name = validated_data.get("name", None)
             function_eval = validated_data.get("function_eval", None)
@@ -6651,24 +6723,28 @@ class UpdateEvalTemplateView(APIView):
                 return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
 
             config = eval_template.config
-            eval_template.description = (
-                description if description else eval_template.description
-            )
-            eval_template.criteria = criteria if criteria else eval_template.criteria
-            eval_template.eval_tags = (
-                eval_tags if eval_tags else eval_template.eval_tags
-            )
-            eval_template.multi_choice = (
-                multi_choice if multi_choice else eval_template.multi_choice
-            )
+            if "description" in raw_data:
+                eval_template.description = description
+            if "criteria" in raw_data:
+                eval_template.criteria = criteria
+            if "eval_tags" in raw_data:
+                eval_template.eval_tags = eval_tags
+            if "multi_choice" in raw_data:
+                eval_template.multi_choice = multi_choice
+                config["multi_choice"] = multi_choice
 
             if name is not None:
-                if EvalTemplate.objects.filter(
-                    name=name,
-                    organization=org,
-                    owner=OwnerChoices.USER.value,
-                    deleted=False,
-                ).exists():
+                if (
+                    EvalTemplate.no_workspace_objects.filter(
+                        _request_workspace_filter(request),
+                        name=name,
+                        organization=org,
+                        owner=OwnerChoices.USER.value,
+                        deleted=False,
+                    )
+                    .exclude(id=eval_template.id)
+                    .exists()
+                ):
                     raise Exception(get_error_message("EVAL_TEMPLATE_ALREADY_EXISTS"))
                 else:
                     eval_template.name = name
@@ -6677,15 +6753,16 @@ class UpdateEvalTemplateView(APIView):
                 config["model"] = model
                 eval_template.model = model
 
-            if choices_map is not None and len(list(choices_map.keys())) > 0:
+            if "choices_map" in raw_data:
+                choices_map = choices_map or {}
                 config["choices_map"] = choices_map
                 eval_template.choices = list(choices_map.keys())
 
-            if check_internet is not None:
+            if "check_internet" in raw_data:
                 config["check_internet"] = check_internet
 
-            if required_keys is not None and len(required_keys) > 0:
-                config["required_keys"] = required_keys
+            if "required_keys" in raw_data:
+                config["required_keys"] = required_keys or []
 
             if function_eval:
                 configuration = eval_template.config.copy()
@@ -6693,7 +6770,7 @@ class UpdateEvalTemplateView(APIView):
                 configuration["config"] = validated_data.get("config", {}).get("config")
                 config = configuration
 
-            if eval_type_id:
+            if "eval_type_id" in raw_data:
                 config["eval_type_id"] = eval_type_id
 
             if error_localizer_enabled is not None:

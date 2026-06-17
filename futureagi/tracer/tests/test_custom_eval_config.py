@@ -12,6 +12,11 @@ from rest_framework import status
 
 from tracer.models.custom_eval_config import CustomEvalConfig
 
+AUTH_REQUIRED_STATUS_CODES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+)
+
 
 def get_result(response):
     """Extract result from API response wrapper."""
@@ -35,7 +40,7 @@ class TestCustomEvalConfigCreateAPI:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_create_config_success(self, auth_client, project, eval_template):
         """Create a new custom eval config."""
@@ -108,7 +113,7 @@ class TestCustomEvalConfigListAPI:
             "/tracer/custom-eval-config/list_custom_eval_configs/",
             {"project_id": str(project.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_list_configs_missing_project(self, auth_client):
         """List configs without project ID."""
@@ -168,7 +173,7 @@ class TestCustomEvalConfigCheckExistsAPI:
             {"project_name": project.name, "eval_tags": ["test"]},
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_check_exists_true(self, auth_client, project, custom_eval_config):
         """Check exists returns true for existing config."""
@@ -219,7 +224,7 @@ class TestCustomEvalConfigGetByNameAPI:
             {"eval_template_name": eval_template.name},
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_get_by_name_success(self, auth_client, eval_template):
         """Get eval template by name."""
@@ -265,7 +270,7 @@ class TestCustomEvalConfigRunEvaluationAPI:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_run_evaluation_missing_config(self, auth_client, project_version):
         """Run evaluation fails without config ID."""

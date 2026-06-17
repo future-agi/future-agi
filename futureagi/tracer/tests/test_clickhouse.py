@@ -782,7 +782,7 @@ class TestClickHouseFilterBuilder:
         builder = ClickHouseFilterBuilder()
         filters = [
             {
-                "column_id": "avg_latency",
+                "column_id": "latency_ms",
                 "filter_config": {
                     "filter_type": "number",
                     "filter_op": "greater_than",
@@ -792,7 +792,7 @@ class TestClickHouseFilterBuilder:
             }
         ]
         where, params = builder.translate(filters)
-        # avg_latency should map to latency_ms
+        # SYSTEM_METRIC numeric filter resolves to the latency_ms column
         assert "latency_ms" in where
         assert ">" in where
 
@@ -819,7 +819,7 @@ class TestClickHouseFilterBuilder:
 
         where, params = builder.translate(filters)
 
-        assert "name IN" in where
+        assert "lower(name) IN" in where
         assert "span_attr_" not in where
         assert "trace_id IN" not in where
         assert tuple(params.values()) == (("response",),)
@@ -848,7 +848,7 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
 
         assert "trace_id IN" in where
-        assert "name IN" in where
+        assert "lower(name) IN" in where
         assert "span_attr_" not in where
         assert "parent_span_id" not in where
         assert tuple(params.values()) == (("response",),)
@@ -877,7 +877,7 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
 
         assert "trace_id IN" in where
-        assert "name IN" in where
+        assert "lower(name) IN" in where
         assert "parent_span_id IS NULL OR parent_span_id = ''" in where
         assert tuple(params.values()) == (("root trace",),)
 
@@ -2440,6 +2440,33 @@ class TestTraceListQueryBuilder:
         query, params = builder.build()
         assert params["offset"] == 75  # 3 * 25
         assert params["limit"] == 25
+
+    def test_build_user_id_query(self):
+        """build_user_id_query() should use enduser_dict for single-query lookup."""
+        from tracer.services.clickhouse.query_builders import TraceListQueryBuilder
+
+        builder = TraceListQueryBuilder(project_id="test-proj-123")
+        trace_ids = ["trace-1", "trace-2", "trace-3"]
+
+        query, params = builder.build_user_id_query(trace_ids)
+
+        assert "SELECT" in query
+        assert "trace_id" in query
+        assert "dictGetOrDefault('enduser_dict', 'user_id', end_user_id, '')" in query
+        assert "GROUP BY trace_id" in query
+        assert "PREWHERE trace_id IN" in query
+        assert params["user_trace_ids"] == ("trace-1", "trace-2", "trace-3")
+        assert params["project_id"] == "test-proj-123"
+
+    def test_build_user_id_query_empty_trace_ids(self):
+        """build_user_id_query() should return empty when no trace_ids provided."""
+        from tracer.services.clickhouse.query_builders import TraceListQueryBuilder
+
+        builder = TraceListQueryBuilder(project_id="test-proj-123")
+        query, params = builder.build_user_id_query([])
+
+        assert query == ""
+        assert params == {}
 
 
 @pytest.mark.unit
@@ -4063,6 +4090,9 @@ class TestTraceListQueryBuilderComprehensive:
     def test_build_uses_date_range_from_filters(self):
         """When datetime filters exist, they should set start/end dates."""
         from tracer.services.clickhouse.query_builders import TraceListQueryBuilder
+        from tracer.services.clickhouse.query_builders.trace_list import (
+            TIME_FILTER_COLUMN,
+        )
 
         builder = TraceListQueryBuilder(
             project_id="proj-1",
@@ -4083,8 +4113,8 @@ class TestTraceListQueryBuilderComprehensive:
         query, params = builder.build()
         assert params["start_date"] is not None
         assert params["end_date"] is not None
-        assert "start_time >=" in query
-        assert "start_time <" in query
+        assert f"{TIME_FILTER_COLUMN} >=" in query
+        assert f"{TIME_FILTER_COLUMN} <" in query
 
     def test_build_default_date_range(self):
         """When no datetime filter, should use default 30-day range."""
@@ -5194,7 +5224,7 @@ class TestFilterBuilderEdgeCases:
         assert "!=" in where
 
     def test_not_contains_filter(self):
-        """not_contains should produce NOT LIKE."""
+        """not_contains should produce NOT ILIKE (case-insensitive)."""
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -5212,7 +5242,7 @@ class TestFilterBuilderEdgeCases:
             }
         ]
         where, _ = builder.translate(filters)
-        assert "NOT LIKE" in where
+        assert "NOT ILIKE" in where
 
     def test_starts_with_filter(self):
         """starts_with should produce LIKE with trailing %."""
@@ -5338,7 +5368,7 @@ class TestFilterBuilderEdgeCases:
         assert "<=" in where
 
     def test_span_attr_not_contains(self):
-        """SPAN_ATTRIBUTE not_contains should produce NOT LIKE."""
+        """SPAN_ATTRIBUTE not_contains should produce NOT ILIKE (case-insensitive)."""
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -5356,7 +5386,7 @@ class TestFilterBuilderEdgeCases:
             }
         ]
         where, _ = builder.translate(filters)
-        assert "NOT LIKE" in where
+        assert "NOT ILIKE" in where
         assert "span_attr_str" in where
 
     def test_span_attr_between(self):
@@ -6151,9 +6181,9 @@ class TestVoiceCallListPhase1bMigration:
     def _voice_list_source() -> str:
         import inspect
 
-        from tracer.views.trace import TraceView
+        from tracer.services.observe_list import build_voice_calls_list
 
-        return inspect.getsource(TraceView._list_voice_calls_clickhouse)
+        return inspect.getsource(build_voice_calls_list)
 
     def test_phase_1b_does_not_query_legacy_cdc_mirror(self):
         """The Phase 1b hydration must NOT read `tracer_observation_span`.
@@ -6171,7 +6201,7 @@ class TestVoiceCallListPhase1bMigration:
         src = self._voice_list_source()
         # Ban the actual query, not the comments that document the cutover.
         assert not re.search(r"FROM\s+tracer_observation_span", src), (
-            "_list_voice_calls_clickhouse references the legacy CDC mirror; "
+            "build_voice_calls_list references the legacy CDC mirror; "
             "the Phase 1b query must read from the v2 `spans` table."
         )
         # Narrow the `_peerdb_is_deleted` ban to the Phase 1b block, found
@@ -6199,7 +6229,7 @@ class TestVoiceCallListPhase1bMigration:
         # v2 dedup contract. FINAL alone (without `spans`) is too permissive.
         assert re.search(
             r"FROM\s+spans\s+FINAL", src
-        ), "_list_voice_calls_clickhouse must hydrate from v2 `spans FINAL`."
+        ), "build_voice_calls_list must hydrate from v2 `spans FINAL`."
         assert "is_deleted = 0" in src
 
     def test_phase_1b_selects_typed_map_columns_for_reconstruction(self):
@@ -8017,7 +8047,7 @@ class TestSpanAttrConditionContract:
                 "k", filter_type="text", filter_op="not_equals", filter_value="v"
             )
         )
-        assert "AND span_attr_str['k'] != " in where
+        assert "AND lower(span_attr_str['k']) != " in where
         assert "NOT mapContains" not in where
 
     def test_text_in(self):
@@ -8026,7 +8056,7 @@ class TestSpanAttrConditionContract:
                 "k", filter_type="text", filter_op="in", filter_value=["a", "b"]
             )
         )
-        assert "span_attr_str['k'] IN" in where
+        assert "lower(span_attr_str['k']) IN" in where
         assert ("a", "b") in params.values()
 
     def test_text_not_in_uses_exists_and(self):
@@ -8041,7 +8071,7 @@ class TestSpanAttrConditionContract:
             )
         )
         assert "mapContains(span_attr_str, 'ended_reason')" in where
-        assert "AND span_attr_str['ended_reason'] NOT IN" in where
+        assert "AND lower(span_attr_str['ended_reason']) NOT IN" in where
         assert "NOT mapContains" not in where
         assert ("voicemail", "assistant-ended-call") in params.values()
 
@@ -8060,7 +8090,7 @@ class TestSpanAttrConditionContract:
                 "k", filter_type="text", filter_op="not_contains", filter_value="abc"
             )
         )
-        assert "AND span_attr_str['k'] NOT LIKE" in where
+        assert "AND span_attr_str['k'] NOT ILIKE" in where
         assert "NOT mapContains" not in where
         assert "%abc%" in params.values()
 

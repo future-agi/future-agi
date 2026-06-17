@@ -37,7 +37,7 @@ export default function Loading({ title, description }) {
         <ShowComponent condition={description}>
           <Typography
             typography={"s2_1"}
-            color={"text.disabled"}
+            color={"text.secondary"}
             sx={{
               textAlign: "center",
             }}

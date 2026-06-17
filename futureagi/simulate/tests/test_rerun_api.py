@@ -14,12 +14,14 @@ from rest_framework import status
 
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from simulate.models import AgentDefinition, Scenarios
-from simulate.models.run_test import RunTest
+from model_hub.models.evals_metric import EvalTemplate
+from simulate.models import AgentDefinition, Scenarios, SimulateEvalConfig
+from simulate.models.run_test import CreateCallExecution, RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import (
     CallExecution,
     CallExecutionSnapshot,
+    EvalExplanationSummaryStatus,
     TestExecution,
 )
 
@@ -272,6 +274,48 @@ class TestCallExecutionRerunView:
         assert data["success_count"] == 1
         assert str(call_execution.id) in data["successful_reruns"]
 
+    @patch(
+        "simulate.temporal.client.rerun_call_executions",
+        side_effect=TimeoutError("temporal dispatch timed out"),
+    )
+    def test_rerun_eval_only_tolerates_dispatch_failure(
+        self,
+        mock_rerun,
+        auth_client,
+        test_execution,
+        call_execution,
+    ):
+        url = self.URL_TEMPLATE.format(test_execution.id)
+        response = auth_client.post(
+            url,
+            {
+                "rerun_type": "eval_only",
+                "call_execution_ids": [str(call_execution.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["success_count"] == 0
+        assert data["failure_count"] == 1
+        assert data["failed_reruns"][0]["call_execution_id"] == str(call_execution.id)
+        assert "temporal dispatch timed out" in data["failed_reruns"][0]["error"]
+        assert data["dispatch_error"] == "temporal dispatch timed out"
+        assert "async dispatch failed" in data["message"]
+        mock_rerun.assert_called_once()
+
+        test_execution.refresh_from_db()
+        call_execution.refresh_from_db()
+        assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
+        assert test_execution.picked_up_by_executor is False
+        assert (
+            test_execution.execution_metadata["rerun_dispatch_failed"]
+            == "temporal dispatch timed out"
+        )
+        assert call_execution.eval_outputs == {"eval1": {"score": 0.9}}
+        assert call_execution.call_metadata["eval_completed"] is True
+
     @patch("simulate.temporal.client.rerun_call_executions")
     def test_rerun_call_and_eval_select_all(
         self, mock_rerun, auth_client, test_execution, call_execution
@@ -293,6 +337,52 @@ class TestCallExecutionRerunView:
         # Verify test execution status updated - RUNNING because Temporal workflow started
         test_execution.refresh_from_db()
         assert test_execution.status == TestExecution.ExecutionStatus.RUNNING
+
+    @patch(
+        "simulate.temporal.client.rerun_call_executions",
+        side_effect=TimeoutError("temporal dispatch timed out"),
+    )
+    def test_rerun_call_and_eval_marks_failed_when_dispatch_fails(
+        self,
+        mock_rerun,
+        auth_client,
+        test_execution,
+        call_execution,
+    ):
+        url = self.URL_TEMPLATE.format(test_execution.id)
+        response = auth_client.post(
+            url,
+            {
+                "rerun_type": "call_and_eval",
+                "call_execution_ids": [str(call_execution.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["success_count"] == 0
+        assert data["failure_count"] == 1
+        assert data["failed_reruns"][0]["call_execution_id"] == str(call_execution.id)
+        assert "temporal dispatch timed out" in data["failed_reruns"][0]["error"]
+        assert data["dispatch_error"] == "temporal dispatch timed out"
+        assert "async dispatch failed" in data["message"]
+        mock_rerun.assert_called_once()
+
+        test_execution.refresh_from_db()
+        call_execution.refresh_from_db()
+        assert test_execution.status == TestExecution.ExecutionStatus.FAILED
+        assert test_execution.picked_up_by_executor is False
+        assert (
+            test_execution.execution_metadata["rerun_dispatch_failed"]
+            == "temporal dispatch timed out"
+        )
+        assert call_execution.status == CallExecution.CallStatus.FAILED
+        assert "Rerun dispatch failed" in call_execution.ended_reason
+        assert (
+            CreateCallExecution.objects.filter(call_execution=call_execution).count()
+            == 0
+        )
 
     def test_rerun_missing_params(self, auth_client, test_execution):
         """Test rerun with neither select_all nor call_execution_ids."""
@@ -466,6 +556,55 @@ class TestTestExecutionRerunView:
         test_execution_2.refresh_from_db()
         assert test_execution.status == TestExecution.ExecutionStatus.EVALUATING
         assert test_execution_2.status == TestExecution.ExecutionStatus.COMPLETED
+
+    @patch(
+        "simulate.temporal.client.rerun_call_executions",
+        side_effect=TimeoutError("temporal dispatch timed out"),
+    )
+    def test_rerun_test_execution_tolerates_dispatch_failure(
+        self,
+        mock_rerun,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+    ):
+        url = self.URL_TEMPLATE.format(run_test.id)
+        response = auth_client.post(
+            url,
+            {
+                "rerun_type": "eval_only",
+                "test_execution_ids": [str(test_execution.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["overall_success_count"] == 0
+        assert data["overall_failure_count"] == 1
+        assert data["results"][0]["success_count"] == 0
+        assert data["results"][0]["failure_count"] == 1
+        assert data["results"][0]["dispatch_error"] == "temporal dispatch timed out"
+        assert data["results"][0]["failed_reruns"][0]["call_execution_id"] == str(
+            call_execution.id
+        )
+        assert (
+            "temporal dispatch timed out"
+            in data["results"][0]["failed_reruns"][0]["error"]
+        )
+        mock_rerun.assert_called_once()
+
+        test_execution.refresh_from_db()
+        call_execution.refresh_from_db()
+        assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
+        assert test_execution.picked_up_by_executor is False
+        assert (
+            test_execution.execution_metadata["rerun_dispatch_failed"]
+            == "temporal dispatch timed out"
+        )
+        assert call_execution.eval_outputs == {"eval1": {"score": 0.9}}
+        assert call_execution.call_metadata["eval_completed"] is True
 
     @patch("simulate.temporal.client.rerun_call_executions")
     def test_rerun_select_all_with_exclusion(
@@ -735,6 +874,30 @@ class TestTestExecutionRuntimeContracts:
         assert response.data["status"] is False
         assert response.data["details"]["legacy_extra"] == ["Unknown field."]
 
+    @patch(
+        "simulate.views.run_test.run_eval_summary_task.apply_async",
+        side_effect=TimeoutError("temporal dispatch timed out"),
+    )
+    def test_eval_summary_refresh_tolerates_dispatch_failure(
+        self, mock_apply_async, auth_client, test_execution
+    ):
+        url = (
+            f"/simulate/test-executions/{test_execution.id}/"
+            "eval-explanation-summary/refresh/"
+        )
+
+        response = auth_client.post(url, {}, format="json")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["status"] is True
+        assert "marked pending" in response.data["result"]["message"]
+        mock_apply_async.assert_called_once_with(args=(str(test_execution.id),))
+        test_execution.refresh_from_db()
+        assert (
+            test_execution.eval_explanation_summary_status
+            == EvalExplanationSummaryStatus.PENDING
+        )
+
     def test_optimiser_refresh_rejects_unknown_fields(
         self, auth_client, test_execution
     ):
@@ -766,6 +929,61 @@ class TestTestExecutionRuntimeContracts:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.data["status"] is False
         assert response.data["details"]["legacy_extra"] == ["Unknown field."]
+
+    @patch(
+        "simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async",
+        side_effect=TimeoutError("temporal dispatch timed out"),
+    )
+    def test_run_new_evals_tolerates_dispatch_failure(
+        self,
+        mock_apply_async,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        organization,
+    ):
+        eval_template = EvalTemplate.objects.create(
+            name="dispatch failure eval",
+            config={"output": "Pass/Fail"},
+            organization=organization,
+        )
+        eval_config = SimulateEvalConfig.objects.create(
+            name="dispatch failure config",
+            eval_template=eval_template,
+            run_test=run_test,
+            config={},
+            mapping={},
+        )
+        url = f"/simulate/run-tests/{run_test.id}/run-new-evals/"
+
+        response = auth_client.post(
+            url,
+            {
+                "test_execution_ids": [str(test_execution.id)],
+                "eval_config_ids": [str(eval_config.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "marked pending" in response.data["message"]
+        assert response.data["call_execution_count"] == 1
+        mock_apply_async.assert_called_once()
+
+        call_execution.refresh_from_db()
+        test_execution.refresh_from_db()
+        assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
+        assert test_execution.picked_up_by_executor is False
+        assert (
+            test_execution.execution_metadata["eval_dispatch_failed"]
+            == "temporal dispatch timed out"
+        )
+        assert call_execution.call_metadata["eval_started"] is False
+        assert (
+            call_execution.call_metadata["eval_dispatch_failed"]
+            == "temporal dispatch timed out"
+        )
 
 
 # ============================================================================

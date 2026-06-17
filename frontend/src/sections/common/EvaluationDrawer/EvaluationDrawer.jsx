@@ -612,6 +612,8 @@ const EvaluationDrawerChild = ({
               Object.keys(evalConfig.choice_scores).length
             )
               runConfig.choice_scores = evalConfig.choice_scores;
+            if (evalConfig.multi_choice !== undefined)
+              runConfig.multi_choice = !!evalConfig.multi_choice;
           }
           // Data injection applies to both single and composite — the
           // backend resolves it at row-evaluation time.

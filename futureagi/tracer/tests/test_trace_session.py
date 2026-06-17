@@ -616,6 +616,80 @@ class TestTraceSessionOverlayWritePath:
         assert after["filter_config"]["filter_op"] == "in"
         assert sid in after["filter_config"]["filter_value"]
 
+    def test_bookmark_filter_canonicalizes_overlay_ids_for_clickhouse(
+        self, observe_project
+    ):
+        raw_id = str(uuid.uuid4())
+        survivor_id = str(uuid.uuid4())
+        TraceSessionOverlay.objects.create(
+            trace_session_id=raw_id,
+            project_id=observe_project.id,
+            bookmarked=True,
+        )
+        analytics = mock.Mock()
+        analytics.execute_ch_query.return_value = mock.Mock(
+            data=[{"any_id": raw_id, "survivor_id": survivor_id}]
+        )
+
+        bookmark_filter = TraceSessionView._build_bookmark_filter(
+            True, [str(observe_project.id)], analytics=analytics
+        )
+
+        assert bookmark_filter["filter_config"]["filter_op"] == "in"
+        assert bookmark_filter["filter_config"]["filter_value"] == [survivor_id]
+        sql = analytics.execute_ch_query.call_args.args[0]
+        assert "trace_session_id_remap" in sql
+        assert "WHERE any_id IN %(ids)s" in sql
+
+    def test_retrieve_clickhouse_binds_canonical_requested_session_id(
+        self, observe_project
+    ):
+        requested_id = str(uuid.uuid4())
+        survivor_id = str(uuid.uuid4())
+        bound_session_ids = []
+        analytics = mock.Mock()
+
+        def execute_ch_query(query, params, timeout_ms):
+            if "WHERE any_id IN %(ids)s" in query:
+                return mock.Mock(
+                    data=[{"any_id": requested_id, "survivor_id": survivor_id}]
+                )
+            if "count(DISTINCT trace_id)" in query:
+                bound_session_ids.append(params["session_id"])
+                return mock.Mock(
+                    data=[
+                        {
+                            "start_time": None,
+                            "end_time": None,
+                            "total_cost": 0,
+                            "total_tokens": 0,
+                            "total_traces": 0,
+                        }
+                    ]
+                )
+            if "GROUP BY trace_id" in query:
+                bound_session_ids.append(params["session_id"])
+                return mock.Mock(data=[])
+            raise AssertionError(f"unexpected ClickHouse query: {query}")
+
+        analytics.execute_ch_query.side_effect = execute_ch_query
+
+        with mock.patch(
+            "tracer.views.trace_session.get_session_navigation",
+            return_value=(None, None),
+        ):
+            response = TraceSessionView()._retrieve_clickhouse(
+                mock.Mock(),
+                requested_id,
+                mock.Mock(id=requested_id),
+                observe_project.id,
+                analytics,
+                {"page_number": 0, "page_size": 10},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert bound_session_ids == [survivor_id, survivor_id]
+
     def test_overlay_write_composes_with_slice_2a_name_read(
         self, auth_client, observe_project, trace_session
     ):

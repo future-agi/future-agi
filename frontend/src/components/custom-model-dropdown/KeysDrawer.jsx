@@ -177,7 +177,7 @@ const KeyConfigDrawerChild = ({
             <Typography
               typography="s1"
               fontWeight={"fontWeightRegular"}
-              color="text.disabled"
+              color="text.secondary"
             >
               Configure your LLM API keys to run evals and prompts, All keys are
               encrypted and securely stored.

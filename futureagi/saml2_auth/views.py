@@ -662,7 +662,7 @@ class Auth0LoginView(APIView):
         },
         reject_unknown_fields=True,
     )
-    def get(self, request):
+    def get(self, request, *args, **kwargs):
         provider = request.validated_query_data.get("provider", None)
         if not provider:
             return self._gm.bad_request("Provider is required")
@@ -713,10 +713,13 @@ class Auth0CallbackView(APIView):
         query_serializer=SAMLOAuthCallbackQuerySerializer,
         responses=SAML_REDIRECT_RESPONSES,
     )
-    def get(self, request):
+    def get(self, request, *args, **kwargs):
         try:
             new_org = "false"
             code = request.validated_query_data.get("code")
+            if not code:
+                logger.error("No code provided in callback.")
+                raise Exception("Authorization code not provided.")
             logger.info(f"CODE: {code}")
 
             # Exchange code for access token
@@ -828,12 +831,14 @@ class Auth0CallbackView(APIView):
 
 class GithubCallbackView(APIView):
     _gm = GeneralMethods()
+    permission_classes = (AllowAny,)
+    authentication_classes = []
 
     @validated_request(
         query_serializer=SAMLOAuthCallbackQuerySerializer,
         responses=SAML_REDIRECT_RESPONSES,
     )
-    def get(self, request):
+    def get(self, request, *args, **kwargs):
         try:
             new_org = "false"
             code = request.validated_query_data.get("code")
@@ -966,12 +971,14 @@ class GithubCallbackView(APIView):
 
 class MicrosoftCallbackView(APIView):
     _gm = GeneralMethods()
+    permission_classes = (AllowAny,)
+    authentication_classes = []
 
     @validated_request(
         query_serializer=SAMLOAuthCallbackQuerySerializer,
         responses=SAML_REDIRECT_RESPONSES,
     )
-    def get(self, request):
+    def get(self, request, *args, **kwargs):
         try:
             new_org = "false"
             code = request.validated_query_data.get("code")

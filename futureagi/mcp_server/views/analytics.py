@@ -6,6 +6,7 @@ from django.db.models import Avg, Count, Q
 from django.db.models.functions import TruncHour
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -22,6 +23,8 @@ from tfc.utils.api_errors import build_error_envelope
 
 class MCPAnalyticsSummaryView(APIView):
     """Usage summary (total calls, sessions, latency)."""
+
+    permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         responses={
@@ -83,6 +86,8 @@ class MCPAnalyticsSummaryView(APIView):
 class MCPAnalyticsToolsView(APIView):
     """Per-tool usage breakdown."""
 
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         responses={
             200: MCPAnalyticsToolsResponseSerializer,
@@ -135,6 +140,8 @@ class MCPAnalyticsToolsView(APIView):
 
 class MCPAnalyticsTimelineView(APIView):
     """Tool calls over time (hourly buckets)."""
+
+    permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         responses={

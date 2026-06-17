@@ -14,6 +14,7 @@ static/
 # Internal data / comparison output
 /custom-catalog
 compare/
+media/
 metadata/
 
 # Django venv activation script
@@ -57,3 +58,5 @@ playwright-report/
 *.out
 .DS_Store
 **/.DS_Store
+
+*.core

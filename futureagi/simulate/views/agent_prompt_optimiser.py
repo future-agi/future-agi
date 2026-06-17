@@ -1,6 +1,7 @@
 import structlog
 from django.db import transaction
 from django.db.models import Avg, Count
+from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
 from rest_framework.decorators import action
@@ -8,9 +9,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
-logger = structlog.get_logger(__name__)
 from model_hub.utils.dataset_optimization import calculate_percentage_point_change
 from model_hub.utils.llm_providers import get_provider_logo_url
+from model_hub.utils.workspace_scope import (
+    request_organization,
+    request_workspace_filter,
+)
 from simulate.constants.agent_prompt_optimiser import (
     AGENT_PROMPT_OPTIMISER_RUN_TABLE_CONFIG,
     TRIAL_TABLE_EVAL_COLUMNS,
@@ -49,6 +53,8 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.errors import format_validation_error
 from tfc.utils.general_methods import GeneralMethods
+
+logger = structlog.get_logger(__name__)
 
 # Human-readable labels and descriptions for optimizer configuration parameters
 OPTIMISER_PARAM_META = {
@@ -151,14 +157,20 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
     serializer_class = AgentPromptOptimiserRunSerializer
 
     def get_queryset(self):
-        user_organization = (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
         queryset = (
             super()
             .get_queryset()
-            .filter(test_execution__run_test__organization=user_organization)
+            .filter(
+                test_execution__run_test__organization=request_organization(
+                    self.request
+                )
+            )
+            .filter(
+                request_workspace_filter(
+                    self.request,
+                    field_name="test_execution__run_test__workspace",
+                )
+            )
             .order_by("-created_at")
         )
 
@@ -319,6 +331,8 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "column_config": column_config,
                 }
             )
+        except Http404:
+            return self._gm.not_found("Agent prompt optimiser run not found")
         except Exception as e:
             logger.exception(f"Error retrieving AgentPromptOptimiserRun: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
@@ -338,6 +352,8 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             instance = self.get_object()
             steps = get_agent_prompt_optimiser_run_steps(str(instance.id))
             return self._gm.success_response(steps)
+        except Http404:
+            return self._gm.not_found("Agent prompt optimiser run not found")
         except Exception as e:
             logger.exception(
                 f"Error retrieving agent prompt optimiser run steps: {str(e)}"
@@ -361,6 +377,8 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             instance = self.get_object()
             graph_data = get_agent_prompt_optimiser_run_graph_data(instance)
             return self._gm.success_response(graph_data)
+        except Http404:
+            return self._gm.not_found("Agent prompt optimiser run not found")
         except Exception as e:
             logger.exception(
                 f"Error retrieving agent prompt optimiser run graph data: {str(e)}"
@@ -421,6 +439,8 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "base_prompt": baseline_trial.prompt if baseline_trial else None,
                 }
             )
+        except Http404:
+            return self._gm.not_found("Agent prompt optimiser run not found")
         except PromptTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
         except Exception as e:
@@ -513,6 +533,8 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "column_config": TRIAL_TABLE_EVAL_COLUMNS,
                 }
             )
+        except Http404:
+            return self._gm.not_found("Agent prompt optimiser run not found")
         except PromptTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
         except Exception as e:
@@ -585,6 +607,8 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "column_config": column_config,
                 }
             )
+        except Http404:
+            return self._gm.not_found("Agent prompt optimiser run not found")
         except PromptTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
         except Exception as e:

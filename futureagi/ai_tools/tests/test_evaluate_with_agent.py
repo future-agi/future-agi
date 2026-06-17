@@ -19,6 +19,7 @@ import pytest
 
 from ai_tools.tests.conftest import run_tool
 from ai_tools.tests.fixtures import make_trace
+from tfc.ee_gating import EEFeature, FeatureUnavailable
 
 # ---------------------------------------------------------------------------
 # Helpers / constants
@@ -120,15 +121,8 @@ def mock_orchestrator():
 
 @pytest.fixture(autouse=True)
 def allow_agentic_eval_feature():
-    """Default tests assume evaluate_with_agent is available.
-
-    The tool calls tfc.ee_gating.check_ee_feature directly, so we patch that
-    to be a no-op (returns None, meaning "allowed").
-    """
-    with patch(
-        "tfc.ee_gating.check_ee_feature",
-        return_value=None,
-    ):
+    """Default tests assume evaluate_with_agent is available."""
+    with patch("tfc.ee_gating.check_ee_feature", return_value=None):
         yield
 
 
@@ -139,12 +133,12 @@ def allow_agentic_eval_feature():
 
 class TestInputValidation:
     def test_blocked_when_agentic_eval_not_allowed(self, tool_context):
-        from tfc.ee_gating import FeatureUnavailable
+        with patch("tfc.ee_gating.check_ee_feature") as mock_check:
+            mock_check.side_effect = FeatureUnavailable(
+                EEFeature.AGENTIC_EVAL,
+                detail="Agentic evaluation requires Boost plan",
+            )
 
-        with patch(
-            "tfc.ee_gating.check_ee_feature",
-            side_effect=FeatureUnavailable("agentic_eval"),
-        ):
             result = run_tool(
                 "evaluate_with_agent",
                 {
@@ -157,7 +151,13 @@ class TestInputValidation:
 
             assert result.is_error
             assert result.error_code == "ENTITLEMENT_DENIED"
-            assert "agentic_eval" in result.content
+            assert result.data == {
+                "feature": EEFeature.AGENTIC_EVAL.value,
+                "upgrade_required": True,
+            }
+            mock_check.assert_called_once_with(
+                EEFeature.AGENTIC_EVAL, org_id=str(tool_context.organization.id)
+            )
 
     def test_invalid_scope_returns_error(self, tool_context):
         result = run_tool(

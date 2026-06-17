@@ -218,6 +218,30 @@ class TestListQueues:
         assert results[0]["name"] == "Second"
         assert results[1]["name"] == "First"
 
+    def test_list_accepts_page_size_alias(self, auth_client):
+        """Annotation queue list accepts the dataset-grid page_size alias."""
+        create_queue(auth_client, name="Page Size 1")
+        create_queue(auth_client, name="Page Size 2")
+
+        resp = auth_client.get(QUEUE_URL, {"page_size": 1})
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 2
+        assert len(resp.data["results"]) == 1
+        assert resp.data["total_pages"] == 2
+
+    def test_list_limit_takes_precedence_over_page_size_alias(self, auth_client):
+        """Existing limit behavior wins when both pagination params are present."""
+        create_queue(auth_client, name="Limit Precedence 1")
+        create_queue(auth_client, name="Limit Precedence 2")
+        create_queue(auth_client, name="Limit Precedence 3")
+
+        resp = auth_client.get(QUEUE_URL, {"limit": 2, "page_size": 1})
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["count"] == 3
+        assert len(resp.data["results"]) == 2
+
 
 # ---------------------------------------------------------------------------
 # 1.2 – Create Queue

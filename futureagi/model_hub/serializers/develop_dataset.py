@@ -82,7 +82,7 @@ class SyntheticDatasetCreationSerializer(serializers.Serializer):
             missing_keys = required_keys - item.keys()
             if missing_keys:
                 raise serializers.ValidationError(
-                    f"Each JSON object in columns must contain the keys: {', '.join(required_keys)}."
+                    f"Each JSON object in columns must contain the keys: {', '.join(sorted(missing_keys))}."
                 )
 
         return value
@@ -113,7 +113,7 @@ class SyntheticDataSerializer(SyntheticDatasetCreationSerializer):
             missing_keys = required_keys - item.keys()
             if missing_keys:
                 raise serializers.ValidationError(
-                    f"Each JSON object in columns must contain the keys: {', '.join(required_keys)}."
+                    f"Each JSON object in columns must contain the keys: {', '.join(sorted(missing_keys))}."
                 )
 
         return value
@@ -134,10 +134,29 @@ class SyntheticDatasetConfigSerializer(serializers.Serializer):
     """Serializer for getting and updating synthetic dataset configuration"""
 
     num_rows = serializers.IntegerField()
-    columns = serializers.ListField()
+    columns = serializers.ListField(child=serializers.JSONField())
     dataset = serializers.JSONField()
     kb_id = serializers.UUIDField(required=False, allow_null=True)
     regenerate = serializers.BooleanField(required=False, default=False)
+
+    def validate_columns(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError("columns must be a list of JSON objects.")
+
+        required_keys = {"name", "data_type", "description", "property"}
+        for item in value:
+            if not isinstance(item, dict):
+                raise serializers.ValidationError(
+                    "Each item in columns must be a JSON object."
+                )
+
+            missing_keys = required_keys - item.keys()
+            if missing_keys:
+                raise serializers.ValidationError(
+                    f"Each JSON object in columns must contain the keys: {', '.join(sorted(missing_keys))}."
+                )
+
+        return value
 
     def validate_dataset(self, value):
         if not isinstance(value, dict):
@@ -223,19 +242,25 @@ class SecretSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         # Add organization from request context
-        validated_data["organization"] = self.context["request"].user.organization
+        request = self.context["request"]
+        validated_data["organization"] = (
+            getattr(request, "organization", None) or request.user.organization
+        )
+        validated_data["workspace"] = getattr(request, "workspace", None)
         return super().create(validated_data)
 
     def to_representation(self, instance):
         """Customize the output representation"""
         data = super().to_representation(instance)
         # Add a masked version of the key for display purposes
-        if instance.key:
-            data["masked_key"] = (
-                instance.actual_key[:4]
-                + "•" * (len(instance.actual_key) - 8)
-                + instance.actual_key[-4:]
-            )
+        actual_key = instance.actual_key
+        if actual_key:
+            if len(actual_key) <= 8:
+                data["masked_key"] = actual_key[:2] + "•" * max(len(actual_key) - 2, 4)
+            else:
+                data["masked_key"] = (
+                    actual_key[:4] + "•" * (len(actual_key) - 8) + actual_key[-4:]
+                )
         return data
 
 

@@ -149,6 +149,7 @@ class ClickHouseClient:
         query: str,
         params: dict[str, Any] | None = None,
         with_column_types: bool = False,
+        settings: dict[str, Any] | None = None,
     ) -> list[tuple]:
         """
         Execute a query and return results.
@@ -157,6 +158,9 @@ class ClickHouseClient:
             query: SQL query string
             params: Query parameters for parameterized queries
             with_column_types: If True, returns (results, column_types)
+            settings: Optional per-query ClickHouse settings (e.g.
+                {"data_type_default_nullable": 0} for DDL that must not be
+                auto-wrapped in Nullable when the server profile sets it to 1)
 
         Returns:
             List of result tuples, or (results, column_types) if with_column_types=True
@@ -170,6 +174,7 @@ class ClickHouseClient:
                 query,
                 params or {},
                 with_column_types=with_column_types,
+                settings=settings,
             )
 
             query_time_ms = (time.monotonic() - t_start) * 1000
@@ -208,6 +213,7 @@ class ClickHouseClient:
         query: str,
         params: dict[str, Any] | None = None,
         timeout_ms: int | None = None,
+        settings: dict[str, Any] | None = None,
     ) -> tuple[list[tuple], list[tuple], float]:
         """
         Execute a read-only query with ClickHouse readonly=2 setting.
@@ -228,7 +234,7 @@ class ClickHouseClient:
         client = self._get_client()
         t_start = time.monotonic()
 
-        query_settings = {"readonly": 2}
+        query_settings = {**(settings or {}), "readonly": 2}
         if timeout_ms is not None:
             # max_execution_time is in seconds
             query_settings["max_execution_time"] = max(timeout_ms / 1000.0, 0.001)
