@@ -349,18 +349,18 @@ const TestRunDetailHeader = () => {
                   {
                     id: "run-start",
                     condition: true,
-                    value: `${formatDurationSafe(kpis?.totalDuration || 0)}`,
+                    value: `${formatDurationSafe(kpis?.total_duration || 0)}`,
                     iconSrc: "/assets/icons/ic_clock.svg",
                     iconSx: { width: 12 },
                   },
                   {
                     id: "direction",
                     condition:
-                      agentType !== AGENT_TYPES.CHAT && kpis?.isInbound != null,
-                    value: kpis?.isInbound === false ? "Outbound" : "Inbound",
+                      agentType !== AGENT_TYPES.CHAT && kpis?.is_inbound != null,
+                    value: kpis?.is_inbound === false ? "Outbound" : "Inbound",
                     variant: "chip",
                     iconSrc:
-                      kpis?.isInbound === false
+                      kpis?.is_inbound === false
                         ? "/assets/icons/ic_call_outbound.svg"
                         : "/assets/icons/ic_call_inbound.svg",
                   },

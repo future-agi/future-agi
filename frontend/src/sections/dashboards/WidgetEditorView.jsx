@@ -54,6 +54,7 @@ import {
 } from "src/hooks/useDashboards";
 import Iconify from "src/components/iconify";
 import { useSnackbar } from "src/components/snackbar";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import { format } from "date-fns";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import {
@@ -1119,6 +1120,25 @@ export default function WidgetEditorView() {
   const [editingName, setEditingName] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
   const [moreMenuAnchor, setMoreMenuAnchor] = useState(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+
+  const confirmDeleteWidget = () => {
+    if (!isEditing) {
+      setConfirmDeleteOpen(false);
+      return;
+    }
+    deleteMutation.mutate(
+      { dashboardId, widgetId: effectiveWidgetId },
+      {
+        onSuccess: () => {
+          enqueueSnackbar("Widget deleted", { variant: "success" });
+          navigate(paths.dashboard.dashboards.detail(dashboardId));
+        },
+        // Close once the request settles, not before it starts.
+        onSettled: () => setConfirmDeleteOpen(false),
+      },
+    );
+  };
   const [timePreset, setTimePreset] = useState(
     searchParams.get("timePreset") || "30D",
   );
@@ -2964,40 +2984,24 @@ export default function WidgetEditorView() {
           transformOrigin={{ vertical: "top", horizontal: "right" }}
           slotProps={{ paper: { sx: { minWidth: 180 } } }}
         >
-          <MenuItem
-            onClick={() => {
-              setMoreMenuAnchor(null);
-              if (
-                !window.confirm("Are you sure you want to delete this widget?")
-              )
-                return;
-              if (effectiveWidgetId && effectiveWidgetId !== "new") {
-                deleteMutation
-                  .mutateAsync({ dashboardId, widgetId: effectiveWidgetId })
-                  .then(() => {
-                    enqueueSnackbar("Widget deleted", { variant: "success" });
-                    navigate(paths.dashboard.dashboards.detail(dashboardId));
-                  })
-                  .catch(() => {
-                    enqueueSnackbar("Failed to delete widget", {
-                      variant: "error",
-                    });
-                  });
-              } else {
-                navigate(paths.dashboard.dashboards.detail(dashboardId));
-              }
-            }}
-            sx={{ color: "error.main" }}
-          >
-            <ListItemIcon>
-              <Iconify
-                icon="mdi:delete-outline"
-                width={18}
-                sx={{ color: "error.main" }}
-              />
-            </ListItemIcon>
-            <ListItemText>Delete</ListItemText>
-          </MenuItem>
+          {isEditing && (
+            <MenuItem
+              onClick={() => {
+                setMoreMenuAnchor(null);
+                setConfirmDeleteOpen(true);
+              }}
+              sx={{ color: "error.main" }}
+            >
+              <ListItemIcon>
+                <Iconify
+                  icon="mdi:delete-outline"
+                  width={18}
+                  sx={{ color: "error.main" }}
+                />
+              </ListItemIcon>
+              <ListItemText>Delete</ListItemText>
+            </MenuItem>
+          )}
           <MenuItem
             onClick={() => {
               setMoreMenuAnchor(null);
@@ -3118,6 +3122,24 @@ export default function WidgetEditorView() {
             <ListItemText>Refresh Data</ListItemText>
           </MenuItem>
         </Menu>
+
+        <ConfirmDialog
+          open={confirmDeleteOpen}
+          onClose={() => setConfirmDeleteOpen(false)}
+          title="Delete Widget"
+          content={`Are you sure you want to delete "${chartName || "this widget"}"? This action cannot be undone.`}
+          action={
+            <Button
+              variant="contained"
+              color="error"
+              size="small"
+              onClick={confirmDeleteWidget}
+              disabled={deleteMutation.isPending}
+            >
+              Delete
+            </Button>
+          }
+        />
 
         <Button
           onClick={() =>

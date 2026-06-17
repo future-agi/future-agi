@@ -16,7 +16,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
-import { useDevelopDetailContext } from "src/sections/develop-detail/Context/DevelopDetailContext";
+import { useRefreshScenarioGrid } from "./useRefreshScenarioGrid";
 import { LoadingButton } from "@mui/lab";
 
 const AddRowUsingAiForm = ({ scenarioId, onClose }) => {
@@ -28,7 +28,7 @@ const AddRowUsingAiForm = ({ scenarioId, onClose }) => {
     resolver: zodResolver(AddRowUsingAiValidationSchema),
   });
 
-  const { refreshGrid } = useDevelopDetailContext();
+  const refreshGrid = useRefreshScenarioGrid(scenarioId);
 
   const { mutate: addRowUsingAi, isPending } = useMutation({
     mutationFn: (data) =>
