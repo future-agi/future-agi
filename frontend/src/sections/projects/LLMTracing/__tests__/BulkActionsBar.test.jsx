@@ -83,4 +83,32 @@ describe("BulkActionsBar", () => {
     menuItem.click();
     expect(onAction).toHaveBeenCalledWith("dataset", expect.any(Object));
   });
+
+  it("keeps disabled actions visible without firing them", async () => {
+    const onAction = vi.fn();
+    render(
+      <BulkActionsBar
+        {...defaultProps}
+        onAction={onAction}
+        actions={[
+          {
+            id: "annotation-queue",
+            label: "Add to annotation queue",
+            icon: "mdi:clipboard-list-outline",
+            disabled: true,
+            disabledReason: "Selected calls are still in progress.",
+          },
+        ]}
+      />,
+    );
+
+    screen.getByText("Actions").click();
+    const menuItem = await screen.findByRole("menuitem", {
+      name: "Add to annotation queue",
+    });
+
+    expect(menuItem).toHaveAttribute("aria-disabled", "true");
+    menuItem.click();
+    expect(onAction).not.toHaveBeenCalled();
+  });
 });

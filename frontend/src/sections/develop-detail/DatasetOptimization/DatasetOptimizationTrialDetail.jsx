@@ -165,7 +165,6 @@ const DatasetOptimizationTrialDetail = ({
       filter: false,
       resizable: true,
       suppressMenu: true,
-      suppressMultiSort: true,
     }),
     [],
   );

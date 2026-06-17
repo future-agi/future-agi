@@ -76,12 +76,7 @@ const TestDetailConfigureEval = () => {
   }, [agentType, sourceType, testData]);
 
   const { mutateAsync: updateEvalAsync } = useMutation({
-    mutationFn: (
-      {
-        evalConfigId,
-        payload,
-      },
-    ) =>
+    mutationFn: ({ evalConfigId, payload }) =>
       axios.post(
         endpoints.runTests.updateSimulateEval(testId, evalConfigId),
         payload,

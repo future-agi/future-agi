@@ -75,6 +75,14 @@ const BUDGET_LEVEL_LABELS = {
   perModel: "Per Model",
 };
 
+function getBudgetLevelLabel(level) {
+  return BUDGET_LEVEL_LABELS[level] || level;
+}
+
+function getBudgetValue(budget, snakeKey, camelKey = snakeKey) {
+  return budget?.[snakeKey] ?? budget?.[camelKey];
+}
+
 function getBudgetAction(budget) {
   return (
     budget?.action ||
@@ -218,8 +226,13 @@ const BudgetDashboardTab = ({ budgets: rawBudgets, overview, gatewayId }) => {
           {budgets.length > 0 ? (
             <Stack spacing={2}>
               {budgets.map((b, idx) => {
-                const limit = Number(b.limit || b.max || b.hard_cap || 0);
-                const spent = Number(b.spent || 0);
+                const limit = Number(
+                  getBudgetValue(b, "limit") ??
+                    getBudgetValue(b, "max") ??
+                    getBudgetValue(b, "hard_cap", "hardCap") ??
+                    0,
+                );
+                const spent = Number(getBudgetValue(b, "spent") ?? 0);
                 const pct =
                   limit > 0 ? Math.min((spent / limit) * 100, 100) : 0;
                 return (
@@ -246,10 +259,7 @@ const BudgetDashboardTab = ({ budgets: rawBudgets, overview, gatewayId }) => {
                           )
                         }
                       >
-                        {BUDGET_LEVEL_LABELS[b.level] ||
-                          BUDGET_LEVEL_LABELS[b.name] ||
-                          b.level ||
-                          b.name ||
+                        {getBudgetLevelLabel(b.level || b.name) ||
                           `Budget ${idx + 1}`}
                       </Typography>
                       <Stack direction="row" spacing={1} alignItems="center">
@@ -303,6 +313,15 @@ const BudgetConfigTab = ({ config }) => {
       {entries.length > 0 ? (
         entries.map((budget, idx) => {
           const level = budget.level || budget.name || `Budget ${idx + 1}`;
+          const hardCap =
+            getBudgetValue(budget, "hard_cap", "hardCap") ??
+            getBudgetValue(budget, "max");
+          const alertThreshold = getBudgetValue(
+            budget,
+            "alert_threshold",
+            "alertThreshold",
+          );
+          const resetDay = getBudgetValue(budget, "reset_day", "resetDay");
           return (
             <Card key={level}>
               <CardContent>
@@ -312,7 +331,9 @@ const BudgetConfigTab = ({ config }) => {
                   alignItems="center"
                   mb={1.5}
                 >
-                  <Typography variant="h6">{level}</Typography>
+                  <Typography variant="h6">
+                    {getBudgetLevelLabel(level)}
+                  </Typography>
                   <Chip
                     label={getBudgetAction(budget)}
                     color={
@@ -344,7 +365,7 @@ const BudgetConfigTab = ({ config }) => {
                       </Typography>
                     </Stack>
                   )}
-                  {(budget.hard_cap ?? budget.max) != null && (
+                  {hardCap != null && (
                     <Stack direction="row" spacing={2}>
                       <Typography
                         variant="body2"
@@ -357,11 +378,11 @@ const BudgetConfigTab = ({ config }) => {
                         variant="body2"
                         sx={{ fontFamily: "monospace" }}
                       >
-                        {formatCost(budget.hard_cap ?? budget.max)}
+                        {formatCost(hardCap)}
                       </Typography>
                     </Stack>
                   )}
-                  {budget.alert_threshold != null && (
+                  {alertThreshold != null && (
                     <Stack direction="row" spacing={2}>
                       <Typography
                         variant="body2"
@@ -370,9 +391,7 @@ const BudgetConfigTab = ({ config }) => {
                       >
                         Alert Threshold
                       </Typography>
-                      <Typography variant="body2">
-                        {budget.alert_threshold}%
-                      </Typography>
+                      <Typography variant="body2">{alertThreshold}%</Typography>
                     </Stack>
                   )}
                   {budget.period && (
@@ -387,7 +406,7 @@ const BudgetConfigTab = ({ config }) => {
                       <Typography variant="body2">{budget.period}</Typography>
                     </Stack>
                   )}
-                  {budget.reset_day != null && (
+                  {resetDay != null && (
                     <Stack direction="row" spacing={2}>
                       <Typography
                         variant="body2"
@@ -396,9 +415,7 @@ const BudgetConfigTab = ({ config }) => {
                       >
                         Reset Day
                       </Typography>
-                      <Typography variant="body2">
-                        {budget.reset_day}
-                      </Typography>
+                      <Typography variant="body2">{resetDay}</Typography>
                     </Stack>
                   )}
                   {budget.description && (
@@ -567,47 +584,51 @@ const AuditLogTab = ({ gatewayId }) => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {logList.slice(0, 25).map((log) => (
-                <TableRow key={log.id}>
-                  <TableCell>
-                    <Typography variant="body2" fontSize="0.75rem">
-                      {log.startedAt
-                        ? new Date(log.startedAt).toLocaleString()
-                        : "\u2014"}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {log.isError ? "Error" : "Request"}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {log.model || "\u2014"}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography
-                      variant="body2"
-                      sx={{ fontFamily: "monospace", fontSize: "0.7rem" }}
-                    >
-                      {log.apiKeyId?.substring(0, 12) || "\u2014"}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {formatCost(log.cost)}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      label={log.status_code || "\u2014"}
-                      color={log.isError ? "error" : "success"}
-                      size="small"
-                    />
-                  </TableCell>
-                </TableRow>
-              ))}
+              {logList.slice(0, 25).map((log) => {
+                const isError = log.is_error ?? Number(log.status_code) >= 400;
+
+                return (
+                  <TableRow key={log.id}>
+                    <TableCell>
+                      <Typography variant="body2" fontSize="0.75rem">
+                        {log.started_at
+                          ? new Date(log.started_at).toLocaleString()
+                          : "\u2014"}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {isError ? "Error" : "Request"}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {log.model || "\u2014"}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography
+                        variant="body2"
+                        sx={{ fontFamily: "monospace", fontSize: "0.7rem" }}
+                      >
+                        {log.api_key_id?.substring(0, 12) || "\u2014"}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {formatCost(log.cost)}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        label={log.status_code || "\u2014"}
+                        color={isError ? "error" : "success"}
+                        size="small"
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
               {logList.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} align="center">

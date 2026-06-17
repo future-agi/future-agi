@@ -29,6 +29,7 @@ import {
   authenticateConnector,
   updateConnectorTools,
 } from "src/sections/falcon-ai/hooks/useFalconAPI";
+import { buildConnectorSavePayload } from "./utils";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -907,10 +908,13 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
     setSaving(true);
     setError(null);
     try {
+      const payload = buildConnectorSavePayload(form, {
+        preserveEmptySecret: isEdit,
+      });
       if (isEdit) {
-        await updateConnector(connector.id, form);
+        await updateConnector(connector.id, payload);
       } else {
-        await createConnector(form);
+        await createConnector(payload);
       }
       onSaved();
     } catch (err) {

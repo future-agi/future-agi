@@ -4,11 +4,19 @@ Tests for Phase 9: Ground Truth.
 
 import io
 import json
+import uuid
 
 import pytest
 
+from accounts.models import Organization, User
+from accounts.models.workspace import Workspace
 from model_hub.models.choices import OwnerChoices
-from model_hub.models.evals_metric import EvalGroundTruth, EvalTemplate
+from model_hub.models.evals_metric import (
+    EvalGroundTruth,
+    EvalGroundTruthEmbedding,
+    EvalTemplate,
+)
+from tfc.constants.roles import OrganizationRoles
 
 
 @pytest.fixture
@@ -38,7 +46,79 @@ def ground_truth(eval_template, organization):
         ],
         row_count=3,
         organization=organization,
+        workspace=eval_template.workspace,
     )
+
+
+def create_other_org_ground_truth():
+    suffix = uuid.uuid4().hex[:8]
+    other_org = Organization.objects.create(name=f"Other GT Org {suffix}")
+    other_user = User.objects.create_user(
+        email=f"other-gt-{suffix}@futureagi.com",
+        password="testpassword123",
+        name="Other GT User",
+        organization=other_org,
+        organization_role=OrganizationRoles.OWNER,
+    )
+    other_workspace = Workspace.objects.create(
+        name=f"Other GT Workspace {suffix}",
+        organization=other_org,
+        is_default=True,
+        is_active=True,
+        created_by=other_user,
+    )
+    other_template = EvalTemplate.no_workspace_objects.create(
+        name=f"other-gt-eval-{suffix}",
+        organization=other_org,
+        workspace=other_workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "Pass/Fail", "required_keys": ["input"]},
+        criteria="Compare {{input}}",
+        visible_ui=True,
+    )
+    other_gt = EvalGroundTruth.objects.create(
+        eval_template=other_template,
+        name=f"other-gt-{suffix}",
+        file_name="other.csv",
+        columns=["input"],
+        data=[{"input": "secret"}],
+        row_count=1,
+        organization=other_org,
+        workspace=other_workspace,
+    )
+    return other_template, other_gt
+
+
+def create_same_org_other_workspace_ground_truth(organization, user):
+    suffix = uuid.uuid4().hex[:8]
+    other_workspace = Workspace.objects.create(
+        name=f"Other Same Org GT Workspace {suffix}",
+        organization=organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    other_template = EvalTemplate.no_workspace_objects.create(
+        name=f"same-org-other-workspace-gt-eval-{suffix}",
+        organization=organization,
+        workspace=other_workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "Pass/Fail", "required_keys": ["input"]},
+        criteria="Compare {{input}}",
+        visible_ui=True,
+    )
+    other_gt = EvalGroundTruth.no_workspace_objects.create(
+        eval_template=other_template,
+        name=f"same-org-other-workspace-gt-{suffix}",
+        file_name="other-workspace.csv",
+        columns=["input", "expected"],
+        data=[{"input": "secret", "expected": "hidden"}],
+        row_count=1,
+        embedding_status="completed",
+        organization=organization,
+        workspace=other_workspace,
+    )
+    return other_template, other_gt
 
 
 # =========================================================================
@@ -93,6 +173,36 @@ class TestGroundTruthUploadAPI:
         assert result["row_count"] == 2
         assert set(result["columns"]) == {"question", "answer", "score"}
 
+    def test_upload_csv_file_with_multipart_json_mapping(
+        self, auth_client, eval_template
+    ):
+        csv_content = "question,answer\nWhat is 1+1?,2\n"
+        csv_file = io.BytesIO(csv_content.encode("utf-8"))
+        csv_file.name = "mapped_data.csv"
+
+        response = auth_client.post(
+            self._url(eval_template.id),
+            {
+                "file": csv_file,
+                "name": "mapped-upload",
+                "variable_mapping": json.dumps(
+                    {"input": "question", "expected": "answer"}
+                ),
+                "role_mapping": json.dumps(
+                    {"input": "question", "expected_output": "answer"}
+                ),
+            },
+            format="multipart",
+        )
+
+        assert response.status_code == 200, response.data
+        gt = EvalGroundTruth.objects.get(id=response.data["result"]["id"])
+        assert gt.variable_mapping == {"input": "question", "expected": "answer"}
+        assert gt.role_mapping == {
+            "input": "question",
+            "expected_output": "answer",
+        }
+
     def test_upload_json_file(self, auth_client, eval_template):
         json_data = [
             {"input": "hello", "output": "world"},
@@ -123,6 +233,23 @@ class TestGroundTruthUploadAPI:
         response = auth_client.post(
             "/model-hub/eval-templates/00000000-0000-0000-0000-000000000000/ground-truth/upload/",
             {"name": "gt", "columns": ["a"], "data": [{"a": 1}]},
+            format="json",
+        )
+        assert response.status_code == 404
+
+    def test_upload_rejects_same_org_other_workspace_template(
+        self, auth_client, organization, user
+    ):
+        other_template, _ = create_same_org_other_workspace_ground_truth(
+            organization, user
+        )
+        response = auth_client.post(
+            self._url(other_template.id),
+            {
+                "name": "cross-workspace-gt",
+                "columns": ["input"],
+                "data": [{"input": "secret"}],
+            },
             format="json",
         )
         assert response.status_code == 404
@@ -178,6 +305,20 @@ class TestGroundTruthListAPI:
         assert item["name"] == "test-gt"
         assert item["row_count"] == 3
         assert item["embedding_status"] == "pending"
+
+    def test_list_rejects_other_org_template(self, auth_client):
+        other_template, _ = create_other_org_ground_truth()
+        response = auth_client.get(self._url(other_template.id))
+        assert response.status_code == 404
+
+    def test_list_rejects_same_org_other_workspace_template(
+        self, auth_client, organization, user
+    ):
+        other_template, _ = create_same_org_other_workspace_ground_truth(
+            organization, user
+        )
+        response = auth_client.get(self._url(other_template.id))
+        assert response.status_code == 404
 
 
 # =========================================================================
@@ -302,6 +443,18 @@ class TestGroundTruthDataAPI:
         )
         assert response.status_code == 404
 
+    def test_data_rejects_other_org_ground_truth(self, auth_client):
+        _, other_gt = create_other_org_ground_truth()
+        response = auth_client.get(self._url(other_gt.id))
+        assert response.status_code == 404
+
+    def test_data_rejects_same_org_other_workspace_ground_truth(
+        self, auth_client, organization, user
+    ):
+        _, other_gt = create_same_org_other_workspace_ground_truth(organization, user)
+        response = auth_client.get(self._url(other_gt.id))
+        assert response.status_code == 404
+
 
 # =========================================================================
 # Status API
@@ -349,6 +502,7 @@ class TestGroundTruthDeleteAPI:
         # Verify soft-deleted
         ground_truth.refresh_from_db()
         assert ground_truth.deleted is True
+        assert ground_truth.deleted_at is not None
 
     def test_delete_nonexistent(self, auth_client):
         response = auth_client.delete(
@@ -416,10 +570,213 @@ class TestGroundTruthConfigAPI:
         )
         assert response.status_code == 400
 
+    def test_config_rejects_same_org_other_workspace_ground_truth(
+        self, auth_client, eval_template, organization, user
+    ):
+        _, other_gt = create_same_org_other_workspace_ground_truth(organization, user)
+        response = auth_client.put(
+            self._url(eval_template.id),
+            {
+                "enabled": True,
+                "ground_truth_id": str(other_gt.id),
+            },
+            format="json",
+        )
+        assert response.status_code == 400
+
+    def test_config_rejects_same_org_other_workspace_template(
+        self, auth_client, organization, user
+    ):
+        other_template, _ = create_same_org_other_workspace_ground_truth(
+            organization, user
+        )
+        response = auth_client.get(self._url(other_template.id))
+        assert response.status_code == 404
+
     def test_config_nonexistent_template(self, auth_client):
         response = auth_client.get(
             "/model-hub/eval-templates/00000000-0000-0000-0000-000000000000/ground-truth-config/"
         )
+        assert response.status_code == 404
+
+
+# =========================================================================
+# Search API
+# =========================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db
+class TestGroundTruthSearchAPI:
+    def _url(self, gt_id):
+        return f"/model-hub/ground-truth/{gt_id}/search/"
+
+    def test_search_requires_completed_embeddings(self, auth_client, ground_truth):
+        response = auth_client.post(
+            self._url(ground_truth.id),
+            {"query": "hello world", "max_results": 2},
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "Embeddings not ready" in response.data["message"]
+
+    def test_search_returns_similar_rows(
+        self, auth_client, ground_truth, monkeypatch
+    ):
+        ground_truth.embedding_status = "completed"
+        ground_truth.embedded_row_count = 3
+        ground_truth.save(
+            update_fields=["embedding_status", "embedded_row_count", "updated_at"]
+        )
+        EvalGroundTruthEmbedding.objects.create(
+            ground_truth=ground_truth,
+            row_index=0,
+            text_content="input: hello\nexpected_output: world",
+            embedding=[1.0, 0.0],
+            row_data=ground_truth.data[0],
+        )
+        EvalGroundTruthEmbedding.objects.create(
+            ground_truth=ground_truth,
+            row_index=1,
+            text_content="input: foo\nexpected_output: bar",
+            embedding=[0.1, 0.9],
+            row_data=ground_truth.data[1],
+        )
+        EvalGroundTruthEmbedding.objects.create(
+            ground_truth=ground_truth,
+            row_index=2,
+            text_content="input: alpha\nexpected_output: beta",
+            embedding=[-1.0, 0.0],
+            row_data=ground_truth.data[2],
+        )
+
+        monkeypatch.setattr(
+            "model_hub.utils.ground_truth_retrieval.generate_embedding",
+            lambda text: [1.0, 0.0],
+        )
+
+        response = auth_client.post(
+            self._url(ground_truth.id),
+            {"query": "hello", "max_results": 2},
+            format="json",
+        )
+
+        assert response.status_code == 200, response.data
+        result = response.data["result"]
+        assert result["query"] == "hello"
+        assert result["total"] == 2
+        assert result["results"][0]["row_index"] == 0
+        assert result["results"][0]["row_data"]["input"] == "hello"
+        assert result["results"][0]["similarity"] == 1.0
+
+    def test_search_rejects_same_org_other_workspace_ground_truth(
+        self, auth_client, organization, user
+    ):
+        _, other_gt = create_same_org_other_workspace_ground_truth(organization, user)
+        response = auth_client.post(
+            self._url(other_gt.id),
+            {"query": "secret", "max_results": 1},
+            format="json",
+        )
+        assert response.status_code == 404
+
+
+# =========================================================================
+# Embed API
+# =========================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db
+class TestGroundTruthEmbedAPI:
+    def _url(self, gt_id):
+        return f"/model-hub/ground-truth/{gt_id}/embed/"
+
+    def test_embed_rejects_empty_ground_truth(
+        self, auth_client, eval_template, organization, workspace
+    ):
+        empty_gt = EvalGroundTruth.objects.create(
+            eval_template=eval_template,
+            name="empty-gt",
+            file_name="empty.json",
+            columns=["input"],
+            data=[],
+            row_count=0,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        response = auth_client.post(self._url(empty_gt.id), {}, format="json")
+        assert response.status_code == 400
+        assert response.data["message"] == "No data rows to embed."
+
+    def test_embed_rejects_processing_ground_truth(self, auth_client, ground_truth):
+        ground_truth.embedding_status = "processing"
+        ground_truth.save(update_fields=["embedding_status", "updated_at"])
+
+        response = auth_client.post(self._url(ground_truth.id), {}, format="json")
+        assert response.status_code == 400
+        assert response.data["message"] == "Embedding generation is already in progress."
+
+    def test_embed_resets_status_and_triggers_workflow(
+        self, auth_client, ground_truth, monkeypatch
+    ):
+        calls = []
+
+        async def fake_trigger_embedding_generation(ground_truth_id):
+            calls.append(ground_truth_id)
+            return "test-run-id"
+
+        monkeypatch.setattr(
+            "tfc.temporal.ground_truth.client.trigger_embedding_generation",
+            fake_trigger_embedding_generation,
+        )
+        ground_truth.embedding_status = "failed"
+        ground_truth.embedded_row_count = 2
+        ground_truth.save(
+            update_fields=["embedding_status", "embedded_row_count", "updated_at"]
+        )
+
+        response = auth_client.post(self._url(ground_truth.id), {}, format="json")
+
+        assert response.status_code == 200, response.data
+        result = response.data["result"]
+        assert result["id"] == str(ground_truth.id)
+        assert result["embedding_status"] == "pending"
+        assert calls == [str(ground_truth.id)]
+        ground_truth.refresh_from_db()
+        assert ground_truth.embedding_status == "pending"
+        assert ground_truth.embedded_row_count == 0
+
+    def test_embed_marks_failed_when_workflow_dispatch_fails(
+        self, auth_client, ground_truth, monkeypatch
+    ):
+        async def fake_trigger_embedding_generation(ground_truth_id):
+            return None
+
+        monkeypatch.setattr(
+            "tfc.temporal.ground_truth.client.trigger_embedding_generation",
+            fake_trigger_embedding_generation,
+        )
+        ground_truth.embedding_status = "completed"
+        ground_truth.embedded_row_count = 2
+        ground_truth.save(
+            update_fields=["embedding_status", "embedded_row_count", "updated_at"]
+        )
+
+        response = auth_client.post(self._url(ground_truth.id), {}, format="json")
+
+        assert response.status_code == 400
+        assert response.data["message"] == "Failed to trigger embedding generation."
+        ground_truth.refresh_from_db()
+        assert ground_truth.embedding_status == "failed"
+        assert ground_truth.embedded_row_count == 0
+
+    def test_embed_rejects_same_org_other_workspace_ground_truth(
+        self, auth_client, organization, user
+    ):
+        _, other_gt = create_same_org_other_workspace_ground_truth(organization, user)
+        response = auth_client.post(self._url(other_gt.id), {}, format="json")
         assert response.status_code == 404
 
 

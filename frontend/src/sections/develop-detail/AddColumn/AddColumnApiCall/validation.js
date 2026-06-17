@@ -20,7 +20,10 @@ export const getAddColumnApiCallValidation = (
         .transform((v) => {
           let content = v;
           allColumns.forEach(({ headerName, field }) => {
-            const pattern = new RegExp(`{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`, "g");
+            const pattern = new RegExp(
+              `{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`,
+              "g",
+            );
             content = content.replace(pattern, `{{${field}$1}}`);
           });
           return content;
@@ -40,7 +43,10 @@ export const getAddColumnApiCallValidation = (
             let val = curr.value;
             if (curr.type === "Variable") {
               allColumns.forEach(({ headerName, field }) => {
-                const p = new RegExp(`{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`, "g");
+                const p = new RegExp(
+                  `{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`,
+                  "g",
+                );
                 val = val.replace(p, `{{${field}$1}}`);
               });
             }
@@ -62,7 +68,10 @@ export const getAddColumnApiCallValidation = (
             let val = curr.value;
             if (curr.type === "Variable") {
               allColumns.forEach(({ headerName, field }) => {
-                const p = new RegExp(`{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`, "g");
+                const p = new RegExp(
+                  `{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`,
+                  "g",
+                );
                 val = val.replace(p, `{{${field}$1}}`);
               });
             }
@@ -77,7 +86,10 @@ export const getAddColumnApiCallValidation = (
           let content = v;
 
           allColumns.forEach(({ headerName, field }) => {
-            const pattern = new RegExp(`{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`, "g");
+            const pattern = new RegExp(
+              `{{\\s*${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`,
+              "g",
+            );
             content = content.replace(pattern, `{{${field}$1}}`);
           });
 

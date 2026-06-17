@@ -155,7 +155,7 @@ class TestExistingBehaviorPreserved:
             project_id=project_id, page_number=2, page_size=25
         )
         query, params = builder.build()
-        assert params["limit"] == 26  # page_size + 1
+        assert params["limit"] == 25  # page_size (no +1 for has_more)
         assert params["offset"] == 50  # page_number * page_size
 
     def test_root_span_filter(self, project_id):

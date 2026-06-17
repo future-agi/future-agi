@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { objectSnakeToCamel } from "src/utils/utils";
 
 // Mirrors `DeepAnalysisResponse.status` on the backend
 // (futureagi/tracer/types/feed_types.py:DeepAnalysisResponse).
@@ -62,7 +63,7 @@ export const useErrorFeedList = (params, options = {}) => {
     ...options,
     queryKey: KEYS.list(params),
     queryFn: () => axios.get(endpoints.errorFeed.list, { params }),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     staleTime: 30 * 1000,
     keepPreviousData: true,
   });
@@ -92,7 +93,7 @@ export const useErrorFeedDetail = (clusterId, options = {}) => {
     ...options,
     queryKey: KEYS.detail(clusterId),
     queryFn: () => axios.get(endpoints.errorFeed.detail(clusterId)),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     enabled,
   });
 };
@@ -107,7 +108,7 @@ export const useErrorFeedOverview = (clusterId, options = {}) => {
     ...options,
     queryKey: KEYS.overview(clusterId),
     queryFn: () => axios.get(endpoints.errorFeed.overview(clusterId)),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     enabled,
   });
 };
@@ -122,7 +123,7 @@ export const useErrorFeedTraces = (clusterId, params = {}, options = {}) => {
     ...options,
     queryKey: KEYS.traces(clusterId, params),
     queryFn: () => axios.get(endpoints.errorFeed.traces(clusterId), { params }),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     enabled,
     keepPreviousData: true,
   });
@@ -138,7 +139,7 @@ export const useErrorFeedTrends = (clusterId, params = {}, options = {}) => {
     ...options,
     queryKey: KEYS.trends(clusterId, params),
     queryFn: () => axios.get(endpoints.errorFeed.trends(clusterId), { params }),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     enabled,
   });
 };
@@ -161,7 +162,7 @@ export const useErrorFeedSidebar = (clusterId, traceId, options = {}) => {
       axios.get(endpoints.errorFeed.sidebar(clusterId), {
         params: traceId ? { trace_id: traceId } : undefined,
       }),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     enabled,
   });
 };
@@ -187,7 +188,7 @@ export const useErrorFeedDeepAnalysis = (clusterId, traceId, options = {}) => {
       axios.get(endpoints.errorFeed.rootCause(clusterId), {
         params: { trace_id: traceId },
       }),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     enabled,
     // React Query v5 passes the Query instance to this callback, not the
     // selected data. Read the running flag off `query.state.data` (the raw
@@ -287,7 +288,14 @@ export const useCreateLinearIssue = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ clusterId, teamId, traceId, title, description, priority }) =>
+    mutationFn: ({
+      clusterId,
+      teamId,
+      traceId,
+      title,
+      description,
+      priority,
+    }) =>
       axios.post(endpoints.errorFeed.createLinearIssue(clusterId), {
         team_id: teamId,
         ...(traceId && { trace_id: traceId }),

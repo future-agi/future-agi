@@ -74,11 +74,11 @@ const EvalDrawerSection = () => {
           },
         },
       ),
-    select: (data) => data?.data?.errorLocalizerTasks || [],
+    select: (data) => data?.data?.error_localizer_tasks || [],
     refetchInterval: ({ state }) => {
-      const errorLocalizerTasks = state?.data?.data?.errorLocalizerTasks;
+      const errorLocalizerTasks = state?.data?.data?.error_localizer_tasks;
       const errorLocalizerTask = errorLocalizerTasks?.find(
-        (task) => task.evalConfigId === evalView?.metricDetail?.id,
+        (task) => task.eval_config_id === evalView?.metricDetail?.id,
       );
       if (ERROR_LOCALIZER_REFETCH_STATUS.includes(errorLocalizerTask?.status)) {
         return ERROR_LOCALIZER_REFETCH_INTERVAL;
@@ -89,10 +89,10 @@ const EvalDrawerSection = () => {
   });
 
   const errorLocalizerTask = errorLocalizerDataList?.find(
-    (task) => task.evalConfigId === evalView?.metricDetail?.id,
+    (task) => task.eval_config_id === evalView?.metricDetail?.id,
   );
   const errorLocalizerTaskStatus = errorLocalizerTask?.status;
-  const errorAnalysis = errorLocalizerTask?.errorAnalysis;
+  const errorAnalysis = errorLocalizerTask?.error_analysis;
   const isErrorLocalizerTaskRunning = ERROR_LOCALIZER_REFETCH_STATUS.includes(
     errorLocalizerTaskStatus,
   );

@@ -1,63 +1,60 @@
-import json
 import traceback
 
 import structlog
+from django.http import Http404
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
 from model_hub.schema.prompt.prompt_metrics import FetchPromptMetricsRequest
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    PromptMetricsEmptyScreenResponseSerializer,
+    PromptMetricsQuerySerializer,
+    PromptMetricsResponseSerializer,
+)
 from model_hub.services.prompt_metrics import (
     fetch_prompt_metrics,
     fetch_prompt_metrics_span_view,
 )
-from tfc.utils.error_codes import get_error_message
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
+
+logger = structlog.get_logger(__name__)
 
 
 class FetchPromptObserveMetricsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        query_serializer=PromptMetricsQuerySerializer,
+        responses={200: PromptMetricsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def get(self, request):
         try:
-            filters = request.query_params.get(
-                "filters", []
-            ) or request.query_params.get("filters", [])
-            prompt_template_id = request.query_params.get(
-                "prompt_template_id", None
-            ) or request.query_params.get("promptTemplateId", None)
-            page_number = int(self.request.query_params.get("page_number", 0)) or int(
-                self.request.query_params.get("pageNumber", 0)
-            )
-            page_size = int(self.request.query_params.get("page_size", 10)) or int(
-                self.request.query_params.get("pageSize", 10)
-            )
-
-            if not prompt_template_id:
-                return self._gm.bad_request(
-                    get_error_message("PROMPT_TEMPLATE_ID_REQUIRED")
-                )
-            if filters:
-                filters = json.loads(filters)
+            query = request.validated_query_data
 
             request_data = FetchPromptMetricsRequest(
-                prompt_template_id=str(prompt_template_id),
+                prompt_template_id=str(query["prompt_template_id"]),
                 organization_id=str(
                     (
                         getattr(request, "organization", None)
                         or request.user.organization
                     ).id
                 ),
-                filters=filters,
-                page_number=page_number,
-                page_size=page_size,
+                filters=query["filters"],
+                page_number=query["page_number"],
+                page_size=query["page_size"],
             )
 
             response = fetch_prompt_metrics(request_data)
 
             return self._gm.success_response(response)
 
+        except Http404:
+            return self._gm.not_found("Prompt template not found")
         except Exception as e:
             logger.error(f"Error while fetching the prompt-observe metrics: {str(e)}")
             return self._gm.bad_request("Failed to fetch the prompt-observe metrics.")
@@ -67,47 +64,35 @@ class FetchPromptMetricsSpanView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        query_serializer=PromptMetricsQuerySerializer,
+        responses={200: PromptMetricsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def get(self, request):
         try:
-            filters = request.query_params.get("filters", [])
-            prompt_template_id = request.query_params.get(
-                "prompt_template_id", None
-            ) or request.query_params.get("promptTemplateId", None)
-            search_term = request.query_params.get(
-                "search_term", None
-            ) or request.query_params.get("searchTerm", None)
-            page_number = int(self.request.query_params.get("page_number", 0)) or int(
-                self.request.query_params.get("pageNumber", 0)
-            )
-            page_size = int(self.request.query_params.get("page_size", 10)) or int(
-                self.request.query_params.get("pageSize", 10)
-            )
-
-            if not prompt_template_id:
-                return self._gm.bad_request(
-                    get_error_message("PROMPT_TEMPLATE_ID_REQUIRED")
-                )
-            if filters:
-                filters = json.loads(filters)
+            query = request.validated_query_data
 
             request_data = FetchPromptMetricsRequest(
-                prompt_template_id=str(prompt_template_id),
+                prompt_template_id=str(query["prompt_template_id"]),
                 organization_id=str(
                     (
                         getattr(request, "organization", None)
                         or request.user.organization
                     ).id
                 ),
-                filters=filters,
-                search_term=search_term,
-                page_number=page_number,
-                page_size=page_size,
+                filters=query["filters"],
+                search_term=query["search_term"],
+                page_number=query["page_number"],
+                page_size=query["page_size"],
             )
 
             response = fetch_prompt_metrics_span_view(request_data)
 
             return self._gm.success_response(response)
 
+        except Http404:
+            return self._gm.not_found("Prompt template not found")
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error while fetching the prompt-observe metrics: {str(e)}")
@@ -118,6 +103,12 @@ class FetchPromptMetricsNullView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: PromptMetricsEmptyScreenResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request):
         try:
             response = {

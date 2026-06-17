@@ -392,6 +392,7 @@ const LabelPanel = forwardRef(function LabelPanel(
 
   // Refs for flushing debounced text inputs before submit
   const textFlushRefs = useRef({});
+  const labelRefs = useRef(new Map());
   // Mirror of values state, always up-to-date (including after flush)
   const valuesRef = useRef(values);
   valuesRef.current = values;
@@ -596,8 +597,21 @@ const LabelPanel = forwardRef(function LabelPanel(
         setFocusedIndex((prev) => {
           const total = labels.length;
           if (total === 0) return 0;
-          if (e.shiftKey) return (prev - 1 + total) % total;
-          return (prev + 1) % total;
+          const next = e.shiftKey
+            ? (prev - 1 + total) % total
+            : (prev + 1) % total;
+          window.requestAnimationFrame(() => {
+            const nextLabel = labels[next];
+            const node = labelRefs.current.get(
+              String(nextLabel?.label_id || ""),
+            );
+            node?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+            const focusTarget = node?.querySelector(
+              'input, textarea, button, [tabindex]:not([tabindex="-1"])',
+            );
+            focusTarget?.focus?.({ preventScroll: true });
+          });
+          return next;
         });
         return;
       }
@@ -1037,6 +1051,11 @@ const LabelPanel = forwardRef(function LabelPanel(
           return (
             <Box
               key={ql.id}
+              ref={(node) => {
+                const key = String(labelId || "");
+                if (node) labelRefs.current.set(key, node);
+                else labelRefs.current.delete(key);
+              }}
               data-review-label-id={labelId}
               data-comment-focus={labelFocused ? "true" : undefined}
               onClick={() => !readOnly && setFocusedIndex(i)}
@@ -1175,51 +1194,66 @@ const LabelPanel = forwardRef(function LabelPanel(
 
       {/* Submit (hidden in read-only mode) */}
       {!readOnly && (
-        <Tooltip title="Ctrl+Enter" placement="top">
-          <span>
-            <Button
-              variant="contained"
-              fullWidth
-              color="inherit"
-              sx={{
-                mt: 2,
-                borderRadius: 0.75,
-                minHeight: 42,
-                fontWeight: 800,
-                bgcolor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? theme.palette.common.white
-                    : theme.palette.grey[900],
-                color: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? theme.palette.grey[900]
-                    : theme.palette.common.white,
-                boxShadow: "none",
-                "&:hover": {
+        <Box
+          data-testid="annotation-submit-action"
+          data-sticky-action="true"
+          sx={{
+            position: "sticky",
+            bottom: 0,
+            zIndex: 2,
+            mt: 2,
+            pt: 1.25,
+            pb: 0.5,
+            bgcolor: "background.paper",
+            borderTop: 1,
+            borderColor: "divider",
+          }}
+        >
+          <Tooltip title="Ctrl+Enter" placement="top">
+            <span>
+              <Button
+                variant="contained"
+                fullWidth
+                color="inherit"
+                sx={{
+                  borderRadius: 0.75,
+                  minHeight: 42,
+                  fontWeight: 800,
                   bgcolor: (theme) =>
                     theme.palette.mode === "dark"
-                      ? alpha(theme.palette.common.white, 0.92)
-                      : theme.palette.grey[800],
-                  boxShadow: (theme) =>
-                    `0 12px 24px ${alpha(theme.palette.text.primary, 0.14)}`,
-                },
-                "&.Mui-disabled": {
-                  color: "text.disabled",
-                  bgcolor: (theme) => quietSurface(theme, 0.08),
-                },
-              }}
-              onClick={handleSubmit}
-              disabled={isPending || !hasValues}
-              startIcon={
-                isPending ? (
-                  <CircularProgress size={16} color="inherit" />
-                ) : null
-              }
-            >
-              {submitLabel}
-            </Button>
-          </span>
-        </Tooltip>
+                      ? theme.palette.common.white
+                      : theme.palette.grey[900],
+                  color: (theme) =>
+                    theme.palette.mode === "dark"
+                      ? theme.palette.grey[900]
+                      : theme.palette.common.white,
+                  boxShadow: "none",
+                  "&:hover": {
+                    bgcolor: (theme) =>
+                      theme.palette.mode === "dark"
+                        ? alpha(theme.palette.common.white, 0.92)
+                        : theme.palette.grey[800],
+                    boxShadow: (theme) =>
+                      `0 12px 24px ${alpha(theme.palette.text.primary, 0.14)}`,
+                  },
+                  "&.Mui-disabled": {
+                    color: "text.disabled",
+                    bgcolor: (theme) => quietSurface(theme, 0.08),
+                  },
+                }}
+                onClick={handleSubmit}
+                disabled={isPending || !hasValues}
+                startIcon={
+                  isPending ? (
+                    <CircularProgress size={16} color="inherit" />
+                  ) : null
+                }
+              >
+                {submitLabel}
+              </Button>
+            </span>
+          </Tooltip>
+        </Box>
       )}
     </Box>
   );

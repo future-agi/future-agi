@@ -3,11 +3,14 @@ import PropTypes from "prop-types";
 import { useWatch } from "react-hook-form";
 import { Box, Stack } from "@mui/material";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
+import { RANGE_FILTER_OPS } from "src/api/contracts/filter-contract.generated";
+
+const RangeOperators = new Set(RANGE_FILTER_OPS);
 
 const NumberQuickFilterValue = ({ control }) => {
   const operator = useWatch({ control, name: "operator" });
 
-  if (operator === "between" || operator === "not_in_between") {
+  if (RangeOperators.has(operator)) {
     return (
       <Stack direction="row" gap={1} alignItems="flex-start">
         <FormTextFieldV2

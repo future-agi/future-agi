@@ -5,8 +5,13 @@ import PropTypes from "prop-types";
 
 // Agent type configs (used in scenarios and agent-definitions)
 const AGENT_TYPE_CONFIG = {
+  text: { label: "Chat", icon: "/assets/icons/ic_chat_single.svg" },
   prompt: { label: "Prompt", icon: "/assets/icons/navbar/ic_prompt.svg" },
   chat: { label: "Chat", icon: "/assets/icons/ic_chat_single.svg" },
+  voice: {
+    label: "Voice",
+    icon: "/assets/icons/ic_phone_call.svg",
+  },
   inbound: {
     label: "Voice Inbound",
     icon: "/assets/icons/ic_phone_call.svg",

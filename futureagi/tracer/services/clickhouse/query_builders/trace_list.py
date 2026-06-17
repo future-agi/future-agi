@@ -121,6 +121,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -134,7 +136,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         # Pagination
         offset = self.page_number * self.page_size
-        self.params["limit"] = self.page_size + 1  # +1 for has_more detection
+        self.params["limit"] = self.page_size
         self.params["offset"] = offset
 
         # Build optional filter fragment
@@ -184,7 +186,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             trace_session_id,
             project_id"""
 
-        # Phase 1: light columns only (no input/output/span_attr/metadata).
+        # Phase 1: light columns only (no input/output/attrs/metadata).
         # Heavy columns are fetched in build_content_query() for just the
         # returned trace_ids — avoids OOM on large tables.
         #
@@ -243,14 +245,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             trace_id,
             input,
             output,
-            span_attr_str,
-            span_attr_num,
-            metadata_map,
-            trace_tags
+            attrs_string,
+            attrs_number,
+            toJSONString(metadata) AS metadata,
+            dictGetOrDefault('trace_dict', 'tags', toUUID(trace_id), '[]') AS trace_tags
         FROM {self.TABLE}
         PREWHERE trace_id IN %(content_trace_ids)s
         WHERE {self.project_filter_sql()}
-          AND _peerdb_is_deleted = 0
+          AND is_deleted = 0
           AND (parent_span_id IS NULL OR parent_span_id = '')
         LIMIT 1 BY trace_id
         """
@@ -271,13 +273,13 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         query = f"""
         SELECT
             trace_id,
-            span_attributes_raw
+            attributes_extra
         FROM {self.TABLE}
         PREWHERE trace_id IN %(attr_trace_ids)s
         WHERE {self.project_filter_sql()}
-          AND _peerdb_is_deleted = 0
-          AND span_attributes_raw != '{{}}'
-          AND span_attributes_raw != ''
+          AND is_deleted = 0
+          AND attributes_extra != '{{}}'
+          AND attributes_extra != ''
         """
         return query, params
 
@@ -290,6 +292,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         # Merge params -- reuse the same start/end dates
@@ -352,7 +356,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         FROM {self.TABLE}
         WHERE {self.project_filter_sql()}
           AND trace_id IN %(sc_trace_ids)s
-          AND _peerdb_is_deleted = 0
+          AND is_deleted = 0
         GROUP BY trace_id
         """
         return query, params
@@ -401,6 +405,23 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             "eval_config_ids": tuple(self.eval_config_ids),
         }
 
+        # Partition-prune `tracer_eval_logger` (PARTITION BY toYYYYMM(created_at))
+        # so the FINAL merge can skip months that cannot match this page.
+        # The page of trace_ids was selected by build() within the user's
+        # [start_date, end_date] window on `start_time`, so the matching eval
+        # rows' `created_at` falls inside that window plus ingestion skew. A
+        # lower-bound-only filter with a 1-day skew buffer (identical to the
+        # mitigation in build()/build_count_query()) prunes old partitions
+        # without dropping any legitimately-matching eval row. Guarded on
+        # self.start_date so callers that invoke build_eval_query() without a
+        # prior build() (e.g. unit tests) keep their current behavior.
+        created_at_fragment = ""
+        if self.start_date is not None:
+            params["start_date"] = self.start_date
+            created_at_fragment = (
+                "AND created_at >= %(start_date)s - INTERVAL 1 DAY"
+            )
+
         # Include errored rows but compute aggregates only over successful
         # rows (error = 0). ``success_count`` / ``error_count`` let the
         # pivot surface an explicit error state on the UI when every eval
@@ -446,6 +467,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
           AND (deleted = 0 OR deleted IS NULL)
           AND trace_id IN %(trace_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
+          {created_at_fragment}
         GROUP BY trace_id, custom_eval_config_id
         """
         return query, params

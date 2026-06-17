@@ -261,7 +261,8 @@ const DatapointDrawerChild = () => {
 
   const { data: averageMetaData } = useQuery({
     queryKey: ["dataset-detail-average", dataset],
-    select: (d) => d.data?.result?.columnConfig,
+    select: (d) =>
+      d.data?.result?.column_config ?? d.data?.result?.columnConfig,
     enabled: false,
   });
 
@@ -367,7 +368,9 @@ const DatapointDrawerChild = () => {
       return null;
     }
   });
-  const evalOutput = evalOpen?.valueInfos?.output;
+  const evalValueInfos = evalOpen?.value_infos
+  const evalCellValue = evalOpen?.cell_value 
+  const evalOutput = evalValueInfos?.output;
 
   const loading = false;
 
@@ -453,9 +456,9 @@ const DatapointDrawerChild = () => {
   };
 
   const finalArray = useMemo(() => {
-    const v = normalizeEvalCellValue(evalOpen?.cellValue);
+    const v = normalizeEvalCellValue(evalCellValue);
     return Array.isArray(v) ? v : undefined;
-  }, [evalOpen?.cellValue]);
+  }, [evalCellValue]);
 
   const onNavigate = async (direction) => {
     isNavigatingRef.current = true;
@@ -520,9 +523,11 @@ const DatapointDrawerChild = () => {
         const mergedRows = [...rows];
         try {
           const nextIds = await getNextItemIds({
-            row_id: datapoint?.rowData?.rowId,
+            row_id: datapoint?.rowData?.row_id ?? datapoint?.rowData?.rowId,
           });
-          const newIds = nextIds?.data?.result?.next?.rowId;
+          const newIds =
+            nextIds?.data?.result?.next?.row_id ??
+            nextIds?.data?.result?.next?.rowId;
           if (newIds && newIds?.length > 0) {
             newIds.forEach((id) => {
               mergedRows.push({ rowData: null, id: id });
@@ -673,7 +678,8 @@ const DatapointDrawerChild = () => {
                 sources={[
                   {
                     sourceType: "dataset_row",
-                    sourceId: datapoint?.rowData?.rowId,
+                    sourceId:
+                      datapoint?.rowData?.row_id ?? datapoint?.rowData?.rowId,
                   },
                 ]}
                 onClose={() => setAnnotateOpen(false)}
@@ -770,19 +776,19 @@ const DatapointDrawerChild = () => {
                         Error
                       </Box>
                     ) : (
-                      hasRenderableCellValue(evalOpen?.cellValue) && (
+                      hasRenderableCellValue(evalCellValue) && (
                         <>
                           <ShowComponent condition={!Array.isArray(finalArray)}>
                             <Chip
                               variant="soft"
-                              label={getLabel(evalOpen?.cellValue)}
+                              label={getLabel(evalCellValue)}
                               size="small"
                               sx={{
-                                ...getStatusColor(evalOpen?.cellValue, theme),
+                                ...getStatusColor(evalCellValue, theme),
                                 transition: "none",
                                 "&:hover": {
                                   backgroundColor: getStatusColor(
-                                    evalOpen?.cellValue,
+                                    evalCellValue,
                                     theme,
                                   ).backgroundColor,
                                   boxShadow: "none",
@@ -808,7 +814,9 @@ const DatapointDrawerChild = () => {
                                 }}
                               />
                             </ShowComponent>
-                            <ShowComponent condition={(finalArray?.length ?? 0) > 0}>
+                            <ShowComponent
+                              condition={(finalArray?.length ?? 0) > 0}
+                            >
                               {finalArray?.map((val) => (
                                 <Chip
                                   key={val}
@@ -817,14 +825,14 @@ const DatapointDrawerChild = () => {
                                   size="small"
                                   sx={{
                                     ...getStatusColor(
-                                      evalOpen?.cellValue,
+                                      evalCellValue,
                                       theme,
                                     ),
                                     marginRight: theme.spacing(1),
                                     transition: "none",
                                     "&:hover": {
                                       backgroundColor: getStatusColor(
-                                        evalOpen?.cellValue,
+                                        evalCellValue,
                                         theme,
                                       ).backgroundColor,
                                       boxShadow: "none",
@@ -863,26 +871,26 @@ const DatapointDrawerChild = () => {
                       borderRadius: "4px",
                     }}
                   >
-                    {Array.isArray(evalOpen?.valueInfos?.children) &&
-                    evalOpen.valueInfos.children.length > 0 ? (
+                    {Array.isArray(evalValueInfos?.children) &&
+                    evalValueInfos.children.length > 0 ? (
                       (() => {
                         /** @type {any[]} */
                         const compositeChildren =
-                          evalOpen.valueInfos.children || [];
+                          evalValueInfos.children || [];
                         return (
                           <CompositeResultView
                             compositeResult={{
-                              ...evalOpen.valueInfos,
+                              ...evalValueInfos,
                               total_children:
-                                evalOpen.valueInfos.total_children ??
+                                evalValueInfos.total_children ??
                                 compositeChildren.length,
                               completed_children:
-                                evalOpen.valueInfos.completed_children ??
+                                evalValueInfos.completed_children ??
                                 compositeChildren.filter(
                                   (child) => child.status === "completed",
                                 ).length,
                               failed_children:
-                                evalOpen.valueInfos.failed_children ??
+                                evalValueInfos.failed_children ??
                                 compositeChildren.filter(
                                   (child) => child.status === "failed",
                                 ).length,
@@ -890,13 +898,13 @@ const DatapointDrawerChild = () => {
                           />
                         );
                       })()
-                    ) : evalOpen?.valueInfos?.reason?.trim() ||
-                      evalOpen?.valueInfos?.summary ? (
+                    ) : evalValueInfos?.reason?.trim() ||
+                      evalValueInfos?.summary ? (
                       <CellMarkdown
                         spacing={0}
                         text={
-                          evalOpen?.valueInfos?.reason ||
-                          evalOpen?.valueInfos?.summary
+                          evalValueInfos?.reason ||
+                          evalValueInfos?.summary
                         }
                       />
                     ) : (
@@ -919,8 +927,8 @@ const DatapointDrawerChild = () => {
                         prev
                           ? {
                               ...prev,
-                              valueInfos: {
-                                ...(prev.valueInfos || {}),
+                              value_infos: {
+                                ...(prev.value_infos ?? prev.valueInfos ?? {}),
                                 errorAnalysis: details?.error_analysis,
                                 input_data: details?.input_data,
                                 input_types: details?.input_types,
@@ -985,7 +993,9 @@ const DatapointDrawerChild = () => {
                         [PropertyName.datasetId]: dataset,
                         [PropertyName.evalId]:
                           evalOpen?.evalMetricId || column?.headerName,
-                        [PropertyName.rowIdentifier]: datapoint?.rowData?.rowId,
+                        [PropertyName.rowIdentifier]:
+                          datapoint?.rowData?.row_id ??
+                          datapoint?.rowData?.rowId,
                       });
                     }}
                     sx={{
@@ -1221,7 +1231,9 @@ const DatapointDrawerChild = () => {
               {/* Existing annotations */}
               <ScoresListSection
                 sourceType="dataset_row"
-                sourceId={datapoint?.rowData?.rowId}
+                sourceId={
+                  datapoint?.rowData?.row_id ?? datapoint?.rowData?.rowId
+                }
               />
             </Box>
           </Box>
@@ -1286,8 +1298,8 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
   useEffect(() => {
     onAnalysisLoadedRef.current = onAnalysisLoaded;
   }, [onAnalysisLoaded]);
-  const valueInfos = evalOpen?.valueInfos;
-  const inlineAnalysis = valueInfos?.errorAnalysis;
+  const valueInfos = evalOpen?.value_infos 
+  const inlineAnalysis = valueInfos?.error_analysis;
   const hasInlineAnalysis = !!(
     inlineAnalysis &&
     typeof inlineAnalysis === "object" &&

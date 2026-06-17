@@ -9,8 +9,6 @@ import {
 } from "../common";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import axios, { endpoints } from "src/utils/axios";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { parseISO } from "date-fns";
 import PropTypes from "prop-types";
 
@@ -35,7 +33,7 @@ const UserSummaryCardsSection = ({ setLastActiveDate }) => {
         project_id: selectedProjectId,
         end_user_id: selectedEndUserId,
         interval: dateInterval,
-        filters: canonicalizeApiFilterColumnIds(objectCamelToSnake(filters)),
+        filters,
       });
       return response.data;
     },

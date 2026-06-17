@@ -143,8 +143,8 @@ class TestVersionCreateAPI:
         assert r2.status_code == 200
         assert r1.data["result"]["version_number"] == 1
         assert r2.data["result"]["version_number"] == 2
-        # Latest should be default
-        assert r2.data["result"]["is_default"] is True
+        assert r1.data["result"]["is_default"] is True
+        assert r2.data["result"]["is_default"] is False
 
     def test_create_version_with_overrides(self, auth_client, user_template):
         response = auth_client.post(
@@ -157,7 +157,7 @@ class TestVersionCreateAPI:
         assert v.criteria == "New instructions {{var}}"
         assert v.model == "turing_flash"
 
-    def test_create_version_sets_new_default(self, auth_client, user_template):
+    def test_create_version_keeps_existing_default(self, auth_client, user_template):
         r1 = auth_client.post(self._url(user_template.id), {}, format="json")
         r2 = auth_client.post(self._url(user_template.id), {}, format="json")
 
@@ -165,8 +165,9 @@ class TestVersionCreateAPI:
         v2 = EvalTemplateVersion.objects.get(id=r2.data["result"]["id"])
 
         v1.refresh_from_db()
-        assert v1.is_default is False
-        assert v2.is_default is True
+        v2.refresh_from_db()
+        assert v1.is_default is True
+        assert v2.is_default is False
 
     def test_create_version_nonexistent_template(self, auth_client):
         response = auth_client.post(

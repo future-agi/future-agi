@@ -114,10 +114,10 @@ const PromptActions = () => {
       reset();
       trackEvent(Events.promptTemplateCreated, {
         [PropertyName.click]: true,
-        [PropertyName.promptId]: data?.data?.result?.rootTemplate,
+        [PropertyName.promptId]: data?.data?.result?.root_template,
       });
       navigate(
-        `/dashboard/workbench/create/${data?.data?.result?.rootTemplate}`,
+        `/dashboard/workbench/create/${data?.data?.result?.root_template}`,
         { replace: true },
       );
     },
@@ -140,7 +140,11 @@ const PromptActions = () => {
   //   filledPlaceholderLabels.includes(label),
   // );
 
-  const isVariablesDefined = useIsVariablesDefined(prompts, variableData, templateFormat);
+  const isVariablesDefined = useIsVariablesDefined(
+    prompts,
+    variableData,
+    templateFormat,
+  );
 
   const isSingleVersion = selectedVersions.length === 1;
 
@@ -490,7 +494,7 @@ const PromptActions = () => {
                           height: 24,
                           "&:hover": {
                             backgroundColor: getTagColorMap(label?.name, theme)
-                              ?.backgroundColor,
+                              ?.hoverBackgroundColor,
                             cursor: "default",
                           },
                         }}

@@ -114,7 +114,7 @@ const CriticalIssues = ({ mode = "develop" }) => {
 
   const isCriticalIssueFetchingAllowed =
     mode === "simulate"
-      ? kpis?.totalCalls >= MinimumTotalCallsForCriticalIssue
+      ? kpis?.total_calls >= MinimumTotalCallsForCriticalIssue
       : true;
 
   const { data, isLoading, refetch, isRefetching } = useQuery({
@@ -180,7 +180,7 @@ const CriticalIssues = ({ mode = "develop" }) => {
             type: temp?.confidence,
             title: temp?.theme,
             guidance: temp?.guidance,
-            evidenceSummary: temp?.evidenceSummary,
+            evidenceSummary: temp?.evidence_summary,
           });
         });
     });

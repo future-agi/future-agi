@@ -7,7 +7,6 @@ Covers:
 """
 
 import pytest
-from django.utils import timezone
 
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
@@ -172,6 +171,12 @@ class TestDeriveOutputType:
     def test_score(self, user_eval_template):
         """Config output 'score' -> 'percentage'."""
         assert derive_output_type(user_eval_template) == "percentage"
+
+    def test_prefers_normalized_output_type(self, user_eval_template):
+        """Dedicated scoring field is canonical when present."""
+        user_eval_template.output_type_normalized = "pass_fail"
+        user_eval_template.config = {"output": "score"}
+        assert derive_output_type(user_eval_template) == "pass_fail"
 
     def test_choices(self, agent_eval_template):
         """Config output 'choices' -> 'deterministic'."""
@@ -558,25 +563,33 @@ class TestEvalListNegationFilters:
 
     def test_serializer_accepts_eval_type_not(self, auth_client):
         response = auth_client.post(
-            self.url, {"filters": {"eval_type_not": ["llm"]}}, format="json",
+            self.url,
+            {"filters": {"eval_type_not": ["llm"]}},
+            format="json",
         )
         assert response.status_code == 200
 
     def test_serializer_accepts_output_type_not(self, auth_client):
         response = auth_client.post(
-            self.url, {"filters": {"output_type_not": ["pass_fail"]}}, format="json",
+            self.url,
+            {"filters": {"output_type_not": ["pass_fail"]}},
+            format="json",
         )
         assert response.status_code == 200
 
     def test_serializer_accepts_created_by_not(self, auth_client):
         response = auth_client.post(
-            self.url, {"filters": {"created_by_not": ["SomeUser"]}}, format="json",
+            self.url,
+            {"filters": {"created_by_not": ["SomeUser"]}},
+            format="json",
         )
         assert response.status_code == 200
 
     def test_serializer_rejects_invalid_eval_type_not(self, auth_client):
         response = auth_client.post(
-            self.url, {"filters": {"eval_type_not": ["invalid_type"]}}, format="json",
+            self.url,
+            {"filters": {"eval_type_not": ["invalid_type"]}},
+            format="json",
         )
         assert response.status_code == 400
 
@@ -604,6 +617,7 @@ class TestEvalTemplateBulkDeleteAPI:
         # Verify template is soft-deleted
         user_eval_template.refresh_from_db()
         assert user_eval_template.deleted is True
+        assert user_eval_template.deleted_at is not None
 
     def test_delete_system_templates_rejected(self, auth_client, system_eval_template):
         """System templates should not be deleted."""
@@ -629,6 +643,21 @@ class TestEvalTemplateBulkDeleteAPI:
         )
         assert response.status_code == 400
 
+    def test_delete_rejects_unknown_fields(self, auth_client, user_eval_template):
+        response = auth_client.post(
+            self.url,
+            {
+                "template_ids": [str(user_eval_template.id)],
+                "templateIds": [str(user_eval_template.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert response.data["message"] == "templateIds: Unknown field."
+        user_eval_template.refresh_from_db()
+        assert user_eval_template.deleted is False
+
     def test_delete_mixed_templates(
         self, auth_client, system_eval_template, user_eval_template
     ):
@@ -651,6 +680,7 @@ class TestEvalTemplateBulkDeleteAPI:
 
         user_eval_template.refresh_from_db()
         assert user_eval_template.deleted is True
+        assert user_eval_template.deleted_at is not None
 
 
 # =============================================================================

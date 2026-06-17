@@ -286,7 +286,7 @@ export const getPersonaDefaultValues = (editPersona) => {
       gender: editPersona?.gender || [],
       ageGroup: editPersona?.ageGroup || [],
       location: editPersona?.location || [],
-      profession: editPersona?.occupation || [],
+      profession: editPersona?.profession || editPersona?.occupation || [],
       personality:
         editPersona?.personality !== null
           ? editPersona?.personality?.map((item) => ({ value: item }))

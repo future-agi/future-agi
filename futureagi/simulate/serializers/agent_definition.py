@@ -1,19 +1,11 @@
 import re
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from django.conf import settings
 from django.core.validators import URLValidator
 from django.db import transaction
 from rest_framework import serializers
-
-# LiveKit URLs are valid in either WebSocket form (wss://, ws://) or HTTP
-# form (https://, http://). The frontend stores whatever the user typed
-# and the backend converts the scheme at use-time in three places:
-# ValidateLiveKitCredentialsView, simulate.services.livekit.config, and
-# LiveKitBridgeConnector._http_url. So the validator just needs to accept
-# all four schemes.
-_LIVEKIT_URL_VALIDATOR = URLValidator(schemes=["http", "https", "ws", "wss"])
 
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion
@@ -22,6 +14,14 @@ from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 from tracer.models.observability_provider import ProviderChoices
 
 MASKED_VALUE = "********"
+
+# LiveKit URLs are valid in either WebSocket form (wss://, ws://) or HTTP
+# form (https://, http://). The frontend stores whatever the user typed
+# and the backend converts the scheme at use-time in three places:
+# ValidateLiveKitCredentialsView, simulate.services.livekit.config, and
+# LiveKitBridgeConnector._http_url. So the validator just needs to accept
+# all four schemes.
+_LIVEKIT_URL_VALIDATOR = URLValidator(schemes=["http", "https", "ws", "wss"])
 
 
 def _is_masked(value: str) -> bool:
@@ -65,14 +65,15 @@ class ProviderCredentialsInput:
     """
 
     provider: str
-    api_key: Optional[str] = None
-    assistant_id: Optional[str] = None
-    livekit_url: Optional[str] = None
-    livekit_api_key: Optional[str] = None
-    livekit_api_secret: Optional[str] = None
-    livekit_agent_name: Optional[str] = None
-    livekit_config_json: Optional[dict[str, Any]] = None
-    livekit_max_concurrency: Optional[int] = None
+    api_key: str | None = None
+    assistant_id: str | None = None
+    livekit_url: str | None = None
+    livekit_api_key: str | None = None
+    livekit_api_secret: str | None = None
+    livekit_agent_name: str | None = None
+    livekit_config_json: dict[str, Any] | None = None
+    livekit_max_concurrency: int | None = None
+    provider_was_provided: bool = False
 
 
 def _extract_credentials_input(
@@ -98,6 +99,7 @@ def _extract_credentials_input(
         livekit_agent_name=validated_data.pop("livekit_agent_name", None),
         livekit_config_json=validated_data.pop("livekit_config_json", None),
         livekit_max_concurrency=validated_data.pop("livekit_max_concurrency", None),
+        provider_was_provided="provider" in validated_data,
     )
 
 
@@ -169,8 +171,27 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
             "updated_at",
             "model",
             "model_details",
+            "livekit_url",
+            "livekit_api_key",
+            "livekit_api_secret",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "created_at",
+            "updated_at",
+            "organization",
+            "workspace",
+            "observability_provider",
+        ]
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            unknown_fields = sorted(set(data) - set(self.fields))
+            if unknown_fields:
+                raise serializers.ValidationError(
+                    {field: ["Unknown field."] for field in unknown_fields}
+                )
+        return super().to_internal_value(data)
 
     def to_representation(self, instance):
         """Read credentials from ProviderCredentials, fall back to AgentDefinition.
@@ -489,6 +510,22 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         """
         from simulate.models.agent_definition import ProviderCredentials
 
+        credential_field_was_provided = data.provider_was_provided or any(
+            value is not None
+            for value in [
+                data.api_key,
+                data.assistant_id,
+                data.livekit_url,
+                data.livekit_api_key,
+                data.livekit_api_secret,
+                data.livekit_agent_name,
+                data.livekit_config_json,
+                data.livekit_max_concurrency,
+            ]
+        )
+        if not credential_field_was_provided:
+            return
+
         provider = (data.provider or "").strip()
 
         if provider in ("livekit", "livekit_bridge"):
@@ -519,10 +556,12 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
             config_json = None
             max_concurrency = None
 
-        creds, _ = ProviderCredentials.objects.get_or_create(
-            agent_definition=instance,
-            defaults={"provider_type": provider_type},
-        )
+        creds = ProviderCredentials.objects.filter(agent_definition=instance).first()
+        if creds is None:
+            creds = ProviderCredentials(
+                agent_definition=instance,
+                provider_type=provider_type,
+            )
         # When the agent's provider changes (e.g. vapi → livekit), wipe
         # stale per-provider fields on the existing creds row so old
         # values don't leak through. When the provider is unchanged,
@@ -690,6 +729,12 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
             "inbound",
             "model",
             "model_details",
+            "livekit_url",
+            "livekit_api_key",
+            "livekit_api_secret",
+            "livekit_agent_name",
+            "livekit_config_json",
+            "livekit_max_concurrency",
         ]
 
     def __init__(self, *args, **kwargs):
@@ -749,6 +794,9 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
             # allow clearing when explicitly passed as null
             instance.knowledge_base = validated_data.get("knowledge_base")
         instance.save()
+
+        creds_input.provider = instance.provider or creds_input.provider
+        AgentDefinitionSerializer._sync_provider_credentials(instance, creds_input)
         return instance
 
     def to_representation(self, instance):

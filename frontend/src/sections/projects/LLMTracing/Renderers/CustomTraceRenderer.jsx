@@ -20,7 +20,7 @@ import {
 import { useNavigationHandlers } from "./useNavigationHandlers";
 
 const CustomTraceRenderer = (params) => {
-  const column = params.colDef.col;
+  const column = params.colDef.context?.sourceColumn;
   const colId = column?.id;
   const value = params.value;
   const data = params.data;

@@ -13,7 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { transformMetricDetails } from "src/sections/agents/CallLogs/utils";
 import { enqueueSnackbar } from "notistack";
-import { deepEqual, objectCamelToSnake } from "src/utils/utils";
+import { deepEqual } from "src/utils/utils";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import SkeltonForTestDeatilDrawer from "../Skeletons/SkeltonForTestDeatilDrawer";
 import { AGENT_TYPES } from "src/sections/agents/constants";
@@ -223,9 +223,7 @@ const TestDetailSideDrawerChild = ({
     const simulateFilters =
       urlModule === "simulate"
         ? JSON.stringify(
-            Array.isArray(drawerQueryKey[3])
-              ? drawerQueryKey[3].map(objectCamelToSnake)
-              : [],
+            Array.isArray(drawerQueryKey[3]) ? drawerQueryKey[3] : [],
           )
         : JSON.stringify([]);
 

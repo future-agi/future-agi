@@ -21,7 +21,6 @@ import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/comm
  * Used in TestPlayground
  */
 const EvalResultDisplay = ({ result }) => {
-
   const [viewMode, setViewMode] = useState("formatted");
 
   // Support multiple shapes:
@@ -111,7 +110,7 @@ const FormattedResult = ({ result }) => {
     if (normalizedRaw.choice != null || normalizedRaw.choices != null) {
       const choiceVal = normalizedRaw.choices ?? normalizedRaw.choice;
       raw = Array.isArray(choiceVal)
-        ? choiceVal.map(( c) => ({ label: c }))
+        ? choiceVal.map((c) => ({ label: c }))
         : { label: choiceVal };
     } else if (typeof normalizedRaw.score === "number") {
       raw = normalizedRaw.score;
@@ -230,7 +229,6 @@ const FormattedResult = ({ result }) => {
     const score = typeof raw === "number" ? raw : parseFloat(raw);
 
     if (!isNaN(score)) {
-
       return (
         <Box
           sx={{

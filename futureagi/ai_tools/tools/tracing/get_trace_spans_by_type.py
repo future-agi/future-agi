@@ -46,7 +46,7 @@ class GetTraceSpansByTypeTool(BaseTool):
     def execute(
         self, params: GetTraceSpansByTypeInput, context: ToolContext
     ) -> ToolResult:
-        from tracer.models.observation_span import ObservationSpan
+        from tracer.services.clickhouse.v2 import get_reader
         from tracer.models.trace import Trace
 
         try:
@@ -64,11 +64,15 @@ class GetTraceSpansByTypeTool(BaseTool):
                 f"Must be one of: {', '.join(VALID_TYPES)}"
             )
 
-        spans = ObservationSpan.objects.filter(
-            trace_id=params.trace_id,
-            observation_type=obs_type,
-            deleted=False,
-        ).order_by("start_time", "created_at")[:50]
+        # CH read replaces ObservationSpan.objects.filter(trace_id=,
+        # observation_type=, deleted=False).order_by("start_time", "created_at")
+        # [:50]. We load all spans for the trace (typically bounded) and
+        # filter by observation_type in Python, then slice. Adding a typed
+        # column filter to list_by_trace would be cheaper at very large
+        # span-per-trace counts; defer until a real perf gap surfaces.
+        with get_reader() as reader:
+            all_spans = reader.list_by_trace(str(params.trace_id))
+        spans = [s for s in all_spans if s.observation_type == obs_type][:50]
 
         if not spans:
             return ToolResult(

@@ -547,13 +547,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
             evalConfig.evalTemplateName ||
             "Unnamed Evaluation",
           template_id: evalConfig.templateId || evalConfig.id?.split("_")[0], // Extract original template ID
-          template_name: evalConfig.evalTemplateName,
           mapping: evalConfig.config?.mapping || {},
           config: evalConfig.config || {},
-          description: evalConfig.description || "",
-          type: evalConfig.type || "user_built",
-          required_keys: evalConfig.evalRequiredKeys || [],
-          tags: evalConfig.evalTemplateTags || [],
           error_localizer: evalConfig?.errorLocalizer,
           ...(evalConfig?.model && { model: evalConfig.model }),
           ...(evalConfig?.evalGroup && { eval_group: evalConfig.evalGroup }),
@@ -709,7 +704,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
     return agentDefVersions?.pages?.reduce((acc, curr) => {
       const newOptions =
         curr.results?.map((result) => ({
-          label: result.versionNameDisplay,
+          label: result.version_name_display,
           value: result.id,
         })) ?? [];
       return [...acc, ...newOptions];
@@ -909,9 +904,9 @@ const CreateRunTestPage = ({ open, onClose }) => {
                     agentDefinitionsLoading
                       ? []
                       : agentDefinitions?.map((agent) => ({
-                          label: agent?.agentName,
+                          label: agent?.agent_name,
                           value: agent?.id,
-                          type: agent?.agentType,
+                          type: agent?.agent_type,
                           component: (
                             <Box
                               sx={{
@@ -925,11 +920,11 @@ const CreateRunTestPage = ({ open, onClose }) => {
                               <SvgColor
                                 sx={{ width: 18 }}
                                 src={getIconForAgentDefinitions(
-                                  agent?.agentType,
+                                  agent?.agent_type,
                                 )}
                               />
-                              <Typography variant="s2_1">
-                                {agent?.agentName}
+                              <Typography typography="s2_1">
+                                {agent?.agent_name}
                               </Typography>
                             </Box>
                           ),
@@ -1201,7 +1196,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                               />
                             )}
                             <Typography variant="body2" fontWeight={600}>
-                              {scenario.datasetRows || 0}
+                              {scenario.dataset_rows || 0}
                             </Typography>
                           </Box>
                         </ListItem>
@@ -1497,14 +1492,14 @@ const CreateRunTestPage = ({ open, onClose }) => {
             >
               <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                 <Typography
-                  variant="s1"
+                  typography="s1"
                   fontWeight={"fontWeightMedium"}
                   color={"text.primary"}
                 >
                   Enable tool call evaluation
                 </Typography>
                 <Typography
-                  variant="s2_1"
+                  typography="s2_1"
                   fontWeight={"fontWeightRegular"}
                   color={"text.primary"}
                 >
@@ -1636,9 +1631,9 @@ const CreateRunTestPage = ({ open, onClose }) => {
                                 flexWrap: "wrap",
                               }}
                             >
-                              <ShowComponent condition={!!evalItem?.groupName}>
+                              <ShowComponent condition={!!evalItem?.group_name}>
                                 <Chip
-                                  label={`Group name - ${evalItem?.groupName}.`}
+                                  label={`Group name - ${evalItem?.group_name}.`}
                                   size="small"
                                   sx={{
                                     height: "24px",

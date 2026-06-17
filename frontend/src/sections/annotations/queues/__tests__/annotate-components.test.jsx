@@ -4,6 +4,7 @@
  */
 /* eslint-disable react/prop-types */
 import { beforeEach, describe, it, expect, vi } from "vitest";
+import { createTheme } from "@mui/material/styles";
 import {
   render,
   screen,
@@ -20,21 +21,34 @@ import DiscussionPanel, {
 import {
   ALL_ANNOTATORS,
   WORKSPACE_MODES,
+  annotationSubmitSuccessMessage,
+  annotationBelongsToCurrentUser,
+  canDiscussQueueItem,
+  canReviewCurrentQueueItem,
   canOpenSubmissionWorkspace,
   canUseCompletedNavigation,
+  getSingleAssignedOtherAnnotatorId,
+  resolveAnnotationFooterProgress,
+  resolveCurrentDetailNavigation,
   resolveQueueItemWorkspaceMode,
   resolveAnnotationWorkspaceMode,
+  resolveSelectedAnnotatorScope,
 } from "../annotate/annotation-view-mode";
 import AnnotateHeader from "../annotate/annotate-header";
 import AnnotateFooter from "../annotate/annotate-footer";
 import AnnotationHistory from "../annotate/annotation-history";
 
-const { mockCreateDiscussionComment, mockUseItemAnnotations } = vi.hoisted(
-  () => ({
-    mockCreateDiscussionComment: vi.fn(),
-    mockUseItemAnnotations: vi.fn(() => ({ data: [] })),
-  }),
-);
+const {
+  mockCreateDiscussionComment,
+  mockUpdateDiscussionComment,
+  mockDeleteDiscussionComment,
+  mockUseItemAnnotations,
+} = vi.hoisted(() => ({
+  mockCreateDiscussionComment: vi.fn(),
+  mockUpdateDiscussionComment: vi.fn(),
+  mockDeleteDiscussionComment: vi.fn(),
+  mockUseItemAnnotations: vi.fn(() => ({ data: [] })),
+}));
 
 const {
   mockResolveDiscussionThread,
@@ -47,6 +61,8 @@ const {
   mockToggleDiscussionReaction: vi.fn(),
   mockDiscussionMutationState: {
     create: { isPending: false, variables: undefined },
+    update: { isPending: false, variables: undefined },
+    delete: { isPending: false, variables: undefined },
     resolve: { isPending: false, variables: undefined },
     reopen: { isPending: false, variables: undefined },
     reaction: { isPending: false, variables: undefined },
@@ -99,6 +115,42 @@ describe("resolveAnnotationWorkspaceMode", () => {
         canAnnotate: false,
       }),
     ).toBe(WORKSPACE_MODES.REVIEW);
+  });
+
+  it("blocks review actions when the pending item includes the current user's submission", () => {
+    expect(
+      canReviewCurrentQueueItem({
+        isReviewMode: true,
+        currentUserId: "user-1",
+        item: { review_status: "pending_review" },
+        annotations: [
+          { annotator: "user-1", label_id: "label-1", value: "positive" },
+          { annotator: "user-2", label_id: "label-1", value: "negative" },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("allows review actions for another annotator's pending submission", () => {
+    expect(
+      canReviewCurrentQueueItem({
+        isReviewMode: true,
+        currentUserId: "reviewer-1",
+        item: { review_status: "pending_review" },
+        annotations: [
+          { annotator: "user-2", label_id: "label-1", value: "negative" },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("recognizes generated annotator_id fields as current-user submissions", () => {
+    expect(
+      annotationBelongsToCurrentUser(
+        { annotator_id: "user-1", label_id: "label-1" },
+        "user-1",
+      ),
+    ).toBe(true);
   });
 
   it("honors annotate mode for multi-role users when requested", () => {
@@ -221,6 +273,207 @@ describe("queue detail workspace mode helpers", () => {
       }),
     ).toBe(WORKSPACE_MODES.REVIEW);
   });
+
+  it("lets reviewers scope annotate detail to a selected annotator outside review mode", () => {
+    expect(
+      resolveSelectedAnnotatorScope({
+        canReview: true,
+        viewingAnnotatorId: "user-2",
+        currentUserId: "user-1",
+      }),
+    ).toEqual({
+      scopedAnnotatorId: "user-2",
+      isViewingOtherAnnotator: true,
+    });
+    expect(
+      resolveSelectedAnnotatorScope({
+        canReview: true,
+        viewingAnnotatorId: "user-1",
+        currentUserId: "user-1",
+      }),
+    ).toEqual({
+      scopedAnnotatorId: "user-1",
+      isViewingOtherAnnotator: false,
+    });
+  });
+
+  it("does not scope all-annotator or unauthorized selections", () => {
+    expect(
+      resolveSelectedAnnotatorScope({
+        canReview: true,
+        viewingAnnotatorId: ALL_ANNOTATORS,
+        currentUserId: "user-1",
+      }),
+    ).toEqual({
+      scopedAnnotatorId: undefined,
+      isViewingOtherAnnotator: false,
+    });
+    expect(
+      resolveSelectedAnnotatorScope({
+        canReview: false,
+        viewingAnnotatorId: "user-2",
+        currentUserId: "user-1",
+      }),
+    ).toEqual({
+      scopedAnnotatorId: undefined,
+      isViewingOtherAnnotator: false,
+    });
+  });
+
+  it("auto-selects a single assigned annotator for manager view-only items", () => {
+    expect(
+      getSingleAssignedOtherAnnotatorId(
+        [{ id: "user-2", name: "Narda" }],
+        "user-1",
+      ),
+    ).toBe("user-2");
+    expect(
+      getSingleAssignedOtherAnnotatorId(
+        [
+          { id: "user-2", name: "Narda" },
+          { id: "user-3", name: "Kartik" },
+        ],
+        "user-1",
+      ),
+    ).toBeNull();
+    expect(
+      getSingleAssignedOtherAnnotatorId(
+        [{ id: "user-1", name: "Current" }],
+        "user-1",
+      ),
+    ).toBeNull();
+  });
+
+  describe("canDiscussQueueItem", () => {
+    it("blocks assigned-to-other annotators from commenting", () => {
+      expect(
+        canDiscussQueueItem({
+          canAnnotate: true,
+          canReview: false,
+          isBlockedAssignedToOther: true,
+        }),
+      ).toBe(false);
+    });
+
+    it("allows reviewers and assigned annotators to comment", () => {
+      expect(
+        canDiscussQueueItem({
+          canAnnotate: false,
+          canReview: true,
+          isBlockedAssignedToOther: false,
+        }),
+      ).toBe(true);
+      expect(
+        canDiscussQueueItem({
+          canAnnotate: true,
+          canReview: false,
+          isBlockedAssignedToOther: false,
+        }),
+      ).toBe(true);
+    });
+  });
+
+  describe("resolveAnnotationFooterProgress", () => {
+    it("uses assigned-slice progress for annotator navigation", () => {
+      expect(
+        resolveAnnotationFooterProgress({
+          isReviewMode: false,
+          progress: {
+            total: 7,
+            current_position: 5,
+            user_progress: { total: 4, current_position: 2 },
+          },
+        }),
+      ).toEqual({ currentPosition: 2, total: 4 });
+    });
+
+    it("uses queue-wide progress in review navigation", () => {
+      expect(
+        resolveAnnotationFooterProgress({
+          isReviewMode: true,
+          progress: {
+            total: 7,
+            current_position: 5,
+            user_progress: { total: 4, current_position: 2 },
+          },
+        }),
+      ).toEqual({ currentPosition: 5, total: 7 });
+    });
+  });
+
+  describe("annotationSubmitSuccessMessage", () => {
+    it("confirms when a review submission advances to the next item", () => {
+      expect(
+        annotationSubmitSuccessMessage({
+          requiresReview: true,
+          hasNextItem: true,
+        }),
+      ).toBe("Submitted for review. Moved to next item.");
+    });
+
+    it("uses save copy for queues without review", () => {
+      expect(
+        annotationSubmitSuccessMessage({
+          requiresReview: false,
+          hasNextItem: false,
+        }),
+      ).toBe("Saved. No more items in this queue.");
+    });
+  });
+
+  describe("resolveCurrentDetailNavigation", () => {
+    it("uses adjacent item ids only when detail matches the current navigation scope", () => {
+      expect(
+        resolveCurrentDetailNavigation({
+          detail: {
+            item: { id: "item-1" },
+            next_item_id: "item-2",
+            prev_item_id: "item-0",
+          },
+          currentItemId: "item-1",
+          detailFetching: false,
+          loadedScopeKey: "include-completed",
+          currentScopeKey: "include-completed",
+        }),
+      ).toEqual({
+        isCurrent: true,
+        nextItemId: "item-2",
+        prevItemId: "item-0",
+      });
+    });
+
+    it("ignores stale adjacent ids after completed visibility changes", () => {
+      expect(
+        resolveCurrentDetailNavigation({
+          detail: {
+            item: { id: "item-1" },
+            next_item_id: "completed-item",
+            prev_item_id: "previous-item",
+          },
+          currentItemId: "item-1",
+          detailFetching: true,
+          loadedScopeKey: "include-completed",
+          currentScopeKey: "open-only",
+        }),
+      ).toEqual({ isCurrent: false, nextItemId: null, prevItemId: null });
+    });
+
+    it("ignores adjacent ids from a different detail item", () => {
+      expect(
+        resolveCurrentDetailNavigation({
+          detail: {
+            item: { id: "item-2" },
+            next_item_id: "item-3",
+            prev_item_id: "item-1",
+          },
+          currentItemId: "item-1",
+          detailFetching: false,
+          loadedScopeKey: "open-only",
+          currentScopeKey: "open-only",
+        }),
+      ).toEqual({ isCurrent: false, nextItemId: null, prevItemId: null });
+    });
+  });
 });
 
 vi.mock("src/utils/format-time", () => ({
@@ -238,6 +491,14 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
   useCreateDiscussionComment: vi.fn(() => ({
     mutate: mockCreateDiscussionComment,
     ...mockDiscussionMutationState.create,
+  })),
+  useUpdateDiscussionComment: vi.fn(() => ({
+    mutate: mockUpdateDiscussionComment,
+    ...mockDiscussionMutationState.update,
+  })),
+  useDeleteDiscussionComment: vi.fn(() => ({
+    mutate: mockDeleteDiscussionComment,
+    ...mockDiscussionMutationState.delete,
   })),
   useResolveDiscussionThread: vi.fn(() => ({
     mutate: mockResolveDiscussionThread,
@@ -257,10 +518,20 @@ beforeEach(() => {
   mockCreateDiscussionComment.mockClear();
   mockUseItemAnnotations.mockReset();
   mockUseItemAnnotations.mockReturnValue({ data: [] });
+  mockUpdateDiscussionComment.mockClear();
+  mockDeleteDiscussionComment.mockClear();
   mockResolveDiscussionThread.mockClear();
   mockReopenDiscussionThread.mockClear();
   mockToggleDiscussionReaction.mockClear();
   mockDiscussionMutationState.create = {
+    isPending: false,
+    variables: undefined,
+  };
+  mockDiscussionMutationState.update = {
+    isPending: false,
+    variables: undefined,
+  };
+  mockDiscussionMutationState.delete = {
     isPending: false,
     variables: undefined,
   };
@@ -375,6 +646,36 @@ describe("LabelInput", () => {
       // MUI Slider has role slider
       expect(screen.getByRole("slider")).toBeInTheDocument();
       expect(screen.getByRole("spinbutton")).toBeInTheDocument();
+    });
+
+    it("renders discrete buttons when display_type is button", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(
+        <LabelInput
+          label={{
+            name: "Score",
+            type: "numeric",
+            settings: {
+              min: 0,
+              max: 4,
+              step_size: 2,
+              display_type: "button",
+            },
+          }}
+          value={{ value: 2 }}
+          onChange={onChange}
+        />,
+      );
+
+      expect(screen.queryByRole("slider")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "0" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "2" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "4" })).toBeInTheDocument();
+      expect(screen.getByRole("spinbutton")).toHaveAttribute("step", "2");
+
+      await user.click(screen.getByRole("button", { name: "4" }));
+      expect(onChange).toHaveBeenCalledWith({ value: 4 });
     });
   });
 
@@ -507,6 +808,38 @@ describe("LabelPanel", () => {
       ],
       itemNotes: "",
     });
+  });
+
+  it("keeps the submit action sticky and fully reachable", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <LabelPanel
+        labels={[
+          {
+            id: "ql-1",
+            label_id: "label-1",
+            name: "Content",
+            type: "thumbs_up_down",
+            settings: {},
+            allow_notes: false,
+          },
+        ]}
+        annotations={[]}
+        onSubmit={vi.fn()}
+        queueId="queue-1"
+        itemId="item-1"
+        submitLabel="Submit for Review"
+      />,
+    );
+
+    await user.click(screen.getByText("Yes"));
+
+    const action = screen.getByTestId("annotation-submit-action");
+    expect(action).toHaveAttribute("data-sticky-action", "true");
+    expect(action).toContainElement(
+      screen.getByRole("button", { name: /submit for review/i }),
+    );
   });
 
   it("prefills and submits whole-item notes", async () => {
@@ -2041,6 +2374,69 @@ describe("AnnotationComparisonPanel", () => {
     });
   });
 
+  it("keeps request actions reachable when targeted feedback drafts grow", async () => {
+    const user = userEvent.setup();
+    const manyLabels = Array.from({ length: 6 }, (_, index) => ({
+      id: `ql-many-${index + 1}`,
+      label_id: `label-many-${index + 1}`,
+      name: `Quality ${index + 1}`,
+      type: "categorical",
+      settings: { options: ["pass", "fail"] },
+    }));
+    const manyAnnotations = manyLabels.map((label, index) => ({
+      id: `ann-review-many-${index + 1}`,
+      annotator: "user-2",
+      annotator_name: "Narda",
+      annotator_email: "narda@example.com",
+      label_id: label.label_id,
+      label_type: label.type,
+      label_settings: label.settings,
+      value: ["pass"],
+    }));
+
+    render(
+      <AnnotationComparisonPanel
+        labels={manyLabels}
+        annotators={annotators}
+        annotations={manyAnnotations}
+        currentUserId="user-1"
+        viewingAnnotatorId="user-2"
+        queueId="queue-1"
+        itemId="item-1"
+        showReviewActions
+      />,
+    );
+
+    for (const label of manyLabels) {
+      await user.click(
+        screen.getByRole("button", {
+          name: new RegExp(`feedback for ${label.name} / narda`, "i"),
+        }),
+      );
+      await user.type(
+        screen.getByLabelText(`Feedback for ${label.name} / Narda`),
+        `adjust ${label.name}`,
+      );
+    }
+
+    const actionBar = screen.getByTestId("review-action-bar");
+    const summary = screen.getByTestId("review-feedback-draft-summary");
+    const draftList = screen.getByTestId("review-feedback-draft-list");
+
+    expect(actionBar).toContainElement(summary);
+    expect(actionBar).toContainElement(draftList);
+    expect(draftList).toHaveAttribute("data-scroll-locked", "true");
+    expect(
+      within(summary).getByText(`${manyLabels.length} targeted`),
+    ).toBeInTheDocument();
+    expect(
+      within(actionBar).getByRole("button", { name: /request changes/i }),
+    ).toBeEnabled();
+    expect(
+      within(actionBar).getByRole("button", { name: /approve/i }),
+    ).toBeDisabled();
+  });
+
   it("does not offer targeted feedback for annotators without a submitted score", () => {
     render(
       <AnnotationComparisonPanel
@@ -2506,6 +2902,66 @@ describe("DiscussionPanel", () => {
     expect(screen.getAllByText("@Narda").length).toBeGreaterThan(0);
     expect(screen.getByText(/please verify the score/i)).toBeInTheDocument();
   });
+
+  it("lets comment authors edit and delete their own comments", async () => {
+    const user = userEvent.setup();
+    mockUpdateDiscussionComment.mockClear();
+    mockDeleteDiscussionComment.mockClear();
+    mockUpdateDiscussionComment.mockImplementationOnce((_, options) => {
+      options?.onSuccess?.();
+    });
+
+    render(
+      <CollaborationDrawer
+        open
+        onClose={vi.fn()}
+        queueId="queue-1"
+        itemId="item-1"
+        itemLabel="trace item-1"
+        labels={[]}
+        members={[]}
+        threads={[
+          {
+            id: "thread-1",
+            status: "open",
+            comments: [
+              {
+                id: "comment-1",
+                action: "comment",
+                comment: "Original comment",
+                reviewer_name: "Reviewer One",
+                can_edit: true,
+                can_delete: true,
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /edit comment/i }));
+    const editField = screen.getByDisplayValue("Original comment");
+    await user.clear(editField);
+    await user.type(editField, "Updated comment");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(mockUpdateDiscussionComment).toHaveBeenCalledWith(
+      {
+        queueId: "queue-1",
+        itemId: "item-1",
+        commentId: "comment-1",
+        comment: "Updated comment",
+      },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+
+    await user.click(screen.getByRole("button", { name: /delete comment/i }));
+    expect(mockDeleteDiscussionComment).toHaveBeenCalledWith({
+      queueId: "queue-1",
+      itemId: "item-1",
+      commentId: "comment-1",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2523,6 +2979,23 @@ describe("AnnotateHeader", () => {
       />,
     );
     expect(screen.getByText("My Queue")).toBeInTheDocument();
+  });
+
+  it("renders a visible back-to-queue action", async () => {
+    const user = userEvent.setup();
+    const onBack = vi.fn();
+    render(
+      <AnnotateHeader
+        queueName="Q"
+        progress={{ total: 10, completed: 3 }}
+        onBack={onBack}
+        onSkip={() => {}}
+        isSkipping={false}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /back to queue/i }));
+    expect(onBack).toHaveBeenCalledOnce();
   });
 
   it("renders progress", () => {
@@ -2565,6 +3038,33 @@ describe("AnnotateHeader", () => {
 
     await user.click(commentsButton);
     expect(onOpenComments).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the comments count badge readable in dark theme", () => {
+    const darkTheme = createTheme({
+      palette: {
+        mode: "dark",
+        info: { main: "#2f7cf7" },
+      },
+    });
+
+    render(
+      <AnnotateHeader
+        queueName="Q"
+        progress={{ total: 10, completed: 3 }}
+        onBack={() => {}}
+        onSkip={() => {}}
+        isSkipping={false}
+        onOpenComments={() => {}}
+        commentBadgeCount={2}
+      />,
+      { theme: darkTheme },
+    );
+
+    const badge = screen.getByText("2");
+    const badgeStyle = window.getComputedStyle(badge);
+    expect(badgeStyle.backgroundColor).toBe("rgb(47, 124, 247)");
+    expect(badgeStyle.color).toBe("rgb(255, 255, 255)");
   });
 
   it("keeps comments available in review mode without showing Skip", async () => {
@@ -2710,6 +3210,27 @@ describe("AnnotateHeader", () => {
     );
     expect(screen.getByRole("button", { name: /skip/i })).toBeDisabled();
   });
+
+  it("disables Skip for completed items", async () => {
+    const user = userEvent.setup();
+    render(
+      <AnnotateHeader
+        queueName="Q"
+        progress={{}}
+        onBack={() => {}}
+        onSkip={() => {}}
+        isSkipping={false}
+        isItemCompleted
+      />,
+    );
+
+    const skipButton = screen.getByRole("button", { name: /skip/i });
+    expect(skipButton).toBeDisabled();
+    await user.hover(skipButton.closest("span"));
+    expect(
+      await screen.findByText("Completed items cannot be skipped"),
+    ).toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2727,7 +3248,12 @@ describe("AnnotateFooter", () => {
         hasNext={true}
       />,
     );
-    expect(screen.getByText("Item 3 of 10")).toBeInTheDocument();
+    // The position is rendered as "<pos> / <total>" split across spans
+    // for typographic styling, so assert each part is present rather than
+    // matching the full string against a single text node.
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("10")).toBeInTheDocument();
+    expect(screen.getByText("/")).toBeInTheDocument();
   });
 
   it("renders Previous and Next buttons", () => {
@@ -2827,11 +3353,16 @@ describe("AnnotationHistory", () => {
         {
           id: "score-1",
           label_name: "Sentiment",
-          value: "positive",
+          value: "neutral",
+          value_history: [
+            { value: "positive", at: "2025-01-01T12:00:00Z" },
+            { value: "negative", at: "2025-01-01T12:05:00Z" },
+          ],
           annotator: "user-1",
           annotator_name: "Kartik",
           score_source: "human",
           created_at: "2025-01-01T12:00:00Z",
+          updated_at: "2025-01-01T12:10:00Z",
         },
       ],
     });
@@ -2842,6 +3373,10 @@ describe("AnnotationHistory", () => {
     await user.click(screen.getByText(/ANNOTATION HISTORY/));
     expect(screen.getByText("Kartik")).toBeInTheDocument();
     expect(screen.getByText("Sentiment")).toBeInTheDocument();
+    expect(screen.getByText("neutral")).toBeInTheDocument();
+    expect(screen.getByText("Previous 1")).toBeInTheDocument();
     expect(screen.getByText("positive")).toBeInTheDocument();
+    expect(screen.getByText("Previous 2")).toBeInTheDocument();
+    expect(screen.getByText("negative")).toBeInTheDocument();
   });
 });

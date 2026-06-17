@@ -1,7 +1,13 @@
 from django.conf import settings
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    PublicConfigResponseSerializer,
+)
 
 
 def _parse_regions():
@@ -22,6 +28,9 @@ def _parse_regions():
     return regions
 
 
+@swagger_auto_schema(
+    method="get", responses={200: PublicConfigResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+)
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def public_config(request):

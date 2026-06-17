@@ -174,7 +174,8 @@ class TestCap:
             cap=5,
         )
         assert len(result.ids) == 5
-        assert result.total_matching == 12
+        # Capped resolvers return a cap+1 sentinel instead of a precise count.
+        assert result.total_matching == 6
         assert result.truncated is True
 
     def test_cap_above_total_is_not_truncated(

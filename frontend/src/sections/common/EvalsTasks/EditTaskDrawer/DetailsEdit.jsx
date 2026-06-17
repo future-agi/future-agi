@@ -36,6 +36,7 @@ import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import {
   extractAttributeFilters,
+  getTaskFilterApiKey,
   getNewTaskFilters,
   NewTaskValidationSchema,
 } from "../NewTaskDrawer/validation";
@@ -53,7 +54,6 @@ import EvaluationSection from "../NewTaskDrawer/EvaluationSection";
 import { red } from "src/theme/palette";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import EvaluationDrawer from "../../EvaluationDrawer/EvaluationDrawer";
-import { objectCamelToSnake } from "src/utils/utils";
 import { resetEvalStore } from "src/sections/evals/store/useEvalStore";
 
 function CustomTabPanel(props) {
@@ -187,7 +187,7 @@ const DetailsEdit = ({
       axios.get(endpoints.project.getEvalTaskConfig(), {
         params: {
           project_id: project,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
           task_id: selectedRow?.id,
         },
       }),
@@ -207,7 +207,7 @@ const DetailsEdit = ({
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
           row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
         },
       }),
     select: (data) => data.data?.result,
@@ -252,15 +252,27 @@ const DetailsEdit = ({
     // Flat chip list with col_type for the BE dispatcher; observation_type
     // (incl. node_type alias) still rides as a sibling key.
     const attributeFilters = extractAttributeFilters(data?.filters);
-    const observationTypes = (data.filters || [])
-      .filter(
-        (f) => f.property === "observation_type" || f.property === "node_type",
-      )
-      .flatMap((f) => {
-        const v = f?.filterConfig?.filterValue;
-        if (Array.isArray(v)) return v;
-        return v !== undefined && v !== null && v !== "" ? [v] : [];
-      });
+
+    // Task system filter aggregation. The task filter UI only exposes
+    // backend-supported system fields plus span attributes, so unsupported
+    // TraceFilterPanel fields cannot be saved and silently ignored.
+    const systemFilters = {};
+    (data.filters || []).forEach((f) => {
+      if (!f?.property || f.property === "attributes") return;
+      const apiKey = getTaskFilterApiKey(f.property);
+      const v = f?.filterConfig?.filterValue;
+      const values = Array.isArray(v)
+        ? v
+        : v !== undefined && v !== null && v !== ""
+          ? [v]
+          : [];
+      if (!values.length) return;
+      if (systemFilters[apiKey]) {
+        systemFilters[apiKey].push(...values);
+      } else {
+        systemFilters[apiKey] = [...values];
+      }
+    });
 
     const transformedData = {
       evals: data.evalsDetails?.map((item) => item.id) || [],
@@ -270,9 +282,7 @@ const DetailsEdit = ({
           new Date(startDateField.value).toISOString(),
           new Date(endDateField.value).toISOString(),
         ],
-        ...(observationTypes?.length > 0
-          ? { observation_type: observationTypes }
-          : {}),
+        ...systemFilters,
         ...(attributeFilters && attributeFilters?.length > 0
           ? { filters: attributeFilters }
           : {}),

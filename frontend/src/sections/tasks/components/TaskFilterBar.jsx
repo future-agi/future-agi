@@ -16,13 +16,20 @@ import TraceFilterPanel, {
 import { FIELD_CATEGORY_TO_COL_TYPE } from "src/sections/common/EvalsTasks/common";
 import { useDashboardFilterValues } from "src/hooks/useDashboards";
 import {
+  getPickerOptionValue,
   getPickerOptionLabel,
   getPickerOptionSecondaryLabel,
-  getPickerOptionValue,
 } from "src/sections/projects/LLMTracing/filterValuePickerUtils";
 
-// Legacy `is`/`is_not` (from thumbs / categorical / id-only dropdowns) →
-// canonical BE ops emitted by TraceFilterPanel everywhere else.
+// ── Operator handling — canonical backend ops ──
+//
+// `TraceFilterPanel` (PR #432 / TH-4924) emits canonical backend op names
+// directly: `equals`, `not_equals`, `in`, `not_in`, `contains`,
+// `not_contains`, `starts_with`, `ends_with`, `is_null`, `is_not_null`,
+// `greater_than`, `greater_than_or_equal`, `less_than`,
+// `less_than_or_equal`, `between`, `not_between`. The thumbs / categorical
+// / id-only dropdowns inside the panel still emit legacy `is`/`is_not` —
+// alias those to canonical so the wire is consistent.
 const LEGACY_OP_ALIAS = { is: "equals", is_not: "not_equals" };
 
 const RANGE_OPS = new Set(["between", "not_between"]);
@@ -72,12 +79,16 @@ const OP_DISPLAY = {
   less_than_or_equal: "≤",
   between: "between",
   not_between: "not between",
-  // legacy (still rendered if a stale row survives until the next save)
-  is: "is",
-  is_not: "is not",
-  equal_to: "=",
-  not_equal_to: "≠",
 };
+
+const TASK_FILTER_CATEGORIES = [
+  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
+  { key: "system", label: "Span type", icon: "mdi:shape-outline" },
+  { key: "attribute", label: "Attributes", icon: "mdi:code-braces" },
+];
+
+const isTaskFilterProperty = (property) =>
+  property?.id === "span_kind" || property?.category === "attribute";
 
 // Panel filter → form row(s). List/range ops keep array `filterValue`;
 // no-value ops drop it; other ops explode into one scalar row per value.
@@ -92,11 +103,7 @@ function convertNewToOld(newFilters) {
         ? "number"
         : fieldType === "boolean"
           ? "boolean"
-          : fieldType === "thumbs"
-            ? "thumbs"
-            : fieldType === "categorical"
-              ? "categorical"
-              : "text";
+          : "text";
     const op = LEGACY_OP_ALIAS[f.operator] || f.operator || "equals";
 
     const base = {
@@ -182,8 +189,7 @@ function convertOldToNew(oldFilters) {
     const fieldType =
       ft === "number" ? "number" : ft === "boolean" ? "boolean" : "string";
 
-    // Aliased legacy → canonical first, then string-specific rehydration.
-    let op = LEGACY_OP_ALIAS[rawOp] || rawOp;
+    let op = rawOp;
     if (isStringLike(fieldType) && HYDRATE_STRING_OP[op]) {
       op = HYDRATE_STRING_OP[op];
     }
@@ -525,6 +531,8 @@ const TaskFilterBar = ({
         projectId={projectId}
         isSimulator={isSimulator}
         tab={rowTypeToFilterTab(rowType)}
+        categories={TASK_FILTER_CATEGORIES}
+        propertyFilter={isTaskFilterProperty}
         onApply={(next) => applyPanelFilters(next || [])}
       />
     </Box>

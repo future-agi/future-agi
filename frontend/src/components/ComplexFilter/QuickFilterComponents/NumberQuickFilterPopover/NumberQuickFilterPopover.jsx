@@ -26,8 +26,8 @@ const NumberQuickFilterPopoverChild = ({
 
   const onSubmit = (data) => {
     const filter = filterData.filter;
-    filter.filterConfig.filterValue = [data.value1, data.value2];
-    filter.filterConfig.filterOp = data.operator;
+    filter.filter_config.filter_value = [data.value1, data.value2];
+    filter.filter_config.filter_op = data.operator;
 
     setFilterOpen(true);
     setFilters((prev) => avoidDuplicateFilterSet(prev, filter));

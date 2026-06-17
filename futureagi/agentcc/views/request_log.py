@@ -48,6 +48,22 @@ def _parse_int(value, default=None):
         return default
 
 
+def _apply_search(queryset, raw_query):
+    """Apply request-log search semantics shared by list/search/export paths."""
+    q = (raw_query or "").strip()
+    if len(q) < 2:
+        return queryset
+
+    return queryset.filter(
+        Q(model__icontains=q)
+        | Q(provider__icontains=q)
+        | Q(error_message__icontains=q)
+        | Q(request_id__icontains=q)
+        | Q(user_id__icontains=q)
+        | Q(session_id__icontains=q)
+    )
+
+
 class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = AgentccRequestLogSerializer
@@ -109,6 +125,14 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
                     pass
             if parsed:
                 queryset = queryset.filter(status_code__in=parsed)
+
+        min_status_code = _parse_int(params.get("min_status_code"))
+        if min_status_code is not None:
+            queryset = queryset.filter(status_code__gte=min_status_code)
+
+        max_status_code = _parse_int(params.get("max_status_code"))
+        if max_status_code is not None:
+            queryset = queryset.filter(status_code__lte=max_status_code)
 
         # Boolean filters
         is_error = params.get("is_error")
@@ -177,6 +201,9 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
         if max_tokens is not None:
             queryset = queryset.filter(total_tokens__lte=max_tokens)
 
+        search_query = params.get("q") or params.get("search")
+        queryset = _apply_search(queryset, search_query)
+
         # Ordering
         ordering = params.get("ordering")
         if ordering:
@@ -231,14 +258,6 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
                 )
 
             queryset = self.get_queryset()
-            queryset = queryset.filter(
-                Q(model__icontains=q)
-                | Q(provider__icontains=q)
-                | Q(error_message__icontains=q)
-                | Q(request_id__icontains=q)
-                | Q(user_id__icontains=q)
-                | Q(session_id__icontains=q)
-            )
 
             page = self.paginate_queryset(queryset)
             if page is not None:
@@ -258,6 +277,18 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
                 Q(session_id="") | Q(session_id__isnull=True)
             )
 
+            ordering = request.query_params.get("ordering") or "-last_request_at"
+            allowed_ordering = {
+                "last_request_at",
+                "-last_request_at",
+                "request_count",
+                "-request_count",
+                "total_cost",
+                "-total_cost",
+            }
+            if ordering not in allowed_ordering:
+                ordering = "-last_request_at"
+
             sessions = (
                 queryset.values("session_id")
                 .annotate(
@@ -275,7 +306,7 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
                     models=ArrayAgg("model", distinct=True),
                     providers=ArrayAgg("provider", distinct=True),
                 )
-                .order_by("-last_request_at")
+                .order_by(ordering)
             )
 
             page = self.paginate_queryset(list(sessions))

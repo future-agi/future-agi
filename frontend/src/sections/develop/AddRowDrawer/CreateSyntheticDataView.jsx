@@ -1,5 +1,11 @@
 import { Box, Button, Divider, Stack, Typography } from "@mui/material";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Iconify from "src/components/iconify";
 import PageHeadings from "src/sections/develop-detail/Common/PageHeadings";
 import FormTabs from "./CreateSyntheticData/FormTabs";
@@ -179,6 +185,10 @@ const CreateSyntheticDataView = ({
     return "";
   }, [knowledgeBaseOptions, kb_id]);
 
+  const handleDatasetCreateOptionAction = useCallback((optionState) => {
+    modalSubmitRef.current?.(optionState);
+  }, []);
+
   const { mutate: createSyntheticData, isPending } = useMutation({
     mutationFn: (data) => {
       // these commented code is required when we are working for single dataset.
@@ -223,6 +233,10 @@ const CreateSyntheticDataView = ({
       );
     },
     onSuccess: (res) => {
+      const updatedDatasetId =
+        res?.data?.result?.data?.dataset_id ??
+        res?.data?.result?.data?.datasetId ??
+        dataset;
       if (onClose) onClose();
       if (onEditSuccessCallback) {
         onEditSuccessCallback();
@@ -231,12 +245,9 @@ const CreateSyntheticDataView = ({
         variant: "success",
       });
       setTimeout(() => {
-        navigate(
-          `/dashboard/develop/${res?.data?.result?.data?.datasetId}?tab=data`,
-          {
-            replace: true,
-          },
-        );
+        navigate(`/dashboard/develop/${updatedDatasetId}?tab=data`, {
+          replace: true,
+        });
       }, 0);
       reset();
     },
@@ -529,7 +540,7 @@ const CreateSyntheticDataView = ({
         editMode={editMode}
         open={openDatasetCreateOptions}
         onClose={() => setOpenDatasetCreateOptions(false)}
-        onAction={modalSubmitRef.current}
+        onAction={handleDatasetCreateOptionAction}
         isLoading={isPending || isUpdating}
       />
     </>

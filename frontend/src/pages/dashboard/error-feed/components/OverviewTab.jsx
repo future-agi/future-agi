@@ -806,7 +806,8 @@ function PatternSummary({ summary, clusterId }) {
 
   if (!insights.length) {
     // Cluster ID prefix is canonical: E-* = eval-source, S-* = scanner-source.
-    const isEvalCluster = typeof clusterId === "string" && clusterId.startsWith("E-");
+    const isEvalCluster =
+      typeof clusterId === "string" && clusterId.startsWith("E-");
     const message = isEvalCluster
       ? "No eval scores aggregated yet — this cluster's evaluations are still landing."
       : "Not enough data yet — waiting for more scanner results.";
@@ -1655,7 +1656,10 @@ export default function OverviewTab({ _error: currentError }) {
   const deepAnalysisRef = useRef(null);
 
   useEffect(() => {
-    if (deepAnalysisState === DEEP_ANALYSIS_STATUS.DONE && deepAnalysisRef.current) {
+    if (
+      deepAnalysisState === DEEP_ANALYSIS_STATUS.DONE &&
+      deepAnalysisRef.current
+    ) {
       deepAnalysisRef.current.scrollIntoView({
         behavior: "smooth",
         block: "start",

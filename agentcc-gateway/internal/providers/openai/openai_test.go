@@ -90,7 +90,7 @@ func TestCreateImage_Success(t *testing.T) {
 	}
 }
 
-func TestCreateImage_ModelPrefixStripped(t *testing.T) {
+func TestCreateImage_ModelPrefixPreserved(t *testing.T) {
 	var receivedModel string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req models.ImageRequest
@@ -109,8 +109,8 @@ func TestCreateImage_ModelPrefixStripped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateImage error: %v", err)
 	}
-	if receivedModel != "dall-e-3" {
-		t.Errorf("model sent to upstream = %q, want %q", receivedModel, "dall-e-3")
+	if receivedModel != "openai/dall-e-3" {
+		t.Errorf("model sent to upstream = %q, want %q", receivedModel, "openai/dall-e-3")
 	}
 }
 
@@ -272,7 +272,7 @@ func TestCreateSpeech_Success(t *testing.T) {
 	}
 }
 
-func TestCreateSpeech_ModelPrefixStripped(t *testing.T) {
+func TestCreateSpeech_ModelPrefixPreserved(t *testing.T) {
 	var receivedModel string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req models.SpeechRequest
@@ -294,8 +294,8 @@ func TestCreateSpeech_ModelPrefixStripped(t *testing.T) {
 	}
 	body.Close()
 
-	if receivedModel != "tts-1-hd" {
-		t.Errorf("model sent = %q, want tts-1-hd", receivedModel)
+	if receivedModel != "openai/tts-1-hd" {
+		t.Errorf("model sent = %q, want openai/tts-1-hd", receivedModel)
 	}
 }
 
@@ -495,7 +495,7 @@ func TestCreateTranscription_Success(t *testing.T) {
 	}
 }
 
-func TestCreateTranscription_ModelPrefixStripped(t *testing.T) {
+func TestCreateTranscription_ModelPrefixPreserved(t *testing.T) {
 	var receivedModel string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mediaType, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -527,8 +527,8 @@ func TestCreateTranscription_ModelPrefixStripped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTranscription error: %v", err)
 	}
-	if receivedModel != "whisper-1" {
-		t.Errorf("model = %q, want whisper-1", receivedModel)
+	if receivedModel != "openai/whisper-1" {
+		t.Errorf("model = %q, want openai/whisper-1", receivedModel)
 	}
 }
 
@@ -866,7 +866,7 @@ func TestCreateEmbedding_Success(t *testing.T) {
 	}
 }
 
-func TestCreateEmbedding_ModelPrefixStripped(t *testing.T) {
+func TestCreateEmbedding_ModelPrefixPreserved(t *testing.T) {
 	var receivedModel string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req models.EmbeddingRequest
@@ -885,8 +885,8 @@ func TestCreateEmbedding_ModelPrefixStripped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
-	if receivedModel != "text-embedding-3-large" {
-		t.Errorf("model = %q, want text-embedding-3-large", receivedModel)
+	if receivedModel != "openai/text-embedding-3-large" {
+		t.Errorf("model = %q, want openai/text-embedding-3-large", receivedModel)
 	}
 }
 

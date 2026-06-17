@@ -136,7 +136,7 @@ export default function JwtRegisterView() {
         email: data?.email,
         full_name: data?.fullName,
         company_name: "",
-        "recaptcha-response": token,
+        recaptcha_response: token,
         allow_email: true,
       };
       let response;
@@ -187,7 +187,14 @@ export default function JwtRegisterView() {
       setLoading(false);
     } catch (error) {
       setLoading(false);
-      logger.error("Registration Error:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Registration Error (expected)", error);
+      } else {
+        logger.error("Registration Error:", error);
+      }
       setErrorMsg(
         typeof error === "string"
           ? error
@@ -219,7 +226,7 @@ export default function JwtRegisterView() {
       const response = await axios.post(endpoints.auth.login, {
         email: data.email,
         password: data.password,
-        "recaptcha-response": token,
+        recaptcha_response: token,
       });
       if (response.status === 200) {
         await login(response);
@@ -247,7 +254,14 @@ export default function JwtRegisterView() {
             : error?.detail || error?.result?.error,
         );
       }
-      logger.error("Login failed", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Login failed (expected)", error);
+      } else {
+        logger.error("Login failed", error);
+      }
     } finally {
       setLoading(false);
     }
@@ -278,7 +292,14 @@ export default function JwtRegisterView() {
         });
       }
     } catch (error) {
-      logger.error("Error during social login:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Error during social login (expected)", error);
+      } else {
+        logger.error("Error during social login:", error);
+      }
       if (error.response?.status === 302 && error.response?.headers?.reason) {
         enqueueSnackbar(error.response.headers.reason, { variant: "error" });
       } else {

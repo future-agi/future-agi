@@ -90,77 +90,90 @@ _TOKEN_KEYS = [
 
 def fetch_trace_data(trace_ids: List[str]) -> List[TraceData]:
     """Fetch trace spans from DB and build nested span trees for the scanner."""
-    from tracer.models.observation_span import ObservationSpan
+    # Was: ObservationSpan.objects.filter(trace_id=).order_by("start_time")
+    #      .values("id", "name", "parent_span_id", "start_time", "end_time",
+    #              "input", "output", "metadata", "model", "observation_type",
+    #              "status_message") — one PG query per trace_id.
+    # Now: a single CH `list_by_trace_ids` covers every trace in the batch
+    # and returns spans in (trace_id, start_time, id) order, which matches
+    # the per-trace .order_by("start_time") contract the scanner relies on
+    # (children come after parents within the same trace, and span_map is
+    # populated before linking — order across parents/children doesn't
+    # change the resulting tree).
+    from tracer.services.clickhouse.v2 import get_reader
 
-    traces = []
+    if not trace_ids:
+        return []
 
+    with get_reader() as reader:
+        all_spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+
+    # Group CH spans by trace_id while preserving CH's start_time order.
+    by_trace: Dict[str, List] = {}
+    for span in all_spans:
+        by_trace.setdefault(str(span.trace_id), []).append(span)
+
+    traces: List[TraceData] = []
+    # Iterate the caller-provided trace_ids order so the consumer sees the
+    # same order as the legacy per-trace loop (the previous code processed
+    # each trace_id in input order).
     for trace_id in trace_ids:
-        rows = list(
-            ObservationSpan.objects.filter(trace_id=trace_id)
-            .order_by("start_time")
-            .values(
-                "id",
-                "name",
-                "parent_span_id",
-                "start_time",
-                "end_time",
-                "input",
-                "output",
-                "metadata",
-                "model",
-                "observation_type",
-                "status_message",
-            )
-        )
-
-        if not rows:
+        ch_spans = by_trace.get(str(trace_id))
+        if not ch_spans:
             continue
 
         # Build flat map
         span_map: Dict[str, SpanData] = {}
-        for row in rows:
-            span_map[row["id"]] = _row_to_span(row)
+        for span in ch_spans:
+            span_map[span.id] = _ch_span_to_span(span)
 
-        # Link children → parents
+        # Link children → parents (root = no parent or parent not in map)
         root_spans = []
-        for row in rows:
-            span = span_map[row["id"]]
-            parent_id = row["parent_span_id"]
+        for span in ch_spans:
+            sd = span_map[span.id]
+            parent_id = span.parent_span_id
             if parent_id and parent_id in span_map:
-                span_map[parent_id].child_spans.append(span)
+                span_map[parent_id].child_spans.append(sd)
             else:
-                root_spans.append(span)
+                root_spans.append(sd)
 
         traces.append(TraceData(trace_id=str(trace_id), spans=root_spans))
 
     return traces
 
 
-def _row_to_span(row: Dict) -> SpanData:
-    """Convert a DB row dict to SpanData."""
+def _ch_span_to_span(span) -> SpanData:
+    """Convert a CHSpan dataclass to SpanData.
+
+    CHSpan stores input / output / metadata as JSON strings (vs the legacy
+    PG ObservationSpan.JSONField which returned dicts). The scanner's
+    span_attributes contract is string-valued, so we json.loads metadata
+    for the token-key lookup but treat input/output as opaque strings
+    (the legacy `str(inp)`/`json.dumps(inp)` branch produced the same shape
+    when `inp` arrived as already-serialized JSON).
+    """
     duration = ""
-    if row["start_time"] and row["end_time"]:
-        delta = (row["end_time"] - row["start_time"]).total_seconds()
+    if span.start_time and span.end_time:
+        delta = (span.end_time - span.start_time).total_seconds()
         duration = f"PT{delta}S"
 
-    metadata = row.get("metadata") or {}
-    if isinstance(metadata, str):
+    metadata: dict = {}
+    if span.metadata:
         try:
-            metadata = json.loads(metadata)
+            parsed = json.loads(span.metadata)
+            metadata = parsed if isinstance(parsed, dict) else {}
         except (json.JSONDecodeError, TypeError):
             metadata = {}
 
-    attrs = {}
-    if row.get("input"):
-        inp = row["input"]
-        attrs["input.value"] = json.dumps(inp) if isinstance(inp, dict) else str(inp)
-    if row.get("output"):
-        out = row["output"]
-        attrs["output.value"] = json.dumps(out) if isinstance(out, dict) else str(out)
-    if row.get("model"):
-        attrs["llm.model_name"] = row["model"]
+    attrs: Dict[str, object] = {}
+    if span.input:
+        attrs["input.value"] = span.input
+    if span.output:
+        attrs["output.value"] = span.output
+    if span.model:
+        attrs["llm.model_name"] = span.model
 
-    obs_type = row.get("observation_type", "")
+    obs_type = span.observation_type or ""
     # Default unrecognized / missing types (commonly "unknown" from older SDKs)
     # to CHAIN so the scanner still sees structural role info instead of a blank span.
     attrs["span.kind"] = _OBS_TYPE_TO_KIND.get(obs_type, "CHAIN")
@@ -170,12 +183,12 @@ def _row_to_span(row: Dict) -> SpanData:
             attrs[key] = metadata[key]
 
     status = "Unset"
-    if row.get("status_message"):
-        status = "Error" if "error" in str(row["status_message"]).lower() else "Ok"
+    if span.status_message:
+        status = "Error" if "error" in str(span.status_message).lower() else "Ok"
 
     return SpanData(
-        span_id=str(row["id"]),
-        span_name=row.get("name") or "unknown",
+        span_id=str(span.id),
+        span_name=span.name or "unknown",
         duration=duration,
         status_code=status,
         span_attributes=attrs,

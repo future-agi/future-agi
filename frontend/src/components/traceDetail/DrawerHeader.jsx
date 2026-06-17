@@ -8,33 +8,35 @@ import { enqueueSnackbar } from "notistack";
 
 const HeaderButton = ({ icon, tooltip, onClick, disabled }) => (
   <Tooltip title={tooltip} arrow placement="bottom">
-    <Box
-      component="button"
-      onClick={onClick}
-      disabled={disabled}
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 24,
-        height: 24,
-        p: 0,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "4px",
-        bgcolor: "background.paper",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-        flexShrink: 0,
-        "&:hover:not(:disabled)": {
-          bgcolor: "action.hover",
-          borderColor: "text.disabled",
-        },
-        transition: "all 120ms",
-      }}
-    >
-      <Iconify icon={icon} width={16} sx={{ color: "text.primary" }} />
-    </Box>
+    <span style={{ display: "inline-flex" }}>
+      <Box
+        component="button"
+        onClick={onClick}
+        disabled={disabled}
+        sx={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 24,
+          height: 24,
+          p: 0,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "4px",
+          bgcolor: "background.paper",
+          cursor: disabled ? "default" : "pointer",
+          opacity: disabled ? 0.4 : 1,
+          flexShrink: 0,
+          "&:hover:not(:disabled)": {
+            bgcolor: "action.hover",
+            borderColor: "text.disabled",
+          },
+          transition: "all 120ms",
+        }}
+      >
+        <Iconify icon={icon} width={16} sx={{ color: "text.primary" }} />
+      </Box>
+    </span>
   </Tooltip>
 );
 
@@ -49,33 +51,35 @@ HeaderButton.propTypes = {
 
 const NavButton = ({ icon, tooltip, onClick, disabled }) => (
   <Tooltip title={tooltip} arrow placement="bottom">
-    <Box
-      component="button"
-      onClick={onClick}
-      disabled={disabled}
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 24,
-        height: 24,
-        p: 0,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "2px",
-        bgcolor: "background.paper",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-        flexShrink: 0,
-        "&:hover:not(:disabled)": {
-          bgcolor: "action.hover",
-          borderColor: "text.disabled",
-        },
-        transition: "all 120ms",
-      }}
-    >
-      <Iconify icon={icon} width={20} sx={{ color: "text.primary" }} />
-    </Box>
+    <span style={{ display: "inline-flex" }}>
+      <Box
+        component="button"
+        onClick={onClick}
+        disabled={disabled}
+        sx={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 24,
+          height: 24,
+          p: 0,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "2px",
+          bgcolor: "background.paper",
+          cursor: disabled ? "default" : "pointer",
+          opacity: disabled ? 0.4 : 1,
+          flexShrink: 0,
+          "&:hover:not(:disabled)": {
+            bgcolor: "action.hover",
+            borderColor: "text.disabled",
+          },
+          transition: "all 120ms",
+        }}
+      >
+        <Iconify icon={icon} width={20} sx={{ color: "text.primary" }} />
+      </Box>
+    </span>
   </Tooltip>
 );
 

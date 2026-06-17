@@ -736,6 +736,8 @@ def delete_datasets(*, dataset_ids, organization):
     Returns:
         dict with deleted count and names or ServiceError
     """
+    from django.utils import timezone
+
     from model_hub.models.develop_dataset import Dataset
 
     datasets = Dataset.objects.filter(
@@ -752,7 +754,7 @@ def delete_datasets(*, dataset_ids, organization):
         )
 
     names = list(datasets.values_list("name", flat=True))
-    deleted = datasets.update(deleted=True)
+    deleted = datasets.update(deleted=True, deleted_at=timezone.now())
 
     return {"deleted": deleted, "names": names}
 

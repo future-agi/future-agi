@@ -1,5 +1,9 @@
-export function buildCompositeRuntimeConfig({ config = {}, codeParams = {} } = {}) {
-  const runtimeConfig = config && typeof config === "object" ? { ...config } : {};
+export function buildCompositeRuntimeConfig({
+  config = {},
+  codeParams = {},
+} = {}) {
+  const runtimeConfig =
+    config && typeof config === "object" ? { ...config } : {};
   const existingParams =
     runtimeConfig.params && typeof runtimeConfig.params === "object"
       ? runtimeConfig.params
@@ -34,7 +38,11 @@ export function buildCompositeChildConfigs(children = []) {
         : existingConfig?.params;
     const nextConfig = { ...existingConfig };
 
-    if (params && typeof params === "object" && Object.keys(params).length > 0) {
+    if (
+      params &&
+      typeof params === "object" &&
+      Object.keys(params).length > 0
+    ) {
       nextConfig.params = params;
     }
 
