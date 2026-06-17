@@ -89,14 +89,6 @@ const CustomTraceRenderer = (params) => {
     return <TagsCell value={value} />;
   }
 
-  if (isEval && column?.outputType === "Pass/Fail") {
-    return (
-      <div style={{ height: "100%", width: "100%", padding: 0, margin: 0 }}>
-        <EvaluationCell value={value} column={column} />
-      </div>
-    );
-  }
-
   if (isEval) {
     return <EvaluationCell value={value} column={column} />;
   }
