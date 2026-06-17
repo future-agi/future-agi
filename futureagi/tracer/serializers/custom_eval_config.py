@@ -31,6 +31,7 @@ class CustomEvalConfigSerializer(serializers.ModelSerializer):
         queryset=EvalTemplateVersion.all_objects.all(),
         required=False,
         allow_null=True,
+        help_text="Pin to a specific template version for runtime.",
     )
 
     class Meta:
