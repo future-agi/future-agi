@@ -1057,24 +1057,26 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     from tracer.services.clickhouse.client import get_clickhouse_client
 
                     ch = get_clickhouse_client()
-                    # Single batch query with type inference across all projects
                     rows, cols, _ = ch.execute_read(
                         """
                         SELECT key, argMax(type, cnt) AS type FROM (
-                            SELECT key, 'text' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_str) AS key
-                            WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
-                            GROUP BY key
-                            UNION ALL
-                            SELECT key, 'number' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_num) AS key
-                            WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
-                            GROUP BY key
-                            UNION ALL
-                            SELECT key, 'boolean' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_bool) AS key
-                            WHERE project_id IN %(project_ids)s AND _peerdb_is_deleted = 0
-                            GROUP BY key
+                            SELECT
+                                pair.1 AS key,
+                                pair.2 AS type,
+                                count() AS cnt
+                            FROM (
+                                SELECT span_attr_str, span_attr_num, span_attr_bool
+                                FROM spans
+                                WHERE project_id IN %(project_ids)s
+                                  AND _peerdb_is_deleted = 0
+                                LIMIT 100000
+                            )
+                            ARRAY JOIN arrayConcat(
+                                arrayMap(k -> (k, 'text'),    mapKeys(span_attr_str)),
+                                arrayMap(k -> (k, 'number'),  mapKeys(span_attr_num)),
+                                arrayMap(k -> (k, 'boolean'), mapKeys(span_attr_bool))
+                            ) AS pair
+                            GROUP BY pair.1, pair.2
                         )
                         GROUP BY key ORDER BY key LIMIT 2000
                         """,
