@@ -11658,7 +11658,7 @@ def run_evaluation_task(evaluation_data):
         row_ids = evaluation_data["row_ids"]
 
         # Update status for all metrics
-        metrics = UserEvalMetric.objects.filter(id__in=metric_ids)
+        metrics = UserEvalMetric.objects.filter(id__in=metric_ids).select_related("pinned_version", "template")
         metric_map = {str(metric.id): metric for metric in list(metrics)}
         metrics.update(status=StatusType.RUNNING.value)
 
