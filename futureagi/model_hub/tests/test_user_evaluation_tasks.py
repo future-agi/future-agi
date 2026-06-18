@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
+from ee.evals.localizer.error_localizer import LocalizerResult
+
 
 @pytest.fixture(autouse=True)
 def _allow_usage_metering():
@@ -490,9 +492,9 @@ class TestProcessSingleErrorLocalization:
         mock_log_cost.return_value = mock_api_log
 
         mock_localizer_instance = MagicMock()
-        mock_localizer_instance.localize_errors.return_value = (
-            "error_analysis",
-            "selected_key",
+        mock_localizer_instance.localize_errors.return_value = LocalizerResult(
+            analysis="error_analysis",
+            selected_key="selected_key",
         )
         mock_localizer.return_value = mock_localizer_instance
 
@@ -846,9 +848,8 @@ class TestErrorLocalizerGateE2E:
         mock_api_log.status = APICallStatusChoices.PROCESSING.value
         mock_log_cost.return_value = mock_api_log
 
-        mock_localizer.return_value.localize_errors.return_value = (
-            {"summary": "missing context"},
-            "q",
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"summary": "missing context"}, selected_key="q",
         )
 
         process_single_error_localization._original_func(str(task.id))
@@ -893,7 +894,9 @@ class TestErrorLocalizerGateE2E:
         mock_api_log = MagicMock()
         mock_api_log.status = APICallStatusChoices.PROCESSING.value
         mock_log_cost.return_value = mock_api_log
-        mock_localizer.return_value.localize_errors.return_value = ({"input_1": []}, "q")
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"input_1": []}, selected_key="q",
+        )
 
         process_single_error_localization._original_func(str(task.id))
 
@@ -1012,7 +1015,9 @@ class TestErrorLocalizerGateE2E:
         mock_api_log = MagicMock()
         mock_api_log.status = APICallStatusChoices.PROCESSING.value
         mock_log_cost.return_value = mock_api_log
-        mock_localizer.return_value.localize_errors.return_value = ({"k": "v"}, "q")
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"k": "v"}, selected_key="q",
+        )
 
         process_single_error_localization._original_func(str(task.id))
 
@@ -1076,7 +1081,9 @@ class TestErrorLocalizerGateE2E:
         mock_api_log = MagicMock()
         mock_api_log.status = APICallStatusChoices.PROCESSING.value
         mock_log_cost.return_value = mock_api_log
-        mock_localizer.return_value.localize_errors.return_value = ({"k": "v"}, "q")
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"k": "v"}, selected_key="q",
+        )
 
         process_single_error_localization._original_func(str(task.id))
 
@@ -1159,7 +1166,9 @@ class TestErrorLocalizerGateE2E:
             f"The input '{selected_key}' is of type '{expected_type}', "
             f"which is not supported by error localization."
         )
-        mock_localizer.return_value.localize_errors.return_value = ({}, selected_key)
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={}, selected_key=selected_key,
+        )
 
         process_single_error_localization._original_func(str(task.id))
 
@@ -1203,9 +1212,9 @@ class TestErrorLocalizerGateE2E:
         mock_api_log.status = APICallStatusChoices.PROCESSING.value
         mock_log_cost.return_value = mock_api_log
 
-        mock_localizer.return_value.localize_errors.return_value = (
-            {"summary": "ok"},
-            "q",  # EL picked the text column
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"summary": "ok"},
+            selected_key="q",  # EL picked the text column
         )
 
         process_single_error_localization._original_func(str(task.id))

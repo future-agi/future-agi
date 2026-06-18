@@ -1158,7 +1158,7 @@ def process_single_error_localization(task_id):
                 evaluation_explanation=task.eval_explanation,
             )
 
-            error_analysis, selected_input_key = localizer.localize_errors()
+            result = localizer.localize_errors()
         except Exception as e:
             import traceback
 
@@ -1170,9 +1170,12 @@ def process_single_error_localization(task_id):
                 refund_cost_for_api_call(api_call_log_row)
             return
 
+        error_analysis = result.analysis
+        selected_input_key = result.selected_key
+
         if not error_analysis:
             skip_reason = (
-                getattr(localizer, "skip_reason", None)
+                result.skip_reason
                 or "Error localization did not produce any results."
             )
             logger.warning(

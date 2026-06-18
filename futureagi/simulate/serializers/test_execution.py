@@ -8,6 +8,7 @@ from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from model_hub.models.develop_dataset import Cell, Column, Row
+from model_hub.services.error_localizer_service import error_localizer_enabled
 from simulate.models import (
     CallExecution,
     CallExecutionSnapshot,
@@ -200,11 +201,15 @@ class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
 
 
 class CallExecutionEvalMetricSerializer(serializers.Serializer):
-    """One per-eval entry of the ``eval_metrics`` map on the call-execution detail response."""
+    """One entry of ``eval_metrics``. All fields optional; pending evals emit ``{}``."""
 
-    id = serializers.CharField()
-    name = serializers.CharField(allow_blank=True)
-    value = serializers.JSONField(allow_null=True)
+    id = serializers.CharField(required=False, allow_blank=True)
+    name = serializers.CharField(required=False, allow_blank=True)
+    value = serializers.JSONField(
+        required=False,
+        allow_null=True,
+        help_text="number | bool | string | list[string] | null",
+    )
     reason = serializers.CharField(allow_blank=True, required=False)
     type = serializers.CharField(allow_blank=True, required=False)
     template_type = serializers.CharField(
@@ -219,11 +224,41 @@ class CallExecutionEvalMetricSerializer(serializers.Serializer):
     error_localizer_status = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
+    error_localizer_message = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
     selected_input_key = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
     input_data = serializers.JSONField(required=False, allow_null=True)
     input_types = serializers.JSONField(required=False, allow_null=True)
+
+
+class CallExecutionErrorLocalizerTaskSerializer(serializers.Serializer):
+    """One entry in ``error_localizer_tasks``."""
+
+    task_id = serializers.CharField()
+    eval_config_id = serializers.CharField(allow_null=True, allow_blank=True)
+    status = serializers.CharField(allow_blank=True)
+    eval_result = serializers.JSONField(allow_null=True)
+    eval_explanation = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
+    input_data = serializers.JSONField(allow_null=True, required=False)
+    input_keys = serializers.ListField(
+        child=serializers.CharField(), allow_empty=True, required=False
+    )
+    input_types = serializers.JSONField(allow_null=True, required=False)
+    rule_prompt = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    error_analysis = serializers.JSONField(allow_null=True, required=False)
+    selected_input_key = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
+    error_message = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
+    created_at = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    updated_at = serializers.CharField(allow_null=True, allow_blank=True, required=False)
 
 
 def _normalize_eval_value(value, output_type):
@@ -721,13 +756,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
-                    "error_localizer": bool(
-                        eval_config
-                        and (
-                            eval_config.error_localizer
-                            or (eval_config.config or {}).get("error_localizer_enabled")
-                        )
-                    ),
+                    "error_localizer": error_localizer_enabled(eval_config),
                 }
 
         call_execution_id = getattr(obj, "id", None)
@@ -1334,14 +1363,17 @@ class CallExecutionSerializer(serializers.ModelSerializer):
             return round(response_time_ms / 1000, 3)
         return None
 
+    @swagger_serializer_method(
+        serializer_or_field=CallExecutionErrorLocalizerTaskSerializer(many=True)
+    )
     def get_error_localizer_tasks(self, obj):
-        """Get error localizer tasks for this call execution"""
-        try:
-            from model_hub.models.error_localizer_model import (
-                ErrorLocalizerSource,
-                ErrorLocalizerTask,
-            )
+        """Get error localizer tasks for this call execution."""
+        from model_hub.selectors.error_localizer import (
+            list_error_localizer_tasks_for_call_execution,
+            serialize_error_localizer_task,
+        )
 
+        try:
             # Handle both model instances and dictionaries (from grouping)
             if hasattr(obj, "id"):
                 obj_id = obj.id
@@ -1353,42 +1385,10 @@ class CallExecutionSerializer(serializers.ModelSerializer):
 
             request = (self.context or {}).get("request")
             workspace = getattr(request, "workspace", None) if request else None
-            call_execution_tasks = ErrorLocalizerTask.objects.filter(
-                source=ErrorLocalizerSource.SIMULATE.value,
-                metadata__call_execution_id=str(obj_id),
+            tasks = list_error_localizer_tasks_for_call_execution(
+                obj_id, workspace=workspace
             )
-            if workspace is not None:
-                call_execution_tasks = call_execution_tasks.filter(workspace=workspace)
-
-            error_localizer_data = []
-            for task in call_execution_tasks:
-                # Extract eval_config_id from source_id
-                eval_config_id = task.metadata.get("eval_config_id")
-
-                error_localizer_data.append(
-                    {
-                        "task_id": str(task.id),
-                        "eval_config_id": eval_config_id,
-                        "status": task.status,
-                        "eval_result": task.eval_result,
-                        "eval_explanation": task.eval_explanation,
-                        "input_data": task.input_data,
-                        "input_keys": task.input_keys,
-                        "input_types": task.input_types,
-                        "rule_prompt": task.rule_prompt,
-                        "error_analysis": task.error_analysis,
-                        "selected_input_key": task.selected_input_key,
-                        "error_message": task.error_message,
-                        "created_at": (
-                            task.created_at.isoformat() if task.created_at else None
-                        ),
-                        "updated_at": (
-                            task.updated_at.isoformat() if task.updated_at else None
-                        ),
-                    }
-                )
-
-            return error_localizer_data
+            return [serialize_error_localizer_task(task) for task in tasks]
         except Exception as e:
             # Log error but don't fail the serializer
             import logging
