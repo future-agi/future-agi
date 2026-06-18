@@ -1091,8 +1091,16 @@ export function buildReadOnlyColumnDefs(columnConfig) {
   return columnConfig
     .filter((col) => col.is_visible !== false)
     .map((col) => {
-      const colDataType = col.data_type;
-      const colIsFrozen = col.is_frozen;
+      const colDataType = col.data_type
+      const colIsFrozen = col.is_frozen
+      const colOriginType = col.origin_type
+      const enrichedCol = {
+        ...col,
+        dataType: colDataType,
+        originType: colOriginType,
+        isFrozen: colIsFrozen,
+        isHoverButtonVisible: false,
+      };
       return {
         field: col.id,
         headerName: col.name,
@@ -1103,9 +1111,10 @@ export function buildReadOnlyColumnDefs(columnConfig) {
         cellDataType: AGGridCellDataType[colDataType],
         dataType: colDataType,
         pinned: colIsFrozen,
+        originType: colOriginType,
         hide: false,
         headerComponent: CustomDevelopDetailColumn,
-        headerComponentParams: { col, readOnly: true },
+        headerComponentParams: { col: enrichedCol, readOnly: true },
         cellRenderer: CustomCellRender,
         cellRendererParams: { editable: false },
         cellStyle: {
@@ -1115,7 +1124,7 @@ export function buildReadOnlyColumnDefs(columnConfig) {
           flex: 1,
           flexDirection: "column",
         },
-        col: { ...col, dataType: colDataType, isHoverButtonVisible: false },
+        col: enrichedCol,
         valueGetter: (params) => {
           const cellValue = params.data?.[col.id]?.cell_value;
           return parseCellValue(cellValue, AGGridCellDataType[colDataType]);
