@@ -21,6 +21,16 @@ Two layers:
     SQL strings without touching the DB, so we exercise each and assert the
     emitted SQL carries none of the v1-only tokens.
 
+NOTE: this catches *over*-exclusion (a method excluded that shouldn't be) and
+pins the two *known* legacy exclusions (`build_eval_query` /
+`build_annotation_query`) so they can't silently flip to wrapped. It can NOT
+generically catch *under*-exclusion: a NEW legacy-table `build*` method that
+nobody adds to `_v2_rewrite_exclude` would be wrapped, have its v1 tokens
+stripped, pass the no-v1-token check, and 500 at runtime. Closing that fully
+would require statically knowing each method's target table. When adding a
+`build*` method that reads a non-migrated legacy table, add it to BOTH
+`_v2_rewrite_exclude` and `_ALLOWED_EXCLUSIONS` so the pin above covers it.
+
 Imports are lazy (inside the tests) to avoid importing the clickhouse package at
 collection time — see test_ch25_filter_compiler.py / the annotation_graph &
 time_series circular-import notes.
@@ -87,6 +97,44 @@ def _build_method_names(cls):
 
 
 @pytest.mark.unit
+class TestRewriteBoundarySplit:
+    """The boundary rewrites tokens on any SQL but only SETTINGS-stamps statements."""
+
+    def test_fragment_is_rewritten_but_gets_no_settings(self):
+        from tracer.services.clickhouse.v2.query_builders._rewrite import (
+            _rewrite_sql_in,
+        )
+
+        # A WHERE/ORDER fragment carrying a v1 token: tokens must be rewritten,
+        # but a fragment must NOT receive a trailing SETTINGS clause.
+        frag = "AND _peerdb_is_deleted = 0"
+        sql, params = _rewrite_sql_in((frag, {}))
+        assert "_peerdb_is_deleted" not in sql  # token rewritten
+        assert "SETTINGS" not in sql  # no settings on a fragment
+
+    def test_non_sql_tuple_is_untouched(self):
+        from tracer.services.clickhouse.v2.query_builders._rewrite import (
+            _rewrite_sql_in,
+        )
+
+        # A future build* returning (cache_key, meta) must pass through verbatim.
+        cache_key, meta = "trace_list:proj-1:page-2", {"ttl": 30}
+        out = _rewrite_sql_in((cache_key, meta))
+        assert out == (cache_key, meta)
+        assert "SETTINGS" not in out[0]
+
+    def test_statement_gets_both_rewrite_and_settings(self):
+        from tracer.services.clickhouse.v2.query_builders._rewrite import (
+            _rewrite_sql_in,
+        )
+
+        stmt = "SELECT _peerdb_is_deleted FROM spans"
+        sql, _ = _rewrite_sql_in((stmt, {}))
+        assert "_peerdb_is_deleted" not in sql
+        assert "SETTINGS" in sql
+
+
+@pytest.mark.unit
 class TestRewriteBoundaryContract:
     """Structural: every registered v2 builder routes its SQL through one boundary."""
 
@@ -138,6 +186,33 @@ class TestRewriteBoundaryContract:
                     f"migrated spans schema (let the mixin wrap it) or it reads a "
                     f"legacy table (add it to _v2_rewrite_exclude with a note)."
                 )
+
+    def test_known_legacy_methods_stay_excluded_and_unwrapped(self):
+        from tracer.services.clickhouse.v2.query_builders._rewrite import _WRAPPED_ATTR
+
+        # build_eval_query / build_annotation_query read tracer_eval_logger /
+        # model_hub_score, which are NOT in the CH 25.3 migration and keep
+        # `_peerdb_is_deleted`. They MUST stay excluded. If one is dropped from
+        # _v2_rewrite_exclude the mixin wraps it, the rewriter strips the token,
+        # and the no-v1-token check still passes — but it 500s at runtime. Pin
+        # them: each must be listed in the exclude set AND genuinely unwrapped.
+        checked = 0
+        for qt in _LIST_BUILDER_TYPES:
+            cls = _load(_registry()[qt])
+            for name in _ALLOWED_EXCLUSIONS:
+                if not hasattr(cls, name):
+                    continue
+                assert name in cls._v2_rewrite_exclude, (
+                    f"{cls.__name__}.{name} reads a non-migrated legacy table but "
+                    f"is not in _v2_rewrite_exclude — the mixin would rewrite it "
+                    f"against the wrong schema."
+                )
+                assert not getattr(getattr(cls, name), _WRAPPED_ATTR, False), (
+                    f"{cls.__name__}.{name} is routed through the rewrite boundary "
+                    f"but reads a legacy table — it must stay excluded."
+                )
+                checked += 1
+        assert checked >= 1, "expected to pin at least one excluded legacy method"
 
 
 @pytest.mark.unit

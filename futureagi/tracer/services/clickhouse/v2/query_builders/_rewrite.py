@@ -19,10 +19,14 @@ Mix it in FIRST so the wrapper resolves ahead of the v1 base in the MRO:
 
     class TraceListQueryBuilderV2(V2RewriteMixin, TraceListQueryBuilder): ...
 
-`rewrite_and_apply_v2_settings` is idempotent on already-v2 SQL (v1 token patterns
-don't match; the SETTINGS append merges rather than duplicates), so wrapping a
-method that already emits v2-native SQL (e.g. the trace-list rollup fast-path) is a
-harmless no-op.
+The two halves of the rewrite are applied with different scope. The v1→v2 token
+rewrite (`rewrite_v1_sql_to_v2`) always runs — it's a word-boundary substitution,
+idempotent on already-v2 SQL and a no-op on a string with no v1 tokens, so it's
+safe on a SQL fragment or a non-SQL value alike. The SETTINGS append
+(`_append_v2_settings`) runs ONLY when the emitted SQL is a complete `SELECT`/`WITH`
+statement (`_is_statement`): a fragment or a non-SQL `(cache_key, meta)` return
+must not get a trailing SETTINGS clause. So wrapping a method that already emits
+v2-native SQL (e.g. the trace-list rollup fast-path) is a harmless no-op.
 
 NOTE: the filter builder (`ClickHouseFilterBuilderV2`) deliberately does NOT use
 this mixin — its `translate` / `translate_sort` emit WHERE/ORDER *fragments* that
@@ -35,11 +39,23 @@ import functools
 from collections.abc import Callable
 
 from tracer.services.clickhouse.v2.query_builders.filters import (
-    rewrite_and_apply_v2_settings,
+    _append_v2_settings,
+    rewrite_v1_sql_to_v2,
 )
 
 # Marks a method as already wrapped, so re-subclassing never double-wraps it.
 _WRAPPED_ATTR = "_v2_rewrite_wrapped"
+
+
+def _is_statement(sql: str) -> bool:
+    """True only for a complete read statement (the kind that may carry SETTINGS).
+
+    A complete query in these builders always starts with SELECT or WITH. A
+    SQL *fragment* (a bare WHERE/ORDER clause) or a non-SQL value (e.g. a future
+    ``(cache_key, meta)`` return) does not — and must NOT get a trailing SETTINGS
+    clause appended.
+    """
+    return sql.lstrip()[:6].upper().startswith(("SELECT", "WITH"))
 
 
 def _rewrite_sql_in(result: object) -> object:
@@ -64,7 +80,11 @@ def _rewrite_sql_in(result: object) -> object:
         sql, params = result
         if not sql:
             return result
-        return rewrite_and_apply_v2_settings(sql), params
+        # Token rewrite is always safe; SETTINGS only belongs on a full statement.
+        rewritten = rewrite_v1_sql_to_v2(sql)
+        if _is_statement(sql):
+            rewritten = _append_v2_settings(rewritten)
+        return rewritten, params
 
     # [(sql, params, meta), ...] — dashboard.build_all_queries.
     if (
@@ -78,7 +98,12 @@ def _rewrite_sql_in(result: object) -> object:
         rewritten = []
         for el in result:
             sql = el[0]
-            new_sql = sql if not sql else rewrite_and_apply_v2_settings(sql)
+            if sql:
+                new_sql = rewrite_v1_sql_to_v2(sql)
+                if _is_statement(sql):
+                    new_sql = _append_v2_settings(new_sql)
+            else:
+                new_sql = sql
             rewritten.append((new_sql, *el[1:]))
         return rewritten
 
