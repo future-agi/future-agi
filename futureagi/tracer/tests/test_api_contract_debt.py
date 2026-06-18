@@ -319,6 +319,7 @@ def test_tracer_observe_helper_routes_reject_anonymous_before_work(
     assert response.data["code"] == "not_authenticated"
 
 
+@pytest.mark.skip(reason="OTLP trace routes migrated to fi-collector — pending PII scrubbing port")
 @pytest.mark.django_db
 def test_tracer_system_public_routes_keep_expected_boundary_semantics(api_client):
     otlp = api_client.post("/tracer/otlp/v1/traces", data={}, format="json")
