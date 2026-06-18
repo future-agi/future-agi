@@ -1492,9 +1492,38 @@ def _execute_evaluation(
     except Exception:
         raise Exception("Error in _execute_evaluation")  # noqa: B904
 
-    eval_type_id = custom_eval_config.eval_template.config.get("eval_type_id")
+    # TH-4909: defensive `or {}` so a template with config=None doesn't crash
+    # with AttributeError BEFORE the agent-template guard below — that
+    # AttributeError would escape the upstream ValueError handler and re-introduce
+    # the silent failure this PR is trying to fix.
+    eval_type_id = (custom_eval_config.eval_template.config or {}).get("eval_type_id")
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
     eval_model = custom_eval_config.eval_template
+
+    # TH-4909: surface incomplete agent templates as visible error rows
+    # instead of silent dispatch failures. A bulk-attach flow saved CECs
+    # whose linked agent template has empty config; those would fail
+    # downstream in the eval engine with unhandled exceptions and no
+    # eval_logger row. Raising ValueError here routes through the
+    # ValueError handler in evaluate_observation_span_observe which
+    # writes an error row via _create_error_eval_logger.
+    #
+    # Composite templates inherit eval_type='agent' from their children but
+    # store output/rule_prompt on the children, not on the composite itself
+    # (see model_hub/utils/eval_list.py::infer_composite_eval_type). Skip
+    # the check for composites — the composite branch below dispatches per
+    # child and each child gets validated on its own pass.
+    if (
+        getattr(eval_model, "eval_type", None) == "agent"
+        and getattr(eval_model, "template_type", None) != "composite"
+    ):
+        _tpl_cfg = eval_model.config or {}
+        _missing = [k for k in ("output", "rule_prompt") if not _tpl_cfg.get(k)]
+        if _missing:
+            raise ValueError(
+                f"Agent eval template '{eval_model.name}' is missing required "
+                f"field(s) {_missing}. Update the template before running this eval."
+            )
 
     # Composite evals: fan out across children via the shared helper and
     # return a synthesised result that matches the shape downstream
