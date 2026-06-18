@@ -660,6 +660,22 @@ class ScenarioDetailView(APIView):
             else:
                 response_data["dataset_rows"] = 0
 
+            # Add dataset column config so frontend can show actual column names in eval mapping
+            from model_hub.models.develop_dataset import Column
+
+            if scenario.dataset:
+                column_order = scenario.dataset.column_order
+                columns = Column.objects.filter(deleted=False, id__in=column_order)
+                column_config = {}
+                for column in columns:
+                    column_config[f"{column.id}"] = {
+                        "name": column.name,
+                        "type": column.data_type,
+                    }
+                response_data["dataset_column_config"] = column_config
+            else:
+                response_data["dataset_column_config"] = None
+
             # Return the response — pass through serializer to whitelist permitted fields
             return Response(
                 ScenarioDetailResponseSerializer(response_data).data,

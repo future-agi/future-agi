@@ -210,6 +210,7 @@ class ScenarioDetailResponseSerializer(serializers.Serializer):
         child=ScenarioPromptItemSerializer(), read_only=True
     )
     dataset_rows = serializers.IntegerField(read_only=True)
+    dataset_column_config = serializers.DictField(read_only=True, allow_null=True)
 
 
 class ScenarioListResponseSerializer(serializers.Serializer):
