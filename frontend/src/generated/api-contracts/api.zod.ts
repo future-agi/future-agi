@@ -19920,9 +19920,9 @@ export const ModelHubEvalTemplatesUsageListResponse = zod.object({
   "pass_count": zod.number().optional(),
   "fail_count": zod.number().optional()
 })),
-  "table": zod.array(zod.object({
+  "table": zod.array(zod.record(zod.string(), zod.object({
 
-}).passthrough()),
+}).passthrough())),
   "logs": zod.object({
   "total": zod.number(),
   "page": zod.number(),

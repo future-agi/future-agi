@@ -10207,7 +10207,7 @@ export interface EvalUsagePaginationApi {
   page_size: number;
 }
 
-export type EvalUsageStatsResponseResultApiTableItem = { [key: string]: unknown };
+export type EvalUsageStatsResponseResultApiTableItem = {[key: string]: { [key: string]: unknown }};
 
 export interface EvalUsageStatsResponseResultApi {
   template_id: string;

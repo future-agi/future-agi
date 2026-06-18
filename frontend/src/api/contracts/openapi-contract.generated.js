@@ -80559,7 +80559,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "table": {
           "type": "array",
           "items": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": {
+              "type": "object"
+            }
           }
         },
         "logs": {

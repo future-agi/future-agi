@@ -1736,7 +1736,9 @@ class EvalUsageStatsResponseResultSerializer(serializers.Serializer):
     is_composite = serializers.BooleanField()
     stats = EvalUsageStatsSerializer()
     chart = EvalUsageChartPointSerializer(many=True)
-    table = serializers.ListField(child=serializers.JSONField())
+    # table rows have dynamic input_var_X columns — typed as record<string, JSON>
+    # so Zod gets z.record(z.string(), z.any()) rather than z.any() for the whole item
+    table = serializers.ListField(child=serializers.DictField(child=serializers.JSONField()))
     logs = EvalUsagePaginationSerializer()
 
 
