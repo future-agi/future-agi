@@ -544,3 +544,16 @@ class TestRetrieveClickhouseInnerPGBound:
 
         response = auth_client.get(f"/tracer/trace-session/{trace_session.id}/")
         assert response.status_code != 500
+
+
+class TestRetrieveClickhouseEvalQueryNullSafety:
+    """Guard against regressing the NULL-safe ``output_str`` filter."""
+
+    def test_eval_subquery_uses_ifnull_output_str_guard(self):
+        import inspect
+
+        from tracer.views.trace_session import TraceSessionView
+
+        source = inspect.getsource(TraceSessionView._retrieve_clickhouse)
+        assert "ifNull(output_str, '') != 'ERROR'" in source
+        assert "AND output_str != 'ERROR'" not in source
