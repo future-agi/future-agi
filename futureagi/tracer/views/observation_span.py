@@ -84,6 +84,7 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_eval_graph_ch,
     fetch_system_metric_graph_ch,
 )
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.create_otel_span import create_single_otel_span
@@ -626,7 +627,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Fetch eval metrics from CH
         evals_metrics = {}
         if children_span_ids:
-            eval_query = """
+            eval_table, eval_nd = eval_logger_source()
+            eval_query = f"""
                 SELECT
                     toString(observation_span_id) AS span_id,
                     toString(custom_eval_config_id) AS config_id,
@@ -637,10 +639,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     error,
                     error_message,
                     output_str
-                FROM tracer_eval_logger FINAL
+                FROM {eval_table} FINAL
                 WHERE observation_span_id IN %(span_ids)s
-                  AND _peerdb_is_deleted = 0
-                  AND (deleted = 0 OR deleted IS NULL)
+                  AND {eval_nd}
             """
             eval_result = analytics.execute_ch_query(
                 eval_query, {"span_ids": children_span_ids}, timeout_ms=5000
@@ -1399,11 +1400,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
         eval_config_ids = []
+        eval_table, eval_nd = eval_logger_source()
         ch_result = analytics.execute_ch_query(
             "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            "FROM tracer_eval_logger FINAL "
-            "WHERE _peerdb_is_deleted = 0 "
-            "AND (deleted = 0 OR deleted IS NULL) "
+            f"FROM {eval_table} FINAL "
+            f"WHERE {eval_nd} "
             "AND dictGet('trace_dict', 'project_id', "
             "trace_id) = toUUID(%(pid)s)",
             {"pid": str(project_id)},
@@ -2181,7 +2182,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         """Get evaluation details from ClickHouse."""
         # Span- and trace-target rows both anchor to observation_span_id;
         # session rows don't and are served by /trace-session/:id/eval_logs/.
-        query = """
+        eval_table, eval_nd = eval_logger_source()
+        query = f"""
             SELECT
                 output_float,
                 output_bool,
@@ -2191,12 +2193,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 error,
                 error_message,
                 output_metadata
-            FROM tracer_eval_logger FINAL
+            FROM {eval_table} FINAL
             WHERE observation_span_id = %(span_id)s
               AND custom_eval_config_id = %(config_id)s
               AND target_type IN ('span', 'trace')
-              AND _peerdb_is_deleted = 0
-              AND (deleted = 0 OR deleted IS NULL)
+              AND {eval_nd}
             LIMIT 1
         """
         result = analytics.execute_ch_query(

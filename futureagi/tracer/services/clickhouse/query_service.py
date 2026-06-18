@@ -19,6 +19,7 @@ from tracer.services.clickhouse.client import (
     get_clickhouse_client,
     is_clickhouse_enabled,
 )
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 
 logger = structlog.get_logger(__name__)
 
@@ -188,11 +189,11 @@ class AnalyticsQueryService:
 
     def get_eval_config_ids_with_data_ch(self, project_id: str) -> list[str]:
         """Get distinct eval config IDs that have data for a project in ClickHouse."""
-        query = """
+        eval_table, eval_nd = eval_logger_source()
+        query = f"""
             SELECT DISTINCT toString(custom_eval_config_id) AS config_id
-            FROM tracer_eval_logger FINAL
-            WHERE _peerdb_is_deleted = 0
-              AND (deleted = 0 OR deleted IS NULL)
+            FROM {eval_table} FINAL
+            WHERE {eval_nd}
               AND trace_id IN (
                   SELECT DISTINCT trace_id
                   FROM spans
