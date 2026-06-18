@@ -207,8 +207,11 @@ def apply_filters(row_data, filters):
                 }
 
                 if filter_op not in text_ops:
-                    message = "Invalid filter operation. \
-                        Allowed operations are: " + ", ".join(text_ops.keys())
+                    message = (
+                        "Invalid filter operation. \
+                        Allowed operations are: "
+                        + ", ".join(text_ops.keys())
+                    )
                     raise ValueError(message)
 
                 result = []
@@ -1903,6 +1906,11 @@ class EvalTemplateBulkDeleteView(APIView):
                     UserEvalMetric.objects.filter(
                         id__in=[m[0] for m in metrics]
                     ).update(deleted=True, deleted_at=timezone.now())
+
+                # Soft-delete EvalSettings rows attached to deleted templates.
+                EvalSettings.objects.filter(
+                    eval_id__in=req.template_ids, deleted=False
+                ).update(deleted=True, deleted_at=timezone.now())
 
             response = BulkDeleteResponse(deleted_count=deleted_count)
             return self._gm.success_response(response.model_dump())
