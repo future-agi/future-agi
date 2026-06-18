@@ -444,3 +444,4 @@ class FetchAssistantRequestSerializer(serializers.Serializer):
         default=ProviderChoices.VAPI,
         help_text="Voice provider. One of: vapi, retell, eleven_labs, others.",
     )
+    agent_definition_id = serializers.UUIDField(required=False, allow_null=True)

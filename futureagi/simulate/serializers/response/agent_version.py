@@ -46,6 +46,8 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         snapshot = data.get("configuration_snapshot")
         if isinstance(snapshot, dict):
+            # Copy to avoid mutating instance.configuration_snapshot in-place
+            snapshot = dict(snapshot)
             for key in ["organization", "knowledge_base", "workspace", "id"]:
                 if key in snapshot and snapshot[key] is not None:
                     snapshot[key] = str(snapshot[key])

@@ -22,6 +22,7 @@ export const getAgentFormValues = (agentDetails) => {
   }
 
   return {
+    agentDefinitionId: agentDetails?.agent_definition || "",
     // Basic Information
     agentName: snapshot.agent_name || "",
     agentType: snapshot.agent_type || "",

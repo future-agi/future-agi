@@ -129,6 +129,7 @@ export const createAgentDefinitionSchema = (options) => {
         .min(1, "Must be at least 1")
         .optional()
         .nullable(),
+      agentDefinitionId: z.string().optional(),
     })
     .superRefine(async (data, ctx) => {
       if (
@@ -288,6 +289,7 @@ export const createAgentDefinitionSchema = (options) => {
               await axios.post(endpoints.agentDefinitions.verifyApiKey, {
                 provider: data.provider,
                 api_key: data.apiKey,
+                agent_definition_id: data.agentDefinitionId,
               });
             } catch (error) {
               ctx.addIssue({
@@ -322,6 +324,7 @@ export const createAgentDefinitionSchema = (options) => {
                   provider: data.provider,
                   api_key: data.apiKey,
                   assistant_id: data.assistantId,
+                  agent_definition_id: data.agentDefinitionId,
                 });
               } catch (error) {
                 ctx.addIssue({
