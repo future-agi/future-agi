@@ -1791,3 +1791,70 @@ class TestMaybePinNewVersion:
         assert result_config.get("rule_prompt") == "", (
             "Empty string should be preserved, not replaced with template prompt"
         )
+
+    def test_config_and_snapshot_agree_after_edit(
+        self, organization, workspace, user, user_template
+    ):
+        """Invariant: after any edit, eval_metric.config and
+        pinned_version.config_snapshot must reflect the same rule_prompt.
+        This is the contract Nikhil asked for — the two sources of truth
+        must stay in lockstep."""
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+        uem = self._make_uem(organization, workspace, user, user_template)
+
+        request_data = {
+            "config": {
+                "config": {"rule_prompt": "lockstep prompt"},
+                "run_config": {"model": "turing_large"},
+            }
+        }
+        # Simulate the view: first pin, then save config
+        maybe_pin_new_version(
+            uem, request_data, user=user,
+            organization=organization, workspace=workspace,
+        )
+        # Simulate eval_metric.config = normalize_eval_runtime_config(...)
+        uem.config = request_data["config"]
+        uem.save()
+
+        # Reload from DB to confirm both are persisted
+        uem.refresh_from_db()
+        assert uem.pinned_version_id is not None
+        snapshot = uem.pinned_version.config_snapshot or {}
+        config_rule_prompt = uem.config.get("config", {}).get("rule_prompt")
+        snapshot_rule_prompt = snapshot.get("rule_prompt")
+        assert config_rule_prompt == snapshot_rule_prompt == "lockstep prompt", (
+            f"config has {config_rule_prompt!r} but snapshot has {snapshot_rule_prompt!r}"
+        )
+
+    def test_version_switch_with_no_config_change_keeps_selected_version(
+        self, organization, workspace, user, user_template
+    ):
+        """Switching to an older version with the same config should keep
+        that version pinned (dedup fires). No new version created."""
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+        from model_hub.models.evals_metric import EvalTemplateVersion
+
+        uem = self._make_uem(organization, workspace, user, user_template)
+
+        # Create v1 with a specific rule_prompt
+        v1_request = {"config": {"config": {"rule_prompt": "v1 prompt"}, "run_config": {}}}
+        maybe_pin_new_version(uem, v1_request, user=user, organization=organization, workspace=workspace)
+        uem.save()
+        v1 = uem.pinned_version
+
+        # Create v2 with a different prompt
+        v2_request = {"config": {"config": {"rule_prompt": "v2 prompt"}, "run_config": {}}}
+        maybe_pin_new_version(uem, v2_request, user=user, organization=organization, workspace=workspace)
+        uem.save()
+        assert uem.pinned_version_id != v1.id
+
+        # Simulate "switch back to v1 with no changes": set v1 as baseline, send v1's config
+        uem.pinned_version = v1
+        maybe_pin_new_version(uem, v1_request, user=user, organization=organization, workspace=workspace)
+
+        # Dedup should fire — snap matches v1 → still pinned to v1
+        assert uem.pinned_version_id == v1.id, "Switching back to v1 with same config should keep v1 pinned"
+        version_count = EvalTemplateVersion.objects.filter(eval_template=user_template).count()
+        assert version_count == 2, f"No new version should be created, found {version_count}"

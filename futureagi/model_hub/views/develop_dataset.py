@@ -7983,7 +7983,10 @@ class EditAndRunUserEvalView(APIView):
                                 new_config["function_params_schema"][key]["default"] = value
                     new_template.config = new_config
                     new_template.save()
-                    eval_metric.template_id = new_template.id
+                    # Assign the full object (not just _id) so the FK cache
+                    # reflects the new template when maybe_pin_new_version
+                    # reads eval_metric.template.owner below.
+                    eval_metric.template = new_template
                     eval_metric.save()
 
                 # Validate config before creating a version to avoid orphans
@@ -8005,12 +8008,15 @@ class EditAndRunUserEvalView(APIView):
                             f"Missing required mapping keys: {', '.join(missing_keys)}"
                         )
 
-                # If the user explicitly switched to a DIFFERENT version from
-                # the dropdown, pin it directly and skip auto-creation. The FE
-                # always echoes the current pinned_version_id on save; we only
-                # treat it as an explicit switch when it differs from what is
-                # already pinned — otherwise we'd skip version creation on every
-                # normal config edit.
+                # If the user explicitly switched to a DIFFERENT version, set it
+                # as the dedup baseline before calling maybe_pin_new_version.
+                # This means:
+                #   - user selects V1 with no config changes → snap matches V1 →
+                #     dedup fires → V1 stays pinned (no new version)
+                #   - user selects V1 and also edits config → snap differs from V1 →
+                #     new version created with the edited config
+                # Both paths keep eval_metric.config and pinned_version.config_snapshot
+                # in lockstep (the invariant).
                 explicit_version_id = request_data.get("pinned_version_id")
                 version_switched = (
                     explicit_version_id
@@ -8024,18 +8030,23 @@ class EditAndRunUserEvalView(APIView):
                     ).first()
                     if not selected_ver:
                         return self._gm.bad_request("Selected version not found")
+                    # Use the selected version as the dedup baseline.
                     eval_metric.pinned_version = selected_ver
-                else:
-                    # Version creation on edit — business logic lives in the service.
-                    from model_hub.services.eval_version_pinning import maybe_pin_new_version
 
-                    maybe_pin_new_version(
-                        eval_metric,
-                        request_data,
-                        user=request.user,
-                        organization=getattr(request, "organization", None) or request.user.organization,
-                        workspace=getattr(request, "workspace", None),
-                    )
+                # Version creation on edit — business logic lives in the service.
+                # Runs whether or not the user switched versions: if config
+                # matches the baseline snapshot, dedup skips creation; if it
+                # differs (including after a version switch with edits), a new
+                # version is created and pinned.
+                from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+                maybe_pin_new_version(
+                    eval_metric,
+                    request_data,
+                    user=request.user,
+                    organization=getattr(request, "organization", None) or request.user.organization,
+                    workspace=getattr(request, "workspace", None),
+                )
 
                 # Update the config (already validated above)
                 if new_config:
