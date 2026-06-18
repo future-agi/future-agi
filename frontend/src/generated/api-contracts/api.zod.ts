@@ -27724,6 +27724,8 @@ export const simulateAgentDefinitionsVersionsCallExecutionsListResponseCallTypeM
 export const simulateAgentDefinitionsVersionsCallExecutionsListResponseMessageCountMin = -2147483648;
 export const simulateAgentDefinitionsVersionsCallExecutionsListResponseMessageCountMax = 2147483647;
 
+
+
 export const simulateAgentDefinitionsVersionsCallExecutionsListResponseCustomerCostCentsMin = -2147483648;
 export const simulateAgentDefinitionsVersionsCallExecutionsListResponseCustomerCostCentsMax = 2147483647;
 
@@ -27776,7 +27778,30 @@ export const SimulateAgentDefinitionsVersionsCallExecutionsListResponseItem = zo
   "eval_outputs": zod.object({
 
 }).passthrough().optional().describe('Evaluation output'),
-  "error_localizer_tasks": zod.string().optional(),
+  "error_localizer_tasks": zod.array(zod.object({
+  "task_id": zod.string().min(1),
+  "eval_config_id": zod.string(),
+  "status": zod.string(),
+  "eval_result": zod.object({
+
+}).passthrough(),
+  "eval_explanation": zod.string().optional(),
+  "input_data": zod.object({
+
+}).passthrough().optional(),
+  "input_keys": zod.array(zod.string().min(1)).optional(),
+  "input_types": zod.object({
+
+}).passthrough().optional(),
+  "rule_prompt": zod.string().optional(),
+  "error_analysis": zod.object({
+
+}).passthrough().optional(),
+  "selected_input_key": zod.string().optional(),
+  "error_message": zod.string().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})).optional().describe('Get error localizer tasks for this call execution.'),
   "call_summary": zod.string().optional().describe('Call summary from the service'),
   "agent_version": zod.string().uuid().optional(),
   "customer_cost_cents": zod.number().min(simulateAgentDefinitionsVersionsCallExecutionsListResponseCustomerCostCentsMin).max(simulateAgentDefinitionsVersionsCallExecutionsListResponseCustomerCostCentsMax).optional().describe('Total customer-reported cost in cents'),
@@ -28792,6 +28817,8 @@ export const simulateApiCallExecutionsListResponseCallTypeMax = 50;
 export const simulateApiCallExecutionsListResponseMessageCountMin = -2147483648;
 export const simulateApiCallExecutionsListResponseMessageCountMax = 2147483647;
 
+
+
 export const simulateApiCallExecutionsListResponseCustomerCostCentsMin = -2147483648;
 export const simulateApiCallExecutionsListResponseCustomerCostCentsMax = 2147483647;
 
@@ -28844,7 +28871,30 @@ export const SimulateApiCallExecutionsListResponseItem = zod.object({
   "eval_outputs": zod.object({
 
 }).passthrough().optional().describe('Evaluation output'),
-  "error_localizer_tasks": zod.string().optional(),
+  "error_localizer_tasks": zod.array(zod.object({
+  "task_id": zod.string().min(1),
+  "eval_config_id": zod.string(),
+  "status": zod.string(),
+  "eval_result": zod.object({
+
+}).passthrough(),
+  "eval_explanation": zod.string().optional(),
+  "input_data": zod.object({
+
+}).passthrough().optional(),
+  "input_keys": zod.array(zod.string().min(1)).optional(),
+  "input_types": zod.object({
+
+}).passthrough().optional(),
+  "rule_prompt": zod.string().optional(),
+  "error_analysis": zod.object({
+
+}).passthrough().optional(),
+  "selected_input_key": zod.string().optional(),
+  "error_message": zod.string().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})).optional().describe('Get error localizer tasks for this call execution.'),
   "call_summary": zod.string().optional().describe('Call summary from the service'),
   "agent_version": zod.string().uuid().optional(),
   "customer_cost_cents": zod.number().min(simulateApiCallExecutionsListResponseCustomerCostCentsMin).max(simulateApiCallExecutionsListResponseCustomerCostCentsMax).optional().describe('Total customer-reported cost in cents'),
@@ -29993,6 +30043,8 @@ export const simulateApiTestExecutionsListResponseCallsItemCallTypeMax = 50;
 export const simulateApiTestExecutionsListResponseCallsItemMessageCountMin = -2147483648;
 export const simulateApiTestExecutionsListResponseCallsItemMessageCountMax = 2147483647;
 
+
+
 export const simulateApiTestExecutionsListResponseCallsItemCustomerCostCentsMin = -2147483648;
 export const simulateApiTestExecutionsListResponseCallsItemCustomerCostCentsMax = 2147483647;
 
@@ -30065,7 +30117,30 @@ export const SimulateApiTestExecutionsListResponseItem = zod.object({
   "eval_outputs": zod.object({
 
 }).passthrough().optional().describe('Evaluation output'),
-  "error_localizer_tasks": zod.string().optional(),
+  "error_localizer_tasks": zod.array(zod.object({
+  "task_id": zod.string().min(1),
+  "eval_config_id": zod.string(),
+  "status": zod.string(),
+  "eval_result": zod.object({
+
+}).passthrough(),
+  "eval_explanation": zod.string().optional(),
+  "input_data": zod.object({
+
+}).passthrough().optional(),
+  "input_keys": zod.array(zod.string().min(1)).optional(),
+  "input_types": zod.object({
+
+}).passthrough().optional(),
+  "rule_prompt": zod.string().optional(),
+  "error_analysis": zod.object({
+
+}).passthrough().optional(),
+  "selected_input_key": zod.string().optional(),
+  "error_message": zod.string().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})).optional().describe('Get error localizer tasks for this call execution.'),
   "call_summary": zod.string().optional().describe('Call summary from the service'),
   "agent_version": zod.string().uuid().optional(),
   "customer_cost_cents": zod.number().min(simulateApiTestExecutionsListResponseCallsItemCustomerCostCentsMin).max(simulateApiTestExecutionsListResponseCallsItemCustomerCostCentsMax).optional().describe('Total customer-reported cost in cents'),
@@ -30104,7 +30179,6 @@ export const simulateCallExecutionsReadResponseDurationSecondsMax = 2147483647;
 
 export const simulateCallExecutionsReadResponseResponseTimeMsMin = -2147483648;
 export const simulateCallExecutionsReadResponseResponseTimeMsMax = 2147483647;
-
 
 
 
@@ -30152,11 +30226,11 @@ export const SimulateCallExecutionsReadResponse = zod.object({
   "customer_name": zod.string().min(1).optional(),
   "eval_outputs": zod.string().optional(),
   "eval_metrics": zod.record(zod.string(), zod.object({
-  "id": zod.string().min(1),
-  "name": zod.string(),
+  "id": zod.string().optional(),
+  "name": zod.string().optional(),
   "value": zod.object({
 
-}).passthrough(),
+}).passthrough().optional().describe('number | bool | string | list[string] | null'),
   "reason": zod.string().optional(),
   "type": zod.string().optional(),
   "template_type": zod.string().optional(),
@@ -30169,6 +30243,7 @@ export const SimulateCallExecutionsReadResponse = zod.object({
 
 }).passthrough().optional(),
   "error_localizer_status": zod.string().optional(),
+  "error_localizer_message": zod.string().optional(),
   "selected_input_key": zod.string().optional(),
   "input_data": zod.object({
 
@@ -30280,6 +30355,8 @@ export const simulateCallExecutionsPartialUpdateResponseCallTypeMax = 50;
 export const simulateCallExecutionsPartialUpdateResponseMessageCountMin = -2147483648;
 export const simulateCallExecutionsPartialUpdateResponseMessageCountMax = 2147483647;
 
+
+
 export const simulateCallExecutionsPartialUpdateResponseCustomerCostCentsMin = -2147483648;
 export const simulateCallExecutionsPartialUpdateResponseCustomerCostCentsMax = 2147483647;
 
@@ -30332,7 +30409,30 @@ export const SimulateCallExecutionsPartialUpdateResponse = zod.object({
   "eval_outputs": zod.object({
 
 }).passthrough().optional().describe('Evaluation output'),
-  "error_localizer_tasks": zod.string().optional(),
+  "error_localizer_tasks": zod.array(zod.object({
+  "task_id": zod.string().min(1),
+  "eval_config_id": zod.string(),
+  "status": zod.string(),
+  "eval_result": zod.object({
+
+}).passthrough(),
+  "eval_explanation": zod.string().optional(),
+  "input_data": zod.object({
+
+}).passthrough().optional(),
+  "input_keys": zod.array(zod.string().min(1)).optional(),
+  "input_types": zod.object({
+
+}).passthrough().optional(),
+  "rule_prompt": zod.string().optional(),
+  "error_analysis": zod.object({
+
+}).passthrough().optional(),
+  "selected_input_key": zod.string().optional(),
+  "error_message": zod.string().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})).optional().describe('Get error localizer tasks for this call execution.'),
   "call_summary": zod.string().optional().describe('Call summary from the service'),
   "agent_version": zod.string().uuid().optional(),
   "customer_cost_cents": zod.number().min(simulateCallExecutionsPartialUpdateResponseCustomerCostCentsMin).max(simulateCallExecutionsPartialUpdateResponseCustomerCostCentsMax).optional().describe('Total customer-reported cost in cents'),

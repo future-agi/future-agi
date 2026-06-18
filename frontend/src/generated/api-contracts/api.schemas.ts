@@ -14257,6 +14257,32 @@ export const CallExecutionApiSimulationCallType = {
   text: 'text',
 } as const;
 
+export type CallExecutionErrorLocalizerTaskApiEvalResult = { [key: string]: unknown };
+
+export type CallExecutionErrorLocalizerTaskApiInputData = { [key: string]: unknown };
+
+export type CallExecutionErrorLocalizerTaskApiInputTypes = { [key: string]: unknown };
+
+export type CallExecutionErrorLocalizerTaskApiErrorAnalysis = { [key: string]: unknown };
+
+export interface CallExecutionErrorLocalizerTaskApi {
+  /** @minLength 1 */
+  task_id: string;
+  eval_config_id: string;
+  status: string;
+  eval_result: CallExecutionErrorLocalizerTaskApiEvalResult;
+  eval_explanation?: string;
+  input_data?: CallExecutionErrorLocalizerTaskApiInputData;
+  input_keys?: string[];
+  input_types?: CallExecutionErrorLocalizerTaskApiInputTypes;
+  rule_prompt?: string;
+  error_analysis?: CallExecutionErrorLocalizerTaskApiErrorAnalysis;
+  selected_input_key?: string;
+  error_message?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface CallExecutionApi {
   readonly id?: string;
   /**
@@ -14370,7 +14396,8 @@ export interface CallExecutionApi {
   recording_available?: boolean;
   /** Evaluation output */
   eval_outputs?: CallExecutionApiEvalOutputs;
-  readonly error_localizer_tasks?: string;
+  /** Get error localizer tasks for this call execution. */
+  readonly error_localizer_tasks?: readonly CallExecutionErrorLocalizerTaskApi[];
   /** Call summary from the service */
   call_summary?: string;
   agent_version?: string;
@@ -16058,6 +16085,9 @@ export const CallExecutionDetailApiStatus = {
   cancelled: 'cancelled',
 } as const;
 
+/**
+ * number | bool | string | list[string] | null
+ */
 export type CallExecutionEvalMetricApiValue = { [key: string]: unknown };
 
 export type CallExecutionEvalMetricApiErrorAnalysis = { [key: string]: unknown };
@@ -16067,10 +16097,10 @@ export type CallExecutionEvalMetricApiInputData = { [key: string]: unknown };
 export type CallExecutionEvalMetricApiInputTypes = { [key: string]: unknown };
 
 export interface CallExecutionEvalMetricApi {
-  /** @minLength 1 */
-  id: string;
-  name: string;
-  value: CallExecutionEvalMetricApiValue;
+  id?: string;
+  name?: string;
+  /** number | bool | string | list[string] | null */
+  value?: CallExecutionEvalMetricApiValue;
   reason?: string;
   type?: string;
   template_type?: string;
@@ -16081,6 +16111,7 @@ export interface CallExecutionEvalMetricApi {
   error_localizer?: boolean;
   error_analysis?: CallExecutionEvalMetricApiErrorAnalysis;
   error_localizer_status?: string;
+  error_localizer_message?: string;
   selected_input_key?: string;
   input_data?: CallExecutionEvalMetricApiInputData;
   input_types?: CallExecutionEvalMetricApiInputTypes;
