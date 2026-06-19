@@ -69,6 +69,11 @@ VOICE_LATENCY_KEYS = {
     "total": "gen_ai.voice.latency.total",
 }
 
+# Name of the per-org system key sim reuses to authenticate span emission to
+# the fi-collector. The collector resolves org + workspace from the key and the
+# project from the ``project_name`` resource attribute (see sim_collector_emit).
+_SIM_INGEST_KEY_NAME = "system_org_key"
+
 SPAN_KIND_AGENT = "AGENT"
 SPAN_KIND_LLM = "LLM"
 SPAN_KIND_TOOL = "TOOL"
@@ -145,6 +150,7 @@ def build_sim_spans(
     seed: str | None = None,
     started_at=None,
     ended_at=None,
+    eval_attributes: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the OTLP span dicts for one simulated conversation.
 
@@ -205,6 +211,12 @@ def build_sim_spans(
         base_attrs[METADATA] = {**metadata, "simulation_modality": modality}
     else:
         base_attrs[METADATA] = {"simulation_modality": modality}
+    # Eval verdicts (attached after evals finish) ride on the root span so they
+    # are filterable at trace granularity, same as the at-emit attributes. A
+    # re-emit with these set replaces the root row in CH (ReplacingMergeTree on
+    # span id) without a separate write path.
+    if eval_attributes:
+        base_attrs.update(eval_attributes)
 
     root_kind = SPAN_KIND_CONVERSATION if modality == "voice" else SPAN_KIND_AGENT
     if modality == "voice":
@@ -361,22 +373,29 @@ def emit_sim_trace(
     call_execution,
     *,
     turns: list[dict[str, Any]] | None = None,
-    user_id: str | None = None,
+    eval_attributes: dict[str, Any] | None = None,
 ) -> int:
     """Emit a trace (span tree) for a completed sim CallExecution.
 
-    Resolves the project from the agent definition's observability provider (falling
-    back to a per-org "Simulations" project), builds the span tree, and writes each
-    span via the tracer's OTel ingest path so the sim appears in the same
-    trace/Session UI as production traces.
+    Resolves the project from the agent definition's observability provider
+    (falling back to a per-org "Simulations" project), builds the span tree, and
+    exports it to the fi-collector — the same OTLP ingestion path production SDK
+    traffic uses — so the sim lands in CH ``spans`` and the same trace/Session UI
+    as production traces.
 
-    ``turns``: pass a normalized ``[{"role","content",...}]`` conversation directly —
-    used by the VOICE completion hook, which stores its transcript outside
-    ChatMessageModel. When omitted (CHAT), the persisted ChatMessage rows are read.
+    ``turns``: pass a normalized ``[{"role","content",...}]`` conversation
+    directly — the VOICE completion hook does this. When omitted, the persisted
+    conversation is re-read (ChatMessage for chat, CallTranscript for voice), so
+    a later eval-attach re-emit needs no turns.
 
-    Returns the number of spans emitted.
+    ``eval_attributes``: when set, merged onto the root span. Used by
+    ``attach_sim_evals_to_trace`` to re-emit the trace with eval verdicts — the
+    deterministic ids make the re-export replace the root row in CH rather than
+    duplicate it.
+
+    Returns the number of spans emitted (exported to the collector).
     """
-    from tracer.utils.create_otel_span import create_single_otel_span
+    from simulate.services.sim_collector_emit import export_sim_spans
 
     test_execution = getattr(call_execution, "test_execution", None)
     run_test = getattr(test_execution, "run_test", None)
@@ -399,29 +418,18 @@ def emit_sim_trace(
     else:
         project_name, project_type = "Simulations", "observe"
 
-    session_id = None
-    if turns is None:
-        # CHAT: read the persisted ChatMessage rows.
-        from simulate.models.chat_message import ChatMessageModel
-
-        rows = list(
-            ChatMessageModel.objects.filter(call_execution=call_execution).order_by(
-                "created_at"
-            )
-        )
-        turns = [_row_to_turn(r) for r in rows]
-        session_id = next(
-            (str(r.session_id) for r in rows if getattr(r, "session_id", None)), None
-        )
-    session_id = session_id or str(
-        (getattr(call_execution, "call_metadata", None) or {}).get("chat_session_id")
-        or getattr(call_execution, "id", "")
-    )
-
     modality = (
         "voice"
         if str(getattr(call_execution, "simulation_call_type", "")) == "voice"
         else "chat"
+    )
+
+    session_id = None
+    if turns is None:
+        turns, session_id = _resolve_turns(call_execution, modality)
+    session_id = session_id or str(
+        (getattr(call_execution, "call_metadata", None) or {}).get("chat_session_id")
+        or getattr(call_execution, "id", "")
     )
 
     spans = build_sim_spans(
@@ -436,44 +444,122 @@ def emit_sim_trace(
         started_at=getattr(call_execution, "started_at", None)
         or getattr(call_execution, "created_at", None),
         ended_at=getattr(call_execution, "ended_at", None),
+        eval_attributes=eval_attributes,
     )
-    emitted = 0
-    for span in spans:
-        try:
-            create_single_otel_span(span, organization_id, user_id, workspace_id)
-            emitted += 1
-        except Exception:  # pragma: no cover - one bad span must not lose the rest
-            logger.exception(
-                "sim_trace_span_emit_failed", extra={"name": span.get("name")}
-            )
-    return emitted
+    credentials = _resolve_ingest_credentials(organization_id, workspace_id)
+    if credentials is None:
+        logger.warning(
+            "sim_trace_no_ingest_credentials",
+            organization_id=organization_id,
+            call_execution_id=str(getattr(call_execution, "id", "")),
+        )
+        return 0
+    api_key, secret_key = credentials
+
+    return export_sim_spans(
+        spans,
+        project_name=project_name,
+        project_type=project_type,
+        api_key=api_key,
+        secret_key=secret_key,
+    )
+
+
+def _resolve_ingest_credentials(
+    organization_id: str, workspace_id: str | None
+) -> tuple[str, str] | None:
+    """Resolve the (api_key, secret_key) sim uses to emit spans to the collector.
+
+    The collector authenticates against the org's system key and resolves the
+    target project under that key's (org, workspace), so the credential is the
+    single lever for landing sim spans in the right project. Strictly org-scoped
+    — the key is read/created only for the call's organization, never another's.
+
+    Reuses the org's existing system key when present (one per org by model
+    constraint); otherwise creates it carrying the call's workspace so the
+    collector resolves projects in that workspace rather than the org default.
+    """
+    if not organization_id:
+        return None
+    from accounts.models.user import OrgApiKey
+
+    key = (
+        OrgApiKey.no_workspace_objects.filter(
+            organization_id=organization_id, type="system", deleted=False, enabled=True
+        )
+        .order_by("created_at")
+        .first()
+    )
+    if key is None:
+        key = OrgApiKey.no_workspace_objects.create(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            name=_SIM_INGEST_KEY_NAME,
+            type="system",
+        )
+    return key.api_key, key.secret_key
 
 
 def attach_sim_evals_to_trace(call_execution, eval_attributes: dict[str, Any]) -> int:
     """Write eval results onto the sim trace's root span, AFTER evals run.
 
-    The trace is emitted at sim completion (before async evals finish), so this is
-    the second half: it finds the root span by its DETERMINISTIC id (same seed = the
-    call id) and merges the eval results into ``span_attributes``, making eval
-    verdicts filterable at span granularity in the trace UI. Idempotent. Returns the
-    number of root spans updated (0 if the trace wasn't emitted / no evals).
+    The trace is emitted at sim completion (before async evals finish), so this
+    is the second half. Spans now live in CH ``spans`` (written by the
+    collector), not PG, so the eval verdicts are attached by RE-EMITTING the
+    trace with ``eval_attributes`` merged onto the root: the deterministic span
+    ids make the CH ``spans`` ReplacingMergeTree replace the root row in place
+    instead of duplicating it. Idempotent. Returns the number of spans
+    re-exported (0 if the conversation could not be re-resolved / no evals).
     """
-    from tracer.models.observation_span import ObservationSpan
-
     seed = str(getattr(call_execution, "id", ""))
     if not seed or not eval_attributes:
         return 0
-    root_span_id = _det_span_id(seed, "root")
-    updated = 0
-    # ObservationSpan's PK ``id`` IS the OTLP span id (CharField); there is no
-    # separate ``span_id`` column — mirror tracer.utils.eval_tasks which filters
-    # spans by ``id__in``. (Caught by the TH-5642 local DB-verified eval run.)
-    for span in ObservationSpan.objects.filter(id=root_span_id):
-        attrs = dict(span.span_attributes or {})
-        attrs.update(eval_attributes)
-        span.span_attributes = attrs
-        span.save(update_fields=["span_attributes"])
-        updated += 1
-    if not updated:
-        logger.info("sim_eval_attach_no_root_span", call_execution_id=seed)
-    return updated
+    emitted = emit_sim_trace(call_execution, eval_attributes=eval_attributes)
+    if not emitted:
+        logger.info("sim_eval_attach_no_spans", call_execution_id=seed)
+    return emitted
+
+
+def _resolve_turns(
+    call_execution, modality: str
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Re-read a sim conversation as normalized turns + the session id.
+
+    Chat turns come from ChatMessage rows; voice turns from CallTranscript rows
+    (the voice completion hook stores its transcript there, not in ChatMessage).
+    Re-readability is what lets eval-attach re-emit without the caller threading
+    the turns back through.
+    """
+    if modality == "voice":
+        from simulate.models.test_execution import CallTranscript
+
+        rows = list(
+            CallTranscript.objects.filter(call_execution=call_execution).order_by(
+                "start_time_ms", "created_at"
+            )
+        )
+        turns = [
+            {
+                "role": (
+                    "assistant"
+                    if str(getattr(r, "speaker_role", "")) == "assistant"
+                    else "user"
+                ),
+                "content": getattr(r, "content", "") or "",
+            }
+            for r in rows
+        ]
+        return turns, None
+
+    from simulate.models.chat_message import ChatMessageModel
+
+    rows = list(
+        ChatMessageModel.objects.filter(call_execution=call_execution).order_by(
+            "created_at"
+        )
+    )
+    turns = [_row_to_turn(r) for r in rows]
+    session_id = next(
+        (str(r.session_id) for r in rows if getattr(r, "session_id", None)), None
+    )
+    return turns, session_id

@@ -1,16 +1,17 @@
-"""Real-DB integration tests for sim observability persistence (TH-5642).
+"""Real-DB integration tests for sim observability emit (TH-5642).
 
 These run emit_sim_trace + attach_sim_evals_to_trace against the migrated test
-Postgres (NOT mocked) and assert the persisted ObservationSpan tree. They exist
-because two bugs hid behind mocked unit tests until a real DB-verified run:
+Postgres (NOT mocked) and assert the EXPORTED span tree — sim now exports to the
+fi-collector instead of writing PG ObservationSpan rows, so the regression
+coverage moves to the span dicts handed to the collector. The collector export
+itself is captured; everything up to it (real turn-reading, project resolution,
+deterministic parent links) runs against the real DB.
 
-1. FLAT TREE — build_sim_spans emitted the parent under ``parent_span_id`` but the
-   OTel ingest converter reads ``parent_id``; children persisted with a NULL
-   parent, so sim traces rendered flat instead of nested.
-2. EVAL ATTACH — attach_sim_evals_to_trace filtered a non-existent ``span_id``
-   column (the PK is ``id``), raising FieldError against a real DB.
-
-A mock cannot catch either; only a real write/read can.
+Regression intent preserved:
+1. FLAT TREE — build_sim_spans must parent each LLM turn under the root via the
+   key the OTLP layer reads; a mock could not catch the original flat-tree bug.
+2. EVAL ATTACH — attach re-emits with verdicts on the root; the voice turns it
+   needs are re-read from CallTranscript (the new re-resolution path).
 """
 
 import pytest
@@ -18,13 +19,30 @@ import pytest
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.run_test import RunTest
 from simulate.models.scenarios import Scenarios
-from simulate.models.test_execution import CallExecution, TestExecution
+from simulate.models.test_execution import (
+    CallExecution,
+    CallTranscript,
+    TestExecution,
+)
+from simulate.services import sim_collector_emit as sce
 from simulate.services.sim_observability import (
-    _det_span_id,
     attach_sim_evals_to_trace,
     emit_sim_trace,
 )
-from tracer.models.observation_span import ObservationSpan
+
+
+def _capture_exports(monkeypatch) -> list[dict]:
+    """Capture the span lists handed to the collector across all exports."""
+    exports: list[dict] = []
+
+    def _fake_export(spans, *, project_name, project_type, api_key, secret_key):
+        exports.append(
+            {"spans": spans, "project_name": project_name, "api_key": api_key}
+        )
+        return len(spans)
+
+    monkeypatch.setattr(sce, "export_sim_spans", _fake_export)
+    return exports
 
 
 def _seed_voice_call(organization, workspace):
@@ -72,50 +90,59 @@ def _seed_voice_call(organization, workspace):
 
 @pytest.mark.integration
 @pytest.mark.django_db
-def test_emit_sim_trace_persists_real_nested_tree(organization, workspace):
+def test_emit_sim_trace_exports_real_nested_tree(organization, workspace, monkeypatch):
+    exports = _capture_exports(monkeypatch)
     ce = _seed_voice_call(organization, workspace)
     turns = [
-        {
-            "role": "assistant",
-            "content": "Hi, this is the clinic. How can I help?",
-            "latency_ms": 800,
-        },
+        {"role": "assistant", "content": "Hi, this is the clinic.", "latency_ms": 800},
         {"role": "user", "content": "I need to reschedule my appointment."},
-        {
-            "role": "assistant",
-            "content": "Sure — what day works for you?",
-            "latency_ms": 850,
-        },
+        {"role": "assistant", "content": "Sure — what day works?", "latency_ms": 850},
     ]
-    emit_sim_trace(ce, turns=turns)
+    n = emit_sim_trace(ce, turns=turns)
 
-    root_id = _det_span_id(str(ce.id), "root")
-    root = ObservationSpan.objects.get(id=root_id)
-    assert root.parent_span_id is None
-    # Voice sim roots persist as 'conversation' so the voice-call list
-    # (root spans WHERE observation_type='conversation') includes them.
-    assert root.observation_type.lower() == "conversation"
-    assert root.trace is not None
-    assert root.project.name == "Simulations"
+    assert n == 3  # root + 2 LLM turns
+    assert len(exports) == 1
+    assert exports[0]["project_name"] == "Simulations"
+    assert exports[0]["api_key"]  # an org-scoped ingest key was resolved
+    spans = exports[0]["spans"]
 
-    # REGRESSION (flat tree): both LLM turns must persist parented to the root.
-    children = list(ObservationSpan.objects.filter(parent_span_id=root_id))
-    assert len(children) == 2, f"expected 2 nested LLM spans, got {len(children)}"
-    assert all(c.observation_type.lower() == "llm" for c in children)
+    root = next(s for s in spans if s["parent_span_id"] is None)
+    # Voice sim roots emit as CONVERSATION so the voice-call list includes them.
+    assert root["attributes"]["gen_ai.span.kind"] == "CONVERSATION"
+
+    # REGRESSION (flat tree): both LLM turns must be parented to the root, via
+    # BOTH parent_span_id and parent_id (the OTLP layer reads parent_id).
+    children = [s for s in spans if s["parent_span_id"] == root["span_id"]]
+    assert len(children) == 2
+    assert all(c["attributes"]["gen_ai.span.kind"] == "LLM" for c in children)
+    assert all(c["parent_id"] == root["span_id"] for c in children)
 
 
 @pytest.mark.integration
 @pytest.mark.django_db
-def test_attach_sim_evals_writes_onto_root_span(organization, workspace):
+def test_attach_sim_evals_reemits_with_voice_turns_from_transcript(
+    organization, workspace, monkeypatch
+):
+    exports = _capture_exports(monkeypatch)
     ce = _seed_voice_call(organization, workspace)
-    emit_sim_trace(
-        ce, turns=[{"role": "assistant", "content": "Hello!", "latency_ms": 700}]
+    # Voice transcript is the source eval-attach re-reads turns from.
+    CallTranscript.objects.create(
+        call_execution=ce, speaker_role="assistant", content="Hello!", start_time_ms=0
+    )
+    CallTranscript.objects.create(
+        call_execution=ce,
+        speaker_role="user",
+        content="Cancel my appointment.",
+        start_time_ms=1500,
     )
 
-    # REGRESSION (eval attach): must resolve the root span by PK ``id``.
     updated = attach_sim_evals_to_trace(ce, {"eval.score": 0.9, "eval.passed": True})
-    assert updated == 1
+    assert updated >= 1  # re-emitted the trace
 
-    root = ObservationSpan.objects.get(id=_det_span_id(str(ce.id), "root"))
-    assert root.span_attributes["eval.score"] == 0.9
-    assert root.span_attributes["eval.passed"] is True
+    spans = exports[-1]["spans"]
+    root = next(s for s in spans if s["parent_span_id"] is None)
+    # Eval verdicts merged onto the root by the re-emit.
+    assert root["attributes"]["eval.score"] == 0.9
+    assert root["attributes"]["eval.passed"] is True
+    # Turns were re-resolved from CallTranscript (one assistant turn → one LLM span).
+    assert any(s["attributes"]["gen_ai.span.kind"] == "LLM" for s in spans)

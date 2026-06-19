@@ -12,26 +12,45 @@ from simulate.services.sim_observability import build_sim_spans
 
 CHAT_TURNS = [
     {"role": "user", "content": "Hi, do you sell scooters?"},
-    {"role": "assistant", "content": "Yes! Which model?", "model": "gpt-4o-mini",
-     "input_tokens": 30, "output_tokens": 8, "total_tokens": 38,
-     "tool_calls": [{"name": "lookup_inventory", "arguments": "{\"q\":\"scooter\"}",
-                     "result": "[3 models]", "id": "call_1"}]},
+    {
+        "role": "assistant",
+        "content": "Yes! Which model?",
+        "model": "gpt-4o-mini",
+        "input_tokens": 30,
+        "output_tokens": 8,
+        "total_tokens": 38,
+        "tool_calls": [
+            {
+                "name": "lookup_inventory",
+                "arguments": '{"q":"scooter"}',
+                "result": "[3 models]",
+                "id": "call_1",
+            }
+        ],
+    },
     {"role": "user", "content": "The cheapest one."},
-    {"role": "assistant", "content": "That's the X1 at $199.", "model": "gpt-4o-mini",
-     "input_tokens": 50, "output_tokens": 10, "total_tokens": 60},
+    {
+        "role": "assistant",
+        "content": "That's the X1 at $199.",
+        "model": "gpt-4o-mini",
+        "input_tokens": 50,
+        "output_tokens": 10,
+        "total_tokens": 60,
+    },
 ]
 
 
 @pytest.mark.unit
 def test_chat_span_tree_shape_and_parenting():
-    spans = build_sim_spans(CHAT_TURNS, modality="chat", project_name="proj",
-                            session_id="sess-1")
+    spans = build_sim_spans(
+        CHAT_TURNS, modality="chat", project_name="proj", session_id="sess-1"
+    )
     by_kind = {}
     for s in spans:
         by_kind.setdefault(s["attributes"][so.FI_SPAN_KIND], []).append(s)
     assert len(by_kind["AGENT"]) == 1
-    assert len(by_kind["LLM"]) == 2     # one per assistant turn
-    assert len(by_kind["TOOL"]) == 1    # one tool call
+    assert len(by_kind["LLM"]) == 2  # one per assistant turn
+    assert len(by_kind["TOOL"]) == 1  # one tool call
 
     root = by_kind["AGENT"][0]
     assert root["parent_span_id"] is None
@@ -88,8 +107,18 @@ def test_root_span_carries_conversation_token_rollup():
 def test_voice_modality_emits_pipeline_latency():
     voice_turns = [
         {"role": "user", "content": "hello"},
-        {"role": "assistant", "content": "Hi there!", "model": "gpt-4o",
-         "voice_latency": {"stt": 120, "llm": 300, "tts": 80, "ttfb": 500, "total": 900}},
+        {
+            "role": "assistant",
+            "content": "Hi there!",
+            "model": "gpt-4o",
+            "voice_latency": {
+                "stt": 120,
+                "llm": 300,
+                "tts": 80,
+                "ttfb": 500,
+                "total": 900,
+            },
+        },
     ]
     spans = build_sim_spans(voice_turns, modality="voice", project_name="proj")
     llm = [s for s in spans if s["attributes"][so.FI_SPAN_KIND] == "LLM"][0]
@@ -125,46 +154,54 @@ def test_empty_conversation_yields_just_root():
 
 
 @pytest.mark.unit
-def test_attach_sim_evals_to_trace_merges_onto_root_span(monkeypatch):
+def test_build_sim_spans_eval_attributes_merge_onto_root_only():
+    # Eval verdicts ride on the root span (not the per-turn children) so they
+    # are filterable at trace granularity.
+    turns = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
+    spans = build_sim_spans(
+        turns,
+        modality="chat",
+        project_name="proj",
+        seed="call-xyz",
+        eval_attributes={
+            "gen_ai.evaluation.score": 0.8,
+            "gen_ai.evaluation.passed": True,
+        },
+    )
+    root = next(s for s in spans if s["attributes"][so.FI_SPAN_KIND] == "AGENT")
+    llm = next(s for s in spans if s["attributes"][so.FI_SPAN_KIND] == "LLM")
+    assert root["attributes"]["gen_ai.evaluation.score"] == 0.8
+    assert root["attributes"]["gen_ai.evaluation.passed"] is True
+    assert "gen_ai.evaluation.score" not in llm["attributes"]
+
+
+@pytest.mark.unit
+def test_attach_sim_evals_to_trace_reemits_with_eval_attributes(monkeypatch):
+    # Spans are CH-only now (collector-written), so eval-attach re-emits the
+    # trace with the verdicts merged onto the root — the deterministic ids make
+    # CH replace the root row rather than duplicate it.
     from types import SimpleNamespace
 
-    import tracer.models.observation_span as osmod
+    import simulate.services.sim_observability as som
 
-    class _FakeSpan:
-        def __init__(self):
-            self.span_attributes = {"gen_ai.span.kind": "AGENT"}
-            self.saved_fields = None
+    seen = {}
 
-        def save(self, update_fields=None):
-            self.saved_fields = update_fields
+    def _fake_emit(call_execution, *, turns=None, eval_attributes=None):
+        seen["eval_attributes"] = eval_attributes
+        return 3
 
-    fake = _FakeSpan()
+    monkeypatch.setattr(som, "emit_sim_trace", _fake_emit)
 
-    class _FakeObservationSpan:
-        class objects:  # noqa: N801
-            @staticmethod
-            def filter(**kwargs):
-                # Looked up by the deterministic root span id, which is the
-                # ObservationSpan PRIMARY KEY ``id`` (a CharField) — there is no
-                # ``span_id`` column. Asserting the wrong field here is what let a
-                # real-DB FieldError slip through (caught by TH-5642 DB-verify).
-                assert kwargs.get("id")
-                return [fake]
-
-    monkeypatch.setattr(osmod, "ObservationSpan", _FakeObservationSpan)
-
-    from simulate.services.sim_observability import attach_sim_evals_to_trace
-
-    n = attach_sim_evals_to_trace(
+    n = som.attach_sim_evals_to_trace(
         SimpleNamespace(id="call-1"),
         {"gen_ai.evaluation.score": 0.8, "gen_ai.evaluation.passed": True},
     )
-    assert n == 1
-    # Merged (existing kept) + eval results added; saved the field.
-    assert fake.span_attributes["gen_ai.span.kind"] == "AGENT"
-    assert fake.span_attributes["gen_ai.evaluation.score"] == 0.8
-    assert fake.span_attributes["gen_ai.evaluation.passed"] is True
-    assert fake.saved_fields == ["span_attributes"]
+    assert n == 3
+    assert seen["eval_attributes"]["gen_ai.evaluation.score"] == 0.8
+    assert seen["eval_attributes"]["gen_ai.evaluation.passed"] is True
 
 
 @pytest.mark.unit

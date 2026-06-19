@@ -1,9 +1,10 @@
 """DB test for the sim-observability emit layer (TH-5642).
 
 Verifies emit_sim_trace reads a CallExecution's ChatMessage rows, builds the span
-tree, and hands each span to the tracer OTel write path — i.e. the sim actually
-becomes a trace. The tracer write itself (create_single_otel_span) is mocked so the
-test pins OUR orchestration, not the tracer's ingest internals.
+tree, and exports it to the fi-collector — i.e. the sim actually becomes a trace
+in CH spans. The collector export itself (export_sim_spans) is mocked so the test
+pins OUR orchestration (turn reading, span shape, project resolution), not the
+OTLP/collector internals.
 """
 
 import uuid
@@ -91,39 +92,38 @@ def test_emit_sim_trace_builds_and_emits_span_tree(
         latency_ms=420,
     )
 
-    captured = []
-    import tracer.utils.create_otel_span as cos
+    captured = {}
+    import simulate.services.sim_collector_emit as sce
 
-    monkeypatch.setattr(
-        cos,
-        "create_single_otel_span",
-        lambda span, org, user, ws=None: captured.append((span, org, ws)),
-    )
+    def _fake_export(spans, *, project_name, project_type, api_key, secret_key):
+        captured["spans"] = spans
+        captured["project_name"] = project_name
+        captured["api_key"] = api_key
+        return len(spans)
+
+    monkeypatch.setattr(sce, "export_sim_spans", _fake_export)
 
     from simulate.services.sim_observability import emit_sim_trace
 
     emitted = emit_sim_trace(ce)
+    spans = captured["spans"]
 
     # Root AGENT span + one LLM span for the single assistant turn.
-    kinds = [s["attributes"]["gen_ai.span.kind"] for s, _, _ in captured]
+    kinds = [s["attributes"]["gen_ai.span.kind"] for s in spans]
     assert emitted == 2
     assert kinds.count("AGENT") == 1
     assert kinds.count("LLM") == 1
-    # The org id was threaded; no observability project → falls back to "Simulations".
-    org_ids = {org for _, org, _ in captured}
-    assert org_ids == {str(organization.id)}
-    assert all(s["project_name"] == "Simulations" for s, _, _ in captured)
+    # No observability project → falls back to "Simulations".
+    assert captured["project_name"] == "Simulations"
+    # An org-scoped ingest key was resolved for the collector auth.
+    assert captured["api_key"]
     # The agent's reply is the LLM span output + the root output.
-    llm = next(
-        s for s, _, _ in captured if s["attributes"]["gen_ai.span.kind"] == "LLM"
-    )
+    llm = next(s for s in spans if s["attributes"]["gen_ai.span.kind"] == "LLM")
     assert llm["attributes"]["output.value"] == "Yes! The X1 is $199."
     assert llm["attributes"]["gen_ai.usage.output_tokens"] == 8
     assert llm["latency"] == 420
     # session.id lives on the root AGENT span (links the whole conversation).
-    root = next(
-        s for s, _, _ in captured if s["attributes"]["gen_ai.span.kind"] == "AGENT"
-    )
+    root = next(s for s in spans if s["attributes"]["gen_ai.span.kind"] == "AGENT")
     assert root["attributes"]["session.id"] == "sess-9"
 
 
@@ -144,26 +144,27 @@ def test_emit_sim_trace_accepts_voice_turns(organization, workspace, monkeypatch
             "voice_latency": {"ttfb": 480, "total": 950},
         },
     ]
-    captured = []
-    import tracer.utils.create_otel_span as cos
+    captured = {}
+    import simulate.services.sim_collector_emit as sce
 
-    monkeypatch.setattr(
-        cos,
-        "create_single_otel_span",
-        lambda span, org, user, ws=None: captured.append(span),
-    )
+    def _fake_export(spans, *, project_name, project_type, api_key, secret_key):
+        captured["spans"] = spans
+        return len(spans)
+
+    monkeypatch.setattr(sce, "export_sim_spans", _fake_export)
 
     from simulate.services.sim_observability import emit_sim_trace
 
     emitted = emit_sim_trace(ce, turns=voice_turns)
+    spans = captured["spans"]
     assert emitted == 2
     # Voice roots emit as CONVERSATION so they appear in the voice-call list
     # next to pulled provider calls (observation_type='conversation').
     root = next(
-        s for s in captured if s["attributes"]["gen_ai.span.kind"] == "CONVERSATION"
+        s for s in spans if s["attributes"]["gen_ai.span.kind"] == "CONVERSATION"
     )
     assert root["name"] == "voice simulation"
     assert root["attributes"]["call.status"] == "completed"
     assert "start_time" in root and "end_time" in root
-    llm = next(s for s in captured if s["attributes"]["gen_ai.span.kind"] == "LLM")
+    llm = next(s for s in spans if s["attributes"]["gen_ai.span.kind"] == "LLM")
     assert llm["attributes"]["gen_ai.voice.latency.ttfb"] == 480
