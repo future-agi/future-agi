@@ -18,89 +18,11 @@ import { z } from "zod";
 import { ShowComponent } from "src/components/show";
 import YAML from "yaml";
 import FormTextFieldV2 from "../FormTextField/FormTextFieldV2";
-
-const tabOptions = [
-  { label: "JSON", value: "json", disabled: false },
-  { label: "YAML", value: "yaml", disabled: false },
-];
-
-const editorOptions = {
-  selectOnLineNumbers: true,
-  roundedSelection: false,
-  readOnly: false,
-  cursorStyle: "line",
-  automaticLayout: true,
-  wordWrap: "on",
-  lineNumbers: "off",
-  folding: false,
-  minimap: { enabled: false },
-  glyphMargin: false,
-  lineDecorationsWidth: 0,
-  renderIndentGuides: true,
-  lineNumbersMinChars: 0,
-  scrollbar: {
-    vertical: "visible",
-    horizontal: "visible",
-    verticalScrollbarSize: 10,
-    horizontalScrollbarSize: 10,
-    alwaysConsumeMouseWheel: false,
-    useShadows: false,
-  },
-};
-
-function getDefaultValues(editTool) {
-  const defaultJson = `{
-  "type": "function",
-  "function": {
-      "name": "",
-      "description": "",
-      "parameters": {
-          "type": "object",
-          "properties": {},
-          "required": []
-      }
-  }
-}`;
-
-  const defaultYaml = `
-  type: function
-  function:
-    name:
-    description:
-    parameters:
-      type: object
-      properties: {}
-      required: []
-  `;
-
-  if (editTool) {
-    return {
-      name: editTool?.name || "",
-      description: editTool?.description || "",
-      config_type: editTool?.configType,
-      inputSchema: {
-        json:
-          editTool?.configType === "json" && editTool?.config
-            ? JSON.stringify(editTool?.config, null, 2)
-            : defaultJson,
-        yaml:
-          editTool?.configType === "yaml" && editTool?.yamlConfig
-            ? editTool?.yamlConfig
-            : defaultYaml,
-      },
-    };
-  }
-
-  return {
-    name: "",
-    description: "",
-    config_type: "json",
-    inputSchema: {
-      json: defaultJson,
-      yaml: defaultYaml,
-    },
-  };
-}
+import {
+  editorOptions,
+  getDefaultValues,
+  tabOptions,
+} from "./EditTool.utils";
 
 const toolSchema = z
   .object({

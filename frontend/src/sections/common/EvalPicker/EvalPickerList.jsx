@@ -19,7 +19,7 @@ import {
   useTheme,
 } from "@mui/material";
 // date-fns available if needed for timestamps
-import { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
@@ -763,7 +763,7 @@ const EvalPickerList = ({ onSelectEval }) => {
               items.map((evalItem) => {
                 const isExpanded = expandedEvalId === evalItem.id;
                 const added = isAlreadyAdded(evalItem.id);
-                const createdBy = evalItem.createdByName || "Unknown";
+                const createdBy = evalItem.created_by_name || "Unknown";
                 const isSystem = createdBy === "System";
 
                 return [
@@ -835,10 +835,10 @@ const EvalPickerList = ({ onSelectEval }) => {
                         >
                           {evalItem.name}
                         </Typography>
-                        {evalItem.currentVersion &&
-                          !evalItem.isDraft &&
-                          evalItem.currentVersion !== "draft" && (
-                            <VersionBadge version={evalItem.currentVersion} />
+                        {evalItem.current_version &&
+                          !evalItem.is_draft &&
+                          evalItem.current_version !== "draft" && (
+                            <VersionBadge version={evalItem.current_version} />
                           )}
                       </Box>
                     </TableCell>
@@ -860,8 +860,8 @@ const EvalPickerList = ({ onSelectEval }) => {
                         noWrap
                         sx={{ fontSize: "12px" }}
                       >
-                        {OUTPUT_TYPE_LABELS[evalItem.outputType] ||
-                          evalItem.outputType}
+                        {OUTPUT_TYPE_LABELS[evalItem.output_type] ||
+                          evalItem.output_type}
                       </Typography>
                     </TableCell>
 

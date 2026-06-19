@@ -1087,37 +1087,50 @@ SourceTypeSelection.propTypes = {
 // ---------------------------------------------------------------------------
 // Build read-only column defs that match the dataset view exactly
 // ---------------------------------------------------------------------------
-function buildReadOnlyColumnDefs(columnConfig) {
+export function buildReadOnlyColumnDefs(columnConfig) {
   return columnConfig
-    .filter((col) => col.isVisible !== false)
-    .map((col) => ({
-      field: col.id,
-      headerName: col.name,
-      minWidth: DEFAULT_MIN_WIDTH,
-      resizable: true,
-      sortable: true,
-      editable: false,
-      cellDataType: AGGridCellDataType[col.dataType],
-      dataType: col.dataType,
-      pinned: col.isFrozen,
-      hide: !col.isVisible,
-      headerComponent: CustomDevelopDetailColumn,
-      headerComponentParams: { col, readOnly: true },
-      cellRenderer: CustomCellRender,
-      cellRendererParams: { editable: false },
-      cellStyle: {
-        padding: 0,
-        height: "100%",
-        display: "flex",
-        flex: 1,
-        flexDirection: "column",
-      },
-      col: { ...col, isHoverButtonVisible: false },
-      valueGetter: (params) => {
-        const cellValue = params.data?.[col.id]?.cellValue;
-        return parseCellValue(cellValue, AGGridCellDataType[col.dataType]);
-      },
-    }));
+    .filter((col) => col.is_visible !== false)
+    .map((col) => {
+      const colDataType = col.data_type
+      const colIsFrozen = col.is_frozen
+      const colOriginType = col.origin_type
+      const enrichedCol = {
+        ...col,
+        dataType: colDataType,
+        originType: colOriginType,
+        isFrozen: colIsFrozen,
+        isHoverButtonVisible: false,
+      };
+      return {
+        field: col.id,
+        headerName: col.name,
+        minWidth: DEFAULT_MIN_WIDTH,
+        resizable: true,
+        sortable: true,
+        editable: false,
+        cellDataType: AGGridCellDataType[colDataType],
+        dataType: colDataType,
+        pinned: colIsFrozen,
+        originType: colOriginType,
+        hide: false,
+        headerComponent: CustomDevelopDetailColumn,
+        headerComponentParams: { col: enrichedCol, readOnly: true },
+        cellRenderer: CustomCellRender,
+        cellRendererParams: { editable: false },
+        cellStyle: {
+          padding: 0,
+          height: "100%",
+          display: "flex",
+          flex: 1,
+          flexDirection: "column",
+        },
+        col: enrichedCol,
+        valueGetter: (params) => {
+          const cellValue = params.data?.[col.id]?.cell_value;
+          return parseCellValue(cellValue, AGGridCellDataType[colDataType]);
+        },
+      };
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1367,7 +1380,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   );
 
   const columnConfig = useMemo(
-    () => tableData?.data?.result?.columnConfig ?? [],
+    () => tableData?.data?.result?.column_config ?? [],
     [tableData],
   );
 
@@ -1479,7 +1492,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         // Individual selection — collect from loaded nodes
         const ids = [];
         api.forEachNode((node) => {
-          if (node.isSelected() && node.data?.rowId) {
+          if (node.isSelected() && node.data?.row_id) {
             ids.push(node.data.row_id);
           }
         });
@@ -1526,11 +1539,9 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
       columnDefs.map((cd) => ({
         field: cd.field,
         headerName: cd.headerName,
-        col: columnConfig.find((c) => c.id === cd.field) || {
-          dataType: "text",
-        },
+        col: cd.col || { dataType: "text" },
       })),
-    [columnDefs, columnConfig],
+    [columnDefs],
   );
 
   const isFilterApplied = useMemo(
@@ -1612,7 +1623,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
             </MenuItem>
           )}
           {(datasets || []).map((ds) => (
-            <MenuItem key={ds.datasetId || ds.id} value={ds.datasetId || ds.id}>
+            <MenuItem key={ds.dataset_id} value={ds.dataset_id}>
               {ds.name}
             </MenuItem>
           ))}

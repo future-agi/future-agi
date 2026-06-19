@@ -63,7 +63,7 @@ const EvalsCardGraphs = ({
         { value: redarData, name: redarLabel, outputType: radarOutputType },
       ],
     };
-  }, [data]);
+  }, [data,mode]);
 
   if (isPending || isLoading) {
     return <EvalsCardLoading />;
@@ -200,7 +200,7 @@ const EvalsCardGraphs = ({
 
         <Box display={"flex"} gap={2} flexWrap={"wrap"}>
           {data
-            ?.filter((e) => (mode === "develop" ? e?.isVisible : true))
+            ?.filter((e) => (mode === "develop" ? e?.is_visible : true))
             ?.map((item) => {
               const headerData = {
                 name: item.name,

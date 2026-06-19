@@ -574,6 +574,16 @@ export const getOutputFormatForModelType = (modelType) => {
   return "string";
 };
 
+export const modelTypeByValueType = {
+  chat: MODEL_TYPES.LLM,
+  tts: MODEL_TYPES.TTS,
+  stt: MODEL_TYPES.STT,
+  image_generation: MODEL_TYPES.IMAGE,
+};
+
+export const getOutputFormatFromCatalogType = (catalogType) =>
+  getOutputFormatForModelType(modelTypeByValueType[catalogType] ?? MODEL_TYPES.LLM);
+
 export const DUMMY_MODEL_PARAMS = [
   {
     id: "temperature",

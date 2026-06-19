@@ -42,6 +42,8 @@ import {
   useCreateWidget,
 } from "src/hooks/useDashboards";
 import Iconify from "src/components/iconify";
+import { ConfirmDialog } from "src/components/custom-dialog";
+import { useSnackbar } from "src/components/snackbar";
 import WidgetChart from "./WidgetChart";
 import {
   DndContext,
@@ -598,7 +600,11 @@ function DraggableWidgetCard({
                 </IconButton>
               </Tooltip>
               <Tooltip title="More">
-                <IconButton size="small" onClick={(e) => onMenuOpen(e, widget)}>
+                <IconButton
+                  size="small"
+                  aria-label="Widget options"
+                  onClick={(e) => onMenuOpen(e, widget)}
+                >
                   <Iconify icon="mdi:dots-vertical" width={16} />
                 </IconButton>
               </Tooltip>
@@ -671,6 +677,7 @@ function DragOverlayCard({ widget }) {
 export default function DashboardDetailView() {
   const navigate = useNavigate();
   const { dashboardId } = useParams();
+  const { enqueueSnackbar } = useSnackbar();
 
   const { data: dashboard, isLoading } = useDashboardDetail(dashboardId);
   const updateDashboard = useUpdateDashboard();
@@ -698,6 +705,12 @@ export default function DashboardDetailView() {
 
   // Dashboard more menu
   const [dashMenuAnchor, setDashMenuAnchor] = useState(null);
+
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const lastConfirmDeleteRef = useRef(null);
+  
+  if (confirmDelete) lastConfirmDeleteRef.current = confirmDelete;
+  const confirmDeleteView = confirmDelete ?? lastConfirmDeleteRef.current;
 
   // Grid container ref (for measuring column widths during resize)
   const gridContainerRef = useRef(null);
@@ -889,9 +902,7 @@ export default function DashboardDetailView() {
   };
 
   const handleDeleteWidget = () => {
-    if (menuWidget) {
-      deleteWidget.mutate({ dashboardId, widgetId: menuWidget.id });
-    }
+    setConfirmDelete({ type: "widget", target: menuWidget });
     closeWidgetMenu();
   };
 
@@ -915,9 +926,31 @@ export default function DashboardDetailView() {
 
   const handleDeleteDashboard = () => {
     setDashMenuAnchor(null);
-    deleteDashboard.mutate(dashboardId, {
-      onSuccess: () => navigate(paths.dashboard.dashboards.root),
-    });
+    setConfirmDelete({ type: "dashboard" });
+  };
+
+  // Single confirm handler for both delete dialogs; branches on the key.
+  // Closes only once the request settles (not synchronously mid-flight).
+  const handleConfirmDelete = () => {
+    if (confirmDelete?.type === "widget") {
+      if (!confirmDelete.target) return;
+      deleteWidget.mutate(
+        { dashboardId, widgetId: confirmDelete.target.id },
+        {
+          onSuccess: () =>
+            enqueueSnackbar("Widget deleted", { variant: "success" }),
+          onSettled: () => setConfirmDelete(null),
+        },
+      );
+    } else if (confirmDelete?.type === "dashboard") {
+      deleteDashboard.mutate(dashboardId, {
+        onSuccess: () => {
+          enqueueSnackbar("Dashboard deleted", { variant: "success" });
+          navigate(paths.dashboard.dashboards.root);
+        },
+        onSettled: () => setConfirmDelete(null),
+      });
+    }
   };
 
   const handleRowResize = useCallback(
@@ -1102,6 +1135,7 @@ export default function DashboardDetailView() {
           <Tooltip title="More options">
             <IconButton
               size="small"
+              aria-label="Dashboard options"
               onClick={(e) => setDashMenuAnchor(e.currentTarget)}
             >
               <Iconify icon="mdi:dots-horizontal" width={20} />
@@ -1513,6 +1547,32 @@ export default function DashboardDetailView() {
           <ListItemText>Delete Dashboard</ListItemText>
         </MenuItem>
       </Menu>
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        title={
+          confirmDeleteView?.type === "widget"
+            ? "Delete Widget"
+            : "Delete Dashboard"
+        }
+        content={
+          confirmDeleteView?.type === "widget"
+            ? `Are you sure you want to delete "${confirmDeleteView.target?.name}"? This action cannot be undone.`
+            : `Are you sure you want to delete "${dashboard?.name}"? This action cannot be undone.`
+        }
+        action={
+          <Button
+            variant="contained"
+            color="error"
+            size="small"
+            onClick={handleConfirmDelete}
+            disabled={deleteWidget.isPending || deleteDashboard.isPending}
+          >
+            Delete
+          </Button>
+        }
+      />
     </Box>
   );
 }

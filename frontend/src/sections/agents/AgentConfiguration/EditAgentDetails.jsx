@@ -16,7 +16,7 @@ import {
   pinCodeOptions,
 } from "src/components/agent-definitions/helper";
 import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
-import { useNavigate, useParams } from "react-router";
+import { useParams } from "react-router";
 import SwitchField from "src/components/Switch/SwitchField";
 import LanguageMultiSelect from "../CreateNewAgent/AgentBasicInfoStep/LanguageMultiSelect";
 import { useWatch } from "react-hook-form";
@@ -216,9 +216,7 @@ const EditAgentDetails = ({
   // meaning (nothing to call). Lock the toggle to inbound.
   const outboundLocked = selectedProvider === "others";
 
-  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null, {
-    status: true,
-  });
+  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null);
 
   const provider = useWatch({
     control,

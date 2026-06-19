@@ -4,6 +4,7 @@ import PropTypes from "prop-types";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import {
   buildAnnotatorFilterChipLabelMap,
+  buildReadOnlyColumnDefs,
   buildSimulationSelectorColumnDefs,
   buildSimulationSelectorFilterFields,
   DatasetRowSelector,
@@ -61,7 +62,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
       const key = options?.queryKey || [];
       if (key[0] === "datasets-list-simple") {
         return {
-          data: [{ datasetId: "dataset-1", name: "Support Prompts" }],
+          data: [{ dataset_id: "dataset-1", name: "Support Prompts" }],
           isLoading: false,
           isFetching: false,
         };
@@ -71,12 +72,12 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
           data: {
             data: {
               result: {
-                columnConfig: [
+                column_config: [
                   {
                     id: "prompt",
                     name: "Prompt",
-                    dataType: "text",
-                    isVisible: true,
+                    data_type: "text",
+                    is_visible: true,
                   },
                 ],
               },
@@ -429,6 +430,53 @@ describe("Session add-items filters", () => {
         },
       }),
     ).toBe("backend-session");
+  });
+});
+
+describe("Dataset read-only column defs", () => {
+  it("builds columns from the snake_case dataset config the API returns", () => {
+    const columns = buildReadOnlyColumnDefs([
+      {
+        id: "prompt",
+        name: "Prompt",
+        data_type: "text",
+        is_frozen: true,
+        is_visible: true,
+      },
+    ]);
+
+    expect(columns).toHaveLength(1);
+    expect(columns[0]).toMatchObject({
+      field: "prompt",
+      headerName: "Prompt",
+      dataType: "text",
+      pinned: true,
+      hide: false,
+    });
+    expect(columns[0].col.dataType).toBe("text");
+  });
+
+  it("hides only columns explicitly marked is_visible: false", () => {
+    const columns = buildReadOnlyColumnDefs([
+      { id: "a", name: "A", data_type: "text", is_visible: false },
+      { id: "b", name: "B", data_type: "text" },
+      { id: "c", name: "C", data_type: "text", is_visible: true },
+    ]);
+
+    expect(columns.map((col) => col.field)).toEqual(["b", "c"]);
+    expect(columns.every((col) => col.hide === false)).toBe(true);
+  });
+
+  it("reads cell values off the snake_case cell_value key", () => {
+    const [column] = buildReadOnlyColumnDefs([
+      { id: "prompt", name: "Prompt", data_type: "text", is_visible: true },
+    ]);
+
+    const value = column.valueGetter({
+      data: { prompt: { cell_value: "hello" } },
+    });
+
+    expect(value).toBe("hello");
   });
 });
 

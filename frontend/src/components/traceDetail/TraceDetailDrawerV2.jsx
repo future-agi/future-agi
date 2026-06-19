@@ -13,6 +13,10 @@ import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { modelCatalogQuery } from "src/api/model/model";
+import { useCreatePromptDraft } from "src/api/develop/prompt";
+import { getOutputFormatFromCatalogType } from "src/sections/develop-detail/RunPrompt/common";
+import logger from "src/utils/logger";
 import DrawerHeader from "./DrawerHeader";
 import DrawerToolbar from "./DrawerToolbar";
 import TraceDisplayPanel, { DEFAULT_VIEW_CONFIG } from "./TraceDisplayPanel";
@@ -42,6 +46,7 @@ import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
 import { buildTraceAnnotationSources } from "src/components/voiceAnnotationSources";
 import AddTagsPopover from "./AddTagsPopover";
 import SaveViewPopover from "./SaveViewDialog";
+import { buildPromptConfigFromSpan } from "./promptFromSpan";
 import { useNavigate } from "react-router";
 import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
 import ImagineTab from "src/components/imagine/ImagineTab";
@@ -49,6 +54,8 @@ import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import useImagineStore from "src/components/imagine/useImagineStore";
 
 const PANEL_WIDTH = "60vw";
+
+const CREATE_PROMPT_ERROR = "Failed to create prompt. Please try again.";
 
 const SPAN_FILTER_DEFAULT = {
   columnId: "",
@@ -73,150 +80,6 @@ const ACTION_ITEMS = [
   { id: "queue", label: "Add to annotation queue", icon: "mdi:playlist-plus" },
 ];
 
-/**
- * Parse template variables from span attributes.
- * SDK stores them as JSON string in:
- *   - gen_ai.prompt.template.variables
- *   - llm.prompt_template.variables
- * Returns { varName: value } or null.
- */
-function parseTemplateVariables(attrs) {
-  const raw =
-    attrs?.["gen_ai.prompt.template.variables"] ||
-    attrs?.["llm.prompt_template.variables"];
-  if (!raw) return null;
-  try {
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
-      return parsed;
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
-/**
- * Replace resolved variable values in text with {{varName}} placeholders.
- * Sorts by value length descending so longer values get replaced first
- * (avoids partial matches when one value is a substring of another).
- */
-function templatizeText(text, variables) {
-  if (!text || !variables) return text;
-  let result = text;
-  const entries = Object.entries(variables)
-    .filter(([, val]) => val != null && String(val).length > 0)
-    .sort((a, b) => String(b[1]).length - String(a[1]).length);
-  for (const [name, value] of entries) {
-    const strVal = String(value);
-    // Replace all occurrences of the value with {{name}}
-    let idx = result.indexOf(strVal);
-    while (idx !== -1) {
-      result =
-        result.slice(0, idx) +
-        `{{${name}}}` +
-        result.slice(idx + strVal.length);
-      idx = result.indexOf(strVal, idx + `{{${name}}}`.length);
-    }
-  }
-  return result;
-}
-
-/**
- * Extract LLM input messages from span attributes and convert to
- * the workbench prompt_config format.
- * If template variables are found, replaces resolved values with
- * {{variable}} placeholders and returns variable_names for the draft.
- */
-function buildPromptConfigFromSpan(span) {
-  const attrs = span?.span_attributes || span?.eval_attributes || {};
-  const templateVars = parseTemplateVariables(attrs);
-
-  // Parse input messages from flattened attributes
-  const tempMessages = {};
-  const messagePrefixes = [
-    "llm.inputMessages",
-    "llm.input_messages",
-    "gen_ai.input.messages",
-  ];
-
-  Object.keys(attrs).forEach((key) => {
-    const matchingPrefix = messagePrefixes.find((prefix) =>
-      key.startsWith(prefix),
-    );
-    if (!matchingPrefix) return;
-    const parts = key.replace(`${matchingPrefix}.`, "").split(".");
-    const index = parts[0];
-    const property = parts.slice(1).join(".");
-    if (!tempMessages[index]) tempMessages[index] = {};
-    if (property === "message.role" || property === "role") {
-      tempMessages[index].role = attrs[key];
-    }
-    if (
-      property.startsWith("message.content") ||
-      property.startsWith("content")
-    ) {
-      let content = attrs[key];
-      if (typeof content === "object" && content !== null)
-        content = JSON.stringify(content, null, 2);
-      if (!tempMessages[index].content) tempMessages[index].content = content;
-      else if (typeof tempMessages[index].content === "string") {
-        tempMessages[index].content += content;
-      }
-    }
-  });
-
-  const parsedMessages = Object.keys(tempMessages)
-    .sort((a, b) => parseInt(a) - parseInt(b))
-    .filter((key) => tempMessages[key].role)
-    .map((key) => {
-      let text =
-        typeof tempMessages[key].content === "string"
-          ? tempMessages[key].content
-          : JSON.stringify(tempMessages[key].content ?? "", null, 2);
-      // Replace resolved values with {{variable}} placeholders
-      if (templateVars) {
-        text = templatizeText(text, templateVars);
-      }
-      return {
-        role: tempMessages[key].role,
-        content: [{ type: "text", text }],
-      };
-    });
-
-  // Fallback: if no messages parsed from attributes, use span.input
-  if (parsedMessages.length === 0 && span?.input) {
-    let inputContent =
-      typeof span.input === "string"
-        ? span.input
-        : JSON.stringify(span.input, null, 2);
-    if (templateVars) {
-      inputContent = templatizeText(inputContent, templateVars);
-    }
-    parsedMessages.push(
-      { role: "system", content: [{ type: "text", text: "" }] },
-      { role: "user", content: [{ type: "text", text: inputContent }] },
-    );
-  }
-
-  // Ensure system message exists
-  if (parsedMessages.length > 0 && parsedMessages[0].role !== "system") {
-    parsedMessages.unshift({
-      role: "system",
-      content: [{ type: "text", text: "" }],
-    });
-  }
-
-  // Build variable_names dict: { varName: [sampleValue] }
-  const variableNames = {};
-  if (templateVars) {
-    for (const [name, value] of Object.entries(templateVars)) {
-      variableNames[name] = value != null ? [String(value)] : [];
-    }
-  }
-
-  return { messages: parsedMessages, variableNames };
-}
-
 function getSpan(entry) {
   return entry?.observation_span || {};
 }
@@ -236,10 +99,8 @@ const TraceDetailDrawerV2 = ({
 }) => {
   const navigate = useNavigate();
 
-  const { mutate: createPromptDraft, isPending: isCreatingDraft } = useMutation(
-    {
-      mutationFn: (body) =>
-        axios.post(endpoints.develop.runPrompt.createPromptDraft, body),
+  const { mutate: createPromptDraft, isPending: isCreatingDraft } =
+    useCreatePromptDraft({
       onSuccess: (res) => {
         const newId =
           res?.data?.result?.rootTemplate ||
@@ -250,12 +111,11 @@ const TraceDetailDrawerV2 = ({
         }
       },
       onError: () => {
-        enqueueSnackbar("Failed to create prompt. Please try again.", {
+        enqueueSnackbar(CREATE_PROMPT_ERROR, {
           variant: "error",
         });
       },
-    },
-  );
+    });
 
   const { mutate: createGraphFromTrace, isPending: isCreatingGraph } =
     useMutation({
@@ -751,16 +611,88 @@ const TraceDetailDrawerV2 = ({
             navigate(
               `/dashboard/workbench/create/${promptTemplateId}?tab=Playground`,
             );
-          } else {
-            const { messages, variableNames } = buildPromptConfigFromSpan(span);
-            createPromptDraft({
-              name: "",
-              prompt_config: [{ messages }],
-              ...(Object.keys(variableNames).length > 0 && {
-                variable_names: variableNames,
-              }),
-            });
+            break;
           }
+          const {
+            messages,
+            variableNames,
+            model,
+            provider,
+            parameters,
+            responseFormat,
+          } = buildPromptConfigFromSpan(span);
+          (async () => {
+            try {
+              // Resolve the trace model to one catalog entry; set it only when sure
+              // (exact or unique provider-scoped match), else leave it unset so the
+              // "Select a model" flow handles it instead of a half-recognized model.
+              let resolved = null;
+              if (model) {
+                try {
+                  const data =
+                    (await queryClient.fetchQuery(modelCatalogQuery(model))) ||
+                    {};
+                  const results = data.results || [];
+                  const nameOf = (m) => m.model_name ?? "";
+                  const provOf = (m) => (m.providers ?? "").toLowerCase();
+                  // Catalog ids are LiteLLM-prefixed (vertex_ai/…, bedrock/<region>/…);
+                  // the trace emits the provider-native id.
+                  const baseName = (n) => n.slice(n.lastIndexOf("/") + 1);
+                  const wantProv = provider?.toLowerCase();
+
+                  // Exact model_name, preferring the trace's provider.
+                  let match =
+                    (wantProv &&
+                      results.find(
+                        (m) => nameOf(m) === model && provOf(m) === wantProv,
+                      )) ||
+                    results.find((m) => nameOf(m) === model);
+
+                  // Else a unique prefix-stripped match within the provider;
+                  // ambiguous (e.g. multi-region Bedrock) stays unresolved.
+                  if (!match && !data.next) {
+                    let cands = results.filter(
+                      (m) => baseName(nameOf(m)) === model,
+                    );
+                    if (wantProv) {
+                      const byProv = cands.filter(
+                        (m) => provOf(m) === wantProv,
+                      );
+                      if (byProv.length) cands = byProv;
+                    }
+                    if (cands.length === 1) [match] = cands;
+                  }
+
+                  if (match) {
+                    resolved = {
+                      model_name: nameOf(match),
+                      providers: match.providers ?? provider ?? "",
+                      logoUrl: match.logo_url ?? "",
+                      type: match.type ?? "",
+                      isAvailable: match.is_available ?? false,
+                    };
+                  }
+                } catch (err) {
+                  logger.warn("workbench model catalog lookup failed", err);
+                }
+              }
+              const configuration = {
+                ...parameters,
+                output_format: getOutputFormatFromCatalogType(resolved?.type),
+                // Set explicitly — the selector defaults to JSON when unset.
+                response_format: responseFormat,
+                ...(resolved && {
+                  model: resolved.model_name,
+                  model_detail: resolved,
+                }),
+              };
+              createPromptDraft({ configuration, messages, variableNames });
+            } catch {
+              enqueueSnackbar(CREATE_PROMPT_ERROR, {
+                variant: "error",
+              });
+            }
+          })();
           break;
         }
         case "playground":
@@ -783,6 +715,7 @@ const TraceDetailDrawerV2 = ({
       createGraphFromTrace,
       traceId,
       actionsAnchorEl,
+      queryClient,
     ],
   );
 
