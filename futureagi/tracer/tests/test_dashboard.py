@@ -743,6 +743,51 @@ class TestDashboardQueryBuilder:
         assert "toStartOfDay" in sql
         assert params["project_ids"] == sample_query_config["project_ids"]
 
+    def test_system_metric_query_prunes_partitions(self, sample_query_config):
+        """Spans-based queries must bound created_at (the partition key) so a
+        windowed query prunes old partitions instead of scanning all history."""
+        builder = DashboardQueryBuilder(sample_query_config)
+        sql, _, _ = builder.build_all_queries()[0]
+        # partition-prune bound on the partition key is present
+        assert "created_at >= %(start_date)s - INTERVAL 1 DAY" in sql
+        # and the precise event-time window is still enforced (correctness)
+        assert "start_time >= %(start_date)s" in sql
+        assert "start_time < %(end_date)s" in sql
+
+    def test_breakdown_query_prunes_partitions(self):
+        """A latency average broken down by a custom span attribute must emit
+        the created_at partition-prune bound while preserving the start_time
+        window."""
+        config = {
+            "project_ids": [str(uuid.uuid4())],
+            "granularity": "day",
+            "time_range": {"preset": "30D"},
+            "metrics": [
+                {
+                    "id": "latency",
+                    "name": "latency",
+                    "type": "system_metric",
+                    "aggregation": "avg",
+                }
+            ],
+            "filters": [],
+            "breakdowns": [
+                {
+                    "name": "final_status",
+                    "type": "custom_attribute",
+                    "source": "traces",
+                    "display_name": "final_status",
+                    "attribute_type": "string",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        sql, _, _ = builder.build_all_queries()[0]
+        assert "created_at >= %(start_date)s - INTERVAL 1 DAY" in sql
+        assert "start_time >= %(start_date)s" in sql
+        # the breakdown is still applied (real call path intact)
+        assert "breakdown_value" in sql
+
     def test_all_system_metrics(self):
         for metric_name in SYSTEM_METRICS:
             config = {

@@ -1287,6 +1287,13 @@ class DashboardQueryBuilder:
             f"{time_col} < %(end_date)s",
         ]
 
+        # spans is partitioned by toYYYYMM(created_at) but the window is
+        # filtered on start_time, so bound created_at too — otherwise no
+        # partitions prune and the scan covers all history. Lower bound only
+        # (created_at >= start_time always holds), so no in-window row drops.
+        if time_col != "created_at":
+            clauses.append("created_at >= %(start_date)s - INTERVAL 1 DAY")
+
         # Apply global + per-metric system_metric filters directly
         # For string-comparable system metrics, use toString() to avoid UUID parse errors
         _STRING_FILTER_COL = {
