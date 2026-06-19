@@ -92,6 +92,52 @@ def test_export_builds_conversation_span_and_drops_raw_log(monkeypatch):
 
 
 @pytest.mark.unit
+def test_export_stashes_normalized_transcript(monkeypatch):
+    captured = {}
+
+    def _fake_emit(spans, **kwargs):
+        captured["spans"] = spans
+        return len(spans)
+
+    import tracer.services.collector_ingest as ci
+    from tracer.services.observability_providers import ObservabilityService
+
+    monkeypatch.setattr(ci, "emit_spans_to_collector", _fake_emit)
+    # The detail drawer builds the transcript from raw_log (dropped on export),
+    # so the export must stash the normalized transcript for the read path.
+    monkeypatch.setattr(
+        ObservabilityService,
+        "process_raw_logs",
+        staticmethod(
+            lambda raw_log, provider, span_attributes=None: {
+                "transcript": [{"role": "bot", "content": "Hi"}]
+            }
+        ),
+    )
+
+    project = SimpleNamespace(
+        id=SimpleNamespace(hex="0" * 32),
+        name="pull-vapi",
+        trace_type="observe",
+        organization_id="org-1",
+        workspace_id=None,
+    )
+    span = SimpleNamespace(
+        project=project,
+        trace=SimpleNamespace(id=SimpleNamespace(hex="f" * 32)),
+        name="Vapi Call Log",
+        input=None,
+        output=None,
+        start_time=None,
+        end_time=None,
+        span_attributes={"raw_log": {"id": "c1", "transcript": "..."}},
+    )
+    op._export_provider_call_to_collector(span, "vapi", "c1")
+    attrs = captured["spans"][0]["attributes"]
+    assert attrs["fi.conversation.transcript"] == [{"role": "bot", "content": "Hi"}]
+
+
+@pytest.mark.unit
 def test_export_no_org_is_noop(monkeypatch):
     called = {"n": 0}
     import tracer.services.collector_ingest as ci

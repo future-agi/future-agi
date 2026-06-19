@@ -296,6 +296,20 @@ def _export_provider_call_to_collector(span, provider: str, provider_log_id: str
             attrs["input.value"] = span.input
         if span.output not in (None, "", [], {}):
             attrs["output.value"] = span.output
+        # The detail drawer builds the transcript from raw_log, which we drop —
+        # compute the normalized transcript now and stash it for the
+        # CH-only-reads detail path (trace.py reads fi.conversation.transcript).
+        raw_log = (span.span_attributes or {}).get("raw_log") or {}
+        try:
+            processed = ObservabilityService.process_raw_logs(
+                raw_log, provider, span_attributes=span.span_attributes or {}
+            )
+            if processed.get("transcript"):
+                attrs["fi.conversation.transcript"] = processed["transcript"]
+        except Exception:
+            logger.warning(
+                "provider_transcript_compute_failed", provider=provider, exc_info=True
+            )
         start_ns = _to_epoch_ns(span.start_time)
         span_dict = {
             "trace_id": span.trace.id.hex,

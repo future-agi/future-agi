@@ -2458,9 +2458,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             ):
                                 total_eval_configs[
                                     str(metric["custom_eval_config_id"]) + "**" + choice
-                                ] = (
-                                    metric["custom_eval_config__name"] + " - " + choice
-                                )
+                                ] = metric["custom_eval_config__name"] + " - " + choice
                 else:
                     score = (
                         metric["avg_float_score"]
@@ -3339,6 +3337,25 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 processed_log["transcript_available"] = True
                 if not processed_log.get("message_count"):
                     processed_log["message_count"] = len(derived_transcript)
+
+        # Collector-routed provider pulls drop the nested raw_log (OTLP can't
+        # carry it) but stash the normalized transcript under this key, so the
+        # detail drawer still renders the conversation. The collector classifies
+        # the JSON string into attrs_string (`attr_str`), not attributes_extra.
+        if not processed_log.get("transcript"):
+            stored = attr_str.get("fi.conversation.transcript") or span_attrs.get(
+                "fi.conversation.transcript"
+            )
+            if isinstance(stored, str):
+                try:
+                    stored = json.loads(stored)
+                except (json.JSONDecodeError, TypeError):
+                    stored = None
+            if isinstance(stored, list) and stored:
+                processed_log["transcript"] = stored
+                processed_log["transcript_available"] = True
+                if not processed_log.get("message_count"):
+                    processed_log["message_count"] = len(stored)
 
         # Fetch ALL non-deleted eval configs for the project so the drawer
         # renders the same set of evals as the list columns. Missing scores
