@@ -316,9 +316,14 @@ class GroundTruthService:
         ]
 
     @staticmethod
-    def embed_dataset(*, gt: EvalGroundTruth) -> EmbedDatasetResult:
+    def embed_dataset(
+        *,
+        gt: EvalGroundTruth,
+        heartbeat: "callable | None" = None,
+    ) -> EmbedDatasetResult:
         """Embed every row of ``gt`` into the CH ``ground_truths`` table."""
         from agentic_eval.core.embeddings.embedding_manager import (
+            _AUDIO_MODEL_BY_TABLE,
             GROUND_TRUTH_TABLE_NAME,
             EmbeddingManager,
         )
@@ -344,6 +349,9 @@ class GroundTruthService:
         gt.embedded_row_count = 0
         gt.save(update_fields=["embedding_status", "embedded_row_count", "updated_at"])
 
+        from agentic_eval.core.embeddings.embedding_manager import (
+            _AUDIO_MODEL_BY_TABLE,
+        )
         logger.info(
             "ground_truth_embed_start",
             ground_truth_id=str(gt.id),
@@ -352,6 +360,7 @@ class GroundTruthService:
             workspace_id=workspace_id,
             rows=len(data),
             mapped_columns=mapped_columns,
+            audio_model=_AUDIO_MODEL_BY_TABLE.get(GROUND_TRUTH_TABLE_NAME, "<default>"),
         )
 
         manager = EmbeddingManager()
@@ -367,6 +376,11 @@ class GroundTruthService:
 
         def _persist_progress(rows_done: int) -> None:
             rows_done_max[0] = max(rows_done_max[0], rows_done)
+            if heartbeat is not None:
+                try:
+                    heartbeat(rows_done)
+                except Exception:
+                    pass
             try:
                 EvalGroundTruth.objects.filter(id=gt_id_for_callback).update(
                     embedded_row_count=rows_done,
@@ -398,10 +412,17 @@ class GroundTruthService:
             return _mark_failed(gt, f"Embedding failed: {exc}")
 
         rows_embedded = rows_done_max[0]
-        if rows_embedded == 0:
+        rows_expected = len(data)
+        if rows_embedded < rows_expected:
+            logger.error(
+                "ground_truth_embed_partial",
+                ground_truth_id=str(gt.id),
+                rows_embedded=rows_embedded,
+                rows_expected=rows_expected,
+            )
             return _mark_failed(
                 gt,
-                "Embedding failed: no rows were written. "
+                f"Embedding failed: only {rows_embedded} of {rows_expected} rows were written. "
                 "Check the embedding-serving service availability.",
             )
 
@@ -513,7 +534,6 @@ class GroundTruthService:
         inputs: dict[str, Any] | None,
         query: str | None,
         max_results: int,
-        similarity_threshold: float = 0.0,  # noqa: ARG004
     ) -> dict[str, Any] | ServiceError:
         if gt.embedding_status != EvalGroundTruth.EmbeddingStatus.COMPLETED:
             return ServiceError(

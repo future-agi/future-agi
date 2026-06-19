@@ -31,7 +31,13 @@ def _run_embed_dataset(ground_truth_id: str) -> GenerateEmbeddingsOutput:
             error="Ground truth not found",
         )
 
-    result = GroundTruthService.embed_dataset(gt=gt)
+    def _heartbeat(rows_done: int) -> None:
+        try:
+            activity.heartbeat(rows_done)
+        except Exception:
+            pass
+
+    result = GroundTruthService.embed_dataset(gt=gt, heartbeat=_heartbeat)
     return GenerateEmbeddingsOutput(
         ground_truth_id=result.ground_truth_id,
         rows_embedded=result.rows_embedded,

@@ -91,7 +91,15 @@ const StatusBadge = ({ status }) => {
       size="small"
       color={info.color}
       variant="outlined"
-      sx={{ fontSize: "11px", height: 22 }}
+      sx={{
+        fontSize: "11px",
+        height: 22,
+        ...(status === "processing" && {
+          borderColor: "warning.dark",
+          color: "warning.dark",
+          "& .MuiChip-icon": { color: "warning.dark" },
+        }),
+      }}
     />
   );
 };
@@ -875,17 +883,21 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                         mb: 1.5,
                       }}
                     >
-                      <Chip
-                        label={`{{${varName}}}`}
-                        size="small"
-                        variant="outlined"
-                        sx={{
-                          fontSize: "11px",
-                          height: 24,
-                          minWidth: 100,
-                          fontFamily: "monospace",
-                        }}
-                      />
+                      <Tooltip title={varName} placement="top" arrow>
+                        <Chip
+                          label={varName}
+                          size="small"
+                          variant="outlined"
+                          sx={{
+                            fontSize: "11px",
+                            height: 24,
+                            minWidth: 100,
+                            maxWidth: 200,
+                            flexShrink: 0,
+                            fontFamily: "monospace",
+                          }}
+                        />
+                      </Tooltip>
                       <Iconify
                         icon="mdi:arrow-right"
                         width={14}

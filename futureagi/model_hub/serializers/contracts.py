@@ -2488,9 +2488,6 @@ class GroundTruthSearchRequestSerializer(serializers.Serializer):
         help_text='Multi-variable runtime inputs: {"variable_name": "value", ...}',
     )
     max_results = serializers.IntegerField(required=False, min_value=1, max_value=20)
-    similarity_threshold = serializers.FloatField(
-        required=False, min_value=0, max_value=1
-    )
 
     def validate(self, attrs):
         if not attrs.get("query") and not attrs.get("inputs"):

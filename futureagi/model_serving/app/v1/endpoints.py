@@ -1,3 +1,5 @@
+import asyncio
+import os
 import traceback
 from typing import Any
 
@@ -16,6 +18,10 @@ except ImportError:
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/v1")
+
+# Cap concurrent audio inferences to bound per-pod memory.
+_AUDIO_INFER_CONCURRENCY = int(os.getenv("AUDIO_INFER_CONCURRENCY", "10"))
+_audio_infer_sem = asyncio.Semaphore(_AUDIO_INFER_CONCURRENCY)
 
 
 @router.get("/models")
@@ -151,7 +157,10 @@ async def infer(model_name: str, data: InferModelRequest) -> dict[str, Any]:
         preprocessed_data = model.preprocess(input_data)
 
         logger.debug("Performing model inference")
-        model_output = model.forward(preprocessed_data)
+        forward_kwargs: dict[str, Any] = {}
+        if data.input_type == "audio" and data.audio_model:
+            forward_kwargs["model"] = data.audio_model
+        model_output = model.forward(preprocessed_data, **forward_kwargs)
 
         logger.debug("Postprocessing model output")
         final_output = model.postprocess(model_output)
@@ -229,22 +238,31 @@ async def embed_image(data: InferModelRequest) -> dict[str, Any]:
 
 @router.post("/embed/audio")
 async def embed_audio(data: InferModelRequest) -> dict[str, Any]:
-    """
-    ✅ IMPROVED: Convenience endpoint for audio embedding.
-    """
+    """Audio embedding endpoint."""
+    import time as _time
+    t0 = _time.time()
+    audio_model = data.audio_model or "<default>"
     try:
-        logger.info("Starting audio embedding process")
         if not data.audio:
             raise HTTPException(status_code=400, detail="Audio input is required")
-
-        # Use the generic infer endpoint
         data.input_type = "audio"
-        return await infer("audio_embedding", data)
-
+        async with _audio_infer_sem:
+            result = await infer("audio_embedding", data)
+        logger.info(
+            "audio_embed_ok",
+            audio_model=audio_model,
+            duration_s=round(_time.time() - t0, 2),
+        )
+        return result
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Audio embedding failed with error: {str(e)}")
+        logger.error(
+            "audio_embed_failed",
+            audio_model=audio_model,
+            duration_s=round(_time.time() - t0, 2),
+            error=str(e),
+        )
         raise HTTPException(
             status_code=500, detail=f"Audio embedding failed: {e}"
         ) from e

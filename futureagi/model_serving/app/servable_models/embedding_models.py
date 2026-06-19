@@ -7,11 +7,19 @@ import librosa
 import numpy as np
 import requests
 import structlog
+import torch
 from app.servable_models import ModelServing
 from app.utils.utils import download_audio_from_url
 from PIL import Image
 from sentence_transformers import SentenceTransformer
-from transformers import AutoProcessor, CLIPModel, Wav2Vec2Model, Wav2Vec2Processor
+from transformers import (
+    AutoProcessor,
+    CLIPModel,
+    Wav2Vec2Model,
+    Wav2Vec2Processor,
+    WhisperFeatureExtractor,
+    WhisperModel,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -123,43 +131,83 @@ class ImageEmbeddingModel(ModelServing):
         return output
 
 
+def _wav2vec2_backend(hf_id: str = "facebook/wav2vec2-base"):
+    model = Wav2Vec2Model.from_pretrained(hf_id)
+    model.eval()
+    processor = Wav2Vec2Processor.from_pretrained(hf_id)
+
+    def embed(waveform):
+        with torch.inference_mode():
+            inp = processor(
+                waveform, sampling_rate=16000, return_tensors="pt", padding=True
+            )
+            out = model(**inp)
+            return out.last_hidden_state.mean(dim=1)[0].detach().numpy().tolist()
+
+    return embed
+
+
+def _whisper_backend(hf_id: str = "openai/whisper-tiny"):
+    # 30s chunk + mean-pool keeps memory bounded for arbitrary audio length.
+    model = WhisperModel.from_pretrained(hf_id)
+    model.eval()
+    fe = WhisperFeatureExtractor.from_pretrained(hf_id)
+    chunk = 30 * 16000
+
+    def embed(waveform):
+        chunks = [
+            waveform[i : i + chunk] for i in range(0, len(waveform), chunk)
+        ] or [waveform]
+        with torch.inference_mode():
+            vecs = [
+                model.encoder(
+                    fe(c, sampling_rate=16000, return_tensors="pt").input_features
+                ).last_hidden_state.mean(dim=1).squeeze(0)
+                for c in chunks
+            ]
+            return torch.stack(vecs).mean(0).detach().numpy().tolist()
+
+    return embed
+
+
+_AUDIO_BACKENDS = {
+    "wav2vec2-base": _wav2vec2_backend,
+    "whisper-tiny": lambda: _whisper_backend("openai/whisper-tiny"),
+    "whisper-base": lambda: _whisper_backend("openai/whisper-base"),
+    "whisper-small": lambda: _whisper_backend("openai/whisper-small"),
+}
+
+
 class AudioEmbeddingModel(ModelServing):
-    _model_instance = None
+    _embed_fns: dict[str, callable] = {}  # per-name cache; one load per process
     _lock = threading.Lock()
+    _default_model = "wav2vec2-base"
 
     def __init__(self):
-        if AudioEmbeddingModel._model_instance is None:
-            with AudioEmbeddingModel._lock:
-                if AudioEmbeddingModel._model_instance is None:
-                    logger.info("Loading audio embedding model: wav2vec2")
+        # Eagerly warm the default backend so first request doesn't pay load cost.
+        self._get(self._default_model)
 
-                    AudioEmbeddingModel._model_instance = {
-                        "model": Wav2Vec2Model.from_pretrained(
-                            "facebook/wav2vec2-base"
-                        ),
-                        "processor": Wav2Vec2Processor.from_pretrained(
-                            "facebook/wav2vec2-base"
-                        ),
-                    }
-        self.model = AudioEmbeddingModel._model_instance["model"]
-        self.processor = AudioEmbeddingModel._model_instance["processor"]
+    @classmethod
+    def _get(cls, name: str | None):
+        name = name or cls._default_model
+        cached = cls._embed_fns.get(name)
+        if cached is not None:
+            return cached
+        with cls._lock:
+            if name not in cls._embed_fns:
+                logger.info("Loading audio embedding model", model=name)
+                cls._embed_fns[name] = _AUDIO_BACKENDS[name]()
+            return cls._embed_fns[name]
 
     def preprocess(self, data):
         """Preprocess audio data from URL."""
         audio_waveform, _ = self.open_audio_from_url(data)
         return audio_waveform
 
-    def forward(self, data):
+    def forward(self, data, model: str | None = None):
         """Generate embeddings for preprocessed audio data."""
         try:
-            inp = self.processor(
-                data, sampling_rate=16000, return_tensors="pt", padding=True
-            )
-            outputs = self.model(**inp)
-            # Use the last hidden state mean as embedding
-            embeddings = outputs.last_hidden_state.mean(dim=1)
-            embeddings = embeddings.detach().numpy()
-            return embeddings[0].tolist()
+            return self._get(model)(data)
         except Exception as e:
             logger.error(f"Error in AudioEmbeddingModel forward: {e}")
             raise

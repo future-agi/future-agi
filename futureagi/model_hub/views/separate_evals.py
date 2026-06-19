@@ -4762,7 +4762,6 @@ class GroundTruthSearchView(APIView):
             inputs=req.inputs,
             query=req.query,
             max_results=req.max_results,
-            similarity_threshold=req.similarity_threshold,
         )
         if isinstance(result, ServiceError):
             return self._gm.bad_request(result.message)

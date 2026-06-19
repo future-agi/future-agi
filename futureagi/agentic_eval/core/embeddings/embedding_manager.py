@@ -21,6 +21,7 @@ from agentic_eval.core.utils.functions import detect_input_type
 import structlog
 
 logger = structlog.get_logger(__name__)
+
 from analytics.utils import mixpanel_slack_notfy
 from model_hub.models.choices import DataTypeChoices
 from model_hub.models.develop_dataset import Cell
@@ -35,6 +36,14 @@ _thread_local = threading.local()
 FEEDBACK_TABLE_NAME = "feedbacks"
 GROUND_TRUTH_TABLE_NAME = "ground_truths"
 _TENANT_SCOPED_TABLES = (FEEDBACK_TABLE_NAME, GROUND_TRUTH_TABLE_NAME)
+
+# Tables not listed fall through to the serving default (wav2vec2-base).
+_AUDIO_MODEL_BY_TABLE: dict[str, str] = {
+    GROUND_TRUTH_TABLE_NAME: "whisper-small",
+}
+
+# Default DB-layer cosine-distance cap for tenant tables when caller passes none.
+_TENANT_DEFAULT_COLUMN_THRESHOLD = 0.35
 
 def log_performance(func):
     @wraps(func)
@@ -190,10 +199,11 @@ class ModelManager:
         logger.info("Accessing audio model")
         if self._use_serving and self.serving_client:
             logger.info("Using serving client for audio embeddings")
-            # Return a function that uses the serving client
-            def audio_embedding(audio_data):
+            def audio_embedding(audio_data, model_name: str | None = None):
                 logger.info("Getting audio embedding from serving client")
-                return self.serving_client.embed_audio(audio_data)
+                return self.serving_client.embed_audio(
+                    audio_data, audio_model=model_name
+                )
             return audio_embedding
         else:
             mixpanel_slack_notfy("ALERT: Audio embeddings are not available")
@@ -314,7 +324,7 @@ class EmbeddingManager:
                 )
                 return embedding_list
 
-    def get_audio_query_embedding(self, type, query):
+    def get_audio_query_embedding(self, type, query, audio_model_name: str | None = None):
         try:
             model = model_manager.audio_model
             # Process URL if query is a string containing URL
@@ -333,9 +343,15 @@ class EmbeddingManager:
 
             if model_manager._use_serving:
                 try:
-                    embedding_vector = model(query)
-                except:
-                    embedding_vector = []   
+                    embedding_vector = model(query, model_name=audio_model_name)
+                except Exception as audio_exc:
+                    logger.exception(
+                        "audio_embed_failed",
+                        query=str(query)[:200],
+                        exc_type=type(audio_exc).__name__,
+                        exc_message=str(audio_exc),
+                    )
+                    embedding_vector = []
                 return embedding_vector
             else:
                 return []
@@ -439,7 +455,9 @@ class EmbeddingManager:
 
         elif index_col_type == "audio":
             embedding_vector = self.get_audio_query_embedding(
-                "audio", data[column_name]
+                "audio",
+                data[column_name],
+                audio_model_name=_AUDIO_MODEL_BY_TABLE.get(table_name),
             )
 
         elif index_col_type == "image-text":
@@ -493,6 +511,9 @@ class EmbeddingManager:
             index_col_type = []
             vectors = []
             metadata_list = []
+
+            row_t0 = time.time()
+            per_column_durations: dict[str, float] = {}
 
             for n, inp in enumerate(inputs_formater):
 
@@ -550,13 +571,16 @@ class EmbeddingManager:
 
                 # Get embedding for this input
                 try:
+                    col_t0 = time.time()
                     if index_col_type[n] == "image":
                         embedding_vector = self.get_image_query_embedding(
                             "image", mod_dict["index_column"]
                         )
                     elif index_col_type[n] == "audio":
                         embedding_vector = self.get_audio_query_embedding(
-                            "audio", mod_dict["index_column"]
+                            "audio",
+                            mod_dict["index_column"],
+                            audio_model_name=_AUDIO_MODEL_BY_TABLE.get(table_name),
                         )
                     elif index_col_type[n] == "image-text":
                         embedding_vector = self.get_image_query_embedding(
@@ -569,6 +593,9 @@ class EmbeddingManager:
                         else:
                             embedding_vector = model.encode(mod_dict["index_column"])
                             embedding_vector = embedding_vector.tolist()
+                    per_column_durations[f"{inp}({index_col_type[n]})"] = round(
+                        time.time() - col_t0, 3
+                    )
 
                     vectors.append(embedding_vector)
 
@@ -601,6 +628,13 @@ class EmbeddingManager:
                     
                     raise
 
+            logger.info(
+                "row_embed_completed",
+                item_id=row_dict.get("item_id"),
+                table_name=table_name,
+                total_s=round(time.time() - row_t0, 3),
+                per_column_s=per_column_durations,
+            )
             return vectors, metadata_list
 
         except Exception as e:
@@ -653,9 +687,7 @@ class EmbeddingManager:
                     )
 
             def process_batch(batch):
-                # Write each row's vectors immediately so partial progress
-                # survives a mid-batch activity death (e.g. Temporal heartbeat
-                # timeout). Each persisted row also ticks progress_callback.
+                # Per-row commits so partial progress survives mid-batch failures.
                 inserted_ids = []
                 db_client = ClickHouseVectorDB()
 
@@ -706,10 +738,9 @@ class EmbeddingManager:
                     db_client.close()
                 return inserted_ids
 
-            # Dynamic batch_size: for small datasets, split so every row
-            # gets its own worker thread instead of running serially in one
-            # batch. Cap at the original 50 for large datasets.
-            max_workers = 20
+            # Cap worker count to match server-side admission for audio. Going
+            # higher just queues threads at the semaphore for no throughput win.
+            max_workers = int(os.getenv("EMBED_WORKER_POOL_SIZE", "10"))
             effective_batch_size = max(
                 1, min(batch_size, -(-len(metadatas) // max_workers))
             ) if metadatas else batch_size
@@ -920,7 +951,11 @@ class EmbeddingManager:
                         "image-text", query
                     )
                 elif input_type == "audio":
-                    query_embedding = self.get_audio_query_embedding("audio", query)
+                    query_embedding = self.get_audio_query_embedding(
+                        "audio",
+                        query,
+                        audio_model_name=_AUDIO_MODEL_BY_TABLE.get(table_name),
+                    )
                 else:
                     model = model_manager.text_model
                     if model_manager._use_serving:
@@ -1002,6 +1037,14 @@ class EmbeddingManager:
 
         self.input_types = self.inputs_type_list(inputs)
 
+        # Tenant tables always go through common-items; threshold only caps the DB query.
+        tenant_scoped = table_name in _TENANT_SCOPED_TABLES
+        effective_threshold = (
+            threshold
+            if threshold is not None
+            else (_TENANT_DEFAULT_COLUMN_THRESHOLD if tenant_scoped else None)
+        )
+
         results = {}
         start_time = datetime.now()
         for n, inp in enumerate(inputs):
@@ -1009,14 +1052,19 @@ class EmbeddingManager:
                 if n >= len(input_cols) or n >= len(self.input_types):
                     logger.warning(f"Skipping input {n} due to mismatch in column names or types")
                     continue
-                    
-                # print(f"[FEEDBACK AVG_RAG] input[{n}]: col={input_cols[n]} type={self.input_types[n]} query={str(inp)[:100]} eval_id={eval_id} org={organization_id} ws={workspace_id}", flush=True)
                 if table_name == GROUND_TRUTH_TABLE_NAME:
                     meta_col = "column_name"
                     per_input_filter = {"column_name": input_cols[n]}
                 else:
                     meta_col = input_cols[n]
                     per_input_filter = {}
+                # Tenant tables span modalities with differing vector dims
+                # (text=384, image=512, audio=768). vector_similarity_search_with_threshold
+                # adds `distance <= threshold` to WHERE, which makes CH compute
+                # cosineDistance before the input_type filter prunes mismatched
+                # rows, raising "arrayCosineDistance must have equal sizes".
+                # Run the no-threshold SQL and cap by distance in Python.
+                sql_threshold = None if tenant_scoped else effective_threshold
                 x = self.retrieve_rag_based_examples(
                     inp,
                     table_name,
@@ -1025,18 +1073,24 @@ class EmbeddingManager:
                     input_type=self.input_types[n],
                     filter_by=per_input_filter,
                     top_k=20,
-                    threshold=threshold,
+                    threshold=sql_threshold,
                     syn_data_flag=syn_data_flag,
                     organization_id=organization_id,
                     workspace_id=workspace_id,
                 )
-                # print(f"[FEEDBACK AVG_RAG] input[{n}]: got {len(x) if x else 0} raw results", flush=True)
-                if threshold and x:
-                    # Sort items by similarity score and get top 4
-                    results[inp] = [{"similarity": i['similarity'] ,"chunk_text": i['metadata']['chunk_text'] } for i in x]
-                elif x:
+                if tenant_scoped and x and effective_threshold is not None:
+                    x = [i for i in x if (i[-1] if not isinstance(i, dict) else i["similarity"]) <= effective_threshold]
+                if not x:
+                    continue
+                if tenant_scoped:
                     results[inp] = {i[-2]["item_id"]: i for i in x}
-                    # print(f"[FEEDBACK AVG_RAG] input[{n}]: {len(results[inp])} unique items by item_id", flush=True)
+                elif effective_threshold:
+                    results[inp] = [
+                        {"similarity": i["similarity"], "chunk_text": i["metadata"]["chunk_text"]}
+                        for i in x
+                    ]
+                else:
+                    results[inp] = {i[-2]["item_id"]: i for i in x}
             except:
                 traceback.print_exc()
         end_time = datetime.now()
@@ -1046,20 +1100,15 @@ class EmbeddingManager:
         )
         start_time = datetime.now()
         top_results = []
-        if threshold and results.values():
-            # Flatten the results into a single list of items
+        if tenant_scoped:
+            top_results = self.get_top_common_items(results, top_k)
+        elif effective_threshold and results.values():
             all_items = []
             for _input_key, items in results.items():
                 all_items.extend(items)
-
-            # Sort by similarity and get top k
-            top_results = sorted(all_items, key=lambda x: x['similarity'], reverse=True)[:top_k]
+            top_results = sorted(all_items, key=lambda x: x["similarity"], reverse=True)[:top_k]
         else:
-            top_results = (
-                self.get_top_common_items(results, top_k)
-                if table_name in _TENANT_SCOPED_TABLES
-                else self.get_top_union_items(results, top_k)
-            )
+            top_results = self.get_top_union_items(results, top_k)
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(

@@ -547,7 +547,6 @@ class GroundTruthSearchRequest(BaseModel):
     query: str = ""
     inputs: dict[str, object] | None = None
     max_results: int = Field(default=3, ge=1, le=20)
-    similarity_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 
