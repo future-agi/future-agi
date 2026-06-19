@@ -133,7 +133,7 @@ export const useBulkCreateScores = () => {
         source_id: sourceId,
         scores: scores.map((s) => ({
           ...s,
-          score_source: scoreSource || "human",
+          score_source: s.score_source ?? scoreSource ?? "human",
         })),
         notes: notes || "",
       };
