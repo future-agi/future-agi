@@ -3,8 +3,6 @@ import uuid
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import pytest
-
 from rest_framework.test import APIRequestFactory
 
 from tracer.views.error_analysis import TraceErrorTaskUpdateRequestSerializer
@@ -94,7 +92,6 @@ def test_feed_mutations_have_runtime_request_contracts():
         assert _body_ref(_operation(path, method)) == definition_name
 
 
-@pytest.mark.skip(reason="OTLP trace routes migrated to fi-collector — pending PII scrubbing port")
 def test_feed_contract_debt_stays_burned_down():
     report = _debt_report()
     covered_paths = {
@@ -111,12 +108,9 @@ def test_feed_contract_debt_stays_burned_down():
         "/tracer/feed/issues/{cluster_id}/create-linear-issue/",
         "/tracer/imagine-analysis/",
         "/tracer/trace-error-task/{project_id}/",
-        "/tracer/otlp/v1/traces",
         "/tracer/shared/{token}/",
         "/tracer/trace-error-analysis/{trace_id}/",
         "/tracer/v1/health",
-        "/tracer/v1/traces",
-        "/tracer/v1/traces/",
         "/tracer/webhook/",
     }
 
@@ -154,23 +148,16 @@ def test_imagine_and_trace_error_task_have_runtime_contracts():
         assert _body_ref(_operation(path, method)) == definition_name
 
 
-@pytest.mark.skip(reason="OTLP trace routes migrated to fi-collector — pending PII scrubbing port")
 def test_protocol_and_public_tracer_endpoints_have_explicit_contracts():
     expected_responses = {
-        ("POST", "/tracer/otlp/v1/traces"): "OTLPHTTPTraceResponse",
         ("GET", "/tracer/shared/{token}/"): "SharedLinkResolveResponse",
         ("GET", "/tracer/trace-error-analysis/{trace_id}/"): (
             "TraceErrorAnalysisResponse"
         ),
         ("GET", "/tracer/v1/health"): "OTLPHealthResponse",
-        ("POST", "/tracer/v1/traces"): "OTLPTraceResponse",
-        ("POST", "/tracer/v1/traces/"): "OTLPTraceResponse",
         ("POST", "/tracer/webhook/"): "WebhookResponse",
     }
     expected_bodies = {
-        ("POST", "/tracer/otlp/v1/traces"): "object",
-        ("POST", "/tracer/v1/traces"): "object",
-        ("POST", "/tracer/v1/traces/"): "object",
         ("POST", "/tracer/webhook/"): "WebhookRequest",
     }
 

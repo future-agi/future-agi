@@ -9418,18 +9418,6 @@ export const ApiPublicIngestionCreateBody = zod.object({
 
 
 /**
- * Asynchronously handles the POST request to create ObservationSpans from OTEL data.
- */
-export const ApiPublicOtelV1TracesCreateBody = zod.object({
-
-}).passthrough().describe('Legacy OTLP JSON\/protobuf trace payload. Prefer \/tracer\/v1\/traces for new integrations.')
-
-export const ApiPublicOtelV1TracesCreateResponse = zod.object({
-
-}).passthrough()
-
-
-/**
  * Vapi validates Langfuse credentials by calling this endpoint with
 ``?limit=1``.      Returns an empty list with standard pagination
 metadata so the credential check passes.
@@ -38700,18 +38688,6 @@ export const TracerObservationSpanDeleteParams = zod.object({
 })
 
 
-/**
- * Asynchronously handles the POST request to create ObservationSpans from OTEL data.
- */
-export const TracerOtlpV1TracesCreateBody = zod.object({
-
-}).passthrough().describe('Legacy OTLP JSON\/protobuf trace payload. Prefer \/tracer\/v1\/traces for new integrations.')
-
-export const TracerOtlpV1TracesCreateResponse = zod.object({
-
-}).passthrough()
-
-
 export const TracerProjectVersionListQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
   "limit": zod.number().optional().describe('Number of results to return per page.')
@@ -43198,18 +43174,6 @@ export const TracerV1HealthListResponse = zod.object({
 })
 
 
-/**
- * The request body contains an ExportTraceServiceRequest with resource spans.
- * @summary Handle OTLP trace export request.
- */
-export const TracerV1TracesCreateResponse = zod.object({
-  "partial_success": zod.object({
-  "rejected_spans": zod.number().optional(),
-  "error_message": zod.string().optional()
-}).optional()
-})
-
-
 export const TracerWebhookCreateBody = zod.object({
   "call": zod.object({
 
@@ -45915,16 +45879,4 @@ export const UsageWorkspaceUsageSummaryListResponse = zod.object({
 export const V1HealthListResponse = zod.object({
   "status": zod.enum(['healthy']),
   "service": zod.string().min(1)
-})
-
-
-/**
- * The request body contains an ExportTraceServiceRequest with resource spans.
- * @summary Handle OTLP trace export request.
- */
-export const V1TracesCreateResponse = zod.object({
-  "partial_success": zod.object({
-  "rejected_spans": zod.number().optional(),
-  "error_message": zod.string().optional()
-}).optional()
 })
