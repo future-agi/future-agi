@@ -74,8 +74,6 @@ def extract_pass(value: Any) -> bool | None:
 def resolve_eval_axes(
     value: Any, config_output: str, multi_choice: bool = False
 ) -> dict[str, Any]:
-    """Project ``value`` into the four filter-axis keys based on the stored
-    ``config_output`` and ``multi_choice`` flag."""
     axes: dict[str, Any] = _empty_axes()
     if value is None:
         return axes

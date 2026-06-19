@@ -235,46 +235,24 @@ class CallExecutionEvalMetricSerializer(serializers.Serializer):
 
 
 class CallExecutionEvalOutputSerializer(serializers.Serializer):
-    """One entry of ``eval_outputs``. All fields optional; pending evals emit ``{}``.
+    """One entry of ``eval_outputs``."""
 
-    The four axis fields (``output_pass`` / ``output_score`` / ``output_choice`` /
-    ``output_choices``) are computed at read time from the verbatim ``output``
-    value and the eval template's stored ``config["output"]`` + ``multi_choice``.
-    Exactly one is populated per row; the others are ``null``.
-    """
-
-    value = serializers.JSONField(
-        required=False,
-        allow_null=True,
-        help_text="Verbatim runner output (number | bool | string | list | dict | null)",
-    )
+    value = serializers.JSONField(required=False, allow_null=True)
     reason = serializers.CharField(allow_blank=True, required=False)
     type = serializers.CharField(allow_blank=True, required=False)
     name = serializers.CharField(allow_blank=True, required=False)
     error = serializers.BooleanField(required=False)
     status = serializers.CharField(allow_blank=True, required=False)
     skipped = serializers.BooleanField(required=False)
-    output_pass = serializers.BooleanField(
-        required=False,
-        allow_null=True,
-        help_text="Set when stored config[output]=Pass/Fail",
-    )
-    output_score = serializers.FloatField(
-        required=False,
-        allow_null=True,
-        help_text="Set when stored config[output] in (score, numeric)",
-    )
+    output_pass = serializers.BooleanField(required=False, allow_null=True)
+    output_score = serializers.FloatField(required=False, allow_null=True)
     output_choice = serializers.CharField(
-        required=False,
-        allow_null=True,
-        allow_blank=True,
-        help_text="Set when stored config[output]=choices and not multi_choice",
+        required=False, allow_null=True, allow_blank=True
     )
     output_choices = serializers.ListField(
         child=serializers.CharField(allow_blank=True),
         required=False,
         allow_null=True,
-        help_text="Set when stored config[output]=choices and multi_choice",
     )
 
 
@@ -701,44 +679,27 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         )
     )
     def get_eval_outputs(self, obj):
-        """Get evaluation outputs in a structured format.
-
-        The four axis fields (output_pass / output_score / output_choice /
-        output_choices) are computed at read time using
-        ``evaluations.engine.normalize.resolve_eval_axes`` against the
-        verbatim ``output`` value and the eval template's stored
-        ``config["output"]`` + ``multi_choice`` flag.
-        """
+        """Get evaluation outputs in a structured format"""
         from evaluations.engine.normalize import resolve_eval_axes
         from simulate.models.eval_config import SimulateEvalConfig
 
-        # Handle both model instances and dictionaries (from grouping)
         if hasattr(obj, "eval_outputs"):
             eval_outputs = obj.eval_outputs
         else:
             eval_outputs = obj.get("eval_outputs") if isinstance(obj, dict) else {}
 
-        # For grouped results, return empty dict as eval outputs are not available
         if isinstance(obj, dict) and "count" in obj:
             return {}
 
         if not eval_outputs:
             return {}
 
-        # One bulk fetch per call: load each eval config's stored output type
-        # and multi_choice flag. resolve_eval_axes is keyed on the stored
-        # config, not the runtime-promoted output_type.
-        eval_ids = [eid for eid in eval_outputs.keys()]
         eval_meta: dict[str, tuple[str, bool]] = {}
-        if eval_ids:
+        if eval_outputs:
             for cfg in (
-                SimulateEvalConfig.objects.filter(id__in=eval_ids)
+                SimulateEvalConfig.objects.filter(id__in=list(eval_outputs.keys()))
                 .select_related("eval_template")
-                .only(
-                    "id",
-                    "eval_template__config",
-                    "eval_template__multi_choice",
-                )
+                .only("id", "eval_template__config", "eval_template__multi_choice")
             ):
                 config = cfg.eval_template.config or {}
                 eval_meta[str(cfg.id)] = (
@@ -746,7 +707,6 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     bool(cfg.eval_template.multi_choice),
                 )
 
-        # Transform eval_outputs to a more structured format
         structured_outputs = {}
         for eval_id, eval_data in eval_outputs.items():
             if isinstance(eval_data, dict):
