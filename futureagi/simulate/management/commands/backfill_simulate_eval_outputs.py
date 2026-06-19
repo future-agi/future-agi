@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -24,7 +25,7 @@ logger = structlog.get_logger(__name__)
 
 class Command(BaseCommand):
     help = (
-        "Backfill output_pass / output_score / output_choice / output_choices "
+        "Backfill output_pass / output_score / output_choices "
         "on CallExecution.eval_outputs rows."
     )
 
@@ -69,6 +70,15 @@ class Command(BaseCommand):
                 "in the same CallExecution are left untouched."
             ),
         )
+        parser.add_argument(
+            "--sample-count",
+            type=int,
+            default=5,
+            help=(
+                "Print first N before/after conversion samples to stdout. "
+                "0 disables sampling. Sampling has no effect on writes."
+            ),
+        )
 
     def handle(self, *args, **options):
         dry_run: bool = options["dry_run"]
@@ -77,6 +87,8 @@ class Command(BaseCommand):
         since_raw: str | None = options.get("since")
         test_execution_id: str | None = options.get("test_execution_id")
         eval_config_filter: str | None = options.get("eval_config_id")
+        sample_count: int = options.get("sample_count", 5)
+        samples: list[dict[str, Any]] = []
 
         since: datetime | None = None
         if since_raw:
@@ -121,9 +133,26 @@ class Command(BaseCommand):
                 config_output, multi_choice = self._resolve_eval_config(
                     eval_id, eval_cfg_cache
                 )
-                entry.update(
-                    resolve_eval_axes(entry.get("output"), config_output, multi_choice)
-                )
+                axes = resolve_eval_axes(entry.get("output"), config_output, multi_choice)
+                # Prefer samples that actually demonstrate a conversion
+                # (non-null runner output AND at least one axis populated).
+                if (
+                    len(samples) < sample_count
+                    and entry.get("output") is not None
+                    and any(v is not None for v in axes.values())
+                ):
+                    samples.append(
+                        {
+                            "call_execution_id": str(call.id),
+                            "eval_config_id": eval_id,
+                            "config_output": config_output,
+                            "multi_choice": multi_choice,
+                            "output_value": entry.get("output"),
+                            "before_axes": {k: entry.get(k) for k in AXIS_KEYS},
+                            "after_axes": axes,
+                        }
+                    )
+                entry.update(axes)
                 blob[eval_id] = entry
                 row_changed = True
                 updated_entries += 1
@@ -141,6 +170,19 @@ class Command(BaseCommand):
         if pending:
             self._flush(pending, dry_run=dry_run)
             pending.clear()
+
+        if samples:
+            self.stdout.write(f">>> --- Sample conversions ({len(samples)}) ---")
+            for i, s in enumerate(samples, 1):
+                self.stdout.write(f">>> [{i}] call_execution_id={s['call_execution_id']}")
+                self.stdout.write(f">>>     eval_config_id   ={s['eval_config_id']}")
+                self.stdout.write(
+                    f">>>     config_output    ={s['config_output']!r}"
+                    f"  multi_choice={s['multi_choice']}"
+                )
+                self.stdout.write(f">>>     runner_output    ={json.dumps(s['output_value'])}")
+                self.stdout.write(f">>>     before_axes      ={json.dumps(s['before_axes'])}")
+                self.stdout.write(f">>>     after_axes       ={json.dumps(s['after_axes'])}")
 
         self.stdout.write(
             self.style.SUCCESS(

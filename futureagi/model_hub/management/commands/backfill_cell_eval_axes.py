@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from evaluations.engine.normalize import AXIS_KEYS, resolve_eval_axes
 from model_hub.models.develop_dataset import Cell
+from model_hub.models.evals_metric import EvalTemplate
 
 logger = structlog.get_logger(__name__)
 
@@ -29,8 +30,8 @@ def _parse_value(raw: Any) -> Any:
 
 class Command(BaseCommand):
     help = (
-        "Backfill axis keys (output_pass / output_score / output_choice / "
-        "output_choices) inside Cell.value_infos."
+        "Backfill axis keys (output_pass / output_score / output_choices) "
+        "inside Cell.value_infos."
     )
 
     def add_arguments(self, parser):
@@ -40,6 +41,12 @@ class Command(BaseCommand):
         parser.add_argument("--since", type=str, default=None)
         parser.add_argument("--column-id", type=str, default=None)
         parser.add_argument("--dataset-id", type=str, default=None)
+        parser.add_argument(
+            "--sample-count",
+            type=int,
+            default=5,
+            help="Print first N before/after conversion samples (0 disables).",
+        )
 
     def handle(self, *args, **options):
         dry_run: bool = options["dry_run"]
@@ -48,6 +55,8 @@ class Command(BaseCommand):
         since_raw: str | None = options.get("since")
         column_id: str | None = options.get("column_id")
         dataset_id: str | None = options.get("dataset_id")
+        sample_count: int = options.get("sample_count", 5)
+        samples: list[dict[str, Any]] = []
 
         since: datetime | None = None
         if since_raw:
@@ -60,16 +69,40 @@ class Command(BaseCommand):
                     f"--since must be YYYY-MM-DD, got {since_raw!r}"
                 ) from exc
 
-        qs = Cell.objects.exclude(value_infos__isnull=True).exclude(value_infos="")
+        qs = (
+            Cell.objects.exclude(value_infos__isnull=True)
+            .exclude(value_infos="")
+            .exclude(deleted=True)
+            .filter(column__source="evaluation")
+        )
         if since is not None:
             qs = qs.filter(created_at__gte=since)
         if column_id:
             qs = qs.filter(column_id=column_id)
         if dataset_id:
             qs = qs.filter(dataset_id=dataset_id)
-        qs = qs.select_related("column__eval_template").order_by("created_at", "id")
+        qs = qs.select_related("column").order_by("created_at", "id")
         if limit:
             qs = qs[:limit]
+
+        # Cache template lookups — Cell.column.source_id is a string UUID
+        # pointing at EvalTemplate; thousands of cells share the same
+        # template, so a per-loop fetch would be wasteful.
+        template_cache: dict[str, EvalTemplate | None] = {}
+
+        def _resolve_template(source_id: str | None) -> EvalTemplate | None:
+            if not source_id:
+                return None
+            if source_id in template_cache:
+                return template_cache[source_id]
+            try:
+                tpl = EvalTemplate.objects.only("id", "config", "multi_choice").get(
+                    id=source_id
+                )
+            except (EvalTemplate.DoesNotExist, ValueError):
+                tpl = None
+            template_cache[source_id] = tpl
+            return tpl
 
         processed = 0
         updated_rows = 0
@@ -95,16 +128,37 @@ class Command(BaseCommand):
                 skipped_rows += 1
                 continue
 
-            tpl = getattr(cell.column, "eval_template", None)
-            template_config = tpl.config if tpl else {}
+            tpl = _resolve_template(getattr(cell.column, "source_id", None))
+            if tpl is None:
+                # Without the template we cannot know which axis applies.
+                # Skip rather than mis-route the value (e.g. labelling a
+                # Pass/Fail "Passed" as a generic choice).
+                skipped_rows += 1
+                continue
+            template_config = tpl.config or {}
             config_output = template_config.get("output") or "score"
-            multi_choice = bool(tpl.multi_choice) if tpl else False
+            multi_choice = bool(tpl.multi_choice)
 
-            axes = resolve_eval_axes(
-                _parse_value(cell.value), config_output, multi_choice
-            )
+            parsed_value = _parse_value(cell.value)
+            axes = resolve_eval_axes(parsed_value, config_output, multi_choice)
+            before_axes = {k: infos.get(k) for k in AXIS_KEYS}
             for key, axis_value in axes.items():
                 infos.setdefault(key, axis_value)
+            after_axes = {k: infos.get(k) for k in AXIS_KEYS}
+
+            if len(samples) < sample_count:
+                samples.append(
+                    {
+                        "cell_id": str(cell.id),
+                        "column_id": str(cell.column_id),
+                        "eval_template_id": str(tpl.id) if tpl else None,
+                        "config_output": config_output,
+                        "multi_choice": multi_choice,
+                        "value": parsed_value,
+                        "before_axes": before_axes,
+                        "after_axes": after_axes,
+                    }
+                )
 
             cell.value_infos = json.dumps(infos)
             updated_rows += 1
@@ -116,6 +170,20 @@ class Command(BaseCommand):
         if pending:
             self._flush(pending, dry_run=dry_run)
             pending.clear()
+
+        if samples:
+            self.stdout.write(f">>> --- Sample conversions ({len(samples)}) ---")
+            for i, s in enumerate(samples, 1):
+                self.stdout.write(f">>> [{i}] cell_id         ={s['cell_id']}")
+                self.stdout.write(f">>>     column_id       ={s['column_id']}")
+                self.stdout.write(f">>>     eval_template_id={s['eval_template_id']}")
+                self.stdout.write(
+                    f">>>     config_output   ={s['config_output']!r}"
+                    f"  multi_choice={s['multi_choice']}"
+                )
+                self.stdout.write(f">>>     value           ={json.dumps(s['value'], default=str)}")
+                self.stdout.write(f">>>     before_axes     ={json.dumps(s['before_axes'])}")
+                self.stdout.write(f">>>     after_axes      ={json.dumps(s['after_axes'])}")
 
         self.stdout.write(
             self.style.SUCCESS(

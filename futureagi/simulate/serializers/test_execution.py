@@ -237,9 +237,11 @@ class CallExecutionEvalMetricSerializer(serializers.Serializer):
 class CallExecutionEvalOutputSerializer(serializers.Serializer):
     """One entry of ``eval_outputs``. All fields optional; pending evals emit ``{}``.
 
-    Exactly one of ``output_pass`` / ``output_score`` / ``output_choice`` /
-    ``output_choices`` is populated per row, gated by the eval template's
-    stored ``config["output"]`` and ``multi_choice`` flag.
+    ``output_pass`` is populated for Pass/Fail templates; ``output_score``
+    for score/numeric templates; ``output_choices`` for choices templates
+    (single-pick lands as a one-element list, multi-pick as N elements).
+    Choice_scores templates populate both ``output_score`` and
+    ``output_choices`` on the same row.
     """
 
     value = serializers.JSONField(
@@ -259,17 +261,15 @@ class CallExecutionEvalOutputSerializer(serializers.Serializer):
     output_score = serializers.FloatField(
         required=False, allow_null=True, help_text="Set when stored config[output] in (score, numeric)"
     )
-    output_choice = serializers.CharField(
-        required=False,
-        allow_null=True,
-        allow_blank=True,
-        help_text="Set when stored config[output]=choices and not multi_choice",
-    )
     output_choices = serializers.ListField(
         child=serializers.CharField(allow_blank=True),
         required=False,
         allow_null=True,
-        help_text="Set when stored config[output]=choices and multi_choice",
+        help_text=(
+            "List of chosen labels. Always a list — single-pick configs land as "
+            "[label]; multi-pick as [label1, label2, ...]. FE checks eval_config."
+            "multi_choice for rendering (dropdown vs multi-select)."
+        ),
     )
 
 
@@ -737,7 +737,6 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     or eval_data.get("status") == "skipped",
                     "output_pass": eval_data.get("output_pass"),
                     "output_score": eval_data.get("output_score"),
-                    "output_choice": eval_data.get("output_choice"),
                     "output_choices": eval_data.get("output_choices"),
                 }
 

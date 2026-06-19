@@ -135,11 +135,8 @@ class Evaluation(BaseModel):
                     self.output_bool = axes["output_pass"]
                 if self.output_float is None and axes["output_score"] is not None:
                     self.output_float = axes["output_score"]
-                if self.output_str_list in (None, []):
-                    if axes["output_choice"] is not None:
-                        self.output_str_list = [axes["output_choice"]]
-                    elif axes["output_choices"] is not None:
-                        self.output_str_list = axes["output_choices"]
+                if self.output_str_list in (None, []) and axes["output_choices"] is not None:
+                    self.output_str_list = axes["output_choices"]
 
                 if (
                     self.output_bool is None

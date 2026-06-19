@@ -7,7 +7,6 @@ from typing import Any
 AXIS_KEYS: tuple[str, ...] = (
     "output_pass",
     "output_score",
-    "output_choice",
     "output_choices",
 )
 
@@ -55,25 +54,33 @@ def extract_score(value: Any) -> float | None:
     return None
 
 
-def extract_choice(value: Any) -> str | None:
+def extract_choices(value: Any) -> list[str] | None:
+    """Project ``value`` into a list of chosen labels.
+
+    Unified single-or-multi shape so every surface stores the same JSONB
+    type. A single-pick eval yields a one-element list. Accepted inputs:
+      * ``"frequently"``                  → ``["frequently"]``
+      * ``["a", "b"]``                    → ``["a", "b"]`` (deduped)
+      * ``{"choice": "x"}``               → ``["x"]``
+      * ``{"choices": ["a", "b"]}``       → ``["a", "b"]`` (deduped)
+      * ``{"score": .., "choice": "x"}``  → ``["x"]`` (choice_scores dict)
+    """
+    if isinstance(value, bool):
+        return None
     if isinstance(value, str):
-        return value
+        return [value]
     if isinstance(value, dict):
         choice = value.get("choice")
         if isinstance(choice, str):
-            return choice
-    return None
-
-
-def extract_choices(value: Any) -> list[str] | None:
-    if isinstance(value, list):
-        strings = [v for v in value if isinstance(v, str)]
-        return dedupe_preserve_order(strings) if strings else None
-    if isinstance(value, dict):
+            return [choice]
         choices = value.get("choices")
         if isinstance(choices, list):
             strings = [v for v in choices if isinstance(v, str)]
             return dedupe_preserve_order(strings) if strings else None
+        return None
+    if isinstance(value, list):
+        strings = [v for v in value if isinstance(v, str)]
+        return dedupe_preserve_order(strings) if strings else None
     return None
 
 
@@ -90,13 +97,18 @@ def extract_pass(value: Any) -> bool | None:
 def resolve_eval_axes(
     value: Any, config_output: str, multi_choice: bool = False
 ) -> dict[str, Any]:
-    """Project ``value`` into the four axis keys.
+    """Project ``value`` into the three axis keys.
 
-    ``config_output`` anchors the *primary* filter axis the FE renders;
-    secondary axes are still populated when the value carries them (e.g.
-    ``choice_scores`` templates emit both a score and a choice in one
-    dict). Letting both axes through is what enables FE to colour the
-    choice bubble by the underlying score.
+    Single-pick and multi-pick configs both land on ``output_choices``
+    (a list of one or more labels), matching the typed-column contract
+    that tracer + experiment already use (``EvalLogger.output_str_list``,
+    ``Evaluation.output_str_list``). ``multi_choice`` is a FE rendering
+    hint (dropdown vs multi-select); it does not change the data shape.
+
+    ``config_output`` anchors the *primary* axis; secondary axes are
+    still populated when the value carries them — a ``choice_scores``
+    dict emits both a score and a label so the FE can colour the chosen
+    label by the underlying score.
     """
     axes: dict[str, Any] = empty_axes()
     if value is None:
@@ -106,14 +118,11 @@ def resolve_eval_axes(
         return axes
     if config_output in ("score", "numeric"):
         axes["output_score"] = extract_score(value)
-        axes["output_choice"] = extract_choice(value)
+        axes["output_choices"] = extract_choices(value)
         return axes
     if config_output == "choices":
         axes["output_score"] = extract_score(value)
-        if multi_choice:
-            axes["output_choices"] = extract_choices(value)
-        else:
-            axes["output_choice"] = extract_choice(value)
+        axes["output_choices"] = extract_choices(value)
         return axes
     return axes
 

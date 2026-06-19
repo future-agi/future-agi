@@ -158,18 +158,16 @@ class DatasetColumnsMutationResponseSerializer(serializers.Serializer):
 
 
 class CellEvalAxesSerializer(serializers.Serializer):
-    """The 4 filter-axis keys inside ``Cell.value_infos`` for eval cells.
+    """The 3 filter-axis keys inside ``Cell.value_infos`` for eval cells.
 
-    Exactly one is populated per cell based on the column's eval template
-    stored ``config["output"]`` + ``multi_choice``. Mirrors the simulate
-    surface's ``CallExecutionEvalOutput`` axis fields for a unified FE
-    contract across surfaces."""
+    Populated per cell based on the column's eval template stored
+    ``config["output"]``. Mirrors the simulate surface's
+    ``CallExecutionEvalOutput`` axis fields for a unified FE contract
+    across surfaces. Single-pick choice configs land as a one-element
+    list in ``output_choices``; multi-pick as N elements."""
 
     output_pass = serializers.BooleanField(required=False, allow_null=True)
     output_score = serializers.FloatField(required=False, allow_null=True)
-    output_choice = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True
-    )
     output_choices = serializers.ListField(
         child=serializers.CharField(allow_blank=True),
         required=False,

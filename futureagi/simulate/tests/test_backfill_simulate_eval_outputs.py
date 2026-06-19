@@ -90,7 +90,6 @@ def test_old_score_plain_float_lands_on_output_score(
     entry = call.eval_outputs[str(cfg.id)]
     assert entry["output_score"] == pytest.approx(0.75)
     assert entry["output_pass"] is None
-    assert entry["output_choice"] is None
     assert entry["output_choices"] is None
 
 
@@ -136,8 +135,7 @@ def test_old_choices_single_plain_string_lands_on_output_choice(
     _run()
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
-    assert entry["output_choice"] == "always"
-    assert entry["output_choices"] is None
+    assert entry["output_choices"] == ["always"]
     assert entry["output_score"] is None
 
 
@@ -161,7 +159,6 @@ def test_old_choices_multi_plain_list_lands_on_output_choices(
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
     assert entry["output_choices"] == ["polite", "concise"]
-    assert entry["output_choice"] is None
 
 
 # ── post-choice_scores shapes (new dict format) ──────────────────────────
@@ -187,7 +184,7 @@ def test_score_dict_with_choice_scores_extracts_score(
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
     assert entry["output_score"] == pytest.approx(0.66)
-    assert entry["output_choice"] == "frequently"
+    assert entry["output_choices"] == ["frequently"]
 
 
 def test_choices_single_dict_with_choice_scores_extracts_choice(
@@ -209,7 +206,7 @@ def test_choices_single_dict_with_choice_scores_extracts_choice(
     _run()
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
-    assert entry["output_choice"] == "always"
+    assert entry["output_choices"] == ["always"]
     assert entry["output_score"] == pytest.approx(1.0)
 
 
@@ -233,7 +230,6 @@ def test_choices_multi_dict_with_choice_scores_extracts_choices(
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
     assert entry["output_choices"] == ["polite", "concise"]
-    assert entry["output_choice"] is None
     assert entry["output_score"] == pytest.approx(0.5)
 
 
@@ -290,7 +286,6 @@ def test_entries_already_canonical_are_skipped(
                 "output": 0.5,
                 "output_pass": None,
                 "output_score": 999.0,
-                "output_choice": None,
                 "output_choices": None,
                 "reason": "",
                 "output_type": "score",
@@ -317,7 +312,6 @@ def test_pending_placeholder_gets_all_none_axes(
     entry = call.eval_outputs[str(cfg.id)]
     assert entry["output_pass"] is None
     assert entry["output_score"] is None
-    assert entry["output_choice"] is None
     assert entry["output_choices"] is None
     assert entry["status"] == "pending"
 
