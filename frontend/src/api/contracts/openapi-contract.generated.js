@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 976,
+  "endpointCount": 971,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -8648,32 +8648,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "403": {
             "$ref": "#/definitions/ApiDetailErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/public/otel/v1/traces": {
-      "post": {
-        "operationId": "api_public_otel_v1_traces_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "description": "Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.",
-          "type": "object"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OTLPHTTPTraceResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/OTLPHTTPErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/OTLPHTTPErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -33292,32 +33266,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "/tracer/otlp/v1/traces": {
-      "post": {
-        "operationId": "tracer_otlp_v1_traces_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "description": "Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.",
-          "type": "object"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OTLPHTTPTraceResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/OTLPHTTPErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/OTLPHTTPErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
     "/tracer/project-version/": {
       "get": {
         "operationId": "tracer_project-version_list",
@@ -36855,70 +36803,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "500": {
             "$ref": "#/definitions/ApiTextErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/tracer/v1/traces": {
-      "post": {
-        "operationId": "tracer_v1_traces_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "description": "OpenTelemetry ExportTraceServiceRequest. JSON payloads use the OTLP HTTP JSON mapping; protobuf payloads use application/x-protobuf.",
-          "type": "object"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "429": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/tracer/v1/traces/": {
-      "post": {
-        "operationId": "tracer_v1_traces_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "description": "OpenTelemetry ExportTraceServiceRequest. JSON payloads use the OTLP HTTP JSON mapping; protobuf payloads use application/x-protobuf.",
-          "type": "object"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "429": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/OTLPTraceResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -41405,38 +41289,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "500": {
             "$ref": "#/definitions/ApiTextErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/traces/": {
-      "post": {
-        "operationId": "v1_traces_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "description": "OpenTelemetry ExportTraceServiceRequest. JSON payloads use the OTLP HTTP JSON mapping; protobuf payloads use application/x-protobuf.",
-          "type": "object"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "429": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/OTLPTraceResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -60601,83 +60453,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "OTLPHTTPErrorResponse": {
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean",
-          "default": false
-        },
-        "type": {
-          "title": "Type",
-          "type": "string",
-          "enum": [
-            "validation_error",
-            "authentication_error",
-            "payment_required",
-            "entitlement_error",
-            "permission_error",
-            "not_found",
-            "conflict",
-            "client_error",
-            "rate_limit",
-            "server_error",
-            "service_unavailable",
-            "timeout",
-            "api_error"
-          ],
-          "x-nullable": true
-        },
-        "code": {
-          "title": "Code",
-          "type": "string",
-          "x-nullable": true
-        },
-        "detail": {
-          "title": "Detail",
-          "type": "string",
-          "x-nullable": true
-        },
-        "result": {
-          "title": "Result",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "message": {
-          "title": "Message",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "error": {
-          "title": "Error",
-          "type": "string",
-          "x-nullable": true
-        },
-        "attr": {
-          "title": "Attr",
-          "type": "string",
-          "x-nullable": true
-        },
-        "details": {
-          "title": "Details",
-          "type": "object",
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    },
-    "OTLPHTTPTraceResponse": {
-      "type": "object",
-      "properties": {}
-    },
     "OTLPHealthResponse": {
       "required": [
         "status",
@@ -60696,14 +60471,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Service",
           "type": "string",
           "minLength": 1
-        }
-      }
-    },
-    "OTLPTraceResponse": {
-      "type": "object",
-      "properties": {
-        "partial_success": {
-          "$ref": "#/definitions/OTLPPartialSuccess"
         }
       }
     },
@@ -84449,19 +84216,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "uuid",
           "readOnly": true
-        }
-      }
-    },
-    "OTLPPartialSuccess": {
-      "type": "object",
-      "properties": {
-        "rejected_spans": {
-          "title": "Rejected spans",
-          "type": "integer"
-        },
-        "error_message": {
-          "title": "Error message",
-          "type": "string"
         }
       }
     },

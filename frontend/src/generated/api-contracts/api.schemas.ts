@@ -3721,43 +3721,6 @@ export interface LangfuseIngestionResponseApi {
   errors: LangfuseIngestionErrorApi[];
 }
 
-export interface OTLPHTTPTraceResponseApi { [key: string]: unknown }
-
-export type OTLPHTTPErrorResponseApiType = typeof OTLPHTTPErrorResponseApiType[keyof typeof OTLPHTTPErrorResponseApiType];
-
-
-export const OTLPHTTPErrorResponseApiType = {
-  validation_error: 'validation_error',
-  authentication_error: 'authentication_error',
-  payment_required: 'payment_required',
-  entitlement_error: 'entitlement_error',
-  permission_error: 'permission_error',
-  not_found: 'not_found',
-  conflict: 'conflict',
-  client_error: 'client_error',
-  rate_limit: 'rate_limit',
-  server_error: 'server_error',
-  service_unavailable: 'service_unavailable',
-  timeout: 'timeout',
-  api_error: 'api_error',
-} as const;
-
-export type OTLPHTTPErrorResponseApiDetails = {[key: string]: string[]};
-
-export interface OTLPHTTPErrorResponseApi {
-  status?: boolean;
-  type?: OTLPHTTPErrorResponseApiType;
-  code?: string;
-  detail?: string;
-  /** @minLength 1 */
-  result?: string;
-  /** @minLength 1 */
-  message?: string;
-  error?: string;
-  attr?: string;
-  details?: OTLPHTTPErrorResponseApiDetails;
-}
-
 export type LangfuseTracesResponseApiDataItem = { [key: string]: unknown };
 
 export interface LangfuseTracesMetaApi {
@@ -21092,15 +21055,6 @@ export interface OTLPHealthResponseApi {
   service: string;
 }
 
-export interface OTLPPartialSuccessApi {
-  rejected_spans?: number;
-  error_message?: string;
-}
-
-export interface OTLPTraceResponseApi {
-  partial_success?: OTLPPartialSuccessApi;
-}
-
 export type WebhookRequestApiCall = { [key: string]: unknown };
 
 export interface WebhookRequestApi {
@@ -23374,16 +23328,6 @@ export type AgentccWebhooksList200 = {
   previous?: string;
   results: AgentccWebhookApi[];
 };
-
-/**
- * Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.
- */
-export type ApiPublicOtelV1TracesCreateBodyOne = { [key: string]: unknown };
-
-/**
- * Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.
- */
-export type ApiPublicOtelV1TracesCreateBodyTwo = { [key: string]: unknown };
 
 export type ApiTracesSpanAttributeDetailListParams = {
 project_id: string;
@@ -25741,16 +25685,6 @@ export type TracerObservationSpanRootSpans200 = {
   previous?: string;
   results: ObservationSpanApi[];
 };
-
-/**
- * Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.
- */
-export type TracerOtlpV1TracesCreateBodyOne = { [key: string]: unknown };
-
-/**
- * Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.
- */
-export type TracerOtlpV1TracesCreateBodyTwo = { [key: string]: unknown };
 
 export type TracerProjectVersionListParams = {
 /**
