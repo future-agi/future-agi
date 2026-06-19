@@ -1,6 +1,13 @@
 from rest_framework import serializers
 
+from model_hub.models.error_localizer_model import ErrorLocalizerStatus
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
+
+_EL_TASK_FE_STATUS = {
+    ErrorLocalizerStatus.RUNNING: "running",
+    ErrorLocalizerStatus.COMPLETED: "completed",
+    ErrorLocalizerStatus.FAILED: "failed",
+}
 
 
 class CallLogEntryResponseSerializer(serializers.Serializer):
@@ -31,8 +38,6 @@ class CallExecutionDeleteResponseSerializer(serializers.Serializer):
 
 
 class ErrorLocalizerTaskResponseSerializer(serializers.Serializer):
-    """Response shape for an error-localizer task attached to a call execution."""
-
     task_id = serializers.UUIDField(read_only=True)
     eval_config_id = serializers.CharField(read_only=True, allow_null=True)
     status = serializers.CharField(read_only=True, allow_blank=True)
@@ -49,6 +54,11 @@ class ErrorLocalizerTaskResponseSerializer(serializers.Serializer):
     updated_at = serializers.DateTimeField(read_only=True, allow_null=True)
     eval_template_name = serializers.CharField(read_only=True, allow_null=True)
     eval_template_id = serializers.UUIDField(read_only=True, allow_null=True)
+
+    def to_representation(self, instance):
+        data = dict(instance) if isinstance(instance, dict) else super().to_representation(instance)
+        data["status"] = _EL_TASK_FE_STATUS.get(data.get("status"), "")
+        return data
 
 
 class CallExecutionErrorLocalizerTasksResponseSerializer(serializers.Serializer):

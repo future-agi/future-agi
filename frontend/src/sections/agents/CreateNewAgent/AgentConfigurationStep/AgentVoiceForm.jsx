@@ -829,7 +829,7 @@ export default function AgentVoiceForm() {
                 <Typography
                   typography="s2_1"
                   fontWeight={"fontWeightRegular"}
-                  color={"text.primary"}
+                  color={"text.secondary"}
                 >
                   {inbound
                     ? INBOUND_OUTBOUND_COPY.inbound.description

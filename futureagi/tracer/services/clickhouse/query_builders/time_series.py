@@ -22,13 +22,6 @@ from datetime import datetime
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
-# CH-direct: the embedded filter builder must emit v2 attribute columns
-# (attrs_string/number/bool) since this builder reads the v2 `spans` table.
-# The V2 subclass rewrites span_attr_* -> attrs_* in translate(); aliased to the
-# v1 name so the call sites below are unchanged.
-from tracer.services.clickhouse.v2.query_builders.filters import (
-    ClickHouseFilterBuilderV2 as ClickHouseFilterBuilder,
-)
 
 
 class TimeSeriesQueryBuilder(BaseQueryBuilder):
@@ -90,6 +83,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         Returns:
             A ``(query_string, params)`` tuple.
         """
+        # Lazy import: a module-level import would form a v1↔v2 circular import.
+        from tracer.services.clickhouse.v2.query_builders.filters import (
+            ClickHouseFilterBuilderV2 as ClickHouseFilterBuilder,
+        )
+
         self.start_date, self.end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date

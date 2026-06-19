@@ -19,7 +19,10 @@ import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { ShowComponent } from "src/components/show";
 import SvgColor from "src/components/svg-color";
 import CallStatus from "src/sections/test/CallLogs/CallStatus";
-import { KeyOptimizerMapping } from "../CreateEditOptimization/common";
+import {
+  KeyOptimizerMapping,
+  mapConfigurationToForm,
+} from "../CreateEditOptimization/common";
 import RerunOptimizationModal from "../CreateEditOptimization/RerunOptimizationModal";
 import OptimizeAgentHeaderComponentSkeleton from "./OptimizeAgentHeaderComponentSkeleton";
 import { AgentPromptOptimizerRerunStatus } from "../FixMyAgentDrawer/common";
@@ -29,15 +32,14 @@ import { getDocsLinkBasedOnOptimizer } from "./common";
 import { formatStartTimeByRequiredFormat } from "src/utils/utils";
 
 const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
-  // The API responds in snake_case (plain JSONRenderer); accept both
-  // spellings so this header keeps working if a camelizing layer returns.
-  const { model, status } = optimization || {};
-  const optimiserType =
-    optimization?.optimiser_type ?? optimization?.optimiserType;
-  const optimiserName =
-    optimization?.optimiser_name ?? optimization?.optimiserName;
-  const providerLogo =
-    optimization?.provider_logo ?? optimization?.providerLogo;
+  const {
+    model,
+    status,
+    optimiser_type: optimiserType,
+    optimiser_name: optimiserName,
+    provider_logo: providerLogo,
+    start_time: startTime,
+  } = optimization || {};
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [createEditOptimizationModalOpen, setCreateEditOptimizationModalOpen] =
     useState(null);
@@ -51,11 +53,10 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
 
   const getDefaultValues = (optimization) => {
     return {
-      name: `${optimization?.optimiser_name ?? optimization?.optimiserName} - Rerun - ${format(new Date(), "dd MMM yyyy")}`,
+      name: `${optimiserName} - Rerun - ${format(new Date(), "dd MMM yyyy")}`,
       model: optimization?.model,
-      optimiserType:
-        optimization?.optimiser_type ?? optimization?.optimiserType,
-      configuration: optimization?.configuration,
+      optimiserType: optimiserType,
+      configuration: mapConfigurationToForm(optimization?.configuration),
     };
   };
 
@@ -63,7 +64,7 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
     return <OptimizeAgentHeaderComponentSkeleton />;
   }
   const formattedStartTime = formatStartTimeByRequiredFormat(
-    optimization?.start_time,
+    startTime,
     "MMM dd, yyyy 'at' h:mm a",
   );
   return (
@@ -82,9 +83,7 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
           <CallStatus value={status ?? "Completed"} />
         </Box>
 
-        <ShowComponent
-          condition={!!optimization?.start_time && !!formattedStartTime}
-        >
+        <ShowComponent condition={!!startTime && !!formattedStartTime}>
           <Typography typography={"s3"} fontWeight={"fontWeightRegular"}>
             Optimization ran on {formattedStartTime}
           </Typography>

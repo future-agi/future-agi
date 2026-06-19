@@ -23,6 +23,10 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries, stripAttributePathPrefix } from "src/utils/utils";
 import { ROW_TYPE_LABELS } from "src/utils/constants";
+import {
+  buildFlatValueMap,
+  executeEvalForRow,
+} from "src/sections/evals/utils/evalExecution";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
@@ -40,102 +44,63 @@ import {
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
 import { ID_ONLY_FIELDS } from "src/sections/projects/LLMTracing/idFields";
-import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
+import {
+  ANNOTATION_COLUMN_IDS,
+  FIELD_CATEGORY_TO_COL_TYPE,
+  RANGE_OPS,
+  LIST_OPS,
+  NO_VALUE_OPS,
+} from "src/sections/common/EvalsTasks/common";
 
-// ───────────────────────────────────────────────────────────────
-// Helpers (ported from TracingTestMode)
-// ───────────────────────────────────────────────────────────────
-const COL_TYPE_MAP = {
-  attribute: "SPAN_ATTRIBUTE",
-  system: "SYSTEM_METRIC",
-  eval: "EVALUATION_METRIC",
-  annotation: "ANNOTATION",
-};
-
-const RANGE_OPS = new Set(["between", "not_between"]);
-const LIST_OPS = new Set(["in", "not_in"]);
-const NO_VALUE_OPS = new Set(NULL_OPERATORS);
-
-// Form rows from `TaskFilterBar.convertNewToOld` carry scalar `filterValue`
-// for single-value ops and arrays for `in`/`not_in`/`between`/`not_between`.
-// Multiple scalar rows for the same (field, op) need to be merged into one
-// wire entry so the BE `in` validator gets a single array clause instead of
-// N independently-evaluated scalar clauses.
-function mergeRowsByFieldAndOp(rows) {
-  const merged = new Map();
-  rows.forEach((f) => {
-    const isAttribute = f.property === "attributes";
-    const columnId = isAttribute ? f.propertyId : f.property;
-    if (!columnId) return;
-    const op = f?.filterConfig?.filterOp || "equals";
-    const filterType = f?.filterConfig?.filterType || "text";
-    const key = `${columnId}|${op}|${f.fieldCategory || "system"}|${filterType}`;
-    if (!merged.has(key)) {
-      merged.set(key, {
-        columnId,
-        fieldCategory: f.fieldCategory,
-        op,
-        filterType,
-        isAttribute,
-        value: undefined,
-        values: [],
-      });
-    }
-    const entry = merged.get(key);
-    const v = f?.filterConfig?.filterValue;
-    if (RANGE_OPS.has(op)) {
-      // Range rows already carry the [low, high] array.
-      entry.value = Array.isArray(v) ? v : entry.value;
-    } else if (LIST_OPS.has(op)) {
-      const arr = Array.isArray(v) ? v : v != null && v !== "" ? [v] : [];
-      entry.values.push(...arr);
-    } else if (v !== undefined && v !== null && v !== "") {
-      entry.values.push(v);
-    }
-  });
-  return Array.from(merged.values());
-}
-
+// One form row → one wire entry. No cross-row merging: it would collapse
+// "not_contains A AND not_contains B" into "in [A, B]" (inverting intent) and
+// is unsupported for numbers (the BE has no number `in`). OR is expressed
+// within a single multi-value `in`/`not_in` row.
 // eslint-disable-next-line react-refresh/only-export-components
 export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
-  const userFilters = mergeRowsByFieldAndOp(oldFormatFilters || []).map(
-    (entry) => {
-      const isIdColumn = ID_ONLY_FIELDS.has(entry.columnId);
-      const colType =
-        COL_TYPE_MAP[entry.fieldCategory] ||
-        (entry.isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
+  const userFilters = (oldFormatFilters || [])
+    .map((f) => {
+      const isAttribute = f.property === "attributes";
+      const columnId = isAttribute ? f.propertyId : f.property;
+      if (!columnId) return null;
+      const op = f?.filterConfig?.filterOp || "equals";
+      const filterType = f?.filterConfig?.filterType || "text";
+      const v = f?.filterConfig?.filterValue;
+      const isIdColumn = ID_ONLY_FIELDS.has(columnId);
+      // apiColType is source of truth; fieldCategory/isAttribute are UI hints.
+      const colType = ANNOTATION_COLUMN_IDS.has(columnId)
+        ? "ANNOTATION"
+        : f.apiColType ||
+          FIELD_CATEGORY_TO_COL_TYPE[f.fieldCategory] ||
+          (isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
       let filterValue;
-      if (NO_VALUE_OPS.has(entry.op)) {
+      if (NO_VALUE_OPS.has(op)) {
         filterValue = "";
-      } else if (RANGE_OPS.has(entry.op)) {
-        filterValue = entry.value;
-      } else if (LIST_OPS.has(entry.op)) {
-        filterValue = entry.values;
-      } else if (entry.values.length > 1) {
-        // Multiple scalar rows under a single-value op — collapse to `in`.
-        filterValue = entry.values;
-      } else if (entry.values.length === 1) {
-        filterValue = entry.values[0];
-      } else {
-        filterValue = undefined;
+      } else if (RANGE_OPS.has(op)) {
+        if (Array.isArray(v) && v.length > 0) filterValue = v;
+      } else if (LIST_OPS.has(op)) {
+        const arr = Array.isArray(v) ? v : v != null && v !== "" ? [v] : [];
+        if (arr.length > 0) filterValue = arr;
+      } else if (v !== undefined && v !== null && v !== "") {
+        filterValue = v;
       }
-      const filterOp =
-        !RANGE_OPS.has(entry.op) &&
-        !LIST_OPS.has(entry.op) &&
-        Array.isArray(filterValue)
-          ? "in"
-          : entry.op;
       return {
-        column_id: entry.columnId,
+        column_id: columnId,
         filter_config: {
-          filter_type: entry.filterType,
-          filter_op: filterOp,
+          filter_type: filterType,
+          filter_op: op,
           ...(filterValue !== undefined && { filter_value: filterValue }),
           ...(!isIdColumn && { col_type: colType }),
         },
       };
-    },
-  );
+    })
+    // Drop value-less in/not_in (legacy/hand-edited)
+    .filter(
+      (entry) =>
+        entry &&
+        (!LIST_OPS.has(entry.filter_config.filter_op) ||
+          entry.filter_config.filter_value !== undefined),
+    );
 
   if (startDate && endDate) {
     userFilters.push({
@@ -516,24 +481,9 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   const handleRunTest = useCallback(async () => {
     if (!currentRow || !evalsDetails?.length || !spanDetail) return;
 
-    const _spanId = currentRow?.span_id;
-    const _traceId = currentRow?.trace_id;
-    const _sessionId = currentRow?.session_id;
-
-    const autoCtx = {};
-    if (rowType === "spans" && _spanId) autoCtx.span_id = _spanId;
-    if ((rowType === "spans" || rowType === "traces") && _traceId)
-      autoCtx.trace_id = _traceId;
-    if (rowType === "sessions" && _sessionId) autoCtx.session_id = _sessionId;
-    if (rowType === "voiceCalls" && _traceId) autoCtx.trace_id = _traceId;
-
-    // Sessions: the lazy fetch only populates `traces[0].spans` (other
-    // traces have empty `spans` arrays), so a walk over spanDetail can't
-    // resolve mappings into unloaded traces. The BE's
-    // `_process_session_mapping` walks the real DB and handles every path
-    // correctly — delegate by sending the saved mapping as `mapping_paths`
-    // alongside `session_id` (already in autoCtx). Same code path as
-    // eval-task runtime, so preview matches prod.
+    // Sessions delegate mapping resolution to the BE via `mapping_paths`,
+    // so the local walk is skipped. Other row types walk once and reuse
+    // the same lookup across every eval on this row.
     const isSession = rowType === "sessions";
 
     // Build a flat fieldName→value lookup by walking spanDetail,
@@ -599,7 +549,6 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     };
 
     setIsTesting(true);
-    // Initialize all to running
     setTestResults(
       evalsDetails.reduce((acc, _ev, idx) => {
         acc[idx] = { status: "running" };
@@ -607,75 +556,62 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
       }, {}),
     );
 
-    // Run evals in parallel — each one independently
     await Promise.all(
       evalsDetails.map(async (evalItem, idx) => {
-        try {
-          const templateId = evalItem?.template_id;
-          if (!templateId) {
-            setTestResults((prev) => ({
-              ...prev,
-              [idx]: {
-                status: "error",
-                error: "Missing template id — re-add this eval",
-              },
-            }));
-            return;
-          }
-          // Build data_injection flags from the eval's saved config
-          // so the BE enables the correct context toggles (same as
-          // EvalPickerConfigFull does for tracing tab).
-          const diFlags =
-            evalItem?.data_injection ||
-            evalItem?.config?.run_config?.data_injection ||
-            evalItem?.config?.data_injection ||
-            {};
-          // Sessions delegate path resolution to the BE
-          // (`_process_session_mapping`) — see `isSession` branch above.
-          // Other row types resolve locally because their lazy fetch
-          // returns the full data they need.
-          const savedMapping = evalItem?.mapping || {};
-          const playgroundConfig = {
-            ...(Object.keys(diFlags).length > 0
-              ? { run_config: { data_injection: diFlags } }
-              : {}),
-          };
-          if (!isSession) {
-            playgroundConfig.mapping = resolveMapping(savedMapping);
-          }
-          const { data } = await axios.post(
-            endpoints.develop.eval.evalPlayground,
-            {
-              template_id: templateId,
-              model: evalItem?.model || "turing_large",
-              config: playgroundConfig,
-              ...(isSession ? { mapping_paths: savedMapping } : {}),
-              ...autoCtx,
-            },
-          );
-          if (data?.status) {
-            setTestResults((prev) => ({
-              ...prev,
-              [idx]: { status: "success", result: data.result },
-            }));
-          } else {
-            setTestResults((prev) => ({
-              ...prev,
-              [idx]: {
-                status: "error",
-                error: data?.result || "Evaluation failed",
-              },
-            }));
-          }
-        } catch (err) {
+        const templateId = evalItem?.template_id;
+        if (!templateId) {
           setTestResults((prev) => ({
             ...prev,
             [idx]: {
               status: "error",
-              error:
-                err?.response?.data?.result ||
-                err?.message ||
-                "Failed to run eval",
+              error: "Missing template id — re-add this eval",
+            },
+          }));
+          return;
+        }
+        // Forward the saved data_injection flags so the BE enables the
+        // matching auto-context (matches EvalPickerConfigFull's tracing tab).
+        const diFlags =
+          evalItem?.data_injection ||
+          evalItem?.config?.run_config?.data_injection ||
+          evalItem?.config?.data_injection ||
+          {};
+        const configExtras =
+          Object.keys(diFlags).length > 0
+            ? { run_config: { data_injection: diFlags } }
+            : {};
+        const result = await executeEvalForRow({
+          evalItem,
+          rowType,
+          currentRow,
+          spanDetail,
+          mapping: evalItem?.mapping || {},
+          flatValueMap,
+          singleEvalConfigExtras: configExtras,
+          compositeConfigExtras: configExtras,
+        });
+        if (result.ok) {
+          setTestResults((prev) => ({
+            ...prev,
+            [idx]: {
+              status: "success",
+              // EvalResultDisplay reads `compositeResult` for composite or
+              // the legacy `output`/`reason`/`score` keys for single.
+              result: result.isComposite
+                ? {
+                    output: result.output,
+                    reason: result.reason,
+                    compositeResult: result.compositeResult,
+                  }
+                : result.raw,
+            },
+          }));
+        } else {
+          setTestResults((prev) => ({
+            ...prev,
+            [idx]: {
+              status: "error",
+              error: result.errorMessage || "Failed to run eval",
             },
           }));
         }
@@ -1039,14 +975,22 @@ const RowDetailTable = ({
                   "&:hover": { backgroundColor: "action.hover" },
                 }}
               >
-                <Typography
-                  variant="caption"
-                  fontWeight={500}
-                  noWrap
-                  sx={{ width: 130, flexShrink: 0, pt: 0.25 }}
+                <CustomTooltip
+                  title={key}
+                  show
+                  placement="top-start"
+                  arrow
+                  size="small"
                 >
-                  {key}
-                </Typography>
+                  <Typography
+                    variant="caption"
+                    fontWeight={500}
+                    noWrap
+                    sx={{ width: 130, flexShrink: 0, pt: 0.25 }}
+                  >
+                    {key}
+                  </Typography>
+                </CustomTooltip>
                 <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
                   {isEmpty ? (
                     <Typography variant="caption" color="text.disabled">
@@ -1163,7 +1107,7 @@ const VariableMappingView = ({
         </Typography>
         <Typography
           variant="caption"
-          color="text.disabled"
+          color="text.secondary"
           sx={{ display: "block", fontSize: "10px" }}
         >
           Configured mapping for each eval against the current row&apos;s fields

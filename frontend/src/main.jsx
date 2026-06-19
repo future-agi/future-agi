@@ -51,6 +51,9 @@ import { initPostHog } from "./utils/PostHog";
 import { initGoogleAds } from "./utils/googleAds";
 import { initReddit } from "./utils/redditAds";
 import { initTwitter } from "./utils/twitterAds";
+import { applyTranslationDomGuard } from "./utils/translationDomGuard";
+
+applyTranslationDomGuard();
 
 const IS_PRODUCTION = CURRENT_ENVIRONMENT === "production";
 const DEFAULT_TRACES_SAMPLE_RATE = IS_PRODUCTION ? 0.1 : 1.0;

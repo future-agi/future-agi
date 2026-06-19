@@ -232,7 +232,7 @@ const AgentBehaviourStepRightSection = ({ control }) => {
         <Typography typography="m3" fontWeight="fontWeightMedium">
           Summary
         </Typography>
-        <Typography typography="s1" color="text.disabled">
+        <Typography typography="s1" color="text.secondary">
           Review your configuration before creating the agent
         </Typography>
       </Box>

@@ -913,7 +913,7 @@ const EvalsListView = () => {
                       ...safe,
                       tags: [
                         .../** @type {string[]} */ (safe.tags || []),
-                        ...tagValues,
+                        tag.value,
                       ],
                     };
                   });

@@ -97,7 +97,7 @@ const TemplateCard = ({ name, description, createdBy, onClick }) => {
         <Typography
           typography={"s2"}
           fontWeight={"fontWeightRegular"}
-          color={"text.disabled"}
+          color={"text.secondary"}
           sx={{
             overflowWrap: "break-word",
             wordBreak: "break-word",
@@ -319,7 +319,7 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
           </Typography>
           <Typography
             typography="s2"
-            color="text.disabled"
+            color="text.secondary"
             fontWeight={"fontWeightRegular"}
           >
             Browse and discover curated prompt templates for writing,

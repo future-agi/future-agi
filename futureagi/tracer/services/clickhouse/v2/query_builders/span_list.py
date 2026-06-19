@@ -1,35 +1,26 @@
 """
 v2 SpanList query builder — targets the CH 25.3 spans schema.
 
-Mirrors the architecture of v2/query_builders/filters.py:
-  - SUBCLASS the v1 builder so all dashboard logic (pagination, sort, eval
-    + annotation joins, the 3-phase merge) is inherited unchanged.
-  - REWRITE column references in the compiled SQL output via the same
-    `rewrite_and_apply_v2_settings()` helper used by the v2 filter compiler. The
-    rewriter is whole-SQL: it covers both the dashboard's own column refs
-    (e.g. `WHERE _peerdb_is_deleted = 0`) AND the WHERE-clause fragments
-    the inner v1 filter compiler emits.
-
-Methods overridden:
-  - `build()` — the main query (paginated spans page)
-  - `build_content_query()` — the per-span input/output/overflow fetch
-    (attributes_extra is the v2 column name for overflow attributes)
-  - `build_count_query()` — the COUNT for pagination
+Subclass the v1 builder so all of its logic (pagination, sort, eval +
+annotation joins, the 3-phase merge) is inherited unchanged, then let
+`V2RewriteMixin` route every inherited `build*` method's compiled SQL through
+the v2 rewriter at one boundary — `build()`, `build_content_query()` and
+`build_count_query()` need no per-method overrides.
 
 The eval and annotation queries (`build_eval_query`, `build_annotation_query`)
 read from `tracer_eval_logger` and `model_hub_score` respectively — those
 tables are NOT part of the CH 25.3 migration (eval results stay in PG;
-annotations live in their own CDC'd table). No rewrite needed there.
+annotations live in their own CDC'd table) and still carry `_peerdb_is_deleted`.
+They are excluded from the rewrite via `_v2_rewrite_exclude`.
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
-
 from tracer.services.clickhouse.query_builders.span_list import SpanListQueryBuilder
-from tracer.services.clickhouse.v2.query_builders.filters import rewrite_and_apply_v2_settings
+from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 
 
-class SpanListQueryBuilderV2(SpanListQueryBuilder):
+class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
     """Drop-in v2 SpanList builder.
 
     Callers can swap import lines:
@@ -41,17 +32,7 @@ class SpanListQueryBuilderV2(SpanListQueryBuilder):
     until the operator promotes the query type to v2_primary or v2_only.
     """
 
-    def build(self) -> Tuple[str, Dict[str, Any]]:
-        sql, params = super().build()
-        return rewrite_and_apply_v2_settings(sql), params
-
-    def build_content_query(self, span_ids: list) -> Tuple[str, Dict[str, Any]]:
-        sql, params = super().build_content_query(span_ids)
-        return rewrite_and_apply_v2_settings(sql), params
-
-    def build_count_query(self) -> Tuple[str, Dict[str, Any]]:
-        sql, params = super().build_count_query()
-        return rewrite_and_apply_v2_settings(sql), params
+    _v2_rewrite_exclude = frozenset({"build_eval_query", "build_annotation_query"})
 
 
 __all__ = ["SpanListQueryBuilderV2"]

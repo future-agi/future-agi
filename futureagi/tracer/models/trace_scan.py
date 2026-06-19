@@ -30,7 +30,7 @@ class TraceScanConfig(BaseModel):
         related_name="scan_config",
     )
     sampling_rate = models.FloatField(
-        default=0.1, help_text="0.0-1.0, fraction of traces to scan"
+        default=0, help_text="0.0-1.0, fraction of traces to scan"
     )
     enabled = models.BooleanField(default=True)
     scan_version = models.CharField(max_length=20, default="v7.2")

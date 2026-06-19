@@ -121,14 +121,18 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
               },
             }}
           >
-            {steps?.map((step, index) => {
-              const { status, name, description } = step || {};
-              const updatedAt = step?.updated_at ?? step?.updatedAt;
+            {steps?.map(({ status, name, description, updated_at: updatedAt }, index) => {
               const isFailedStep =
                 steps
                   .slice(0, index)
                   .some((step) => step?.status === "failed") || //check if any previous step has failed or current step is failed then render failed status
                 status === "failed";
+
+              const updatedDate = updatedAt ? new Date(updatedAt) : null;
+              const formattedUpdatedAt =
+                updatedDate && isValid(updatedDate)
+                  ? format(updatedDate, "dd/MM/yyyy,HH:mm:ss")
+                  : null;
 
               return (
                 <Step key={index} completed={status === "completed"} expanded>
@@ -184,7 +188,7 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
                     >
                       <Typography
                         variant="body2"
-                        color="text.disabled"
+                        color="text.secondary"
                         fontSize="14px"
                       >
                         {description}
@@ -193,8 +197,7 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
 
                     <ShowComponent
                       condition={
-                        Boolean(updatedAt) &&
-                        isValid(new Date(updatedAt)) &&
+                        Boolean(formattedUpdatedAt) &&
                         [
                           AgentPromptOptimizerStatus.COMPLETED,
                           AgentPromptOptimizerStatus.FAILED,
@@ -206,12 +209,7 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
                         color="text.disabled"
                         fontSize="13px"
                       >
-                        {/* Children evaluate eagerly even when ShowComponent's
-                            condition is false — a null updatedAt crashed the
-                            whole optimization detail page (RangeError). */}
-                        {updatedAt && isValid(new Date(updatedAt))
-                          ? format(new Date(updatedAt), "dd/MM/yyyy,HH:mm:ss")
-                          : null}
+                        {formattedUpdatedAt}
                       </Typography>
                     </ShowComponent>
                   </StepContent>

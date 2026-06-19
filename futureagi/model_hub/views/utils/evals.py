@@ -530,21 +530,23 @@ def run_eval_func(
 
         if error_localizer:
             from model_hub.tasks.user_evaluation import (
-                _eval_passed,
                 trigger_error_localization_for_playground,
             )
 
-            if not _eval_passed(value):
-                logger.info(
-                    f"sending to error localizer: {api_call_log_row.log_id}, {value}, {param_values}, {response.get('reason')}"
-                )
-                trigger_error_localization_for_playground(
-                    eval_template=template,
-                    log=api_call_log_row,
-                    value=value,
-                    mapping=mappings,
-                    eval_explanation=response.get("reason"),
-                )
+            logger.info(
+                "error_localizer_dispatch",
+                log_id=api_call_log_row.log_id,
+                value=value,
+                params=param_values,
+                reason=response.get("reason"),
+            )
+            trigger_error_localization_for_playground(
+                eval_template=template,
+                log=api_call_log_row,
+                value=value,
+                mapping=mappings,
+                eval_explanation=response.get("reason"),
+            )
 
         return output
 

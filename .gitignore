@@ -229,3 +229,4 @@ frontend/scripts/.artifacts/
 install-*.log
 uninstall-*.log
 futureagi/agora*.dat
+*.core

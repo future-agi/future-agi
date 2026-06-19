@@ -1319,7 +1319,7 @@ const CustomEvalsFormChild = ({
                 <Typography
                   typography={"s2"}
                   sx={{ mt: -1 }}
-                  color={"text.disabled"}
+                  color={"text.secondary"}
                   fontStyle={"italic"}
                 >
                   <Typography
