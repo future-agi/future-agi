@@ -6625,6 +6625,11 @@ export interface AnnotationsLabelsApi {
   readonly archived?: boolean;
 }
 
+export interface AnnotationLabelCreateResponseApi {
+  status?: boolean;
+  result: AnnotationsLabelsApi;
+}
+
 export interface AnnotationLabelRestoreResponseApi {
   status?: boolean;
   result: AnnotationsLabelsApi;

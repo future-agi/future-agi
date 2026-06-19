@@ -12308,15 +12308,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "post": {
         "operationId": "model-hub_annotations-labels_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/AnnotationsLabels"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/AnnotationsLabels"
+          "200": {
+            "$ref": "#/definitions/AnnotationLabelCreateResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -46023,6 +46032,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/AnnotationActionMessageResult"
+        }
+      }
+    },
+    "AnnotationLabelCreateResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/AnnotationsLabels"
         }
       }
     },

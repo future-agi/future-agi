@@ -202,6 +202,21 @@ class TestCreateLabel:
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["status"] is True
 
+    def test_create_returns_created_label_object(self, auth_client):
+        """Create responds with the serialized label under ``result``."""
+        resp = create_label(
+            auth_client,
+            name="Echoed Label",
+            type="categorical",
+            settings=make_categorical_settings(),
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data["result"]
+        assert result["name"] == "Echoed Label"
+        assert result["type"] == "categorical"
+        assert result["id"]
+
     def test_create_numeric_label(self, auth_client):
         """TC-9: Create numeric label with min/max/step."""
         resp = create_label(

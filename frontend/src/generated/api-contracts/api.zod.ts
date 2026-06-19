@@ -14273,6 +14273,31 @@ export const ModelHubAnnotationsLabelsCreateBody = zod.object({
   "allow_notes": zod.boolean().optional()
 })
 
+export const modelHubAnnotationsLabelsCreateResponseStatusDefault = true;
+export const modelHubAnnotationsLabelsCreateResponseResultNameMax = 255;
+
+
+
+export const ModelHubAnnotationsLabelsCreateResponse = zod.object({
+  "status": zod.boolean().default(modelHubAnnotationsLabelsCreateResponseStatusDefault),
+  "result": zod.object({
+  "id": zod.string().uuid().optional(),
+  "name": zod.string().min(1).max(modelHubAnnotationsLabelsCreateResponseResultNameMax),
+  "type": zod.enum(['text', 'numeric', 'categorical', 'star', 'thumbs_up_down']),
+  "organization": zod.string().uuid().optional(),
+  "settings": zod.object({
+
+}).passthrough().optional(),
+  "project": zod.string().uuid().optional(),
+  "description": zod.string().optional(),
+  "allow_notes": zod.boolean().optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "trace_annotations_count": zod.number().optional(),
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
+})
+})
+
 
 export const ModelHubAnnotationsLabelsReadParams = zod.object({
   "id": zod.string()
