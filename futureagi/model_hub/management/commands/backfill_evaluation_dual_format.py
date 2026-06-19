@@ -27,9 +27,7 @@ def _parse_value(raw: Any) -> Any:
 
 
 class Command(BaseCommand):
-    help = (
-        "Backfill output_bool / output_float / output_str_list on Evaluation rows."
-    )
+    help = "Backfill output_bool / output_float / output_str_list on Evaluation rows."
 
     def add_arguments(self, parser):
         parser.add_argument("--dry-run", action="store_true")
@@ -87,9 +85,7 @@ class Command(BaseCommand):
 
             tpl = ev.eval_template
             template_config = tpl.config if tpl else {}
-            config_output = (
-                template_config.get("output") or ev.output_type or "score"
-            )
+            config_output = template_config.get("output") or ev.output_type or "score"
             multi_choice = bool(tpl.multi_choice) if tpl else False
 
             axes = resolve_eval_axes(
@@ -139,9 +135,7 @@ class Command(BaseCommand):
         )
 
     @staticmethod
-    def _flush(
-        rows: list[Evaluation], fields: list[str], *, dry_run: bool
-    ) -> None:
+    def _flush(rows: list[Evaluation], fields: list[str], *, dry_run: bool) -> None:
         if dry_run or not rows:
             return
         with transaction.atomic():

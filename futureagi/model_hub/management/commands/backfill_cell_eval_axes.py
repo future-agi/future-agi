@@ -67,9 +67,7 @@ class Command(BaseCommand):
             qs = qs.filter(column_id=column_id)
         if dataset_id:
             qs = qs.filter(dataset_id=dataset_id)
-        qs = qs.select_related("column__eval_template").order_by(
-            "created_at", "id"
-        )
+        qs = qs.select_related("column__eval_template").order_by("created_at", "id")
         if limit:
             qs = qs[:limit]
 
