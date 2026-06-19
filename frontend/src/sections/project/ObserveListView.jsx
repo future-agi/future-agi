@@ -216,8 +216,11 @@ const ObserveListView = forwardRef(
           header: "Last Active",
           size: 160,
           enableSorting: false,
-          cell: ({ getValue, row }) => {
-            const val = getValue() || row.original.updated_at;
+          // Read the row directly: the grid's value accessor keys off the
+          // column `id` ("lastActive"), but the data field is `last_active`.
+          // Fall back to updated_at only when there's no activity yet.
+          cell: ({ row }) => {
+            const val = row.original?.last_active || row.original?.updated_at;
             const color = getHealthColor(val, theme);
             if (!val) return null;
             return (
