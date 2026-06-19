@@ -725,9 +725,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/api/public/ingestion": [
         "post"
       ],
-      "/api/public/otel/v1/traces": [
-        "post"
-      ],
       "/api/public/traces": [
         "get"
       ],
@@ -2768,9 +2765,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "patch",
         "put"
       ],
-      "/tracer/otlp/v1/traces": [
-        "post"
-      ],
       "/tracer/project-version/": [
         "get",
         "post"
@@ -3045,12 +3039,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/v1/health": [
         "get"
       ],
-      "/tracer/v1/traces": [
-        "post"
-      ],
-      "/tracer/v1/traces/": [
-        "post"
-      ],
       "/tracer/webhook/": [
         "post"
       ]
@@ -3314,9 +3302,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
     "v1": {
       "/v1/health": [
         "get"
-      ],
-      "/v1/traces/": [
-        "post"
       ]
     }
   }
@@ -4030,9 +4015,6 @@ export const API_SURFACE_PATHS = Object.freeze({
     "get"
   ],
   "/api/public/ingestion": [
-    "post"
-  ],
-  "/api/public/otel/v1/traces": [
     "post"
   ],
   "/api/public/traces": [
@@ -6055,9 +6037,6 @@ export const API_SURFACE_PATHS = Object.freeze({
     "patch",
     "put"
   ],
-  "/tracer/otlp/v1/traces": [
-    "post"
-  ],
   "/tracer/project-version/": [
     "get",
     "post"
@@ -6332,12 +6311,6 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/v1/health": [
     "get"
   ],
-  "/tracer/v1/traces": [
-    "post"
-  ],
-  "/tracer/v1/traces/": [
-    "post"
-  ],
   "/tracer/webhook/": [
     "post"
   ],
@@ -6597,8 +6570,5 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/v1/health": [
     "get"
-  ],
-  "/v1/traces/": [
-    "post"
   ]
 });
