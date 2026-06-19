@@ -70392,6 +70392,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "readOnly": true
         },
         "column_order": {
+          "description": "Heterogeneous column metadata. Entries with type='evaluation' follow EvalColumnOrderEntrySerializer; other types (system, scenario_dataset_column, persona, tool_evaluation) are open dicts.",
           "type": "array",
           "items": {
             "type": "object",
@@ -70427,6 +70428,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "readOnly": true,
           "minLength": 1
+        },
+        "eval_column_entry_schema": {
+          "$ref": "#/definitions/EvalColumnOrderEntry"
         }
       }
     },
@@ -89101,6 +89105,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "EvalColumnOrderEntry": {
+      "description": "Documentation-only field that pins the eval column_order entry shape into the OpenAPI schema. Not present at runtime.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "column_name": {
+          "title": "Column name",
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "title": "Type",
+          "description": "Always 'evaluation' for this shape.",
+          "type": "string",
+          "minLength": 1
+        },
+        "visible": {
+          "title": "Visible",
+          "type": "boolean"
+        },
+        "eval_config": {
+          "$ref": "#/definitions/EvalConfigMetadata"
+        }
+      }
+    },
     "TestExecutionRerunResult": {
       "type": "object",
       "properties": {
@@ -96888,6 +96921,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "array",
           "items": {
             "$ref": "#/definitions/TeamWorkspaceSummary"
+          }
+        }
+      }
+    },
+    "EvalConfigMetadata": {
+      "type": "object",
+      "properties": {
+        "output": {
+          "title": "Output",
+          "description": "Stored eval_template.config['output']: 'score' / 'choices' / 'Pass/Fail' / 'numeric' / 'reason'. Drives which axis field is populated on each per-row eval entry.",
+          "type": "string",
+          "x-nullable": true
+        },
+        "output_type": {
+          "title": "Output type",
+          "description": "Alias of ``output``. Both fields are always identical.",
+          "type": "string",
+          "x-nullable": true
+        },
+        "multi_choice": {
+          "title": "Multi choice",
+          "description": "From EvalTemplate.multi_choice (not in the config JSON). When output='choices', selects single-pick vs multi-pick filter UI.",
+          "type": "boolean"
+        },
+        "eval_type_id": {
+          "title": "Eval type id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "optional_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }

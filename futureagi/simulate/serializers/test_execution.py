@@ -1201,6 +1201,63 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         return reason
 
 
+class EvalConfigMetadataSerializer(serializers.Serializer):
+    """Shape of ``eval_config`` inside an ``evaluation``-typed
+    ``column_order`` entry. Sourced from ``EvalTemplate.config`` plus the
+    ``output_type`` alias and the ``multi_choice`` flag (which lives on
+    ``EvalTemplate.multi_choice``, not inside the config JSON)."""
+
+    output = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        help_text=(
+            "Stored eval_template.config['output']: 'score' / 'choices' / "
+            "'Pass/Fail' / 'numeric' / 'reason'. Drives which axis field is "
+            "populated on each per-row eval entry."
+        ),
+    )
+    output_type = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        help_text="Alias of ``output``. Both fields are always identical.",
+    )
+    multi_choice = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "From EvalTemplate.multi_choice (not in the config JSON). When "
+            "output='choices', selects single-pick vs multi-pick filter UI."
+        ),
+    )
+    eval_type_id = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    choices = serializers.ListField(
+        child=serializers.CharField(allow_blank=True), required=False
+    )
+    required_keys = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
+    optional_keys = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
+
+
+class EvalColumnOrderEntrySerializer(serializers.Serializer):
+    """One ``evaluation``-typed entry in ``column_order``. Other entry types
+    (system, scenario_dataset_column, persona, tool_evaluation) have their
+    own shapes and remain modelled as open dicts in the parent response."""
+
+    id = serializers.CharField(required=False)
+    column_name = serializers.CharField(required=False)
+    type = serializers.CharField(
+        required=False, help_text="Always 'evaluation' for this shape."
+    )
+    visible = serializers.BooleanField(required=False)
+    eval_config = EvalConfigMetadataSerializer(required=False)
+
+
 class TestExecutionDetailResponseSerializer(serializers.Serializer):
     """Paginated response for GET /simulate/test-executions/{id}/."""
 
@@ -1214,13 +1271,30 @@ class TestExecutionDetailResponseSerializer(serializers.Serializer):
     )
     total_pages = serializers.IntegerField(read_only=True)
     current_page = serializers.IntegerField(read_only=True)
-    column_order = serializers.ListField(child=serializers.DictField(), read_only=True)
+    column_order = serializers.ListField(
+        child=serializers.DictField(),
+        read_only=True,
+        help_text=(
+            "Heterogeneous column metadata. Entries with type='evaluation' "
+            "follow EvalColumnOrderEntrySerializer; other types "
+            "(system, scenario_dataset_column, persona, tool_evaluation) "
+            "are open dicts."
+        ),
+    )
     error_messages = serializers.ListField(
         child=serializers.CharField(), read_only=True
     )
     status = serializers.CharField(read_only=True, required=False)
     provider = serializers.CharField(read_only=True, required=False)
     agent_type = serializers.CharField(read_only=True, required=False)
+    eval_column_entry_schema = EvalColumnOrderEntrySerializer(
+        read_only=True,
+        required=False,
+        help_text=(
+            "Documentation-only field that pins the eval column_order entry "
+            "shape into the OpenAPI schema. Not present at runtime."
+        ),
+    )
 
 
 class RunTestKPIsResponseSerializer(serializers.Serializer):

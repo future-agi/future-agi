@@ -17694,6 +17694,36 @@ export type TestExecutionDetailResponseApiResultsItem = {[key: string]: string};
 
 export type TestExecutionDetailResponseApiColumnOrderItem = {[key: string]: string};
 
+export interface EvalConfigMetadataApi {
+  /** Stored eval_template.config['output']: 'score' / 'choices' / 'Pass/Fail' / 'numeric' / 'reason'. Drives which axis field is populated on each per-row eval entry. */
+  output?: string;
+  /** Alias of ``output``. Both fields are always identical. */
+  output_type?: string;
+  /** From EvalTemplate.multi_choice (not in the config JSON). When output='choices', selects single-pick vs multi-pick filter UI. */
+  multi_choice?: boolean;
+  eval_type_id?: string;
+  choices?: string[];
+  required_keys?: string[];
+  optional_keys?: string[];
+}
+
+/**
+ * Documentation-only field that pins the eval column_order entry shape into the OpenAPI schema. Not present at runtime.
+ */
+export interface EvalColumnOrderEntryApi {
+  /** @minLength 1 */
+  id?: string;
+  /** @minLength 1 */
+  column_name?: string;
+  /**
+     * Always 'evaluation' for this shape.
+     * @minLength 1
+     */
+  type?: string;
+  visible?: boolean;
+  eval_config?: EvalConfigMetadataApi;
+}
+
 export interface TestExecutionDetailResponseApi {
   readonly count?: number;
   /** @minLength 1 */
@@ -17704,6 +17734,7 @@ export interface TestExecutionDetailResponseApi {
   readonly results?: readonly TestExecutionDetailResponseApiResultsItem[];
   readonly total_pages?: number;
   readonly current_page?: number;
+  /** Heterogeneous column metadata. Entries with type='evaluation' follow EvalColumnOrderEntrySerializer; other types (system, scenario_dataset_column, persona, tool_evaluation) are open dicts. */
   readonly column_order?: readonly TestExecutionDetailResponseApiColumnOrderItem[];
   readonly error_messages?: readonly string[];
   /** @minLength 1 */
@@ -17712,6 +17743,7 @@ export interface TestExecutionDetailResponseApi {
   readonly provider?: string;
   /** @minLength 1 */
   readonly agent_type?: string;
+  eval_column_entry_schema?: EvalColumnOrderEntryApi;
 }
 
 /**

@@ -33024,6 +33024,11 @@ export const SimulateTestExecutionsReadQueryParams = zod.object({
 
 
 
+
+
+
+
+
 export const SimulateTestExecutionsReadResponse = zod.object({
   "count": zod.number().optional(),
   "next": zod.string().min(1).optional(),
@@ -33031,11 +33036,26 @@ export const SimulateTestExecutionsReadResponse = zod.object({
   "results": zod.array(zod.record(zod.string(), zod.string())).optional().describe('Call execution rows may include dynamic eval\/scenario columns.'),
   "total_pages": zod.number().optional(),
   "current_page": zod.number().optional(),
-  "column_order": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "column_order": zod.array(zod.record(zod.string(), zod.string())).optional().describe('Heterogeneous column metadata. Entries with type=\'evaluation\' follow EvalColumnOrderEntrySerializer; other types (system, scenario_dataset_column, persona, tool_evaluation) are open dicts.'),
   "error_messages": zod.array(zod.string().min(1)).optional(),
   "status": zod.string().min(1).optional(),
   "provider": zod.string().min(1).optional(),
-  "agent_type": zod.string().min(1).optional()
+  "agent_type": zod.string().min(1).optional(),
+  "eval_column_entry_schema": zod.object({
+  "id": zod.string().min(1).optional(),
+  "column_name": zod.string().min(1).optional(),
+  "type": zod.string().min(1).optional().describe('Always \'evaluation\' for this shape.'),
+  "visible": zod.boolean().optional(),
+  "eval_config": zod.object({
+  "output": zod.string().optional().describe('Stored eval_template.config[\'output\']: \'score\' \/ \'choices\' \/ \'Pass\/Fail\' \/ \'numeric\' \/ \'reason\'. Drives which axis field is populated on each per-row eval entry.'),
+  "output_type": zod.string().optional().describe('Alias of ``output``. Both fields are always identical.'),
+  "multi_choice": zod.boolean().optional().describe('From EvalTemplate.multi_choice (not in the config JSON). When output=\'choices\', selects single-pick vs multi-pick filter UI.'),
+  "eval_type_id": zod.string().optional(),
+  "choices": zod.array(zod.string()).optional(),
+  "required_keys": zod.array(zod.string().min(1)).optional(),
+  "optional_keys": zod.array(zod.string().min(1)).optional()
+}).optional()
+}).optional().describe('Documentation-only field that pins the eval column_order entry shape into the OpenAPI schema. Not present at runtime.')
 })
 
 
