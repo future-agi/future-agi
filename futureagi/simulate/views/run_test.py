@@ -2203,11 +2203,16 @@ class TestExecutionDetailView(APIView):
 
                 # Add evaluation metrics columns
                 for eval_config in eval_configs:
+                    template_config = dict(eval_config.eval_template.config or {})
+                    template_config["output_type"] = template_config.get("output")
+                    template_config["multi_choice"] = bool(
+                        eval_config.eval_template.multi_choice
+                    )
                     default_columns.append(
                         {
                             "column_name": eval_config.name,
                             "id": str(eval_config.id),
-                            "eval_config": eval_config.eval_template.config,
+                            "eval_config": template_config,
                             "visible": True,
                             "type": "evaluation",
                         }
@@ -7074,15 +7079,22 @@ class RunNewEvalsOnTestExecutionView(APIView):
             # Precompute the eval-config columns once; they are identical
             # for every test_execution so recomputing inside the loop is
             # pure overhead.
-            eval_column_entries = [
-                {
+            def _eval_column_entry(eval_config):
+                template_config = dict(eval_config.eval_template.config or {})
+                template_config["output_type"] = template_config.get("output")
+                template_config["multi_choice"] = bool(
+                    eval_config.eval_template.multi_choice
+                )
+                return {
                     "column_name": eval_config.name,
                     "id": str(eval_config.id),
-                    "eval_config": eval_config.eval_template.config,
+                    "eval_config": template_config,
                     "visible": True,
                     "type": "evaluation",
                 }
-                for eval_config in eval_configs
+
+            eval_column_entries = [
+                _eval_column_entry(eval_config) for eval_config in eval_configs
             ]
 
             def _flush_bulk_update(buffer):
