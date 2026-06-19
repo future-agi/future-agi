@@ -12,9 +12,10 @@ Span tree (OpenInference/FI conventions):
    └─ LLM  "<modality>.turn N"              (each agent-under-test turn)
         └─ TOOL "<tool name>"               (each tool call in that turn)
 
-This module is Django-free and pure (build_sim_spans returns plain dicts) so it is
-trivially unit-tested; the thin emit layer (emit_sim_trace) resolves the project and
-hands each span to the tracer's existing ``create_single_otel_span`` write path.
+build_sim_spans is Django-free and pure (returns plain dicts) so it is trivially
+unit-tested; the thin emit layer (emit_sim_trace) resolves the project + ingest
+credentials and exports the spans to the fi-collector — the same OTLP ingestion
+path production traffic uses — via simulate.services.sim_collector_emit.
 """
 
 from __future__ import annotations
