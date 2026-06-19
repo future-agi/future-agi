@@ -860,6 +860,7 @@ const EvalsListView = () => {
               selectedCount={selectedItems.length}
               onDelete={() => setDeleteDialogOpen(true)}
               onCancel={handleCancelSelection}
+              canEditEvals={canEditEvals}
             />
           ) : (
             <Button

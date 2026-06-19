@@ -641,6 +641,11 @@ const TaskListView = ({
                   <Iconify icon="solar:trash-bin-trash-linear" width={16} />
                 }
                 onClick={() => setDeleteTarget(selectedItems)}
+                disabled={
+                  !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                    role
+                  ]
+                }
                 sx={{ textTransform: "none", fontSize: "12px", height: 32 }}
               >
                 Delete
