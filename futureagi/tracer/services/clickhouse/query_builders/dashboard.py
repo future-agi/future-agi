@@ -1287,6 +1287,18 @@ class DashboardQueryBuilder:
             f"{time_col} < %(end_date)s",
         ]
 
+        # Partition pruning: ``spans`` is PARTITION BY toYYYYMM(created_at), but
+        # dashboard queries filter the window on ``start_time`` (event time).
+        # Without a bound on the partition key a windowed query scans the
+        # project's entire history, which times out on high-volume projects.
+        # Add a lower ``created_at`` bound (1-day skew buffer for ingestion lag)
+        # so ClickHouse prunes every partition older than the window.  Lower
+        # bound only: a qualifying in-window row always has
+        # created_at >= start_time >= start_date, so no row is ever excluded and
+        # results are unchanged.  Same pattern as ``agent_graph.py``.
+        if time_col != "created_at":
+            clauses.append("created_at >= %(start_date)s - INTERVAL 1 DAY")
+
         # Apply global + per-metric system_metric filters directly
         # For string-comparable system metrics, use toString() to avoid UUID parse errors
         _STRING_FILTER_COL = {
