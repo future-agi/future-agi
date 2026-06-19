@@ -70,11 +70,6 @@ VOICE_LATENCY_KEYS = {
     "total": "gen_ai.voice.latency.total",
 }
 
-# Name of the per-org system key sim reuses to authenticate span emission to
-# the fi-collector. The collector resolves org + workspace from the key and the
-# project from the ``project_name`` resource attribute (see sim_collector_emit).
-_SIM_INGEST_KEY_NAME = "system_org_key"
-
 SPAN_KIND_AGENT = "AGENT"
 SPAN_KIND_LLM = "LLM"
 SPAN_KIND_TOOL = "TOOL"
@@ -396,7 +391,7 @@ def emit_sim_trace(
 
     Returns the number of spans emitted (exported to the collector).
     """
-    from simulate.services.sim_collector_emit import export_sim_spans
+    from tracer.services.collector_ingest import emit_spans_to_collector
 
     test_execution = getattr(call_execution, "test_execution", None)
     run_test = getattr(test_execution, "run_test", None)
@@ -447,58 +442,13 @@ def emit_sim_trace(
         ended_at=getattr(call_execution, "ended_at", None),
         eval_attributes=eval_attributes,
     )
-    credentials = _resolve_ingest_credentials(organization_id, workspace_id)
-    if credentials is None:
-        logger.warning(
-            "sim_trace_no_ingest_credentials",
-            organization_id=organization_id,
-            call_execution_id=str(getattr(call_execution, "id", "")),
-        )
-        return 0
-    api_key, secret_key = credentials
-
-    return export_sim_spans(
+    return emit_spans_to_collector(
         spans,
         project_name=project_name,
         project_type=project_type,
-        api_key=api_key,
-        secret_key=secret_key,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
     )
-
-
-def _resolve_ingest_credentials(
-    organization_id: str, workspace_id: str | None
-) -> tuple[str, str] | None:
-    """Resolve the (api_key, secret_key) sim uses to emit spans to the collector.
-
-    The collector authenticates against the org's system key and resolves the
-    target project under that key's (org, workspace), so the credential is the
-    single lever for landing sim spans in the right project. Strictly org-scoped
-    — the key is read/created only for the call's organization, never another's.
-
-    Reuses the org's existing system key when present (one per org by model
-    constraint); otherwise creates it carrying the call's workspace so the
-    collector resolves projects in that workspace rather than the org default.
-    """
-    if not organization_id:
-        return None
-    from accounts.models.user import OrgApiKey
-
-    key = (
-        OrgApiKey.no_workspace_objects.filter(
-            organization_id=organization_id, type="system", deleted=False, enabled=True
-        )
-        .order_by("created_at")
-        .first()
-    )
-    if key is None:
-        key = OrgApiKey.no_workspace_objects.create(
-            organization_id=organization_id,
-            workspace_id=workspace_id,
-            name=_SIM_INGEST_KEY_NAME,
-            type="system",
-        )
-    return key.api_key, key.secret_key
 
 
 def attach_sim_evals_to_trace(call_execution, eval_attributes: dict[str, Any]) -> int:
