@@ -60,7 +60,7 @@ func TestConvertMinimalGenAISpan(t *testing.T) {
 
 	expect := map[string]any{
 		"project_id":       "11111111-1111-4111-8111-111111111111",
-		"observation_type": "LLM",
+		"observation_type": "llm",
 		"service_name":     "my-llm-app",
 		// trace_id is emitted as the 36-char DASHED UUID (not 32-char hex) so it
 		// matches PG tracer_trace.id + the migration backfill and resolves via

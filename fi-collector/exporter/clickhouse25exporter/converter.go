@@ -48,7 +48,23 @@ const (
 	// gated on `project.trace_type == "observe"`; the collector mirrors that
 	// using the resource `project_type` hint, which carries this value.
 	projectTypeObserve = "observe"
+
+	// observationTypeUnknown is the fallback when the span kind is absent or
+	// not a recognized type — mirrors Python get_observation_type
+	// (tracer/utils/otel.py), which returns "unknown", NOT "span".
+	observationTypeUnknown = "unknown"
 )
+
+// knownObservationTypes mirrors ObservationSpan.OBSERVATION_SPAN_TYPES
+// (tracer/models/observation_span.py). The entire read layer — voice-call
+// list, monitor metrics, user list — filters these values in LOWERCASE
+// (e.g. `observation_type = 'conversation'`), so the collector MUST store
+// them lowercased and validated, exactly like Python get_observation_type.
+var knownObservationTypes = map[string]struct{}{
+	"tool": {}, "chain": {}, "llm": {}, "retriever": {}, "embedding": {},
+	"agent": {}, "reranker": {}, "guardrail": {}, "evaluator": {},
+	"conversation": {}, "unknown": {},
+}
 
 // Convert walks an OTLP Traces payload and returns one map per span. Maps
 // are designed for JSONEachRow encoding: all values are JSON-natural types
@@ -182,16 +198,18 @@ func spanToRow(
 		parentID = strings.ToLower(span.ParentSpanID().String())
 	}
 
-	// observation_type: prefer the OTel-GenAI `gen_ai.operation.name`
-	// (chat / embedding / completion) when present; fall back to the
-	// SDK-provided `openinference.span.kind` (LLM / CHAIN / TOOL); else
-	// generic span kind. Matches the legacy adapter behaviour.
-	observationType := strings.ToUpper(attrsStr["openinference.span.kind"])
+	// observation_type: the SDK-provided span kind from
+	// `openinference.span.kind` else `fi.span.kind`. LOWERCASED and validated
+	// against the known type set, falling back to "unknown" — a byte-for-byte
+	// mirror of Python get_observation_type (tracer/utils/otel.py): the read
+	// layer filters these values lowercase, so uppercasing here makes every
+	// collector-ingested span invisible to the voice-call list and metrics.
+	observationType := strings.ToLower(attrsStr["openinference.span.kind"])
 	if observationType == "" {
-		observationType = strings.ToUpper(attrsStr["fi.span.kind"])
+		observationType = strings.ToLower(attrsStr["fi.span.kind"])
 	}
-	if observationType == "" {
-		observationType = "SPAN"
+	if _, ok := knownObservationTypes[observationType]; !ok {
+		observationType = observationTypeUnknown
 	}
 
 	// Inputs/outputs: extracted from openinference convention if present.
