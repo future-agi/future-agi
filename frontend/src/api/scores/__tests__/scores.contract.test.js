@@ -11,7 +11,7 @@ import {
   ModelHubScoresForSourceResponse,
   ModelHubAnnotationQueuesForSourceResponse,
 } from "src/generated/api-contracts/api.zod";
-import { useBulkCreateScores } from "../scores";
+import { useBulkCreateScores, SCORE_ITEM_CONSUMED_FIELDS } from "../scores";
 
 // Keys returned by `result[]` of a list/array response schema.
 const arrayItemKeys = (responseSchema) =>
@@ -190,26 +190,39 @@ describe("Scores API contract", () => {
   // assertion fails — pointing straight at the component that reads it —
   // instead of the page silently rendering blank.
   describe("consumer field reads", () => {
+    // src/components/ScoresListSection/ScoresListSection.jsx:108-120
+    const SCORES_LIST_CONSUMED = [
+      "id",
+      "label_id",
+      "source_type",
+      "source_id",
+      "label_name",
+      "label_type",
+      "value",
+      "annotator_name",
+      "annotator_email",
+      "score_source",
+      "notes",
+      "updated_at",
+      "queue_id",
+      "queue_item",
+    ];
+
     it("ScoresListSection reads only fields present in ScoresForSource", () => {
-      // src/components/ScoresListSection/ScoresListSection.jsx:108-120
-      const consumed = [
-        "id",
-        "label_id",
-        "source_type",
-        "source_id",
-        "label_name",
-        "label_type",
-        "value",
-        "annotator_name",
-        "annotator_email",
-        "score_source",
-        "notes",
-        "updated_at",
-        "queue_id",
-        "queue_item",
-      ];
       const available = arrayItemKeys(ModelHubScoresForSourceResponse);
-      expect(available).toEqual(expect.arrayContaining(consumed));
+      expect(available).toEqual(expect.arrayContaining(SCORES_LIST_CONSUMED));
+    });
+
+
+
+    it("runtime SCORE_ITEM_CONSUMED_FIELDS stays within the contract and the consumed reads", () => {
+      const available = arrayItemKeys(ModelHubScoresForSourceResponse);
+      expect(available).toEqual(
+        expect.arrayContaining([...SCORE_ITEM_CONSUMED_FIELDS]),
+      );
+      expect(SCORES_LIST_CONSUMED).toEqual(
+        expect.arrayContaining([...SCORE_ITEM_CONSUMED_FIELDS]),
+      );
     });
 
     it("AnnotationSidebarContent reads only fields present in QueuesForSource", () => {

@@ -10,7 +10,7 @@ import {
 } from "src/generated/api-contracts/api";
 import { ModelHubScoresForSourceResponse } from "src/generated/api-contracts/api.zod";
 
-const SCORE_ITEM_CONSUMED_FIELDS = [
+export const SCORE_ITEM_CONSUMED_FIELDS = [
   "label_id",
   "label_name",
   "label_type",
