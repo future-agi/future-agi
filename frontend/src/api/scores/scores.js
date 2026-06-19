@@ -1,12 +1,26 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { apiPath } from "src/api/contracts/api-surface";
+import { selectContractedList } from "src/api/contract-validation";
 import {
   modelHubScoresBulkCreate,
   modelHubScoresCreate,
   modelHubScoresDelete,
   modelHubScoresForSource,
 } from "src/generated/api-contracts/api";
+import { ModelHubScoresForSourceResponse } from "src/generated/api-contracts/api.zod";
+
+const SCORE_ITEM_CONSUMED_FIELDS = [
+  "label_id",
+  "label_name",
+  "label_type",
+  "value",
+  "score_source",
+  "annotator_name",
+  "updated_at",
+  "queue_id",
+  "queue_item",
+];
 
 export const scoreEndpoints = {
   list: apiPath("/model-hub/scores/"),
@@ -35,7 +49,12 @@ export const useScoresForSource = (sourceType, sourceId, options = {}) => {
     queryKey: scoreKeys.forSource(sourceType, sourceId),
     queryFn: () =>
       modelHubScoresForSource({ source_type: sourceType, source_id: sourceId }),
-    select: (d) => d?.data?.result || d?.result || d,
+    select: (d) =>
+      selectContractedList(d, {
+        schema: ModelHubScoresForSourceResponse,
+        requiredItemKeys: SCORE_ITEM_CONSUMED_FIELDS,
+        label: "scores/for-source",
+      }),
     enabled: !!sourceType && !!sourceId,
     staleTime: 1000 * 60,
     ...options,
