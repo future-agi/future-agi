@@ -11,6 +11,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.utils.constants import (
     LIST_OPS,
     NO_VALUE_OPS,
@@ -1292,11 +1293,14 @@ class ClickHouseFilterBuilder:
             negate_outer: bool = False,
         ) -> str:
             outer_operator = "NOT IN" if negate_outer else "IN"
+            # Respect CH25_EVAL_LOGGER_TABLE: the legacy peerdb CDC table is gone
+            # in CDC-off deployments (only tracer_eval_logger_v2 exists).
+            eval_table, eval_nd = eval_logger_source()
             return (
                 f"{outer_col} {outer_operator} ("
-                f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
+                f"SELECT {inner_col} FROM {eval_table} FINAL "
                 f"WHERE custom_eval_config_id IN %({param_cfg})s "
-                f"AND is_deleted = 0 "
+                f"AND {eval_nd} "
                 f"{error_clause} "
                 f"AND {match_condition}"
                 f")"
@@ -1754,11 +1758,12 @@ class ClickHouseFilterBuilder:
         # (seeded by ``BaseQueryBuilder.__init__``), matching the pattern
         # used by ``_build_span_attr_condition`` above.
         # toString() casts UUID → String to match spans.trace_id (String type).
+        eval_table, eval_nd = eval_logger_source("el")
         return (
             "trace_id IN ("
-            "SELECT DISTINCT toString(el.trace_id) FROM tracer_eval_logger AS el FINAL "
+            f"SELECT DISTINCT toString(el.trace_id) FROM {eval_table} AS el FINAL "
             f"INNER JOIN {self.table} AS sp ON sp.trace_id = toString(el.trace_id) "
-            "WHERE el.is_deleted = 0 AND el.trace_id IS NOT NULL "
+            f"WHERE {eval_nd} AND el.trace_id IS NOT NULL "
             "AND sp.is_deleted = 0 "
             f"AND {self._project_scope_predicate('sp')})"
         )
