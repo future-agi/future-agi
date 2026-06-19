@@ -33,6 +33,7 @@ from temporalio import activity
 
 from evaluations.engine.normalize import (
     build_simulate_eval_payload,
+    eval_config_multi_choice,
     eval_config_output,
 )
 from simulate.models.test_execution import CallExecution
@@ -203,7 +204,6 @@ def _build_transcript_data(call_execution):
     Assembles transcript text from CallTranscript (VOICE) or ChatMessageModel (TEXT)
     records, and reads recording URLs from call_execution fields.
     """
-    from simulate.models import CallTranscript, ChatMessageModel
 
     transcript_data = {
         "transcript": "",
@@ -538,7 +538,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
     from model_hub.models.develop_dataset import Cell, Column
     from model_hub.tasks.user_evaluation import trigger_error_localization_for_simulate
     from model_hub.views.utils.evals import run_eval_func
-    from simulate.models import Scenarios, SimulateEvalConfig
+    from simulate.models import Scenarios
     from tfc.utils.error_codes import get_specific_error_message
 
     try:
@@ -721,6 +721,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                     build_simulate_eval_payload(
                         value=None,
                         config_output=eval_config_output(eval_config),
+                        multi_choice=eval_config_multi_choice(eval_config),
                         reason=error_message,
                         name=eval_config.name,
                         output_type=derive_kpi_output_type(eval_template),
@@ -802,6 +803,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 build_simulate_eval_payload(
                     value=eval_output,
                     config_output=eval_config_output(eval_config),
+                    multi_choice=eval_config_multi_choice(eval_config),
                     reason=eval_reason,
                     name=eval_config.name,
                     output_type=eval_result.get("output_type"),
@@ -843,6 +845,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             build_simulate_eval_payload(
                 value=None,
                 config_output=eval_config_output(eval_config),
+                multi_choice=eval_config_multi_choice(eval_config),
                 reason=get_specific_error_message(e),
                 name=eval_config.name,
                 output_type=derive_kpi_output_type(eval_config.eval_template),
@@ -1017,6 +1020,7 @@ def _run_evaluations_standalone(
                     build_simulate_eval_payload(
                         value=None,
                         config_output=eval_config_output(eval_config),
+                        multi_choice=eval_config_multi_choice(eval_config),
                         reason="No transcript data available",
                         name=eval_config.name,
                         output_type=derive_kpi_output_type(eval_config.eval_template),
@@ -1264,9 +1268,9 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from model_hub.models.choices import EvalOutputType
     from sdk.utils.helpers import _get_api_call_type
     from simulate.models import AgentDefinition
+    from tfc.constants.api_calls import APICallStatusChoices
     from tfc.utils.error_codes import get_specific_error_message
     from tracer.models.observability_provider import ProviderChoices
-    from tfc.constants.api_calls import APICallStatusChoices
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
     except ImportError:

@@ -22,6 +22,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from evaluations.engine.normalize import empty_axes
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import EvalTemplate
@@ -4826,8 +4827,7 @@ class UpdateEvalConfigView(APIView):
                     # Set placeholder values for the eval config that will be rerun
                     call_execution.eval_outputs[str(eval_config.id)] = {
                         "status": "pending",
-                        "output_scalar": None,
-                        "output_dict": None,
+                        **empty_axes(),
                     }
 
                     call_executions_list.append(call_execution)
@@ -7187,8 +7187,7 @@ class RunNewEvalsOnTestExecutionView(APIView):
                 for eval_config in eval_configs:
                     call_execution.eval_outputs[str(eval_config.id)] = {
                         "status": "pending",
-                        "output_scalar": None,
-                        "output_dict": None,
+                        **empty_axes(),
                     }
 
                 call_executions_list.append(call_execution)

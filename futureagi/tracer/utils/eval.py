@@ -16,11 +16,6 @@ from accounts.models.workspace import Workspace
 # ClickHouse client warms up at startup. Keep it lazy.
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from common.utils.data_injection import normalize as _di_normalize
-from evaluations.engine.normalize import (
-    dedupe_preserve_order as _dedupe_preserve_order,  # noqa: F401 — re-export
-    dual_write_eval_value as _dual_write_eval_value,
-    eval_config_output as _eval_config_output,
-)
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
 from sdk.utils.helpers import _get_api_call_type
@@ -642,6 +637,141 @@ def _process_mapping(
             raise EvalSkippedMissingAttribute(attribute, key, span.id)
 
     return parsed_mapping
+
+
+def _dedupe_preserve_order(items):
+    """Return ``items`` with duplicates removed, keeping first-seen order.
+
+    Used to guarantee ``EvalLogger.output_str_list`` never repeats a choice
+    when the upstream eval emits duplicates (per-item dicts, choices arrays,
+    plain string lists — all funnel through here).
+    """
+    seen = set()
+    out = []
+    for x in items:
+        if x in seen:
+            continue
+        seen.add(x)
+        out.append(x)
+    return out
+
+
+def _dual_write_eval_value(value, config_output, logger_kwargs):
+    """Populate ``logger_kwargs`` with one eval result, dual-writing both the
+    new (``output_str``) and legacy (``output_float`` / ``output_str_list``)
+    shapes so FE readers that still consume the typed columns keep working.
+
+    Gating (see the dual-write plan):
+      * ``output_float`` is (re-)populated only when ``config_output == "score"``.
+      * ``output_str_list`` is (re-)populated only when ``config_output == "choices"``.
+      * ``output_bool`` is never touched here; the bool / "Passed"/"Failed"
+        branches behave exactly as today's dispatch.
+      * Any other ``config_output`` (``Pass/Fail``, ``reason``, ``numeric``, …)
+        keeps today's isinstance-chain behaviour unchanged.
+
+    The dict shape ``{"score": …, "choice": …}`` / ``{"score": …, "choices": […]}``
+    comes from ``evaluations/engine/formatting.py``'s choices branch; we serialize
+    it as JSON into ``output_str`` for the new format.
+    """
+    if isinstance(value, bool):
+        logger_kwargs["output_bool"] = value
+        return
+    if value in ("Passed", "Failed"):
+        logger_kwargs["output_bool"] = value == "Passed"
+        return
+
+    if config_output == "score":
+        if isinstance(value, dict):
+            logger_kwargs["output_str"] = json.dumps(value)
+            score = value.get("score")
+            if isinstance(score, int | float) and not isinstance(score, bool):
+                logger_kwargs["output_float"] = float(score)
+        elif isinstance(value, int | float):
+            logger_kwargs["output_float"] = float(value)
+        elif isinstance(value, list):
+            # Score evals never store a list — collapse to the mean so the FE
+            # always reads a single scalar from output_float. Elements may be
+            # raw numbers or per-item dicts shaped like ``{"score": …, "choice": …}``
+            # from the choices-promoted code path; extract the score from each.
+            # Keep the original list in output_str so per-element values stay
+            # inspectable.
+            logger_kwargs["output_str"] = json.dumps(value)
+            numerics = []
+            for v in value:
+                if isinstance(v, bool):
+                    continue
+                if isinstance(v, int | float):
+                    numerics.append(v)
+                elif isinstance(v, dict):
+                    s = v.get("score")
+                    if isinstance(s, int | float) and not isinstance(s, bool):
+                        numerics.append(s)
+            if numerics:
+                logger_kwargs["output_float"] = sum(numerics) / len(numerics)
+        else:
+            logger_kwargs["output_str"] = str(value)
+        return
+
+    if config_output == "choices":
+        if isinstance(value, dict):
+            logger_kwargs["output_str"] = json.dumps(value)
+            choice = value.get("choice")
+            choices = value.get("choices")
+            if isinstance(choice, str):
+                logger_kwargs["output_str_list"] = [choice]
+            elif isinstance(choices, list):
+                logger_kwargs["output_str_list"] = _dedupe_preserve_order(choices)
+        elif isinstance(value, str):
+            logger_kwargs["output_str"] = value
+            logger_kwargs["output_str_list"] = [value]
+        elif isinstance(value, list):
+            # Two shapes can arrive here:
+            #   * Plain list of choice strings.
+            #   * List of per-item dicts shaped like ``{"choice": …}`` /
+            #     ``{"choices": [...]}`` (mirrors the dict branch above).
+            # Flatten + dedupe to a single ordered list either way. If any
+            # element is a dict, also dump the raw list to ``output_str`` so the
+            # per-item payloads stay inspectable.
+            if any(isinstance(v, dict) for v in value):
+                logger_kwargs["output_str"] = json.dumps(value)
+            collected = []
+            for v in value:
+                if isinstance(v, str):
+                    collected.append(v)
+                elif isinstance(v, dict):
+                    inner_choice = v.get("choice")
+                    inner_choices = v.get("choices")
+                    if isinstance(inner_choice, str):
+                        collected.append(inner_choice)
+                    elif isinstance(inner_choices, list):
+                        collected.extend(c for c in inner_choices if isinstance(c, str))
+            logger_kwargs["output_str_list"] = _dedupe_preserve_order(collected)
+        elif isinstance(value, int | float):
+            logger_kwargs["output_float"] = float(value)
+        else:
+            logger_kwargs["output_str"] = str(value)
+        return
+
+    # Other output types — preserve today's dispatch verbatim.
+    if isinstance(value, int | float):
+        logger_kwargs["output_float"] = float(value)
+    elif isinstance(value, list):
+        logger_kwargs["output_str_list"] = value
+    else:
+        logger_kwargs["output_str"] = str(value)
+
+
+def _eval_config_output(custom_eval_config):
+    """Read the stored ``output`` type from an eval template config.
+
+    Never use the runtime-promoted value (``format_eval_value`` internally
+    promotes ``score`` → ``choices`` when ``choice_scores`` exist); the gating
+    rules in :func:`_dual_write_eval_value` are keyed on the **stored** type.
+    """
+    try:
+        return custom_eval_config.eval_template.config.get("output", "score")
+    except (AttributeError, TypeError):
+        return "score"
 
 
 def _emit_eval_billing(

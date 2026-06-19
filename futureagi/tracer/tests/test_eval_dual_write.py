@@ -21,9 +21,6 @@ import model_hub.tasks  # noqa: F401
 from tracer.utils.eval import _dual_write_eval_value, _eval_config_output  # noqa: E402
 
 EVAL_PY = (Path(__file__).resolve().parent.parent / "utils" / "eval.py").read_text()
-NORMALIZE_PY = (
-    Path(__file__).resolve().parents[2] / "evaluations" / "engine" / "normalize.py"
-).read_text()
 
 
 # ── score output_type ────────────────────────────────────────────────────
@@ -300,32 +297,33 @@ def test_bool_takes_precedence_over_int_for_any_output_type():
 def test_helper_is_called_from_exactly_seven_dispatch_sites():
     """Pins call-site count so future edits cannot drop a dispatcher silently."""
     calls = re.findall(r"_dual_write_eval_value\(", EVAL_PY)
-    # 7 call sites; the helper lives in evaluations.engine.normalize now.
-    assert len(calls) == 7, (
-        f"Expected 7 _dual_write_eval_value call sites in tracer/utils/eval.py, "
-        f"found {len(calls)}"
+    # 1 helper definition + 7 call sites = 8 occurrences total.
+    assert len(calls) == 8, (
+        f"Expected 1 def + 7 calls of _dual_write_eval_value, found {len(calls)}"
     )
 
 
 def test_typed_columns_only_assigned_inside_helper():
     """``output_float`` / ``output_str_list`` must never be assigned outside
-    ``evaluations.engine.normalize.dual_write_eval_value`` — that's the only
-    place the score / choices gating contract is enforced."""
-    inline_in_tracer = re.findall(
-        r'logger_kwargs\["output_(?:float|str_list)"\]\s*=', EVAL_PY
-    )
-    assert not inline_in_tracer, (
-        f"Inline assignments outside helper found in tracer/utils/eval.py: "
-        f"{inline_in_tracer}. All output_float / output_str_list writes must "
-        "go through dual_write_eval_value to honour the score / choices gating."
-    )
-
-    start_match = re.search(r"^def dual_write_eval_value\(", NORMALIZE_PY, re.MULTILINE)
-    assert start_match, "dual_write_eval_value definition not found in normalize.py"
-    after_def = NORMALIZE_PY[start_match.end() :]
+    the dual-write helper — that's the only place gating rules are enforced."""
+    # Locate the helper body.
+    start_match = re.search(r"^def _dual_write_eval_value\(", EVAL_PY, re.MULTILINE)
+    assert start_match, "_dual_write_eval_value definition not found"
+    after_def = EVAL_PY[start_match.end() :]
     next_def = re.search(r"^def [_A-Za-z]", after_def, re.MULTILINE)
-    helper_body = after_def[: next_def.start()] if next_def else after_def
+    assert next_def, "could not locate end of _dual_write_eval_value"
+    helper_body = after_def[: next_def.start()]
+    rest_of_file = EVAL_PY[: start_match.start()] + after_def[next_def.start() :]
 
+    typed_assignments = re.findall(
+        r'logger_kwargs\["output_(?:float|str_list)"\]\s*=', rest_of_file
+    )
+    assert not typed_assignments, (
+        f"Inline assignments outside helper found: {typed_assignments}. "
+        "All output_float / output_str_list writes must go through "
+        "_dual_write_eval_value to honour the score/choices gating."
+    )
+    # Sanity: the helper itself does assign them.
     assert re.search(r'logger_kwargs\["output_float"\]\s*=', helper_body), (
         "helper should assign output_float internally"
     )

@@ -1,25 +1,40 @@
-"""Tests for ``evaluations.engine.normalize`` — the helpers shared across
-every dual-write writer surface.
+"""Tests for ``evaluations.engine.normalize``.
 
-``dual_write_eval_value`` is exercised exhaustively by
-``tracer/tests/test_eval_dual_write.py``; here we focus on the
-simulate-facing helpers (``coerce_to_legacy_scalar`` /
-``build_simulate_eval_payload``) plus accessor / dedup utility coverage.
+Covers the four extractors, the central ``resolve_eval_axes`` dispatch,
+``empty_axes`` defaults, ``build_simulate_eval_payload`` payload shape, and
+the config-output / multi-choice accessors. Each assertion is keyed on the
+**stored** ``config_output`` so the strict gating contract is exercised
+directly.
 """
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import pytest
 
 from evaluations.engine.normalize import (
+    AXIS_KEYS,
     build_simulate_eval_payload,
-    coerce_to_legacy_scalar,
     dedupe_preserve_order,
+    empty_axes,
+    eval_config_multi_choice,
     eval_config_output,
+    extract_choice,
+    extract_choices,
+    extract_pass,
+    extract_score,
+    resolve_eval_axes,
 )
+
+
+def _custom_eval_config(*, stored_output=None, multi_choice=None):
+    config = {"output": stored_output} if stored_output is not None else {}
+    template = SimpleNamespace(config=config)
+    if multi_choice is not None:
+        template.multi_choice = multi_choice
+    return SimpleNamespace(eval_template=template)
+
 
 # ── dedupe_preserve_order ────────────────────────────────────────────────
 
@@ -32,239 +47,367 @@ def test_dedupe_handles_empty():
     assert dedupe_preserve_order([]) == []
 
 
+# ── AXIS_KEYS + empty_axes ───────────────────────────────────────────────
+
+
+def test_axis_keys_pinned():
+    assert AXIS_KEYS == (
+        "output_pass",
+        "output_score",
+        "output_choice",
+        "output_choices",
+    )
+
+
+def test_empty_axes_returns_all_none():
+    assert empty_axes() == {
+        "output_pass": None,
+        "output_score": None,
+        "output_choice": None,
+        "output_choices": None,
+    }
+
+
+def test_empty_axes_returns_fresh_dict_each_call():
+    a = empty_axes()
+    a["output_score"] = 1.0
+    assert empty_axes()["output_score"] is None
+
+
 # ── eval_config_output ───────────────────────────────────────────────────
 
 
-def _custom_eval_config(stored_output: str | None):
-    config = {"output": stored_output} if stored_output is not None else {}
-    return SimpleNamespace(eval_template=SimpleNamespace(config=config))
-
-
 def test_eval_config_output_reads_stored_value():
-    cfg = _custom_eval_config("choices")
-    assert eval_config_output(cfg) == "choices"
+    assert eval_config_output(_custom_eval_config(stored_output="choices")) == "choices"
 
 
 def test_eval_config_output_defaults_to_score_when_missing():
-    assert eval_config_output(_custom_eval_config(None)) == "score"
+    assert eval_config_output(_custom_eval_config()) == "score"
 
 
 def test_eval_config_output_defaults_when_no_template():
     assert eval_config_output(SimpleNamespace()) == "score"
 
 
-# ── coerce_to_legacy_scalar — scalar passthrough ─────────────────────────
+# ── eval_config_multi_choice ─────────────────────────────────────────────
+
+
+def test_eval_config_multi_choice_reads_flag():
+    assert eval_config_multi_choice(_custom_eval_config(multi_choice=True)) is True
+    assert eval_config_multi_choice(_custom_eval_config(multi_choice=False)) is False
+
+
+def test_eval_config_multi_choice_defaults_false_when_missing():
+    assert eval_config_multi_choice(_custom_eval_config()) is False
+
+
+def test_eval_config_multi_choice_defaults_when_no_template():
+    assert eval_config_multi_choice(SimpleNamespace()) is False
+
+
+# ── extract_score ────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
-    "value,config_output,expected",
+    "value,expected",
     [
-        (None, "score", None),
-        (None, "choices", None),
-        (True, "Pass/Fail", True),
-        (False, "Pass/Fail", False),
-        (0.7, "score", 0.7),
-        (3, "score", 3),
-        ("Choice 1", "choices", "Choice 1"),
-        ("Passed", "Pass/Fail", "Passed"),
+        (0.7, 0.7),
+        (1, 1.0),
+        (0, 0.0),
+        ({"score": 0.66, "choice": "always"}, 0.66),
+        ({"score": 0, "choice": "x"}, 0.0),
     ],
 )
-def test_coerce_passes_scalars_through(value, config_output, expected):
-    assert coerce_to_legacy_scalar(value, config_output) == expected
+def test_extract_score_extracts(value, expected):
+    assert extract_score(value) == pytest.approx(expected)
 
 
-# ── coerce_to_legacy_scalar — score path ─────────────────────────────────
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "0.7",
+        True,
+        False,
+        {"choice": "always"},
+        {"score": "not-a-number"},
+        ["A"],
+    ],
+)
+def test_extract_score_yields_none(value):
+    assert extract_score(value) is None
 
 
-def test_coerce_score_dict_extracts_score_field():
-    assert coerce_to_legacy_scalar(
-        {"score": 0.7, "choice": "Good"}, "score"
-    ) == pytest.approx(0.7)
+# ── extract_choice ───────────────────────────────────────────────────────
 
 
-def test_coerce_score_dict_without_numeric_score_yields_none():
-    assert coerce_to_legacy_scalar({"choice": "Good"}, "score") is None
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("always", "always"),
+        ({"score": 1.0, "choice": "always"}, "always"),
+        ({"choice": "x"}, "x"),
+    ],
+)
+def test_extract_choice_extracts(value, expected):
+    assert extract_choice(value) == expected
 
 
-def test_coerce_score_dict_with_zero_is_preserved():
-    assert coerce_to_legacy_scalar({"score": 0}, "score") == 0.0
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        0.7,
+        True,
+        {"score": 1.0, "choices": ["A", "B"]},
+        ["A"],
+    ],
+)
+def test_extract_choice_yields_none(value):
+    assert extract_choice(value) is None
 
 
-def test_coerce_score_list_averages_numerics():
-    assert coerce_to_legacy_scalar([0.4, 0.6, 0.8], "score") == pytest.approx(0.6)
+# ── extract_choices ──────────────────────────────────────────────────────
 
 
-def test_coerce_score_list_of_dicts_averages_score_fields():
-    assert coerce_to_legacy_scalar(
-        [{"score": 0.4}, {"score": 0.8}], "score"
-    ) == pytest.approx(0.6)
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (["A", "B"], ["A", "B"]),
+        (["A", "B", "A"], ["A", "B"]),
+        ({"score": 0.5, "choices": ["polite", "concise"]}, ["polite", "concise"]),
+        ({"choices": ["A", "B", "A"]}, ["A", "B"]),
+    ],
+)
+def test_extract_choices_extracts(value, expected):
+    assert extract_choices(value) == expected
 
 
-def test_coerce_score_empty_list_yields_none():
-    assert coerce_to_legacy_scalar([], "score") is None
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "always",
+        {"score": 1.0, "choice": "always"},
+        [],
+        {"choices": []},
+    ],
+)
+def test_extract_choices_yields_none_for_unfilterable(value):
+    assert extract_choices(value) is None
 
 
-def test_coerce_score_list_of_bools_excluded_from_mean():
-    assert coerce_to_legacy_scalar([True, False, 0.5], "score") == pytest.approx(0.5)
+# ── extract_pass ─────────────────────────────────────────────────────────
 
 
-# ── coerce_to_legacy_scalar — choices path ───────────────────────────────
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (True, True),
+        (False, False),
+        ("Passed", True),
+        ("Failed", False),
+    ],
+)
+def test_extract_pass_extracts(value, expected):
+    assert extract_pass(value) is expected
 
 
-def test_coerce_choices_dict_single_returns_choice_string():
-    assert coerce_to_legacy_scalar({"choice": "Good"}, "choices") == "Good"
+@pytest.mark.parametrize("value", [None, 0, 0.7, "yes", "no", ["A"]])
+def test_extract_pass_yields_none(value):
+    assert extract_pass(value) is None
 
 
-def test_coerce_choices_dict_multi_returns_json_list():
-    assert json.loads(coerce_to_legacy_scalar({"choices": ["A", "B"]}, "choices")) == [
-        "A",
-        "B",
-    ]
+# ── resolve_eval_axes ────────────────────────────────────────────────────
 
 
-def test_coerce_choices_dict_multi_dedupes_before_json_dump():
-    assert json.loads(
-        coerce_to_legacy_scalar({"choices": ["A", "B", "A"]}, "choices")
-    ) == ["A", "B"]
-
-
-def test_coerce_choices_list_of_strings_returns_json_list():
-    assert json.loads(coerce_to_legacy_scalar(["A", "B"], "choices")) == ["A", "B"]
-
-
-def test_coerce_choices_list_of_dicts_flattens_and_dedupes():
-    raw = [{"choice": "A"}, {"choice": "B"}, {"choice": "A"}]
-    assert json.loads(coerce_to_legacy_scalar(raw, "choices")) == ["A", "B"]
-
-
-def test_coerce_choices_dict_neither_field_present_yields_none():
-    assert coerce_to_legacy_scalar({"foo": "bar"}, "choices") is None
-
-
-# ── coerce_to_legacy_scalar — other config_output fallback ───────────────
-
-
-def test_coerce_other_config_dict_round_trips_as_json():
-    assert json.loads(coerce_to_legacy_scalar({"reason": "ok"}, "reason")) == {
-        "reason": "ok"
+def test_resolve_axes_pass_fail_routes_to_output_pass_only():
+    axes = resolve_eval_axes("Passed", "Pass/Fail")
+    assert axes == {
+        "output_pass": True,
+        "output_score": None,
+        "output_choice": None,
+        "output_choices": None,
     }
 
 
-def test_coerce_other_config_list_round_trips_as_json():
-    assert json.loads(coerce_to_legacy_scalar([1, 2, 3], "numeric")) == [1, 2, 3]
+def test_resolve_axes_score_plain_float():
+    axes = resolve_eval_axes(0.7, "score")
+    assert axes["output_score"] == pytest.approx(0.7)
+    assert axes["output_pass"] is None
+    assert axes["output_choice"] is None
+    assert axes["output_choices"] is None
+
+
+def test_resolve_axes_score_dict_with_choice_scores():
+    axes = resolve_eval_axes({"score": 0.66, "choice": "frequently"}, "score")
+    assert axes["output_score"] == pytest.approx(0.66)
+    assert axes["output_choice"] is None
+
+
+def test_resolve_axes_numeric_routes_to_output_score():
+    axes = resolve_eval_axes(0.42, "numeric")
+    assert axes["output_score"] == pytest.approx(0.42)
+
+
+def test_resolve_axes_choices_single_plain_string():
+    axes = resolve_eval_axes("always", "choices", multi_choice=False)
+    assert axes["output_choice"] == "always"
+    assert axes["output_choices"] is None
+    assert axes["output_score"] is None
+
+
+def test_resolve_axes_choices_single_dict():
+    axes = resolve_eval_axes(
+        {"score": 1.0, "choice": "always"}, "choices", multi_choice=False
+    )
+    assert axes["output_choice"] == "always"
+    assert axes["output_score"] is None
+
+
+def test_resolve_axes_choices_multi_plain_list():
+    axes = resolve_eval_axes(["A", "B"], "choices", multi_choice=True)
+    assert axes["output_choices"] == ["A", "B"]
+    assert axes["output_choice"] is None
+
+
+def test_resolve_axes_choices_multi_dict_shape():
+    axes = resolve_eval_axes(
+        {"score": 0.5, "choices": ["polite", "concise"]},
+        "choices",
+        multi_choice=True,
+    )
+    assert axes["output_choices"] == ["polite", "concise"]
+    assert axes["output_score"] is None
+
+
+def test_resolve_axes_reason_yields_all_none():
+    assert resolve_eval_axes("free-form text", "reason") == empty_axes()
+
+
+def test_resolve_axes_none_value_yields_all_none():
+    assert resolve_eval_axes(None, "score") == empty_axes()
+    assert resolve_eval_axes(None, "choices", multi_choice=True) == empty_axes()
+
+
+def test_resolve_axes_strict_gating_score_dict_with_choice_does_not_set_choice():
+    """A score-typed eval with choice_scores returns a dict containing both
+    score and choice. Strict gating routes only output_score, never
+    output_choice, regardless of what's in the dict."""
+    axes = resolve_eval_axes({"score": 0.7, "choice": "always"}, "score")
+    assert axes["output_choice"] is None
+    assert axes["output_choices"] is None
+
+
+def test_resolve_axes_strict_gating_choices_dict_with_score_does_not_set_score():
+    """Mirror case: a choices-typed eval's dict carries a score, but
+    gating routes only output_choice."""
+    axes = resolve_eval_axes(
+        {"score": 0.7, "choice": "frequently"}, "choices", multi_choice=False
+    )
+    assert axes["output_score"] is None
 
 
 # ── build_simulate_eval_payload ──────────────────────────────────────────
 
 
-def test_build_payload_success_score_dict():
+def test_payload_success_score():
     payload = build_simulate_eval_payload(
-        value={"score": 0.7, "choice": "Good"},
+        value=0.75,
         config_output="score",
         reason="ok",
-        name="my-eval",
+        name="eval-a",
         output_type="score",
     )
-    assert payload["output"] == {"score": 0.7, "choice": "Good"}
-    assert payload["output_scalar"] == pytest.approx(0.7)
-    assert payload["output_dict"] == {"score": 0.7, "choice": "Good"}
-    assert payload["output_type"] == "score"
+    assert payload["output"] == 0.75
+    assert payload["output_score"] == pytest.approx(0.75)
+    assert payload["output_pass"] is None
+    assert payload["output_choice"] is None
+    assert payload["output_choices"] is None
     assert payload["reason"] == "ok"
-    assert payload["name"] == "my-eval"
+    assert payload["name"] == "eval-a"
+    assert payload["output_type"] == "score"
     assert "error" not in payload
     assert "status" not in payload
     assert "skipped" not in payload
-    assert "timestamp" not in payload
 
 
-def test_build_payload_success_choices_multi():
+def test_payload_success_pass_fail():
     payload = build_simulate_eval_payload(
-        value={"choices": ["A", "B"]},
+        value="Passed",
+        config_output="Pass/Fail",
+        name="eval-b",
+        output_type="Pass/Fail",
+    )
+    assert payload["output_pass"] is True
+    assert payload["output_score"] is None
+    assert payload["output"] == "Passed"
+
+
+def test_payload_success_choices_single_dict():
+    payload = build_simulate_eval_payload(
+        value={"score": 1.0, "choice": "always"},
         config_output="choices",
-        reason="multi",
-        name="categories",
+        multi_choice=False,
+        name="eval-c",
         output_type="choices",
     )
-    assert payload["output"] == {"choices": ["A", "B"]}
-    assert json.loads(payload["output_scalar"]) == ["A", "B"]
-    assert payload["output_dict"] == {"choices": ["A", "B"]}
+    assert payload["output_choice"] == "always"
+    assert payload["output_choices"] is None
+    assert payload["output_score"] is None
+    assert payload["output"] == {"score": 1.0, "choice": "always"}
 
 
-def test_build_payload_success_choices_single_string():
+def test_payload_success_choices_multi_dict():
     payload = build_simulate_eval_payload(
-        value="Good",
+        value={"score": 0.5, "choices": ["polite", "concise"]},
         config_output="choices",
-        reason="single",
-        name="category",
+        multi_choice=True,
+        name="eval-d",
         output_type="choices",
     )
-    assert payload["output"] == "Good"
-    assert payload["output_scalar"] == "Good"
-    assert payload["output_dict"] is None
+    assert payload["output_choices"] == ["polite", "concise"]
+    assert payload["output_choice"] is None
+    assert payload["output_score"] is None
 
 
-def test_build_payload_error_path_emits_none_scalars():
+def test_payload_error_path_all_axes_none():
     payload = build_simulate_eval_payload(
         value=None,
         config_output="score",
         reason="boom",
-        name="my-eval",
+        name="eval-e",
         output_type="score",
         error="error",
         timestamp="2026-06-19T00:00:00",
     )
     assert payload["output"] is None
-    assert payload["output_scalar"] is None
-    assert payload["output_dict"] is None
+    for key in AXIS_KEYS:
+        assert payload[key] is None, key
     assert payload["error"] == "error"
     assert payload["timestamp"] == "2026-06-19T00:00:00"
 
 
-def test_build_payload_skipped_path_emits_skipped_flag():
+def test_payload_skipped_path_emits_skipped_flag():
     payload = build_simulate_eval_payload(
         value=None,
         config_output="score",
         reason="processing skipped",
-        name="my-eval",
+        name="eval-f",
         output_type=None,
         status="skipped",
         skipped=True,
     )
     assert payload["status"] == "skipped"
     assert payload["skipped"] is True
-    assert payload["output_scalar"] is None
-    assert payload["output_dict"] is None
+    for key in AXIS_KEYS:
+        assert payload[key] is None, key
 
 
-def test_build_payload_no_transcript_path_minimal_shape():
+def test_payload_always_carries_canonical_keys():
     payload = build_simulate_eval_payload(
         value=None,
         config_output="score",
-        reason="No transcript data available",
-        name="my-eval",
-        output_type="score",
     )
-    assert payload["output"] is None
-    assert payload["output_scalar"] is None
-    assert payload["output_dict"] is None
-    assert "error" not in payload
-    assert "status" not in payload
-
-
-def test_build_payload_always_carries_canonical_keys():
-    payload = build_simulate_eval_payload(
-        value=None,
-        config_output="score",
-        reason="",
-        name="",
-        output_type=None,
-    )
-    for key in (
-        "output",
-        "output_scalar",
-        "output_dict",
-        "reason",
-        "output_type",
-        "name",
-    ):
-        assert key in payload, f"{key} missing"
+    base_keys = {"output", "reason", "output_type", "name", *AXIS_KEYS}
+    assert base_keys.issubset(payload.keys())

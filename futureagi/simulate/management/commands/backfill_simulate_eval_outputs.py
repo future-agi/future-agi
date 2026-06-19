@@ -1,21 +1,19 @@
-"""Backfill ``output_scalar`` / ``output_dict`` on existing
-``CallExecution.eval_outputs`` rows.
+"""Backfill the per-axis filter keys on ``CallExecution.eval_outputs`` rows.
 
 Forward-only, idempotent. Mirrors the flag surface of PR #618's
 ``backfill_eval_logger_dual_format`` so operators have one mental model:
 ``--dry-run``, ``--limit``, ``--batch-size``, ``--since``, plus scoped
 ``--test-execution-id`` / ``--eval-config-id`` filters.
 
-Skips:
+Per eval entry, re-derives the four axis keys
+(``output_pass`` / ``output_score`` / ``output_choice`` / ``output_choices``)
+from the verbatim ``output`` field via
+``evaluations.engine.normalize.resolve_eval_axes``. The stored
+``eval_template.config["output"]`` and ``multi_choice`` flag drive the
+dispatch (looked up once per eval_config_id, cached for the run).
 
-* Rows whose ``eval_outputs`` is empty.
-* Per-eval entries that already carry the ``output_scalar`` key (idempotent
-  on re-run).
-
-For each repair-able entry, looks up the ``SimulateEvalConfig`` by id (cached
-per command run) to read the **stored** ``eval_template.config["output"]``,
-then re-derives ``output_scalar`` and ``output_dict`` via
-``evaluations.engine.normalize.{coerce_to_legacy_scalar, eval_config_output}``.
+Idempotent: an entry that already carries all four axis keys is skipped on
+re-run.
 """
 
 from __future__ import annotations
@@ -29,8 +27,10 @@ from django.db import transaction
 from django.utils import timezone
 
 from evaluations.engine.normalize import (
-    coerce_to_legacy_scalar,
+    AXIS_KEYS,
+    eval_config_multi_choice,
     eval_config_output,
+    resolve_eval_axes,
 )
 from simulate.models.eval_config import SimulateEvalConfig
 from simulate.models.test_execution import CallExecution
@@ -40,8 +40,8 @@ logger = structlog.get_logger(__name__)
 
 class Command(BaseCommand):
     help = (
-        "Backfill output_scalar / output_dict on CallExecution.eval_outputs "
-        "rows that pre-date TH-6044."
+        "Backfill output_pass / output_score / output_choice / output_choices "
+        "on CallExecution.eval_outputs rows that pre-date TH-6044."
     )
 
     def add_arguments(self, parser):
@@ -114,7 +114,7 @@ class Command(BaseCommand):
         if limit:
             qs = qs[:limit]
 
-        config_output_cache: dict[str, str] = {}
+        eval_cfg_cache: dict[str, tuple[str, bool]] = {}
         processed = 0
         updated_rows = 0
         updated_entries = 0
@@ -130,19 +130,15 @@ class Command(BaseCommand):
                     continue
                 if eval_config_filter and eval_id != eval_config_filter:
                     continue
-                if "output_scalar" in entry:
+                if all(k in entry for k in AXIS_KEYS):
                     skipped_entries += 1
                     continue
 
-                config_output = self._resolve_config_output(
-                    eval_id, config_output_cache
+                config_output, multi_choice = self._resolve_eval_config(
+                    eval_id, eval_cfg_cache
                 )
-                output_value = entry.get("output")
-                entry["output_scalar"] = coerce_to_legacy_scalar(
-                    output_value, config_output
-                )
-                entry["output_dict"] = (
-                    output_value if isinstance(output_value, dict) else None
+                entry.update(
+                    resolve_eval_axes(entry.get("output"), config_output, multi_choice)
                 )
                 blob[eval_id] = entry
                 row_changed = True
@@ -179,20 +175,26 @@ class Command(BaseCommand):
         )
 
     @staticmethod
-    def _resolve_config_output(eval_id: str, cache: dict[str, str]) -> str:
+    def _resolve_eval_config(
+        eval_id: str, cache: dict[str, tuple[str, bool]]
+    ) -> tuple[str, bool]:
+        """Look up the eval config's stored output type and multi_choice flag,
+        cached per command run. Returns ``("score", False)`` as a safe default
+        when the eval_config no longer exists.
+        """
         cached = cache.get(eval_id)
         if cached is not None:
             return cached
         try:
             cfg = (
                 SimulateEvalConfig.objects.select_related("eval_template")
-                .only("id", "eval_template__config")
+                .only("id", "eval_template__config", "eval_template__multi_choice")
                 .get(id=eval_id)
             )
         except SimulateEvalConfig.DoesNotExist:
-            resolved = "score"
+            resolved = ("score", False)
         else:
-            resolved = eval_config_output(cfg)
+            resolved = (eval_config_output(cfg), eval_config_multi_choice(cfg))
         cache[eval_id] = resolved
         return resolved
 

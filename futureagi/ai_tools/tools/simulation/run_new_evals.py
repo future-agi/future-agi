@@ -57,6 +57,7 @@ class RunNewEvalsOnSimulationTool(BaseTool):
     ) -> ToolResult:
         import structlog
 
+        from evaluations.engine.normalize import empty_axes
         from simulate.models.call_execution import CallExecution
         from simulate.models.run_test import RunTest
         from simulate.models.simulate_eval_config import SimulateEvalConfig
@@ -195,8 +196,7 @@ class RunNewEvalsOnSimulationTool(BaseTool):
             for eval_config in eval_configs:
                 call_execution.eval_outputs[str(eval_config.id)] = {
                     "status": "pending",
-                    "output_scalar": None,
-                    "output_dict": None,
+                    **empty_axes(),
                 }
 
             call_executions_list.append(call_execution)
