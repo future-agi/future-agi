@@ -1233,6 +1233,12 @@ const TestPlayground = React.forwardRef(
                                   errorLocalizerState.status,
                               }
                             : {}),
+                          ...(errorLocalizerState.message
+                            ? {
+                                error_localizer_message:
+                                  errorLocalizerState.message,
+                              }
+                            : {}),
                           ...(errorLocalizerState.details
                             ? {
                                 error_details:

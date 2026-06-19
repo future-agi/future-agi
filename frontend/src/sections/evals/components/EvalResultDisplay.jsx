@@ -10,6 +10,7 @@ import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
+import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
 import CompositeResultView from "./CompositeResultView";
 import { canonicalEntries } from "src/utils/utils";
 import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
@@ -471,41 +472,12 @@ const ErrorLocalizationSection = ({ result }) => {
       </Box>
     );
   }
-    if (errorLocalizerStatus === "skipped") {
+  if (errorLocalizerStatus === "skipped") {
     return (
-      <Box
-        sx={{
-          mx: 1.5,
-          my: 1,
-          px: 1.5,
-          py: 1,
-          borderRadius: "6px",
-          border: "1px solid",
-          borderColor: "divider",
-          backgroundColor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(145, 158, 171, 0.08)"
-              : "rgba(145, 158, 171, 0.04)",
-        }}
-      >
-        <Typography
-      
-          typography="s3"
-          color="text.secondary"
-          sx={{ display: "block" }}
-        >
-          Error localization skipped
-        </Typography>
-        {errorLocalizerMessage && (
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ display: "block", fontSize: "11px", mt: 0.25 }}
-          >
-            {errorLocalizerMessage}
-          </Typography>
-        )}
-      </Box>
+      <SkippedLocalizationBanner
+        message={errorLocalizerMessage}
+        sx={{ mx: 1.5, my: 1 }}
+      />
     );
   }
 
