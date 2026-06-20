@@ -30255,7 +30255,7 @@ export const SimulateCallExecutionsReadResponse = zod.object({
   "skipped": zod.boolean().optional(),
   "output_pass": zod.boolean().optional().describe('Set when stored config[output]=Pass\/Fail'),
   "output_score": zod.number().optional().describe('Set when stored config[output] in (score, numeric)'),
-  "output_choices": zod.array(zod.string()).optional().describe('List of chosen labels. Always a list — single-pick configs land as [label]; multi-pick as [label1, label2, ...]. FE checks eval_config.multi_choice for rendering (dropdown vs multi-select).')
+  "output_choices": zod.array(zod.string()).optional().describe('List of chosen labels. Always a list: single-pick configs land as [label]; multi-pick as [label1, label2, ...]. FE checks eval_config.multi_choice for rendering (dropdown vs multi-select).')
 })).optional().describe('Get evaluation outputs in a structured format'),
   "eval_metrics": zod.record(zod.string(), zod.object({
   "id": zod.string().optional(),

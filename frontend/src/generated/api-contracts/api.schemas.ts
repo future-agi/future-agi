@@ -16086,7 +16086,7 @@ export interface CallExecutionEvalOutputApi {
   output_pass?: boolean;
   /** Set when stored config[output] in (score, numeric) */
   output_score?: number;
-  /** List of chosen labels. Always a list — single-pick configs land as [label]; multi-pick as [label1, label2, ...]. FE checks eval_config.multi_choice for rendering (dropdown vs multi-select). */
+  /** List of chosen labels. Always a list: single-pick configs land as [label]; multi-pick as [label1, label2, ...]. FE checks eval_config.multi_choice for rendering (dropdown vs multi-select). */
   output_choices?: string[];
 }
 
