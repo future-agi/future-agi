@@ -108,6 +108,23 @@ METRIC_UNITS: dict[str, str] = {
 # ``rescale_rate_to_percent`` so the result matches the ``%`` unit.
 _RATE_INDICATOR_METRICS = frozenset({"error_rate"})
 
+# Low-cardinality custom attributes that a pre-aggregated rollup
+# (``dashboard_attr_rollup``) covers for the latency-average breakdown path.
+# A request for ``latency`` avg broken down by exactly one of these (and no
+# filters) is served from the rollup instead of scanning the fat ``span_attr_str``
+# Map over every root span. Adding a key here REQUIRES extending the MV's
+# ARRAY JOIN key list in the v2 schema (a new numbered .sql file) so the rollup
+# actually carries that attribute — otherwise the fast-path would read an empty
+# rollup. Keep the two in lock-step.
+_ROLLUP_COVERED_ATTRS = frozenset({"final_status", "country"})
+
+# The rollup is hour-resolution (keyed on toStartOfHour). It can serve any
+# bucket >= 1 hour by re-aggregating hourly state, but NOT sub-hour buckets —
+# ``minute`` would emit toStartOfMinute over an already hour-truncated column and
+# collapse every minute of an hour into one point. Sub-hour widgets keep the
+# exact spans scan.
+_ROLLUP_GRANULARITIES = frozenset({"hour", "day", "week", "month", "year"})
+
 # Metrics that are non-numeric identifiers — force count_distinct aggregation
 _COUNT_DISTINCT_METRICS = frozenset(
     {
@@ -521,6 +538,51 @@ class DashboardQueryBuilder:
     ) -> tuple[str, dict]:
         # Normalize: saved widgets may have capitalized names (e.g. "Latency")
         metric_name = metric_name.lower() if metric_name else metric_name
+
+        # Rollup fast-path: latency average broken down by a single covered
+        # low-cardinality custom attribute (final_status, country), at hour-or-
+        # coarser granularity, with no filters. The spans path groups the fat
+        # attrs_string Map over every root span and times out; serve it from the
+        # pre-aggregated dashboard_attr_rollup (v2 schema 020) instead.
+        # sumMerge/countMerge over the hourly state gives an EXACT count-weighted
+        # mean equal to avg(latency_ms) over the same rows, and breakdown_value is
+        # the same bare attrs_string[k] the spans path emits — so the output is
+        # identical at the rollup's hour resolution (the only edge effect is the
+        # partial first/last hour of an unaligned window, inherent to the hourly
+        # grain every sibling rollup uses — see 010). Output columns
+        # (time_bucket, breakdown_value, value) and the params contract match the
+        # spans path, so the caller is unaffected. ANY filter, an uncovered
+        # attribute, a sub-hour granularity, a non-latency metric, a non-avg
+        # aggregation, or more than one breakdown falls through to the spans scan
+        # (fail-closed).
+        single_bd = self.breakdowns[0] if len(self.breakdowns) == 1 else None
+        if (
+            metric_name == "latency"
+            and aggregation == "avg"
+            and self.granularity in _ROLLUP_GRANULARITIES
+            and single_bd is not None
+            and single_bd.get("type") == "custom_attribute"
+            and single_bd.get("name") in _ROLLUP_COVERED_ATTRS
+            and not per_metric_filters
+            and not self.global_filters
+        ):
+            params = dict(params)
+            params["attr_key"] = _sanitize_attr_key(single_bd["name"])
+            rollup_query = (
+                f"SELECT {bucket_fn}(hour) AS time_bucket,\n"
+                "       attr_value AS breakdown_value,\n"
+                # Count-weighted mean: exact avg(latency_ms) at any bucket size.
+                "       sumMerge(latency_sum) / countMerge(n) AS value\n"
+                "FROM dashboard_attr_rollup\n"
+                "WHERE project_id IN %(project_ids)s\n"
+                "  AND attr_key = %(attr_key)s\n"
+                "  AND hour >= %(start_date)s\n"
+                "  AND hour < %(end_date)s\n"
+                "GROUP BY time_bucket, breakdown_value\n"
+                "ORDER BY time_bucket, breakdown_value"
+            )
+            return rollup_query, params
+
         if metric_name not in SYSTEM_METRICS:
             # Fallback: treat unknown system metrics as custom span attributes
             # (handles widgets saved with wrong type, e.g. span attribute saved as system_metric)
