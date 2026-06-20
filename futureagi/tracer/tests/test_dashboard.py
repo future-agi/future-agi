@@ -1387,19 +1387,10 @@ class TestDashboardQueryBuilder:
 
 
 class TestDashboardAttrRollupRouting:
-    """Routing for the latency-average × covered-attribute breakdown.
+    """Routing for the latency-avg × covered-attribute breakdown.
 
-    The fast-path serves "latency avg over root spans, broken down by a covered
-    low-cardinality custom attribute, no filters" from the pre-aggregated
-    ``dashboard_attr_rollup`` instead of scanning the fat ``span_attr_str`` Map
-    over every root span. All assertions go through the REAL builder call-path
-    (``build_all_queries`` → ``_build_system_metric_query``), not hand-built SQL.
-
-    Each test is tagged:
-      [FIX]      proves the rollup is used — RED if the routing branch is removed
-                 (the query would target ``spans`` and scan ``span_attr_str``).
-      [FALLBACK] proves the spans path is preserved when the request is NOT a
-                 clean covered breakdown — RED if the branch over-matches.
+    Drives the real build_all_queries() call-path. [FIX] tests go RED if the
+    routing branch is removed; [FALLBACK] tests prove the spans path is kept.
     """
 
     @staticmethod
@@ -1461,8 +1452,7 @@ class TestDashboardAttrRollupRouting:
         assert params["attr_key"] == "country"
 
     def test_per_metric_filter_falls_back_to_spans(self):
-        # [FALLBACK] a per-metric filter present → must NOT use the rollup
-        # (the rollup carries no per-span columns to filter on).
+        # [FALLBACK] per-metric filter → spans path.
         config = self._config(
             breakdowns=[self._bd("final_status")],
             metric_filters=[
@@ -1507,8 +1497,7 @@ class TestDashboardAttrRollupRouting:
         assert "span_attr_str" in sql
 
     def test_non_avg_aggregation_falls_back_to_spans(self):
-        # [FALLBACK] p95 (non-avg) over a covered attribute → spans path
-        # (the rollup carries a mean, not a quantile state).
+        # [FALLBACK] non-avg (p95) → spans path.
         config = self._config(
             aggregation="p95", breakdowns=[self._bd("final_status")]
         )
@@ -1518,9 +1507,7 @@ class TestDashboardAttrRollupRouting:
         assert "span_attr_str" in sql
 
     def test_non_latency_metric_falls_back_to_spans(self):
-        # [FALLBACK] cost avg over a covered attribute → spans path (the rollup
-        # only carries latency). The spans path still scans span_attr_str for
-        # the breakdown — the point is it does NOT route to the rollup.
+        # [FALLBACK] non-latency (cost) → spans path.
         config = self._config(
             metric_name="cost", breakdowns=[self._bd("final_status")]
         )
@@ -1531,8 +1518,7 @@ class TestDashboardAttrRollupRouting:
         assert "breakdown_value" in sql
 
     def test_two_breakdowns_fall_back_to_spans(self):
-        # [FALLBACK] more than one breakdown → spans path (the rollup is keyed
-        # by a single attr_key/attr_value).
+        # [FALLBACK] >1 breakdown → spans path.
         config = self._config(
             breakdowns=[self._bd("final_status"), self._bd("country")]
         )
@@ -1549,9 +1535,7 @@ class TestDashboardAttrRollupRouting:
         assert "latency_ms" in sql
 
     def test_sub_hour_granularity_falls_back_to_spans(self):
-        # [FALLBACK] minute (sub-hour) granularity → spans path. The rollup is
-        # keyed on toStartOfHour, so a sub-hour bucket would collapse to the hour
-        # and silently lose resolution; only hour-or-coarser routes to it.
+        # [FALLBACK] sub-hour granularity → spans path (rollup is hourly).
         config = self._config(
             breakdowns=[self._bd("final_status")], granularity="minute"
         )
@@ -1570,8 +1554,7 @@ class TestDashboardAttrRollupRouting:
         assert "dashboard_attr_rollup" in sql
 
     def test_rollup_params_carry_window_bounds(self):
-        # [FIX] the rollup query is bounded by the same start/end window params
-        # as the spans path, so it never scans all history.
+        # [FIX] rollup is window-bounded, never all-history.
         config = self._config(breakdowns=[self._bd("final_status")])
         builder = DashboardQueryBuilder(config)
         sql, params, _ = builder.build_all_queries()[0]
@@ -1581,29 +1564,14 @@ class TestDashboardAttrRollupRouting:
         assert "project_id IN %(project_ids)s" in sql
 
     def test_weighted_mean_equals_raw_avg(self):
-        """Numbers-identical proof (no live stack needed).
-
-        The rollup reads ``sumMerge(latency_sum) / countMerge(n)`` — a
-        count-weighted mean over the hourly state. This equals ``avg(latency_ms)``
-        over the same raw rows at ANY bucket size. Verify the algebra the SQL
-        relies on: re-aggregating per-hour (sum, count) pairs into a day and
-        dividing total-sum by total-count yields exactly the flat average of all
-        the raw latencies — whereas a naive average-of-hourly-averages does not.
-        """
-        # Two hours with very unequal row counts (where avg-of-avgs would drift).
-        hour_a = [100, 200, 300]          # n=3, sum=600
-        hour_b = [1000]                   # n=1, sum=1000
+        # sumMerge/countMerge == flat avg of raw latencies; avg-of-avgs would not.
+        hour_a = [100, 200, 300]
+        hour_b = [1000]
         raw = hour_a + hour_b
         flat_avg = sum(raw) / len(raw)
-
-        # What the rollup stores per hour: (sum, count) state.
         states = [(sum(hour_a), len(hour_a)), (sum(hour_b), len(hour_b))]
-        # What the read computes: sumMerge / countMerge across the day.
         weighted = sum(s for s, _ in states) / sum(c for _, c in states)
         assert weighted == pytest.approx(flat_avg)
-
-        # And prove the wrong approach (avg of per-hour avgs) would NOT match,
-        # i.e. the sum+count design is load-bearing, not incidental.
         avg_of_avgs = ((sum(hour_a) / len(hour_a)) + (sum(hour_b) / len(hour_b))) / 2
         assert avg_of_avgs != pytest.approx(flat_avg)
 
