@@ -21,13 +21,12 @@ These tests pin:
 
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 # Cycle-breaker -- same rationale as test_eval_task_runtime.
 import model_hub.tasks  # noqa: F401, E402
-
 
 _TEST_DATABASE = "test_trace_session_ch_query"
 
@@ -127,7 +126,7 @@ class TestTraceListingCHQuery:
     def _exec(self, client, query, params):
         rows, columns = client.execute(query, params, with_column_types=True)
         col_names = [c[0] for c in columns]
-        return [dict(zip(col_names, row)) for row in rows]
+        return [dict(zip(col_names, row, strict=False)) for row in rows]
 
     def test_query_parses_without_alias_collision(self, ch_spans_table):
         """The original bug raised ILLEGAL_AGGREGATION at parse/analysis
@@ -157,7 +156,7 @@ class TestTraceListingCHQuery:
         client = ch_spans_table
         project_id = str(uuid.uuid4())
         session_id = str(uuid.uuid4())
-        base = datetime(2026, 5, 11, 8, 52, 9, tzinfo=timezone.utc)
+        base = datetime(2026, 5, 11, 8, 52, 9, tzinfo=UTC)
 
         # Pick trace ids so the alphabetically-first one starts LATER.
         trace_late_alpha = "00000000-0000-0000-0000-000000000001"
@@ -233,7 +232,7 @@ class TestTraceListingCHQuery:
         client = ch_spans_table
         project_id = str(uuid.uuid4())
         session_id = str(uuid.uuid4())
-        base = datetime(2026, 5, 11, 8, 52, 9, tzinfo=timezone.utc)
+        base = datetime(2026, 5, 11, 8, 52, 9, tzinfo=UTC)
         trace_id = str(uuid.uuid4())
 
         columns = (
@@ -293,6 +292,120 @@ class TestTraceListingCHQuery:
         # clickhouse-driver returns DateTime64 as naive datetimes; the
         # value is in UTC but tzinfo is dropped, so compare via the
         # naive form of our base instant.
-        assert rows[0]["trace_min_start_time"] == (
-            base + timedelta(seconds=1)
-        ).replace(tzinfo=None)
+        assert rows[0]["trace_min_start_time"] == (base + timedelta(seconds=1)).replace(
+            tzinfo=None
+        )
+
+
+def _session_eval_aggregation_query(database: str, *, null_safe: bool) -> str:
+    """Eval subquery from ``_retrieve_clickhouse``.
+
+    ``null_safe=False`` reproduces the pre-fix filter that excluded every
+    successful row with a NULL ``output_str`` under ClickHouse's
+    three-valued logic.
+    """
+    output_str_guard = (
+        "ifNull(output_str, '') != 'ERROR'" if null_safe else "output_str != 'ERROR'"
+    )
+    return f"""
+        SELECT
+            toString(trace_id) AS trace_id,
+            toString(custom_eval_config_id) AS config_id,
+            round(avg(output_float) * 100, 2) AS float_score,
+            round(avg(CASE WHEN output_bool = 1 THEN 100.0
+                           WHEN output_bool = 0 THEN 0.0
+                           ELSE NULL END), 2) AS bool_score,
+            count(output_float) AS float_count,
+            count(output_bool) AS bool_count
+        FROM {database}.tracer_eval_logger FINAL
+        WHERE trace_id IN %(trace_ids)s
+          AND custom_eval_config_id IN %(config_ids)s
+          AND _peerdb_is_deleted = 0
+          AND (deleted = 0 OR deleted IS NULL)
+          AND {output_str_guard}
+          AND (error = 0 OR error IS NULL)
+        GROUP BY trace_id, custom_eval_config_id
+    """
+
+
+@pytest.fixture(scope="module")
+def ch_eval_logger_table(ch_client):
+    """Minimal ``tracer_eval_logger`` table for session eval aggregation."""
+    ch_client.execute(f"CREATE DATABASE IF NOT EXISTS {_TEST_DATABASE}")
+    ch_client.execute(f"DROP TABLE IF EXISTS {_TEST_DATABASE}.tracer_eval_logger")
+    ch_client.execute(
+        f"""
+        CREATE TABLE {_TEST_DATABASE}.tracer_eval_logger (
+            id UUID,
+            trace_id Nullable(UUID),
+            custom_eval_config_id UUID,
+            output_bool Nullable(UInt8),
+            output_float Nullable(Float64),
+            output_str Nullable(String),
+            error UInt8 DEFAULT 0,
+            deleted UInt8 DEFAULT 0,
+            _peerdb_is_deleted UInt8 DEFAULT 0
+        ) ENGINE = ReplacingMergeTree()
+        ORDER BY (trace_id, custom_eval_config_id, id)
+        SETTINGS allow_nullable_key = 1
+        """
+    )
+    yield ch_client
+    ch_client.execute(f"DROP TABLE IF EXISTS {_TEST_DATABASE}.tracer_eval_logger")
+
+
+@pytest.mark.integration
+class TestSessionEvalAggregationCHQuery:
+    """NULL-safe ``output_str`` guard on the session-detail eval subquery."""
+
+    def _exec(self, client, query, params):
+        rows, columns = client.execute(query, params, with_column_types=True)
+        col_names = [c[0] for c in columns]
+        return [dict(zip(col_names, row, strict=False)) for row in rows]
+
+    def test_null_output_str_included_with_ifnull_guard(self, ch_eval_logger_table):
+        """Successful eval rows with NULL ``output_str`` must aggregate.
+
+        Most evaluators leave ``output_str`` NULL; a bare
+        ``output_str != 'ERROR'`` evaluates to NULL (not TRUE) in
+        ClickHouse and silently drops the row — the bug that left
+        ``evals_metrics`` empty on session detail.
+        """
+        client = ch_eval_logger_table
+        trace_id = str(uuid.uuid4())
+        config_id = str(uuid.uuid4())
+        row_id = str(uuid.uuid4())
+
+        client.execute(
+            f"""
+            INSERT INTO {_TEST_DATABASE}.tracer_eval_logger
+                (id, trace_id, custom_eval_config_id,
+                 output_float, output_str, error, deleted, _peerdb_is_deleted)
+            VALUES
+                ('{row_id}', '{trace_id}', '{config_id}',
+                 0.85, NULL, 0, 0, 0)
+            """
+        )
+
+        params = {
+            "trace_ids": (trace_id,),
+            "config_ids": (config_id,),
+        }
+
+        buggy_rows = self._exec(
+            client,
+            _session_eval_aggregation_query(_TEST_DATABASE, null_safe=False),
+            params,
+        )
+        assert buggy_rows == [], "bare output_str != 'ERROR' must exclude NULL rows"
+
+        fixed_rows = self._exec(
+            client,
+            _session_eval_aggregation_query(_TEST_DATABASE, null_safe=True),
+            params,
+        )
+        assert len(fixed_rows) == 1
+        assert fixed_rows[0]["trace_id"] == trace_id
+        assert fixed_rows[0]["config_id"] == config_id
+        assert fixed_rows[0]["float_count"] == 1
+        assert fixed_rows[0]["float_score"] == 85.0
