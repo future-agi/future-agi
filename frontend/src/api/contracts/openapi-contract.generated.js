@@ -76817,7 +76817,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true
         },
         "output_choices": {
-          "description": "List of chosen labels. Always a list — single-pick configs land as [label]; multi-pick as [label1, label2, ...]. FE checks eval_config.multi_choice for rendering (dropdown vs multi-select).",
+          "description": "List of chosen labels. Always a list: single-pick configs land as [label]; multi-pick as [label1, label2, ...]. FE checks eval_config.multi_choice for rendering (dropdown vs multi-select).",
           "type": "array",
           "items": {
             "type": "string"
