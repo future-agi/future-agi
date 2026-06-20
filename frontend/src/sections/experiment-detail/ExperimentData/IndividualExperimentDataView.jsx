@@ -262,7 +262,7 @@ const IndividualExperimentDataView = () => {
         }
       },
 
-      getRowId: (data) => data.rowId, // Ensure rowId is unique for each row
+      getRowId: (data) => data.row_id,
     }),
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
