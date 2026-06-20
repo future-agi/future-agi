@@ -85,7 +85,7 @@ class Command(BaseCommand):
         if limit:
             qs = qs[:limit]
 
-        # Cache template lookups — Cell.column.source_id is a string UUID
+        # Cache template lookups: Cell.column.source_id is a string UUID
         # pointing at EvalTemplate; thousands of cells share the same
         # template, so a per-loop fetch would be wasteful.
         template_cache: dict[str, EvalTemplate | None] = {}

@@ -145,7 +145,7 @@ def test_extract_score_int_coerced_to_float():
 
 def test_extract_score_list_of_plain_numbers_returns_mean():
     """Score config that emits a list of numbers (e.g. per-item evals
-    aggregated) collapses to the mean — matches tracer's contract."""
+    aggregated) collapses to the mean: matches tracer's contract."""
     assert extract_score([0.3, 0.7, 0.5]) == pytest.approx(0.5)
 
 
@@ -200,10 +200,10 @@ def test_extract_choices_list_of_per_item_dicts_with_only_score_returns_none():
         (["polite", "concise"], ["polite", "concise"]),
         # Single-element list (legacy / tracer shape)
         (["frequently"], ["frequently"]),
-        # choice_scores dict — single label
+        # choice_scores dict: single label
         ({"score": 1.0, "choice": "always"}, ["always"]),
         ({"choice": "x"}, ["x"]),
-        # choice_scores dict — multi labels
+        # choice_scores dict: multi labels
         ({"score": 0.5, "choices": ["polite", "concise"]}, ["polite", "concise"]),
         ({"choices": ["a"]}, ["a"]),
         # Dedupe preserves order
@@ -282,7 +282,7 @@ def test_extract_pass_yields_none(value):
     assert extract_pass(value) is None
 
 
-# ── resolve_eval_axes — primary axis routing ─────────────────────────────
+# ── resolve_eval_axes: primary axis routing ─────────────────────────────
 
 
 def test_resolve_axes_pass_fail_routes_to_output_pass_only():
@@ -308,7 +308,7 @@ def test_resolve_axes_numeric_routes_to_output_score():
 
 
 def test_resolve_axes_choices_single_plain_string_lands_as_one_element_list():
-    """Single-pick string lands as ``["always"]`` — same list shape as
+    """Single-pick string lands as ``["always"]``: same list shape as
     multi-pick. Matches tracer + experiment contract."""
     axes = resolve_eval_axes("always", "choices", multi_choice=False)
     assert axes["output_choices"] == ["always"]
@@ -355,7 +355,7 @@ def test_resolve_axes_one_element_list_multi_choice_true():
     assert axes["output_choices"] == ["frequently"]
 
 
-# ── resolve_eval_axes — permissive secondary axis ───────────────────────
+# ── resolve_eval_axes: permissive secondary axis ───────────────────────
 
 
 def test_resolve_axes_permissive_score_config_dict_populates_both_axes():
@@ -377,14 +377,14 @@ def test_resolve_axes_permissive_score_config_dict_with_choices_list():
 
 
 def test_resolve_axes_plain_score_does_not_invent_choice():
-    """Plain numeric value carries no choice — output_choices stays None."""
+    """Plain numeric value carries no choice: output_choices stays None."""
     axes = resolve_eval_axes(0.42, "score")
     assert axes["output_score"] == pytest.approx(0.42)
     assert axes["output_choices"] is None
 
 
 def test_resolve_axes_plain_choice_does_not_invent_score():
-    """Plain string value carries no score — output_score stays None."""
+    """Plain string value carries no score: output_score stays None."""
     axes = resolve_eval_axes("always", "choices", multi_choice=False)
     assert axes["output_choices"] == ["always"]
     assert axes["output_score"] is None
@@ -396,7 +396,7 @@ def test_resolve_axes_score_config_dict_with_only_choice():
     assert axes["output_choices"] == ["always"]
 
 
-# ── resolve_eval_axes — edge cases ──────────────────────────────────────
+# ── resolve_eval_axes: edge cases ──────────────────────────────────────
 
 
 def test_resolve_axes_reason_yields_all_none():
@@ -405,7 +405,7 @@ def test_resolve_axes_reason_yields_all_none():
 
 def test_resolve_axes_unknown_config_output_yields_all_none():
     """Unknown / future output types must not panic and must not invent
-    axes — strict no-op."""
+    axes: strict no-op."""
     assert resolve_eval_axes(0.5, "future_type") == empty_axes()
     assert resolve_eval_axes({"score": 0.5}, "") == empty_axes()
 
@@ -425,7 +425,7 @@ def test_resolve_axes_none_value_yields_all_none():
 
 
 def test_resolve_axes_empty_dict_value():
-    """Dict carrying neither score nor choice nor choices — all axes
+    """Dict carrying neither score nor choice nor choices: all axes
     null."""
     assert resolve_eval_axes({}, "score") == empty_axes()
     assert resolve_eval_axes({}, "choices", multi_choice=True) == empty_axes()
@@ -433,7 +433,7 @@ def test_resolve_axes_empty_dict_value():
 
 
 def test_resolve_axes_score_zero_distinguishable_from_none():
-    """A score of exactly 0.0 must surface as 0.0, not None — filter UI
+    """A score of exactly 0.0 must surface as 0.0, not None: filter UI
     treats them differently."""
     axes = resolve_eval_axes(0.0, "score")
     assert axes["output_score"] == 0.0

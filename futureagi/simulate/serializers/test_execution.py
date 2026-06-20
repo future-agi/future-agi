@@ -282,7 +282,7 @@ class CallExecutionEvalOutputSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         help_text=(
-            "List of chosen labels. Always a list — single-pick configs land as "
+            "List of chosen labels. Always a list: single-pick configs land as "
             "[label]; multi-pick as [label1, label2, ...]. FE checks eval_config."
             "multi_choice for rendering (dropdown vs multi-select)."
         ),

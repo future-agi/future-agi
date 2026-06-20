@@ -142,7 +142,7 @@ def resolve_eval_axes(
     hint (dropdown vs multi-select); it does not change the data shape.
 
     ``config_output`` anchors the *primary* axis; secondary axes are
-    still populated when the value carries them — a ``choice_scores``
+    still populated when the value carries them: a ``choice_scores``
     dict emits both a score and a label so the FE can colour the chosen
     label by the underlying score.
     """
