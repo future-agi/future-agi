@@ -10435,11 +10435,17 @@ export const ExperimentCreateV2ApiExperimentType = {
   image: 'image',
 } as const;
 
+/**
+ * Any valid JSON value.
+ */
 export type PromptConfigEntryApiModel = { [key: string]: unknown };
 
 export type PromptConfigEntryApiModelParams = {[key: string]: string};
 
-export type PromptConfigEntryApiConfiguration = {[key: string]: string};
+/**
+ * Any valid JSON value.
+ */
+export type PromptConfigEntryApiConfiguration = { [key: string]: unknown };
 
 export type PromptConfigEntryApiMessagesItem = {[key: string]: string};
 
@@ -10450,8 +10456,10 @@ export interface PromptConfigEntryApi {
   prompt_version?: string;
   agent_id?: string;
   agent_version?: string;
+  /** Any valid JSON value. */
   model?: PromptConfigEntryApiModel;
   model_params?: PromptConfigEntryApiModelParams;
+  /** Any valid JSON value. */
   configuration?: PromptConfigEntryApiConfiguration;
   /** @minLength 1 */
   output_format?: string;

@@ -80731,7 +80731,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "model": {
           "title": "Model",
-          "type": "object"
+          "type": "object",
+          "x-json-value": true,
+          "description": "Any valid JSON value."
         },
         "model_params": {
           "title": "Model params",
@@ -80745,11 +80747,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "configuration": {
           "title": "Configuration",
           "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          },
-          "default": {}
+          "default": {},
+          "x-json-value": true,
+          "description": "Any valid JSON value."
         },
         "output_format": {
           "title": "Output format",

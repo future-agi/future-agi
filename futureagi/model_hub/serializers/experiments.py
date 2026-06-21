@@ -12,6 +12,7 @@ from model_hub.models.experiments import (
     ExperimentsTable,
 )
 from tfc.middleware.workspace_context import get_current_organization
+from tfc.utils.serializer_fields import JsonValueField
 
 
 class ExperimentsTableSerializer(serializers.ModelSerializer):
@@ -409,10 +410,12 @@ class PromptConfigEntrySerializer(serializers.Serializer):
     agent_id = serializers.UUIDField(required=False, allow_null=True)
     agent_version = serializers.UUIDField(required=False, allow_null=True)
 
-    # Model config (prompt entries only — single string or ModelSpec dict)
-    model = serializers.JSONField(required=False, default=None)
+    # model and configuration are polymorphic across experiment types
+    # (string vs ModelSpec dict; nested tool configs), so they ship as
+    # JsonValueField to publish the shape honestly to the FE.
+    model = JsonValueField(required=False, default=None)
     model_params = serializers.DictField(required=False, default=dict)
-    configuration = serializers.DictField(required=False, default=dict)
+    configuration = JsonValueField(required=False, default=dict)
     output_format = serializers.CharField(required=False, default="string")
 
     # Inline messages (tts/stt/image experiments)
