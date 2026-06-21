@@ -2060,7 +2060,7 @@ class TestStampEvaluationAxesFallback:
         with (
             patch(
                 "tracer.utils.eval._dual_write_eval_value",
-                side_effect=RuntimeError("boom"),
+                side_effect=TypeError("boom"),
             ),
             patch("model_hub.services.evaluation.logger") as log,
         ):

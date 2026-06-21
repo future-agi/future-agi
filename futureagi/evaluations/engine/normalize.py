@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ast
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 AXIS_KEYS: tuple[str, ...] = (
     "output_bool",
@@ -16,6 +16,19 @@ AXIS_STORAGE_TO_API: tuple[tuple[str, str], ...] = (
     ("output_float", "output_score"),
     ("output_str_list", "output_choices"),
 )
+
+
+class EvalAxes(TypedDict):
+    output_bool: bool | None
+    output_float: float | None
+    output_str_list: list[str] | None
+    output_str: NotRequired[str | None]
+
+
+class EvalAxesApi(TypedDict):
+    output_pass: bool | None
+    output_score: float | None
+    output_choices: list[str] | None
 
 
 def empty_axes() -> dict[str, None]:
@@ -39,12 +52,12 @@ def eval_config_multi_choice(custom_eval_config: Any) -> bool:
 
 def resolve_eval_axes(
     value: Any, config_output: str, *, include_output_str: bool = False
-) -> dict[str, Any]:
+) -> EvalAxes:
     """Project ``value`` into typed columns; missing keys default to None."""
     keys = AXIS_KEYS + (("output_str",) if include_output_str else ())
     axes: dict[str, Any] = dict.fromkeys(keys, None)
     if value is None:
-        return axes
+        return axes  # type: ignore[return-value]
     from tracer.utils.eval import _dual_write_eval_value
 
     projected: dict[str, Any] = {}
@@ -54,12 +67,12 @@ def resolve_eval_axes(
     for key in keys:
         if key in projected:
             axes[key] = projected[key]
-    return axes
+    return axes  # type: ignore[return-value]
 
 
-def project_storage_axes_to_api(eval_data: dict) -> dict[str, Any]:
+def project_storage_axes_to_api(eval_data: dict) -> EvalAxesApi:
     """Read storage-axis keys off ``eval_data``, return API-named dict."""
-    return {api: eval_data.get(storage) for storage, api in AXIS_STORAGE_TO_API}
+    return {api: eval_data.get(storage) for storage, api in AXIS_STORAGE_TO_API}  # type: ignore[return-value]
 
 
 def parse_legacy_value(raw: Any) -> Any:

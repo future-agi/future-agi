@@ -37,7 +37,7 @@ def stamp_evaluation_axes(evaluation: Any) -> None:
         projected = resolve_eval_axes(
             evaluation.value, config_output, include_output_str=True
         )
-    except Exception:
+    except (TypeError, ValueError, KeyError, AttributeError):
         logger.warning(
             "evaluation_axes_resolve_failed",
             evaluation_id=str(getattr(evaluation, "id", "")) or None,
