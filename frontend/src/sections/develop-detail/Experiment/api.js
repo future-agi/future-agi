@@ -17,14 +17,13 @@ export const useStopExperiment = (experimentId, onSuccess = null) => {
 
 export const useReRunExperiment = (
   experimentIds,
-  selectAll,
+  _selectAll,
   onSuccess = null,
 ) => {
   const { mutate, isPending } = useMutation({
     mutationFn: async () => {
       return axios.post(endpoints.develop.experiment.rerun, {
         experiment_ids: experimentIds,
-        select_all: selectAll,
       });
     },
     onSuccess: () => {

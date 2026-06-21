@@ -53,7 +53,24 @@ const EvalDrawerSection = () => {
 
   const reason = evalView?.metricDetail?.reason;
   const isError = evalView?.metricDetail?.error;
-  const output = evalView?.metricDetail?.value;
+  const canonicalChoices = Array.isArray(evalView?.metricDetail?.output_choices)
+    ? evalView.metricDetail.output_choices
+    : null;
+  const canonicalPass =
+    typeof evalView?.metricDetail?.output_pass === "boolean"
+      ? evalView.metricDetail.output_pass
+      : null;
+  const canonicalScore =
+    typeof evalView?.metricDetail?.output_score === "number"
+      ? evalView.metricDetail.output_score
+      : null;
+  const output =
+    canonicalChoices ??
+    (canonicalPass !== null
+      ? canonicalPass
+        ? "Passed"
+        : "Failed"
+      : canonicalScore ?? evalView?.metricDetail?.value);
   const theme = useTheme();
   const { testDetailDrawerOpenId } = useTestDetailSideDrawerStoreShallow(
     (state) => ({
@@ -183,24 +200,32 @@ const EvalDrawerSection = () => {
                         />
                       </ShowComponent>
                       <ShowComponent condition={output?.length > 0}>
-                        {output?.map((val) => (
-                          <Chip
-                            key={val}
-                            variant="soft"
-                            label={val}
-                            size="small"
-                            sx={{
-                              ...getStatusColor(output, theme),
-                              marginRight: theme.spacing(1),
-                              transition: "none",
-                              "&:hover": {
-                                backgroundColor: getStatusColor(output, theme)
-                                  .backgroundColor, // Lock it to same color
-                                boxShadow: "none",
-                              },
-                            }}
-                          />
-                        ))}
+                        {output?.map((val, idx) => {
+                          // val can be a plain string ("Good") or a dict like
+                          // {choice: "Good"} / {score, choice: "Good"} when
+                          // the runner emits the list-of-dicts shape. Pipe
+                          // through getLabel so the chip never renders the
+                          // raw object as "[object Object]".
+                          const label = getLabel(val);
+                          return (
+                            <Chip
+                              key={`${typeof val === "string" ? val : label}-${idx}`}
+                              variant="soft"
+                              label={label}
+                              size="small"
+                              sx={{
+                                ...getStatusColor(output, theme),
+                                marginRight: theme.spacing(1),
+                                transition: "none",
+                                "&:hover": {
+                                  backgroundColor: getStatusColor(output, theme)
+                                    .backgroundColor, // Lock it to same color
+                                  boxShadow: "none",
+                                },
+                              }}
+                            />
+                          );
+                        })}
                       </ShowComponent>
                     </>
                   )}

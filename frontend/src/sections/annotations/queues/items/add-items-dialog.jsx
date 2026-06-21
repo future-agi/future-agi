@@ -3740,9 +3740,32 @@ function formatGenericSimulationValue(value) {
   if (value === null || value === undefined || value === "") return "-";
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value))
-    return value.map(formatGenericSimulationValue).join(", ");
+    return value
+      .map(formatGenericSimulationValue)
+      .filter((s) => s && s !== "-")
+      .join(", ") || "-";
   if (typeof value === "object") {
+    if (Array.isArray(value.output_choices) && value.output_choices.length > 0) {
+      return value.output_choices.join(", ");
+    }
+    if (typeof value.output_pass === "boolean") {
+      return value.output_pass ? "Passed" : "Failed";
+    }
+    if (typeof value.output_score === "number") {
+      const v = value.output_score;
+      const pct = v <= 1 ? Math.round(v * 100) : Math.round(v);
+      return `${pct}%`;
+    }
+    if (typeof value.choice === "string") return value.choice;
+    if (Array.isArray(value.choices))
+      return value.choices.filter((c) => typeof c === "string").join(", ") || "-";
     if ("value" in value) return formatGenericSimulationValue(value.value);
+    if (typeof value.score === "number") {
+      const v = value.score;
+      const pct = v <= 1 ? Math.round(v * 100) : Math.round(v);
+      return `${pct}%`;
+    }
+    if (Object.keys(value).length === 0) return "-";
     try {
       return JSON.stringify(value);
     } catch {
@@ -3839,6 +3862,87 @@ function SimulationTextCellRenderer({ value, valueFormatted }) {
 SimulationTextCellRenderer.propTypes = {
   value: PropTypes.any,
   valueFormatted: PropTypes.any,
+};
+
+function SimulationEvalCellRenderer({ value }) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return (
+      <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+        <Typography variant="body2" noWrap>
+          {formatGenericSimulationValue(value)}
+        </Typography>
+      </Box>
+    );
+  }
+  if (value.skipped) {
+    return (
+      <Box sx={{ display: "flex", alignItems: "center", height: "100%", px: 0.5 }}>
+        <Typography variant="body2" color="text.disabled">Skipped</Typography>
+      </Box>
+    );
+  }
+  if (value.error) {
+    return (
+      <Box sx={{ display: "flex", alignItems: "center", height: "100%", px: 0.5 }}>
+        <Typography variant="body2" color="error.main">Error</Typography>
+      </Box>
+    );
+  }
+  const choices = Array.isArray(value.output_choices) ? value.output_choices : null;
+  if (choices && choices.length > 0) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          height: "100%",
+          gap: 0.5,
+          flexWrap: "wrap",
+        }}
+      >
+        {choices.map((c, i) => (
+          <Chip
+            key={`${c}-${i}`}
+            label={String(c)}
+            size="small"
+            variant="outlined"
+            color="primary"
+          />
+        ))}
+      </Box>
+    );
+  }
+  if (typeof value.output_pass === "boolean") {
+    return (
+      <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+        <Chip
+          label={value.output_pass ? "Passed" : "Failed"}
+          size="small"
+          color={value.output_pass ? "success" : "error"}
+        />
+      </Box>
+    );
+  }
+  if (typeof value.output_score === "number") {
+    const v = value.output_score;
+    const pct = v <= 1 ? Math.round(v * 100) : Math.round(v);
+    return (
+      <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+        <Typography variant="body2">{`${pct}%`}</Typography>
+      </Box>
+    );
+  }
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+      <Typography variant="body2" noWrap>
+        {formatGenericSimulationValue(value)}
+      </Typography>
+    </Box>
+  );
+}
+
+SimulationEvalCellRenderer.propTypes = {
+  value: PropTypes.any,
 };
 
 function CallStatusCellRenderer({ data }) {
@@ -4106,9 +4210,9 @@ function createDynamicSimulationColumn(col) {
       colId: columnId,
       flex: 1,
       minWidth: 160,
-      valueGetter: (params) =>
-        formatGenericSimulationValue(params.data?.eval_metrics?.[columnId]),
-      cellRenderer: SimulationTextCellRenderer,
+      valueGetter: (params) => params.data?.eval_metrics?.[columnId],
+      valueFormatter: (params) => formatGenericSimulationValue(params.value),
+      cellRenderer: SimulationEvalCellRenderer,
     };
   }
 

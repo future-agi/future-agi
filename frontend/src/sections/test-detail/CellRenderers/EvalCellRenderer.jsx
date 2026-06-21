@@ -11,10 +11,32 @@ import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRendere
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 
 const EvalCellRenderer = ({ value: evalData }) => {
-  // Numeric output type keeps its dedicated cell.
   const isNumeric = evalData?.type === OutputTypes.NUMERIC;
+
+  const canonicalPass =
+    typeof evalData?.output_pass === "boolean" ? evalData.output_pass : null;
+  const canonicalScore =
+    typeof evalData?.output_score === "number" ? evalData.output_score : null;
+  const canonicalChoices = Array.isArray(evalData?.output_choices)
+    ? evalData.output_choices
+    : null;
+  const hasCanonical =
+    canonicalPass !== null ||
+    canonicalScore !== null ||
+    canonicalChoices !== null;
+
   const result = normalizeEvalResult(evalData?.value, evalData?.type);
+
   const getBgColor = () => {
+    if (canonicalPass !== null) {
+      return canonicalPass
+        ? interpolateColorBasedOnScore(1, 1)
+        : interpolateColorBasedOnScore(0, 1);
+    }
+    if (canonicalScore !== null) {
+      const maxScore = canonicalScore <= 1 ? 1 : 100;
+      return interpolateColorBasedOnScore(canonicalScore, maxScore);
+    }
     if (result.kind === "score") {
       const maxScore = result.score <= 1 ? 1 : 100;
       return interpolateColorBasedOnScore(result.score, maxScore);
@@ -23,6 +45,10 @@ const EvalCellRenderer = ({ value: evalData }) => {
       return result.pass
         ? interpolateColorBasedOnScore(1, 1)
         : interpolateColorBasedOnScore(0, 1);
+    }
+    if (result.kind === "choices" && typeof result.score === "number") {
+      const maxScore = result.score <= 1 ? 1 : 100;
+      return interpolateColorBasedOnScore(result.score, maxScore);
     }
     return null;
   };
@@ -73,6 +99,33 @@ const EvalCellRenderer = ({ value: evalData }) => {
     }
     if (isNumeric) {
       return <NumericCell value={evalData?.value} sx={{ padding: "0 12px" }} />;
+    }
+    if (hasCanonical) {
+      // Choices anchor the visible content when present, mirroring the
+      // choice-bubble UX the FE PR targets.
+      if (canonicalChoices && canonicalChoices.length > 0) {
+        return (
+          <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
+            {canonicalChoices.map((item, idx) => (
+              <Chip
+                key={`${item}-${idx}`}
+                color="primary"
+                variant="outlined"
+                size="small"
+                label={_.capitalize(String(item))}
+              />
+            ))}
+          </Box>
+        );
+      }
+      if (canonicalPass !== null) {
+        return canonicalPass ? "Passed" : "Failed";
+      }
+      if (canonicalScore !== null) {
+        const pct = canonicalScore <= 1 ? canonicalScore * 100 : canonicalScore;
+        return `${Math.round(pct)}%`;
+      }
+      return <Box sx={{ padding: 1 }}>-</Box>;
     }
     switch (result.kind) {
       case "score": {

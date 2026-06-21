@@ -841,7 +841,7 @@ function ExperimentDataView() {
           setFetchingData(false);
         }
       },
-      getRowId: (data) => data.rowId,
+      getRowId: (data) => data.row_id,
     }),
     [experimentId, diffMode, setFetchingData, experimentSearch],
   );
@@ -982,7 +982,7 @@ function ExperimentDataView() {
             getMainMenuItems={menuList}
             debounceVerticalScrollbar={true}
             // postProcessPopup={postProcessPopup}
-            getRowId={({ data }) => data.rowId}
+            getRowId={({ data }) => data.row_id}
             theme={agTheme}
             onRowClicked={handleRowClick}
             suppressColumnMoveAnimation={true}

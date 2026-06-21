@@ -218,30 +218,61 @@ const VoiceRightPanel = ({
       let scoreLabel;
       let scoreItems;
 
-      if (typeof rawValue === "number") {
-        // Numbers in [0, 1] → percent. Numbers already in [0, 100] → as-is.
-        score =
-          rawValue <= 1 ? Math.round(rawValue * 100) : Math.round(rawValue);
-      } else if (typeof rawValue === "boolean") {
-        score = rawValue ? 100 : 0;
-        scoreLabel = rawValue ? "Pass" : "Fail";
-      } else if (typeof rawValue === "string") {
-        const lower = rawValue.toLowerCase();
-        if (lower.includes("pass") || lower === "true") {
-          score = 100;
-          scoreLabel = "Pass";
-        } else if (lower.includes("fail") || lower === "false") {
-          score = 0;
-          scoreLabel = "Fail";
-        } else {
-          // Surface the string verbatim; leave score null so the badge goes gray
-          scoreLabel =
-            rawValue.length > 24 ? `${rawValue.slice(0, 24)}…` : rawValue;
+      const hasCanonicalPass = typeof e?.output_pass === "boolean";
+      const hasCanonicalScore = typeof e?.output_score === "number";
+      const hasCanonicalChoices =
+        Array.isArray(e?.output_choices) && e.output_choices.length > 0;
+
+      if (hasCanonicalPass) {
+        score = e.output_pass ? 100 : 0;
+        scoreLabel = e.output_pass ? "Pass" : "Fail";
+      } else if (hasCanonicalScore) {
+        const v = e.output_score;
+        score = v <= 1 ? Math.round(v * 100) : Math.round(v);
+      }
+      if (hasCanonicalChoices) {
+        scoreItems = e.output_choices.map((v) => String(v));
+      }
+
+      if (!hasCanonicalPass && !hasCanonicalScore && !hasCanonicalChoices) {
+        if (typeof rawValue === "number") {
+          // Numbers in [0, 1] → percent. Numbers already in [0, 100] → as-is.
+          score =
+            rawValue <= 1 ? Math.round(rawValue * 100) : Math.round(rawValue);
+        } else if (typeof rawValue === "boolean") {
+          score = rawValue ? 100 : 0;
+          scoreLabel = rawValue ? "Pass" : "Fail";
+        } else if (typeof rawValue === "string") {
+          const lower = rawValue.toLowerCase();
+          if (lower.includes("pass") || lower === "true") {
+            score = 100;
+            scoreLabel = "Pass";
+          } else if (lower.includes("fail") || lower === "false") {
+            score = 0;
+            scoreLabel = "Fail";
+          } else {
+            // Surface the string verbatim; leave score null so the badge goes gray
+            scoreLabel =
+              rawValue.length > 24 ? `${rawValue.slice(0, 24)}…` : rawValue;
+          }
+        } else if (Array.isArray(rawValue) && rawValue.length > 0) {
+          // Choices-type legacy shape: rawValue can be a list of plain
+          // strings OR a list-of-one wrapping a dict like
+          // {score, choice|choices}. Resolve each entry to a printable label.
+          scoreItems = rawValue
+            .flatMap((v) => {
+              if (typeof v === "string") return [v];
+              if (v && typeof v === "object") {
+                if (Array.isArray(v.choices))
+                  return v.choices.filter((c) => typeof c === "string");
+                if (typeof v.choice === "string") return [v.choice];
+                if (typeof v.label === "string") return [v.label];
+              }
+              return [];
+            })
+            .map((v) => String(v));
+          if (scoreItems.length === 0) scoreItems = undefined;
         }
-      } else if (Array.isArray(rawValue) && rawValue.length > 0) {
-        // Choices-type results surface their selected labels as an array —
-        // keep them as items so the table can render one chip per label.
-        scoreItems = rawValue.map((v) => String(v));
       }
 
       return {
