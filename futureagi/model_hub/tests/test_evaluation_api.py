@@ -2059,7 +2059,7 @@ class TestStampEvaluationAxesFallback:
         e = _mk_eval(value={"x": object()}, output_type="score")
         with (
             patch(
-                "model_hub.services.evaluation.resolve_eval_axes",
+                "tracer.utils.eval._dual_write_eval_value",
                 side_effect=RuntimeError("boom"),
             ),
             patch("model_hub.services.evaluation.logger") as log,
@@ -2089,3 +2089,64 @@ class TestStampEvaluationAxesFallback:
         _stamp(e)
         assert e.output_float == 0.5
         assert e.output_str_list is None
+
+
+# Mirror of tracer_eval_logger output_str policy (PR #618)
+
+class TestStampEvaluationAxesOutputStrMirror:
+    def test_dict_value_on_score_config_dumps_json(self, _stamp):
+        e = _mk_eval(value={"score": 1.0, "choice": "Good"}, output_type="score")
+        _stamp(e)
+        assert e.output_str == '{"score": 1.0, "choice": "Good"}'
+        assert e.output_float == 1.0
+        assert e.output_str_list == ["Good"]
+
+    def test_dict_value_on_choices_config_dumps_json(self, _stamp):
+        e = _mk_eval(value={"score": 0.875, "choices": ["A", "B"]}, output_type="choices")
+        _stamp(e)
+        assert e.output_str == '{"score": 0.875, "choices": ["A", "B"]}'
+        assert e.output_float == 0.875
+        assert e.output_str_list == ["A", "B"]
+
+    def test_string_value_on_choices_config_passes_through(self, _stamp):
+        e = _mk_eval(value="excellent", output_type="choices")
+        _stamp(e)
+        assert e.output_str == "excellent"
+        assert e.output_str_list == ["excellent"]
+
+    def test_plain_list_on_choices_config_leaves_output_str_null(self, _stamp):
+        e = _mk_eval(value=["neutral"], output_type="choices")
+        _stamp(e)
+        assert e.output_str is None
+        assert e.output_str_list == ["neutral"]
+
+    def test_plain_score_value_leaves_output_str_null(self, _stamp):
+        e = _mk_eval(value=1.0, output_type="score")
+        _stamp(e)
+        assert e.output_str is None
+        assert e.output_float == 1.0
+
+    def test_passfail_string_leaves_output_str_null(self, _stamp):
+        e = _mk_eval(value="Passed", output_type="Pass/Fail")
+        _stamp(e)
+        assert e.output_str is None
+        assert e.output_bool is True
+
+    def test_list_of_dicts_on_choices_config_dumps_json(self, _stamp):
+        e = _mk_eval(
+            value=[{"choice": "A"}, {"choice": "B"}], output_type="choices"
+        )
+        _stamp(e)
+        assert e.output_str == '[{"choice": "A"}, {"choice": "B"}]'
+        assert e.output_str_list == ["A", "B"]
+
+    def test_pre_set_output_str_is_preserved(self, _stamp):
+        e = _mk_eval(
+            value={"score": 1.0, "choice": "Good"},
+            output_type="choices",
+            output_str="legacy-text",
+        )
+        _stamp(e)
+        assert e.output_str == "legacy-text"
+        assert e.output_float == 1.0
+        assert e.output_str_list == ["Good"]

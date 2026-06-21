@@ -12,8 +12,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
-from evaluations.engine.normalize import resolve_eval_axes
 from model_hub.models.evaluation import Evaluation
+from tracer.utils.eval import _dual_write_eval_value
 
 logger = structlog.get_logger(__name__)
 
@@ -80,7 +80,12 @@ class Command(BaseCommand):
         updated_rows = 0
         skipped_rows = 0
         pending: list[Evaluation] = []
-        update_fields = ["output_bool", "output_float", "output_str_list"]
+        update_fields = [
+            "output_bool",
+            "output_float",
+            "output_str_list",
+            "output_str",
+        ]
 
         for ev in qs.iterator(chunk_size=batch_size):
             processed += 1
@@ -90,27 +95,25 @@ class Command(BaseCommand):
             multi_choice = bool(tpl.multi_choice) if tpl else False
 
             parsed_value = _parse_value(ev.value)
-            axes = resolve_eval_axes(parsed_value, config_output, multi_choice)
+            projected: dict[str, Any] = {}
+            _dual_write_eval_value(
+                parsed_value,
+                config_output,
+                projected,
+                permissive_secondary_axis=True,
+            )
 
             before = {
                 "output_bool": ev.output_bool,
                 "output_float": ev.output_float,
                 "output_str_list": list(ev.output_str_list) if ev.output_str_list else ev.output_str_list,
+                "output_str": ev.output_str,
             }
-            # Per-axis additive check: only write when the dispatch produced
-            # an axis the row doesn't already carry. Permissive secondary
-            # axes (e.g. choice_scores filling output_str_list on a row that
-            # already has output_float) get captured this way.
             changed = False
-            if ev.output_bool is None and axes["output_pass"] is not None:
-                ev.output_bool = axes["output_pass"]
-                changed = True
-            if ev.output_float is None and axes["output_score"] is not None:
-                ev.output_float = axes["output_score"]
-                changed = True
-            if ev.output_str_list is None and axes["output_choices"] is not None:
-                ev.output_str_list = axes["output_choices"]
-                changed = True
+            for col in ("output_bool", "output_float", "output_str_list", "output_str"):
+                if col in projected and getattr(ev, col) is None:
+                    setattr(ev, col, projected[col])
+                    changed = True
 
             if not changed:
                 skipped_rows += 1
@@ -129,8 +132,9 @@ class Command(BaseCommand):
                             "output_bool": ev.output_bool,
                             "output_float": ev.output_float,
                             "output_str_list": ev.output_str_list,
+                            "output_str": ev.output_str,
                         },
-                        "axes_dispatched": axes,
+                        "projected": projected,
                     }
                 )
 
@@ -154,7 +158,7 @@ class Command(BaseCommand):
                     f"  multi_choice={s['multi_choice']}"
                 )
                 self.stdout.write(f">>>     value           ={json.dumps(s['value'], default=str)}")
-                self.stdout.write(f">>>     axes_dispatched ={json.dumps(s['axes_dispatched'])}")
+                self.stdout.write(f">>>     projected       ={json.dumps(s['projected'], default=str)}")
                 self.stdout.write(f">>>     before_columns  ={json.dumps(s['before'], default=str)}")
                 self.stdout.write(f">>>     after_columns   ={json.dumps(s['after'], default=str)}")
 

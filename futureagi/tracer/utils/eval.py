@@ -656,7 +656,9 @@ def _dedupe_preserve_order(items):
     return out
 
 
-def _dual_write_eval_value(value, config_output, logger_kwargs):
+def _dual_write_eval_value(
+    value, config_output, logger_kwargs, permissive_secondary_axis: bool = False
+):
     """Populate ``logger_kwargs`` with one eval result, dual-writing both the
     new (``output_str``) and legacy (``output_float`` / ``output_str_list``)
     shapes so FE readers that still consume the typed columns keep working.
@@ -672,6 +674,12 @@ def _dual_write_eval_value(value, config_output, logger_kwargs):
     The dict shape ``{"score": …, "choice": …}`` / ``{"score": …, "choices": […]}``
     comes from ``evaluations/engine/formatting.py``'s choices branch; we serialize
     it as JSON into ``output_str`` for the new format.
+
+    ``permissive_secondary_axis`` (default ``False``): when ``True``, additionally
+    populate the off-axis typed column for ``choice_scores`` shapes (dict or
+    list-of-dicts carrying both score and choice keys). ``EvalLogger`` callers
+    keep the strict default; ``Evaluation`` callers (PR #991, TH-6044) opt in
+    so FE filter pickers can read both axes from the typed columns.
     """
     if isinstance(value, bool):
         logger_kwargs["output_bool"] = value
@@ -686,6 +694,15 @@ def _dual_write_eval_value(value, config_output, logger_kwargs):
             score = value.get("score")
             if isinstance(score, int | float) and not isinstance(score, bool):
                 logger_kwargs["output_float"] = float(score)
+            if permissive_secondary_axis:
+                choice = value.get("choice")
+                choices = value.get("choices")
+                if isinstance(choice, str):
+                    logger_kwargs["output_str_list"] = [choice]
+                elif isinstance(choices, list):
+                    flat = [c for c in choices if isinstance(c, str)]
+                    if flat:
+                        logger_kwargs["output_str_list"] = _dedupe_preserve_order(flat)
         elif isinstance(value, int | float):
             logger_kwargs["output_float"] = float(value)
         elif isinstance(value, list):
@@ -708,6 +725,18 @@ def _dual_write_eval_value(value, config_output, logger_kwargs):
                         numerics.append(s)
             if numerics:
                 logger_kwargs["output_float"] = sum(numerics) / len(numerics)
+            if permissive_secondary_axis:
+                collected = []
+                for v in value:
+                    if isinstance(v, dict):
+                        inner_choice = v.get("choice")
+                        inner_choices = v.get("choices")
+                        if isinstance(inner_choice, str):
+                            collected.append(inner_choice)
+                        elif isinstance(inner_choices, list):
+                            collected.extend(c for c in inner_choices if isinstance(c, str))
+                if collected:
+                    logger_kwargs["output_str_list"] = _dedupe_preserve_order(collected)
         else:
             logger_kwargs["output_str"] = str(value)
         return
@@ -721,6 +750,10 @@ def _dual_write_eval_value(value, config_output, logger_kwargs):
                 logger_kwargs["output_str_list"] = [choice]
             elif isinstance(choices, list):
                 logger_kwargs["output_str_list"] = _dedupe_preserve_order(choices)
+            if permissive_secondary_axis:
+                score = value.get("score")
+                if isinstance(score, int | float) and not isinstance(score, bool):
+                    logger_kwargs["output_float"] = float(score)
         elif isinstance(value, str):
             logger_kwargs["output_str"] = value
             logger_kwargs["output_str_list"] = [value]
@@ -746,6 +779,15 @@ def _dual_write_eval_value(value, config_output, logger_kwargs):
                     elif isinstance(inner_choices, list):
                         collected.extend(c for c in inner_choices if isinstance(c, str))
             logger_kwargs["output_str_list"] = _dedupe_preserve_order(collected)
+            if permissive_secondary_axis:
+                numerics = []
+                for v in value:
+                    if isinstance(v, dict):
+                        s = v.get("score")
+                        if isinstance(s, int | float) and not isinstance(s, bool):
+                            numerics.append(s)
+                if numerics:
+                    logger_kwargs["output_float"] = sum(numerics) / len(numerics)
         elif isinstance(value, int | float):
             logger_kwargs["output_float"] = float(value)
         else:
