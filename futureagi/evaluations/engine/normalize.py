@@ -10,20 +10,15 @@ AXIS_KEYS: tuple[str, ...] = (
     "output_choices",
 )
 
+_TRACER_TO_AXIS = {
+    "output_bool": "output_pass",
+    "output_float": "output_score",
+    "output_str_list": "output_choices",
+}
+
 
 def empty_axes() -> dict[str, None]:
     return dict.fromkeys(AXIS_KEYS, None)
-
-
-def dedupe_preserve_order(items: list[Any]) -> list[Any]:
-    seen: set[Any] = set()
-    out: list[Any] = []
-    for x in items:
-        if x in seen:
-            continue
-        seen.add(x)
-        out.append(x)
-    return out
 
 
 def eval_config_output(custom_eval_config: Any) -> str:
@@ -41,92 +36,22 @@ def eval_config_multi_choice(custom_eval_config: Any) -> bool:
         return False
 
 
-def extract_score(value: Any) -> float | None:
-    """Project ``value`` into a single float; lists collapse to the numeric mean."""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int | float):
-        return float(value)
-    if isinstance(value, dict):
-        score = value.get("score")
-        if isinstance(score, int | float) and not isinstance(score, bool):
-            return float(score)
-        return None
-    if isinstance(value, list):
-        numerics: list[float] = []
-        for v in value:
-            if isinstance(v, bool):
-                continue
-            if isinstance(v, int | float):
-                numerics.append(float(v))
-            elif isinstance(v, dict):
-                inner = v.get("score")
-                if isinstance(inner, int | float) and not isinstance(inner, bool):
-                    numerics.append(float(inner))
-        if numerics:
-            return sum(numerics) / len(numerics)
-    return None
-
-
-def extract_choices(value: Any) -> list[str] | None:
-    """Project ``value`` into a deduped list of chosen labels; single-pick yields one element."""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        choice = value.get("choice")
-        if isinstance(choice, str):
-            return [choice]
-        choices = value.get("choices")
-        if isinstance(choices, list):
-            strings = [v for v in choices if isinstance(v, str)]
-            return dedupe_preserve_order(strings) if strings else None
-        return None
-    if isinstance(value, list):
-        collected: list[str] = []
-        for v in value:
-            if isinstance(v, str):
-                collected.append(v)
-            elif isinstance(v, dict):
-                inner_choice = v.get("choice")
-                inner_choices = v.get("choices")
-                if isinstance(inner_choice, str):
-                    collected.append(inner_choice)
-                elif isinstance(inner_choices, list):
-                    collected.extend(c for c in inner_choices if isinstance(c, str))
-        return dedupe_preserve_order(collected) if collected else None
-    return None
-
-
-def extract_pass(value: Any) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if value == "Passed":
-        return True
-    if value == "Failed":
-        return False
-    return None
-
-
 def resolve_eval_axes(
     value: Any, config_output: str, multi_choice: bool = False
 ) -> dict[str, Any]:
-    """Project ``value`` into the 3 axis keys; ``config_output`` anchors the primary axis."""
+    """Project ``value`` into the 3 axis keys via tracer's _dual_write_eval_value."""
     axes: dict[str, Any] = empty_axes()
     if value is None:
         return axes
-    if config_output == "Pass/Fail":
-        axes["output_pass"] = extract_pass(value)
-        return axes
-    if config_output in ("score", "numeric"):
-        axes["output_score"] = extract_score(value)
-        axes["output_choices"] = extract_choices(value)
-        return axes
-    if config_output == "choices":
-        axes["output_score"] = extract_score(value)
-        axes["output_choices"] = extract_choices(value)
-        return axes
+    from tracer.utils.eval import _dual_write_eval_value
+
+    projected: dict[str, Any] = {}
+    _dual_write_eval_value(
+        value, config_output, projected, permissive_secondary_axis=True
+    )
+    for tracer_key, axis_key in _TRACER_TO_AXIS.items():
+        if tracer_key in projected:
+            axes[axis_key] = projected[tracer_key]
     return axes
 
 

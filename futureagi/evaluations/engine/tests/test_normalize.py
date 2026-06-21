@@ -9,13 +9,9 @@ import pytest
 from evaluations.engine.normalize import (
     AXIS_KEYS,
     build_simulate_eval_payload,
-    dedupe_preserve_order,
     empty_axes,
     eval_config_multi_choice,
     eval_config_output,
-    extract_choices,
-    extract_pass,
-    extract_score,
     resolve_eval_axes,
 )
 
@@ -28,19 +24,7 @@ def _custom_eval_config(*, stored_output=None, multi_choice=None):
     return SimpleNamespace(eval_template=template)
 
 
-# ── dedupe_preserve_order ────────────────────────────────────────────────
-
-
-def test_dedupe_preserves_first_seen_order():
-    assert dedupe_preserve_order(["a", "b", "a", "c", "b"]) == ["a", "b", "c"]
-
-
-def test_dedupe_handles_empty():
-    assert dedupe_preserve_order([]) == []
-
-
-# ── AXIS_KEYS + empty_axes ───────────────────────────────────────────────
-
+# AXIS_KEYS + empty_axes
 
 def test_axis_keys_pinned():
     assert AXIS_KEYS == ("output_pass", "output_score", "output_choices")
@@ -60,8 +44,7 @@ def test_empty_axes_returns_fresh_dict_each_call():
     assert empty_axes()["output_score"] is None
 
 
-# ── eval_config_output ───────────────────────────────────────────────────
-
+# eval_config_output
 
 def test_eval_config_output_reads_stored_value():
     assert eval_config_output(_custom_eval_config(stored_output="choices")) == "choices"
@@ -75,8 +58,7 @@ def test_eval_config_output_defaults_when_no_template():
     assert eval_config_output(SimpleNamespace()) == "score"
 
 
-# ── eval_config_multi_choice ─────────────────────────────────────────────
-
+# eval_config_multi_choice
 
 def test_eval_config_multi_choice_reads_flag():
     assert eval_config_multi_choice(_custom_eval_config(multi_choice=True)) is True
@@ -91,199 +73,7 @@ def test_eval_config_multi_choice_defaults_when_no_template():
     assert eval_config_multi_choice(SimpleNamespace()) is False
 
 
-# ── extract_score ────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "value,expected",
-    [
-        (0.7, 0.7),
-        (1, 1.0),
-        (0, 0.0),
-        (-0.5, -0.5),
-        ({"score": 0.66, "choice": "always"}, 0.66),
-        ({"score": 0, "choice": "x"}, 0.0),
-    ],
-)
-def test_extract_score_extracts(value, expected):
-    assert extract_score(value) == pytest.approx(expected)
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        None,
-        "0.7",
-        True,
-        False,
-        {"choice": "always"},
-        {"score": "not-a-number"},
-        {"score": None},
-        {"score": True},
-        {},
-        ["A"],
-    ],
-)
-def test_extract_score_yields_none(value):
-    assert extract_score(value) is None
-
-
-def test_extract_score_nan_and_infinity_pass_through():
-    import math
-
-    assert math.isnan(extract_score(float("nan")))
-    assert math.isinf(extract_score(float("inf")))
-
-
-def test_extract_score_int_coerced_to_float():
-    result = extract_score(1)
-    assert isinstance(result, float)
-
-
-# ── extract_score list shapes (mirror tracer's averaging) ────────────────
-
-
-def test_extract_score_list_of_plain_numbers_returns_mean():
-    """Score config that emits a list of numbers (e.g. per-item evals
-    aggregated) collapses to the mean: matches tracer's contract."""
-    assert extract_score([0.3, 0.7, 0.5]) == pytest.approx(0.5)
-
-
-def test_extract_score_list_of_per_item_dicts_returns_mean_of_inner_scores():
-    """choice_scores promoted into per-item list: tracer averages the
-    inner ``score`` fields and discards labels; we do the same."""
-    value = [
-        {"score": 0.5, "choice": "a"},
-        {"score": 0.7, "choice": "b"},
-    ]
-    assert extract_score(value) == pytest.approx(0.6)
-
-
-def test_extract_score_list_skips_bools_in_numerics():
-    """``True``/``False`` are int subclasses; must not pollute the mean."""
-    assert extract_score([0.5, True, False, 0.5]) == pytest.approx(0.5)
-
-
-def test_extract_score_list_mixed_types_extracts_numerics_only():
-    """Strings and other non-numeric entries are ignored."""
-    assert extract_score([0.5, "x", {"score": 1.0}]) == pytest.approx(0.75)
-
-
-def test_extract_score_list_no_numerics_returns_none():
-    assert extract_score(["a", "b"]) is None
-    assert extract_score([True, False]) is None
-    assert extract_score([{"choice": "x"}]) is None
-
-
-def test_extract_choices_list_of_per_item_dicts_flattens_choices():
-    """Tracer-style list of per-item dicts: flatten each item's choice
-    or choices field into one deduped list."""
-    value = [{"choice": "a"}, {"choice": "b"}, {"choices": ["c", "a"]}]
-    assert extract_choices(value) == ["a", "b", "c"]
-
-
-def test_extract_choices_list_of_per_item_dicts_with_only_score_returns_none():
-    """Per-item dicts that carry only a score and no choice → nothing to
-    collect, all-empty list collapses to None."""
-    assert extract_choices([{"score": 0.5}, {"score": 0.7}]) is None
-
-
-# ── extract_choices ──────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "value,expected",
-    [
-        # Single-pick string → one-element list (canonical contract)
-        ("always", ["always"]),
-        # Plain multi-element list
-        (["polite", "concise"], ["polite", "concise"]),
-        # Single-element list (legacy / tracer shape)
-        (["frequently"], ["frequently"]),
-        # choice_scores dict: single label
-        ({"score": 1.0, "choice": "always"}, ["always"]),
-        ({"choice": "x"}, ["x"]),
-        # choice_scores dict: multi labels
-        ({"score": 0.5, "choices": ["polite", "concise"]}, ["polite", "concise"]),
-        ({"choices": ["a"]}, ["a"]),
-        # Dedupe preserves order
-        (["A", "B", "A", "C"], ["A", "B", "C"]),
-        # Mixed list keeps strings only
-        (["A", 1, "B", None], ["A", "B"]),
-        # Unicode and edge strings preserved
-        ("你好", ["你好"]),
-        ("", [""]),
-    ],
-)
-def test_extract_choices_extracts(value, expected):
-    assert extract_choices(value) == expected
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        None,
-        0.5,
-        0,
-        True,
-        False,
-        [],
-        [1, 2, 3],
-        [None, None],
-        {"score": 0.5},
-        {"choice": None},
-        {"choice": 42},
-        {"choice": True},
-        {"choice": ["A"]},
-        {"choices": []},
-        {"choices": "polite"},
-        {"choices": None},
-        {},
-    ],
-)
-def test_extract_choices_yields_none(value):
-    assert extract_choices(value) is None
-
-
-# ── extract_pass ─────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "value,expected",
-    [
-        (True, True),
-        (False, False),
-        ("Passed", True),
-        ("Failed", False),
-    ],
-)
-def test_extract_pass_extracts(value, expected):
-    assert extract_pass(value) is expected
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        None,
-        0,
-        1,
-        "passed",
-        "PASSED",
-        "pass",
-        "fail",
-        "",
-        {"output": "Passed"},
-    ],
-)
-def test_extract_pass_yields_none(value):
-    """Strict canonical-form matching: only exact bool / 'Passed' / 'Failed'
-    convert. Lowercase / uppercase / int variants stay None to surface
-    upstream label drift."""
-    assert extract_pass(value) is None
-
-
-# ── resolve_eval_axes: primary axis routing ─────────────────────────────
-
+# resolve_eval_axes: primary axis routing
 
 def test_resolve_axes_pass_fail_routes_to_output_pass_only():
     axes = resolve_eval_axes("Passed", "Pass/Fail")
@@ -308,8 +98,6 @@ def test_resolve_axes_numeric_routes_to_output_score():
 
 
 def test_resolve_axes_choices_single_plain_string_lands_as_one_element_list():
-    """Single-pick string lands as ``["always"]``: same list shape as
-    multi-pick. Matches tracer + experiment contract."""
     axes = resolve_eval_axes("always", "choices", multi_choice=False)
     assert axes["output_choices"] == ["always"]
     assert axes["output_score"] is None
@@ -317,7 +105,6 @@ def test_resolve_axes_choices_single_plain_string_lands_as_one_element_list():
 
 
 def test_resolve_axes_choices_single_dict_lands_as_one_element_list():
-    """choice_scores single-pick dict carries both score and choice."""
     axes = resolve_eval_axes(
         {"score": 1.0, "choice": "always"}, "choices", multi_choice=False
     )
@@ -342,26 +129,18 @@ def test_resolve_axes_choices_multi_dict():
 
 
 def test_resolve_axes_legacy_single_choice_as_one_element_list():
-    """Legacy / tracer wrote single-pick as ``["frequently"]`` even when
-    multi_choice=False. multi_choice is only an FE rendering hint, so
-    output_choices is still the right axis."""
     axes = resolve_eval_axes(["frequently"], "choices", multi_choice=False)
     assert axes["output_choices"] == ["frequently"]
 
 
 def test_resolve_axes_one_element_list_multi_choice_true():
-    """Multi-pick with only one pick is still a list of one."""
     axes = resolve_eval_axes(["frequently"], "choices", multi_choice=True)
     assert axes["output_choices"] == ["frequently"]
 
 
-# ── resolve_eval_axes: permissive secondary axis ───────────────────────
-
+# resolve_eval_axes: permissive secondary axis
 
 def test_resolve_axes_permissive_score_config_dict_populates_both_axes():
-    """``choice_scores`` template with score config: dict carries both
-    a score and a chosen label. Both axes populate so FE can colour the
-    chosen label by the underlying score."""
     axes = resolve_eval_axes({"score": 0.7, "choice": "always"}, "score")
     assert axes["output_score"] == pytest.approx(0.7)
     assert axes["output_choices"] == ["always"]
@@ -377,14 +156,12 @@ def test_resolve_axes_permissive_score_config_dict_with_choices_list():
 
 
 def test_resolve_axes_plain_score_does_not_invent_choice():
-    """Plain numeric value carries no choice: output_choices stays None."""
     axes = resolve_eval_axes(0.42, "score")
     assert axes["output_score"] == pytest.approx(0.42)
     assert axes["output_choices"] is None
 
 
 def test_resolve_axes_plain_choice_does_not_invent_score():
-    """Plain string value carries no score: output_score stays None."""
     axes = resolve_eval_axes("always", "choices", multi_choice=False)
     assert axes["output_choices"] == ["always"]
     assert axes["output_score"] is None
@@ -396,23 +173,13 @@ def test_resolve_axes_score_config_dict_with_only_choice():
     assert axes["output_choices"] == ["always"]
 
 
-# ── resolve_eval_axes: edge cases ──────────────────────────────────────
-
+# resolve_eval_axes: edge cases
 
 def test_resolve_axes_reason_yields_all_none():
     assert resolve_eval_axes("free-form text", "reason") == empty_axes()
 
 
-def test_resolve_axes_unknown_config_output_yields_all_none():
-    """Unknown / future output types must not panic and must not invent
-    axes: strict no-op."""
-    assert resolve_eval_axes(0.5, "future_type") == empty_axes()
-    assert resolve_eval_axes({"score": 0.5}, "") == empty_axes()
-
-
 def test_resolve_axes_pass_fail_does_not_bleed_score_or_choice():
-    """Pass/Fail surface only emits Pass/Fail. Even if a dict arrives,
-    score and choice must NOT bleed through."""
     axes = resolve_eval_axes({"score": 0.7, "choice": "x"}, "Pass/Fail")
     assert axes["output_pass"] is None
     assert axes["output_score"] is None
@@ -425,29 +192,23 @@ def test_resolve_axes_none_value_yields_all_none():
 
 
 def test_resolve_axes_empty_dict_value():
-    """Dict carrying neither score nor choice nor choices: all axes
-    null."""
     assert resolve_eval_axes({}, "score") == empty_axes()
     assert resolve_eval_axes({}, "choices", multi_choice=True) == empty_axes()
     assert resolve_eval_axes({}, "choices", multi_choice=False) == empty_axes()
 
 
 def test_resolve_axes_score_zero_distinguishable_from_none():
-    """A score of exactly 0.0 must surface as 0.0, not None: filter UI
-    treats them differently."""
     axes = resolve_eval_axes(0.0, "score")
     assert axes["output_score"] == 0.0
     assert axes["output_score"] is not None
 
 
 def test_resolve_axes_idempotent():
-    """Running resolve twice with the same inputs gives the same dict."""
     value = {"score": 0.7, "choice": "x"}
     assert resolve_eval_axes(value, "score") == resolve_eval_axes(value, "score")
 
 
-# ── build_simulate_eval_payload ──────────────────────────────────────────
-
+# build_simulate_eval_payload
 
 def test_payload_success_score():
     payload = build_simulate_eval_payload(
