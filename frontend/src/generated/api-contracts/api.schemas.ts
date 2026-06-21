@@ -8324,9 +8324,6 @@ export interface DatasetCellDataRequestApi {
 
 export type DatasetCellValueApiCellValue = { [key: string]: unknown };
 
-/**
- * Per-cell metadata. For eval cells, the dict includes the canonical axis keys: output_pass (bool|null), output_score (float|null), output_choices (list[str]|null). Non-eval cell types carry cell-type-specific keys instead.
- */
 export type DatasetCellValueApiValueInfos = { [key: string]: unknown };
 
 export type DatasetCellValueApiFeedbackInfo = { [key: string]: unknown };
@@ -8334,7 +8331,6 @@ export type DatasetCellValueApiFeedbackInfo = { [key: string]: unknown };
 export interface DatasetCellValueApi {
   cell_value?: DatasetCellValueApiCellValue;
   status?: string;
-  /** Per-cell metadata. For eval cells, the dict includes the canonical axis keys: output_pass (bool|null), output_score (float|null), output_choices (list[str]|null). Non-eval cell types carry cell-type-specific keys instead. */
   readonly value_infos?: DatasetCellValueApiValueInfos;
   feedback_info?: DatasetCellValueApiFeedbackInfo;
 }
@@ -16066,13 +16062,9 @@ export const CallExecutionDetailApiStatus = {
   cancelled: 'cancelled',
 } as const;
 
-/**
- * Verbatim runner output (number | bool | string | list | dict | null)
- */
 export type CallExecutionEvalOutputApiValue = { [key: string]: unknown };
 
 export interface CallExecutionEvalOutputApi {
-  /** Verbatim runner output (number | bool | string | list | dict | null) */
   value?: CallExecutionEvalOutputApiValue;
   reason?: string;
   type?: string;
@@ -16080,11 +16072,8 @@ export interface CallExecutionEvalOutputApi {
   error?: boolean;
   status?: string;
   skipped?: boolean;
-  /** Set when stored config[output]=Pass/Fail */
   output_pass?: boolean;
-  /** Set when stored config[output] in (score, numeric) */
   output_score?: number;
-  /** List of chosen labels. Always a list: single-pick configs land as [label]; multi-pick as [label1, label2, ...]. FE checks eval_config.multi_choice for rendering (dropdown vs multi-select). */
   output_choices?: string[];
 }
 
@@ -16123,11 +16112,8 @@ export interface CallExecutionEvalMetricApi {
   selected_input_key?: string;
   input_data?: CallExecutionEvalMetricApiInputData;
   input_types?: CallExecutionEvalMetricApiInputTypes;
-  /** Mirrors eval_outputs[...].output_pass; set on Pass/Fail evals. */
   output_pass?: boolean;
-  /** Mirrors eval_outputs[...].output_score; set on score / numeric / choice_scores evals. */
   output_score?: number;
-  /** Mirrors eval_outputs[...].output_choices; one-element list for single-pick, N for multi-pick. */
   output_choices?: string[];
 }
 
@@ -17720,7 +17706,6 @@ export interface TestExecutionDetailResponseApi {
   readonly results?: readonly TestExecutionDetailResponseApiResultsItem[];
   readonly total_pages?: number;
   readonly current_page?: number;
-  /** Heterogeneous column metadata. Entry types: evaluation, system, scenario_dataset_column, persona, tool_evaluation. Evaluation entries carry {id, column_name, type='evaluation', visible, eval_config: {output, output_type, multi_choice, pass_threshold, eval_type_id, choices, required_keys, optional_keys}}; other types carry type-specific shapes. */
   readonly column_order?: readonly TestExecutionDetailResponseApiColumnOrderItem[];
   readonly error_messages?: readonly string[];
   /** @minLength 1 */

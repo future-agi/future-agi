@@ -17311,7 +17311,7 @@ export const ModelHubDevelopsGetCellDataCreateResponse = zod.object({
   "status": zod.string().optional(),
   "value_infos": zod.object({
 
-}).passthrough().optional().describe('Per-cell metadata. For eval cells, the dict includes the canonical axis keys: output_pass (bool|null), output_score (float|null), output_choices (list[str]|null). Non-eval cell types carry cell-type-specific keys instead.'),
+}).passthrough().optional(),
   "feedback_info": zod.object({
 
 }).passthrough().optional()
@@ -30245,16 +30245,16 @@ export const SimulateCallExecutionsReadResponse = zod.object({
   "eval_outputs": zod.record(zod.string(), zod.object({
   "value": zod.object({
 
-}).passthrough().optional().describe('Verbatim runner output (number | bool | string | list | dict | null)'),
+}).passthrough().optional(),
   "reason": zod.string().optional(),
   "type": zod.string().optional(),
   "name": zod.string().optional(),
   "error": zod.boolean().optional(),
   "status": zod.string().optional(),
   "skipped": zod.boolean().optional(),
-  "output_pass": zod.boolean().optional().describe('Set when stored config[output]=Pass\/Fail'),
-  "output_score": zod.number().optional().describe('Set when stored config[output] in (score, numeric)'),
-  "output_choices": zod.array(zod.string()).optional().describe('List of chosen labels. Always a list: single-pick configs land as [label]; multi-pick as [label1, label2, ...]. FE checks eval_config.multi_choice for rendering (dropdown vs multi-select).')
+  "output_pass": zod.boolean().optional(),
+  "output_score": zod.number().optional(),
+  "output_choices": zod.array(zod.string()).optional()
 })).optional().describe('Get evaluation outputs in a structured format'),
   "eval_metrics": zod.record(zod.string(), zod.object({
   "id": zod.string().optional(),
@@ -30282,9 +30282,9 @@ export const SimulateCallExecutionsReadResponse = zod.object({
   "input_types": zod.object({
 
 }).passthrough().optional(),
-  "output_pass": zod.boolean().optional().describe('Mirrors eval_outputs[...].output_pass; set on Pass\/Fail evals.'),
-  "output_score": zod.number().optional().describe('Mirrors eval_outputs[...].output_score; set on score \/ numeric \/ choice_scores evals.'),
-  "output_choices": zod.array(zod.string()).optional().describe('Mirrors eval_outputs[...].output_choices; one-element list for single-pick, N for multi-pick.')
+  "output_pass": zod.boolean().optional(),
+  "output_score": zod.number().optional(),
+  "output_choices": zod.array(zod.string()).optional()
 })).optional().describe('Get evaluation metrics in a format suitable for the UI'),
   "scenario_columns": zod.string().optional(),
   "ended_reason": zod.string().max(simulateCallExecutionsReadResponseEndedReasonMax).optional().describe('Reason why the call ended'),
@@ -33037,7 +33037,7 @@ export const SimulateTestExecutionsReadResponse = zod.object({
   "results": zod.array(zod.record(zod.string(), zod.string())).optional().describe('Call execution rows may include dynamic eval\/scenario columns.'),
   "total_pages": zod.number().optional(),
   "current_page": zod.number().optional(),
-  "column_order": zod.array(zod.record(zod.string(), zod.string())).optional().describe('Heterogeneous column metadata. Entry types: evaluation, system, scenario_dataset_column, persona, tool_evaluation. Evaluation entries carry {id, column_name, type=\'evaluation\', visible, eval_config: {output, output_type, multi_choice, pass_threshold, eval_type_id, choices, required_keys, optional_keys}}; other types carry type-specific shapes.'),
+  "column_order": zod.array(zod.record(zod.string(), zod.string())).optional(),
   "error_messages": zod.array(zod.string().min(1)).optional(),
   "status": zod.string().min(1).optional(),
   "provider": zod.string().min(1).optional(),

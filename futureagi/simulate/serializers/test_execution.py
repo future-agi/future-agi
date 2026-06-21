@@ -233,60 +233,29 @@ class CallExecutionEvalMetricSerializer(serializers.Serializer):
     )
     input_data = serializers.JSONField(required=False, allow_null=True)
     input_types = serializers.JSONField(required=False, allow_null=True)
-    output_pass = serializers.BooleanField(
-        required=False,
-        allow_null=True,
-        help_text="Mirrors eval_outputs[...].output_pass; set on Pass/Fail evals.",
-    )
-    output_score = serializers.FloatField(
-        required=False,
-        allow_null=True,
-        help_text="Mirrors eval_outputs[...].output_score; set on score / numeric / choice_scores evals.",
-    )
+    output_pass = serializers.BooleanField(required=False, allow_null=True)
+    output_score = serializers.FloatField(required=False, allow_null=True)
     output_choices = serializers.ListField(
         child=serializers.CharField(allow_blank=True),
         required=False,
         allow_null=True,
-        help_text="Mirrors eval_outputs[...].output_choices; one-element list for single-pick, N for multi-pick.",
     )
 
 
 class CallExecutionEvalOutputSerializer(serializers.Serializer):
-    """One entry of ``eval_outputs``. All fields optional; pending evals emit ``{}``.
-
-    ``output_pass`` is populated for Pass/Fail templates; ``output_score``
-    for score/numeric templates; ``output_choices`` for choices templates
-    (single-pick lands as a one-element list, multi-pick as N elements).
-    Choice_scores templates populate both ``output_score`` and
-    ``output_choices`` on the same row.
-    """
-
-    value = serializers.JSONField(
-        required=False,
-        allow_null=True,
-        help_text="Verbatim runner output (number | bool | string | list | dict | null)",
-    )
+    value = serializers.JSONField(required=False, allow_null=True)
     reason = serializers.CharField(allow_blank=True, required=False)
     type = serializers.CharField(allow_blank=True, required=False)
     name = serializers.CharField(allow_blank=True, required=False)
     error = serializers.BooleanField(required=False)
     status = serializers.CharField(allow_blank=True, required=False)
     skipped = serializers.BooleanField(required=False)
-    output_pass = serializers.BooleanField(
-        required=False, allow_null=True, help_text="Set when stored config[output]=Pass/Fail"
-    )
-    output_score = serializers.FloatField(
-        required=False, allow_null=True, help_text="Set when stored config[output] in (score, numeric)"
-    )
+    output_pass = serializers.BooleanField(required=False, allow_null=True)
+    output_score = serializers.FloatField(required=False, allow_null=True)
     output_choices = serializers.ListField(
         child=serializers.CharField(allow_blank=True),
         required=False,
         allow_null=True,
-        help_text=(
-            "List of chosen labels. Always a list: single-pick configs land as "
-            "[label]; multi-pick as [label1, label2, ...]. FE checks eval_config."
-            "multi_choice for rendering (dropdown vs multi-select)."
-        ),
     )
 
 
@@ -733,9 +702,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
                     structured_outputs[eval_id] = {
-                        "output_pass": None,
-                        "output_score": None,
-                        "output_choices": None,
+                        **project_storage_axes_to_api(eval_data),
                         "status": "pending",
                     }
                     continue
@@ -1234,18 +1201,7 @@ class TestExecutionDetailResponseSerializer(serializers.Serializer):
     )
     total_pages = serializers.IntegerField(read_only=True)
     current_page = serializers.IntegerField(read_only=True)
-    column_order = serializers.ListField(
-        child=serializers.DictField(),
-        read_only=True,
-        help_text=(
-            "Heterogeneous column metadata. Entry types: evaluation, system, "
-            "scenario_dataset_column, persona, tool_evaluation. Evaluation "
-            "entries carry {id, column_name, type='evaluation', visible, "
-            "eval_config: {output, output_type, multi_choice, pass_threshold, "
-            "eval_type_id, choices, required_keys, optional_keys}}; other "
-            "types carry type-specific shapes."
-        ),
-    )
+    column_order = serializers.ListField(child=serializers.DictField(), read_only=True)
     error_messages = serializers.ListField(
         child=serializers.CharField(), read_only=True
     )
