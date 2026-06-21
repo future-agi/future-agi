@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from evaluations.engine.normalize import AXIS_KEYS, resolve_eval_axes
 from model_hub.models.develop_dataset import Cell
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 
 logger = structlog.get_logger(__name__)
 
@@ -85,21 +85,25 @@ class Command(BaseCommand):
         if limit:
             qs = qs[:limit]
 
-        # Cache template lookups: Cell.column.source_id is a string UUID
-        # pointing at EvalTemplate; thousands of cells share the same
-        # template, so a per-loop fetch would be wasteful.
         template_cache: dict[str, EvalTemplate | None] = {}
 
         def _resolve_template(source_id: str | None) -> EvalTemplate | None:
+            # Column.source_id on dataset eval columns is UserEvalMetric.id,
+            # not EvalTemplate.id. Walk the chain.
             if not source_id:
                 return None
             if source_id in template_cache:
                 return template_cache[source_id]
             try:
+                uem = UserEvalMetric.objects.only("template_id").get(id=source_id)
                 tpl = EvalTemplate.objects.only("id", "config", "multi_choice").get(
-                    id=source_id
+                    id=uem.template_id
                 )
-            except (EvalTemplate.DoesNotExist, ValueError):
+            except (
+                UserEvalMetric.DoesNotExist,
+                EvalTemplate.DoesNotExist,
+                ValueError,
+            ):
                 tpl = None
             template_cache[source_id] = tpl
             return tpl
