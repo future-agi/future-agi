@@ -675,11 +675,8 @@ def _dual_write_eval_value(
     comes from ``evaluations/engine/formatting.py``'s choices branch; we serialize
     it as JSON into ``output_str`` for the new format.
 
-    ``permissive_secondary_axis`` (default ``False``): when ``True``, additionally
-    populate the off-axis typed column for ``choice_scores`` shapes (dict or
-    list-of-dicts carrying both score and choice keys). ``EvalLogger`` callers
-    keep the strict default; ``Evaluation`` callers (PR #991, TH-6044) opt in
-    so FE filter pickers can read both axes from the typed columns.
+    ``permissive_secondary_axis``: when True, also fill the off-axis typed column
+    on ``choice_scores`` dict / list-of-dicts shapes.
     """
     if isinstance(value, bool):
         logger_kwargs["output_bool"] = value

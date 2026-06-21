@@ -10,16 +10,7 @@ logger = structlog.get_logger(__name__)
 
 
 def stamp_evaluation_axes(evaluation: Any) -> None:
-    """Populate typed output columns on ``evaluation`` from ``value``; additive only.
-
-    Delegates to ``tracer/utils/eval.py:_dual_write_eval_value`` (Sarthak's PR
-    #618 helper) with ``permissive_secondary_axis=True`` so ``choice_scores``
-    rows fill both ``output_float`` and ``output_str_list``. Tracer's own seven
-    callers stay on the default ``False`` and behave exactly as before.
-
-    Lifting the helper into the shared ``evaluations/engine/normalize`` module
-    is a follow-up; for now both surfaces share the same function object.
-    """
+    """Populate typed output columns on ``evaluation`` from ``value``; additive only."""
     if evaluation.value is None:
         return
 
