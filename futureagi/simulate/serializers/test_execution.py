@@ -7,7 +7,6 @@ from django.db.models import Count, Q
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
-from evaluations.engine.normalize import empty_axes
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.services.error_localizer_service import error_localizer_enabled
 from simulate.models import (
@@ -733,7 +732,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
                     structured_outputs[eval_id] = {
-                        **empty_axes(),
+                        "output_pass": None,
+                        "output_score": None,
+                        "output_choices": None,
                         "status": "pending",
                     }
                     continue
@@ -755,9 +756,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
-                    "output_pass": eval_data.get("output_pass"),
-                    "output_score": eval_data.get("output_score"),
-                    "output_choices": eval_data.get("output_choices"),
+                    "output_pass": eval_data.get("output_bool"),
+                    "output_score": eval_data.get("output_float"),
+                    "output_choices": eval_data.get("output_str_list"),
                 }
 
         return structured_outputs
@@ -824,12 +825,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
                     "error_localizer": error_localizer_enabled(eval_config),
-                    # Canonical axis keys (mirrors the eval_outputs entry).
-                    # FE cell + drawer renderers prefer these over ``value``
-                    # for the per-row filter / colour decisions.
-                    "output_pass": eval_data.get("output_pass"),
-                    "output_score": eval_data.get("output_score"),
-                    "output_choices": eval_data.get("output_choices"),
+                    "output_pass": eval_data.get("output_bool"),
+                    "output_score": eval_data.get("output_float"),
+                    "output_choices": eval_data.get("output_str_list"),
                 }
 
         call_execution_id = getattr(obj, "id", None)

@@ -1662,9 +1662,9 @@ class TestCreateCellAxisInjection:
             _runner._create_cell(ds, col, row, {"reason": "hi"}, 0.7, "completed")
             payload = _captured_value_infos(m)
             assert payload["reason"] == "hi"
-            assert payload["output_score"] == 0.7
-            assert payload["output_pass"] is None
-            assert payload["output_choices"] is None
+            assert payload["output_float"] == 0.7
+            assert payload["output_bool"] is None
+            assert payload["output_str_list"] is None
 
     def test_choices_template_populates_output_choices(self, _runner):
         _runner.eval_template = _SN(config={"output": "choices"}, multi_choice=False)
@@ -1673,8 +1673,8 @@ class TestCreateCellAxisInjection:
         with cancelled, stopped, mock_create as m:
             _runner._create_cell(ds, col, row, {}, "frequently", "completed")
             payload = _captured_value_infos(m)
-            assert payload["output_choices"] == ["frequently"]
-            assert payload["output_score"] is None
+            assert payload["output_str_list"] == ["frequently"]
+            assert payload["output_float"] is None
 
     def test_passfail_template_populates_output_pass(self, _runner):
         _runner.eval_template = _SN(config={"output": "Pass/Fail"}, multi_choice=False)
@@ -1683,8 +1683,8 @@ class TestCreateCellAxisInjection:
         with cancelled, stopped, mock_create as m:
             _runner._create_cell(ds, col, row, {}, "Passed", "completed")
             payload = _captured_value_infos(m)
-            assert payload["output_pass"] is True
-            assert payload["output_score"] is None
+            assert payload["output_bool"] is True
+            assert payload["output_float"] is None
 
     def test_pre_stamped_axes_are_not_overwritten(self, _runner):
         _runner.eval_template = _SN(config={"output": "score"}, multi_choice=False)
@@ -1697,17 +1697,17 @@ class TestCreateCellAxisInjection:
                 row,
                 {
                     "reason": "hi",
-                    "output_score": 0.9,
-                    "output_pass": True,
-                    "output_choices": ["forced"],
+                    "output_float": 0.9,
+                    "output_bool": True,
+                    "output_str_list": ["forced"],
                 },
                 0.1,
                 "completed",
             )
             payload = _captured_value_infos(m)
-            assert payload["output_score"] == 0.9
-            assert payload["output_pass"] is True
-            assert payload["output_choices"] == ["forced"]
+            assert payload["output_float"] == 0.9
+            assert payload["output_bool"] is True
+            assert payload["output_str_list"] == ["forced"]
 
     def test_missing_template_defaults_to_score_axis(self, _runner):
         _runner.eval_template = None
@@ -1715,7 +1715,7 @@ class TestCreateCellAxisInjection:
         cancelled, stopped, mock_create = _patch_runner_deps()
         with cancelled, stopped, mock_create as m:
             _runner._create_cell(ds, col, row, {}, 0.5, "completed")
-            assert _captured_value_infos(m)["output_score"] == 0.5
+            assert _captured_value_infos(m)["output_float"] == 0.5
 
     def test_empty_template_config_defaults_to_score(self, _runner):
         _runner.eval_template = _SN(config={}, multi_choice=False)
@@ -1723,7 +1723,7 @@ class TestCreateCellAxisInjection:
         cancelled, stopped, mock_create = _patch_runner_deps()
         with cancelled, stopped, mock_create as m:
             _runner._create_cell(ds, col, row, {}, 0.5, "completed")
-            assert _captured_value_infos(m)["output_score"] == 0.5
+            assert _captured_value_infos(m)["output_float"] == 0.5
 
     def test_skips_when_experiment_cancelled(self, _runner):
         _runner.eval_template = _SN(config={"output": "score"}, multi_choice=False)

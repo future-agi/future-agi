@@ -27,21 +27,21 @@ def _custom_eval_config(*, stored_output=None, multi_choice=None):
 # AXIS_KEYS + empty_axes
 
 def test_axis_keys_pinned():
-    assert AXIS_KEYS == ("output_pass", "output_score", "output_choices")
+    assert AXIS_KEYS == ("output_bool", "output_float", "output_str_list")
 
 
 def test_empty_axes_returns_all_none():
     assert empty_axes() == {
-        "output_pass": None,
-        "output_score": None,
-        "output_choices": None,
+        "output_bool": None,
+        "output_float": None,
+        "output_str_list": None,
     }
 
 
 def test_empty_axes_returns_fresh_dict_each_call():
     a = empty_axes()
-    a["output_score"] = 1.0
-    assert empty_axes()["output_score"] is None
+    a["output_float"] = 1.0
+    assert empty_axes()["output_float"] is None
 
 
 # eval_config_output
@@ -78,44 +78,44 @@ def test_eval_config_multi_choice_defaults_when_no_template():
 def test_resolve_axes_pass_fail_routes_to_output_pass_only():
     axes = resolve_eval_axes("Passed", "Pass/Fail")
     assert axes == {
-        "output_pass": True,
-        "output_score": None,
-        "output_choices": None,
+        "output_bool": True,
+        "output_float": None,
+        "output_str_list": None,
     }
 
 
 def test_resolve_axes_score_plain_float():
     axes = resolve_eval_axes(0.7, "score")
-    assert axes["output_score"] == pytest.approx(0.7)
-    assert axes["output_pass"] is None
-    assert axes["output_choices"] is None
+    assert axes["output_float"] == pytest.approx(0.7)
+    assert axes["output_bool"] is None
+    assert axes["output_str_list"] is None
 
 
 def test_resolve_axes_numeric_routes_to_output_score():
     axes = resolve_eval_axes(0.42, "numeric")
-    assert axes["output_score"] == pytest.approx(0.42)
-    assert axes["output_choices"] is None
+    assert axes["output_float"] == pytest.approx(0.42)
+    assert axes["output_str_list"] is None
 
 
 def test_resolve_axes_choices_single_plain_string_lands_as_one_element_list():
     axes = resolve_eval_axes("always", "choices", multi_choice=False)
-    assert axes["output_choices"] == ["always"]
-    assert axes["output_score"] is None
-    assert axes["output_pass"] is None
+    assert axes["output_str_list"] == ["always"]
+    assert axes["output_float"] is None
+    assert axes["output_bool"] is None
 
 
 def test_resolve_axes_choices_single_dict_lands_as_one_element_list():
     axes = resolve_eval_axes(
         {"score": 1.0, "choice": "always"}, "choices", multi_choice=False
     )
-    assert axes["output_choices"] == ["always"]
-    assert axes["output_score"] == pytest.approx(1.0)
+    assert axes["output_str_list"] == ["always"]
+    assert axes["output_float"] == pytest.approx(1.0)
 
 
 def test_resolve_axes_choices_multi_plain_list():
     axes = resolve_eval_axes(["A", "B"], "choices", multi_choice=True)
-    assert axes["output_choices"] == ["A", "B"]
-    assert axes["output_score"] is None
+    assert axes["output_str_list"] == ["A", "B"]
+    assert axes["output_float"] is None
 
 
 def test_resolve_axes_choices_multi_dict():
@@ -124,53 +124,53 @@ def test_resolve_axes_choices_multi_dict():
         "choices",
         multi_choice=True,
     )
-    assert axes["output_choices"] == ["polite", "concise"]
-    assert axes["output_score"] == pytest.approx(0.5)
+    assert axes["output_str_list"] == ["polite", "concise"]
+    assert axes["output_float"] == pytest.approx(0.5)
 
 
 def test_resolve_axes_legacy_single_choice_as_one_element_list():
     axes = resolve_eval_axes(["frequently"], "choices", multi_choice=False)
-    assert axes["output_choices"] == ["frequently"]
+    assert axes["output_str_list"] == ["frequently"]
 
 
 def test_resolve_axes_one_element_list_multi_choice_true():
     axes = resolve_eval_axes(["frequently"], "choices", multi_choice=True)
-    assert axes["output_choices"] == ["frequently"]
+    assert axes["output_str_list"] == ["frequently"]
 
 
 # resolve_eval_axes: permissive secondary axis
 
 def test_resolve_axes_permissive_score_config_dict_populates_both_axes():
     axes = resolve_eval_axes({"score": 0.7, "choice": "always"}, "score")
-    assert axes["output_score"] == pytest.approx(0.7)
-    assert axes["output_choices"] == ["always"]
-    assert axes["output_pass"] is None
+    assert axes["output_float"] == pytest.approx(0.7)
+    assert axes["output_str_list"] == ["always"]
+    assert axes["output_bool"] is None
 
 
 def test_resolve_axes_permissive_score_config_dict_with_choices_list():
     axes = resolve_eval_axes(
         {"score": 0.7, "choices": ["a", "b"]}, "score"
     )
-    assert axes["output_score"] == pytest.approx(0.7)
-    assert axes["output_choices"] == ["a", "b"]
+    assert axes["output_float"] == pytest.approx(0.7)
+    assert axes["output_str_list"] == ["a", "b"]
 
 
 def test_resolve_axes_plain_score_does_not_invent_choice():
     axes = resolve_eval_axes(0.42, "score")
-    assert axes["output_score"] == pytest.approx(0.42)
-    assert axes["output_choices"] is None
+    assert axes["output_float"] == pytest.approx(0.42)
+    assert axes["output_str_list"] is None
 
 
 def test_resolve_axes_plain_choice_does_not_invent_score():
     axes = resolve_eval_axes("always", "choices", multi_choice=False)
-    assert axes["output_choices"] == ["always"]
-    assert axes["output_score"] is None
+    assert axes["output_str_list"] == ["always"]
+    assert axes["output_float"] is None
 
 
 def test_resolve_axes_score_config_dict_with_only_choice():
     axes = resolve_eval_axes({"choice": "always"}, "score")
-    assert axes["output_score"] is None
-    assert axes["output_choices"] == ["always"]
+    assert axes["output_float"] is None
+    assert axes["output_str_list"] == ["always"]
 
 
 # resolve_eval_axes: edge cases
@@ -181,9 +181,9 @@ def test_resolve_axes_reason_yields_all_none():
 
 def test_resolve_axes_pass_fail_does_not_bleed_score_or_choice():
     axes = resolve_eval_axes({"score": 0.7, "choice": "x"}, "Pass/Fail")
-    assert axes["output_pass"] is None
-    assert axes["output_score"] is None
-    assert axes["output_choices"] is None
+    assert axes["output_bool"] is None
+    assert axes["output_float"] is None
+    assert axes["output_str_list"] is None
 
 
 def test_resolve_axes_none_value_yields_all_none():
@@ -199,8 +199,8 @@ def test_resolve_axes_empty_dict_value():
 
 def test_resolve_axes_score_zero_distinguishable_from_none():
     axes = resolve_eval_axes(0.0, "score")
-    assert axes["output_score"] == 0.0
-    assert axes["output_score"] is not None
+    assert axes["output_float"] == 0.0
+    assert axes["output_float"] is not None
 
 
 def test_resolve_axes_idempotent():
@@ -219,9 +219,9 @@ def test_payload_success_score():
         output_type="score",
     )
     assert payload["output"] == 0.75
-    assert payload["output_score"] == pytest.approx(0.75)
-    assert payload["output_pass"] is None
-    assert payload["output_choices"] is None
+    assert payload["output_float"] == pytest.approx(0.75)
+    assert payload["output_bool"] is None
+    assert payload["output_str_list"] is None
     assert payload["reason"] == "ok"
     assert payload["name"] == "eval-a"
     assert payload["output_type"] == "score"
@@ -237,9 +237,9 @@ def test_payload_success_pass_fail():
         name="eval-b",
         output_type="Pass/Fail",
     )
-    assert payload["output_pass"] is True
-    assert payload["output_score"] is None
-    assert payload["output_choices"] is None
+    assert payload["output_bool"] is True
+    assert payload["output_float"] is None
+    assert payload["output_str_list"] is None
     assert payload["output"] == "Passed"
 
 
@@ -251,8 +251,8 @@ def test_payload_success_choices_single_dict():
         name="eval-c",
         output_type="choices",
     )
-    assert payload["output_choices"] == ["always"]
-    assert payload["output_score"] == pytest.approx(1.0)
+    assert payload["output_str_list"] == ["always"]
+    assert payload["output_float"] == pytest.approx(1.0)
     assert payload["output"] == {"score": 1.0, "choice": "always"}
 
 
@@ -264,8 +264,8 @@ def test_payload_success_choices_multi_dict():
         name="eval-d",
         output_type="choices",
     )
-    assert payload["output_choices"] == ["polite", "concise"]
-    assert payload["output_score"] == pytest.approx(0.5)
+    assert payload["output_str_list"] == ["polite", "concise"]
+    assert payload["output_float"] == pytest.approx(0.5)
 
 
 def test_payload_error_path_all_axes_none():

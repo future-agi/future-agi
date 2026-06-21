@@ -8335,7 +8335,7 @@ export interface DatasetCellValueApi {
   cell_value?: DatasetCellValueApiCellValue;
   status?: string;
   /** Per-cell metadata. For eval cells, the dict includes the canonical axis keys: output_pass (bool|null), output_score (float|null), output_choices (list[str]|null). Non-eval cell types carry cell-type-specific keys instead. */
-  value_infos?: DatasetCellValueApiValueInfos;
+  readonly value_infos?: DatasetCellValueApiValueInfos;
   feedback_info?: DatasetCellValueApiFeedbackInfo;
 }
 

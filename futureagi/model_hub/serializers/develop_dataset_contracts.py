@@ -1,3 +1,6 @@
+import json
+
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from model_hub.serializers.contracts import DerivedVariableDetailSerializer
@@ -157,12 +160,17 @@ class DatasetColumnsMutationResponseSerializer(serializers.Serializer):
     result = DatasetColumnsMutationResultSerializer()
 
 
+_AXIS_STORAGE_TO_API = (
+    ("output_bool", "output_pass"),
+    ("output_float", "output_score"),
+    ("output_str_list", "output_choices"),
+)
+
+
 class DatasetCellValueSerializer(serializers.Serializer):
     cell_value = serializers.JSONField(allow_null=True, required=False)
     status = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    value_infos = serializers.JSONField(
-        required=False,
-        allow_null=True,
+    value_infos = serializers.SerializerMethodField(
         help_text=(
             "Per-cell metadata. For eval cells, the dict includes the canonical "
             "axis keys: output_pass (bool|null), output_score (float|null), "
@@ -171,6 +179,24 @@ class DatasetCellValueSerializer(serializers.Serializer):
         ),
     )
     feedback_info = serializers.JSONField(required=False, allow_null=True)
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.JSONField(allow_null=True)
+    )
+    def get_value_infos(self, obj):
+        raw = obj.get("value_infos") if isinstance(obj, dict) else getattr(obj, "value_infos", None)
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (TypeError, ValueError):
+                return raw
+        if not isinstance(raw, dict):
+            return raw
+        out = dict(raw)
+        for storage_key, api_key in _AXIS_STORAGE_TO_API:
+            if storage_key in out:
+                out[api_key] = out.pop(storage_key)
+        return out
 
 
 class DatasetCellDataResponseSerializer(serializers.Serializer):

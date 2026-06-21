@@ -5,16 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 AXIS_KEYS: tuple[str, ...] = (
-    "output_pass",
-    "output_score",
-    "output_choices",
+    "output_bool",
+    "output_float",
+    "output_str_list",
 )
-
-_TRACER_TO_AXIS = {
-    "output_bool": "output_pass",
-    "output_float": "output_score",
-    "output_str_list": "output_choices",
-}
 
 
 def empty_axes() -> dict[str, None]:
@@ -49,9 +43,9 @@ def resolve_eval_axes(
     _dual_write_eval_value(
         value, config_output, projected, permissive_secondary_axis=True
     )
-    for tracer_key, axis_key in _TRACER_TO_AXIS.items():
-        if tracer_key in projected:
-            axes[axis_key] = projected[tracer_key]
+    for key in AXIS_KEYS:
+        if key in projected:
+            axes[key] = projected[key]
     return axes
 
 

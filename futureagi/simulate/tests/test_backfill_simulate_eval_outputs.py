@@ -95,9 +95,9 @@ def test_old_score_plain_float_lands_on_output_score(
     _run()
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
-    assert entry["output_score"] == pytest.approx(0.75)
-    assert entry["output_pass"] is None
-    assert entry["output_choices"] is None
+    assert entry["output_float"] == pytest.approx(0.75)
+    assert entry["output_bool"] is None
+    assert entry["output_str_list"] is None
 
 
 def test_old_pass_fail_string_lands_on_output_pass(
@@ -119,8 +119,8 @@ def test_old_pass_fail_string_lands_on_output_pass(
     _run()
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
-    assert entry["output_pass"] is True
-    assert entry["output_score"] is None
+    assert entry["output_bool"] is True
+    assert entry["output_float"] is None
 
 
 def test_old_choices_single_plain_string_lands_on_output_choice(
@@ -142,8 +142,8 @@ def test_old_choices_single_plain_string_lands_on_output_choice(
     _run()
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
-    assert entry["output_choices"] == ["always"]
-    assert entry["output_score"] is None
+    assert entry["output_str_list"] == ["always"]
+    assert entry["output_float"] is None
 
 
 def test_old_choices_multi_plain_list_lands_on_output_choices(
@@ -165,7 +165,7 @@ def test_old_choices_multi_plain_list_lands_on_output_choices(
     _run()
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
-    assert entry["output_choices"] == ["polite", "concise"]
+    assert entry["output_str_list"] == ["polite", "concise"]
 
 
 # ── post-choice_scores shapes (new dict format) ──────────────────────────
@@ -190,8 +190,8 @@ def test_score_dict_with_choice_scores_extracts_score(
     _run()
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
-    assert entry["output_score"] == pytest.approx(0.66)
-    assert entry["output_choices"] == ["frequently"]
+    assert entry["output_float"] == pytest.approx(0.66)
+    assert entry["output_str_list"] == ["frequently"]
 
 
 def test_choices_single_dict_with_choice_scores_extracts_choice(
@@ -213,8 +213,8 @@ def test_choices_single_dict_with_choice_scores_extracts_choice(
     _run()
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
-    assert entry["output_choices"] == ["always"]
-    assert entry["output_score"] == pytest.approx(1.0)
+    assert entry["output_str_list"] == ["always"]
+    assert entry["output_float"] == pytest.approx(1.0)
 
 
 def test_choices_multi_dict_with_choice_scores_extracts_choices(
@@ -236,8 +236,8 @@ def test_choices_multi_dict_with_choice_scores_extracts_choices(
     _run()
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
-    assert entry["output_choices"] == ["polite", "concise"]
-    assert entry["output_score"] == pytest.approx(0.5)
+    assert entry["output_str_list"] == ["polite", "concise"]
+    assert entry["output_float"] == pytest.approx(0.5)
 
 
 # ── operational safety ──────────────────────────────────────────────────
@@ -259,7 +259,7 @@ def test_dry_run_writes_nothing(db, organization, run_test, test_execution):
     )
     _run(dry_run=True)
     call.refresh_from_db()
-    assert "output_score" not in call.eval_outputs[str(cfg.id)]
+    assert "output_float" not in call.eval_outputs[str(cfg.id)]
 
 
 def test_rerun_is_idempotent(db, organization, run_test, test_execution):
@@ -291,9 +291,9 @@ def test_entries_already_canonical_are_skipped(
         {
             str(cfg.id): {
                 "output": 0.5,
-                "output_pass": None,
-                "output_score": 999.0,
-                "output_choices": None,
+                "output_bool": None,
+                "output_float": 999.0,
+                "output_str_list": None,
                 "reason": "",
                 "output_type": "score",
                 "name": "already cfg",
@@ -302,7 +302,7 @@ def test_entries_already_canonical_are_skipped(
     )
     _run()
     call.refresh_from_db()
-    assert call.eval_outputs[str(cfg.id)]["output_score"] == 999.0
+    assert call.eval_outputs[str(cfg.id)]["output_float"] == 999.0
 
 
 def test_pending_placeholder_gets_all_none_axes(
@@ -317,9 +317,9 @@ def test_pending_placeholder_gets_all_none_axes(
     _run()
     call.refresh_from_db()
     entry = call.eval_outputs[str(cfg.id)]
-    assert entry["output_pass"] is None
-    assert entry["output_score"] is None
-    assert entry["output_choices"] is None
+    assert entry["output_bool"] is None
+    assert entry["output_float"] is None
+    assert entry["output_str_list"] is None
     assert entry["status"] == "pending"
 
 
@@ -348,5 +348,5 @@ def test_eval_config_id_flag_scopes_to_one_entry(
     )
     _run(eval_config_id=str(cfg_a.id))
     call.refresh_from_db()
-    assert "output_score" in call.eval_outputs[str(cfg_a.id)]
-    assert "output_score" not in call.eval_outputs[str(cfg_b.id)]
+    assert "output_float" in call.eval_outputs[str(cfg_a.id)]
+    assert "output_float" not in call.eval_outputs[str(cfg_b.id)]

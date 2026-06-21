@@ -78505,6 +78505,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Value infos",
           "description": "Per-cell metadata. For eval cells, the dict includes the canonical axis keys: output_pass (bool|null), output_score (float|null), output_choices (list[str]|null). Non-eval cell types carry cell-type-specific keys instead.",
           "type": "object",
+          "readOnly": true,
           "x-nullable": true
         },
         "feedback_info": {
