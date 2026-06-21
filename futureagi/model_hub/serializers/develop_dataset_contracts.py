@@ -3,6 +3,7 @@ import json
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
+from evaluations.engine.normalize import AXIS_STORAGE_TO_API
 from model_hub.serializers.contracts import DerivedVariableDetailSerializer
 from model_hub.serializers.develop_dataset import ColumnSerializer, DatasetSerializer
 
@@ -160,13 +161,6 @@ class DatasetColumnsMutationResponseSerializer(serializers.Serializer):
     result = DatasetColumnsMutationResultSerializer()
 
 
-_AXIS_STORAGE_TO_API = (
-    ("output_bool", "output_pass"),
-    ("output_float", "output_score"),
-    ("output_str_list", "output_choices"),
-)
-
-
 class DatasetCellValueSerializer(serializers.Serializer):
     cell_value = serializers.JSONField(allow_null=True, required=False)
     status = serializers.CharField(required=False, allow_blank=True, allow_null=True)
@@ -193,7 +187,7 @@ class DatasetCellValueSerializer(serializers.Serializer):
         if not isinstance(raw, dict):
             return raw
         out = dict(raw)
-        for storage_key, api_key in _AXIS_STORAGE_TO_API:
+        for storage_key, api_key in AXIS_STORAGE_TO_API:
             if storage_key in out:
                 out[api_key] = out.pop(storage_key)
         return out

@@ -4,6 +4,7 @@ from typing import Any
 
 import structlog
 
+from evaluations.engine.normalize import project_eval_value
 from model_hub.models.evals_metric import EvalTemplate
 
 logger = structlog.get_logger(__name__)
@@ -32,15 +33,9 @@ def stamp_evaluation_axes(evaluation: Any) -> None:
             template_lookup_failed=template_lookup_failed,
         )
 
-    from tracer.utils.eval import _dual_write_eval_value
-
-    projected: dict[str, Any] = {}
     try:
-        _dual_write_eval_value(
-            evaluation.value,
-            config_output,
-            projected,
-            permissive_secondary_axis=True,
+        projected = project_eval_value(
+            evaluation.value, config_output, include_output_str=True
         )
     except Exception:
         logger.warning(

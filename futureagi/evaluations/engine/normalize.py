@@ -1,13 +1,20 @@
-"""Per-axis projection of simulate eval-row payloads."""
+"""Per-axis projection helpers for eval-row payloads."""
 
 from __future__ import annotations
 
+import ast
 from typing import Any
 
 AXIS_KEYS: tuple[str, ...] = (
     "output_bool",
     "output_float",
     "output_str_list",
+)
+
+AXIS_STORAGE_TO_API: tuple[tuple[str, str], ...] = (
+    ("output_bool", "output_pass"),
+    ("output_float", "output_score"),
+    ("output_str_list", "output_choices"),
 )
 
 
@@ -30,51 +37,50 @@ def eval_config_multi_choice(custom_eval_config: Any) -> bool:
         return False
 
 
-def resolve_eval_axes(
-    value: Any, config_output: str, multi_choice: bool = False
+def project_eval_value(
+    value: Any, config_output: str, *, include_output_str: bool = False
 ) -> dict[str, Any]:
-    """Project ``value`` into the 3 axis keys via tracer's _dual_write_eval_value."""
-    axes: dict[str, Any] = empty_axes()
+    """Project ``value`` to typed columns via tracer's ``_dual_write_eval_value``.
+
+    Returns only the keys populated by the helper. ``include_output_str=False``
+    (the default) drops ``output_str`` so callers writing to surfaces that
+    don't carry that column don't need to filter it out themselves.
+    """
     if value is None:
-        return axes
+        return {}
     from tracer.utils.eval import _dual_write_eval_value
 
     projected: dict[str, Any] = {}
     _dual_write_eval_value(
         value, config_output, projected, permissive_secondary_axis=True
     )
+    if not include_output_str:
+        projected.pop("output_str", None)
+    return projected
+
+
+def resolve_eval_axes(
+    value: Any, config_output: str, multi_choice: bool = False
+) -> dict[str, Any]:
+    """Project ``value`` into the 3 axis keys; missing axes default to None."""
+    projected = project_eval_value(value, config_output)
+    axes = empty_axes()
     for key in AXIS_KEYS:
         if key in projected:
             axes[key] = projected[key]
     return axes
 
 
-def build_simulate_eval_payload(
-    *,
-    value: Any,
-    config_output: str,
-    multi_choice: bool = False,
-    reason: str = "",
-    name: str = "",
-    output_type: str | None = None,
-    error: Any = None,
-    status: str | None = None,
-    skipped: bool = False,
-    timestamp: str | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "output": value,
-        **resolve_eval_axes(value, config_output, multi_choice),
-        "reason": reason,
-        "output_type": output_type,
-        "name": name,
-    }
-    if error is not None:
-        payload["error"] = error
-    if status is not None:
-        payload["status"] = status
-    if skipped:
-        payload["skipped"] = True
-    if timestamp is not None:
-        payload["timestamp"] = timestamp
-    return payload
+def project_storage_axes_to_api(eval_data: dict) -> dict[str, Any]:
+    """Read storage-axis keys off ``eval_data``, return API-named dict."""
+    return {api: eval_data.get(storage) for storage, api in AXIS_STORAGE_TO_API}
+
+
+def parse_legacy_value(raw: Any) -> Any:
+    """Decode legacy string-encoded eval values; pass non-strings through."""
+    if raw is None or not isinstance(raw, str):
+        return raw
+    try:
+        return ast.literal_eval(raw)
+    except (ValueError, SyntaxError, RecursionError, MemoryError, TypeError):
+        return raw

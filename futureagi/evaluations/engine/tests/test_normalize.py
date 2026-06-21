@@ -8,12 +8,12 @@ import pytest
 
 from evaluations.engine.normalize import (
     AXIS_KEYS,
-    build_simulate_eval_payload,
     empty_axes,
     eval_config_multi_choice,
     eval_config_output,
     resolve_eval_axes,
 )
+from simulate.utils.processing_outcomes import build_simulate_eval_payload
 
 
 def _custom_eval_config(*, stored_output=None, multi_choice=None):

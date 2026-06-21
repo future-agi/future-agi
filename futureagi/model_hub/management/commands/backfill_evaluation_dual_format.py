@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import json
 from datetime import datetime
 from typing import Any
@@ -12,19 +11,10 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
+from evaluations.engine.normalize import parse_legacy_value, project_eval_value
 from model_hub.models.evaluation import Evaluation
-from tracer.utils.eval import _dual_write_eval_value
 
 logger = structlog.get_logger(__name__)
-
-
-def _parse_value(raw: Any) -> Any:
-    if raw is None or not isinstance(raw, str):
-        return raw
-    try:
-        return ast.literal_eval(raw)
-    except (ValueError, SyntaxError, RecursionError, MemoryError, TypeError):
-        return raw
 
 
 class Command(BaseCommand):
@@ -94,13 +84,9 @@ class Command(BaseCommand):
             config_output = template_config.get("output") or ev.output_type or "score"
             multi_choice = bool(tpl.multi_choice) if tpl else False
 
-            parsed_value = _parse_value(ev.value)
-            projected: dict[str, Any] = {}
-            _dual_write_eval_value(
-                parsed_value,
-                config_output,
-                projected,
-                permissive_secondary_axis=True,
+            parsed_value = parse_legacy_value(ev.value)
+            projected = project_eval_value(
+                parsed_value, config_output, include_output_str=True
             )
 
             before = {

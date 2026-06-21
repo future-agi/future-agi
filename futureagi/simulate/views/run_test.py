@@ -22,7 +22,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from evaluations.engine.normalize import empty_axes
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import EvalTemplate
@@ -149,6 +148,7 @@ from simulate.utils.eval_summary import (
     _get_completed_call_executions,
     _get_eval_configs_with_template,
 )
+from simulate.utils.processing_outcomes import pending_eval_entry
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.utils.sql_query import (
     get_combined_call_executions_and_snapshots_count_query,
@@ -183,6 +183,21 @@ from tracer.services.clickhouse.span_attribute_lookups import (
 
 logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
+
+
+def _eval_column_entry(eval_config) -> dict:
+    """Default ``column_order`` entry for one eval_config."""
+    template_config = dict(eval_config.eval_template.config or {})
+    template_config["output_type"] = template_config.get("output")
+    template_config["multi_choice"] = bool(eval_config.eval_template.multi_choice)
+    template_config["pass_threshold"] = eval_config.eval_template.pass_threshold
+    return {
+        "column_name": eval_config.name,
+        "id": str(eval_config.id),
+        "eval_config": template_config,
+        "visible": True,
+        "type": "evaluation",
+    }
 
 
 def _empty_call_log_summary(reason: str) -> dict:
@@ -2203,23 +2218,7 @@ class TestExecutionDetailView(APIView):
 
                 # Add evaluation metrics columns
                 for eval_config in eval_configs:
-                    template_config = dict(eval_config.eval_template.config or {})
-                    template_config["output_type"] = template_config.get("output")
-                    template_config["multi_choice"] = bool(
-                        eval_config.eval_template.multi_choice
-                    )
-                    template_config["pass_threshold"] = (
-                        eval_config.eval_template.pass_threshold
-                    )
-                    default_columns.append(
-                        {
-                            "column_name": eval_config.name,
-                            "id": str(eval_config.id),
-                            "eval_config": template_config,
-                            "visible": True,
-                            "type": "evaluation",
-                        }
-                    )
+                    default_columns.append(_eval_column_entry(eval_config))
 
                 # Save the default column order
                 test_execution.execution_metadata["column_order"] = default_columns
@@ -4833,10 +4832,9 @@ class UpdateEvalConfigView(APIView):
                         call_execution.eval_outputs = {}
 
                     # Set placeholder values for the eval config that will be rerun
-                    call_execution.eval_outputs[str(eval_config.id)] = {
-                        "status": "pending",
-                        **empty_axes(),
-                    }
+                    call_execution.eval_outputs[str(eval_config.id)] = (
+                        pending_eval_entry()
+                    )
 
                     call_executions_list.append(call_execution)
 
@@ -7082,23 +7080,6 @@ class RunNewEvalsOnTestExecutionView(APIView):
             # Precompute the eval-config columns once; they are identical
             # for every test_execution so recomputing inside the loop is
             # pure overhead.
-            def _eval_column_entry(eval_config):
-                template_config = dict(eval_config.eval_template.config or {})
-                template_config["output_type"] = template_config.get("output")
-                template_config["multi_choice"] = bool(
-                    eval_config.eval_template.multi_choice
-                )
-                template_config["pass_threshold"] = (
-                    eval_config.eval_template.pass_threshold
-                )
-                return {
-                    "column_name": eval_config.name,
-                    "id": str(eval_config.id),
-                    "eval_config": template_config,
-                    "visible": True,
-                    "type": "evaluation",
-                }
-
             eval_column_entries = [
                 _eval_column_entry(eval_config) for eval_config in eval_configs
             ]
@@ -7203,10 +7184,9 @@ class RunNewEvalsOnTestExecutionView(APIView):
 
                 # Set placeholder values for each eval config that will be run
                 for eval_config in eval_configs:
-                    call_execution.eval_outputs[str(eval_config.id)] = {
-                        "status": "pending",
-                        **empty_axes(),
-                    }
+                    call_execution.eval_outputs[str(eval_config.id)] = (
+                        pending_eval_entry()
+                    )
 
                 call_executions_list.append(call_execution)
 

@@ -57,14 +57,13 @@ class RunNewEvalsOnSimulationTool(BaseTool):
     ) -> ToolResult:
         import structlog
         from simulate.models.call_execution import CallExecution
-        from simulate.models.simulate_eval_config import SimulateEvalConfig
-
-        from evaluations.engine.normalize import empty_axes
         from simulate.models.run_test import RunTest
+        from simulate.models.simulate_eval_config import SimulateEvalConfig
         from simulate.models.test_execution import TestExecution
         from simulate.services.test_executor import (
             run_new_evals_on_call_executions_task,
         )
+        from simulate.utils.processing_outcomes import pending_eval_entry
 
         logger = structlog.get_logger(__name__)
 
@@ -194,10 +193,7 @@ class RunNewEvalsOnSimulationTool(BaseTool):
                 call_execution.eval_outputs = {}
 
             for eval_config in eval_configs:
-                call_execution.eval_outputs[str(eval_config.id)] = {
-                    "status": "pending",
-                    **empty_axes(),
-                }
+                call_execution.eval_outputs[str(eval_config.id)] = pending_eval_entry()
 
             call_executions_list.append(call_execution)
 

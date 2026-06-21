@@ -7,6 +7,7 @@ from django.db.models import Count, Q
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
+from evaluations.engine.normalize import project_storage_axes_to_api
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.services.error_localizer_service import error_localizer_enabled
 from simulate.models import (
@@ -756,9 +757,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
-                    "output_pass": eval_data.get("output_bool"),
-                    "output_score": eval_data.get("output_float"),
-                    "output_choices": eval_data.get("output_str_list"),
+                    **project_storage_axes_to_api(eval_data),
                 }
 
         return structured_outputs
@@ -825,9 +824,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
                     "error_localizer": error_localizer_enabled(eval_config),
-                    "output_pass": eval_data.get("output_bool"),
-                    "output_score": eval_data.get("output_float"),
-                    "output_choices": eval_data.get("output_str_list"),
+                    **project_storage_axes_to_api(eval_data),
                 }
 
         call_execution_id = getattr(obj, "id", None)

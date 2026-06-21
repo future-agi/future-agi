@@ -204,6 +204,212 @@ def test_call_execution_serializer_exposes_raw_simulation_metrics(call_execution
     assert data["customer_cost_cents"] == 123
 
 
+# ============================================================================
+# CallExecutionDetailSerializer — storage->API axis-key boundary rename
+# Storage: output_bool / output_float / output_str_list (matches tracer).
+# API:     output_pass / output_score / output_choices (FE-facing).
+# ============================================================================
+
+
+def _outputs(eval_outputs):
+    from types import SimpleNamespace
+
+    return CallExecutionDetailSerializer().get_eval_outputs(
+        SimpleNamespace(eval_outputs=eval_outputs)
+    )
+
+
+def _metrics(eval_outputs):
+    from types import SimpleNamespace
+
+    return CallExecutionDetailSerializer().get_eval_metrics(
+        SimpleNamespace(eval_outputs=eval_outputs, id=None)
+    )
+
+
+def test_outputs_renames_output_bool_to_output_pass():
+    out = _outputs({"e1": {"output_bool": True, "output": "Passed", "name": "n"}})
+    assert out["e1"]["output_pass"] is True
+    assert "output_bool" not in out["e1"]
+
+
+def test_outputs_renames_output_float_to_output_score():
+    out = _outputs({"e1": {"output_float": 0.75, "output": 0.75, "name": "n"}})
+    assert out["e1"]["output_score"] == pytest.approx(0.75)
+    assert "output_float" not in out["e1"]
+
+
+def test_outputs_renames_output_str_list_to_output_choices():
+    out = _outputs(
+        {"e1": {"output_str_list": ["polite", "concise"], "output": "x", "name": "n"}}
+    )
+    assert out["e1"]["output_choices"] == ["polite", "concise"]
+    assert "output_str_list" not in out["e1"]
+
+
+def test_outputs_carries_all_three_axes_for_choice_scores_dict():
+    out = _outputs(
+        {
+            "e1": {
+                "output_bool": None,
+                "output_float": 1.0,
+                "output_str_list": ["Good"],
+                "output": {"score": 1.0, "choice": "Good"},
+                "name": "cs-template",
+            }
+        }
+    )
+    assert out["e1"]["output_pass"] is None
+    assert out["e1"]["output_score"] == pytest.approx(1.0)
+    assert out["e1"]["output_choices"] == ["Good"]
+
+
+def test_outputs_missing_axis_keys_default_to_none():
+    out = _outputs({"e1": {"output": "free text", "name": "reason-only"}})
+    assert out["e1"]["output_pass"] is None
+    assert out["e1"]["output_score"] is None
+    assert out["e1"]["output_choices"] is None
+
+
+def test_outputs_pending_status_emits_canonical_none_payload():
+    out = _outputs({"e1": {"status": "pending"}})
+    assert out["e1"] == {
+        "output_pass": None,
+        "output_score": None,
+        "output_choices": None,
+        "status": "pending",
+    }
+
+
+def test_outputs_empty_dict_short_circuits():
+    assert _outputs({}) == {}
+
+
+def test_outputs_none_eval_outputs_returns_empty_dict():
+    assert _outputs(None) == {}
+
+
+def test_outputs_grouped_obj_with_count_returns_empty():
+    serializer = CallExecutionDetailSerializer()
+    assert serializer.get_eval_outputs({"eval_outputs": {"e1": {}}, "count": 3}) == {}
+
+
+def test_outputs_preserves_value_reason_name_type_status_skipped():
+    out = _outputs(
+        {
+            "e1": {
+                "output_float": 0.5,
+                "output": 0.5,
+                "reason": "ok",
+                "name": "score-template",
+                "output_type": "score",
+                "status": "completed",
+            }
+        }
+    )
+    entry = out["e1"]
+    assert entry["reason"] == "ok"
+    assert entry["name"] == "score-template"
+    assert entry["type"] == "score"
+    assert entry["status"] == "completed"
+    assert entry["skipped"] is False
+    assert entry["error"] is False
+
+
+def test_metrics_renames_axes():
+    metrics = _metrics(
+        {
+            "e1": {
+                "output_bool": False,
+                "output_float": 0.0,
+                "output_str_list": ["x"],
+                "output": "x",
+                "name": "n",
+            }
+        }
+    )
+    assert metrics["e1"]["output_pass"] is False
+    assert metrics["e1"]["output_score"] == 0.0
+    assert metrics["e1"]["output_choices"] == ["x"]
+    for storage_key in ("output_bool", "output_float", "output_str_list"):
+        assert storage_key not in metrics["e1"]
+
+
+def test_metrics_pending_status_emits_empty_dict():
+    assert _metrics({"e1": {"status": "pending"}}) == {"e1": {}}
+
+
+def test_metrics_includes_id_and_default_visible():
+    metrics = _metrics({"e1": {"output_float": 0.5, "output": 0.5, "name": "n"}})
+    assert metrics["e1"]["id"] == "e1"
+    assert metrics["e1"]["visible"] is True
+
+
+def test_metrics_grouped_obj_with_count_returns_empty():
+    assert (
+        CallExecutionDetailSerializer().get_eval_metrics(
+            {"eval_outputs": {"e1": {}}, "count": 5}
+        )
+        == {}
+    )
+
+
+def test_metrics_error_localizer_defaults_false_without_config():
+    metrics = _metrics({"e1": {"output_float": 0.5, "output": 0.5, "name": "n"}})
+    assert metrics["e1"]["error_localizer"] is False
+
+
+@pytest.mark.parametrize(
+    "storage_key,api_key,value",
+    [
+        ("output_bool", "output_pass", True),
+        ("output_bool", "output_pass", False),
+        ("output_float", "output_score", 0.0),
+        ("output_float", "output_score", 1.0),
+        ("output_str_list", "output_choices", ["one"]),
+        ("output_str_list", "output_choices", ["a", "b"]),
+    ],
+)
+def test_outputs_rename_round_trip(storage_key, api_key, value):
+    eval_data = {storage_key: value, "output": value, "name": "n"}
+    out = _outputs({"e1": eval_data})
+    assert out["e1"][api_key] == value
+    assert storage_key not in out["e1"]
+
+
+# ============================================================================
+# xl.py source-level guard: every eval_outputs write must route through the
+# canonical builder. Cheap regex over the module text; no DB required.
+# ============================================================================
+
+
+def test_every_eval_outputs_write_in_xl_uses_canonical_builder():
+    import re
+    from pathlib import Path
+
+    xl_py = (
+        Path(__file__).resolve().parents[1] / "temporal" / "activities" / "xl.py"
+    ).read_text()
+    lines = xl_py.splitlines()
+    offending = []
+    found = 0
+    for idx, line in enumerate(lines):
+        if not re.search(r"call_execution\.eval_outputs\[[^\]]+\]\s*=", line):
+            continue
+        found += 1
+        window = "\n".join(lines[idx : idx + 6])
+        if "build_simulate_eval_payload(" not in window:
+            offending.append(f"line {idx + 1}: {line.strip()}")
+    assert found, (
+        "No eval_outputs writes found in xl.py. Either the writer sites moved "
+        "or the locator regex needs an update."
+    )
+    assert not offending, (
+        "eval_outputs assignments not going through build_simulate_eval_payload:\n  "
+        + "\n  ".join(offending)
+    )
+
+
 def _fake_log_payload(body, severity="INFO", category="llm", ts_ms=1_700_000_000_000):
     """Build a VAPI-shaped log payload dict."""
     return {

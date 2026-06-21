@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import json
 from datetime import datetime
 from typing import Any
@@ -12,21 +11,16 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
-from evaluations.engine.normalize import AXIS_KEYS, resolve_eval_axes
+from evaluations.engine.normalize import (
+    AXIS_KEYS,
+    parse_legacy_value,
+    resolve_eval_axes,
+)
 from model_hub.models.develop_dataset import Cell
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.selectors.evals import resolve_eval_template_for_column_source_id
 
 logger = structlog.get_logger(__name__)
-
-
-def _parse_value(raw: Any) -> Any:
-    if raw is None or not isinstance(raw, str):
-        return raw
-    try:
-        return ast.literal_eval(raw)
-    except (ValueError, SyntaxError, RecursionError, MemoryError, TypeError):
-        return raw
 
 
 class Command(BaseCommand):
@@ -132,7 +126,7 @@ class Command(BaseCommand):
             config_output = template_config.get("output") or "score"
             multi_choice = bool(tpl.multi_choice)
 
-            parsed_value = _parse_value(cell.value)
+            parsed_value = parse_legacy_value(cell.value)
             axes = resolve_eval_axes(parsed_value, config_output, multi_choice)
             before_axes = {k: infos.get(k) for k in AXIS_KEYS}
             for key, axis_value in axes.items():

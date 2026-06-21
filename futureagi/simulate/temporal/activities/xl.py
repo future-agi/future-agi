@@ -32,11 +32,11 @@ from django.utils import timezone
 from temporalio import activity
 
 from evaluations.engine.normalize import (
-    build_simulate_eval_payload,
     eval_config_multi_choice,
     eval_config_output,
 )
 from simulate.models.test_execution import CallExecution
+from simulate.utils.processing_outcomes import build_simulate_eval_payload
 from simulate.temporal.types.activities import (
     RunSimulateEvaluationsInput,
     RunSimulateEvaluationsOutput,
