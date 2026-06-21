@@ -17,8 +17,7 @@ from evaluations.engine.normalize import (
     resolve_eval_axes,
 )
 from model_hub.models.develop_dataset import Cell
-from model_hub.models.evals_metric import EvalTemplate
-from model_hub.selectors.evals import resolve_eval_template_for_column_source_id
+from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 
 logger = structlog.get_logger(__name__)
 
@@ -87,7 +86,15 @@ class Command(BaseCommand):
                 return None
             if source_id in template_cache:
                 return template_cache[source_id]
-            tpl = resolve_eval_template_for_column_source_id(source_id)
+            try:
+                tpl = (
+                    UserEvalMetric.objects.select_related("template")
+                    .only("template__id", "template__config", "template__multi_choice")
+                    .get(id=source_id)
+                    .template
+                )
+            except (UserEvalMetric.DoesNotExist, EvalTemplate.DoesNotExist, ValueError):
+                tpl = None
             template_cache[source_id] = tpl
             return tpl
 
