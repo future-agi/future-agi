@@ -152,15 +152,10 @@ class TracePreviewSerializer(serializers.Serializer):
 
 
 class RcaTrailStepSerializer(serializers.Serializer):
-    """One frame of the persisted ``rca_trace`` trail (a type-discriminated
-    union keyed on ``type``: reasoning / step_start / step_result / synthesis).
-
-    Producer is the cluster-RCA agent in the companion ee PR #114 (not in this
-    checkout); these fields are the FE-consumed contract (clusterAnalyzeSocket
-    buildMessagesFromFrames) — reconcile when ee#114 lands. ``args``/``result``
-    are open, tool-dependent maps with unknown keys (JSONField, not a nested
-    serializer); JSONField also tolerates either object or pre-stringified JSON
-    without crashing or reprs.
+    """One ``rca_trace`` frame — a union keyed on ``type`` (reasoning /
+    step_start / step_result / synthesis). Fields are the FE-consumed contract
+    (clusterAnalyzeSocket buildMessagesFromFrames). ``args``/``result`` are open
+    tool-dependent maps → JSONField, not a nested serializer.
     """
 
     type = serializers.CharField()
@@ -217,10 +212,9 @@ class KeyMomentSerializer(serializers.Serializer):
 
 
 class PatternInsightEvidenceSerializer(serializers.Serializer):
-    """Stat rigor for an insight's hover tooltip. Heterogeneous across the five
-    insight builders in queries/feed.py (topic/brief/judge log-odds, KS shift,
-    missing-tool) — every key any builder emits must be declared, else DRF drops
-    it on output. All optional; each insight populates only its relevant subset.
+    """Stat evidence for an insight tooltip. Union across the five insight
+    builders — every key any builder emits must be declared or DRF drops it.
+    All optional; each insight populates only its subset.
     """
 
     # strings

@@ -1,11 +1,8 @@
 """Pin the cluster-RCA span aliasing contract (no DB).
 
-The ee RCA agent (agenthub/cluster_rca/agent.py) consumes span dicts by key
-(``sp["span_id"]``, ``span["parent_span_id"]``, …). Two aliasing paths must
-produce the identical key set: ``_rows_to_dicts(_SPAN_COLS)`` for the raw-SQL
-aggregations, and ``_chspan_to_agent_dict(CHSpan)`` for the CHSpanReader-folded
-reads. If they drift, the agent silently loses a field — the exact failure mode
-this test guards (and the reason the #10 fold added a single key source).
+The agent reads span dicts by key, so the raw-SQL (``_rows_to_dicts``) and
+CHSpan-folded (``_chspan_to_agent_dict``) paths must emit the identical key set
+— drift = a silently-dropped field.
 """
 
 from datetime import datetime

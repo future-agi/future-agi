@@ -1020,31 +1020,19 @@ def _log_odds_distinctive(
     min_z: float = 1.96,
     top_k: int = 8,
 ) -> list[tuple[str, float, int, int]]:
-    """Monroe et al. "Fightin' Words" weighted log-odds-ratio z-score, with an
+    """Monroe et al. "Fightin' Words" weighted log-odds z-score with an
     informative Dirichlet prior, for n-grams distinctive to ``fail_docs`` vs
-    ``base_docs``. Returns ``(term, z, df_fail, df_base)`` tuples — where df_*
-    is the number of docs in each group containing the term, taken from the
-    SAME tokenization (callers must NOT re-match the n-gram against raw text;
-    the stopword-stripped n-gram won't appear verbatim there). z >= ``min_z``,
-    sorted by (z desc, longer-phrase-first).
+    ``base_docs``. Returns ``(term, z, df_fail, df_base)`` (z >= ``min_z``,
+    sorted by z desc then longer-phrase-first). df_* counts come from the SAME
+    tokenization — do NOT re-match the stripped n-gram against raw text.
 
-    The prior is the standard background-share allocation alpha_w = a0 * p_w,
-    where p_w is the term's frequency in the pooled (fail+base) corpus — our
-    empirical background — and a0 is the total prior mass / shrinkage strength.
-    We set a0 = |V| (~one pseudo-count per term): a light regularizer that
-    tames rare-term inflation on the small-N clusters we deal with without
-    swamping the signal. Larger a0 pulls every z toward the pooled baseline;
-    using the *raw* pooled count as the prior (a0 = corpus size — the heaviest
-    setting, which some reference impls default to) over-weights merely-
-    frequent terms, so the |V| scaling is what keeps distinctive phrases on
-    top. For term w::
+    Prior alpha_w = a0 * p_w (p_w = pooled frequency), with a0 = |V| — a light
+    one-pseudo-count-per-term regularizer that tames rare-term inflation on
+    small-N clusters without using the raw pooled count (which over-weights
+    merely-frequent terms). For term w::
 
         delta = log((y_f+a)/(n_f+a0-y_f-a)) - log((y_b+a)/(n_b+a0-y_b-a))
-        var   = 1/(y_f+a) + 1/(y_b+a)
-        z     = delta / sqrt(var)
-
-    where y_f/y_b = counts of w in fail/base, a = alpha_w, a0 = sum of alpha,
-    n_f/n_b = total counts in fail/base.
+        z     = delta / sqrt(1/(y_f+a) + 1/(y_b+a))
     """
     if not fail_docs or not base_docs:
         return []

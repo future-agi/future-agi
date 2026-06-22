@@ -1,14 +1,7 @@
-"""Pure-unit pins for the feed log-odds helper (``_log_odds_distinctive``).
+"""Pure-unit pins for ``_log_odds_distinctive`` (stateless, no DB).
 
-A stateless function with no DB access, so these need no fixtures or DB. Import
-works under pytest-django at collection time (settings are configured) but
-nothing here touches the ORM.
-
-NOT covered here (intentionally): the NULLS-LAST ordering hardening in
-``trace_judge`` / ``_trace_judges_batch`` / ``_session_judges_batch``. That is a
-behavioral guarantee over real ``EvalLogger`` rows (a null-score, explanation-
-only eval must not outrank a scored one), so it belongs in the DB-backed feed
-suite alongside the existing ``EvalLogger`` fixtures, not in this pure-unit file.
+The NULLS-LAST ordering fix in ``trace_judge``/``_*_judges_batch`` is a
+DB-backed guarantee over real ``EvalLogger`` rows, so it's tested there, not here.
 """
 
 from tracer.queries.feed import _log_odds_distinctive

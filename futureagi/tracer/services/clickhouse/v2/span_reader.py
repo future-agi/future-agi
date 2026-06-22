@@ -110,8 +110,8 @@ class CHSpan:
     semconv_source: str = ""
     is_deleted: int = 0
 
-    # Trace-level fields denormalized onto every span row. Lets a caller derive
-    # trace context (e.g. the cluster-RCA agent) without a separate PG read.
+    # Denormalized onto every span row so a caller gets trace context (e.g. the
+    # cluster-RCA agent) without a separate PG read.
     trace_name: str = ""
 
 
@@ -342,9 +342,7 @@ class CHSpanReader:
         """Equivalent to ObservationSpan.objects.get(id=span_id), returns None
         if absent (matches the pattern most callers wrap with try/except).
 
-        ``project_id`` (optional) scopes the read to one tenant — pass it from
-        multi-tenant call sites (e.g. the cluster-RCA agent); omit to keep the
-        prior unscoped behavior the eval runner relies on."""
+        ``project_id`` (optional) scopes to one tenant; omit for prior behavior."""
         where = ["id = %(span_id)s", "is_deleted = 0"]
         params: dict[str, Any] = {"span_id": span_id}
         if project_id:
@@ -458,9 +456,8 @@ class CHSpanReader:
         attributes_extra). input/output/attrs_string stay real. ``project_id``
         (optional) scopes the read to one tenant; omit for prior behavior.
 
-        NOTE: this is the *structural* root (parentless span). It is NOT the
-        same as the cluster-RCA agent's "representative trace" (earliest span's
-        I/O via argMin) — those are deliberately different reads.
+        NOTE: structural root (parentless span), NOT the cluster-RCA agent's
+        argMin "representative trace" — deliberately different reads.
         """
         if not trace_ids:
             return []

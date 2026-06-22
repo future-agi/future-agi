@@ -63,17 +63,15 @@ def _rows_to_dicts(rows: list, cols: tuple) -> list[dict[str, Any]]:
     return [dict(zip(keys, row, strict=False)) for row in rows]
 
 
-# The agent's dict shape (keys) — derived once from _SPAN_COLS so the two
-# aliasing paths (raw-SQL via _rows_to_dicts, and CHSpan via the helper below)
-# can't drift. test_cluster_rca_spans pins that they stay equal.
+# Agent dict keys, derived from _SPAN_COLS so the raw-SQL and CHSpan aliasing
+# paths can't drift (test_cluster_rca_spans pins the equality).
 _AGENT_SPAN_KEYS = tuple(c.split(" AS ")[-1].strip() for c in _SPAN_COLS)
 
 
 def _chspan_to_agent_dict(s: CHSpan) -> dict[str, Any]:
-    """Map a CHSpanReader ``CHSpan`` to the agent's column-aliased dict — the
-    exact shape ``_rows_to_dicts(_SPAN_COLS)`` produces (the contract the ee
-    RCA agent consumes). ``span_id`` aliases ``CHSpan.id``; start/end times are
-    stringified to match the prior ``toString(...)`` columns.
+    """Map a CHSpan to the agent's column-aliased dict (same keys as
+    ``_rows_to_dicts(_SPAN_COLS)``). ``span_id`` is ``CHSpan.id``; times are
+    stringified to match the prior ``toString(...)`` shape.
     """
     return {
         "span_id": str(s.id),
@@ -106,9 +104,8 @@ def _ids_list(trace_ids: Iterable[str]) -> list[str]:
 
 
 def _v2_client():
-    """A clickhouse_connect client on the v2 cluster — the SAME connection
-    CHSpanReader uses (``get_v2_config``), so the agent's reads stay on one CH
-    client + convention instead of a second (legacy ``ClickHouseClient``) one.
+    """A clickhouse_connect client on the v2 cluster (``get_v2_config``) — the
+    same one CHSpanReader uses, so the agent's reads stay on one CH client.
     """
     cfg = get_v2_config()
     return clickhouse_connect.get_client(
