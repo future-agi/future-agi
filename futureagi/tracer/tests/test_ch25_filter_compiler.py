@@ -50,6 +50,24 @@ class TestRewriteV1SqlToV2:
               "FROM spans WHERE is_deleted = 0")
         assert rewrite_v1_sql_to_v2(v1) == v2
 
+    # ─── Dictionary-name renames ─────────────────────────────────────────────
+    def test_legacy_enduser_dict_renamed(self):
+        # The legacy CDC dict (source `tracer_enduser`) → the v2 CH-native dict.
+        out = rewrite_v1_sql_to_v2(
+            "dictGetOrDefault('enduser_dict', 'user_id', any(end_user_id), '')"
+        )
+        assert "end_users_dict" in out
+        assert "'enduser_dict'" not in out
+
+    def test_enduser_dict_and_soft_delete_renamed_together(self):
+        v1 = (
+            "SELECT dictGetOrDefault('enduser_dict', 'user_id', any(end_user_id), '') "
+            "FROM spans WHERE _peerdb_is_deleted = 0"
+        )
+        out = rewrite_v1_sql_to_v2(v1)
+        assert "end_users_dict" in out and "'enduser_dict'" not in out
+        assert "is_deleted = 0" in out and "_peerdb_is_deleted" not in out
+
     # ─── Negative: don't rewrite substrings of unrelated identifiers ─────────
     def test_does_not_rewrite_substring_of_another_identifier(self):
         # `is_deleted_extra` should NOT be rewritten — only the

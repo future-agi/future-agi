@@ -11,6 +11,20 @@ is NOT modified — these coexist.
 
 from __future__ import annotations
 
+import math
+
+
+def _to_clamped_score(value) -> float:
+    if value is None:
+        return 0.0
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if math.isnan(score):
+        return 0.0
+    return max(0.0, min(1.0, score))
+
 
 def normalize_score(
     value,
@@ -18,7 +32,7 @@ def normalize_score(
     choice_scores: dict[str, float] | None = None,
 ) -> float:
     """
-    Normalize any eval output to a 0-1 float.
+    Normalize any eval output to a finite float in [0.0, 1.0].
 
     Args:
         value: The raw eval output (str, float, int, bool, list)
@@ -26,7 +40,7 @@ def normalize_score(
         choice_scores: Dict mapping choice labels to 0-1 scores
 
     Returns:
-        Normalized score as float in [0.0, 1.0]
+        Normalized score as float in [0.0, 1.0]; never NaN; never raises.
     """
     if value is None:
         return 0.0
@@ -40,29 +54,14 @@ def normalize_score(
             return 1.0 if value > 0 else 0.0
         return 0.0
 
-    if output_type == "percentage":
-        try:
-            score = float(value)
-            return max(0.0, min(1.0, score))
-        except (ValueError, TypeError):
-            return 0.0
-
     if output_type == "deterministic":
         if choice_scores and isinstance(value, str):
             return apply_choice_scores(value, choice_scores) or 0.0
         if choice_scores and isinstance(value, list) and len(value) > 0:
-            # For single-choice: use the first element
             return apply_choice_scores(str(value[0]), choice_scores) or 0.0
-        try:
-            return max(0.0, min(1.0, float(value)))
-        except (ValueError, TypeError):
-            return 0.0
+        return _to_clamped_score(value)
 
-    # Fallback
-    try:
-        return max(0.0, min(1.0, float(value)))
-    except (ValueError, TypeError):
-        return 0.0
+    return _to_clamped_score(value)
 
 
 def determine_pass_fail(score: float, threshold: float = 0.5) -> bool:

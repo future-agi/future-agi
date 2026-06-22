@@ -40,6 +40,10 @@ import {
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ReactApexChart from "react-apexcharts";
 import ChartLegend from "./ChartLegend";
+import {
+  buildTimeRangePayload,
+  resolveInitialTimeRange,
+} from "./dashboardDateRange";
 import { paths } from "src/routes/paths";
 import {
   useDashboardDetail,
@@ -54,6 +58,7 @@ import {
 } from "src/hooks/useDashboards";
 import Iconify from "src/components/iconify";
 import { useSnackbar } from "src/components/snackbar";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import { format } from "date-fns";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import {
@@ -1119,6 +1124,25 @@ export default function WidgetEditorView() {
   const [editingName, setEditingName] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
   const [moreMenuAnchor, setMoreMenuAnchor] = useState(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+
+  const confirmDeleteWidget = () => {
+    if (!isEditing) {
+      setConfirmDeleteOpen(false);
+      return;
+    }
+    deleteMutation.mutate(
+      { dashboardId, widgetId: effectiveWidgetId },
+      {
+        onSuccess: () => {
+          enqueueSnackbar("Widget deleted", { variant: "success" });
+          navigate(paths.dashboard.dashboards.detail(dashboardId));
+        },
+        // Close once the request settles, not before it starts.
+        onSettled: () => setConfirmDeleteOpen(false),
+      },
+    );
+  };
   const [timePreset, setTimePreset] = useState(
     searchParams.get("timePreset") || "30D",
   );
@@ -1361,12 +1385,13 @@ export default function WidgetEditorView() {
         setChartDescription(widget.description || "");
         const qc = widget.queryConfig || widget.query_config || {};
         const cc = widget.chartConfig || widget.chart_config || {};
-        setTimePreset(
-          searchParams.get("timePreset") ||
-            qc.timeRange?.preset ||
-            qc.time_range?.preset ||
-            "30D",
-        );
+        const { timePreset: initialPreset, customDateRange: initialRange } =
+          resolveInitialTimeRange(
+            qc.timeRange || qc.time_range,
+            searchParams.get("timePreset"),
+          );
+        setTimePreset(initialPreset);
+        if (initialRange) setCustomDateRange(initialRange);
         setGranularity(qc.granularity || "day");
         setChartType(cc.chartType || cc.chart_type || "line");
         // Restore axis config if saved
@@ -1768,13 +1793,7 @@ export default function WidgetEditorView() {
   };
 
   const buildQueryConfig = useCallback(() => {
-    const timeRange =
-      timePreset === "custom" && customDateRange
-        ? {
-            custom_start: customDateRange[0].toISOString(),
-            custom_end: customDateRange[1].toISOString(),
-          }
-        : { preset: timePreset };
+    const timeRange = buildTimeRangePayload(timePreset, customDateRange);
     return {
       project_ids: [],
       time_range: timeRange,
@@ -1801,7 +1820,8 @@ export default function WidgetEditorView() {
   // Auto-preview when config changes (debounced)
   const previewTimerRef = useRef(null);
   useEffect(() => {
-    if (metrics.length > 0) {
+    const customWithoutRange = timePreset === "custom" && !customDateRange;
+    if (metrics.length > 0 && !customWithoutRange) {
       clearTimeout(previewTimerRef.current);
       previewTimerRef.current = setTimeout(() => {
         queryMutation.mutate(buildQueryConfig());
@@ -2964,40 +2984,24 @@ export default function WidgetEditorView() {
           transformOrigin={{ vertical: "top", horizontal: "right" }}
           slotProps={{ paper: { sx: { minWidth: 180 } } }}
         >
-          <MenuItem
-            onClick={() => {
-              setMoreMenuAnchor(null);
-              if (
-                !window.confirm("Are you sure you want to delete this widget?")
-              )
-                return;
-              if (effectiveWidgetId && effectiveWidgetId !== "new") {
-                deleteMutation
-                  .mutateAsync({ dashboardId, widgetId: effectiveWidgetId })
-                  .then(() => {
-                    enqueueSnackbar("Widget deleted", { variant: "success" });
-                    navigate(paths.dashboard.dashboards.detail(dashboardId));
-                  })
-                  .catch(() => {
-                    enqueueSnackbar("Failed to delete widget", {
-                      variant: "error",
-                    });
-                  });
-              } else {
-                navigate(paths.dashboard.dashboards.detail(dashboardId));
-              }
-            }}
-            sx={{ color: "error.main" }}
-          >
-            <ListItemIcon>
-              <Iconify
-                icon="mdi:delete-outline"
-                width={18}
-                sx={{ color: "error.main" }}
-              />
-            </ListItemIcon>
-            <ListItemText>Delete</ListItemText>
-          </MenuItem>
+          {isEditing && (
+            <MenuItem
+              onClick={() => {
+                setMoreMenuAnchor(null);
+                setConfirmDeleteOpen(true);
+              }}
+              sx={{ color: "error.main" }}
+            >
+              <ListItemIcon>
+                <Iconify
+                  icon="mdi:delete-outline"
+                  width={18}
+                  sx={{ color: "error.main" }}
+                />
+              </ListItemIcon>
+              <ListItemText>Delete</ListItemText>
+            </MenuItem>
+          )}
           <MenuItem
             onClick={() => {
               setMoreMenuAnchor(null);
@@ -3119,6 +3123,24 @@ export default function WidgetEditorView() {
           </MenuItem>
         </Menu>
 
+        <ConfirmDialog
+          open={confirmDeleteOpen}
+          onClose={() => setConfirmDeleteOpen(false)}
+          title="Delete Widget"
+          content={`Are you sure you want to delete "${chartName || "this widget"}"? This action cannot be undone.`}
+          action={
+            <Button
+              variant="contained"
+              color="error"
+              size="small"
+              onClick={confirmDeleteWidget}
+              disabled={deleteMutation.isPending}
+            >
+              Delete
+            </Button>
+          }
+        />
+
         <Button
           onClick={() =>
             navigate(paths.dashboard.dashboards.detail(dashboardId))
@@ -3231,6 +3253,7 @@ export default function WidgetEditorView() {
               open={isDatePickerOpen}
               onClose={() => setIsDatePickerOpen(false)}
               anchorEl={customDateAnchorRef.current}
+              value={customDateRange}
               setDateFilter={(filter) => {
                 if (filter && filter[0] && filter[1]) {
                   setCustomDateRange([

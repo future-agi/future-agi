@@ -314,8 +314,14 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
     created_payload_bytes = 0
 
     for log in logs:
-        normalized_data = normalize_fn(log)
-        provider_log_id = normalized_data.get("id")
+        provider_log_id = None
+        try:
+            normalized_data = normalize_fn(log)
+            provider_log_id = normalized_data.get("id")
+        except Exception:
+            logger.exception(
+                f"Failed to normalize log for {provider.provider}"
+            )
 
         if not provider_log_id:
             logger.error(f"No provider log id found for {provider.provider}")
@@ -406,7 +412,7 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
     if created_count:
         emit_span_ingestion_usage(
             organization_id=project.organization_id,
-            num_traces=created_count,
+            num_traces=0,
             num_spans=created_count,
             payload_bytes=created_payload_bytes,
             source="voice_observability",

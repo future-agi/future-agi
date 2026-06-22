@@ -63,7 +63,51 @@ def _rebind_case(
     )
 
 
+def _is_truthy(value) -> bool:
+    return value.lower() == "true" if isinstance(value, str) else bool(value)
+
+
+def _expected_annotation_units(case: FilterCase, seeded: list[SeededRow]) -> int:
+    """Annotation predicates are scoped per row_type (grid parity):
+    spans -> span-scoped scores only; traces/voiceCalls -> any score on the
+    trace (trace- or span-scoped, via the OR bridge); sessions -> session-
+    scoped scores only (the corpora seed none).
+    """
+    pred = case.expected_predicate
+
+    if case.target_type == "sessions":
+        if case.col_type == "has_annotation" and not _is_truthy(case.filter_value):
+            return len({r.session_id for r in seeded})
+        return 0
+
+    if case.target_type == "spans":
+        if case.col_type == "has_annotation" and not _is_truthy(case.filter_value):
+            return sum(
+                1
+                for r in seeded
+                if not (r.has_annotation and r.annotation_scope == "span")
+            )
+        return sum(
+            1 for r in seeded if r.annotation_scope == "span" and pred(r)
+        )
+
+    # traces / voiceCalls: a span sees every score on its trace.
+    if case.col_type == "has_annotation":
+        annotated_traces = {r.trace_id for r in seeded if r.has_annotation}
+        if _is_truthy(case.filter_value):
+            matching_traces = annotated_traces
+        else:
+            matching_traces = {r.trace_id for r in seeded} - annotated_traces
+    else:
+        matching_traces = {r.trace_id for r in seeded if pred(r)}
+    if case.target_type == "traces":
+        return len(matching_traces)
+    return sum(1 for r in seeded if r.trace_id in matching_traces)
+
+
 def _expected_unit_count(case: FilterCase, seeded: list[SeededRow]) -> int:
+    if case.col_type in ("ANNOTATION", "has_annotation"):
+        return _expected_annotation_units(case, seeded)
     if case.target_type in ("spans", "voiceCalls"):
         return sum(1 for r in seeded if case.expected_predicate(r))
     if case.target_type == "traces":

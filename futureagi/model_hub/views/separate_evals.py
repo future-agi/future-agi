@@ -577,11 +577,8 @@ class GetAPICallLogView(APIView):
 
             config = json.loads(log_row.config)
             error_localizer = config.get("error_localizer", {})
-            # Look up the ErrorLocalizerTask keyed by this log_id so the
-            # frontend can distinguish "still running" from "never started"
-            # and from "completed". The task row is populated by
-            # `trigger_error_localization_for_playground` when the playground
-            # is called with error_localizer=true.
+            if not isinstance(error_localizer, dict):
+                error_localizer = {}
             error_localizer_status = None
             error_localizer_message = None
             try:

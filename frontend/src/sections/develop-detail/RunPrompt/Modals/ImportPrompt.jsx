@@ -194,15 +194,15 @@ export default function ImportPrompt({
   const [, setHasUserChangedVersion] = useState(false);
 
   useEffect(() => {
-    if (open && data?.prompt?.id && data?.promptVersion?.templateVersion) {
+    if (open && data?.prompt?.id && data?.promptVersion?.template_version) {
       setValue("prompt", data?.prompt?.id, {
         shouldValidate: true,
       });
-      setValue("promptVersion", data?.promptVersion?.templateVersion, {
+      setValue("promptVersion", data?.promptVersion?.template_version, {
         shouldValidate: true,
       });
     }
-  }, [data?.prompt?.id, data?.promptVersion?.templateVersion, open, setValue]);
+  }, [data?.prompt?.id, data?.promptVersion?.template_version, open, setValue]);
 
   const {
     data: promptsData,
@@ -242,18 +242,18 @@ export default function ImportPrompt({
 
   const versions =
     versionRes?.map((version) => ({
-      label: version?.templateVersion,
-      value: version?.templateVersion,
+      label: version?.template_version,
+      value: version?.template_version,
     })) ?? [];
 
   useEffect(() => {
     if (versionRes?.length === 0) return;
-    const latestVersionId = versionRes?.[0]?.templateVersion;
+    const latestVersionId = versionRes?.[0]?.template_version;
     if (selectedVersionId !== latestVersionId) {
       setValue("promptVersion", latestVersionId, {
         shouldValidate: true,
       });
-    } else if (!selectedPromptId && !data?.promptVersion?.templateVersion) {
+    } else if (!selectedPromptId && !data?.promptVersion?.template_version) {
       setValue("promptVersion", "", {
         shouldValidate: true,
       });
@@ -266,9 +266,9 @@ export default function ImportPrompt({
     if (!selectedPromptId || !selectedVersionId || versionRes?.length < 0)
       return;
     const selectedVersion = versionRes.find(
-      (v) => v?.templateVersion === selectedVersionId,
+      (v) => v?.template_version === selectedVersionId,
     );
-    const messages = selectedVersion?.promptConfigSnapshot?.messages || [];
+    const messages = selectedVersion?.prompt_config_snapshot?.messages || [];
     setPromptMessages(messages);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVersionId, selectedPromptId, versionRes?.length]);
@@ -290,7 +290,7 @@ export default function ImportPrompt({
       return data?.prompt === prompt?.id;
     });
     const promptVersion = versionRes.find(
-      (version) => version?.templateVersion === data?.promptVersion,
+      (version) => version?.template_version === data?.promptVersion,
     );
     handleApplyImportedPrompt({
       prompt,

@@ -46,6 +46,7 @@ const AddEvaluationFeeback = ({ module = "dataset", onRefreshGrid }) => {
   };
   const { experimentId } = useParams();
   const metricId = isExperimentModule ? data?.userEvalMetricId : data?.sourceId;
+  const rowId = data?.rowData?.row_id;
   const detailsEndpoint = isExperimentModule
     ? endpoints.develop.experiment.feedback.getDetails(experimentId)
     : endpoints.develop.eval.getFeedbackDetails;
@@ -54,20 +55,20 @@ const AddEvaluationFeeback = ({ module = "dataset", onRefreshGrid }) => {
     queryKey: [
       "fetch-feedback-details",
       metricId,
-      data?.rowData?.rowId,
+      rowId,
       isExperimentModule ? experimentId : null,
     ],
     queryFn: () =>
       axios.get(detailsEndpoint, {
         params: {
           user_eval_metric_id: metricId,
-          row_id: data?.rowData?.rowId,
+          row_id: rowId,
         },
       }),
     enabled:
       !!(isExperimentModule
         ? data?.userEvalMetricId && experimentId
-        : data?.sourceId) && !!data?.rowData?.rowId,
+        : data?.sourceId) && !!rowId,
     select: (d) => d.data?.result?.feedback?.[0],
   });
 
@@ -142,6 +143,7 @@ const EvaluationFeeback = ({
   const existingFeedbackId = existingFeedback?.id;
   const { dataset, experimentId } = useParams();
   const metricId = isExperimentModule ? data?.userEvalMetricId : data?.sourceId;
+  const rowId = data?.rowData?.row_id;
   const feedbackEndpoints = isExperimentModule
     ? {
         getTemplate:
@@ -157,7 +159,7 @@ const EvaluationFeeback = ({
   const feedbackQueryKey = [
     "fetch-feedback-details",
     metricId,
-    data?.rowData?.rowId,
+    rowId,
     isExperimentModule ? experimentId : null,
   ];
 
@@ -230,12 +232,12 @@ const EvaluationFeeback = ({
       user_eval_metric: metricId,
       source: isExperimentModule ? "experiment" : "dataset",
       source_id: isExperimentModule ? data.sourceId : data.id,
-      row_id: data.rowData.rowId,
+      row_id: rowId,
     };
     trackEvent(Events.datasetSubmitFeedbackClicked, {
       [PropertyName.datasetId]: dataset,
       [PropertyName.evalId]: data?.sourceId,
-      [PropertyName.rowIdentifier]: data?.rowData.rowId,
+      [PropertyName.rowIdentifier]: rowId,
     });
     if (existingFeedbackId) {
       newFeedback.current = payload;
@@ -254,6 +256,7 @@ const EvaluationFeeback = ({
       action_type: formData.value,
       user_eval_metric_id: metricId,
       feedback_id: feedbackId,
+      row_id: rowId,
     };
     if (newFeedback?.current?.value) {
       payload.value = newFeedback?.current?.value;
@@ -375,7 +378,7 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
       </Box>
 
       <div style={{ borderBottom: "1px solid var(--border-light)" }} />
-      {feedbackData?.outputType === "reason" && (
+      {feedbackData?.output_type === "reason" && (
         <AllInputField
           label="Write a right value"
           placeholder="Improve the tone and grammar of the prompt"
@@ -387,7 +390,7 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
           rows={3}
         />
       )}
-      {feedbackData?.outputType === "score" && (
+      {feedbackData?.output_type === "score" && (
         <AllInputField
           label="Write a right value"
           placeholder="Add Number"
@@ -420,8 +423,8 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
             );
           })}
       </Box>
-      {(feedbackData?.outputType === "Pass/Fail" ||
-        feedbackData?.outputType === "choices") && (
+      {(feedbackData?.output_type === "Pass/Fail" ||
+        feedbackData?.output_type === "choices") && (
         <RadioField
           label="Select a right value"
           control={control}
@@ -432,7 +435,7 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
           }))}
         />
       )}
-      {feedbackData?.outputType === "select" && (
+      {feedbackData?.output_type === "select" && (
         <AllSelectField
           label="Select a right value"
           control={control}

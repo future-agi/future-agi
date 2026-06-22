@@ -66,6 +66,7 @@ def resolve_version(eval_template, version_number=None, organization=None):
     """
     try:
         from django.db import models
+        from django.db.utils import DatabaseError, ProgrammingError
 
         from model_hub.models.evals_metric import EvalTemplateVersion
 
@@ -89,9 +90,16 @@ def resolve_version(eval_template, version_number=None, organization=None):
             resolved = EvalTemplateVersion.objects.get_default(eval_template)
 
         if resolved:
-            EvalTemplateVersion.all_objects.filter(id=resolved.id).update(
-                usage_count=models.F("usage_count") + 1
-            )
+            try:
+                EvalTemplateVersion.all_objects.filter(id=resolved.id).update(
+                    usage_count=models.F("usage_count") + 1
+                )
+            except (DatabaseError, ProgrammingError):
+                logger.warning(
+                    "usage_count_update_failed",
+                    version_id=str(resolved.id),
+                    exc_info=True,
+                )
 
         return resolved
 
@@ -248,7 +256,9 @@ def prepare_eval_config(
 
     # AgentEvaluator — multi-turn reasoning via Falcon AI AgentLoop
     if eval_type_id == "AgentEvaluator":
-        config["rule_prompt"] = eval_template.config.get("rule_prompt")
+        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
+            "rule_prompt"
+        )
         config["model"] = model or eval_template.config.get("model")
         raw_output = eval_template.config.get("output")
         if eval_template.choice_scores and raw_output != "Pass/Fail":
@@ -290,8 +300,12 @@ def prepare_eval_config(
     # CustomPromptEvaluator — LLM-as-judge
     elif eval_type_id == "CustomPromptEvaluator":
         config["provider"] = eval_template.config.get("provider")
-        config["rule_prompt"] = eval_template.config.get("rule_prompt")
-        config["system_prompt"] = eval_template.config.get("system_prompt")
+        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
+            "rule_prompt"
+        )
+        config["system_prompt"] = config["system_prompt"] if "system_prompt" in config else eval_template.config.get(
+            "system_prompt"
+        )
         raw_output = eval_template.config.get("output")
         if eval_template.choice_scores and raw_output != "Pass/Fail":
             config["output_type"] = "choices"

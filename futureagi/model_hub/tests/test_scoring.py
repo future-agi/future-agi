@@ -4,6 +4,8 @@ Tests for Phase 2: Scoring System utilities.
 All unit tests — no database access needed.
 """
 
+import math
+
 import pytest
 
 from model_hub.utils.scoring import (
@@ -72,6 +74,99 @@ class TestNormalizeScore:
 
     def test_none_value(self):
         assert normalize_score(None) == 0.0
+
+
+@pytest.mark.unit
+class TestNormalizeScoreRobustness:
+    @pytest.mark.parametrize(
+        "value,output_type,expected",
+        [
+            (float("nan"), "percentage", 0.0),
+            (float("inf"), "percentage", 1.0),
+            (float("-inf"), "percentage", 0.0),
+            ("nan", "percentage", 0.0),
+            ("inf", "percentage", 1.0),
+            ("1e-3", "percentage", 0.001),
+            (True, "percentage", 1.0),
+            (False, "percentage", 0.0),
+            ("", "percentage", 0.0),
+            ("   ", "percentage", 0.0),
+            ([0.9], "percentage", 0.0),
+            ({"score": 0.9}, "percentage", 0.0),
+        ],
+    )
+    def test_percentage_robustness(self, value, output_type, expected):
+        assert normalize_score(value, output_type) == expected
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            ("PASSED", 1.0),
+            ("YES", 1.0),
+            ("TRUE", 1.0),
+            ("Failed", 0.0),
+            ("no", 0.0),
+            ("maybe", 0.0),
+            ("", 0.0),
+            (0, 0.0),
+            (1, 1.0),
+            (-5, 0.0),
+            (float("nan"), 0.0),
+            ([True], 0.0),
+            ({"result": True}, 0.0),
+            (None, 0.0),
+        ],
+    )
+    def test_pass_fail_robustness(self, value, expected):
+        assert normalize_score(value, "pass_fail") == expected
+
+    def test_deterministic_empty_list(self):
+        assert normalize_score([], "deterministic", {"Yes": 1.0}) == 0.0
+
+    def test_deterministic_multi_element_list_takes_first(self):
+        scores = {"Yes": 1.0, "No": 0.0}
+        assert normalize_score(["Yes", "No"], "deterministic", scores) == 1.0
+
+    def test_deterministic_choice_case_insensitive(self):
+        scores = {"Yes": 1.0, "No": 0.0}
+        assert normalize_score("yes", "deterministic", scores) == 1.0
+        assert normalize_score("YES", "deterministic", scores) == 1.0
+
+    def test_deterministic_choice_with_whitespace(self):
+        scores = {"Yes": 1.0, "No": 0.0}
+        assert normalize_score(" Yes ", "deterministic", scores) == 1.0
+
+    def test_deterministic_dict_value_returns_zero(self):
+        assert normalize_score({"choice": "Yes"}, "deterministic", {"Yes": 1.0}) == 0.0
+
+    def test_deterministic_none_value(self):
+        assert normalize_score(None, "deterministic", {"Yes": 1.0}) == 0.0
+
+    @pytest.mark.parametrize(
+        "output_type",
+        ["unknown", "PassFail", "PERCENTAGE", "", None],
+    )
+    def test_unknown_output_type_falls_back_to_percentage(self, output_type):
+        assert normalize_score(0.75, output_type) == 0.75
+        assert normalize_score("not_a_number", output_type) == 0.0
+        assert normalize_score(None, output_type) == 0.0
+
+    def test_never_raises(self):
+        weird_inputs = [
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            {"deeply": {"nested": "dict"}},
+            [[1, 2], [3, 4]],
+            object(),
+            b"bytes",
+        ]
+        for value in weird_inputs:
+            for output_type in ("pass_fail", "percentage", "deterministic", "unknown"):
+                result = normalize_score(value, output_type, {"x": 0.5})
+                assert isinstance(result, float)
+                assert 0.0 <= result <= 1.0
+                assert not math.isnan(result)
 
 
 # =============================================================================
