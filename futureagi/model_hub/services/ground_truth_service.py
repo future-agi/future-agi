@@ -323,7 +323,6 @@ class GroundTruthService:
     ) -> EmbedDatasetResult:
         """Embed every row of ``gt`` into the CH ``ground_truths`` table."""
         from agentic_eval.core.embeddings.embedding_manager import (
-            _AUDIO_MODEL_BY_TABLE,
             GROUND_TRUTH_TABLE_NAME,
             EmbeddingManager,
         )
@@ -349,9 +348,6 @@ class GroundTruthService:
         gt.embedded_row_count = 0
         gt.save(update_fields=["embedding_status", "embedded_row_count", "updated_at"])
 
-        from agentic_eval.core.embeddings.embedding_manager import (
-            _AUDIO_MODEL_BY_TABLE,
-        )
         logger.info(
             "ground_truth_embed_start",
             ground_truth_id=str(gt.id),
@@ -360,7 +356,6 @@ class GroundTruthService:
             workspace_id=workspace_id,
             rows=len(data),
             mapped_columns=mapped_columns,
-            audio_model=_AUDIO_MODEL_BY_TABLE.get(GROUND_TRUTH_TABLE_NAME, "<default>"),
         )
 
         manager = EmbeddingManager()

@@ -182,7 +182,6 @@ class ModelServingClient:
         self,
         audio_data: str | bytes,
         model_name: str = "audio_embedding",
-        audio_model: str | None = None,
     ) -> list[float]:
         """
         ✅ IMPROVED: Get audio embeddings from the serving service with input validation.
@@ -195,7 +194,6 @@ class ModelServingClient:
         data = {
             "audio": processed_audio,
             "input_type": "audio",
-            "audio_model": audio_model,
         }
 
         try:

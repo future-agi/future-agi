@@ -37,11 +37,6 @@ FEEDBACK_TABLE_NAME = "feedbacks"
 GROUND_TRUTH_TABLE_NAME = "ground_truths"
 _TENANT_SCOPED_TABLES = (FEEDBACK_TABLE_NAME, GROUND_TRUTH_TABLE_NAME)
 
-# Tables not listed fall through to the serving default (wav2vec2-base).
-_AUDIO_MODEL_BY_TABLE: dict[str, str] = {
-    GROUND_TRUTH_TABLE_NAME: "whisper-small",
-}
-
 # Default DB-layer cosine-distance cap for tenant tables when caller passes none.
 _TENANT_DEFAULT_COLUMN_THRESHOLD = 0.35
 
@@ -199,11 +194,9 @@ class ModelManager:
         logger.info("Accessing audio model")
         if self._use_serving and self.serving_client:
             logger.info("Using serving client for audio embeddings")
-            def audio_embedding(audio_data, model_name: str | None = None):
+            def audio_embedding(audio_data):
                 logger.info("Getting audio embedding from serving client")
-                return self.serving_client.embed_audio(
-                    audio_data, audio_model=model_name
-                )
+                return self.serving_client.embed_audio(audio_data)
             return audio_embedding
         else:
             mixpanel_slack_notfy("ALERT: Audio embeddings are not available")
@@ -324,7 +317,7 @@ class EmbeddingManager:
                 )
                 return embedding_list
 
-    def get_audio_query_embedding(self, type, query, audio_model_name: str | None = None):
+    def get_audio_query_embedding(self, type, query):
         try:
             model = model_manager.audio_model
             # Process URL if query is a string containing URL
@@ -343,14 +336,8 @@ class EmbeddingManager:
 
             if model_manager._use_serving:
                 try:
-                    embedding_vector = model(query, model_name=audio_model_name)
-                except Exception as audio_exc:
-                    logger.exception(
-                        "audio_embed_failed",
-                        query=str(query)[:200],
-                        exc_type=type(audio_exc).__name__,
-                        exc_message=str(audio_exc),
-                    )
+                    embedding_vector = model(query)
+                except:
                     embedding_vector = []
                 return embedding_vector
             else:
@@ -455,9 +442,7 @@ class EmbeddingManager:
 
         elif index_col_type == "audio":
             embedding_vector = self.get_audio_query_embedding(
-                "audio",
-                data[column_name],
-                audio_model_name=_AUDIO_MODEL_BY_TABLE.get(table_name),
+                "audio", data[column_name]
             )
 
         elif index_col_type == "image-text":
@@ -511,9 +496,6 @@ class EmbeddingManager:
             index_col_type = []
             vectors = []
             metadata_list = []
-
-            row_t0 = time.time()
-            per_column_durations: dict[str, float] = {}
 
             for n, inp in enumerate(inputs_formater):
 
@@ -571,16 +553,13 @@ class EmbeddingManager:
 
                 # Get embedding for this input
                 try:
-                    col_t0 = time.time()
                     if index_col_type[n] == "image":
                         embedding_vector = self.get_image_query_embedding(
                             "image", mod_dict["index_column"]
                         )
                     elif index_col_type[n] == "audio":
                         embedding_vector = self.get_audio_query_embedding(
-                            "audio",
-                            mod_dict["index_column"],
-                            audio_model_name=_AUDIO_MODEL_BY_TABLE.get(table_name),
+                            "audio", mod_dict["index_column"]
                         )
                     elif index_col_type[n] == "image-text":
                         embedding_vector = self.get_image_query_embedding(
@@ -593,9 +572,6 @@ class EmbeddingManager:
                         else:
                             embedding_vector = model.encode(mod_dict["index_column"])
                             embedding_vector = embedding_vector.tolist()
-                    per_column_durations[f"{inp}({index_col_type[n]})"] = round(
-                        time.time() - col_t0, 3
-                    )
 
                     vectors.append(embedding_vector)
 
@@ -625,16 +601,9 @@ class EmbeddingManager:
 
                 except Exception:
                     traceback.print_exc()
-                    
+
                     raise
 
-            logger.info(
-                "row_embed_completed",
-                item_id=row_dict.get("item_id"),
-                table_name=table_name,
-                total_s=round(time.time() - row_t0, 3),
-                per_column_s=per_column_durations,
-            )
             return vectors, metadata_list
 
         except Exception as e:
@@ -738,16 +707,13 @@ class EmbeddingManager:
                     db_client.close()
                 return inserted_ids
 
-            # Cap worker count to match server-side admission for audio. Going
-            # higher just queues threads at the semaphore for no throughput win.
+            # Cap worker count to match server-side admission. Going higher
+            # just queues threads at the semaphore for no throughput win.
             max_workers = int(os.getenv("EMBED_WORKER_POOL_SIZE", "10"))
-            effective_batch_size = max(
-                1, min(batch_size, -(-len(metadatas) // max_workers))
-            ) if metadatas else batch_size
 
+            # Split metadatas into batches
             batches = [
-                metadatas[i : i + effective_batch_size]
-                for i in range(0, len(metadatas), effective_batch_size)
+                metadatas[i : i + batch_size] for i in range(0, len(metadatas), batch_size)
             ]
 
             all_item_ids = []
@@ -952,9 +918,7 @@ class EmbeddingManager:
                     )
                 elif input_type == "audio":
                     query_embedding = self.get_audio_query_embedding(
-                        "audio",
-                        query,
-                        audio_model_name=_AUDIO_MODEL_BY_TABLE.get(table_name),
+                        "audio", query
                     )
                 else:
                     model = model_manager.text_model

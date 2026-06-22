@@ -157,10 +157,7 @@ async def infer(model_name: str, data: InferModelRequest) -> dict[str, Any]:
         preprocessed_data = model.preprocess(input_data)
 
         logger.debug("Performing model inference")
-        forward_kwargs: dict[str, Any] = {}
-        if data.input_type == "audio" and data.audio_model:
-            forward_kwargs["model"] = data.audio_model
-        model_output = model.forward(preprocessed_data, **forward_kwargs)
+        model_output = model.forward(preprocessed_data)
 
         logger.debug("Postprocessing model output")
         final_output = model.postprocess(model_output)
@@ -238,31 +235,22 @@ async def embed_image(data: InferModelRequest) -> dict[str, Any]:
 
 @router.post("/embed/audio")
 async def embed_audio(data: InferModelRequest) -> dict[str, Any]:
-    """Audio embedding endpoint."""
-    import time as _time
-    t0 = _time.time()
-    audio_model = data.audio_model or "<default>"
+    """
+    ✅ IMPROVED: Convenience endpoint for audio embedding.
+    """
     try:
+        logger.info("Starting audio embedding process")
         if not data.audio:
             raise HTTPException(status_code=400, detail="Audio input is required")
+
         data.input_type = "audio"
         async with _audio_infer_sem:
-            result = await infer("audio_embedding", data)
-        logger.info(
-            "audio_embed_ok",
-            audio_model=audio_model,
-            duration_s=round(_time.time() - t0, 2),
-        )
-        return result
+            return await infer("audio_embedding", data)
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            "audio_embed_failed",
-            audio_model=audio_model,
-            duration_s=round(_time.time() - t0, 2),
-            error=str(e),
-        )
+        logger.error(f"Audio embedding failed with error: {str(e)}")
         raise HTTPException(
             status_code=500, detail=f"Audio embedding failed: {e}"
         ) from e
