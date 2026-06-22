@@ -343,3 +343,161 @@ class TestFiltering:
 
         assert _decode(cell_a)["output_float"] == pytest.approx(0.7)
         assert "output_float" not in _decode(cell_b)
+
+
+def _eval_column_with_source(
+    *, dataset, user_eval_metric, source: str, source_id: str
+) -> Column:
+    """Mirror ``_eval_column`` but force the source / source_id pair.
+
+    Used for experiment_evaluation / optimisation_evaluation columns whose
+    source_id is a composite of ``{prefix}-sourceid-{user_eval_metric_id}``
+    rather than a bare UUID.
+    """
+    return Column.objects.create(
+        name=f"eval-col-{uuid.uuid4()}",
+        dataset=dataset,
+        data_type=DataTypeChoices.TEXT.value,
+        source=source,
+        source_id=source_id,
+    )
+
+
+class TestMultiSourceCoverage:
+    """The backfill must cover all three cell sources that hold eval rows."""
+
+    def test_experiment_evaluation_cell_axes_are_backfilled(
+        self, db, dataset, organization, workspace
+    ):
+        tpl = _template(organization=organization, output="score")
+        uem = _user_eval_metric(
+            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+        )
+        prefix = uuid.uuid4()
+        composite_id = f"{prefix}-sourceid-{uem.id}"
+        col = _eval_column_with_source(
+            dataset=dataset,
+            user_eval_metric=uem,
+            source=SourceChoices.EXPERIMENT_EVALUATION.value,
+            source_id=composite_id,
+        )
+        cell = _eval_cell(dataset=dataset, column=col, value="0.7", value_infos={})
+
+        out = _run()
+
+        assert _decode(cell)["output_float"] == pytest.approx(0.7)
+        assert "updated_rows=1" in out
+
+    def test_optimisation_evaluation_cell_axes_are_backfilled(
+        self, db, dataset, organization, workspace
+    ):
+        tpl = _template(organization=organization, output="choices")
+        uem = _user_eval_metric(
+            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+        )
+        composite_id = f"{uuid.uuid4()}-sourceid-{uem.id}"
+        col = _eval_column_with_source(
+            dataset=dataset,
+            user_eval_metric=uem,
+            source=SourceChoices.OPTIMISATION_EVALUATION.value,
+            source_id=composite_id,
+        )
+        cell = _eval_cell(
+            dataset=dataset, column=col, value="frequently", value_infos={}
+        )
+
+        out = _run()
+
+        assert _decode(cell)["output_str_list"] == ["frequently"]
+        assert "updated_rows=1" in out
+
+    def test_mixed_sources_in_one_run_all_get_backfilled(
+        self, db, dataset, organization, workspace
+    ):
+        score_tpl = _template(organization=organization, output="score")
+        passfail_tpl = _template(organization=organization, output="Pass/Fail")
+        choices_tpl = _template(organization=organization, output="choices")
+        score_uem = _user_eval_metric(
+            dataset=dataset, organization=organization, workspace=workspace, template=score_tpl
+        )
+        passfail_uem = _user_eval_metric(
+            dataset=dataset, organization=organization, workspace=workspace, template=passfail_tpl
+        )
+        choices_uem = _user_eval_metric(
+            dataset=dataset, organization=organization, workspace=workspace, template=choices_tpl
+        )
+        dataset_col = _eval_column(dataset=dataset, user_eval_metric=score_uem)
+        experiment_col = _eval_column_with_source(
+            dataset=dataset,
+            user_eval_metric=passfail_uem,
+            source=SourceChoices.EXPERIMENT_EVALUATION.value,
+            source_id=f"{uuid.uuid4()}-sourceid-{passfail_uem.id}",
+        )
+        optimisation_col = _eval_column_with_source(
+            dataset=dataset,
+            user_eval_metric=choices_uem,
+            source=SourceChoices.OPTIMISATION_EVALUATION.value,
+            source_id=f"{uuid.uuid4()}-sourceid-{choices_uem.id}",
+        )
+        dataset_cell = _eval_cell(
+            dataset=dataset, column=dataset_col, value="0.42", value_infos={}
+        )
+        experiment_cell = _eval_cell(
+            dataset=dataset, column=experiment_col, value="Passed", value_infos={}
+        )
+        optimisation_cell = _eval_cell(
+            dataset=dataset, column=optimisation_col, value="always", value_infos={}
+        )
+
+        out = _run()
+
+        assert _decode(dataset_cell)["output_float"] == pytest.approx(0.42)
+        assert _decode(experiment_cell)["output_bool"] is True
+        assert _decode(optimisation_cell)["output_str_list"] == ["always"]
+        assert "updated_rows=3" in out
+
+    def test_composite_source_id_without_separator_falls_back_to_direct_lookup(
+        self, db, dataset, organization, workspace
+    ):
+        """Defensive: experiment column whose source_id happens to be a plain
+        ``UserEvalMetric.id`` (no -sourceid- prefix) still resolves via the
+        direct lookup. Mirrors the dataset surface fallback."""
+        tpl = _template(organization=organization, output="score")
+        uem = _user_eval_metric(
+            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+        )
+        col = _eval_column_with_source(
+            dataset=dataset,
+            user_eval_metric=uem,
+            source=SourceChoices.EXPERIMENT_EVALUATION.value,
+            source_id=str(uem.id),  # no composite prefix
+        )
+        cell = _eval_cell(dataset=dataset, column=col, value="0.5", value_infos={})
+
+        _run()
+
+        assert _decode(cell)["output_float"] == pytest.approx(0.5)
+
+    def test_composite_source_id_with_unknown_metric_id_is_skipped(
+        self, db, dataset, organization, workspace
+    ):
+        """If the tail of the composite source_id is not a valid metric uuid,
+        the cell is skipped (no template => can't route the value)."""
+        tpl = _template(organization=organization, output="score")
+        uem = _user_eval_metric(
+            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+        )
+        # Real source_id format but tail is a different UUID that won't resolve
+        col = _eval_column_with_source(
+            dataset=dataset,
+            user_eval_metric=uem,
+            source=SourceChoices.EXPERIMENT_EVALUATION.value,
+            source_id=f"{uuid.uuid4()}-sourceid-{uuid.uuid4()}",
+        )
+        cell = _eval_cell(dataset=dataset, column=col, value="0.5", value_infos={})
+
+        out = _run()
+
+        infos = _decode(cell)
+        assert "output_float" not in infos
+        assert "skipped_rows=1" in out

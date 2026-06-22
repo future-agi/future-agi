@@ -1,4 +1,9 @@
-"""Backfill the 4 axis keys inside ``Cell.value_infos`` for eval cells."""
+"""Backfill axis keys inside ``Cell.value_infos`` for eval cells.
+
+Covers all three cell sources that hold eval-row payloads:
+``evaluation`` (dataset eval grid), ``experiment_evaluation`` (experiment
+eval grid), ``optimisation_evaluation`` (optimisation eval grid).
+"""
 
 from __future__ import annotations
 
@@ -22,10 +27,34 @@ from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 logger = structlog.get_logger(__name__)
 
 
+_EVAL_CELL_SOURCES = (
+    "evaluation",                # dataset eval grid
+    "experiment_evaluation",     # experiment eval grid
+    "optimisation_evaluation",   # optimisation eval grid
+)
+
+
+def _resolve_user_eval_metric_id(source_id: str) -> str:
+    """Pull the ``UserEvalMetric.id`` out of a ``Column.source_id``.
+
+    Dataset eval columns store the metric id directly. Experiment and
+    optimisation eval columns store a composite id of the form
+    ``{prefix}-sourceid-{user_eval_metric_id}`` (see
+    ``tfc/temporal/experiments/activities.py:869`` and
+    ``model_hub/tasks/composite_runner.py:155``). The dispatch pattern
+    here mirrors ``tfc/utils/functions.py:481``; ``rsplit`` is used so
+    multiple ``-sourceid-`` tokens (defensive) take the last segment.
+    """
+    if "-sourceid-" in source_id:
+        return source_id.rsplit("-sourceid-", 1)[-1]
+    return source_id
+
+
 class Command(BaseCommand):
     help = (
         "Backfill axis keys (output_pass / output_score / output_choices) "
-        "inside Cell.value_infos."
+        "inside Cell.value_infos for dataset, experiment, and optimisation "
+        "eval cells."
     )
 
     def add_arguments(self, parser):
@@ -67,7 +96,7 @@ class Command(BaseCommand):
             Cell.objects.exclude(value_infos__isnull=True)
             .exclude(value_infos="")
             .exclude(deleted=True)
-            .filter(column__source="evaluation")
+            .filter(column__source__in=_EVAL_CELL_SOURCES)
         )
         if since is not None:
             qs = qs.filter(created_at__gte=since)
@@ -86,11 +115,12 @@ class Command(BaseCommand):
                 return None
             if source_id in template_cache:
                 return template_cache[source_id]
+            metric_id = _resolve_user_eval_metric_id(source_id)
             try:
                 tpl = (
                     UserEvalMetric.objects.select_related("template")
                     .only("template__id", "template__config", "template__multi_choice")
-                    .get(id=source_id)
+                    .get(id=metric_id)
                     .template
                 )
             except (UserEvalMetric.DoesNotExist, EvalTemplate.DoesNotExist, ValueError):
@@ -145,6 +175,7 @@ class Command(BaseCommand):
                     {
                         "cell_id": str(cell.id),
                         "column_id": str(cell.column_id),
+                        "column_source": getattr(cell.column, "source", None),
                         "eval_template_id": str(tpl.id) if tpl else None,
                         "config_output": config_output,
                         "multi_choice": multi_choice,
@@ -170,6 +201,7 @@ class Command(BaseCommand):
             for i, s in enumerate(samples, 1):
                 self.stdout.write(f">>> [{i}] cell_id         ={s['cell_id']}")
                 self.stdout.write(f">>>     column_id       ={s['column_id']}")
+                self.stdout.write(f">>>     column_source   ={s['column_source']}")
                 self.stdout.write(f">>>     eval_template_id={s['eval_template_id']}")
                 self.stdout.write(
                     f">>>     config_output   ={s['config_output']!r}"
