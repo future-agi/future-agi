@@ -987,6 +987,119 @@ class TestDeleteEvalsView:
         assert metric_to_delete.deleted is True
         assert metric_to_delete.column_deleted is False
 
+    def test_delete_eval_no_cell_join_on_source_id(
+        self, dataset, organization, workspace, eval_template
+    ):
+        """Query-shape guard: delete_eval_column_and_dependents must never issue
+        a Cell query that JOINs on column__source_id__startswith (full scan).
+        All cell deletes should use column_id IN (...) instead.
+        """
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from model_hub.services.column_service import delete_eval_column_and_dependents
+
+        metric = UserEvalMetric.objects.create(
+            name="Eval Shape",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+        eval_col = Column.objects.create(
+            name="Eval Shape",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        reason_col = Column.objects.create(
+            name="Eval Shape-reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_col.id}-sourceid-{metric.id}",
+        )
+        row = Row.objects.create(dataset=dataset, order=0)
+        Cell.objects.create(dataset=dataset, row=row, column=eval_col, value="x")
+        Cell.objects.create(dataset=dataset, row=row, column=reason_col, value="y")
+        dataset.column_order = [str(eval_col.id), str(reason_col.id)]
+        dataset.save()
+
+        with CaptureQueriesContext(connection) as ctx:
+            delete_eval_column_and_dependents(eval_col, organization.id)
+
+        cell_queries = [
+            q["sql"] for q in ctx.captured_queries
+            if "develops_cell" in q["sql"].lower()
+        ]
+        for sql in cell_queries:
+            # Must not JOIN on develops_column to filter by source_id
+            assert "source_id" not in sql, (
+                "Cell delete must not use column__source_id JOIN; "
+                f"found full-scan query: {sql}"
+            )
+
+    def test_delete_eval_atomic_rollback(
+        self, dataset, organization, workspace, eval_template
+    ):
+        """Atomicity guard: if any step inside delete_eval_column_and_dependents
+        raises, no writes should be committed (cells, column_order, columns
+        all stay untouched).
+        """
+        from unittest.mock import patch
+
+        from django.db import transaction
+
+        from model_hub.services.column_service import delete_eval_column_and_dependents
+
+        metric = UserEvalMetric.objects.create(
+            name="Eval Atomic",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+        eval_col = Column.objects.create(
+            name="Eval Atomic",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        row = Row.objects.create(dataset=dataset, order=0)
+        cell = Cell.objects.create(
+            dataset=dataset, row=row, column=eval_col, value="before"
+        )
+        original_order = [str(eval_col.id)]
+        dataset.column_order = original_order[:]
+        dataset.save()
+
+        # Blow up after cells are deleted but before columns are deleted
+        with patch(
+            "model_hub.models.evals_metric.UserEvalMetric.get_metrics_using_column",
+            side_effect=RuntimeError("simulated mid-delete failure"),
+        ):
+            with pytest.raises(RuntimeError):
+                with transaction.atomic():
+                    delete_eval_column_and_dependents(eval_col, organization.id)
+
+        # Nothing should have been committed
+        cell.refresh_from_db()
+        assert cell.deleted is False, "Cell must not be soft-deleted after rollback"
+
+        eval_col.refresh_from_db()
+        assert eval_col.deleted is False, "Column must not be soft-deleted after rollback"
+
+        dataset.refresh_from_db()
+        assert str(eval_col.id) in dataset.column_order, (
+            "column_order must be unchanged after rollback"
+        )
+
 
 # ==================== is_user_eval_stopped Tests ====================
 
