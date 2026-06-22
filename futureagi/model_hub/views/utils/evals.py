@@ -15,6 +15,7 @@ from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.services.ground_truth_service import GroundTruthService
 from model_hub.views.eval_runner import (
     EvaluationRunner,
     _extract_column_id_and_path,
@@ -290,8 +291,6 @@ def run_eval_func(
             if isinstance(code_eval_params, dict):
                 _run_kwargs.update(code_eval_params)
 
-        from model_hub.services.ground_truth_service import GroundTruthService
-
         GroundTruthService.inject_context(_run_kwargs, template)
 
         # Preprocess inputs for code evals that need external data (e.g. CLIP embeddings)
@@ -332,8 +331,6 @@ def run_eval_func(
         }
         if partial_input_warning:
             response["warnings"] = [partial_input_warning]
-
-        from model_hub.services.ground_truth_service import GroundTruthService
 
         response["ground_truth_examples"] = GroundTruthService.resolve_preview_examples(
             eval_template=template, eval_inputs=_run_kwargs
@@ -669,8 +666,6 @@ def process_eval_for_single_row(
         output["metadata"] = response.get("metadata")
         output["output_type"] = eval_template.config.get("output")
         output["runtime"] = response.get("runtime")
-
-        from model_hub.services.ground_truth_service import GroundTruthService
 
         output["ground_truth_examples"] = GroundTruthService.resolve_preview_examples(
             eval_template=eval_template, eval_inputs=eval_inputs

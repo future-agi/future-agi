@@ -25,8 +25,6 @@ from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalGroundTruth, EvalTemplate
 from model_hub.services.ground_truth_service import GroundTruthService
 from tfc.constants.roles import OrganizationRoles
-from model_hub.models.evals_metric import EvalGroundTruth
-
 
 
 @dataclass

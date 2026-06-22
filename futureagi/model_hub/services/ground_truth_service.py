@@ -216,7 +216,7 @@ class GroundTruthService:
             gt = EvalGroundTruth.objects.filter(
                 id=gt_config["ground_truth_id"], deleted=False
             ).first()
-        except Exception:
+        except (DatabaseError, ValueError):
             gt = None
         if gt is None:
             return mapped
@@ -374,7 +374,10 @@ class GroundTruthService:
             if heartbeat is not None:
                 try:
                     heartbeat(rows_done)
-                except Exception:
+                except RuntimeError:
+                    # heartbeat() raises RuntimeError when called outside an
+                    # activity context (eg. backfill / management command).
+                    # Cancellation is async and is not caught here.
                     pass
             try:
                 EvalGroundTruth.objects.filter(id=gt_id_for_callback).update(
@@ -675,7 +678,7 @@ def _row_from_ch_metadata(
         if isinstance(value, str) and value:
             try:
                 decoded = manager.decode_path(value)
-            except Exception:
+            except (ValueError, UnicodeDecodeError):
                 decoded = value
             if decoded.startswith(("http://", "https://", "s3://")):
                 row[key] = decoded

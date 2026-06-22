@@ -18,7 +18,6 @@ def _run_embed_dataset(ground_truth_id: str) -> GenerateEmbeddingsOutput:
     """Synchronous path executed by the Temporal activity."""
     close_old_connections()
 
-    from model_hub.models.evals_metric import EvalGroundTruth
     from model_hub.services.ground_truth_service import GroundTruthService
 
     try:
@@ -96,7 +95,6 @@ def _force_mark_failed(ground_truth_id: str, reason: str) -> None:
     is swallowed rather than masking the first."""
     try:
         close_old_connections()
-        from model_hub.models.evals_metric import EvalGroundTruth
 
         gt = EvalGroundTruth.objects.get(id=ground_truth_id)
         gt.embedding_status = EvalGroundTruth.EmbeddingStatus.FAILED

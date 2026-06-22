@@ -14,6 +14,7 @@ render them into a single string the LLM can read.
 from typing import Any
 
 import structlog
+from django.db import DatabaseError
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -64,14 +65,17 @@ class GroundTruthSearchTool(BaseTool):
     input_model = GroundTruthSearchInput
 
     def execute(
-        self, params: GroundTruthSearchInput, context: ToolContext  # noqa: ARG002
+        self, params: GroundTruthSearchInput, context: ToolContext
     ) -> ToolResult:
         from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.services.ground_truth_service import GroundTruthService
 
         try:
             gt = EvalGroundTruth.objects.get(
-                id=params.ground_truth_id, deleted=False
+                id=params.ground_truth_id,
+                organization=context.organization,
+                workspace=context.workspace,
+                deleted=False,
             )
         except EvalGroundTruth.DoesNotExist:
             return ToolResult.error(
@@ -89,7 +93,7 @@ class GroundTruthSearchTool(BaseTool):
             rows = GroundTruthService.retrieve_few_shot(
                 gt=gt, inputs=resolved_inputs, max_results=params.max_results
             )
-        except Exception as exc:
+        except (DatabaseError, ConnectionError, ValueError) as exc:
             logger.exception(
                 "ground_truth_search_failed",
                 ground_truth_id=params.ground_truth_id,
