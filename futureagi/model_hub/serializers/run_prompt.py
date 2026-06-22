@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from model_hub.models.api_key import ApiKey
-from tfc.utils.serializer_fields import JsonValueField
+from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
 
 
 class ApiKeyCreateSerializer(serializers.Serializer):
@@ -127,7 +127,7 @@ class LitellmSerializer(serializers.Serializer):
         default=None,
         help_text="Controls diversity via nucleus sampling. Value between 0 and 1.",
     )
-    response_format = JsonValueField(
+    response_format = StringOrObjectField(
         required=False,
         help_text="JSON schema for response format if required. Can be a string (e.g. 'text', 'json_object') or a JSON object. Defaults to None.",
     )
@@ -163,9 +163,9 @@ class LitellmSerializer(serializers.Serializer):
 
 class PromptConfigSerializer(serializers.Serializer):
     model = serializers.CharField(max_length=255, required=False, allow_blank=True)
-    run_prompt_config = JsonValueField(required=False)
+    run_prompt_config = serializers.DictField(required=False)
     messages = serializers.ListField(
-        child=JsonValueField(),
+        child=serializers.DictField(),
         required=False,
         help_text="List of messages with format [{'role': 'user/assistant', 'content': 'text'}]",
     )
@@ -204,7 +204,7 @@ class PromptConfigSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Controls diversity via nucleus sampling. Value between 0 and 1.",
     )
-    response_format = JsonValueField(
+    response_format = StringOrObjectField(
         required=False,
         allow_null=True,
         help_text="JSON schema for response format if required. Can be a JSON object or string. Defaults to None.",

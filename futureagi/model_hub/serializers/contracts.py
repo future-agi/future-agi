@@ -3,7 +3,7 @@ import json
 from rest_framework import serializers
 
 from model_hub.constants import MAX_EMPTY_DATASET_ROWS
-from tfc.utils.serializer_fields import JsonValueField
+from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
 from model_hub.models.choices import ModelTypes
 from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetKbSerializer,
@@ -1255,7 +1255,7 @@ class ColumnConfigResultSerializer(serializers.Serializer):
     presence_penalty = serializers.FloatField(required=False, allow_null=True)
     max_tokens = serializers.IntegerField(required=False, allow_null=True)
     top_p = serializers.FloatField(required=False, allow_null=True)
-    response_format = JsonValueField(required=False)
+    response_format = StringOrObjectField(required=False)
     tool_choice = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )

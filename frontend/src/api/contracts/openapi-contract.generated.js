@@ -58600,9 +58600,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "description": "Any valid JSON value.",
+          "description": "String or JSON object.",
           "type": "object",
-          "x-json-value": true
+          "x-string-or-object": true
         },
         "tool_choice": {
           "title": "Tool choice",
@@ -75313,16 +75313,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "run_prompt_config": {
           "title": "Run prompt config",
           "type": "object",
-          "x-json-value": true,
-          "description": "Any valid JSON value."
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          }
         },
         "messages": {
           "description": "List of messages with format [{'role': 'user/assistant', 'content': 'text'}]",
           "type": "array",
           "items": {
             "type": "object",
-            "x-json-value": true,
-            "description": "Any valid JSON value."
+            "additionalProperties": {
+              "type": "string",
+              "x-nullable": true
+            }
           }
         },
         "temperature": {
@@ -75367,10 +75371,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "description": "Any valid JSON value.",
+          "description": "String or JSON object.",
           "type": "object",
           "x-nullable": true,
-          "x-json-value": true
+          "x-string-or-object": true
         },
         "tool_choice": {
           "title": "Tool choice",
@@ -77233,8 +77237,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "response_format": {
           "title": "Response format",
           "type": "object",
-          "x-json-value": true,
-          "description": "Any valid JSON value."
+          "x-string-or-object": true,
+          "description": "String or JSON object."
         },
         "tool_choice": {
           "title": "Tool choice",
