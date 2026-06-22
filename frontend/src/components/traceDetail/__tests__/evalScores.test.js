@@ -69,6 +69,18 @@ describe("spanOwnEvalRows", () => {
       spanOwnEvalRows({ observation_span: { id: "s1" }, eval_scores: [] }),
     ).toEqual([]);
   });
+
+  // A *populated* legacy array is silently ignored — the rollup reads only the
+  // grouped {eval_tasks} shape. Documents current (pre-guard) behavior; update
+  // this when/if a legacy-array guard lands.
+  it("yields no rows for a populated legacy array-shaped eval_scores", () => {
+    const legacy = {
+      observation_span: { id: "s1" },
+      eval_scores: [{ eval_name: "levenshtein", output_type: "score", value: 80 }],
+    };
+    expect(spanOwnEvalRows(legacy)).toEqual([]);
+    expect(collectSubtreeEvals(legacy)).toEqual({ pass: 0, fail: 0, total: 0 });
+  });
 });
 
 describe("collectSubtreeEvals", () => {
