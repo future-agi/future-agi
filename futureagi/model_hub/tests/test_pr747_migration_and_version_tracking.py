@@ -1,9 +1,9 @@
- """
+"""
 Tests for PR #747 — eval usage version tracking.
 
 Two independent concerns:
 
-1. Migration guard: 0111_eval_usage_version_backfill is a RunPython
+1. Migration guard: 0112_eval_usage_version_backfill is a RunPython
    migration whose first act is `apps.get_model("usage", "APICallLog")`.
    In an OSS build where `ee.usage` is absent from INSTALLED_APPS, that
    call would raise LookupError and fail the migration.  The migration
@@ -68,7 +68,7 @@ class _FakeAppsNoUsage:
         )
 
 
-def test_migration_0111_returns_early_when_usage_app_absent():
+def test_migration_0112_returns_early_when_usage_app_absent():
     """0111 migration must silently return when ee.usage is not installed.
 
     Simulates the OSS build by providing a fake app registry that raises
@@ -77,7 +77,7 @@ def test_migration_0111_returns_early_when_usage_app_absent():
     propagates LookupError and this test fails.
     """
     migration_module = importlib.import_module(
-        "model_hub.migrations.0111_eval_usage_version_backfill"
+        "model_hub.migrations.0112_eval_usage_version_backfill"
     )
     func = migration_module.backfill_apicalllog_version_info
 
@@ -92,7 +92,7 @@ def test_migration_0111_returns_early_when_usage_app_absent():
     assert result is None
 
 
-def test_migration_0111_noop_reverse_code_exists():
+def test_migration_0112_noop_reverse_code_exists():
     """The reverse_code for 0111 must be migrations.RunPython.noop.
 
     This asserts the migration is safely reversible (it doesn't attempt
@@ -102,7 +102,7 @@ def test_migration_0111_noop_reverse_code_exists():
     from django.db.migrations import RunPython
 
     migration_module = importlib.import_module(
-        "model_hub.migrations.0111_eval_usage_version_backfill"
+        "model_hub.migrations.0112_eval_usage_version_backfill"
     )
     migration_class = migration_module.Migration
 
