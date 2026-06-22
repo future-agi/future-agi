@@ -27,7 +27,6 @@ const PasswordSentLogin = ({
     mutationFn: (email) =>
       axios.post(endpoints.auth.passwordResetInitiate, {
         email,
-        resend_email: true,
       }),
     meta: {
       errorHandled: true,

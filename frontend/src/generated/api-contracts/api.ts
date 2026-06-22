@@ -178,6 +178,7 @@ import type {
   AgentccWebhooksListParams,
   AllActiveTestsApi,
   AnnotationActionMessageResponseApi,
+  AnnotationLabelCreateResponseApi,
   AnnotationLabelRestoreResponseApi,
   AnnotationQueueApi,
   AnnotationSummaryResponseApi,
@@ -191,8 +192,6 @@ import type {
   ApiKeyRequestApi,
   ApiKeyResponseApi,
   ApiKeySuccessResponseApi,
-  ApiPublicOtelV1TracesCreateBodyOne,
-  ApiPublicOtelV1TracesCreateBodyTwo,
   ApiSelectionTooLargeErrorApi,
   ApiTextErrorResponseApi,
   ApiTracesSpanAttributeDetailListParams,
@@ -744,10 +743,7 @@ import type {
   NodeExecutionDetailResponseApi,
   NodeReadApi,
   NodeTemplateDetailApi,
-  OTLPHTTPErrorResponseApi,
-  OTLPHTTPTraceResponseApi,
   OTLPHealthResponseApi,
-  OTLPTraceResponseApi,
   ObservabilityProviderApi,
   ObservationAttributeListResponseApi,
   ObservationSpanApi,
@@ -1160,8 +1156,6 @@ import type {
   TracerObservationSpanRetrieveLoadingParams,
   TracerObservationSpanRootSpans200,
   TracerObservationSpanRootSpansParams,
-  TracerOtlpV1TracesCreateBodyOne,
-  TracerOtlpV1TracesCreateBodyTwo,
   TracerProjectFetchSystemMetrics200,
   TracerProjectFetchSystemMetricsParams,
   TracerProjectGetGraphData200,
@@ -1260,7 +1254,6 @@ import type {
   UsageBudgetMutationResponseApi,
   UsageEmptyRequestApi,
   UsageErrorResponseApi,
-  UsageGetCustomerInvoicesListParams,
   UsageInvoiceDetailResponseApi,
   UsageInvoiceListResponseApi,
   UsageMessageResponseApi,
@@ -17270,60 +17263,6 @@ export const apiPublicIngestionCreate = async (langfuseIngestionRequestApi: Lang
 
 
 
-export type apiPublicOtelV1TracesCreateResponse200 = {
-  data: OTLPHTTPTraceResponseApi
-  status: 200
-}
-
-export type apiPublicOtelV1TracesCreateResponse403 = {
-  data: OTLPHTTPErrorResponseApi
-  status: 403
-}
-
-export type apiPublicOtelV1TracesCreateResponse500 = {
-  data: OTLPHTTPErrorResponseApi
-  status: 500
-}
-
-export type apiPublicOtelV1TracesCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 403 | 500>
-}
-
-export type apiPublicOtelV1TracesCreateResponseSuccess = (apiPublicOtelV1TracesCreateResponse200) & {
-  headers: Headers;
-};
-export type apiPublicOtelV1TracesCreateResponseError = (apiPublicOtelV1TracesCreateResponse403 | apiPublicOtelV1TracesCreateResponse500 | apiPublicOtelV1TracesCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type apiPublicOtelV1TracesCreateResponse = (apiPublicOtelV1TracesCreateResponseSuccess | apiPublicOtelV1TracesCreateResponseError)
-
-export const getApiPublicOtelV1TracesCreateUrl = () => {
-
-
-
-
-  return `/api/public/otel/v1/traces`
-}
-
-/**
- * Asynchronously handles the POST request to create ObservationSpans from OTEL data.
- */
-export const apiPublicOtelV1TracesCreate = async (apiPublicOtelV1TracesCreateBody: ApiPublicOtelV1TracesCreateBodyOne | ApiPublicOtelV1TracesCreateBodyTwo, options?: RequestInit): Promise<apiPublicOtelV1TracesCreateResponse> => {
-
-  return apiMutator<apiPublicOtelV1TracesCreateResponse>(getApiPublicOtelV1TracesCreateUrl(),
-  {
-    ...options,
-    method: 'POST'
-    ,
-    body: JSON.stringify(
-      apiPublicOtelV1TracesCreateBody,)
-  }
-);}
-
-
-
 export type apiPublicTracesListResponse200 = {
   data: LangfuseTracesResponseApi
   status: 200
@@ -18829,11 +18768,6 @@ export type falconAiQuickAnalysisCreateResponse200 = {
   status: 200
 }
 
-export type falconAiQuickAnalysisCreateResponse400 = {
-  data: FalconErrorResponseApi
-  status: 400
-}
-
 export type falconAiQuickAnalysisCreateResponse429 = {
   data: FalconErrorResponseApi
   status: 429
@@ -18851,13 +18785,13 @@ export type falconAiQuickAnalysisCreateResponse504 = {
 
 export type falconAiQuickAnalysisCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 429 | 502 | 504>
+  status: Exclude<HTTPStatusCodes, 200 | 429 | 502 | 504>
 }
 
 export type falconAiQuickAnalysisCreateResponseSuccess = (falconAiQuickAnalysisCreateResponse200) & {
   headers: Headers;
 };
-export type falconAiQuickAnalysisCreateResponseError = (falconAiQuickAnalysisCreateResponse400 | falconAiQuickAnalysisCreateResponse429 | falconAiQuickAnalysisCreateResponse502 | falconAiQuickAnalysisCreateResponse504 | falconAiQuickAnalysisCreateResponseDefault) & {
+export type falconAiQuickAnalysisCreateResponseError = (falconAiQuickAnalysisCreateResponse429 | falconAiQuickAnalysisCreateResponse502 | falconAiQuickAnalysisCreateResponse504 | falconAiQuickAnalysisCreateResponseDefault) & {
   headers: Headers;
 };
 
@@ -24424,20 +24358,35 @@ export const modelHubAnnotationsLabelsList = async (params?: ModelHubAnnotations
 
 
 
-export type modelHubAnnotationsLabelsCreateResponse201 = {
-  data: AnnotationsLabelsApi
-  status: 201
+export type modelHubAnnotationsLabelsCreateResponse200 = {
+  data: AnnotationLabelCreateResponseApi
+  status: 200
+}
+
+export type modelHubAnnotationsLabelsCreateResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type modelHubAnnotationsLabelsCreateResponse403 = {
+  data: ApiTextErrorResponseApi
+  status: 403
+}
+
+export type modelHubAnnotationsLabelsCreateResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
 }
 
 export type modelHubAnnotationsLabelsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 500>
 }
 
-export type modelHubAnnotationsLabelsCreateResponseSuccess = (modelHubAnnotationsLabelsCreateResponse201) & {
+export type modelHubAnnotationsLabelsCreateResponseSuccess = (modelHubAnnotationsLabelsCreateResponse200) & {
   headers: Headers;
 };
-export type modelHubAnnotationsLabelsCreateResponseError = (modelHubAnnotationsLabelsCreateResponseDefault) & {
+export type modelHubAnnotationsLabelsCreateResponseError = (modelHubAnnotationsLabelsCreateResponse400 | modelHubAnnotationsLabelsCreateResponse403 | modelHubAnnotationsLabelsCreateResponse500 | modelHubAnnotationsLabelsCreateResponseDefault) & {
   headers: Headers;
 };
 
@@ -63077,60 +63026,6 @@ export const tracerObservationSpanDelete = async (id: string, options?: RequestI
 
 
 
-export type tracerOtlpV1TracesCreateResponse200 = {
-  data: OTLPHTTPTraceResponseApi
-  status: 200
-}
-
-export type tracerOtlpV1TracesCreateResponse403 = {
-  data: OTLPHTTPErrorResponseApi
-  status: 403
-}
-
-export type tracerOtlpV1TracesCreateResponse500 = {
-  data: OTLPHTTPErrorResponseApi
-  status: 500
-}
-
-export type tracerOtlpV1TracesCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 403 | 500>
-}
-
-export type tracerOtlpV1TracesCreateResponseSuccess = (tracerOtlpV1TracesCreateResponse200) & {
-  headers: Headers;
-};
-export type tracerOtlpV1TracesCreateResponseError = (tracerOtlpV1TracesCreateResponse403 | tracerOtlpV1TracesCreateResponse500 | tracerOtlpV1TracesCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerOtlpV1TracesCreateResponse = (tracerOtlpV1TracesCreateResponseSuccess | tracerOtlpV1TracesCreateResponseError)
-
-export const getTracerOtlpV1TracesCreateUrl = () => {
-
-
-
-
-  return `/tracer/otlp/v1/traces`
-}
-
-/**
- * Asynchronously handles the POST request to create ObservationSpans from OTEL data.
- */
-export const tracerOtlpV1TracesCreate = async (tracerOtlpV1TracesCreateBody: TracerOtlpV1TracesCreateBodyOne | TracerOtlpV1TracesCreateBodyTwo, options?: RequestInit): Promise<tracerOtlpV1TracesCreateResponse> => {
-
-  return apiMutator<tracerOtlpV1TracesCreateResponse>(getTracerOtlpV1TracesCreateUrl(),
-  {
-    ...options,
-    method: 'POST'
-    ,
-    body: JSON.stringify(
-      tracerOtlpV1TracesCreateBody,)
-  }
-);}
-
-
-
 export type tracerProjectVersionListResponse200 = {
   data: TracerProjectVersionList200
   status: 200
@@ -68564,70 +68459,6 @@ export const tracerV1HealthList = async ( options?: RequestInit): Promise<tracer
 
 
 
-export type tracerV1TracesCreateResponse200 = {
-  data: OTLPTraceResponseApi
-  status: 200
-}
-
-export type tracerV1TracesCreateResponse400 = {
-  data: OTLPTraceResponseApi
-  status: 400
-}
-
-export type tracerV1TracesCreateResponse403 = {
-  data: OTLPTraceResponseApi
-  status: 403
-}
-
-export type tracerV1TracesCreateResponse429 = {
-  data: OTLPTraceResponseApi
-  status: 429
-}
-
-export type tracerV1TracesCreateResponse500 = {
-  data: OTLPTraceResponseApi
-  status: 500
-}
-
-export type tracerV1TracesCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 429 | 500>
-}
-
-export type tracerV1TracesCreateResponseSuccess = (tracerV1TracesCreateResponse200) & {
-  headers: Headers;
-};
-export type tracerV1TracesCreateResponseError = (tracerV1TracesCreateResponse400 | tracerV1TracesCreateResponse403 | tracerV1TracesCreateResponse429 | tracerV1TracesCreateResponse500 | tracerV1TracesCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerV1TracesCreateResponse = (tracerV1TracesCreateResponseSuccess | tracerV1TracesCreateResponseError)
-
-export const getTracerV1TracesCreateUrl = () => {
-
-
-
-
-  return `/tracer/v1/traces/`
-}
-
-/**
- * The request body contains an ExportTraceServiceRequest with resource spans.
- * @summary Handle OTLP trace export request.
- */
-export const tracerV1TracesCreate = async ( options?: RequestInit): Promise<tracerV1TracesCreateResponse> => {
-
-  return apiMutator<tracerV1TracesCreateResponse>(getTracerV1TracesCreateUrl(),
-  {
-    ...options,
-    method: 'POST'
-
-
-  }
-);}
-
-
-
 export type tracerWebhookCreateResponse200 = {
   data: WebhookResponseApi
   status: 200
@@ -70453,28 +70284,17 @@ export type usageGetCustomerInvoicesListResponseError = (usageGetCustomerInvoice
 
 export type usageGetCustomerInvoicesListResponse = (usageGetCustomerInvoicesListResponseSuccess | usageGetCustomerInvoicesListResponseError)
 
-export const getUsageGetCustomerInvoicesListUrl = (params?: UsageGetCustomerInvoicesListParams,) => {
-  const normalizedParams = new URLSearchParams();
+export const getUsageGetCustomerInvoicesListUrl = () => {
 
-  Object.entries(params || {}).forEach(([key, value]) => {
 
-    if (Array.isArray(value)) {
-      value
-        .filter((item) => item !== undefined && item !== null)
-        .forEach((item) => normalizedParams.append(key, item.toString()))
-    } else if (value !== undefined && value !== null) {
-      normalizedParams.append(key, value.toString())
-    }
-  });
 
-  const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/usage/get-customer-invoices/?${stringifiedParams}` : `/usage/get-customer-invoices/`
+  return `/usage/get-customer-invoices/`
 }
 
-export const usageGetCustomerInvoicesList = async (params?: UsageGetCustomerInvoicesListParams, options?: RequestInit): Promise<usageGetCustomerInvoicesListResponse> => {
+export const usageGetCustomerInvoicesList = async ( options?: RequestInit): Promise<usageGetCustomerInvoicesListResponse> => {
 
-  return apiMutator<usageGetCustomerInvoicesListResponse>(getUsageGetCustomerInvoicesListUrl(params),
+  return apiMutator<usageGetCustomerInvoicesListResponse>(getUsageGetCustomerInvoicesListUrl(),
   {
     ...options,
     method: 'GET'
@@ -73529,15 +73349,14 @@ export const getUsageV2AddAddonDeleteUrl = () => {
 /**
  * Add or remove an add-on subscription.
  */
-export const usageV2AddAddonDelete = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2AddAddonDeleteResponse> => {
+export const usageV2AddAddonDelete = async ( options?: RequestInit): Promise<usageV2AddAddonDeleteResponse> => {
 
   return apiMutator<usageV2AddAddonDeleteResponse>(getUsageV2AddAddonDeleteUrl(),
   {
     ...options,
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      usageEmptyRequestApi,)
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -73751,15 +73570,14 @@ export const getUsageV2AddonDeleteUrl = () => {
 /**
  * Add or remove an add-on subscription.
  */
-export const usageV2AddonDelete = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2AddonDeleteResponse> => {
+export const usageV2AddonDelete = async ( options?: RequestInit): Promise<usageV2AddonDeleteResponse> => {
 
   return apiMutator<usageV2AddonDeleteResponse>(getUsageV2AddonDeleteUrl(),
   {
     ...options,
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      usageEmptyRequestApi,)
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -74943,16 +74761,14 @@ export const getUsageV2PaymentMethodsDeleteUrl = (pmId: string,) => {
 /**
  * Manage a specific payment method.
  */
-export const usageV2PaymentMethodsDelete = async (pmId: string,
-    usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2PaymentMethodsDeleteResponse> => {
+export const usageV2PaymentMethodsDelete = async (pmId: string, options?: RequestInit): Promise<usageV2PaymentMethodsDeleteResponse> => {
 
   return apiMutator<usageV2PaymentMethodsDeleteResponse>(getUsageV2PaymentMethodsDeleteUrl(pmId),
   {
     ...options,
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      usageEmptyRequestApi,)
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -75093,16 +74909,14 @@ export const getUsageV2PaymentMethodsDefaultDeleteUrl = (pmId: string,) => {
 /**
  * Manage a specific payment method.
  */
-export const usageV2PaymentMethodsDefaultDelete = async (pmId: string,
-    usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2PaymentMethodsDefaultDeleteResponse> => {
+export const usageV2PaymentMethodsDefaultDelete = async (pmId: string, options?: RequestInit): Promise<usageV2PaymentMethodsDefaultDeleteResponse> => {
 
   return apiMutator<usageV2PaymentMethodsDefaultDeleteResponse>(getUsageV2PaymentMethodsDefaultDeleteUrl(pmId),
   {
     ...options,
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      usageEmptyRequestApi,)
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -75390,15 +75204,14 @@ export const getUsageV2ReinstateAddonDeleteUrl = () => {
 /**
  * Add or remove an add-on subscription.
  */
-export const usageV2ReinstateAddonDelete = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2ReinstateAddonDeleteResponse> => {
+export const usageV2ReinstateAddonDelete = async ( options?: RequestInit): Promise<usageV2ReinstateAddonDeleteResponse> => {
 
   return apiMutator<usageV2ReinstateAddonDeleteResponse>(getUsageV2ReinstateAddonDeleteUrl(),
   {
     ...options,
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      usageEmptyRequestApi,)
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -75612,15 +75425,14 @@ export const getUsageV2RemoveAddonDeleteUrl = () => {
 /**
  * Add or remove an add-on subscription.
  */
-export const usageV2RemoveAddonDelete = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2RemoveAddonDeleteResponse> => {
+export const usageV2RemoveAddonDelete = async ( options?: RequestInit): Promise<usageV2RemoveAddonDeleteResponse> => {
 
   return apiMutator<usageV2RemoveAddonDeleteResponse>(getUsageV2RemoveAddonDeleteUrl(),
   {
     ...options,
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      usageEmptyRequestApi,)
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -75924,7 +75736,7 @@ and projected month-end usage.
 
 Query params:
     period: YYYY-MM (default: current month)
-    period_end: YYYY-MM (optional; defaults to period for a single month)
+    workspace_id: optional (filter by workspace)
  * @summary Get usage overview for the current billing period.
  */
 export const usageV2UsageOverviewList = async (params?: UsageV2UsageOverviewListParams, options?: RequestInit): Promise<usageV2UsageOverviewListResponse> => {
@@ -76390,70 +76202,6 @@ export const v1HealthList = async ( options?: RequestInit): Promise<v1HealthList
   {
     ...options,
     method: 'GET'
-
-
-  }
-);}
-
-
-
-export type v1TracesCreateResponse200 = {
-  data: OTLPTraceResponseApi
-  status: 200
-}
-
-export type v1TracesCreateResponse400 = {
-  data: OTLPTraceResponseApi
-  status: 400
-}
-
-export type v1TracesCreateResponse403 = {
-  data: OTLPTraceResponseApi
-  status: 403
-}
-
-export type v1TracesCreateResponse429 = {
-  data: OTLPTraceResponseApi
-  status: 429
-}
-
-export type v1TracesCreateResponse500 = {
-  data: OTLPTraceResponseApi
-  status: 500
-}
-
-export type v1TracesCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 429 | 500>
-}
-
-export type v1TracesCreateResponseSuccess = (v1TracesCreateResponse200) & {
-  headers: Headers;
-};
-export type v1TracesCreateResponseError = (v1TracesCreateResponse400 | v1TracesCreateResponse403 | v1TracesCreateResponse429 | v1TracesCreateResponse500 | v1TracesCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type v1TracesCreateResponse = (v1TracesCreateResponseSuccess | v1TracesCreateResponseError)
-
-export const getV1TracesCreateUrl = () => {
-
-
-
-
-  return `/v1/traces/`
-}
-
-/**
- * The request body contains an ExportTraceServiceRequest with resource spans.
- * @summary Handle OTLP trace export request.
- */
-export const v1TracesCreate = async ( options?: RequestInit): Promise<v1TracesCreateResponse> => {
-
-  return apiMutator<v1TracesCreateResponse>(getV1TracesCreateUrl(),
-  {
-    ...options,
-    method: 'POST'
 
 
   }

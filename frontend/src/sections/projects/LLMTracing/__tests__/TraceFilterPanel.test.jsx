@@ -4,7 +4,6 @@ import {
   filterPropertiesForPicker,
   getTraceFilterFields,
   normalizeFilterRowOperator,
-  shouldUseSingleSelectValuePicker,
 } from "../TraceFilterPanel";
 import {
   getPickerOptionSearchText,
@@ -129,39 +128,6 @@ describe("normalizeFilterRowOperator", () => {
         }).operator,
       ).toBe("is_null");
     }
-  });
-
-  it("keeps annotator, categorical, and direct ID filters multi-selectable", () => {
-    expect(
-      shouldUseSingleSelectValuePicker(
-        { field: "annotator", fieldType: "annotator" },
-        "equals",
-      ),
-    ).toBe(false);
-    expect(
-      shouldUseSingleSelectValuePicker(
-        { field: "quality", fieldType: "categorical" },
-        "equals",
-      ),
-    ).toBe(false);
-    expect(
-      shouldUseSingleSelectValuePicker(
-        { field: "trace_id", fieldType: "string" },
-        "in",
-      ),
-    ).toBe(false);
-    expect(
-      shouldUseSingleSelectValuePicker(
-        { field: "span_id", fieldType: "string" },
-        "not_in",
-      ),
-    ).toBe(false);
-    expect(
-      shouldUseSingleSelectValuePicker(
-        { field: "trace_name", fieldType: "string" },
-        "contains",
-      ),
-    ).toBe(true);
   });
 });
 

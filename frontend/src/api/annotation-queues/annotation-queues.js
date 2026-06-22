@@ -315,7 +315,7 @@ export const useHardDeleteAnnotationQueue = () => {
 export const useRestoreAnnotationQueue = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id) => axios.post(annotationQueueEndpoints.restore(id)),
+    mutationFn: (id) => axios.post(annotationQueueEndpoints.restore(id), {}),
     onSuccess: () => {
       enqueueSnackbar("Queue restored. Rule cadence reset.", {
         variant: "success",
@@ -1325,6 +1325,7 @@ export const useEvaluateRule = () => {
     mutationFn: ({ queueId, ruleId }) =>
       axios.post(
         annotationQueueEndpoints.automationRuleEvaluate(queueId, ruleId),
+        {},
       ),
     onSuccess: (response, variables) => {
       // 200 → ran inline (≤ sync threshold). 202 → too large; backend

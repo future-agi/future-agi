@@ -22,7 +22,7 @@ config:
     detect_types:
       type: string
       default: null
-      required: true
+      required: false
   config_params_desc:
     text: Text to scan for PII
     detect_types: 'Comma-separated types to detect (default: all). Options: ssn, credit_card, phone, email, ip_address'
@@ -40,8 +40,8 @@ config:
             "ip_address": (r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b", "IP"),
         }
         dt = kwargs.get("detect_types")
-        if dt is None:
-            return {"score": 0.0, "reason": "detect_types is required"}
+        if dt is None or (isinstance(dt, str) and not dt.strip()):
+            dt = list(patterns.keys())
         if isinstance(dt, str):
             try:
                 dt = json.loads(dt)

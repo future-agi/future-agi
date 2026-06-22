@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 976,
+  "endpointCount": 971,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -8655,32 +8655,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "/api/public/otel/v1/traces": {
-      "post": {
-        "operationId": "api_public_otel_v1_traces_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "description": "Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.",
-          "type": "object"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OTLPHTTPTraceResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/OTLPHTTPErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/OTLPHTTPErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
     "/api/public/traces": {
       "get": {
         "operationId": "api_public_traces_list",
@@ -9376,8 +9350,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/falcon-ai/quick-analysis/": {
       "post": {
         "operationId": "falcon-ai_quick-analysis_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/QuickAnalysis"
         },
@@ -9385,9 +9359,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/QuickAnalysisResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/FalconErrorResponse"
           },
           "429": {
             "$ref": "#/definitions/FalconErrorResponse"
@@ -12311,15 +12282,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "post": {
         "operationId": "model-hub_annotations-labels_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/AnnotationsLabels"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/AnnotationsLabels"
+          "200": {
+            "$ref": "#/definitions/AnnotationLabelCreateResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -33286,32 +33266,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "/tracer/otlp/v1/traces": {
-      "post": {
-        "operationId": "tracer_otlp_v1_traces_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "description": "Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.",
-          "type": "object"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OTLPHTTPTraceResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/OTLPHTTPErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/OTLPHTTPErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
     "/tracer/project-version/": {
       "get": {
         "operationId": "tracer_project-version_list",
@@ -36856,70 +36810,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "/tracer/v1/traces": {
-      "post": {
-        "operationId": "tracer_v1_traces_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "description": "OpenTelemetry ExportTraceServiceRequest. JSON payloads use the OTLP HTTP JSON mapping; protobuf payloads use application/x-protobuf.",
-          "type": "object"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "429": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/tracer/v1/traces/": {
-      "post": {
-        "operationId": "tracer_v1_traces_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "description": "OpenTelemetry ExportTraceServiceRequest. JSON payloads use the OTLP HTTP JSON mapping; protobuf payloads use application/x-protobuf.",
-          "type": "object"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "429": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
     "/tracer/webhook/": {
       "post": {
         "operationId": "tracer_webhook_create",
@@ -37845,26 +37735,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/usage/get-customer-invoices/": {
       "get": {
         "operationId": "usage_get-customer-invoices_list",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
         "requestBody": null,
-        "queryParameters": {
-          "page": {
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          "page_size": {
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            }
-          }
-        },
+        "queryParameters": {},
         "responses": {
           "200": {
             "$ref": "#/definitions/CustomerInvoicesResponse"
@@ -37896,8 +37770,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/usage/get-last-four-digits/": {
       "get": {
         "operationId": "usage_get-last-four-digits_list",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -39927,11 +39801,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_add-addon_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40034,11 +39906,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_addon_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40635,11 +40505,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_payment-methods_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40707,11 +40575,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_payment-methods_default_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40849,11 +40715,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_reinstate-addon_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40956,11 +40820,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_remove-addon_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
@@ -41118,6 +40980,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "string",
               "minLength": 1
+            }
+          },
+          "workspace_id": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
             }
           }
         },
@@ -41420,38 +41289,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "500": {
             "$ref": "#/definitions/ApiTextErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/traces/": {
-      "post": {
-        "operationId": "v1_traces_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "description": "OpenTelemetry ExportTraceServiceRequest. JSON payloads use the OTLP HTTP JSON mapping; protobuf payloads use application/x-protobuf.",
-          "type": "object"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "429": {
-            "$ref": "#/definitions/OTLPTraceResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/OTLPTraceResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -42291,7 +42128,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Plan",
           "type": "string",
           "enum": [
-            "payg",
             "boost",
             "scale",
             "enterprise"
@@ -46051,6 +45887,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "AnnotationLabelCreateResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/AnnotationsLabels"
+        }
+      }
+    },
     "AnnotationLabelRestoreResponse": {
       "required": [
         "result"
@@ -47737,8 +47589,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true
         },
         "error_localizer_tasks": {
-          "title": "Error localizer tasks",
-          "type": "string",
+          "description": "Get error localizer tasks for this call execution.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CallExecutionErrorLocalizerTask"
+          },
           "readOnly": true
         },
         "call_summary": {
@@ -47922,7 +47777,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "eval_metrics": {
           "title": "Eval metrics",
-          "type": "string",
+          "description": "Get evaluation metrics in a format suitable for the UI",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/CallExecutionEvalMetric"
+          },
           "readOnly": true
         },
         "scenario_columns": {
@@ -60594,83 +60453,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "OTLPHTTPErrorResponse": {
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean",
-          "default": false
-        },
-        "type": {
-          "title": "Type",
-          "type": "string",
-          "enum": [
-            "validation_error",
-            "authentication_error",
-            "payment_required",
-            "entitlement_error",
-            "permission_error",
-            "not_found",
-            "conflict",
-            "client_error",
-            "rate_limit",
-            "server_error",
-            "service_unavailable",
-            "timeout",
-            "api_error"
-          ],
-          "x-nullable": true
-        },
-        "code": {
-          "title": "Code",
-          "type": "string",
-          "x-nullable": true
-        },
-        "detail": {
-          "title": "Detail",
-          "type": "string",
-          "x-nullable": true
-        },
-        "result": {
-          "title": "Result",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "message": {
-          "title": "Message",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "error": {
-          "title": "Error",
-          "type": "string",
-          "x-nullable": true
-        },
-        "attr": {
-          "title": "Attr",
-          "type": "string",
-          "x-nullable": true
-        },
-        "details": {
-          "title": "Details",
-          "type": "object",
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    },
-    "OTLPHTTPTraceResponse": {
-      "type": "object",
-      "properties": {}
-    },
     "OTLPHealthResponse": {
       "required": [
         "status",
@@ -60689,14 +60471,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Service",
           "type": "string",
           "minLength": 1
-        }
-      }
-    },
-    "OTLPTraceResponse": {
-      "type": "object",
-      "properties": {
-        "partial_success": {
-          "$ref": "#/definitions/OTLPPartialSuccess"
         }
       }
     },
@@ -73603,6 +73377,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Composite weight overrides",
           "type": "object",
           "x-nullable": true
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
         }
       }
     },
@@ -76796,6 +76576,170 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "x-nullable": true
           },
           "default": {}
+        }
+      }
+    },
+    "CallExecutionErrorLocalizerTask": {
+      "required": [
+        "task_id",
+        "eval_config_id",
+        "status",
+        "eval_result"
+      ],
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "title": "Task id",
+          "type": "string",
+          "minLength": 1
+        },
+        "eval_config_id": {
+          "title": "Eval config id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "eval_result": {
+          "title": "Eval result",
+          "type": "object",
+          "x-nullable": true
+        },
+        "eval_explanation": {
+          "title": "Eval explanation",
+          "type": "string",
+          "x-nullable": true
+        },
+        "input_data": {
+          "title": "Input data",
+          "type": "object",
+          "x-nullable": true
+        },
+        "input_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "input_types": {
+          "title": "Input types",
+          "type": "object",
+          "x-nullable": true
+        },
+        "rule_prompt": {
+          "title": "Rule prompt",
+          "type": "string",
+          "x-nullable": true
+        },
+        "error_analysis": {
+          "title": "Error analysis",
+          "type": "object",
+          "x-nullable": true
+        },
+        "selected_input_key": {
+          "title": "Selected input key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "error_message": {
+          "title": "Error message",
+          "type": "string",
+          "x-nullable": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "x-nullable": true
+        },
+        "updated_at": {
+          "title": "Updated at",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "CallExecutionEvalMetric": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "description": "number | bool | string | list[string] | null",
+          "type": "object",
+          "x-nullable": true
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "template_type": {
+          "title": "Template type",
+          "type": "string",
+          "x-nullable": true
+        },
+        "visible": {
+          "title": "Visible",
+          "type": "boolean"
+        },
+        "error": {
+          "title": "Error",
+          "type": "boolean"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "skipped": {
+          "title": "Skipped",
+          "type": "boolean"
+        },
+        "error_localizer": {
+          "title": "Error localizer",
+          "type": "boolean"
+        },
+        "error_analysis": {
+          "title": "Error analysis",
+          "type": "object",
+          "x-nullable": true
+        },
+        "error_localizer_status": {
+          "title": "Error localizer status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "error_localizer_message": {
+          "title": "Error localizer message",
+          "type": "string",
+          "x-nullable": true
+        },
+        "selected_input_key": {
+          "title": "Selected input key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "input_data": {
+          "title": "Input data",
+          "type": "object",
+          "x-nullable": true
+        },
+        "input_types": {
+          "title": "Input types",
+          "type": "object",
+          "x-nullable": true
         }
       }
     },
@@ -84272,19 +84216,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "uuid",
           "readOnly": true
-        }
-      }
-    },
-    "OTLPPartialSuccess": {
-      "type": "object",
-      "properties": {
-        "rejected_spans": {
-          "title": "Rejected spans",
-          "type": "integer"
-        },
-        "error_message": {
-          "title": "Error message",
-          "type": "string"
         }
       }
     },

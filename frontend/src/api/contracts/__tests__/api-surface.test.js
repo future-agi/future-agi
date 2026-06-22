@@ -128,7 +128,7 @@ describe("api surface contract", () => {
     ).toBeGreaterThan(360);
     expect(
       Object.keys(API_SURFACE_CONTRACT.groups.tracer).length,
-    ).toBeGreaterThan(155);
+    ).toBeGreaterThan(153);
     expect(
       Object.keys(API_SURFACE_CONTRACT.groups.accounts).length,
     ).toBeGreaterThan(75);

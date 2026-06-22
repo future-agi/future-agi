@@ -381,6 +381,15 @@ PortkeyInstrumentor().instrument(tracer_provider=tracer_provider)
 }
 
 
+from enum import Enum
+
+
+class FilterType(Enum):
+    TEXT = "text"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+
+
 # SPAN_ATTRIBUTE filter vocabulary shared by the CH builder and the Django ORM
 # validator. Single source of truth for allowed filter ops per type.
 SPAN_ATTR_ALLOWED_OPS: dict[str, set[str]] = CONTRACT_SPAN_ATTR_ALLOWED_OPS

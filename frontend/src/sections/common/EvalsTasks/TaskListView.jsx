@@ -18,7 +18,20 @@ import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import DeleteConfirmation from "./DeleteConfirmation";
+
+const POLL_INTERVAL_MS = 5000;
+
+// Continuous tasks stay in "running" forever — only poll their pending → running flip.
+const shouldPollRow = (row) => {
+  const status = row?.status?.toLowerCase?.();
+  const runType = row?.run_type?.toLowerCase?.();
+  if (status === "pending") return true;
+  if (status === "running") return runType === "historical";
+  return false;
+};
 
 // ── Status Config ──
 
@@ -299,6 +312,7 @@ const TaskListView = ({
   _onEditTask,
   refreshKey,
 }) => {
+  const { role } = useAuthContext();
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -354,6 +368,12 @@ const TaskListView = ({
       return resp?.result;
     },
     keepPreviousData: true,
+    structuralSharing: false,
+    refetchInterval: (query) =>
+      (query?.state?.data?.table || []).some(shouldPollRow)
+        ? POLL_INTERVAL_MS
+        : false,
+    refetchIntervalInBackground: false,
   });
 
   const items = useMemo(
@@ -621,6 +641,11 @@ const TaskListView = ({
                   <Iconify icon="solar:trash-bin-trash-linear" width={16} />
                 }
                 onClick={() => setDeleteTarget(selectedItems)}
+                disabled={
+                  !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                    role
+                  ]
+                }
                 sx={{ textTransform: "none", fontSize: "12px", height: 32 }}
               >
                 Delete
@@ -641,6 +666,11 @@ const TaskListView = ({
               color="primary"
               startIcon={<Iconify icon="mingcute:add-line" width={18} />}
               onClick={onCreateTask}
+              disabled={
+                !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                  role
+                ]
+              }
               sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
             >
               Create Task

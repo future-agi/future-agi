@@ -130,7 +130,7 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
     let subsetOptions = [];
     let splitOptions = [];
 
-    const datasetInfo = loadedDataset?.data?.result?.datasetInfo?.splits;
+    const datasetInfo = loadedDataset?.data?.result?.dataset_info?.splits;
 
     if (datasetInfo) {
       subsetOptions = Object.keys(datasetInfo)?.map((subset) => ({

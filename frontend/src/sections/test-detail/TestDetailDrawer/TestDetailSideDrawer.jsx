@@ -15,6 +15,7 @@ import { transformMetricDetails } from "src/sections/agents/CallLogs/utils";
 import { enqueueSnackbar } from "notistack";
 import { deepEqual } from "src/utils/utils";
 import { useUrlState } from "src/routes/hooks/use-url-state";
+import { stripUiFilterKeys } from "src/components/ComplexFilter/common";
 import SkeltonForTestDeatilDrawer from "../Skeletons/SkeltonForTestDeatilDrawer";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { HeaderSkeleton } from "./BasLineCompare/Skeletons";
@@ -223,7 +224,9 @@ const TestDetailSideDrawerChild = ({
     const simulateFilters =
       urlModule === "simulate"
         ? JSON.stringify(
-            Array.isArray(drawerQueryKey[3]) ? drawerQueryKey[3] : [],
+            stripUiFilterKeys(
+              Array.isArray(drawerQueryKey[3]) ? drawerQueryKey[3] : [],
+            ),
           )
         : JSON.stringify([]);
 

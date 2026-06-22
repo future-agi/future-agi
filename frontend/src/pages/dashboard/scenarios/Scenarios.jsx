@@ -165,7 +165,7 @@ function Scenarios() {
         ),
       },
       {
-        id: "agentType",
+        id: "agent_type",
         accessorKey: "agent_type",
         header: "Agent Type",
         size: 170,
@@ -173,7 +173,7 @@ function Scenarios() {
         cell: ChipCell,
       },
       {
-        id: "datasetRows",
+        id: "dataset_rows",
         accessorKey: "dataset_rows",
         header: "No of Datapoints",
         size: 140,
@@ -185,7 +185,7 @@ function Scenarios() {
         ),
       },
       {
-        id: "scenarioType",
+        id: "scenario_type",
         accessorKey: "scenario_type",
         header: "Scenario Type",
         size: 150,
@@ -193,7 +193,7 @@ function Scenarios() {
         cell: ChipCell,
       },
       {
-        id: "createdAt",
+        id: "created_at",
         accessorKey: "created_at",
         header: "Created At",
         size: 170,

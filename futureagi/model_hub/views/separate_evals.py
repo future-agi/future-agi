@@ -207,11 +207,8 @@ def apply_filters(row_data, filters):
                 }
 
                 if filter_op not in text_ops:
-                    message = (
-                        "Invalid filter operation. \
-                        Allowed operations are: "
-                        + ", ".join(text_ops.keys())
-                    )
+                    message = "Invalid filter operation. \
+                        Allowed operations are: " + ", ".join(text_ops.keys())
                     raise ValueError(message)
 
                 result = []
@@ -580,11 +577,8 @@ class GetAPICallLogView(APIView):
 
             config = json.loads(log_row.config)
             error_localizer = config.get("error_localizer", {})
-            # Look up the ErrorLocalizerTask keyed by this log_id so the
-            # frontend can distinguish "still running" from "never started"
-            # and from "completed". The task row is populated by
-            # `trigger_error_localization_for_playground` when the playground
-            # is called with error_localizer=true.
+            if not isinstance(error_localizer, dict):
+                error_localizer = {}
             error_localizer_status = None
             error_localizer_message = None
             try:
@@ -1815,26 +1809,100 @@ class EvalTemplateBulkDeleteView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            templates_to_delete = list(
-                EvalTemplate.objects.filter(
+            from model_hub.models.develop_dataset import Cell, Column, Dataset
+
+            with transaction.atomic():
+                deleted_count = EvalTemplate.objects.filter(
                     id__in=req.template_ids,
                     organization=organization,
                     owner=OwnerChoices.USER.value,
                     deleted=False,
-                ).values_list("id", flat=True)
-            )
+                ).update(deleted=True, deleted_at=timezone.now())
 
-            now = timezone.now()
-            deleted_count = EvalTemplate.objects.filter(
-                id__in=templates_to_delete,
-                organization=organization,
-                owner=OwnerChoices.USER.value,
-                deleted=False,
-            ).update(deleted=True, deleted_at=now)
-            EvalSettings.objects.filter(
-                eval_id__in=templates_to_delete,
-                deleted=False,
-            ).update(deleted=True, deleted_at=now)
+                # Fetch all UserEvalMetrics bound to these templates
+                # Scoped to the requesting org to prevent cross-tenant cascade
+                metrics = list(
+                    UserEvalMetric.objects.filter(
+                        template_id__in=req.template_ids,
+                        organization=organization,
+                        deleted=False,
+                    ).values_list("id", "dataset_id")
+                )
+
+                if metrics:
+                    metric_ids = {str(m[0]) for m in metrics}
+                    dataset_ids = {m[1] for m in metrics}
+
+                    # Find eval result columns scoped by dataset (indexed)
+                    eval_cols = list(
+                        Column.objects.filter(
+                            dataset_id__in=dataset_ids,
+                            source=SourceChoices.EVALUATION.value,
+                            source_id__in=metric_ids,
+                            deleted=False,
+                        ).values_list("id", "dataset_id", flat=False)
+                    )
+
+                    # Build set of eval column IDs for dependent column lookup
+                    eval_col_ids = {row[0] for row in eval_cols}
+                    all_col_ids = set(eval_col_ids)
+
+                    # Find dependent columns (reason, tags) scoped by dataset
+                    if eval_col_ids:
+                        eval_col_suffixes = {
+                            f"{ecid}-sourceid-"
+                            for ecid in (str(eid) for eid in eval_col_ids)
+                        }
+                        dep_cols = list(
+                            Column.objects.filter(
+                                dataset_id__in=dataset_ids,
+                                source__in=[
+                                    SourceChoices.EVALUATION_REASON.value,
+                                    SourceChoices.EVALUATION_TAGS.value,
+                                ],
+                                deleted=False,
+                            ).values_list("id", "source_id")
+                        )
+                        for col_id, source_id in dep_cols:
+                            if source_id and any(
+                                sfx in source_id for sfx in eval_col_suffixes
+                            ):
+                                all_col_ids.add(col_id)
+
+                    if all_col_ids:
+                        # Bulk soft-delete cells
+                        Cell.objects.filter(
+                            column_id__in=all_col_ids, deleted=False
+                        ).update(deleted=True, deleted_at=timezone.now())
+
+                        # Bulk soft-delete columns
+                        Column.objects.filter(id__in=all_col_ids).update(
+                            deleted=True, deleted_at=timezone.now()
+                        )
+
+                        # Fix column_order per affected dataset
+                        col_id_strs = {str(c) for c in all_col_ids}
+                        affected_datasets = list(
+                            Dataset.objects.filter(id__in=dataset_ids)
+                        )
+                        datasets_to_update = []
+                        for ds in affected_datasets:
+                            if ds.column_order:
+                                new_order = [
+                                    c for c in ds.column_order if c not in col_id_strs
+                                ]
+                                if len(new_order) != len(ds.column_order):
+                                    ds.column_order = new_order
+                                    datasets_to_update.append(ds)
+                        if datasets_to_update:
+                            Dataset.objects.bulk_update(
+                                datasets_to_update, ["column_order"]
+                            )
+
+                    # Soft-delete the metrics themselves
+                    UserEvalMetric.objects.filter(
+                        id__in=[m[0] for m in metrics]
+                    ).update(deleted=True, deleted_at=timezone.now())
 
             response = BulkDeleteResponse(deleted_count=deleted_count)
             return self._gm.success_response(response.model_dump())

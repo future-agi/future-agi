@@ -51,7 +51,7 @@ const CreateDatasetLinks = ({
               <Typography
                 variant="s2"
                 fontWeight={"fontWeightMedium"}
-                color="text.disabled"
+                color="text.secondary"
               >
                 {item}
               </Typography>

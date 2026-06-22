@@ -49,6 +49,11 @@ const LabelSelectContent = ({
     return [];
   });
 
+  const originalLabelIds = new Set((selectedLabels ?? []).map((l) => l.id));
+  const hasChanges =
+    selectedLabelsList.length !== originalLabelIds.size ||
+    selectedLabelsList.some((l) => !originalLabelIds.has(l.id));
+
   const { mutate: assignLabel, isPending: isAssigning } = useMutation({
     mutationFn: (labelIds) =>
       axios.post(endpoints.develop.runPrompt.assignMultipleLabels, {
@@ -107,11 +112,6 @@ const LabelSelectContent = ({
   );
 
   const handleSave = useCallback(() => {
-    if (selectedLabelsList.length === 0) {
-      return enqueueSnackbar("Please select at least one label", {
-        variant: "warning",
-      });
-    }
     const labelIds = selectedLabelsList.map((label) => label.id);
     assignLabel(labelIds);
   }, [selectedLabelsList, assignLabel]);
@@ -199,6 +199,9 @@ const LabelSelectContent = ({
                   color: colorMap?.color,
                   borderRadius: "100px",
                   zIndex: 10,
+                  "&:hover": {
+                    backgroundColor: colorMap?.hoverBackgroundColor,
+                  },
                   "& .MuiChip-deleteIcon": {
                     color: colorMap?.color,
                   },
@@ -261,7 +264,7 @@ const LabelSelectContent = ({
       </Box>
 
       <LoadingButton
-        disabled={selectedLabelsList?.length === 0}
+        disabled={!hasChanges}
         loading={isAssigning}
         color="primary"
         variant="contained"
