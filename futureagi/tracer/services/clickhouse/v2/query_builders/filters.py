@@ -308,18 +308,27 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
     # Expose the v2 attribute-type meta on the instance.
     SPAN_ATTR_TYPE_META = _SPAN_ATTR_TYPE_META_V2
 
-    def translate(self, filters):  # type: ignore[override]
+    # End-user filter subquery reads the v2 `end_users` RMT (keyed by
+    # end_user_id, soft-deleted via is_deleted) instead of the dropped legacy
+    # `tracer_enduser` (id + _peerdb_is_deleted/deleted).
+    _ENDUSER_DIM_TABLE = "end_users"
+    _ENDUSER_DIM_ID_COL = "end_user_id"
+    _ENDUSER_DIM_NOT_DELETED = "is_deleted = 0"
+
+    def translate(self, filters, *args, **kwargs):  # type: ignore[override]
         # `translate` returns a WHERE fragment that gets stitched into a larger
         # SELECT statement by callers. Do NOT append SETTINGS here — that
         # happens at the full-SELECT boundary in the per-builder `build()`
         # methods (SpanListQueryBuilderV2.build, TraceListQueryBuilderV2.build,
         # etc.). Otherwise we'd end up with `WHERE ... SETTINGS ... AND ...`
         # which is a syntax error.
-        sql, params = super().translate(filters)
+        sql, params = super().translate(filters, *args, **kwargs)
         return rewrite_v1_sql_to_v2(sql), params
 
-    def translate_sort(self, sort_params):  # type: ignore[override]
-        result = super().translate_sort(sort_params)
+    def translate_sort(self, sort_params, *args, **kwargs):  # type: ignore[override]
+        # Forward extra args (e.g. field_map) to the v1 implementation — callers
+        # like the list builders pass field_map=SORT_FIELD_MAP.
+        result = super().translate_sort(sort_params, *args, **kwargs)
         if isinstance(result, tuple):
             sql, *rest = result
             return (rewrite_v1_sql_to_v2(sql), *rest)

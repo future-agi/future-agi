@@ -42,6 +42,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     TABLE = "spans"
     EVAL_TABLE = "tracer_eval_logger"
     ANNOTATION_TABLE = "model_hub_score"
+    # Filter compiler class; the v2 list builder overrides this to the v2
+    # builder so it reads the v2 dimension tables (end_users, etc.).
+    _FILTER_BUILDER_CLS = ClickHouseFilterBuilder
 
     SORT_FIELD_MAP: dict[str, str] = {
         "created_at": "start_time",
@@ -88,9 +91,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         self.params["start_date"] = start_date
         self.params["end_date"] = end_date
 
-        fb = ClickHouseFilterBuilder(
+        fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
-            query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
+            query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
             project_ids=self.project_ids,
@@ -248,9 +251,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
     def build_count_query(self) -> tuple[str, dict[str, Any]]:
         """Build a count query for total matching spans."""
-        fb = ClickHouseFilterBuilder(
+        fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
-            query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
+            query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
             project_ids=self.project_ids,
