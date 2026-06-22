@@ -15,7 +15,7 @@ import { LoadingButton } from "@mui/lab";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import CustomModelDropdownControl from "src/components/custom-model-dropdown/CustomModelDropdownControl";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import { useExtractEntitiesStore } from "../../states";
+import { useExtractEntitiesStore , useRerunDependentColumnsStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
@@ -38,6 +38,7 @@ export const ExtractEntitiesChild = ({
   editId,
 }) => {
   const { refreshGrid } = useDevelopDetailContext();
+  const { setRerunDependentColumns } = useRerunDependentColumnsStore();
 
   const { control, handleSubmit, reset } = useForm({
     defaultValues: {
@@ -110,7 +111,19 @@ export const ExtractEntitiesChild = ({
       });
       refreshGrid();
       onClose();
-    },
+    
+      try {
+        axios.get(endpoints.develop.addColumns.getDependentColumns(editId)).then((res) => {
+          if (res.data?.result?.dependents?.length > 0) {
+            setRerunDependentColumns({
+              sourceColumnId: editId,
+              dependents: res.data.result.dependents,
+            });
+          }
+        });
+      } catch (err) {
+        console.error("Failed to check dependent columns", err);
+      }},
   });
 
   const transformFormToApi = (formValues) => {

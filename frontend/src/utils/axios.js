@@ -729,6 +729,8 @@ export const endpoints = {
         `/model-hub/columns/${columnId}/operation-config/`,
       updateDynamicColumn: (columnId) =>
         `/model-hub/columns/${columnId}/rerun-operation/`,
+      getDependentColumns: (columnId) =>
+        `/model-hub/columns/${columnId}/dependents/`,
     },
     deleteDatasetRow: (datasetId) =>
       `/model-hub/develops/${datasetId}/delete_row/`,

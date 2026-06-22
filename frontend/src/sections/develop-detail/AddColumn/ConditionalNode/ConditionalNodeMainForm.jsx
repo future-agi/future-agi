@@ -25,7 +25,7 @@ import {
 import { ShowComponent } from "../../../../components/show";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import { useConditionalNodeStoreShallow } from "../../states";
+import { useConditionalNodeStoreShallow , useRerunDependentColumnsStore } from "../../states";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 
@@ -178,6 +178,7 @@ const ConditionalNodeMainForm = ({
     (s) => s.setOpenConditionalNode,
   );
   const { refreshGrid } = useDevelopDetailContext();
+  const { setRerunDependentColumns } = useRerunDependentColumnsStore();
 
   const onClose = () => {
     setOpenConditionalNode(false);
@@ -213,7 +214,19 @@ const ConditionalNodeMainForm = ({
       });
       refreshGrid();
       onClose();
-    },
+    
+      try {
+        axios.get(endpoints.develop.addColumns.getDependentColumns(editId)).then((res) => {
+          if (res.data?.result?.dependents?.length > 0) {
+            setRerunDependentColumns({
+              sourceColumnId: editId,
+              dependents: res.data.result.dependents,
+            });
+          }
+        });
+      } catch (err) {
+        console.error("Failed to check dependent columns", err);
+      }},
   });
 
   const transformFormToApi = (formValues) => {
