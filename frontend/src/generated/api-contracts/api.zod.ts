@@ -21821,15 +21821,24 @@ export const ModelHubGetEvalLogsDetailsListQueryParams = zod.object({
   "sort": zod.string().min(1).default(modelHubGetEvalLogsDetailsListQuerySortDefault)
 })
 
+
+
+
+
 export const ModelHubGetEvalLogsDetailsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-  "table": zod.array(zod.object({
+  "table": zod.array(zod.record(zod.string(), zod.object({
 
-}).passthrough()),
+}).passthrough())),
   "column_config": zod.array(zod.object({
-
-}).passthrough()),
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "data_type": zod.string().optional(),
+  "is_visible": zod.boolean().optional(),
+  "origin_type": zod.string().optional(),
+  "output_type": zod.string().optional()
+})),
   "metadata": zod.object({
   "total_rows": zod.number(),
   "total_pages": zod.number()
@@ -25290,9 +25299,9 @@ export const ModelHubPromptMetricsListResponse = zod.object({
   "result": zod.object({
   "prompt_template_id": zod.string().uuid().optional(),
   "prompt_template_name": zod.string().min(1).optional(),
-  "table": zod.array(zod.object({
+  "table": zod.array(zod.record(zod.string(), zod.object({
 
-}).passthrough()),
+}).passthrough())),
   "config": zod.object({
 
 }).passthrough(),
@@ -25343,9 +25352,9 @@ export const ModelHubPromptSpanMetricsListResponse = zod.object({
   "result": zod.object({
   "prompt_template_id": zod.string().uuid().optional(),
   "prompt_template_name": zod.string().min(1).optional(),
-  "table": zod.array(zod.object({
+  "table": zod.array(zod.record(zod.string(), zod.object({
 
-}).passthrough()),
+}).passthrough())),
   "config": zod.object({
 
 }).passthrough(),

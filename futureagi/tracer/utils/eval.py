@@ -53,6 +53,13 @@ OBSERVE = "observe"
 from tracer.utils.eval_helpers import resolve_eval_config_id  # noqa: F401, E402
 
 
+def _resolve_eval_version(custom_eval_config, eval_template):
+    """Return the pinned EvalTemplateVersion or the template's default, or None."""
+    if custom_eval_config.pinned_version_id:
+        return custom_eval_config.pinned_version
+    return EvalTemplateVersion.objects.get_default(eval_template)
+
+
 # Friendly eval-mapping shorthands used in saved configs. The user-
 # facing variable picker (voice projects in particular) lets people map
 # variables to things like ``recording_url`` or ``transcript``; the
@@ -1543,11 +1550,7 @@ def _execute_evaluation(
 
     # Track which eval version produced this result — prefer pinned over default
     try:
-        _ver = (
-            custom_eval_config.pinned_version
-            if custom_eval_config.pinned_version_id
-            else EvalTemplateVersion.objects.get_default(eval_model)
-        )
+        _ver = _resolve_eval_version(custom_eval_config, eval_model)
         if _ver:
             source_config["version_id"] = str(_ver.id)
             source_config["version_number"] = _ver.version_number
@@ -2873,11 +2876,7 @@ def _execute_evaluation_for_trace(
 
     # Track which eval version produced this result — prefer pinned over default
     try:
-        _ver = (
-            custom_eval_config.pinned_version
-            if custom_eval_config.pinned_version_id
-            else EvalTemplateVersion.objects.get_default(eval_template)
-        )
+        _ver = _resolve_eval_version(custom_eval_config, eval_template)
         if _ver:
             source_config["version_id"] = str(_ver.id)
             source_config["version_number"] = _ver.version_number
@@ -3120,11 +3119,7 @@ def _execute_evaluation_for_session(
 
     # Track which eval version produced this result — prefer pinned over default
     try:
-        _ver = (
-            custom_eval_config.pinned_version
-            if custom_eval_config.pinned_version_id
-            else EvalTemplateVersion.objects.get_default(eval_template)
-        )
+        _ver = _resolve_eval_version(custom_eval_config, eval_template)
         if _ver:
             source_config["version_id"] = str(_ver.id)
             source_config["version_number"] = _ver.version_number

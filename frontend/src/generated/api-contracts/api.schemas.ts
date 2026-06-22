@@ -11191,18 +11191,27 @@ export interface UpdateColumnConfigApi {
   source?: string;
 }
 
+export interface EvalColumnConfigItemApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  data_type?: string;
+  is_visible?: boolean;
+  origin_type?: string;
+  output_type?: string;
+}
+
 export interface EvalApiLogTableMetadataApi {
   total_rows: number;
   total_pages: number;
 }
 
-export type EvalApiLogTableResponseResultApiTableItem = { [key: string]: unknown };
-
-export type EvalApiLogTableResponseResultApiColumnConfigItem = { [key: string]: unknown };
+export type EvalApiLogTableResponseResultApiTableItem = {[key: string]: { [key: string]: unknown }};
 
 export interface EvalApiLogTableResponseResultApi {
   table: EvalApiLogTableResponseResultApiTableItem[];
-  column_config: EvalApiLogTableResponseResultApiColumnConfigItem[];
+  column_config: EvalColumnConfigItemApi[];
   metadata?: EvalApiLogTableMetadataApi;
 }
 
@@ -12557,7 +12566,7 @@ export interface PromptMetricsMetadataApi {
   total_rows: number;
 }
 
-export type PromptMetricsResultApiTableItem = { [key: string]: unknown };
+export type PromptMetricsResultApiTableItem = {[key: string]: { [key: string]: unknown }};
 
 export type PromptMetricsResultApiConfig = { [key: string]: unknown };
 

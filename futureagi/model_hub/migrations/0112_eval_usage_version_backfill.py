@@ -104,7 +104,9 @@ def backfill_apicalllog_version_info(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("model_hub", "0110_merge_20260609_1253"),
+        # Chains after #772's pinned_version FK so both PRs produce a single
+        # migration leaf when merged to dev. #772 must land first (or simultaneously).
+        ("model_hub", "0111_userevalmetric_pinned_version"),
     ]
 
     operations = [

@@ -79634,13 +79634,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "table": {
           "type": "array",
           "items": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": {
+              "type": "object"
+            }
           }
         },
         "column_config": {
           "type": "array",
           "items": {
-            "type": "object"
+            "$ref": "#/definitions/EvalColumnConfigItem"
           }
         },
         "metadata": {
@@ -85830,7 +85833,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "table": {
           "type": "array",
           "items": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": {
+              "type": "object"
+            }
           }
         },
         "config": {
@@ -92474,6 +92480,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_pages": {
           "title": "Total pages",
           "type": "integer"
+        }
+      }
+    },
+    "EvalColumnConfigItem": {
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "data_type": {
+          "title": "Data type",
+          "type": "string"
+        },
+        "is_visible": {
+          "title": "Is visible",
+          "type": "boolean"
+        },
+        "origin_type": {
+          "title": "Origin type",
+          "type": "string"
+        },
+        "output_type": {
+          "title": "Output type",
+          "type": "string"
         }
       }
     },

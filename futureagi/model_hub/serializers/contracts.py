@@ -505,7 +505,8 @@ class PromptMetricsMetadataSerializer(serializers.Serializer):
 class PromptMetricsResultSerializer(serializers.Serializer):
     prompt_template_id = serializers.UUIDField(required=False)
     prompt_template_name = serializers.CharField(required=False)
-    table = serializers.ListField(child=serializers.JSONField())
+    # table rows have dynamic column keys — typed as record<string, JSON>
+    table = serializers.ListField(child=serializers.DictField(child=serializers.JSONField()))
     config = serializers.JSONField()
     metadata = PromptMetricsMetadataSerializer()
 
@@ -1801,9 +1802,20 @@ class EvalApiLogTableMetadataSerializer(serializers.Serializer):
     total_pages = serializers.IntegerField()
 
 
+class EvalColumnConfigItemSerializer(serializers.Serializer):
+    """Shape of a single column definition returned by get_column_data()."""
+    id = serializers.CharField()
+    name = serializers.CharField()
+    data_type = serializers.CharField(required=False, allow_blank=True)
+    is_visible = serializers.BooleanField(required=False)
+    origin_type = serializers.CharField(required=False, allow_blank=True)
+    output_type = serializers.CharField(required=False, allow_blank=True)
+
+
 class EvalApiLogTableResponseResultSerializer(serializers.Serializer):
-    table = serializers.ListField(child=serializers.JSONField())
-    column_config = serializers.ListField(child=serializers.JSONField())
+    # table rows have dynamic column keys — typed as record<string, JSON>
+    table = serializers.ListField(child=serializers.DictField(child=serializers.JSONField()))
+    column_config = EvalColumnConfigItemSerializer(many=True)
     metadata = EvalApiLogTableMetadataSerializer(required=False)
 
 

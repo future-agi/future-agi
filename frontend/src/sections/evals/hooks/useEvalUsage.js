@@ -36,7 +36,7 @@ export function useEvalUsageLogs(
       );
       const result = data?.result || {};
       return {
-        table: result.table || result.logs?.items || [],
+        table: result.table || [],
         pagination: result.logs || {},
       };
     },
