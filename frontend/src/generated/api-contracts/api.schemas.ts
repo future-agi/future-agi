@@ -10455,6 +10455,29 @@ export const ExperimentCreateV2ApiExperimentType = {
 /**
  * Any valid JSON value.
  */
+export type MessageItemApiContent = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type MessageItemApiToolCalls = { [key: string]: unknown };
+
+export interface MessageItemApi {
+  /** @minLength 1 */
+  role: string;
+  /** Any valid JSON value. */
+  content: MessageItemApiContent;
+  /** @minLength 1 */
+  name?: string;
+  /** Any valid JSON value. */
+  tool_calls?: MessageItemApiToolCalls;
+  /** @minLength 1 */
+  tool_call_id?: string;
+}
+
+/**
+ * String or JSON object.
+ */
 export type PromptConfigEntryApiModel = { [key: string]: unknown };
 
 /**
@@ -10467,11 +10490,6 @@ export type PromptConfigEntryApiModelParams = { [key: string]: unknown };
  */
 export type PromptConfigEntryApiConfiguration = { [key: string]: unknown };
 
-/**
- * Any valid JSON value.
- */
-export type PromptConfigEntryApiMessagesItem = { [key: string]: unknown };
-
 export interface PromptConfigEntryApi {
   id?: string;
   name?: string;
@@ -10479,7 +10497,7 @@ export interface PromptConfigEntryApi {
   prompt_version?: string;
   agent_id?: string;
   agent_version?: string;
-  /** Any valid JSON value. */
+  /** String or JSON object. */
   model?: PromptConfigEntryApiModel;
   /** Any valid JSON value. */
   model_params?: PromptConfigEntryApiModelParams;
@@ -10487,7 +10505,7 @@ export interface PromptConfigEntryApi {
   configuration?: PromptConfigEntryApiConfiguration;
   /** @minLength 1 */
   output_format?: string;
-  messages?: PromptConfigEntryApiMessagesItem[];
+  messages?: MessageItemApi[];
   voice_input_column_id?: string;
 }
 

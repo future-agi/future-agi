@@ -20224,6 +20224,9 @@ export const modelHubExperimentsV2CreateBodyPromptConfigItemModelParamsDefault =
 export const modelHubExperimentsV2CreateBodyPromptConfigItemConfigurationDefault = {  };
 export const modelHubExperimentsV2CreateBodyPromptConfigItemOutputFormatDefault = `string`;
 
+
+
+
 export const modelHubExperimentsV2CreateBodyUserEvalMetricsItemNameMax = 2000;
 
 export const modelHubExperimentsV2CreateBodyUserEvalMetricsItemModelDefault = ``;
@@ -20245,7 +20248,7 @@ export const ModelHubExperimentsV2CreateBody = zod.object({
   "agent_version": zod.string().uuid().optional(),
   "model": zod.object({
 
-}).passthrough().optional().describe('Any valid JSON value.'),
+}).passthrough().optional().describe('String or JSON object.'),
   "model_params": zod.object({
 
 }).passthrough().default(modelHubExperimentsV2CreateBodyPromptConfigItemModelParamsDefault).describe('Any valid JSON value.'),
@@ -20254,8 +20257,16 @@ export const ModelHubExperimentsV2CreateBody = zod.object({
 }).passthrough().default(modelHubExperimentsV2CreateBodyPromptConfigItemConfigurationDefault).describe('Any valid JSON value.'),
   "output_format": zod.string().min(1).default(modelHubExperimentsV2CreateBodyPromptConfigItemOutputFormatDefault),
   "messages": zod.array(zod.object({
+  "role": zod.string().min(1),
+  "content": zod.object({
 
-}).passthrough().describe('Any valid JSON value.')).optional(),
+}).passthrough().describe('Any valid JSON value.'),
+  "name": zod.string().min(1).optional(),
+  "tool_calls": zod.object({
+
+}).passthrough().optional().describe('Any valid JSON value.'),
+  "tool_call_id": zod.string().min(1).optional()
+})).optional(),
   "voice_input_column_id": zod.string().uuid().optional()
 })),
   "user_eval_metrics": zod.array(zod.object({
@@ -20439,6 +20450,9 @@ export const modelHubExperimentsV2UpdateBodyPromptConfigItemModelParamsDefault =
 export const modelHubExperimentsV2UpdateBodyPromptConfigItemConfigurationDefault = {  };
 export const modelHubExperimentsV2UpdateBodyPromptConfigItemOutputFormatDefault = `string`;
 
+
+
+
 export const modelHubExperimentsV2UpdateBodyUserEvalMetricsItemNameMax = 2000;
 
 export const modelHubExperimentsV2UpdateBodyUserEvalMetricsItemModelDefault = ``;
@@ -20457,7 +20471,7 @@ export const ModelHubExperimentsV2UpdateBody = zod.object({
   "agent_version": zod.string().uuid().optional(),
   "model": zod.object({
 
-}).passthrough().optional().describe('Any valid JSON value.'),
+}).passthrough().optional().describe('String or JSON object.'),
   "model_params": zod.object({
 
 }).passthrough().default(modelHubExperimentsV2UpdateBodyPromptConfigItemModelParamsDefault).describe('Any valid JSON value.'),
@@ -20466,8 +20480,16 @@ export const ModelHubExperimentsV2UpdateBody = zod.object({
 }).passthrough().default(modelHubExperimentsV2UpdateBodyPromptConfigItemConfigurationDefault).describe('Any valid JSON value.'),
   "output_format": zod.string().min(1).default(modelHubExperimentsV2UpdateBodyPromptConfigItemOutputFormatDefault),
   "messages": zod.array(zod.object({
+  "role": zod.string().min(1),
+  "content": zod.object({
 
-}).passthrough().describe('Any valid JSON value.')).optional(),
+}).passthrough().describe('Any valid JSON value.'),
+  "name": zod.string().min(1).optional(),
+  "tool_calls": zod.object({
+
+}).passthrough().optional().describe('Any valid JSON value.'),
+  "tool_call_id": zod.string().min(1).optional()
+})).optional(),
   "voice_input_column_id": zod.string().uuid().optional()
 })).optional(),
   "user_eval_metrics": zod.array(zod.object({
