@@ -178,6 +178,7 @@ import type {
   AgentccWebhooksListParams,
   AllActiveTestsApi,
   AnnotationActionMessageResponseApi,
+  AnnotationLabelCreateResponseApi,
   AnnotationLabelRestoreResponseApi,
   AnnotationQueueApi,
   AnnotationSummaryResponseApi,
@@ -191,8 +192,6 @@ import type {
   ApiKeyRequestApi,
   ApiKeyResponseApi,
   ApiKeySuccessResponseApi,
-  ApiPublicOtelV1TracesCreateBodyOne,
-  ApiPublicOtelV1TracesCreateBodyTwo,
   ApiSelectionTooLargeErrorApi,
   ApiTextErrorResponseApi,
   ApiTracesSpanAttributeDetailListParams,
@@ -744,10 +743,7 @@ import type {
   NodeExecutionDetailResponseApi,
   NodeReadApi,
   NodeTemplateDetailApi,
-  OTLPHTTPErrorResponseApi,
-  OTLPHTTPTraceResponseApi,
   OTLPHealthResponseApi,
-  OTLPTraceResponseApi,
   ObservabilityProviderApi,
   ObservationAttributeListResponseApi,
   ObservationSpanApi,
@@ -1160,8 +1156,6 @@ import type {
   TracerObservationSpanRetrieveLoadingParams,
   TracerObservationSpanRootSpans200,
   TracerObservationSpanRootSpansParams,
-  TracerOtlpV1TracesCreateBodyOne,
-  TracerOtlpV1TracesCreateBodyTwo,
   TracerProjectFetchSystemMetrics200,
   TracerProjectFetchSystemMetricsParams,
   TracerProjectGetGraphData200,
@@ -17269,60 +17263,6 @@ export const apiPublicIngestionCreate = async (langfuseIngestionRequestApi: Lang
 
 
 
-export type apiPublicOtelV1TracesCreateResponse200 = {
-  data: OTLPHTTPTraceResponseApi
-  status: 200
-}
-
-export type apiPublicOtelV1TracesCreateResponse403 = {
-  data: OTLPHTTPErrorResponseApi
-  status: 403
-}
-
-export type apiPublicOtelV1TracesCreateResponse500 = {
-  data: OTLPHTTPErrorResponseApi
-  status: 500
-}
-
-export type apiPublicOtelV1TracesCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 403 | 500>
-}
-
-export type apiPublicOtelV1TracesCreateResponseSuccess = (apiPublicOtelV1TracesCreateResponse200) & {
-  headers: Headers;
-};
-export type apiPublicOtelV1TracesCreateResponseError = (apiPublicOtelV1TracesCreateResponse403 | apiPublicOtelV1TracesCreateResponse500 | apiPublicOtelV1TracesCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type apiPublicOtelV1TracesCreateResponse = (apiPublicOtelV1TracesCreateResponseSuccess | apiPublicOtelV1TracesCreateResponseError)
-
-export const getApiPublicOtelV1TracesCreateUrl = () => {
-
-
-
-
-  return `/api/public/otel/v1/traces`
-}
-
-/**
- * Asynchronously handles the POST request to create ObservationSpans from OTEL data.
- */
-export const apiPublicOtelV1TracesCreate = async (apiPublicOtelV1TracesCreateBody: ApiPublicOtelV1TracesCreateBodyOne | ApiPublicOtelV1TracesCreateBodyTwo, options?: RequestInit): Promise<apiPublicOtelV1TracesCreateResponse> => {
-
-  return apiMutator<apiPublicOtelV1TracesCreateResponse>(getApiPublicOtelV1TracesCreateUrl(),
-  {
-    ...options,
-    method: 'POST'
-    ,
-    body: JSON.stringify(
-      apiPublicOtelV1TracesCreateBody,)
-  }
-);}
-
-
-
 export type apiPublicTracesListResponse200 = {
   data: LangfuseTracesResponseApi
   status: 200
@@ -24418,20 +24358,35 @@ export const modelHubAnnotationsLabelsList = async (params?: ModelHubAnnotations
 
 
 
-export type modelHubAnnotationsLabelsCreateResponse201 = {
-  data: AnnotationsLabelsApi
-  status: 201
+export type modelHubAnnotationsLabelsCreateResponse200 = {
+  data: AnnotationLabelCreateResponseApi
+  status: 200
+}
+
+export type modelHubAnnotationsLabelsCreateResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type modelHubAnnotationsLabelsCreateResponse403 = {
+  data: ApiTextErrorResponseApi
+  status: 403
+}
+
+export type modelHubAnnotationsLabelsCreateResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
 }
 
 export type modelHubAnnotationsLabelsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 500>
 }
 
-export type modelHubAnnotationsLabelsCreateResponseSuccess = (modelHubAnnotationsLabelsCreateResponse201) & {
+export type modelHubAnnotationsLabelsCreateResponseSuccess = (modelHubAnnotationsLabelsCreateResponse200) & {
   headers: Headers;
 };
-export type modelHubAnnotationsLabelsCreateResponseError = (modelHubAnnotationsLabelsCreateResponseDefault) & {
+export type modelHubAnnotationsLabelsCreateResponseError = (modelHubAnnotationsLabelsCreateResponse400 | modelHubAnnotationsLabelsCreateResponse403 | modelHubAnnotationsLabelsCreateResponse500 | modelHubAnnotationsLabelsCreateResponseDefault) & {
   headers: Headers;
 };
 
@@ -63071,60 +63026,6 @@ export const tracerObservationSpanDelete = async (id: string, options?: RequestI
 
 
 
-export type tracerOtlpV1TracesCreateResponse200 = {
-  data: OTLPHTTPTraceResponseApi
-  status: 200
-}
-
-export type tracerOtlpV1TracesCreateResponse403 = {
-  data: OTLPHTTPErrorResponseApi
-  status: 403
-}
-
-export type tracerOtlpV1TracesCreateResponse500 = {
-  data: OTLPHTTPErrorResponseApi
-  status: 500
-}
-
-export type tracerOtlpV1TracesCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 403 | 500>
-}
-
-export type tracerOtlpV1TracesCreateResponseSuccess = (tracerOtlpV1TracesCreateResponse200) & {
-  headers: Headers;
-};
-export type tracerOtlpV1TracesCreateResponseError = (tracerOtlpV1TracesCreateResponse403 | tracerOtlpV1TracesCreateResponse500 | tracerOtlpV1TracesCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerOtlpV1TracesCreateResponse = (tracerOtlpV1TracesCreateResponseSuccess | tracerOtlpV1TracesCreateResponseError)
-
-export const getTracerOtlpV1TracesCreateUrl = () => {
-
-
-
-
-  return `/tracer/otlp/v1/traces`
-}
-
-/**
- * Asynchronously handles the POST request to create ObservationSpans from OTEL data.
- */
-export const tracerOtlpV1TracesCreate = async (tracerOtlpV1TracesCreateBody: TracerOtlpV1TracesCreateBodyOne | TracerOtlpV1TracesCreateBodyTwo, options?: RequestInit): Promise<tracerOtlpV1TracesCreateResponse> => {
-
-  return apiMutator<tracerOtlpV1TracesCreateResponse>(getTracerOtlpV1TracesCreateUrl(),
-  {
-    ...options,
-    method: 'POST'
-    ,
-    body: JSON.stringify(
-      tracerOtlpV1TracesCreateBody,)
-  }
-);}
-
-
-
 export type tracerProjectVersionListResponse200 = {
   data: TracerProjectVersionList200
   status: 200
@@ -68551,70 +68452,6 @@ export const tracerV1HealthList = async ( options?: RequestInit): Promise<tracer
   {
     ...options,
     method: 'GET'
-
-
-  }
-);}
-
-
-
-export type tracerV1TracesCreateResponse200 = {
-  data: OTLPTraceResponseApi
-  status: 200
-}
-
-export type tracerV1TracesCreateResponse400 = {
-  data: OTLPTraceResponseApi
-  status: 400
-}
-
-export type tracerV1TracesCreateResponse403 = {
-  data: OTLPTraceResponseApi
-  status: 403
-}
-
-export type tracerV1TracesCreateResponse429 = {
-  data: OTLPTraceResponseApi
-  status: 429
-}
-
-export type tracerV1TracesCreateResponse500 = {
-  data: OTLPTraceResponseApi
-  status: 500
-}
-
-export type tracerV1TracesCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 429 | 500>
-}
-
-export type tracerV1TracesCreateResponseSuccess = (tracerV1TracesCreateResponse200) & {
-  headers: Headers;
-};
-export type tracerV1TracesCreateResponseError = (tracerV1TracesCreateResponse400 | tracerV1TracesCreateResponse403 | tracerV1TracesCreateResponse429 | tracerV1TracesCreateResponse500 | tracerV1TracesCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerV1TracesCreateResponse = (tracerV1TracesCreateResponseSuccess | tracerV1TracesCreateResponseError)
-
-export const getTracerV1TracesCreateUrl = () => {
-
-
-
-
-  return `/tracer/v1/traces/`
-}
-
-/**
- * The request body contains an ExportTraceServiceRequest with resource spans.
- * @summary Handle OTLP trace export request.
- */
-export const tracerV1TracesCreate = async ( options?: RequestInit): Promise<tracerV1TracesCreateResponse> => {
-
-  return apiMutator<tracerV1TracesCreateResponse>(getTracerV1TracesCreateUrl(),
-  {
-    ...options,
-    method: 'POST'
 
 
   }
@@ -76365,70 +76202,6 @@ export const v1HealthList = async ( options?: RequestInit): Promise<v1HealthList
   {
     ...options,
     method: 'GET'
-
-
-  }
-);}
-
-
-
-export type v1TracesCreateResponse200 = {
-  data: OTLPTraceResponseApi
-  status: 200
-}
-
-export type v1TracesCreateResponse400 = {
-  data: OTLPTraceResponseApi
-  status: 400
-}
-
-export type v1TracesCreateResponse403 = {
-  data: OTLPTraceResponseApi
-  status: 403
-}
-
-export type v1TracesCreateResponse429 = {
-  data: OTLPTraceResponseApi
-  status: 429
-}
-
-export type v1TracesCreateResponse500 = {
-  data: OTLPTraceResponseApi
-  status: 500
-}
-
-export type v1TracesCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 429 | 500>
-}
-
-export type v1TracesCreateResponseSuccess = (v1TracesCreateResponse200) & {
-  headers: Headers;
-};
-export type v1TracesCreateResponseError = (v1TracesCreateResponse400 | v1TracesCreateResponse403 | v1TracesCreateResponse429 | v1TracesCreateResponse500 | v1TracesCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type v1TracesCreateResponse = (v1TracesCreateResponseSuccess | v1TracesCreateResponseError)
-
-export const getV1TracesCreateUrl = () => {
-
-
-
-
-  return `/v1/traces/`
-}
-
-/**
- * The request body contains an ExportTraceServiceRequest with resource spans.
- * @summary Handle OTLP trace export request.
- */
-export const v1TracesCreate = async ( options?: RequestInit): Promise<v1TracesCreateResponse> => {
-
-  return apiMutator<v1TracesCreateResponse>(getV1TracesCreateUrl(),
-  {
-    ...options,
-    method: 'POST'
 
 
   }

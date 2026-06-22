@@ -2468,6 +2468,37 @@ class TestTraceListQueryBuilder:
         assert query == ""
         assert params == {}
 
+    def test_v2_build_user_id_query_uses_v2_dict_and_column(self):
+        """TraceListQueryBuilderV2 must rewrite the inherited user-id query to the
+        v2 `end_users_dict` / `is_deleted` (and append the v2 SETTINGS) — the v1
+        `enduser_dict` / `_peerdb_is_deleted` artifacts must be gone."""
+        from tracer.services.clickhouse.v2.query_builders.trace_list import (
+            TraceListQueryBuilderV2,
+        )
+
+        builder = TraceListQueryBuilderV2(project_id="test-proj-123")
+        query, params = builder.build_user_id_query(["trace-1", "trace-2"])
+
+        assert "end_users_dict" in query
+        assert "is_deleted" in query
+        assert "use_skip_indexes_if_final" in query  # v2 SETTINGS appended
+        assert "'enduser_dict'" not in query
+        assert "_peerdb_is_deleted" not in query
+        assert params["user_trace_ids"] == ("trace-1", "trace-2")
+
+    def test_v2_build_user_id_query_empty_trace_ids(self):
+        """The v2 override preserves the empty-input contract (no rewrite/SETTINGS
+        applied to an empty query)."""
+        from tracer.services.clickhouse.v2.query_builders.trace_list import (
+            TraceListQueryBuilderV2,
+        )
+
+        builder = TraceListQueryBuilderV2(project_id="test-proj-123")
+        query, params = builder.build_user_id_query([])
+
+        assert query == ""
+        assert params == {}
+
 
 @pytest.mark.unit
 class TestSessionListQueryBuilder:

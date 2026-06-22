@@ -9418,18 +9418,6 @@ export const ApiPublicIngestionCreateBody = zod.object({
 
 
 /**
- * Asynchronously handles the POST request to create ObservationSpans from OTEL data.
- */
-export const ApiPublicOtelV1TracesCreateBody = zod.object({
-
-}).passthrough().describe('Legacy OTLP JSON\/protobuf trace payload. Prefer \/tracer\/v1\/traces for new integrations.')
-
-export const ApiPublicOtelV1TracesCreateResponse = zod.object({
-
-}).passthrough()
-
-
-/**
  * Vapi validates Langfuse credentials by calling this endpoint with
 ``?limit=1``.      Returns an empty list with standard pagination
 metadata so the credential check passes.
@@ -14273,6 +14261,31 @@ export const ModelHubAnnotationsLabelsCreateBody = zod.object({
   "allow_notes": zod.boolean().optional()
 })
 
+export const modelHubAnnotationsLabelsCreateResponseStatusDefault = true;
+export const modelHubAnnotationsLabelsCreateResponseResultNameMax = 255;
+
+
+
+export const ModelHubAnnotationsLabelsCreateResponse = zod.object({
+  "status": zod.boolean().default(modelHubAnnotationsLabelsCreateResponseStatusDefault),
+  "result": zod.object({
+  "id": zod.string().uuid().optional(),
+  "name": zod.string().min(1).max(modelHubAnnotationsLabelsCreateResponseResultNameMax),
+  "type": zod.enum(['text', 'numeric', 'categorical', 'star', 'thumbs_up_down']),
+  "organization": zod.string().uuid().optional(),
+  "settings": zod.object({
+
+}).passthrough().optional(),
+  "project": zod.string().uuid().optional(),
+  "description": zod.string().optional(),
+  "allow_notes": zod.boolean().optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "trace_annotations_count": zod.number().optional(),
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
+})
+})
+
 
 export const ModelHubAnnotationsLabelsReadParams = zod.object({
   "id": zod.string()
@@ -17918,7 +17931,8 @@ export const ModelHubDevelopsEditAndRunUserEvalCreateBody = zod.object({
   "experiment_id": zod.string().uuid().optional(),
   "composite_weight_overrides": zod.object({
 
-}).passthrough().optional()
+}).passthrough().optional(),
+  "pinned_version_id": zod.string().uuid().optional()
 })
 
 
@@ -27724,6 +27738,8 @@ export const simulateAgentDefinitionsVersionsCallExecutionsListResponseCallTypeM
 export const simulateAgentDefinitionsVersionsCallExecutionsListResponseMessageCountMin = -2147483648;
 export const simulateAgentDefinitionsVersionsCallExecutionsListResponseMessageCountMax = 2147483647;
 
+
+
 export const simulateAgentDefinitionsVersionsCallExecutionsListResponseCustomerCostCentsMin = -2147483648;
 export const simulateAgentDefinitionsVersionsCallExecutionsListResponseCustomerCostCentsMax = 2147483647;
 
@@ -27776,7 +27792,30 @@ export const SimulateAgentDefinitionsVersionsCallExecutionsListResponseItem = zo
   "eval_outputs": zod.object({
 
 }).passthrough().optional().describe('Evaluation output'),
-  "error_localizer_tasks": zod.string().optional(),
+  "error_localizer_tasks": zod.array(zod.object({
+  "task_id": zod.string().min(1),
+  "eval_config_id": zod.string(),
+  "status": zod.string(),
+  "eval_result": zod.object({
+
+}).passthrough(),
+  "eval_explanation": zod.string().optional(),
+  "input_data": zod.object({
+
+}).passthrough().optional(),
+  "input_keys": zod.array(zod.string().min(1)).optional(),
+  "input_types": zod.object({
+
+}).passthrough().optional(),
+  "rule_prompt": zod.string().optional(),
+  "error_analysis": zod.object({
+
+}).passthrough().optional(),
+  "selected_input_key": zod.string().optional(),
+  "error_message": zod.string().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})).optional().describe('Get error localizer tasks for this call execution.'),
   "call_summary": zod.string().optional().describe('Call summary from the service'),
   "agent_version": zod.string().uuid().optional(),
   "customer_cost_cents": zod.number().min(simulateAgentDefinitionsVersionsCallExecutionsListResponseCustomerCostCentsMin).max(simulateAgentDefinitionsVersionsCallExecutionsListResponseCustomerCostCentsMax).optional().describe('Total customer-reported cost in cents'),
@@ -28792,6 +28831,8 @@ export const simulateApiCallExecutionsListResponseCallTypeMax = 50;
 export const simulateApiCallExecutionsListResponseMessageCountMin = -2147483648;
 export const simulateApiCallExecutionsListResponseMessageCountMax = 2147483647;
 
+
+
 export const simulateApiCallExecutionsListResponseCustomerCostCentsMin = -2147483648;
 export const simulateApiCallExecutionsListResponseCustomerCostCentsMax = 2147483647;
 
@@ -28844,7 +28885,30 @@ export const SimulateApiCallExecutionsListResponseItem = zod.object({
   "eval_outputs": zod.object({
 
 }).passthrough().optional().describe('Evaluation output'),
-  "error_localizer_tasks": zod.string().optional(),
+  "error_localizer_tasks": zod.array(zod.object({
+  "task_id": zod.string().min(1),
+  "eval_config_id": zod.string(),
+  "status": zod.string(),
+  "eval_result": zod.object({
+
+}).passthrough(),
+  "eval_explanation": zod.string().optional(),
+  "input_data": zod.object({
+
+}).passthrough().optional(),
+  "input_keys": zod.array(zod.string().min(1)).optional(),
+  "input_types": zod.object({
+
+}).passthrough().optional(),
+  "rule_prompt": zod.string().optional(),
+  "error_analysis": zod.object({
+
+}).passthrough().optional(),
+  "selected_input_key": zod.string().optional(),
+  "error_message": zod.string().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})).optional().describe('Get error localizer tasks for this call execution.'),
   "call_summary": zod.string().optional().describe('Call summary from the service'),
   "agent_version": zod.string().uuid().optional(),
   "customer_cost_cents": zod.number().min(simulateApiCallExecutionsListResponseCustomerCostCentsMin).max(simulateApiCallExecutionsListResponseCustomerCostCentsMax).optional().describe('Total customer-reported cost in cents'),
@@ -29993,6 +30057,8 @@ export const simulateApiTestExecutionsListResponseCallsItemCallTypeMax = 50;
 export const simulateApiTestExecutionsListResponseCallsItemMessageCountMin = -2147483648;
 export const simulateApiTestExecutionsListResponseCallsItemMessageCountMax = 2147483647;
 
+
+
 export const simulateApiTestExecutionsListResponseCallsItemCustomerCostCentsMin = -2147483648;
 export const simulateApiTestExecutionsListResponseCallsItemCustomerCostCentsMax = 2147483647;
 
@@ -30065,7 +30131,30 @@ export const SimulateApiTestExecutionsListResponseItem = zod.object({
   "eval_outputs": zod.object({
 
 }).passthrough().optional().describe('Evaluation output'),
-  "error_localizer_tasks": zod.string().optional(),
+  "error_localizer_tasks": zod.array(zod.object({
+  "task_id": zod.string().min(1),
+  "eval_config_id": zod.string(),
+  "status": zod.string(),
+  "eval_result": zod.object({
+
+}).passthrough(),
+  "eval_explanation": zod.string().optional(),
+  "input_data": zod.object({
+
+}).passthrough().optional(),
+  "input_keys": zod.array(zod.string().min(1)).optional(),
+  "input_types": zod.object({
+
+}).passthrough().optional(),
+  "rule_prompt": zod.string().optional(),
+  "error_analysis": zod.object({
+
+}).passthrough().optional(),
+  "selected_input_key": zod.string().optional(),
+  "error_message": zod.string().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})).optional().describe('Get error localizer tasks for this call execution.'),
   "call_summary": zod.string().optional().describe('Call summary from the service'),
   "agent_version": zod.string().uuid().optional(),
   "customer_cost_cents": zod.number().min(simulateApiTestExecutionsListResponseCallsItemCustomerCostCentsMin).max(simulateApiTestExecutionsListResponseCallsItemCustomerCostCentsMax).optional().describe('Total customer-reported cost in cents'),
@@ -30150,7 +30239,33 @@ export const SimulateCallExecutionsReadResponse = zod.object({
   "audio_url": zod.string().url().min(1).optional(),
   "customer_name": zod.string().min(1).optional(),
   "eval_outputs": zod.string().optional(),
-  "eval_metrics": zod.string().optional(),
+  "eval_metrics": zod.record(zod.string(), zod.object({
+  "id": zod.string().optional(),
+  "name": zod.string().optional(),
+  "value": zod.object({
+
+}).passthrough().optional().describe('number | bool | string | list[string] | null'),
+  "reason": zod.string().optional(),
+  "type": zod.string().optional(),
+  "template_type": zod.string().optional(),
+  "visible": zod.boolean().optional(),
+  "error": zod.boolean().optional(),
+  "status": zod.string().optional(),
+  "skipped": zod.boolean().optional(),
+  "error_localizer": zod.boolean().optional(),
+  "error_analysis": zod.object({
+
+}).passthrough().optional(),
+  "error_localizer_status": zod.string().optional(),
+  "error_localizer_message": zod.string().optional(),
+  "selected_input_key": zod.string().optional(),
+  "input_data": zod.object({
+
+}).passthrough().optional(),
+  "input_types": zod.object({
+
+}).passthrough().optional()
+})).optional().describe('Get evaluation metrics in a format suitable for the UI'),
   "scenario_columns": zod.string().optional(),
   "ended_reason": zod.string().max(simulateCallExecutionsReadResponseEndedReasonMax).optional().describe('Reason why the call ended'),
   "simulator_agent_name": zod.string().min(1).optional(),
@@ -30254,6 +30369,8 @@ export const simulateCallExecutionsPartialUpdateResponseCallTypeMax = 50;
 export const simulateCallExecutionsPartialUpdateResponseMessageCountMin = -2147483648;
 export const simulateCallExecutionsPartialUpdateResponseMessageCountMax = 2147483647;
 
+
+
 export const simulateCallExecutionsPartialUpdateResponseCustomerCostCentsMin = -2147483648;
 export const simulateCallExecutionsPartialUpdateResponseCustomerCostCentsMax = 2147483647;
 
@@ -30306,7 +30423,30 @@ export const SimulateCallExecutionsPartialUpdateResponse = zod.object({
   "eval_outputs": zod.object({
 
 }).passthrough().optional().describe('Evaluation output'),
-  "error_localizer_tasks": zod.string().optional(),
+  "error_localizer_tasks": zod.array(zod.object({
+  "task_id": zod.string().min(1),
+  "eval_config_id": zod.string(),
+  "status": zod.string(),
+  "eval_result": zod.object({
+
+}).passthrough(),
+  "eval_explanation": zod.string().optional(),
+  "input_data": zod.object({
+
+}).passthrough().optional(),
+  "input_keys": zod.array(zod.string().min(1)).optional(),
+  "input_types": zod.object({
+
+}).passthrough().optional(),
+  "rule_prompt": zod.string().optional(),
+  "error_analysis": zod.object({
+
+}).passthrough().optional(),
+  "selected_input_key": zod.string().optional(),
+  "error_message": zod.string().optional(),
+  "created_at": zod.string().optional(),
+  "updated_at": zod.string().optional()
+})).optional().describe('Get error localizer tasks for this call execution.'),
   "call_summary": zod.string().optional().describe('Call summary from the service'),
   "agent_version": zod.string().uuid().optional(),
   "customer_cost_cents": zod.number().min(simulateCallExecutionsPartialUpdateResponseCustomerCostCentsMin).max(simulateCallExecutionsPartialUpdateResponseCustomerCostCentsMax).optional().describe('Total customer-reported cost in cents'),
@@ -38548,18 +38688,6 @@ export const TracerObservationSpanDeleteParams = zod.object({
 })
 
 
-/**
- * Asynchronously handles the POST request to create ObservationSpans from OTEL data.
- */
-export const TracerOtlpV1TracesCreateBody = zod.object({
-
-}).passthrough().describe('Legacy OTLP JSON\/protobuf trace payload. Prefer \/tracer\/v1\/traces for new integrations.')
-
-export const TracerOtlpV1TracesCreateResponse = zod.object({
-
-}).passthrough()
-
-
 export const TracerProjectVersionListQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
   "limit": zod.number().optional().describe('Number of results to return per page.')
@@ -43046,18 +43174,6 @@ export const TracerV1HealthListResponse = zod.object({
 })
 
 
-/**
- * The request body contains an ExportTraceServiceRequest with resource spans.
- * @summary Handle OTLP trace export request.
- */
-export const TracerV1TracesCreateResponse = zod.object({
-  "partial_success": zod.object({
-  "rejected_spans": zod.number().optional(),
-  "error_message": zod.string().optional()
-}).optional()
-})
-
-
 export const TracerWebhookCreateBody = zod.object({
   "call": zod.object({
 
@@ -45763,16 +45879,4 @@ export const UsageWorkspaceUsageSummaryListResponse = zod.object({
 export const V1HealthListResponse = zod.object({
   "status": zod.enum(['healthy']),
   "service": zod.string().min(1)
-})
-
-
-/**
- * The request body contains an ExportTraceServiceRequest with resource spans.
- * @summary Handle OTLP trace export request.
- */
-export const V1TracesCreateResponse = zod.object({
-  "partial_success": zod.object({
-  "rejected_spans": zod.number().optional(),
-  "error_message": zod.string().optional()
-}).optional()
 })

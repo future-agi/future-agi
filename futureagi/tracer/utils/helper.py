@@ -668,6 +668,11 @@ def fetch_grouped_eval_rows(analytics, trace_id):
                     "choices": (
                         (c.eval_template.choices or []) if c.eval_template else []
                     ),
+                    "template_type": (
+                        getattr(c.eval_template, "template_type", None)
+                        if c.eval_template
+                        else None
+                    ),
                 }
                 for c in configs
             }
@@ -698,6 +703,7 @@ def fetch_grouped_eval_rows(analytics, trace_id):
                 "output_str_list": row.get("output_str_list"),
                 "error": row.get("error"),
                 "explanation": row.get("eval_explanation") or None,
+                "template_type": row.get("template_type"),
             }
             eval_rows.append(normalized)
             rows_by_span.setdefault(sid, []).append(normalized)
