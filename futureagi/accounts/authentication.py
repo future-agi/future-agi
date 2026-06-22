@@ -201,6 +201,9 @@ class APIKeyAuthentication(BaseAuthentication):
             "workspace/switch/",
             "organizations/switch/",
             "get-eval-templates",
+            "eval-templates/list/",  # Read-only list endpoint (POST body for filters)
+            "eval-templates/list-charts/",  # Read-only charts endpoint (POST body for filters)
+            "get-eval-template-names",  # Read-only name lookup (POST body for filters)
             "update-user-full-name",  # Users can always update their own profile
             "onboarding/",  # Users can always update their own onboarding profile
             "logout/",  # Users can always invalidate their own access token
