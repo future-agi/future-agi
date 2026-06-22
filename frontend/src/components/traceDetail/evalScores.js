@@ -1,14 +1,8 @@
-import { isNumericPass } from "src/sections/projects/LLMTracing/evalCellModel";
-
-const isPassFail = (ot) => {
-  const t = String(ot || "").toLowerCase();
-  return t === "pass/fail" || t === "pass_fail" || t === "boolean";
-};
-
-const isChoice = (ot) => {
-  const t = String(ot || "").toLowerCase();
-  return t === "choices" || t === "choice";
-};
+import {
+  isNumericPass,
+  resolveEvalKind,
+  EVAL_KIND,
+} from "src/sections/projects/LLMTracing/evalCellModel";
 
 // Flatten this span's own evals. The root carries scope:"trace" (every span),
 // so filter spans[] to the entry's own id. Errored/choice rows have pass=null.
@@ -17,8 +11,9 @@ export function spanOwnEvalRows(entry) {
   const rows = [];
   for (const task of entry?.eval_scores?.eval_tasks || []) {
     for (const ev of task.evals || []) {
-      const pf = isPassFail(ev.output_type);
-      const choice = isChoice(ev.output_type);
+      const kind = resolveEvalKind({ outputType: ev.output_type });
+      const pf = kind === EVAL_KIND.PASS_FAIL;
+      const choice = kind === EVAL_KIND.CHOICE;
       for (const s of ev.spans || []) {
         if (spanId && s.span_id !== spanId) continue;
         let pass = null;

@@ -22,6 +22,7 @@ import {
   SPAN_DEFAULT_COLUMNS,
   mergeCellStyle,
   generateAnnotationColumnsForTracing,
+  normalizeConfigKeys,
 } from "./common";
 import { buildColumnBlocks } from "./evalTaskGrouping";
 import EvalTaskGroupHeader from "./Renderers/EvalTaskGroupHeader";
@@ -43,16 +44,6 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
 
 const ROWS_LIMIT = 100;
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
 
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;

@@ -1,10 +1,3 @@
-export const EVAL_METRICS_GROUP = "Evaluation Metrics";
-
-export const EVAL_TASK_ROW_TYPE = {
-  TRACES: "traces",
-  SPANS: "spans",
-};
-
 const TRACE_GLYPH = { code: "T", label: "Trace-level eval — one result per trace" };
 const SPAN_GLYPH = {
   code: "S",
@@ -17,8 +10,6 @@ const GLYPH_BY_ROW_TYPE = {
   spans: SPAN_GLYPH,
   span: SPAN_GLYPH,
 };
-
-export const isEvalMetricColumn = (col) => col?.groupBy === EVAL_METRICS_GROUP;
 
 // Each task is emitted as one block at its first eval's array position so
 // user reorder sticks.
