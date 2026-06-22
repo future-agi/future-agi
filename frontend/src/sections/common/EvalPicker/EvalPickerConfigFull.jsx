@@ -144,7 +144,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
   // ── Editable state (mirrors EvalDetailPage) ──
   const [selectedVersionId, setSelectedVersionId] = useState(
-    evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null,
+    evalData?.pinned_version_id ?? null,
   );
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState("");
@@ -239,10 +239,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         initial[c.child_id] = c.weight != null ? c.weight : 1.0;
       }
     });
-    const saved =
-      evalData?.composite_weight_overrides ||
-      evalData?.compositeWeightOverrides ||
-      {};
+    const saved = evalData?.composite_weight_overrides || {};
     if (saved && typeof saved === "object") {
       Object.entries(saved).forEach(([childId, w]) => {
         if (w != null) initial[childId] = w;

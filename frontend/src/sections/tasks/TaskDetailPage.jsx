@@ -19,6 +19,8 @@ import Iconify from "src/components/iconify";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TaskLogsView from "src/sections/common/EvalsTasks/TaskLogsView";
 import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import TaskHeader from "./components/TaskHeader";
 import TaskConfigPanel from "./components/TaskConfigPanel";
 import TaskLivePreview from "./components/TaskLivePreview";
@@ -66,6 +68,9 @@ const getLinkedTraceSource = (taskDetails) => {
 const TaskDetailPage = () => {
   const { taskId } = useParams();
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditTask =
+    RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][role];
   const queryClient = useQueryClient();
   const [tab, setTab] = useState("details");
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -462,7 +467,7 @@ const TaskDetailPage = () => {
             variant="outlined"
             size="small"
             loading={testState.isTesting}
-            disabled={!testState.canTest}
+            disabled={!testState.canTest || !canEditTask}
             onClick={() => previewRef.current?.runTest()}
             startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
             sx={{ textTransform: "none", fontWeight: 500, minWidth: 120 }}
@@ -474,6 +479,7 @@ const TaskDetailPage = () => {
             size="small"
             onClick={handleSave}
             loading={isUpdating}
+            disabled={!canEditTask}
             sx={{ textTransform: "none", fontWeight: 500, minWidth: 140 }}
           >
             Save

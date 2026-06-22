@@ -315,7 +315,7 @@ export const useHardDeleteAnnotationQueue = () => {
 export const useRestoreAnnotationQueue = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id) => axios.post(annotationQueueEndpoints.restore(id)),
+    mutationFn: (id) => axios.post(annotationQueueEndpoints.restore(id), {}),
     onSuccess: () => {
       enqueueSnackbar("Queue restored. Rule cadence reset.", {
         variant: "success",
