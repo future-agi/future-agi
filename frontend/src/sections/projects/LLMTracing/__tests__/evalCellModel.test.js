@@ -28,18 +28,20 @@ describe("resolveEvalKind", () => {
   });
 });
 
-describe("scoreTone — numeric color bands (dev parity)", () => {
-  it("is red (fail) below 40 — including the boundary just under", () => {
+describe("scoreTone — shares the >=50 pass cutoff (dev parity)", () => {
+  it("is red (fail) below 50", () => {
     expect(scoreTone(0)).toBe("fail");
-    expect(scoreTone(39.99)).toBe("fail");
+    expect(scoreTone(49.99)).toBe("fail");
   });
-  it("is orange (neutral) in [40,60)", () => {
-    expect(scoreTone(40)).toBe("neutral");
-    expect(scoreTone(59.99)).toBe("neutral");
-  });
-  it("is green (pass) at/above 60", () => {
-    expect(scoreTone(60)).toBe("pass");
+  it("is green (pass) at/above 50", () => {
+    expect(scoreTone(50)).toBe("pass");
     expect(scoreTone(100)).toBe("pass");
+  });
+  // Regression guard: the chip tone must never contradict the >=50 pass count.
+  // 45 was a neutral chip but counted fail; 58 was neutral but counted pass.
+  it("agrees with the pass count across the old 40-60 neutral band", () => {
+    expect(scoreTone(45)).toBe("fail");
+    expect(scoreTone(58)).toBe("pass");
   });
 });
 
@@ -67,8 +69,9 @@ describe("evalCellChips", () => {
     ]);
   });
 
-  // Numeric — the color fix: below-passing must be red, not neutral "plain"
-  it("colors numeric scores by value (red <40, green >=60)", () => {
+  // Numeric — tone tracks the >=50 pass cutoff so the chip can't disagree
+  // with the pass count.
+  it("colors numeric scores by the >=50 cutoff (red <50, green >=50)", () => {
     expect(evalCellChips(32, score)).toEqual([{ label: "32%", tone: "fail" }]);
     expect(evalCellChips(72, score)).toEqual([{ label: "72%", tone: "pass" }]);
   });

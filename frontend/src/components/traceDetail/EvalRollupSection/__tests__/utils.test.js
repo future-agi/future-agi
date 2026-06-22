@@ -23,7 +23,7 @@ describe("spanResultChip", () => {
   });
 
   // Boundary / null
-  it("renders a missing numeric value as a neutral dash", () => {
+  it("renders a missing numeric value as a plain dash", () => {
     expect(spanResultChip({ value: null }, "score")).toEqual({
       label: "—",
       tone: "plain",

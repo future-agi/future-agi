@@ -3,6 +3,7 @@ import {
   EVAL_KIND,
   choiceTone,
   scoreTone,
+  isNumericPass,
 } from "src/sections/projects/LLMTracing/evalCellModel";
 
 export const NAME_W = "42%";
@@ -45,8 +46,7 @@ export const spanPassed = (span, outputType) => {
   if (span.error) return false;
   const kind = resolveEvalKind({ outputType });
   if (kind === EVAL_KIND.PASS_FAIL) return span.value === "pass";
-  if (kind === EVAL_KIND.NUMERIC)
-    return typeof span.value === "number" && span.value >= 50;
+  if (kind === EVAL_KIND.NUMERIC) return isNumericPass(span.value);
   return true;
 };
 

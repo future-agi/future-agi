@@ -5,6 +5,7 @@ import Iconify from "src/components/iconify";
 import {
   resolveEvalKind,
   EVAL_KIND,
+  isNumericPass,
 } from "src/sections/projects/LLMTracing/evalCellModel";
 import SummaryBar from "./SummaryBar";
 import SearchBar from "./SearchBar";
@@ -61,7 +62,7 @@ const EvalRollupSection = ({
         } else if (kind === EVAL_KIND.NUMERIC) {
           for (const s of ev.spans || []) {
             if (s.error || typeof s.value !== "number") continue;
-            if (s.value >= 50) p += 1;
+            if (isNumericPass(s.value)) p += 1;
             else {
               f += 1;
               failing.push(ev);

@@ -15,8 +15,10 @@ export const resolveEvalKind = (col) => {
 export const choiceTone = (label, col) =>
   (col?.choicesMap || {})[label] || "neutral";
 
-// Numeric score color bands (red <40, orange <60, green ≥60), matching dev.
-export const scoreTone = (n) => (n < 40 ? "fail" : n < 60 ? "neutral" : "pass");
+export const NUMERIC_PASS_CUTOFF = 50;
+export const isNumericPass = (n) =>
+  typeof n === "number" && n >= NUMERIC_PASS_CUTOFF;
+export const scoreTone = (n) => (isNumericPass(n) ? "pass" : "fail");
 
 // Render the backend's flat eval cell value straight into chips — no wrapper.
 // Pass/Fail -> {pass,fail} counts; Choices -> {label:count}; Score -> number.
@@ -37,9 +39,7 @@ export const evalCellChips = (value, col) => {
       return chips;
     }
     const passed =
-      value === "pass" ||
-      value === true ||
-      (typeof value === "number" && value >= 50);
+      value === "pass" || value === true || isNumericPass(value);
     return [{ label: passed ? "Pass" : "Fail", tone: passed ? "pass" : "fail" }];
   }
 

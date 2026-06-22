@@ -1,3 +1,5 @@
+import { isNumericPass } from "src/sections/projects/LLMTracing/evalCellModel";
+
 const isPassFail = (ot) => {
   const t = String(ot || "").toLowerCase();
   return t === "pass/fail" || t === "pass_fail" || t === "boolean";
@@ -36,7 +38,7 @@ export function spanOwnEvalRows(entry) {
           label = result === true ? "Pass" : result === false ? "Fail" : "—";
         } else if (typeof s.value === "number") {
           score = s.value;
-          pass = s.value >= 50;
+          pass = isNumericPass(s.value);
           label = `${s.value}%`;
         }
         rows.push({
