@@ -35,7 +35,16 @@ def _capture_exports(monkeypatch) -> list[dict]:
     """Capture the span lists handed to the collector across all exports."""
     exports: list[dict] = []
 
-    def _fake_export(spans, *, project_name, project_type, api_key, secret_key):
+    def _fake_export(
+        spans,
+        *,
+        project_name,
+        project_type,
+        api_key,
+        secret_key,
+        eval_tags=None,
+        service_name="fi-simulation",
+    ):
         exports.append(
             {"spans": spans, "project_name": project_name, "api_key": api_key}
         )

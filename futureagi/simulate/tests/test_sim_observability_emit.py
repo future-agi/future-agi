@@ -95,7 +95,16 @@ def test_emit_sim_trace_builds_and_emits_span_tree(
     captured = {}
     import simulate.services.sim_collector_emit as sce
 
-    def _fake_export(spans, *, project_name, project_type, api_key, secret_key):
+    def _fake_export(
+        spans,
+        *,
+        project_name,
+        project_type,
+        api_key,
+        secret_key,
+        eval_tags=None,
+        service_name="fi-simulation",
+    ):
         captured["spans"] = spans
         captured["project_name"] = project_name
         captured["api_key"] = api_key
@@ -147,7 +156,16 @@ def test_emit_sim_trace_accepts_voice_turns(organization, workspace, monkeypatch
     captured = {}
     import simulate.services.sim_collector_emit as sce
 
-    def _fake_export(spans, *, project_name, project_type, api_key, secret_key):
+    def _fake_export(
+        spans,
+        *,
+        project_name,
+        project_type,
+        api_key,
+        secret_key,
+        eval_tags=None,
+        service_name="fi-simulation",
+    ):
         captured["spans"] = spans
         return len(spans)
 
