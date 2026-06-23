@@ -10,6 +10,8 @@ import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { formatDate } from "src/utils/report-utils";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import Iconify from "src/components/iconify";
 import TaskHeader from "./components/TaskHeader";
@@ -20,6 +22,9 @@ import { useTaskDraft } from "./hooks/useTaskDraft";
 
 const TaskCreatePage = () => {
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canCreateTask =
+    RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][role];
   const [searchParams] = useSearchParams();
   const preselectedProject = searchParams.get("project") || "";
   const preselectedFilters = (() => {
@@ -207,7 +212,7 @@ const TaskCreatePage = () => {
           variant="outlined"
           size="small"
           loading={testState.isTesting}
-          disabled={!testState.canTest}
+          disabled={!testState.canTest || !canCreateTask}
           onClick={() => previewRef.current?.runTest()}
           startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
           sx={{ textTransform: "none", fontWeight: 500, minWidth: 120 }}
@@ -219,6 +224,7 @@ const TaskCreatePage = () => {
           size="small"
           onClick={handleSubmit(onSubmit)}
           loading={isPending}
+          disabled={!canCreateTask}
           sx={{ textTransform: "none", fontWeight: 500, minWidth: 140 }}
         >
           Create Task

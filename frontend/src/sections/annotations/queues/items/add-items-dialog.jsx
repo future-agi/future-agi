@@ -42,6 +42,7 @@ import { isEqual } from "lodash";
 import "src/sections/develop-detail/DataTab/developDataGrid.css";
 import SvgColor from "src/components/svg-color";
 import axios, { endpoints } from "src/utils/axios";
+import { stripUiFilterKeys } from "src/components/ComplexFilter/common";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useTestRunsList } from "src/api/tests/testRuns";
@@ -4263,7 +4264,7 @@ function SimulationSelector({ onSetSelection }) {
   );
 
   const serializedFilters = useMemo(
-    () => JSON.stringify(validatedFilters || []),
+    () => JSON.stringify(stripUiFilterKeys(validatedFilters)),
     [validatedFilters],
   );
 
@@ -4471,7 +4472,7 @@ function SimulationSelector({ onSetSelection }) {
             </MenuItem>
           )}
           {tests.map((t) => (
-            <MenuItem key={t.id} value={t.id} sx={{ maxWidth: 300 }}>
+            <MenuItem key={t.id} value={t.id} sx={{ width: "100%" }}>
               <CustomTooltip
                 size="small"
                 arrow
@@ -4547,7 +4548,7 @@ function SimulationSelector({ onSetSelection }) {
             {(executionRuns || []).map((run) => {
               const label = formatExecutionRunLabel(run);
               return (
-                <MenuItem key={run.id} value={run.id} sx={{ maxWidth: 340 }}>
+                <MenuItem key={run.id} value={run.id} sx={{ width: "100%" }}>
                   <CustomTooltip
                     size="small"
                     arrow

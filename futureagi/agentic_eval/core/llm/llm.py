@@ -289,7 +289,7 @@ class LLM:
             "aws_bedrock": {
                 "aws_access_key": os.getenv("AWS_ACCESS_KEY_ID"),
                 "aws_secret_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
-                "aws_region": "us-west-2",
+                "aws_region": os.getenv("AWS_BEDROCK_REGION", "us-west-2"),
             },
         }
 
