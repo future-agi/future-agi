@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 
-#TODO: switch this to "start_time" once we create an index on that column .
+# TODO: switch this to "start_time" once we create an index on that column .
 TIME_FILTER_COLUMN = "created_at"  # Options: "created_at" | "start_time"
 
 
@@ -400,6 +400,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if not trace_ids or not self.eval_config_ids:
             return "", {}
 
+        # CDC-off seam: legacy peerdb table + ``_peerdb_is_deleted`` are gone
+        # CH-off; read ``tracer_eval_logger_v2`` with ``is_deleted = 0``.
+        from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+
+        eval_table, eval_nd = eval_logger_source()
+
         params: Dict[str, Any] = {
             "trace_ids": tuple(trace_ids),
             "eval_config_ids": tuple(self.eval_config_ids),
@@ -418,9 +424,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         created_at_fragment = ""
         if self.start_date is not None:
             params["start_date"] = self.start_date
-            created_at_fragment = (
-                "AND created_at >= %(start_date)s - INTERVAL 1 DAY"
-            )
+            created_at_fragment = "AND created_at >= %(start_date)s - INTERVAL 1 DAY"
 
         # Include errored rows but compute aggregates only over successful
         # rows (error = 0). ``success_count`` / ``error_count`` let the
@@ -462,9 +466,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 output_str_list,
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ) AS str_lists
-        FROM {self.EVAL_TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
-          AND (deleted = 0 OR deleted IS NULL)
+        FROM {eval_table} FINAL
+        WHERE {eval_nd}
           AND trace_id IN %(trace_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
           {created_at_fragment}
@@ -520,9 +523,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
-    def build_user_id_query(
-        self, trace_ids: List[str]
-    ) -> Tuple[str, Dict[str, Any]]:
+    def build_user_id_query(self, trace_ids: List[str]) -> Tuple[str, Dict[str, Any]]:
         """Fetch user_id strings from ClickHouse for a page of trace IDs.
 
         Uses enduser_dict to resolve end_user_id UUIDs to user_id strings
@@ -555,9 +556,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
-    def resolve_user_ids(
-        self, trace_ids: List[str], analytics
-    ) -> Dict[str, str]:
+    def resolve_user_ids(self, trace_ids: List[str], analytics) -> Dict[str, str]:
         """Resolve user_id strings for a page of trace IDs.
 
         Single-query lookup using ClickHouse enduser_dict:
@@ -578,9 +577,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if not user_query:
             return {}
 
-        result = analytics.execute_ch_query(
-            user_query, user_params, timeout_ms=10000
-        )
+        result = analytics.execute_ch_query(user_query, user_params, timeout_ms=10000)
 
         # Build trace_id → user_id mapping (filter already applied in query)
         user_id_map = {
@@ -712,9 +709,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 for lst in parsed:
                     for choice in set(lst):
                         counts[choice] = counts.get(choice, 0) + 1
-                per_choice = {
-                    k: round(100.0 * v / total, 2) for k, v in counts.items()
-                }
+                per_choice = {k: round(100.0 * v / total, 2) for k, v in counts.items()}
                 result.setdefault(trace_id, {})[config_id] = {
                     "per_choice": per_choice,
                 }
@@ -736,9 +731,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 "avg_score": (
                     round(avg_score * 100, 2) if _finite(avg_score) else None
                 ),
-                "pass_rate": (
-                    round(pass_rate, 2) if _finite(pass_rate) else None
-                ),
+                "pass_rate": (round(pass_rate, 2) if _finite(pass_rate) else None),
                 "count": _get(row, "eval_count", 6, 0) or 0,
             }
             result.setdefault(trace_id, {})[config_id] = score_data

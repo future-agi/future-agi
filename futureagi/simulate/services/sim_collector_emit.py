@@ -173,6 +173,7 @@ def export_sim_spans(
     api_key: str,
     secret_key: str,
     eval_tags: list[dict[str, Any]] | None = None,
+    service_name: str = "fi-simulation",
 ) -> int:
     """Export sim spans to the fi-collector over OTLP/gRPC.
 
@@ -189,7 +190,7 @@ def export_sim_spans(
             RES_PROJECT_NAME: project_name,
             RES_PROJECT_TYPE: project_type,
             RES_EVAL_TAGS: json.dumps(eval_tags or []),
-            "service.name": "fi-simulation",
+            "service.name": service_name,
         }
     )
     readable = [_readable_span(s, resource) for s in spans]

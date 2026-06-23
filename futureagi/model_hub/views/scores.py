@@ -27,6 +27,7 @@ from model_hub.serializers.scores import (
     UpdateScoreSerializer,
 )
 from model_hub.utils.annotation_queue_helpers import (
+    resolve_ch_span_source,
     resolve_default_queue_item_for_source,
     resolve_source_object,
 )
@@ -46,6 +47,21 @@ ERROR_RESPONSES = {
     409: ApiTextErrorResponseSerializer,
     500: ApiTextErrorResponseSerializer,
 }
+
+
+def _span_source_trace_id(source_type, source_obj):
+    """Valid-UUID trace_id of an observation_span source (PG model or CHSpan),
+    else ``None``. Stamped as a denormalized locator on span Scores so they roll
+    up to the trace in reads (incl. CH-only spans with no PG row to join)."""
+    if source_type != "observation_span":
+        return None
+    import uuid
+
+    tid = getattr(source_obj, "trace_id", None)
+    try:
+        return str(uuid.UUID(str(tid)))
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def _resolve_queue_item(queue_item_id, source_type, source_obj, organization, user):
@@ -122,9 +138,16 @@ def _auto_complete_queue_items(source_type, source_obj, annotator):
     if not fk_field:
         return
 
+    # Use the FK *id* form, not the object: a CHSpan (collector-only span) is not
+    # an ObservationSpan model instance, so ``**{fk_field: source_obj}`` raises a
+    # type error. ``.pk``/``.id`` is the str id for both PG models and CHSpan.
+    source_pk = getattr(source_obj, "pk", None) or getattr(source_obj, "id", None)
+    if source_pk is None:
+        return
+
     # Find queue items pointing to this source that are not yet completed
     queue_items = QueueItem.objects.filter(
-        **{fk_field: source_obj},
+        **{f"{fk_field}_id": source_pk},
         deleted=False,
         status__in=[QueueItemStatus.PENDING.value, QueueItemStatus.IN_PROGRESS.value],
     ).select_related("queue")
@@ -137,7 +160,7 @@ def _auto_complete_queue_items(source_type, source_obj, annotator):
     queue_item_ids = [qi.id for qi in queue_items]
     scored_by_item = defaultdict(set)
     for label_id, queue_item_id in Score.objects.filter(
-        **{fk_field: source_obj},
+        **{f"{fk_field}_id": source_pk},
         annotator=annotator,
         queue_item_id__in=queue_item_ids,
         deleted=False,
@@ -333,6 +356,15 @@ class ScoreViewSet(viewsets.ModelViewSet):
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
         )
+        # CDC-off fallback: collector-only spans (sim / SDK) have no PG row, so
+        # resolve them from CH instead of 404ing. The CHSpan duck-types as a
+        # source object for the queue-scope resolver + FK-id writes below.
+        if not source_obj and source_type == "observation_span":
+            source_obj = resolve_ch_span_source(
+                source_id,
+                organization=request.organization,
+                workspace=getattr(request, "workspace", None),
+            )
         if not source_obj:
             return self._gm.not_found(f"Source not found: {source_type}={source_id}")
 
@@ -371,6 +403,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
         # field is still populated automatically via the post-save signal
         # (set_workspace_from_organization), so workspace-scoped reads
         # continue to work correctly.
+        source_trace_id = _span_source_trace_id(source_type, source_obj)
         with transaction.atomic():
             score, created = Score.no_workspace_objects.update_or_create(
                 **{f"{fk_field}_id": source_obj.pk},
@@ -386,6 +419,11 @@ class ScoreViewSet(viewsets.ModelViewSet):
                     "organization": request.organization,
                     "workspace": getattr(request, "workspace", None)
                     or getattr(queue_item, "workspace", None),
+                    # Denormalized trace locator so a span Score (incl. CH-only
+                    # collector spans, which have no PG ObservationSpan to join)
+                    # rolls up to its trace in the trace-detail annotation map,
+                    # which merges Q(trace_id) | Q(observation_span__trace_id).
+                    **({"trace_id": source_trace_id} if source_trace_id else {}),
                 },
             )
 
@@ -436,6 +474,13 @@ class ScoreViewSet(viewsets.ModelViewSet):
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
         )
+        # CDC-off fallback: collector-only spans live only in CH (see create()).
+        if not source_obj and source_type == "observation_span":
+            source_obj = resolve_ch_span_source(
+                source_id,
+                organization=request.organization,
+                workspace=getattr(request, "workspace", None),
+            )
         if not source_obj:
             return self._gm.not_found(f"Source not found: {source_type}={source_id}")
 
@@ -446,6 +491,10 @@ class ScoreViewSet(viewsets.ModelViewSet):
             elif span_notes_source_id:
                 span_notes_target = resolve_source_object(
                     "observation_span",
+                    span_notes_source_id,
+                    organization=request.organization,
+                    workspace=getattr(request, "workspace", None),
+                ) or resolve_ch_span_source(
                     span_notes_source_id,
                     organization=request.organization,
                     workspace=getattr(request, "workspace", None),
@@ -473,6 +522,15 @@ class ScoreViewSet(viewsets.ModelViewSet):
 
         created_scores = []
         errors = []
+        source_trace_id = _span_source_trace_id(source_type, source_obj)
+        # SpanNotes.span is a (db_constraint=False) FK that rejects a CHSpan
+        # OBJECT on assignment — write the id form so collector-only spans work.
+        span_notes_pk = (
+            getattr(span_notes_target, "pk", None)
+            or getattr(span_notes_target, "id", None)
+            if span_notes_target is not None
+            else None
+        )
 
         with transaction.atomic():
             for score_data in data["scores"]:
@@ -507,6 +565,8 @@ class ScoreViewSet(viewsets.ModelViewSet):
                         "organization": request.organization,
                         "workspace": getattr(request, "workspace", None)
                         or getattr(queue_item, "workspace", None),
+                        # Denormalized trace locator (see create()).
+                        **({"trace_id": source_trace_id} if source_trace_id else {}),
                     },
                 )
                 created_scores.append(score)
@@ -525,7 +585,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
             if span_notes_target is not None:
                 if span_notes:
                     SpanNotes.objects.update_or_create(
-                        span=span_notes_target,
+                        span_id=span_notes_pk,
                         created_by_user=request.user,
                         defaults={
                             "notes": span_notes,
@@ -535,7 +595,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 else:
                     # User explicitly cleared the notes field — delete the SpanNote
                     SpanNotes.objects.filter(
-                        span=span_notes_target,
+                        span_id=span_notes_pk,
                         created_by_user=request.user,
                     ).delete()
 

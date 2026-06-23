@@ -790,15 +790,19 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         # PG metadata by primary key.
         trace_ids = [r["trace_id"] for r in traces_data]
         eval_configs: list = []
+        # CDC-off seam: legacy peerdb table + ``_peerdb_is_deleted`` are gone
+        # CH-off; read ``tracer_eval_logger_v2`` with ``is_deleted = 0`` instead.
+        from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+
+        eval_table, eval_nd = eval_logger_source()
         if trace_ids:
             try:
                 config_id_result = analytics.execute_ch_query(
-                    """
+                    f"""
                     SELECT DISTINCT toString(custom_eval_config_id) AS config_id
-                    FROM tracer_eval_logger FINAL
+                    FROM {eval_table} FINAL
                     WHERE trace_id IN %(trace_ids)s
-                      AND _peerdb_is_deleted = 0
-                      AND (deleted = 0 OR deleted IS NULL)
+                      AND {eval_nd}
                     """,
                     {"trace_ids": trace_ids},
                     timeout_ms=3000,
@@ -827,7 +831,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         eval_map = {}
         if eval_configs and trace_ids:
             config_ids = [str(c.id) for c in eval_configs]
-            eval_query = """
+            eval_query = f"""
                 SELECT
                     toString(trace_id) AS trace_id,
                     toString(custom_eval_config_id) AS config_id,
@@ -837,11 +841,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                                    ELSE NULL END), 2) AS bool_score,
                     count(output_float) AS float_count,
                     count(output_bool) AS bool_count
-                FROM tracer_eval_logger FINAL
+                FROM {eval_table} FINAL
                 WHERE trace_id IN %(trace_ids)s
                   AND custom_eval_config_id IN %(config_ids)s
-                  AND _peerdb_is_deleted = 0
-                  AND (deleted = 0 OR deleted IS NULL)
+                  AND {eval_nd}
                   AND output_str != 'ERROR'
                   AND (error = 0 OR error IS NULL)
                 GROUP BY trace_id, custom_eval_config_id

@@ -4,6 +4,7 @@ ClickHouse Client for Analytics Backend
 Provides connection management and query execution for ClickHouse.
 """
 
+import os
 import queue
 import threading
 import time
@@ -418,6 +419,16 @@ class ClickHouseClient:
             Dict mapping table names to lag in seconds. A value of -1
             indicates the lag could not be determined.
         """
+        # CDC-off: the legacy CDC tables (and `_peerdb_synced_at`) are gone — no
+        # replication chain to measure. (Currently no callers; gated for safety.)
+        if str(os.getenv("CH25_DROP_LEGACY_CDC_CHAIN", "")).strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            return {}
+
         from datetime import datetime
 
         # CH25 close-out (2026-05-28): removed `tracer_observation_span`

@@ -68,6 +68,7 @@ def emit_spans_to_collector(
     project_type: str,
     organization_id: str,
     workspace_id: str | None,
+    service_name: str = "fi-simulation",
 ) -> int:
     """Resolve credentials and export ``spans`` (build_sim_spans-shaped dicts) to
     the collector. Best-effort: returns the number exported, 0 on missing
@@ -88,4 +89,5 @@ def emit_spans_to_collector(
         project_type=project_type,
         api_key=api_key,
         secret_key=secret_key,
+        service_name=service_name,
     )

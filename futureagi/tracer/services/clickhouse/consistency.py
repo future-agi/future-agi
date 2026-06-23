@@ -4,6 +4,7 @@ ClickHouse Consistency Monitoring
 Monitors PG-CH data consistency, CDC replication lag, and query performance.
 """
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -18,6 +19,19 @@ from tracer.services.clickhouse.client import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def _legacy_cdc_dropped() -> bool:
+    """True when the legacy PeerDB CDC chain has been dropped — the legacy CDC
+    tables (tracer_trace/trace_session/tracer_eval_logger) no longer exist in CH
+    and have no ``_peerdb_synced_at``, so lag/row-count comparisons are undefined
+    and must be skipped (else they 500/false-alarm)."""
+    return str(os.getenv("CH25_DROP_LEGACY_CDC_CHAIN", "")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 @dataclass
@@ -68,6 +82,9 @@ class ConsistencyChecker:
         threshold_pct: float = 1.0,
     ) -> list[ConsistencyResult]:
         """Compare row counts between PG and CH for each table."""
+        # CDC-off: the legacy CH counterparts are gone — comparison is undefined.
+        if _legacy_cdc_dropped():
+            return []
         results = []
         for pg_table, ch_table in self.MONITORED_TABLES:
             try:
@@ -115,6 +132,9 @@ class ConsistencyChecker:
 
     def get_cdc_lag(self) -> dict[str, float]:
         """Get CDC replication lag per table in seconds."""
+        # CDC-off: no PeerDB chain to measure — report no lag (health stays green).
+        if _legacy_cdc_dropped():
+            return {}
         lag = {}
         tables = [
             "tracer_trace",

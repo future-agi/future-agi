@@ -325,6 +325,12 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         if not span_ids or not self.eval_config_ids:
             return "", {}
 
+        # CDC-off seam: legacy peerdb table + ``_peerdb_is_deleted`` are gone
+        # CH-off; read ``tracer_eval_logger_v2`` with ``is_deleted = 0``.
+        from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+
+        eval_table, eval_nd = eval_logger_source()
+
         params: dict[str, Any] = {
             "span_ids": tuple(span_ids),
             "eval_config_ids": tuple(self.eval_config_ids),
@@ -371,9 +377,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 output_str_list,
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ) AS str_lists
-        FROM {self.EVAL_TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
-          AND (deleted = 0 OR deleted IS NULL)
+        FROM {eval_table} FINAL
+        WHERE {eval_nd}
           AND observation_span_id IN %(span_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
         GROUP BY observation_span_id, custom_eval_config_id

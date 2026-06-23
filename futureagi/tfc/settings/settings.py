@@ -803,19 +803,19 @@ WEBAUTHN_CHALLENGE_TTL = 120  # 2 minutes
 # to the legacy CLICKHOUSE dict above for connection details if not set
 # explicitly — see tracer/services/clickhouse/v2/__init__.py:get_v2_config().
 CLICKHOUSE_V2 = {
-    "CH25_HOST":      os.getenv("CH25_HOST"),
+    "CH25_HOST": os.getenv("CH25_HOST"),
     "CH25_HTTP_PORT": os.getenv("CH25_HTTP_PORT", "8123"),
-    "CH25_TCP_PORT":  os.getenv("CH25_TCP_PORT", "9000"),
-    "CH25_USER":      os.getenv("CH25_USER", "default"),
-    "CH25_PASSWORD":  os.getenv("CH25_PASSWORD", ""),
-    "CH25_DATABASE":  os.getenv("CH25_DATABASE", "default"),
+    "CH25_TCP_PORT": os.getenv("CH25_TCP_PORT", "9000"),
+    "CH25_USER": os.getenv("CH25_USER", "default"),
+    "CH25_PASSWORD": os.getenv("CH25_PASSWORD", ""),
+    "CH25_DATABASE": os.getenv("CH25_DATABASE", "default"),
     # ─── Per-query-type routing for the shadow-mode rollout ──────────────────
     # Comma-separated query type names. See tracer/services/clickhouse/v2/shadow.py
     # for RoutingMode definitions. Anything not listed defaults to V1_ONLY.
     "QUERY_TYPES_V2_PRIMARY": os.getenv("CH25_QUERY_TYPES_V2_PRIMARY", ""),
-    "QUERY_TYPES_V2_ONLY":    os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
-    "QUERY_TYPES_SHADOW":     os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
-    "QUERY_TYPES_DISABLED":   os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
+    "QUERY_TYPES_V2_ONLY": os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
+    "QUERY_TYPES_SHADOW": os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
+    "QUERY_TYPES_DISABLED": os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
 # Eval-logger table read by the trace/voice/user eval-config discovery queries.
@@ -826,6 +826,15 @@ CLICKHOUSE_V2 = {
 # CH-direct stacks set it to `tracer_eval_logger_v2`). See
 # tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
 CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
+# Curated EndUser table the ClickHouse filter builder's user_id / user_id_type
+# subquery reads. Legacy PeerDB CDC table ``tracer_enduser`` (id,
+# _peerdb_is_deleted, deleted) is the default; CDC-off stacks flip to the v2
+# collector-written ``end_users`` RMT (end_user_id, is_deleted) — schema 017.
+CH25_END_USER_TABLE = os.getenv("CH25_END_USER_TABLE", "tracer_enduser")
+# Unified-annotation Score table the observe filter builder reads (annotation
+# filters). Legacy PeerDB CDC mirror ``model_hub_score`` is the default; CDC-off
+# stacks flip to the app-mirrored ``model_hub_score_v2`` RMT (schema 020).
+CH25_SCORE_TABLE = os.getenv("CH25_SCORE_TABLE", "model_hub_score")
 
 # Where the eval runner reads span data from.
 #   "postgres"   — current behavior; reads from tracer_observation_span (Django ORM)

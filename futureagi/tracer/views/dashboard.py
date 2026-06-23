@@ -1066,36 +1066,51 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 from model_hub.models.evals_metric import EvalTemplate
 
                 used_template_ids = []
-                if is_clickhouse_enabled():
+                if not filter_by_project:
+                    # Workspace-wide eval-template catalog. Read the PG
+                    # system-of-record (APICallLog), NOT CH ``usage_apicalllog``:
+                    # that is a dropped PeerDB mirror CDC-off (UNKNOWN_TABLE 500)
+                    # and PG is correct in BOTH modes. NOTE: the breakage was in
+                    # the CH-DISABLED config too — this path no longer needs CH.
+                    from ee.usage.models.usage import APICallLog
+                    from tfc.constants.api_calls import APICallStatusChoices
+
+                    used_template_ids = list(
+                        APICallLog.objects.filter(
+                            workspace=workspace,
+                            status=APICallStatusChoices.SUCCESS.value,
+                        )
+                        .exclude(source_id__isnull=True)
+                        .exclude(source_id="")
+                        .values_list("source_id", flat=True)
+                        .distinct()
+                    )
+                elif is_clickhouse_enabled():
                     from tracer.services.clickhouse.client import (
                         get_clickhouse_client,
                     )
 
+                    # Get eval config IDs that have results on traces in the given
+                    # project(s). Route through the CDC-off seam: the legacy peerdb
+                    # table + ``_peerdb_is_deleted`` column are gone CH-off, so read
+                    # ``tracer_eval_logger_v2`` with ``is_deleted = 0`` instead
+                    # (else this 500s and the dashboard Evals columns render empty).
+                    from tracer.services.clickhouse.eval_logger_table import (
+                        eval_logger_source,
+                    )
+
                     ch = get_clickhouse_client()
-
-                    if filter_by_project:
-                        # Get eval template IDs that have results on traces in the given project(s)
-                        result = ch.execute_read(
-                            "SELECT DISTINCT toString(custom_eval_config_id) AS tid "
-                            "FROM tracer_eval_logger "
-                            "WHERE _peerdb_is_deleted = 0 AND deleted = 0 "
-                            "AND custom_eval_config_id != toUUID('00000000-0000-0000-0000-000000000000') "
-                            "AND created_at >= now() - INTERVAL 90 DAY "
-                            "AND dictGet('trace_dict', 'project_id', trace_id) IN %(project_ids)s",
-                            {"project_ids": project_ids},
-                            timeout_ms=5000,
-                        )
-                    else:
-                        ws_id = str(workspace.id)
-                        result = ch.execute_read(
-                            "SELECT DISTINCT source_id FROM usage_apicalllog "
-                            "WHERE workspace_id = toUUID(%(ws_id)s) "
-                            "AND status = 'success' AND length(source_id) > 0 "
-                            "AND _peerdb_is_deleted = 0",
-                            {"ws_id": ws_id},
-                            timeout_ms=5000,
-                        )
-
+                    eval_table, eval_nd = eval_logger_source()
+                    result = ch.execute_read(
+                        "SELECT DISTINCT toString(custom_eval_config_id) AS tid "
+                        f"FROM {eval_table} "
+                        f"WHERE {eval_nd} "
+                        "AND custom_eval_config_id != toUUID('00000000-0000-0000-0000-000000000000') "
+                        "AND created_at >= now() - INTERVAL 90 DAY "
+                        "AND dictGet('trace_dict', 'project_id', trace_id) IN %(project_ids)s",
+                        {"project_ids": project_ids},
+                        timeout_ms=5000,
+                    )
                     # execute_read returns (rows, columns, time_ms)
                     raw_rows = result[0] if isinstance(result, tuple) else result
                     used_template_ids = [
@@ -1177,7 +1192,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 from model_hub.models.develop_annotations import AnnotationsLabels
 
                 if filter_by_project:
-
                     from model_hub.models.score import Score
 
                     used_label_ids = list(

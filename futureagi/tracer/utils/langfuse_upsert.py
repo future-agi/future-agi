@@ -323,6 +323,22 @@ def upsert_langfuse_trace(
 
     transaction.on_commit(lambda tid=str(trace.id): mirror_traces_to_clickhouse([tid]))
 
+    # CH25 (CDC-off): the trace mirror above feeds trace_dict, but the
+    # observations themselves still only live in PG — the collector is the sole
+    # CH `spans` writer. Route the persisted Langfuse spans through the same
+    # collector seam as provider pulls / sim so they appear in the CH-backed
+    # observe UI. Post-commit (reads the committed PG spans) + best-effort +
+    # self-gated on dual_write_enabled() (no-op / CDC handles it when PeerDB on).
+    from tracer.utils.langfuse_collector_emit import (
+        emit_langfuse_spans_to_collector,
+    )
+
+    transaction.on_commit(
+        lambda t=trace, ext=external_id, rsid=root_span_id: (
+            emit_langfuse_spans_to_collector(t, ext, rsid)
+        )
+    )
+
     # CH25 (P3b flip): mirror the curated EndUser / TraceSession into CH
     # `end_users` / `trace_sessions`, keyed by the DETERMINISTIC ids stamped above.
     # The PG get_or_create is GONE — pass the CuratedEndUser/CuratedSession built

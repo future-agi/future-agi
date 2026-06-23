@@ -514,6 +514,62 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
     return obj
 
 
+def resolve_ch_span_source(source_id, organization=None, workspace=None):
+    """CDC-off fallback for ``resolve_source_object('observation_span', …)``.
+
+    Collector-ingested spans (sim / SDK) live ONLY in CH ``spans`` — there is no
+    PG ``ObservationSpan`` row — so the PG lookup returns ``None`` and score
+    writes 404. Resolve the span from CH instead and return the ``CHSpan``
+    dataclass (it duck-types as a source object: ``.pk``/``.id``, ``.project_id``,
+    ``.trace_id``, ``.org_id``; the queue-scope resolver already accepts it).
+    Returns ``None`` when the span is absent or fails the org/workspace check.
+    """
+    try:
+        from tracer.services.clickhouse.v2 import get_reader
+
+        reader = get_reader()
+        try:
+            ch = reader.get(str(source_id))
+        finally:
+            close = getattr(reader, "close", None)
+            if callable(close):
+                close()
+    except Exception:
+        logger.exception("resolve_ch_span_source_failed", source_id=str(source_id))
+        return None
+    if ch is None:
+        return None
+
+    if organization is not None:
+        ch_org = str(getattr(ch, "org_id", "") or "")
+        if ch_org and ch_org != str(organization.pk):
+            logger.warning(
+                "ch_span_source_org_mismatch",
+                source_id=str(source_id),
+                expected_org=str(organization.pk),
+                actual_org=ch_org,
+            )
+            return None
+
+    if workspace is not None:
+        from tracer.models.project import Project
+
+        proj = Project.objects.filter(id=getattr(ch, "project_id", None)).first()
+        obj_ws = getattr(proj, "workspace", None) if proj else None
+        ws_match = obj_ws == workspace or (
+            obj_ws is None and getattr(workspace, "is_default", False)
+        )
+        if not ws_match:
+            logger.warning(
+                "ch_span_source_workspace_mismatch",
+                source_id=str(source_id),
+                expected_workspace=str(workspace.pk),
+            )
+            return None
+
+    return ch
+
+
 def _get_source_organization(obj):
     """Return the organization that owns *obj*, traversing FKs as needed."""
     # Direct organization FK (ObservationSpan, RunPrompter, Dataset, …)

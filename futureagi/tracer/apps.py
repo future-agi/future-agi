@@ -36,3 +36,12 @@ class SdkConfig(AppConfig):
         )
 
         connect_eval_logger_mirror()
+
+        # CDC-off replacement: mirror unified-annotation Scores PG -> CH on write
+        # so the observe annotation filters (has_annotation / annotator /
+        # per-label value) resolve without PeerDB. Gated by dual_write_enabled().
+        from tracer.services.clickhouse.v2.score_writer import (
+            connect_score_mirror,
+        )
+
+        connect_score_mirror()

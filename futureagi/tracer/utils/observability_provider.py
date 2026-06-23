@@ -333,6 +333,24 @@ def _export_provider_call_to_collector(span, provider: str, provider_log_id: str
             organization_id=organization_id,
             workspace_id=str(project.workspace_id) if project.workspace_id else None,
         )
+        # The collector writes CH `spans` (and curated end_users/trace_sessions)
+        # but NOT CH `traces`. trace_dict — which resolves a span/eval back to its
+        # project (e.g. the voice-call-list eval column does
+        # `dictGet('trace_dict','project_id', trace_id)`) — is fed only by the
+        # app-side trace mirror. The app's own SDK ingestion paths already mirror
+        # (create_otel_span / trace_ingestion); collector-routed provider pulls
+        # must too, else evals (and any trace_dict-keyed read) never resolve to a
+        # project for provider calls. Post-commit + best-effort, self-gated on
+        # dual_write_enabled() (no-op when CDC is on / PG trace absent).
+        from django.db import transaction
+
+        from tracer.services.clickhouse.v2.trace_writer import (
+            mirror_traces_to_clickhouse,
+        )
+
+        transaction.on_commit(
+            lambda tid=str(span.trace_id): mirror_traces_to_clickhouse([tid])
+        )
     except Exception:
         logger.exception(
             "provider_collector_export_failed",

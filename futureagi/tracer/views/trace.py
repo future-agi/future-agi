@@ -4489,7 +4489,31 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # the voice_call_detail endpoint.
             for key in self._VOICE_CALL_HEAVY_KEYS:
                 entry.pop(key, None)
-            entry.setdefault("observation_span", [])
+            # Every row here is a root conversation span (the query filters
+            # ``parent_span_id IS NULL AND observation_type='conversation'``),
+            # but the heavy-key strip drops ``observation_span``. The drawer
+            # gates both its voice-drawer routing and its ``voice_call_detail``
+            # fetch on a conversation span being present on the row. Collector-
+            # exported provider/SDK rows carry no ``raw_log`` (it's dropped on
+            # export), so ``process_raw_logs`` can't set ``call_type`` — the
+            # signal the drawer used to fall back on — and the row would
+            # mis-route to the non-voice drawer with an empty transcript. Seed a
+            # minimal conversation stub so the row is recognized as voice and
+            # the annotation root-span id resolves; the detail fetch replaces it
+            # with the full span list. Chat sims stay correct: their
+            # ``simulation_call_type`` is ``"text"`` and the drawer's
+            # ``!== CHAT`` guard short-circuits before this stub is read.
+            entry["observation_span"] = (
+                [
+                    {
+                        "id": span_id,
+                        "observation_type": "conversation",
+                        "parent_span_id": None,
+                    }
+                ]
+                if span_id
+                else []
+            )
 
             # Include span attributes for custom columns (skip heavy/nested values)
             for key, value in span_attrs.items():
