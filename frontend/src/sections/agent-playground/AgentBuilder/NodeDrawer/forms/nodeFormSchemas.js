@@ -92,7 +92,10 @@ export const getPromptNodeFormSchema = () =>
     prompt_version_id: z.string().nullable().optional().default(null),
     prompt_template_id: z.string().nullable().optional().default(null),
     outputFormat: z.string().optional().default("string"),
-    templateFormat: z.enum(["mustache", "jinja"]).optional().default("mustache"),
+    templateFormat: z
+      .enum(["mustache", "jinja"])
+      .optional()
+      .default("mustache"),
     modelConfig: modelConfigSchema,
     messages: z
       .array(getMessageValidationSchema())
@@ -127,6 +130,16 @@ export const agentNodeFormSchema = z.object({
     .optional(),
 });
 
+export const codeExecutionNodeFormSchema = z.object({
+  nodeType: z.literal(NODE_TYPES.CODE_EXECUTION).optional(),
+  nodeId: z.string().optional(),
+  name: z.string().optional(),
+  language: z.enum(["python", "javascript", "typescript"]),
+  code: z.string().min(1, "Code is required").max(20000),
+  timeout_ms: z.coerce.number().int().min(100).max(30000),
+  memory_mb: z.coerce.number().int().min(32).max(512),
+});
+
 /**
  * Schema for Eval Node Form
  */
@@ -155,6 +168,8 @@ export function getNodeFormSchema(nodeType) {
       return getPromptNodeFormSchema();
     case NODE_TYPES.AGENT:
       return agentNodeFormSchema;
+    case NODE_TYPES.CODE_EXECUTION:
+      return codeExecutionNodeFormSchema;
     case "eval":
       return evalNodeFormSchema;
     default:

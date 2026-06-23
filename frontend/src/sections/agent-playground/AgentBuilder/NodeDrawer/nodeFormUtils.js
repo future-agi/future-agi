@@ -1,5 +1,8 @@
 import { getRandomId } from "src/utils/utils";
-import { NODE_TYPES } from "../../utils/constants";
+import {
+  CODE_EXECUTION_DEFAULT_CONFIG,
+  NODE_TYPES,
+} from "../../utils/constants";
 
 /**
  * Normalize responseFormat to always return a string (for dropdown/form use).
@@ -156,6 +159,14 @@ export function getDefaultValues(nodeData) {
     };
   }
 
+  if (nodeData?.type === NODE_TYPES.CODE_EXECUTION) {
+    return {
+      ...baseValues,
+      ...CODE_EXECUTION_DEFAULT_CONFIG,
+      ...mergedConfig,
+    };
+  }
+
   if (nodeData?.type === "eval") {
     return {
       ...baseValues,
@@ -296,6 +307,18 @@ export function mapNodeDetailToNodeData(apiNode, existingNode) {
               : existingNode?.data?.config?.payload?.inputMappings || [],
           },
         },
+      },
+    };
+  }
+
+  if (nodeType === NODE_TYPES.CODE_EXECUTION) {
+    return {
+      ...existingNode,
+      data: {
+        ...existingNode?.data,
+        label: apiNode.name || existingNode?.data?.label,
+        ports: apiNode.ports || existingNode?.data?.ports || [],
+        config: apiNode.config || existingNode?.data?.config || {},
       },
     };
   }

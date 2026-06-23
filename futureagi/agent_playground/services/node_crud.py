@@ -8,6 +8,7 @@ import re
 from typing import Any
 from uuid import UUID
 
+import jsonschema
 import structlog
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -129,7 +130,16 @@ def _auto_create_edges_for_node(
                             )
             else:
                 # Simple variable: match by display_name
-                out_port = output_ports_by_name.get(in_port.display_name)
+                if node.node_template and node.node_template.name == "code_execution":
+                    out_port = (
+                        Port.no_workspace_objects.filter(
+                            node=nc.source_node, direction=PortDirection.OUTPUT
+                        )
+                        .order_by("created_at")
+                        .first()
+                    )
+                else:
+                    out_port = output_ports_by_name.get(in_port.display_name)
                 if out_port:
                     try:
                         Edge(
@@ -171,6 +181,7 @@ def create_node(
     node_id = data["id"]
     name = data["name"]
     position = data.get("position", {})
+    config = data.get("config") or {}
     source_node_id = data.get("source_node_id")
     prompt_data = data.get("prompt_template")
     ports_data = data.get("ports", [])
@@ -180,6 +191,7 @@ def create_node(
 
     if node_type == NodeType.ATOMIC:
         node_template = _resolve_node_template(data["node_template_id"])
+        _validate_config_against_template(node_template, config)
     elif node_type == NodeType.SUBGRAPH:
         ref_gv_id = data.get("ref_graph_version_id")
         if ref_gv_id:
@@ -193,7 +205,7 @@ def create_node(
         ref_graph_version=ref_graph_version,
         type=node_type,
         name=name,
-        config={},
+        config=config,
         position=position,
     )
     node.save(skip_validation=True)
@@ -240,6 +252,9 @@ def create_node(
     # Handle explicit FE ports (used for non-LLM atomic nodes or when FE sends ports)
     elif ports_data:
         _create_ports_from_fe_array(node, ports_data)
+        _create_ports_from_template_definition(node)
+    elif node_template:
+        _create_ports_from_template_definition(node)
 
     # Create NodeConnection if source_node_id provided
     nc = None
@@ -277,6 +292,10 @@ def update_node(
         node.name = data["name"]
     if "position" in data:
         node.position = data["position"]
+    if "config" in data:
+        node.config = data["config"] or {}
+        if node.type == NodeType.ATOMIC and node.node_template:
+            _validate_config_against_template(node.node_template, node.config)
 
     # Handle ref_graph_version_id update (subgraph nodes)
     if "ref_graph_version_id" in data:
@@ -396,6 +415,17 @@ def _resolve_node_template(node_template_id: UUID) -> NodeTemplate:
     return NodeTemplate.no_workspace_objects.get(id=node_template_id)
 
 
+def _validate_config_against_template(
+    node_template: NodeTemplate, config: dict[str, Any]
+) -> None:
+    if node_template.input_mode == PortMode.DYNAMIC:
+        return
+    try:
+        jsonschema.validate(instance=config or {}, schema=node_template.config_schema)
+    except jsonschema.ValidationError as e:
+        raise ValidationError(f"Invalid config: {e.message}") from e
+
+
 def _resolve_ref_graph_version(ref_graph_version_id: UUID) -> GraphVersion:
     return GraphVersion.no_workspace_objects.get(id=ref_graph_version_id)
 
@@ -422,7 +452,9 @@ def _resolve_or_create_pt_ptv(
 
     # Build variable_names dict from messages (model_hub convention)
     messages = prompt_data.get("messages", [])
-    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    _tf = prompt_data.get("template_format") or prompt_data.get(
+        "configuration", {}
+    ).get("template_format")
     var_names = _extract_variables(messages, template_format=_tf)
     var_names_dict = prompt_data.get("variable_names") or {v: [] for v in var_names}
     pv_metadata = prompt_data.get("metadata") or {}
@@ -618,7 +650,9 @@ def _reconcile_prompt_ports(node: Node, prompt_data: dict[str, Any]) -> None:
     """
     now = timezone.now()
     messages = prompt_data.get("messages", [])
-    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    _tf = prompt_data.get("template_format") or prompt_data.get(
+        "configuration", {}
+    ).get("template_format")
     new_vars = _extract_variables(messages, template_format=_tf)
 
     existing_input_ports = list(
@@ -675,7 +709,9 @@ def _reconcile_prompt_ports(node: Node, prompt_data: dict[str, Any]) -> None:
 def _create_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> None:
     """Create ports for an LLM prompt node from its messages."""
     messages = prompt_data.get("messages", [])
-    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    _tf = prompt_data.get("template_format") or prompt_data.get(
+        "configuration", {}
+    ).get("template_format")
     variables = _extract_variables(messages, template_format=_tf)
 
     # Input ports for each variable
@@ -703,7 +739,9 @@ def _create_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> None:
 def _create_input_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> None:
     """Create input ports for an LLM prompt node from variables in messages."""
     messages = prompt_data.get("messages", [])
-    _tf = prompt_data.get("template_format") or prompt_data.get("configuration", {}).get("template_format")
+    _tf = prompt_data.get("template_format") or prompt_data.get(
+        "configuration", {}
+    ).get("template_format")
     variables = _extract_variables(messages, template_format=_tf)
 
     for var in variables:
@@ -741,8 +779,36 @@ def _create_ports_from_fe_array(node: Node, ports_data: list[dict]) -> None:
             display_name=pd["display_name"],
             direction=pd["direction"],
             data_schema=pd.get("data_schema", {}),
+            required=pd.get("required", True),
             ref_port_id=pd.get("ref_port_id"),
         ).save(skip_validation=True)
+
+
+def _create_ports_from_template_definition(node: Node) -> None:
+    """Create atomic node ports from the registered template contract."""
+    if not node.node_template:
+        return
+
+    definitions = [
+        (PortDirection.INPUT, node.node_template.input_definition),
+        (PortDirection.OUTPUT, node.node_template.output_definition),
+    ]
+    existing_keys = set(
+        Port.no_workspace_objects.filter(node=node).values_list("key", flat=True)
+    )
+    for direction, port_definitions in definitions:
+        for port_definition in port_definitions:
+            key = port_definition["key"]
+            if key in existing_keys:
+                continue
+            Port(
+                node=node,
+                key=key,
+                display_name=port_definition.get("display_name") or key,
+                direction=direction,
+                data_schema=port_definition.get("data_schema", {}),
+                required=port_definition.get("required", True),
+            ).save(skip_validation=True)
 
 
 def _create_subgraph_ports(node: Node, ref_graph_version: GraphVersion) -> None:
@@ -1079,7 +1145,9 @@ def _replace_output_ports(node: Node, ports_data: list[dict]) -> None:
     _create_ports_from_fe_array(node, ports_data)
 
 
-def _extract_variables(messages: list[dict], template_format: str | None = None) -> list[str]:
+def _extract_variables(
+    messages: list[dict], template_format: str | None = None
+) -> list[str]:
     """Extract unique variable names from message contents, preserving order.
 
     When template_format is "jinja" or "jinja2", uses Jinja2 AST analysis to
