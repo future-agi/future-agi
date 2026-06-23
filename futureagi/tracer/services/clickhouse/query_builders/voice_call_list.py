@@ -55,7 +55,6 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
     """
 
     TABLE = "spans"
-    EVAL_TABLE = "tracer_eval_logger"
     ANNOTATION_TABLE = "model_hub_score"
 
     def __init__(

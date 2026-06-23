@@ -284,6 +284,15 @@ def _export_provider_call_to_collector(span, provider: str, provider_log_id: str
         organization_id = str(getattr(project, "organization_id", "") or "")
         if not organization_id:
             return
+        # Gate the whole export on dual_write_enabled(): CDC-off (the default,
+        # CH25_DROP_LEGACY_CDC_CHAIN) this collector emit is how the PG
+        # conversation span reaches CH; CDC-on, PeerDB already replicates that
+        # PG row, so emitting here too would write a SECOND conversation root for
+        # the same call. Matches the langfuse emit's gating.
+        from tracer.services.clickhouse.v2.trace_writer import dual_write_enabled
+
+        if not dual_write_enabled():
+            return
         # OTLP can't carry the nested provider raw_log; drop it so the read
         # path's empty-raw_log branch derives status/duration/recording from the
         # call.* scalar attrs the provider processors already set.
@@ -332,6 +341,7 @@ def _export_provider_call_to_collector(span, provider: str, provider_log_id: str
             project_type=project.trace_type,
             organization_id=organization_id,
             workspace_id=str(project.workspace_id) if project.workspace_id else None,
+            service_name="fi-provider",
         )
         # The collector writes CH `spans` (and curated end_users/trace_sessions)
         # but NOT CH `traces`. trace_dict — which resolves a span/eval back to its

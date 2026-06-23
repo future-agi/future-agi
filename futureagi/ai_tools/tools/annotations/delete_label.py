@@ -47,8 +47,25 @@ class DeleteLabelTool(BaseTool):
 
         label_name = label.name
 
-        # Soft-delete associated Score records (mirrors backend behavior)
-        Score.objects.filter(label_id=params.label_id).update(deleted=True)
+        # Soft-delete associated Score records (mirrors backend behavior).
+        # Capture ids BEFORE the queryset update (it returns a count, not ids)
+        # and mirror them to CH post-commit: the Score->CH mirror is wired on
+        # post_save, which a queryset .update() bypasses, so CDC-off the deleted
+        # rows would otherwise stay live in CH and the annotation filters would
+        # keep returning them.
+        from django.db import transaction
+
+        from tracer.services.clickhouse.v2.score_writer import (
+            mirror_scores_to_clickhouse,
+        )
+
+        affected_scores = Score.objects.filter(label_id=params.label_id)
+        affected_ids = list(affected_scores.values_list("id", flat=True))
+        affected_scores.update(deleted=True)
+        if affected_ids:
+            transaction.on_commit(
+                lambda ids=affected_ids: mirror_scores_to_clickhouse(ids)
+            )
 
         label.delete()
 

@@ -315,7 +315,12 @@ class ScoreViewSet(viewsets.ModelViewSet):
         if source_type and source_id:
             fk_field = SCORE_SOURCE_FK_MAP.get(source_type)
             if fk_field:
-                qs = qs.filter(**{f"{fk_field}_id": source_id})
+                # Match BOTH the source FK and source_type. A span-source Score
+                # now carries a denormalized trace_id (so the trace-detail map
+                # rolls span scores up under the trace), so a trace-scoped
+                # `trace_id=` filter alone would also return span scores. Pinning
+                # source_type keeps "scores whose SOURCE is this trace" exact.
+                qs = qs.filter(source_type=source_type, **{f"{fk_field}_id": source_id})
 
         # Filter by label
         label_id = query_params.get("label_id")
@@ -721,6 +726,10 @@ class ScoreViewSet(viewsets.ModelViewSet):
 
         scores = (
             Score.objects.filter(
+                # Pin source_type: span Scores carry a denormalized trace_id (for
+                # the trace-detail rollup), so a trace-scoped `trace_id=` filter
+                # alone would also return span scores on the same trace.
+                source_type=source_type,
                 **{f"{fk_field}_id": source_id},
                 organization=request.organization,
                 deleted=False,

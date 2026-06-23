@@ -117,11 +117,15 @@ def mirror_scores_to_clickhouse(score_ids: Iterable[Any]) -> None:
 
 
 def _on_score_saved(sender, instance, **kwargs) -> None:
-    """post_save receiver — mirror every Score write into CH after commit.
+    """post_save receiver — mirror a Score write into CH after commit.
 
-    Catches all Score write sites transparently (the CDC it replaces did the
-    same). Gated + best-effort inside the mirror; on_commit so the mirrored row
-    is the committed state.
+    Covers the ``.save()`` / ``create()`` / ``update_or_create()`` paths
+    (ScoreViewSet, single annotate, soft-delete). It does NOT fire for
+    ``bulk_create`` / ``bulk_update`` / queryset ``.update()`` — Django emits no
+    ``post_save`` for those — so the bulk write sites
+    (``tracer.views.annotation._save_data``, ``ai_tools…delete_label``) call
+    ``mirror_scores_to_clickhouse`` explicitly post-commit. A NEW bulk Score
+    write site must do the same. Gated + best-effort inside the mirror.
     """
     from django.db import transaction
 

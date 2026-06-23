@@ -1270,6 +1270,19 @@ class BulkAnnotationView(APIView):
         # Auto-create queue items for default queues and auto-complete
         all_scores = list(annotations_to_create) + list(annotations_to_update)
         if all_scores:
+            # CDC-off: the Score->CH mirror is wired on post_save, which
+            # bulk_create/bulk_update bypass. Mirror the bulk-written ids
+            # explicitly (post-commit) so the CH-backed annotation filters see
+            # them when the PeerDB CDC chain is dropped.
+            from tracer.services.clickhouse.v2.score_writer import (
+                mirror_scores_to_clickhouse,
+            )
+
+            _mirror_ids = [s.id for s in all_scores if s.id]
+            transaction.on_commit(
+                lambda ids=_mirror_ids: mirror_scores_to_clickhouse(ids)
+            )
+
             # Group scores by (source_type, source_obj) for batched queue operations
             source_groups = {}
             for score in all_scores:

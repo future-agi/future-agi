@@ -1398,6 +1398,57 @@ class TestScoreOnCollectorOnlySpan:
 
         monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: _R())
 
+    def _fake_reader_with_org(self, monkeypatch, ch_span_id, project, org_id, trace):
+        """Like _fake_reader but with an explicit (possibly foreign/empty) org_id
+        on the CH span, to exercise the org-scope gate."""
+        from types import SimpleNamespace
+
+        fake = SimpleNamespace(
+            id=ch_span_id,
+            pk=ch_span_id,
+            project_id=str(project.id),
+            org_id=org_id,
+            trace_id=str(trace.id),
+        )
+
+        class _R:
+            def get(self, sid):
+                return fake if str(sid) == ch_span_id else None
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: _R())
+
+    @pytest.mark.parametrize("foreign_org", ["", str(uuid.uuid4())])
+    def test_ch_only_span_denied_cross_org(
+        self,
+        auth_client,
+        observe_project,
+        trace,
+        organization,
+        star_label,
+        monkeypatch,
+        foreign_org,
+    ):
+        """Regression (TH-5642, authz): a CH span whose org_id is empty or belongs
+        to another org must NOT resolve under this org's request — annotating it
+        404s, not 200. (An ``if ch_org and ...`` guard failed OPEN on empty org.)
+        """
+        ch_span_id = "ch_" + uuid.uuid4().hex[:16]
+        self._fake_reader_with_org(
+            monkeypatch, ch_span_id, observe_project, foreign_org, trace
+        )
+        payload = {
+            "source_type": "observation_span",
+            "source_id": ch_span_id,
+            "label_id": str(star_label.id),
+            "value": {"rating": 4},
+        }
+        resp = auth_client.post(SCORE_URL, payload, format="json")
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.content
+        assert not Score.objects.filter(observation_span_id=ch_span_id).exists()
+
     def test_create_score_on_ch_only_span(
         self, auth_client, observe_project, trace, organization, star_label, monkeypatch
     ):

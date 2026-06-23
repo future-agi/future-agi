@@ -40,7 +40,6 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     """
 
     TABLE = "spans"
-    EVAL_TABLE = "tracer_eval_logger"
     ANNOTATION_TABLE = "model_hub_score"
 
     SORT_FIELD_MAP: dict[str, str] = {

@@ -542,12 +542,16 @@ def resolve_ch_span_source(source_id, organization=None, workspace=None):
 
     if organization is not None:
         ch_org = str(getattr(ch, "org_id", "") or "")
-        if ch_org and ch_org != str(organization.pk):
+        # Deny by default: an empty/missing org on the span is unattributable,
+        # so it must NOT resolve under another org's request. A `ch_org and ...`
+        # guard would fail OPEN on empty org_id (bible §10 — auth gates deny on
+        # missing scope).
+        if ch_org != str(organization.pk):
             logger.warning(
                 "ch_span_source_org_mismatch",
                 source_id=str(source_id),
                 expected_org=str(organization.pk),
-                actual_org=ch_org,
+                actual_org=ch_org or "<empty>",
             )
             return None
 

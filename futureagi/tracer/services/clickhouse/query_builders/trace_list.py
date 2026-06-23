@@ -38,7 +38,6 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     """
 
     TABLE = "spans"
-    EVAL_TABLE = "tracer_eval_logger"
 
     # Mapping from sort column names the frontend sends to actual
     # ClickHouse column names on the root span.

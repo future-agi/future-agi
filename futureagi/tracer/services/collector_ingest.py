@@ -42,22 +42,33 @@ def resolve_ingest_credentials(
     """
     if not organization_id:
         return None
+    from django.db import IntegrityError
+
     from accounts.models.user import OrgApiKey
 
-    key = (
-        OrgApiKey.no_workspace_objects.filter(
-            organization_id=organization_id, type="system", deleted=False, enabled=True
+    # get_or_create on the partial-unique key (org, type=system, deleted=False)
+    # so two concurrent first-time emits don't both .create() and race the
+    # unique constraint (which would raise IntegrityError -> 0 spans emitted for
+    # the loser). The IntegrityError catch handles the create/create race window
+    # get_or_create itself doesn't close, by re-fetching the winner.
+    lookup = {
+        "organization_id": organization_id,
+        "type": "system",
+        "deleted": False,
+    }
+    try:
+        key, _ = OrgApiKey.no_workspace_objects.get_or_create(
+            defaults={"workspace_id": workspace_id, "name": _INGEST_KEY_NAME},
+            **lookup,
         )
-        .order_by("created_at")
-        .first()
-    )
+    except IntegrityError:
+        key = (
+            OrgApiKey.no_workspace_objects.filter(**lookup)
+            .order_by("created_at")
+            .first()
+        )
     if key is None:
-        key = OrgApiKey.no_workspace_objects.create(
-            organization_id=organization_id,
-            workspace_id=workspace_id,
-            name=_INGEST_KEY_NAME,
-            type="system",
-        )
+        return None
     return key.api_key, key.secret_key
 
 
