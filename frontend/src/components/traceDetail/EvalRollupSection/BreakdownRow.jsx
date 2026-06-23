@@ -5,6 +5,7 @@ import Iconify from "src/components/iconify";
 import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import EvalDetailExpansion from "./EvalDetailExpansion";
 import { spanResultChip, spanHasDetail } from "./utils";
+import { evalSpanShape } from "./shapes";
 
 // One span's result under a rolled-up eval; expands to its explanation/localizer.
 const BreakdownRow = ({
@@ -98,7 +99,7 @@ const BreakdownRow = ({
 };
 
 BreakdownRow.propTypes = {
-  span: PropTypes.object.isRequired,
+  span: evalSpanShape.isRequired,
   outputType: PropTypes.string,
   choicesMap: PropTypes.object,
   evalConfigId: PropTypes.string,

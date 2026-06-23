@@ -5,6 +5,7 @@ import Iconify from "src/components/iconify";
 import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import EvalDetailExpansion from "./EvalDetailExpansion";
 import { spanResultChip, spanHasDetail, NAME_W } from "./utils";
+import { evalShape } from "./shapes";
 
 // Span scope: one eval's result for the selected span; expands to the
 // explanation + error localizer.
@@ -62,7 +63,7 @@ const EvalSingleRow = ({ ev, onFixWithFalcon }) => {
 };
 
 EvalSingleRow.propTypes = {
-  ev: PropTypes.object.isRequired,
+  ev: evalShape.isRequired,
   onFixWithFalcon: PropTypes.func,
 };
 

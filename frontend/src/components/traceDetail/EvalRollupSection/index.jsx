@@ -12,6 +12,7 @@ import SearchBar from "./SearchBar";
 import TaskHeader from "./TaskHeader";
 import EvalRollupRow from "./EvalRollupRow";
 import EvalSingleRow from "./EvalSingleRow";
+import { evalScoresShape } from "./shapes";
 import { NAME_W } from "./utils";
 
 // Renders the backend's pre-grouped, pre-aggregated eval_scores object directly
@@ -185,7 +186,7 @@ const EvalRollupSection = ({
 };
 
 EvalRollupSection.propTypes = {
-  evalScores: PropTypes.object,
+  evalScores: evalScoresShape,
   emptyMessage: PropTypes.string,
   onSelectSpan: PropTypes.func,
   onFixWithFalcon: PropTypes.func,

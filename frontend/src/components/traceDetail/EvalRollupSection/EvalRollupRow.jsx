@@ -6,6 +6,7 @@ import { evalCellChips } from "src/sections/projects/LLMTracing/evalCellModel";
 import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import BreakdownRow from "./BreakdownRow";
 import { colFromEval, NAME_W } from "./utils";
+import { evalShape } from "./shapes";
 
 // One eval rolled up across its spans (trace scope); expands to the per-span
 // breakdown. The chip renders the backend-computed `aggregate` directly.
@@ -78,7 +79,7 @@ const EvalRollupRow = ({ ev, onSelectSpan, onFixWithFalcon }) => {
 };
 
 EvalRollupRow.propTypes = {
-  ev: PropTypes.object.isRequired,
+  ev: evalShape.isRequired,
   onSelectSpan: PropTypes.func,
   onFixWithFalcon: PropTypes.func,
 };
