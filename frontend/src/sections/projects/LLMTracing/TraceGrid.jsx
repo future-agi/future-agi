@@ -167,6 +167,10 @@ const TraceGrid = React.forwardRef(
       [setFilterOpen, setExtraFilters],
     );
 
+    // Tells cell renderers (e.g. TagsCell) they are on the trace grid, so tag
+    // edits target the trace even when a row also carries its root span_id.
+    const gridContext = useMemo(() => ({ entityType: "trace" }), []);
+
     const dataSource = useMemo(
       () => {
         prefetchCache.current.clear();
@@ -529,6 +533,7 @@ const TraceGrid = React.forwardRef(
           rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
+          context={gridContext}
           tooltipShowDelay={0}
           tooltipHideDelay={2000}
           tooltipInteraction={true}

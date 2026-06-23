@@ -110,12 +110,15 @@ const getSpanListColumnDefs = (col) => {
     },
     cellRendererSelector: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
-        // No renderer for empty values
-        return null;
-      }
       const column = params?.colDef?.col;
       const colId = column?.id;
+
+      // The tags column stays interactive even when empty so a first tag can
+      // be added via its "+ Tag" affordance. Other columns render nothing when
+      // empty (valueFormatter shows "-").
+      if (isCellValueEmpty(value) && colId !== "tags") {
+        return null;
+      }
 
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
         return {
@@ -261,6 +264,10 @@ const SpanGrid = React.forwardRef(
       }),
       [setFilterOpen, setExtraFilters],
     );
+
+    // Tells cell renderers (e.g. TagsCell) they are on the span grid, so tag
+    // edits target the span (the popover hits the span endpoint).
+    const gridContext = useMemo(() => ({ entityType: "span" }), []);
 
     const { columnDefs } = useMemo(() => {
       // If no columns yet → return initial columnDefs
@@ -582,6 +589,7 @@ const SpanGrid = React.forwardRef(
           columnDefs={columnDefs}
           onColumnMoved={onColumnMoved}
           defaultColDef={defaultColDef}
+          context={gridContext}
           rowSelection={{ mode: "multiRow" }}
           pagination={false}
           cacheBlockSize={ROWS_LIMIT}

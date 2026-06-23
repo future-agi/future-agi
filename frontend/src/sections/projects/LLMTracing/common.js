@@ -624,12 +624,15 @@ export const getTraceListColumnDefs = (col) => {
     },
     cellRendererSelector: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
-        // No renderer for empty values
-        return null;
-      }
       const column = params?.colDef?.col;
       const colId = column?.id;
+
+      // The tags column stays interactive even when empty so a first tag can
+      // be added via its "+ Tag" affordance. Other columns render nothing when
+      // empty (valueFormatter shows "-").
+      if (isCellValueEmpty(value) && colId !== "tags") {
+        return null;
+      }
 
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
         return {

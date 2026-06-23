@@ -6,14 +6,24 @@ import TagsCell from "../TagsCell";
 // stay focused on TagsCell wiring: the cell must open the popover and hand it
 // the row identity + current tags.
 vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
-  default: ({ open, traceId, spanId, currentTags }) => (
+  default: ({ open, traceId, spanId, currentTags, onSuccess }) => (
     <div
       data-testid="add-tags-popover"
       data-open={String(open)}
       data-trace-id={traceId ?? ""}
       data-span-id={spanId ?? ""}
       data-current-tags={JSON.stringify(currentTags ?? [])}
-    />
+    >
+      {open && (
+        <button
+          type="button"
+          data-testid="popover-save"
+          onClick={() => onSuccess?.()}
+        >
+          save
+        </button>
+      )}
+    </div>
   ),
 }));
 
@@ -119,5 +129,59 @@ describe("TagsCell", () => {
     await user.click(container.firstChild);
 
     expect(screen.queryByTestId("add-tags-popover")).not.toBeInTheDocument();
+  });
+
+  it("tags the trace (not its root span) on the trace grid even when the row carries a span_id", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <TagsCell
+        value={["production"]}
+        traceId="trace-1"
+        spanId="span-root"
+        entityType="trace"
+      />,
+    );
+
+    await user.click(container.firstChild);
+
+    const popover = screen.getByTestId("add-tags-popover");
+    expect(popover).toHaveAttribute("data-trace-id", "trace-1");
+    // span id is suppressed so the popover patches the trace, not its root span
+    expect(popover).toHaveAttribute("data-span-id", "");
+  });
+
+  it("tags the span on the span grid when the entity context is 'span'", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <TagsCell
+        value={["latency"]}
+        traceId="trace-1"
+        spanId="span-9"
+        entityType="span"
+      />,
+    );
+
+    await user.click(container.firstChild);
+
+    const popover = screen.getByTestId("add-tags-popover");
+    expect(popover).toHaveAttribute("data-span-id", "span-9");
+    expect(popover).toHaveAttribute("data-trace-id", "");
+  });
+
+  it("refreshes the grid via onTagsUpdated after a successful save", async () => {
+    const user = userEvent.setup();
+    const onTagsUpdated = vi.fn();
+    const { container } = render(
+      <TagsCell
+        value={["production"]}
+        traceId="trace-1"
+        onTagsUpdated={onTagsUpdated}
+      />,
+    );
+
+    await user.click(container.firstChild);
+    await user.click(screen.getByTestId("popover-save"));
+
+    expect(onTagsUpdated).toHaveBeenCalledTimes(1);
   });
 });
