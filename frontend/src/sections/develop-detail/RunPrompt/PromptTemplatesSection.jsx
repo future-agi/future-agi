@@ -68,7 +68,7 @@ const PromptTemplatesSection = ({
 
   const templateFormat = watch("config.template_format") || "mustache";
 
-  const existingRoles = messages.map((p) => p?.role);
+  const existingRoles = (messages || []).map((p) => p?.role);
   return (
     <Box sx={{ gap: "16px", display: "flex", flexDirection: "column" }}>
       <Box sx={{ display: "flex", justifyContent: "flex-end" }}>

@@ -157,7 +157,7 @@ export const ReadOnlyPrompt = ({ title, prompt, allColumns = [] }) => {
 
 ReadOnlyPrompt.propTypes = {
   title: PropTypes.string,
-  prompt: PropTypes.string,
+  prompt: PropTypes.oneOfType([PropTypes.string, PropTypes.array]),
   allColumns: PropTypes.array,
 };
 
