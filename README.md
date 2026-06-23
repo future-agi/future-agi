@@ -98,6 +98,9 @@ Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**
 
 Two ways, picked by how much you want to install:
 
+The self-host path requires Docker Desktop or Docker Engine with Docker Compose
+available before running the installer.
+
 <table width="100%">
 <tr>
 <th width="50%">Cloud (fastest)</th>
