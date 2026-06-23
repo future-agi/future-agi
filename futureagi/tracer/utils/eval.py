@@ -40,7 +40,7 @@ from tracer.utils.helper import (
 
 logger = structlog.get_logger(__name__)
 
-from tfc.billing.boundary import get_billing
+from tfc.billing.boundary import get_billing, token_usage_properties, llm_usage_properties
 
 custom_prompt_eval_types = ["CustomPrompt"]
 EXPERIMENT = "experiment"
@@ -787,10 +787,6 @@ def _emit_eval_billing(
     Centralizes the dual-write block used by span/trace/session eval paths.
     Silently no-ops on any error.
     """
-    try:
-        from ee.usage.utils.event_properties import token_usage_properties
-    except ImportError:
-        token_usage_properties = lambda token_usage: {}
 
     try:
         billing = get_billing()
@@ -933,10 +929,6 @@ def _run_evaluation(
             api_call_log_row.save()
 
         # Emit usage event for billing
-        try:
-            from ee.usage.utils.event_properties import token_usage_properties
-        except ImportError:
-            token_usage_properties = lambda token_usage: {}
 
         try:
             _token_usage = getattr(eval_instance, "token_usage", {})

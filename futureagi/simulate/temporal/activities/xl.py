@@ -39,7 +39,7 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationOutput,
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
-from tfc.billing.boundary import get_billing
+from tfc.billing.boundary import get_billing, token_usage_properties, llm_usage_properties
 
 logger = structlog.get_logger(__name__)
 
@@ -1546,10 +1546,6 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
 
                 # Emit cost-based usage event
                 try:
-                    try:
-                        from ee.usage.utils.event_properties import llm_usage_properties
-                    except ImportError:
-                        llm_usage_properties = lambda obj: {}
 
                     actual_cost = 0
                     if hasattr(agent, "llm") and agent.llm:

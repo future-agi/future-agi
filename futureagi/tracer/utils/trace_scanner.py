@@ -12,7 +12,7 @@ from typing import List
 import structlog
 
 # Activity-aware stub: used inside Temporal trace-scanner activities.
-from tfc.billing.boundary import get_billing, BillingEventType
+from tfc.billing.boundary import get_billing, BillingEventType, token_usage_properties, llm_usage_properties
 from tfc.ee_stub import _ee_activity_stub as _ee_stub
 
 try:
@@ -114,10 +114,6 @@ def _emit_scanner_billing(
             return
 
         from tracer.models.project import Project
-        try:
-            from ee.usage.utils.event_properties import token_usage_properties
-        except ImportError:
-            token_usage_properties = lambda token_usage: {}
 
         project = Project.objects.select_related("organization").filter(
             id=project_id

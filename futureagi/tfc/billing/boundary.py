@@ -275,3 +275,33 @@ def _reset_for_testing() -> None:
     """Force re-detection on next get_billing() call.  Test use only."""
     global _instance
     _instance = None
+
+
+# ---------------------------------------------------------------------------
+# Re-exports: token_usage_properties / llm_usage_properties
+# These build the properties dict passed to billing.record_usage(**props).
+# Exposed here so call sites don't import from ee.usage directly.
+# ---------------------------------------------------------------------------
+
+try:
+    from ee.usage.utils.event_properties import (  # noqa: F401
+        token_usage_properties,
+        llm_usage_properties,
+    )
+except ImportError:
+    def token_usage_properties(*args: Any, **kwargs: Any) -> dict:  # type: ignore[misc]
+        return {}
+
+    def llm_usage_properties(*args: Any, **kwargs: Any) -> dict:  # type: ignore[misc]
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Re-export: UsageLimitExceeded exception
+# ---------------------------------------------------------------------------
+
+try:
+    from ee.usage.exceptions import UsageLimitExceeded  # noqa: F401
+except ImportError:
+    class UsageLimitExceeded(Exception):  # type: ignore[misc]
+        """OSS stub — raised in EE/Cloud when usage limits are exceeded."""

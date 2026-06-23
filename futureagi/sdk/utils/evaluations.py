@@ -9,7 +9,7 @@ from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.evaluation import Evaluation, StatusChoices
 from model_hub.tasks.user_evaluation import trigger_error_localization_for_standalone
 from sdk.utils.helpers import _get_api_call_type
-from tfc.billing.boundary import get_billing
+from tfc.billing.boundary import get_billing, token_usage_properties, llm_usage_properties
 from tfc.constants.api_calls import APICallStatusChoices
 from tracer.utils.inline_evals import trigger_inline_eval
 
@@ -295,11 +295,6 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
 
         api_call_type = _get_api_call_type(model)
 
-        try:
-            from ee.usage.utils.event_properties import token_usage_properties
-        except ImportError:
-            token_usage_properties = lambda token_usage: {}
-
         billing.record_usage(
             str(user.organization.id),
             api_call_type,
@@ -559,11 +554,6 @@ def _run_protect(
 
             billing_protect = get_billing()
             credits = billing_protect.ai_credits(actual_cost)
-
-            try:
-                from ee.usage.utils.event_properties import token_usage_properties
-            except ImportError:
-                token_usage_properties = lambda token_usage: {}
 
             billing_protect.record_usage(
                 str(user.organization.id),

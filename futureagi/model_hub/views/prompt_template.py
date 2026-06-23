@@ -173,7 +173,7 @@ def _safe_background_task(func, *args, **kwargs):
     return wrapped
 
 
-from tfc.billing.boundary import BillingEventType, get_billing
+from tfc.billing.boundary import BillingEventType, get_billing, token_usage_properties, llm_usage_properties
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 MIME_TO_EXT = {
@@ -2710,10 +2710,6 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
             # Dual-write: emit usage event for new billing system
             try:
-                try:
-                    from ee.usage.utils.event_properties import token_usage_properties
-                except ImportError:
-                    token_usage_properties = lambda token_usage: {}
 
                 billing.record_usage(
                     str(org.id),
@@ -3335,10 +3331,6 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
             # Dual-write: emit usage event for new billing system
             try:
-                try:
-                    from ee.usage.utils.event_properties import token_usage_properties
-                except ImportError:
-                    token_usage_properties = lambda token_usage: {}
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
@@ -3447,10 +3439,6 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
             # Dual-write: emit usage event for new billing system
             try:
-                try:
-                    from ee.usage.utils.event_properties import token_usage_properties
-                except ImportError:
-                    token_usage_properties = lambda token_usage: {}
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization

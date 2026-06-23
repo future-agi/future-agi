@@ -21,7 +21,7 @@ from model_hub.views.eval_runner import (
     process_mapping,
 )
 from sdk.utils.helpers import _get_api_call_type
-from tfc.billing.boundary import BillingEventType, get_billing
+from tfc.billing.boundary import BillingEventType, get_billing, token_usage_properties, llm_usage_properties, UsageLimitExceeded
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
@@ -224,7 +224,6 @@ def run_eval_func(
         usage_check = billing.check_usage(str(org.id), api_call_type)
         if not usage_check.allowed:
             try:
-                from ee.usage.exceptions import UsageLimitExceeded
                 raise UsageLimitExceeded(usage_check)
             except ImportError:
                 raise ValueError(str(usage_check))
@@ -451,11 +450,6 @@ def run_eval_func(
             )
 
             credits = billing.ai_credits(actual_cost)
-
-            try:
-                from ee.usage.utils.event_properties import token_usage_properties
-            except ImportError:
-                token_usage_properties = lambda token_usage: {}
 
             billing.record_usage(
                 str(org.id),

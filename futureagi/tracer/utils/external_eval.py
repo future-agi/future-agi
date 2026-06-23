@@ -12,7 +12,7 @@ from tracer.models.external_eval_config import (
     PlatformChoices,
     StatusChoices,
 )
-from tfc.billing.boundary import get_billing
+from tfc.billing.boundary import get_billing, token_usage_properties, llm_usage_properties
 from tfc.constants.api_calls import APICallStatusChoices
 
 
@@ -71,10 +71,6 @@ def _log_and_deduct_cost_for_external_eval(
         raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # Emit usage event for billing
-    try:
-        from ee.usage.utils.event_properties import token_usage_properties
-    except ImportError:
-        token_usage_properties = lambda token_usage: {}
 
     try:
         billing.record_usage(

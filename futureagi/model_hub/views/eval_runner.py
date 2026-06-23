@@ -87,7 +87,7 @@ from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
 
-from tfc.billing.boundary import BillingEventType, get_billing
+from tfc.billing.boundary import BillingEventType, get_billing, token_usage_properties, llm_usage_properties
 
 
 def _request_organization(request):
@@ -1208,11 +1208,6 @@ class EvaluationRunner:
                     if _is_code_eval
                     else _get_api_call_type(self.user_eval_metric.model)
                 )
-
-                try:
-                    from ee.usage.utils.event_properties import token_usage_properties
-                except ImportError:
-                    token_usage_properties = lambda token_usage: {}
 
                 billing.record_usage(
                     emit_org_id,
