@@ -51,6 +51,12 @@ def resolve_ingest_credentials(
     # unique constraint (which would raise IntegrityError -> 0 spans emitted for
     # the loser). The IntegrityError catch handles the create/create race window
     # get_or_create itself doesn't close, by re-fetching the winner.
+    #
+    # The constraint guarantees at most ONE non-deleted system key per org, so we
+    # key only on (org, type, deleted) — not `enabled`. If that single key is
+    # disabled, it is returned as-is (re-enabling it here would silently override
+    # an operator's deliberate disable); the collector's own auth then rejects a
+    # disabled key, surfacing the misconfiguration rather than masking it.
     lookup = {
         "organization_id": organization_id,
         "type": "system",

@@ -1487,3 +1487,56 @@ class TestScoreOnCollectorOnlySpan:
         ).exists()
         # SpanNotes written by id (the FK rejects a CHSpan OBJECT) on the CH span id
         assert SpanNotes.objects.filter(span_id=ch_span_id).exists()
+
+
+@pytest.mark.django_db
+class TestDeleteLabelMirrorsScores:
+    """TH-5642 review (C1): the delete_label tool soft-deletes Scores via a
+    queryset .update(), which emits no post_save — so the CH mirror never fires.
+    CDC-off that leaves the deleted annotations live in CH (the filters keep
+    returning them). The tool must mirror the affected ids explicitly."""
+
+    def test_delete_label_mirrors_soft_deleted_scores_to_ch(
+        self,
+        organization,
+        user,
+        workspace,
+        observation_span,
+        star_label,
+        django_capture_on_commit_callbacks,
+        monkeypatch,
+    ):
+        import tracer.services.clickhouse.v2.score_writer as sw
+        from ai_tools.base import ToolContext
+        from ai_tools.tools.annotations.delete_label import (
+            DeleteLabelInput,
+            DeleteLabelTool,
+        )
+
+        score = Score.objects.create(
+            source_type="observation_span",
+            observation_span=observation_span,
+            label=star_label,
+            annotator=user,
+            value={"rating": 4},
+            score_source="human",
+            organization=organization,
+        )
+        captured: list[str] = []
+        monkeypatch.setattr(
+            sw,
+            "mirror_scores_to_clickhouse",
+            lambda ids: captured.extend(str(i) for i in ids),
+        )
+
+        ctx = ToolContext(user=user, organization=organization, workspace=workspace)
+        with django_capture_on_commit_callbacks(execute=True):
+            DeleteLabelTool().execute(DeleteLabelInput(label_id=star_label.id), ctx)
+
+        score.refresh_from_db()
+        assert score.deleted is True  # soft-deleted by the queryset .update()
+        assert str(score.id) in captured, (
+            "soft-deleted Score must be mirrored to CH so the tombstone "
+            "(deleted=1) reaches the read layer (post_save does not fire for "
+            "queryset .update())"
+        )
