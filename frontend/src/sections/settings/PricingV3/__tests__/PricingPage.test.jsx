@@ -277,4 +277,57 @@ describe("PricingPage", () => {
       expect(screen.getByText("Storage")).toBeInTheDocument();
     });
   });
+
+  it("clarifies monthly storage allowance and overage billing", async () => {
+    const { default: PricingPage } = await import("../PricingPage");
+    renderWithQuery(<PricingPage />);
+
+    expect(
+      await screen.findByText("Storage overages are billed monthly."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("First 50 GB included each month."),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/60 GB uses 10 extra GB/)).toHaveTextContent(
+      "$2.00/GB/mo",
+    );
+    expect(screen.getByText(/60 GB uses 10 extra GB/)).toHaveTextContent(
+      "$20.00/mo",
+    );
+    expect(screen.getAllByText("per GB/mo").length).toBeGreaterThan(0);
+  });
+
+  it("clarifies storage billing cadence for custom pricing tiers", async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        result: {
+          ...MOCK_PLANS_RESPONSE.data.result,
+          current_plan: "custom",
+          is_custom_pricing: true,
+          custom_details: {
+            pricing: {
+              storage: {
+                display_name: "Storage",
+                display_unit: "GB",
+                tiers: [
+                  { start: 0, end: 50, rate: 0 },
+                  { start: 50, end: null, rate: 2 },
+                ],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const { default: PricingPage } = await import("../PricingPage");
+    renderWithQuery(<PricingPage />);
+
+    expect(await screen.findByText("Your pricing tiers")).toBeInTheDocument();
+    expect(
+      screen.getAllByText((_, element) =>
+        Boolean(element?.textContent?.includes("GB/mo")),
+      ).length,
+    ).toBeGreaterThan(0);
+  });
 });
