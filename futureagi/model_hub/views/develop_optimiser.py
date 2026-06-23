@@ -142,12 +142,7 @@ class DevelopOptimizer:
                 from ee.usage.models.usage import APICallLog
             except ImportError:
                 APICallLog = None
-            try:
-                from ee.usage.utils.usage_entries import refund_cost_for_api_call
-            except ImportError:
-                refund_cost_for_api_call = None
-
-            optimizer_row = OptimizationDataset.objects.get(id=self.optimize_dataset.id)
+                        optimizer_row = OptimizationDataset.objects.get(id=self.optimize_dataset.id)
             optimisation_id = str(optimizer_row.id)
             # get the api call log row by reference id
             if APICallLog is not None:
@@ -160,8 +155,7 @@ class DevelopOptimizer:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 api_call_log_row.save()
                 refund_config = {"reference_id": str(optimizer_row.id)}
-                if refund_cost_for_api_call is not None:
-                    refund_cost_for_api_call(api_call_log_row, config=refund_config)
+                billing.refund(api_call_log_row, config=refund_config)
             else:
                 # update the api call log row
                 api_call_log_row.status = APICallStatusChoices.SUCCESS.value

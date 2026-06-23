@@ -231,14 +231,7 @@ def first_signup(data, mode=None):
 
         # Create billing subscription (Free plan default).
         # Skip when ee is absent — no subscription model.
-        try:
-            from ee.usage.utils.usage_entries import (
-                create_organization_subscription_if_not_exists,
-            )
-
-            create_organization_subscription_if_not_exists(organization)
-        except ImportError:
-            pass
+        _get_billing_sub().setup_org_subscription(organization)
     else:
         raise Exception(f"Invalid data: {serializer.errors}")
 

@@ -43,8 +43,7 @@ def public_config(request):
 
     """
     try:
-        from ee.usage.deployment import DeploymentMode
-
+from tfc.ee_gating import is_oss as _is_oss
         is_cloud = DeploymentMode.is_cloud()
     except ImportError:
         is_cloud = False

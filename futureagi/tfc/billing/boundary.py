@@ -129,6 +129,26 @@ class Billing:
         """Per-run platform fee for evals.  Returns 0.0 in OSS."""
         raise NotImplementedError
 
+    def refund(self, api_call_log_row: Any, **config: Any) -> None:
+        """Refund credits for a failed API call.  No-op in OSS."""
+        raise NotImplementedError
+
+    def check_rate_limit(self, org_id: str, event_type: str) -> UsageDecision:
+        """Rate-limit check for ingestion.  Returns ALLOW in OSS."""
+        raise NotImplementedError
+
+    def setup_org_subscription(self, organization: Any) -> None:
+        """Create default subscription for a new org.  No-op in OSS."""
+        raise NotImplementedError
+
+    def get_gateway_client(self, **kw: Any) -> Any:
+        """Return sync gateway LLM client.  Raises ImportError in OSS."""
+        raise NotImplementedError
+
+    def get_async_gateway_client(self, **kw: Any) -> Any:
+        """Return async gateway LLM client.  Raises ImportError in OSS."""
+        raise NotImplementedError
+
 
 # ---------------------------------------------------------------------------
 # _NoopBilling — OSS fallback
@@ -166,6 +186,21 @@ class _NoopBilling(Billing):
 
     def eval_per_run_fee(self) -> float:
         return 0.0
+
+    def refund(self, api_call_log_row, **config):
+        pass  # no credits to refund in OSS
+
+    def check_rate_limit(self, org_id, event_type):
+        return _ALLOW  # no rate limiting in OSS
+
+    def setup_org_subscription(self, organization):
+        pass  # no subscription management in OSS
+
+    def get_gateway_client(self, **kw):
+        raise ImportError("get_gateway_client requires the ee extras")
+
+    def get_async_gateway_client(self, **kw):
+        raise ImportError("get_async_gateway_client requires the ee extras")
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +279,36 @@ class _EeBilling(Billing):
         from ee.usage.services.config import BillingConfig
 
         return BillingConfig.get().get_eval_per_run_fee()
+
+    def refund(self, api_call_log_row, **config):
+        from ee.usage.utils.usage_entries import refund_cost_for_api_call
+
+        refund_cost_for_api_call(api_call_log_row, config=config or None)
+
+    def check_rate_limit(self, org_id, event_type):
+        from ee.usage.services.rate_limiter import RateLimiter
+
+        result = RateLimiter.check(org_id, event_type)
+        return UsageDecision(
+            allowed=getattr(result, "allowed", True),
+            reason=getattr(result, "reason", ""),
+            error_code=getattr(result, "error_code", ""),
+        )
+
+    def setup_org_subscription(self, organization):
+        from ee.usage.utils.usage_entries import create_organization_subscription_if_not_exists
+
+        create_organization_subscription_if_not_exists(organization)
+
+    def get_gateway_client(self, **kw):
+        from ee.usage.services.gateway_llm_client import get_gateway_client
+
+        return get_gateway_client(**kw)
+
+    def get_async_gateway_client(self, **kw):
+        from ee.usage.services.gateway_llm_client import get_async_gateway_client
+
+        return get_async_gateway_client(**kw)
 
 
 # ---------------------------------------------------------------------------

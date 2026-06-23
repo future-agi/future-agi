@@ -96,7 +96,7 @@ class ModelHubConfig(AppConfig):
 
         # Warm CH page cache in background (prod only — skip in local dev)
         try:
-            from ee.usage.deployment import DeploymentMode
+from tfc.ee_gating import is_oss as _is_oss
         except ImportError:
             DeploymentMode = None
 

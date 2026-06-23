@@ -94,8 +94,7 @@ async def run_llm_analysis(input: RunAnalysisInput) -> str:
     """Run LLM analysis using Falcon's LLM client. Returns markdown."""
     # Falcon is gated on deployment mode (EE / Cloud) AND code presence.
     try:
-        from ee.usage.deployment import DeploymentMode
-
+from tfc.ee_gating import is_oss as _is_oss
         _is_oss = DeploymentMode.is_oss()
     except ImportError:
         _is_oss = True

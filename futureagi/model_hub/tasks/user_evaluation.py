@@ -51,12 +51,6 @@ try:
     from ee.usage.models.usage import APICallLog
 except ImportError:
     APICallLog = None
-try:
-    from ee.usage.utils.usage_entries import refund_cost_for_api_call
-except ImportError:
-    refund_cost_for_api_call = None
-
-
 def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
     """Flip RUNNING cells for this eval to ERROR when a usage pre-check fails.
 
@@ -1147,8 +1141,7 @@ def process_single_error_localization(task_id):
                 f"Error in process_single_error_localization: {str(e)}\n{traceback.format_exc()}"
             )
             task.mark_as_failed(str(e))
-            if refund_cost_for_api_call is not None:
-                refund_cost_for_api_call(api_call_log_row)
+            billing.refund(api_call_log_row)
             return
 
         error_analysis = result.analysis
@@ -1165,8 +1158,7 @@ def process_single_error_localization(task_id):
                 reason=skip_reason,
             )
             task.mark_as_skipped(skip_reason)
-            if refund_cost_for_api_call is not None:
-                refund_cost_for_api_call(api_call_log_row)
+            billing.refund(api_call_log_row)
             return
 
         # Update the task with the results
@@ -1237,8 +1229,7 @@ def process_single_error_localization(task_id):
                         logger.info("Log doesn't exist.")
             except Exception as e:
                 logger.error(f"Error in updating cell metadata: {str(e)}")
-                if refund_cost_for_api_call is not None:
-                    refund_cost_for_api_call(api_call_log_row)
+                billing.refund(api_call_log_row)
                 task.mark_as_failed(str(e))
 
         elif task.source == ErrorLocalizerSource.OBSERVE:
@@ -1276,8 +1267,7 @@ def process_single_error_localization(task_id):
 
             except Exception as e:
                 logger.error(f"Error in updating span metadata: {str(e)}")
-                if refund_cost_for_api_call is not None:
-                    refund_cost_for_api_call(api_call_log_row)
+                billing.refund(api_call_log_row)
                 task.mark_as_failed(str(e))
 
         elif task.source == ErrorLocalizerSource.PLAYGROUND:
@@ -1295,8 +1285,7 @@ def process_single_error_localization(task_id):
                 eval_logger.save(update_fields=["config"])
             except Exception as e:
                 logger.exception(f"Error in updating log config: {str(e)}")
-                if refund_cost_for_api_call is not None:
-                    refund_cost_for_api_call(api_call_log_row)
+                billing.refund(api_call_log_row)
                 task.mark_as_failed(str(e))
     finally:
         close_old_connections()

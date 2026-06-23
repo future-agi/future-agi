@@ -167,8 +167,7 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
         if api_call_log_row:
             logger.info(f"Refunding cost for failed trace analysis {trace_id}.")
             try:
-                from ee.usage.utils.usage_entries import refund_cost_for_api_call
-                refund_cost_for_api_call(api_call_log_row, config={"error": str(e)})
+                get_billing().refund(api_call_log_row, config={"error": str(e)})
             except ImportError:
                 pass
             api_call_log_row.status = APICallStatusChoices.ERROR.value
@@ -379,8 +378,7 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
     # In OSS mode or when ee/falcon_ai/ isn't installed, skip cleanly so
     # the enclosing task doesn't surface an ImportError.
     try:
-        from ee.usage.deployment import DeploymentMode
-
+from tfc.ee_gating import is_oss as _is_oss
         _is_oss = DeploymentMode.is_oss()
     except ImportError:
         _is_oss = True
