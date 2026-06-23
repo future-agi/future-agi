@@ -66,6 +66,68 @@ var knownObservationTypes = map[string]struct{}{
 	"conversation": {}, "unknown": {},
 }
 
+// spanKindAttrKeys mirrors AttributeAliases.SPAN_KIND
+// (tracer/utils/semantic_conventions.py) — the ordered list of attribute keys
+// a span kind may arrive under across SDK conventions. First non-empty wins.
+var spanKindAttrKeys = []string{
+	"fi.span.kind",            // FI
+	"gen_ai.span.kind",        // OTEL GenAI
+	"llm.request.type",        // OpenLLMetry
+	"openinference.span.kind", // OpenInference
+}
+
+// operationNameAttrKeys mirrors AttributeAliases.OPERATION_NAME — the fallback
+// when no span-kind attr is present (OTEL GenAI sets only the operation name).
+var operationNameAttrKeys = []string{
+	"gen_ai.operation.name", // OTEL GenAI
+}
+
+// spanKindSynonyms mirrors AttributeRegistry.normalize_span_kind: operation /
+// convention values that map onto an internal observation type. Values already
+// equal to a known type pass through unchanged (validated below).
+var spanKindSynonyms = map[string]string{
+	"chat":             "llm",
+	"generate_content": "llm",
+	"text_completion":  "llm",
+	"embeddings":       "embedding",
+	"execute_tool":     "tool",
+	"invoke":           "chain",
+}
+
+// resolveObservationType derives the lowercased, validated observation type
+// from a span's attributes — a mirror of Python get_observation_type ∘
+// normalize_span_kind (tracer/utils/otel.py + semantic_conventions.py). It reads
+// the span-kind aliases across every SDK convention, falls back to the
+// operation-name aliases, applies the synonym map, and validates against
+// knownObservationTypes (else "unknown"). Without the full alias set, OTEL-GenAI
+// (`gen_ai.operation.name`) and OpenLLMetry (`llm.request.type`) spans land
+// "unknown" and render with the wrong type / miss observation_type filters.
+func resolveObservationType(attrsStr map[string]string) string {
+	raw := ""
+	for _, k := range spanKindAttrKeys {
+		if v := attrsStr[k]; v != "" {
+			raw = v
+			break
+		}
+	}
+	if raw == "" {
+		for _, k := range operationNameAttrKeys {
+			if v := attrsStr[k]; v != "" {
+				raw = v
+				break
+			}
+		}
+	}
+	t := strings.ToLower(strings.TrimSpace(raw))
+	if syn, ok := spanKindSynonyms[t]; ok {
+		t = syn
+	}
+	if _, ok := knownObservationTypes[t]; !ok {
+		return observationTypeUnknown
+	}
+	return t
+}
+
 // Convert walks an OTLP Traces payload and returns one map per span. Maps
 // are designed for JSONEachRow encoding: all values are JSON-natural types
 // (string, float64, bool, nil, slice, map). UUID-typed CH columns receive
@@ -133,10 +195,58 @@ func ConvertWithIdentities(traces ptrace.Traces) ([]map[string]any, *curatedwrit
 				}
 				rows = append(rows, row)
 				identity.addTo(ids)
+				collectTrace(ids, row, projectID)
 			}
 		}
 	}
 	return rows, ids, nil
+}
+
+// collectTrace derives the per-batch `traces` identity from a ROOT span (one
+// with no parent) and adds it to the batch. Only the root span produces a trace
+// row: it carries the trace-level name / input / output, there is exactly one
+// per trace, and writing one row per trace keeps `traces` (the trace_dict
+// source) at one row per trace. It reads the already-built span `row` so the
+// trace's columns are byte-identical to the span's (no second derivation) —
+// trace_id, project_id, name, input, output, session, start_time all come
+// straight off the row the converter just emitted.
+//
+// `rawProjectID` is the resource's UNcoalesced `fi.project_id`. We gate on it
+// being a valid UUID: coalesceUUID would have stamped the span (and hence the
+// row) with a RANDOM project_id for an unauthenticated/malformed producer, and
+// a traces row keyed on a random project resolves to nothing useful — the span
+// is already orphaned, so we skip its trace rather than pollute `traces`.
+func collectTrace(ids *curatedwriter.Batch, row map[string]any, rawProjectID string) {
+	if parent, _ := row["parent_span_id"].(string); parent != "" {
+		return // not the root — the root span of this trace writes the row
+	}
+	if _, ok := canonicalUUID(rawProjectID); !ok {
+		return // orphan span (no real project) — nothing to resolve to
+	}
+	traceID, _ := row["trace_id"].(string)
+	if traceID == "" {
+		return
+	}
+	projectID, _ := row["project_id"].(string) // == span's coalesceUUID(projectID)
+	name, _ := row["name"].(string)
+	input, _ := row["input"].(string)
+	output, _ := row["output"].(string)
+	createdAt, _ := row["start_time"].(string)
+	t := curatedwriter.Trace{
+		ID:        traceID,
+		ProjectID: projectID,
+		Name:      name,
+		Input:     input,
+		Output:    output,
+		CreatedAt: createdAt,
+	}
+	if sid, ok := row["trace_session_id"].(string); ok {
+		t.SessionID = sid // nil (no session) stays "" → NULL
+	}
+	if v, ok := row["_version"].(uint64); ok {
+		t.Version = v // root span start nanos; app mirror (time.time_ns) wins
+	}
+	ids.AddTrace(t)
 }
 
 // spanToRow does the per-span conversion. Keeping this in one function
@@ -198,19 +308,14 @@ func spanToRow(
 		parentID = strings.ToLower(span.ParentSpanID().String())
 	}
 
-	// observation_type: the SDK-provided span kind from
-	// `openinference.span.kind` else `fi.span.kind`. LOWERCASED and validated
-	// against the known type set, falling back to "unknown" — a byte-for-byte
-	// mirror of Python get_observation_type (tracer/utils/otel.py): the read
-	// layer filters these values lowercase, so uppercasing here makes every
-	// collector-ingested span invisible to the voice-call list and metrics.
-	observationType := strings.ToLower(attrsStr["openinference.span.kind"])
-	if observationType == "" {
-		observationType = strings.ToLower(attrsStr["fi.span.kind"])
-	}
-	if _, ok := knownObservationTypes[observationType]; !ok {
-		observationType = observationTypeUnknown
-	}
+	// observation_type: the SDK-provided span kind resolved across ALL SDK
+	// conventions (FI / OpenInference / OTEL-GenAI / OpenLLMetry), lowercased,
+	// synonym-normalized, and validated against the known type set — a mirror of
+	// Python get_observation_type ∘ normalize_span_kind (tracer/utils/otel.py).
+	// The read layer filters these values lowercase, so uppercasing here (or
+	// dropping a convention's key) makes spans invisible/mistyped in the
+	// voice-call list and metrics.
+	observationType := resolveObservationType(attrsStr)
 
 	// Inputs/outputs: extracted from openinference convention if present.
 	// `input.value` / `output.value` route to the overflow tier (per

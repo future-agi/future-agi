@@ -52,6 +52,20 @@ import (
 const (
 	tableEndUsers      = "end_users"
 	tableTraceSessions = "trace_sessions"
+	// tableTraces is the CH read-replica of PG `tracer_trace` (schema 015). In
+	// the no-CDC v2 world the app's OTLP ingest is disabled (it now points at
+	// this collector — tracer/urls.py "Migrated to fi-collector service"), so
+	// NOTHING writes a `traces` row for direct-to-collector SDK/sim traffic.
+	// Without it, `trace_dict` (SOURCE traces) has no entry, and every
+	// trace-level read keyed by trace_id resolves to all-zeros:
+	//   • dictGet('trace_dict','project_id', …) → eval/annotation/dashboard
+	//     enumerators (eval_logger_v2 has NO project_id column) filter the
+	//     trace out of its own project → evals/annotations invisible.
+	//   • dictGet('trace_dict','name'/'tags', …) → trace name + trace-level
+	//     metadata blank.
+	// So the collector derives the trace row from the ROOT span — the SCALE
+	// doc's "Phase 3: collector emits the root-span-derived trace".
+	tableTraces = "traces"
 )
 
 // COLUMN CONTRACT. JSONEachRow maps by NAME, so the row maps built in
@@ -96,6 +110,38 @@ type Session struct {
 	ExternalSessionID string
 }
 
+// Trace is one CH `traces` row to mirror, DERIVED FROM THE ROOT SPAN (the span
+// with no parent) of a trace seen in this batch. It is NOT a "curated
+// dimension" like EndUser/Session (which exist per-span); it is the trace fact
+// the read layer resolves via `trace_dict`. It rides the same best-effort
+// batch/flush plumbing because that machinery is exactly what a per-batch,
+// own-table, never-block-the-spans dual-write needs.
+//
+// Only the ROOT span produces a Trace — it carries the trace-level name /
+// input / output, and there is exactly one per trace, so there is no
+// minimal-vs-rich contest within a trace (every span carries the same
+// project_id, but writing one row from the root keeps the `traces` table at one
+// row per trace and lets the app's authoritative mirror — provider pulls /
+// langfuse — win the RMT merge: see Version).
+type Trace struct {
+	ID        string // trace_id (canonical dashed UUID) — RMT key + trace_dict key.
+	ProjectID string // canonical dashed UUID — what dictGet('project_id', …) must return.
+	Name      string // root span name → the trace name (dict 'name'); "" → omit → NULL.
+	Input     string // root span input.value (DEFAULT '' in schema).
+	Output    string // root span output.value.
+	SessionID string // trace_session_id (UUID) or "" → omit → NULL.
+	CreatedAt string // DateTime64(6) text from the root span's start_time.
+	// Version is the RMT `_version` (UInt64). The collector uses the root
+	// span's START nanos. The APP trace mirror (mirror_traces_to_clickhouse,
+	// trace_writer.py) uses time.time_ns() at mirror time — ALWAYS later than
+	// the call's start — so for a trace the app ALSO owns (provider/langfuse,
+	// which both mirror traces AND emit spans here), the app's authoritative
+	// row wins the merge. For collector-only traces (generic SDK, sims) the
+	// collector is the sole writer and the value only needs to be idempotent
+	// across client retries (same start nanos → same version → stable).
+	Version uint64
+}
+
 // Batch collects the DISTINCT curated identities seen across ONE span batch,
 // deduping WITHIN the batch (one row per distinct EndUserID / TraceSessionID).
 // Cross-batch duplicates are left to the RMT's version merge — see the package
@@ -106,8 +152,10 @@ type Session struct {
 type Batch struct {
 	endUsers []EndUser
 	sessions []Session
+	traces   []Trace
 	euSeen   map[string]struct{} // dedup set keyed by EndUserID
 	sessSeen map[string]struct{} // dedup set keyed by TraceSessionID
+	trcSeen  map[string]struct{} // dedup set keyed by trace ID
 }
 
 // NewBatch returns an empty Batch ready to collect identities.
@@ -115,6 +163,7 @@ func NewBatch() *Batch {
 	return &Batch{
 		euSeen:   make(map[string]struct{}),
 		sessSeen: make(map[string]struct{}),
+		trcSeen:  make(map[string]struct{}),
 	}
 }
 
@@ -146,12 +195,26 @@ func (b *Batch) AddSession(s Session) {
 	b.sessions = append(b.sessions, s)
 }
 
+// AddTrace records a distinct trace (first-occurrence wins). Only the root span
+// calls this (see Trace), so within a batch there is one entry per trace_id;
+// cross-batch / cross-writer duplicates collapse on the CH RMT by Version.
+func (b *Batch) AddTrace(t Trace) {
+	if t.ID == "" {
+		return
+	}
+	if _, dup := b.trcSeen[t.ID]; dup {
+		return
+	}
+	b.trcSeen[t.ID] = struct{}{}
+	b.traces = append(b.traces, t)
+}
+
 // Merge folds another batch's distinct identities into this one (deduping
 // across both by id). Used by the server to accumulate ALL payloads received
 // between flushes into ONE drain-scoped batch, so each drain emits at most one
-// end_users + one trace_sessions insert — bounding the best-effort latency and
-// avoiding many tiny RMT parts (CH "too many parts") at 100K spans/s. A nil
-// `other` is a no-op.
+// end_users + one trace_sessions + one traces insert — bounding the best-effort
+// latency and avoiding many tiny RMT parts (CH "too many parts") at 100K
+// spans/s. A nil `other` is a no-op.
 func (b *Batch) Merge(other *Batch) {
 	if other == nil {
 		return
@@ -162,6 +225,9 @@ func (b *Batch) Merge(other *Batch) {
 	for _, s := range other.sessions {
 		b.AddSession(s)
 	}
+	for _, t := range other.traces {
+		b.AddTrace(t)
+	}
 }
 
 // EndUsers returns the distinct end_user identities collected (insertion order).
@@ -170,9 +236,14 @@ func (b *Batch) EndUsers() []EndUser { return b.endUsers }
 // Sessions returns the distinct session identities collected (insertion order).
 func (b *Batch) Sessions() []Session { return b.sessions }
 
+// Traces returns the distinct traces collected (insertion order).
+func (b *Batch) Traces() []Trace { return b.traces }
+
 // Empty reports whether the batch collected no curated identities at all — the
 // caller skips the writer entirely in that (common) case.
-func (b *Batch) Empty() bool { return len(b.endUsers) == 0 && len(b.sessions) == 0 }
+func (b *Batch) Empty() bool {
+	return len(b.endUsers) == 0 && len(b.sessions) == 0 && len(b.traces) == 0
+}
 
 // Writer mirrors a Batch's curated identities into the CH `end_users` /
 // `trace_sessions` RMTs over the shared chwriter (one batched JSONEachRow insert
@@ -227,6 +298,15 @@ func (cw *Writer) Write(ctx context.Context, b *Batch, now time.Time) error {
 			firstErr = err
 		}
 	}
+	if ts := b.Traces(); len(ts) > 0 {
+		rows := make([]map[string]any, 0, len(ts))
+		for _, t := range ts {
+			rows = append(rows, traceRow(t, now))
+		}
+		if err := cw.w.InsertBestEffort(ctx, tableTraces, rows); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 	return firstErr
 }
 
@@ -278,6 +358,51 @@ func sessionRow(s Session, now time.Time) map[string]any {
 		"version":             formatDateTime64(now),
 		"is_deleted":          uint8(0),
 	}
+}
+
+// traceRow maps a Trace → a CH `traces` JSONEachRow row, matching schema 015
+// (the app's trace_writer._trace_to_row column set). JSONEachRow maps by name,
+// so columns OMITTED here take their schema DEFAULT:
+//
+//   - id / project_id        : UUID columns, canonical lowercase-dashed.
+//   - input / output         : non-null String DEFAULT '' (already '' when absent).
+//   - created_at             : DateTime64(6,'UTC') — the root span's start_time.
+//                              NO schema default → MUST be provided.
+//   - updated_at             : `now`.
+//   - is_deleted             : UInt8 0 (a freshly ingested trace is never
+//                              soft-deleted; an app soft-delete writes its own
+//                              higher-_version tombstone row).
+//   - _version               : UInt64 — the root span's start nanos (see Trace.Version).
+//   - name                   : Nullable(String). OMITTED when empty so the column
+//                              is SQL NULL — matching the ~96% unnamed traces the
+//                              app left NULL (schema 015) AND letting dictGet's
+//                              Nullable 'name' round-trip NULL. A real root-span
+//                              name passes through (an IMPROVEMENT over the app,
+//                              which named almost nothing).
+//   - session_id             : Nullable(UUID). OMITTED when empty → SQL NULL.
+//   - tags / metadata / error / error_analysis_status / project_version_id :
+//                              left to their schema DEFAULTs ('[]' / '{}' / '' /
+//                              'PENDING' / NULL) — the collector has no PG source
+//                              for them and the app mirror fills them if it owns
+//                              the trace.
+func traceRow(t Trace, now time.Time) map[string]any {
+	row := map[string]any{
+		"id":         t.ID,
+		"project_id": t.ProjectID,
+		"input":      t.Input,
+		"output":     t.Output,
+		"created_at": t.CreatedAt,
+		"updated_at": formatDateTime64(now),
+		"is_deleted": uint8(0),
+		"_version":   t.Version,
+	}
+	if t.Name != "" {
+		row["name"] = t.Name
+	}
+	if t.SessionID != "" {
+		row["session_id"] = t.SessionID
+	}
+	return row
 }
 
 // nullableType maps the user_id_type sentinel to its CH wire value: the ""

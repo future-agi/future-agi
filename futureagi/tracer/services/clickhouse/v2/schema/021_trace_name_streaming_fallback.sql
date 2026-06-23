@@ -1,0 +1,43 @@
+-- =============================================================================
+-- 021 — spans.trace_name streaming fallback (CDC-off / direct-to-collector SDK)
+-- =============================================================================
+--
+-- WHY: 015 redefined the MATERIALIZED `trace_name` column to
+--
+--     ifNull(dictGetOrDefault('trace_dict', 'name', toUUID(trace_id), ''), '')
+--
+-- which is correct for BACKFILLED traffic — the backfill warms `traces`, then
+-- `ALTER TABLE spans MATERIALIZE COLUMN trace_name` recomputes the column with
+-- the dict populated. But it is WRONG for STREAMING ingestion, which is now the
+-- only live SDK path: the app's OTLP endpoint is disabled (tracer/urls.py
+-- "Migrated to fi-collector service"), so SDKs send OTLP straight to the
+-- fi-collector, and the collector inserts each span the moment it arrives.
+--
+-- `trace_name` is MATERIALIZED — evaluated ONCE at insert time and frozen. At
+-- that instant the trace_dict cannot know the trace yet: the dict has a
+-- LIFETIME(MIN 30 MAX 60) refresh, and even the collector's own root-span
+-- `traces` row (added alongside this change) lands in the same flush window, so
+-- the dict has not reloaded. The dictGet therefore misses and the column
+-- freezes to '' — the trace shows a BLANK name in the trace list forever
+-- (re-materializing later would fix it, but streaming has no backfill step).
+--
+-- FIX: fall back to the span's OWN `name` on a dict miss. The dict's `name` is
+-- Nullable, so dictGetOrDefault returns NULL for a found-but-NULL-name trace
+-- (the ~96% the ingest never names) and '' for a dict miss; nullIf(...,'')
+-- folds the '' default to NULL so ifNull then takes the span's own `name`. Net:
+--   • dict HIT with a real name  → the trace's name on every span (015 intent,
+--     restored once a backfill + MATERIALIZE warms historical rows).
+--   • dict MISS / NULL-name      → the span's own `name` (012's behaviour) — a
+--     sensible, non-blank value AT INSERT for streaming traffic, where the root
+--     span's name is the trace name and child spans show their own name.
+--
+-- This is an EXPRESSION-only MODIFY (type stays String), which the
+-- idx_trace_name bloom index permits (a type change would be Code 524). It is
+-- metadata-only and applies to NEW inserts; existing rows keep their stored
+-- value until `ALTER TABLE spans MATERIALIZE COLUMN trace_name` is run
+-- out-of-band. Idempotent across boots.
+-- =============================================================================
+
+ALTER TABLE spans
+    MODIFY COLUMN trace_name String
+        MATERIALIZED ifNull(nullIf(dictGetOrDefault('trace_dict', 'name', toUUID(trace_id), ''), ''), name);
