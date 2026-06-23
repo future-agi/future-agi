@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 import pandas as pd
+import structlog
 from rest_framework import serializers
 
 from model_hub.models.choices import AnnotationTypeChoices, DataTypeChoices
@@ -17,6 +18,8 @@ from tracer.utils.constants import (
     SPAN_ATTR_ALLOWED_OPS,
 )
 from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass
@@ -38,6 +41,12 @@ class FieldConfig:
     # value from eval_outputs without parsing the id.
     source_field: str | None = None
     parent_eval_id: str | None = None
+    # Clusters eval columns by the eval_task that ran the config, and records
+    # the target_type (span/trace/session) the config was applied at. Populated
+    # only for eval columns when an eval_task_map is supplied; None otherwise.
+    eval_task_id: str | None = None
+    eval_task_name: str | None = None
+    target_type: str | None = None
 
 
 def get_sort_query(sort_by, sort_order="desc"):
@@ -268,9 +277,21 @@ def update_column_config_based_on_eval_config(
     custom_eval_configs: list[CustomEvalConfig],
     skip_choices: bool | None = False,
     is_simulator: bool = False,
+    eval_task_map: dict[str, dict] | None = None,
 ):
+    """Append one column per eval config (or per choice for CHOICES evals).
+
+    ``eval_task_map`` optionally clusters each eval column under the eval_task
+    that ran it: ``{config_id: {"eval_task_id", "eval_task_name",
+    "target_type"}}``. When provided, those three fields are stamped onto each
+    eval column (CHOICES sub-columns inherit the parent config's mapping) so
+    the frontend can group eval results by task and show the applied
+    target_type. Configs absent from the map get ``None`` for all three.
+    """
     if not column_config:
         column_config = []
+
+    eval_task_map = eval_task_map or {}
 
     for item in custom_eval_configs:
         eval_template_config = item.eval_template.config or {}
@@ -282,6 +303,11 @@ def update_column_config_based_on_eval_config(
         name_prefix = "" if is_simulator else "Avg. "
 
         eval_template_id = str(item.eval_template.id)
+
+        task_info = eval_task_map.get(str(item.id), {})
+        eval_task_id = task_info.get("eval_task_id")
+        eval_task_name = task_info.get("eval_task_name")
+        target_type = task_info.get("target_type")
 
         if choices and output_type == EvalOutputType.CHOICES.value and not skip_choices:
             for choice in choices:
@@ -296,6 +322,9 @@ def update_column_config_based_on_eval_config(
                     ),
                     choices_map=choices_map,
                     eval_template_id=eval_template_id,
+                    eval_task_id=eval_task_id,
+                    eval_task_name=eval_task_name,
+                    target_type=target_type,
                 )
                 present_config = asdict(present_config)
                 if not any(
@@ -313,6 +342,9 @@ def update_column_config_based_on_eval_config(
                 choices_map=choices_map,
                 choices=choices,
                 eval_template_id=eval_template_id,
+                eval_task_id=eval_task_id,
+                eval_task_name=eval_task_name,
+                target_type=target_type,
             )
             present_config = asdict(present_config)
             if not any(
@@ -321,6 +353,461 @@ def update_column_config_based_on_eval_config(
                 column_config.append(present_config)
 
     return column_config
+
+
+def _eval_chip_value(cell, output_type, choices):
+    """Map a count cell to its chip value given an output type + choice labels.
+
+    Single source of truth for the Pass/Fail + Choices "count" rendering, used
+    by both ``eval_count_cell`` (list endpoints) and
+    ``build_task_grouped_eval_scores`` (trace detail). ``cell`` is a dict with
+    ``choice_counts`` (Choices) or ``pass_count``/``fail_count`` (Pass/Fail) or
+    ``avg_score`` (Score). A non-dict ``cell`` is returned unchanged.
+    """
+    if not isinstance(cell, dict):
+        return cell
+
+    if output_type == EvalOutputType.CHOICES.value:
+        counts = cell.get("choice_counts", {}) or {}
+        if choices:
+            return {str(choice): int(counts.get(str(choice), 0)) for choice in choices}
+        return {str(k): int(v) for k, v in counts.items()}
+
+    if output_type == EvalOutputType.PASS_FAIL.value:
+        return {
+            "pass": int(cell.get("pass_count", 0) or 0),
+            "fail": int(cell.get("fail_count", 0) or 0),
+        }
+
+    return cell.get("avg_score")
+
+
+def eval_count_cell(scores, eval_config):
+    """Chip-style value for one count-mode eval cell.
+
+    Shared by the trace/voice/span list endpoints so the Pass/Fail + Choices
+    "count" rendering lives in one place. Given a count-mode pivot cell
+    (``pivot_eval_results(..., count_mode=True)``) and its ``CustomEvalConfig``,
+    returns the value to render:
+
+      * Choices   -> ``{label: count}`` zero-filled across the template's
+                     declared choices (one chip per label).
+      * Pass/Fail -> ``{"pass": n, "fail": n}`` (exact appearance counts).
+      * Score     -> the numeric average (or ``None``).
+
+    Callers must handle the ``{"error": True}`` marker before calling this; a
+    non-dict ``scores`` is returned unchanged.
+    """
+    if not isinstance(scores, dict):
+        return scores
+
+    template = getattr(eval_config, "eval_template", None)
+    output_type = (getattr(template, "config", None) or {}).get(
+        "output", EvalOutputType.SCORE.value
+    )
+    choices = getattr(template, "choices", None) or []
+    return _eval_chip_value(scores, output_type, choices)
+
+
+# ---------------------------------------------------------------------------
+# Trace-detail: eval scores grouped eval_task -> eval -> {aggregate, spans}.
+# ---------------------------------------------------------------------------
+
+
+def _eval_row_is_error(row):
+    """True when an EvalLogger row represents an error (mirrors the list
+    endpoints' ``error = 1 OR output_str = 'ERROR'`` guard)."""
+    if row.get("error"):
+        return True
+    return (row.get("output_str") or "") == "ERROR"
+
+
+def _eval_row_bool(value):
+    """Normalise an ``output_bool`` (CH ``Nullable(UInt8)``) to True/False/None."""
+    if value is None:
+        return None
+    return bool(value)
+
+
+def _eval_row_choice_labels(value):
+    """Parse an ``output_str_list`` (CH ``String DEFAULT '[]'`` or a list) into
+    a list of label strings; empty list when absent/unparseable."""
+    if isinstance(value, list):
+        return [str(x) for x in value]
+    if isinstance(value, str) and value.strip().startswith("["):
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed]
+    return []
+
+
+def _aggregate_eval_cell(rows, output_type):
+    """Aggregate non-errored EvalLogger rows into a count cell for one eval.
+
+    Score -> ``{"avg_score": mean(output_float)*100}``; Pass/Fail ->
+    ``{"pass_count", "fail_count"}``; Choices -> ``{"choice_counts": {...}}``.
+    """
+    live = [r for r in rows if not _eval_row_is_error(r)]
+
+    if output_type == EvalOutputType.CHOICES.value:
+        counts: dict = {}
+        for row in live:
+            for label in set(_eval_row_choice_labels(row.get("output_str_list"))):
+                counts[label] = counts.get(label, 0) + 1
+        return {"choice_counts": counts}
+
+    if output_type == EvalOutputType.PASS_FAIL.value:
+        pass_count = sum(
+            1 for r in live if _eval_row_bool(r.get("output_bool")) is True
+        )
+        fail_count = sum(
+            1 for r in live if _eval_row_bool(r.get("output_bool")) is False
+        )
+        return {"pass_count": pass_count, "fail_count": fail_count}
+
+    vals = [
+        r.get("output_float")
+        for r in live
+        if isinstance(r.get("output_float"), (int, float))
+        and not isinstance(r.get("output_float"), bool)
+    ]
+    avg = round(sum(vals) / len(vals) * 100, 2) if vals else None
+    return {"avg_score": avg}
+
+
+def _per_span_eval_value(rows, output_type):
+    """Raw per-span value (one span's rows): Score -> number, Pass/Fail ->
+    ``"pass"``/``"fail"``, Choices -> ``[labels]``. Uses the latest non-errored
+    row (re-runs); ``None`` when every row errored."""
+    live = [r for r in rows if not _eval_row_is_error(r)]
+    if not live:
+        return None
+    row = live[-1]
+
+    if output_type == EvalOutputType.CHOICES.value:
+        return _eval_row_choice_labels(row.get("output_str_list"))
+
+    if output_type == EvalOutputType.PASS_FAIL.value:
+        b = _eval_row_bool(row.get("output_bool"))
+        return None if b is None else ("pass" if b else "fail")
+
+    f = row.get("output_float")
+    if isinstance(f, (int, float)) and not isinstance(f, bool):
+        return round(f * 100, 2)
+    return None
+
+
+def build_task_grouped_eval_scores(
+    rows, config_lookup, task_lookup, span_name_map, scope
+):
+    """Group span-level EvalLogger rows into the task -> eval -> {aggregate,
+    spans} structure used by the trace-detail response.
+
+    ``rows``: already-filtered EvalLogger-shaped dicts (caller passes all trace
+    rows for the root span, or one span's rows for a child). Each dict needs
+    ``span_id``, ``eval_config_id``, ``eval_task_id``, ``output_float``,
+    ``output_bool``, ``output_str``, ``output_str_list``, ``error``,
+    ``explanation``. ``config_lookup``: ``{cid: {"name","output","choices"}}``.
+    ``task_lookup``: ``{eval_task_id: name}``. ``span_name_map``:
+    ``{span_id: name}``. ``scope``: ``"trace"`` (root) or ``"span"``.
+
+    Pure in-memory, single pass over ``rows`` — no DB access.
+    """
+    # eval_task_id -> config_id -> [rows]; dict preserves first-seen order.
+    tasks: dict = {}
+    for row in rows:
+        cid = row.get("eval_config_id") or ""
+        if not cid or cid not in config_lookup or not row.get("span_id"):
+            continue
+        tid = row.get("eval_task_id") or None
+        tasks.setdefault(tid, {}).setdefault(cid, []).append(row)
+
+    eval_tasks = []
+    for tid, configs in tasks.items():
+        evals = []
+        for cid, eval_rows in configs.items():
+            info = config_lookup[cid]
+            output_type = info.get("output") or EvalOutputType.SCORE.value
+            choices = info.get("choices") or []
+
+            aggregate = _eval_chip_value(
+                _aggregate_eval_cell(eval_rows, output_type), output_type, choices
+            )
+
+            # target_type (span/trace/session) the eval was applied at — same
+            # discriminator the list endpoints carry per (config, task). Rows in
+            # one (task, config) group share it; take the first non-null.
+            target_type = next(
+                (r.get("target_type") for r in eval_rows if r.get("target_type")),
+                None,
+            )
+
+            # One entry per span (group this eval's rows by span_id).
+            by_span: dict = {}
+            for row in eval_rows:
+                by_span.setdefault(row.get("span_id"), []).append(row)
+            spans = []
+            for sid, span_rows in by_span.items():
+                explanation = next(
+                    (r.get("explanation") for r in span_rows if r.get("explanation")),
+                    None,
+                )
+                spans.append(
+                    {
+                        "span_id": sid,
+                        "span_name": span_name_map.get(sid),
+                        "value": _per_span_eval_value(span_rows, output_type),
+                        "explanation": explanation,
+                        "error": all(_eval_row_is_error(r) for r in span_rows),
+                    }
+                )
+
+            evals.append(
+                {
+                    "eval_config_id": cid,
+                    "eval_name": info.get("name", cid),
+                    "output_type": output_type,
+                    "target_type": target_type,
+                    "aggregate": aggregate,
+                    "spans": spans,
+                }
+            )
+
+        eval_tasks.append(
+            {
+                "eval_task_id": tid,
+                "eval_task_name": (task_lookup.get(tid) if tid else "Ungrouped"),
+                "evals": evals,
+            }
+        )
+
+    return {"scope": scope, "eval_tasks": eval_tasks}
+
+
+def fetch_grouped_eval_rows(analytics, trace_id):
+    """Fetch non-deleted span-level eval rows for a trace + the batched name
+    lookups needed to group them.
+
+    Shared by the trace-detail and voice-call-detail endpoints. Runs ONE CH
+    query against the eval-logger table plus two batched PG lookups (config
+    names/output/choices via ``select_related`` — no extra query; task names) —
+    soft-deleted rows, configs and tasks are all excluded. Trace/session-level
+    rows (no ``observation_span_id``) are skipped. Any CH/PG failure is logged
+    and returns empty structures (non-fatal).
+
+    Returns ``(eval_rows, rows_by_span, config_lookup, task_lookup)``:
+      * ``eval_rows``    — normalised dicts (``span_id``, ``eval_config_id``,
+        ``eval_task_id``, ``output_float``/``bool``/``str``/``str_list``,
+        ``error``, ``explanation``)
+      * ``rows_by_span`` — ``{span_id: [rows]}``
+      * ``config_lookup``— ``{config_id: {"name", "output", "choices"}}``
+      * ``task_lookup``  — ``{eval_task_id: name}``
+    """
+    from tracer.models.eval_task import EvalTask
+    from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+
+    eval_rows: list[dict] = []
+    rows_by_span: dict[str, list[dict]] = {}
+    config_lookup: dict[str, dict] = {}
+    task_lookup: dict[str, str] = {}
+    try:
+        eval_table, eval_nd = eval_logger_source()
+        eval_query = f"""
+        SELECT
+            toString(observation_span_id) AS span_id,
+            toString(custom_eval_config_id) AS eval_config_id,
+            eval_task_id,
+            target_type,
+            output_float,
+            output_bool,
+            output_str,
+            output_str_list,
+            error,
+            eval_explanation
+        FROM {eval_table} FINAL
+        WHERE trace_id = %(trace_id)s
+          AND {eval_nd}
+        """
+        eval_result = analytics.execute_ch_query(
+            eval_query, {"trace_id": str(trace_id)}, timeout_ms=30000
+        )
+
+        # Collect unique config + task IDs for batched name lookups.
+        config_ids_set = set()
+        task_ids_set = set()
+        for row in eval_result.data:
+            if not row.get("span_id"):
+                continue  # span-level evals only (skip trace/session rows)
+            cid = row.get("eval_config_id", "")
+            if cid:
+                config_ids_set.add(cid)
+            tid = row.get("eval_task_id")
+            if tid:
+                task_ids_set.add(str(tid))
+
+        if config_ids_set:
+            configs = CustomEvalConfig.objects.filter(
+                id__in=list(config_ids_set), deleted=False
+            ).select_related("eval_template")
+            config_lookup = {
+                str(c.id): {
+                    # Prefer the CustomEvalConfig's user-given name, fall back
+                    # to the template name only if unset.
+                    "name": c.name
+                    or (c.eval_template.name if c.eval_template else str(c.id)),
+                    "output": (
+                        (c.eval_template.config or {}).get(
+                            "output", EvalOutputType.SCORE.value
+                        )
+                        if c.eval_template
+                        else EvalOutputType.SCORE.value
+                    ),
+                    "choices": (
+                        (c.eval_template.choices or []) if c.eval_template else []
+                    ),
+                    "template_type": (
+                        getattr(c.eval_template, "template_type", None)
+                        if c.eval_template
+                        else None
+                    ),
+                }
+                for c in configs
+            }
+
+        if task_ids_set:
+            task_lookup = {
+                str(tid): name
+                for tid, name in EvalTask.objects.filter(
+                    id__in=task_ids_set, deleted=False
+                ).values_list("id", "name")
+            }
+
+        # Normalise rows once; bucket by span for per-span child structures.
+        for row in eval_result.data:
+            sid = row.get("span_id", "")
+            cid = row.get("eval_config_id", "")
+            if not sid or not cid or cid not in config_lookup:
+                continue
+            tid = row.get("eval_task_id")
+            normalized = {
+                "span_id": sid,
+                "eval_config_id": cid,
+                "eval_task_id": str(tid) if tid else None,
+                "target_type": row.get("target_type") or None,
+                "output_float": row.get("output_float"),
+                "output_bool": row.get("output_bool"),
+                "output_str": row.get("output_str"),
+                "output_str_list": row.get("output_str_list"),
+                "error": row.get("error"),
+                "explanation": row.get("eval_explanation") or None,
+                "template_type": row.get("template_type"),
+            }
+            eval_rows.append(normalized)
+            rows_by_span.setdefault(sid, []).append(normalized)
+    except Exception as e:
+        logger.warning("fetch_grouped_eval_rows_failed", error=str(e))
+
+    return eval_rows, rows_by_span, config_lookup, task_lookup
+
+
+def attach_grouped_eval_scores(
+    span_targets, eval_rows, rows_by_span, config_lookup, task_lookup
+):
+    """Attach grouped ``eval_scores`` to span target dicts (in place) and
+    return the trace-level structure.
+
+    Shared by the trace-detail and voice-call-detail endpoints so the "root
+    span gets the trace view, every other span gets its own scope" wiring lives
+    in one place. ``span_targets`` is an iterable of
+    ``(span_id, span_name, is_root, target)`` where ``target`` is the dict that
+    receives ``target['eval_scores']``. Root spans (``is_root`` true) get the
+    trace-level view (aggregate + span-wise across ALL spans); every other span
+    gets the same structure scoped to just itself. The trace-level structure is
+    returned so callers can also surface it at the top level.
+    """
+    span_targets = list(span_targets)
+    span_name_map = {str(sid): name for sid, name, _is_root, _t in span_targets}
+    trace_level = build_task_grouped_eval_scores(
+        eval_rows, config_lookup, task_lookup, span_name_map, "trace"
+    )
+    for sid, _name, is_root, target in span_targets:
+        if is_root:
+            target["eval_scores"] = trace_level
+        else:
+            target["eval_scores"] = build_task_grouped_eval_scores(
+                rows_by_span.get(str(sid), []),
+                config_lookup,
+                task_lookup,
+                span_name_map,
+                "span",
+            )
+    return trace_level
+
+
+def build_eval_task_map(discovery_rows, alive_config_ids):
+    """Cluster eval configs by the eval_task that ran them + the target_type.
+
+    Shared by the trace/span/voice list endpoints to enrich each eval column
+    with the eval_task it belongs to and the target_type it was applied at.
+
+    ``discovery_rows``: iterable of ``(config_id, eval_task_id, target_type,
+    last_seen)`` tuples — typically the ``(config, task, target_type)`` groups
+    of NON-DELETED rows in the eval_logger table, each carrying that group's
+    ``max(created_at)`` as ``last_seen``. Because the not-deleted filter is
+    applied before grouping, a config whose loggers under a given task are all
+    soft-deleted produces no row for that task and so drops out of it.
+    ``alive_config_ids``: ids whose ``CustomEvalConfig`` is not soft-deleted;
+    rows for any other config are ignored.
+
+    Returns ``{config_id: {"eval_task_id", "eval_task_name", "target_type"}}``
+    keeping the most-recent surviving ``(task, target_type)`` per config
+    (single task + single target_type per eval column).
+    """
+    from tracer.models.eval_task import EvalTask
+
+    alive = {str(c) for c in alive_config_ids}
+    # config_id -> (eval_task_id, target_type, last_seen)
+    chosen: dict[str, tuple] = {}
+    for config_id, eval_task_id, target_type, last_seen in discovery_rows:
+        if not config_id:
+            continue
+        config_id = str(config_id)
+        if config_id not in alive:
+            continue
+        existing = chosen.get(config_id)
+        if existing is None or (
+            last_seen is not None
+            and existing[2] is not None
+            and last_seen > existing[2]
+        ):
+            chosen[config_id] = (
+                str(eval_task_id) if eval_task_id else None,
+                target_type or None,
+                last_seen,
+            )
+
+    task_ids = {v[0] for v in chosen.values() if v[0]}
+    task_names = (
+        {
+            str(tid): name
+            for tid, name in EvalTask.objects.filter(id__in=task_ids).values_list(
+                "id", "name"
+            )
+        }
+        if task_ids
+        else {}
+    )
+    return {
+        cid: {
+            "eval_task_id": eval_task_id,
+            "eval_task_name": task_names.get(eval_task_id) if eval_task_id else None,
+            "target_type": target_type,
+        }
+        for cid, (eval_task_id, target_type, _last_seen) in chosen.items()
+    }
 
 
 def _validate_span_attribute_filter(column_id, filter_config):

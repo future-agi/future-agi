@@ -36,6 +36,7 @@ from rest_framework import serializers
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
@@ -68,6 +69,7 @@ from tracer.serializers.trace import (
     UsersQuerySerializer,
     UsersResponseSerializer,
 )
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.graph_dispatch import (
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
@@ -77,15 +79,20 @@ from tracer.services.clickhouse.query_builders import (
     AgentGraphQueryBuilder,
     UserListQueryBuilder,
 )
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.observability_providers import ObservabilityService
+from tracer.services.observe_list import (
+    build_traces_of_session_list,
+    build_voice_calls_list,
+)
 from tracer.utils.annotations import (
     build_annotation_subqueries as _build_annotation_subqueries_impl,
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
+    attach_grouped_eval_scores,
+    fetch_grouped_eval_rows,
     get_annotation_labels_for_project,
     get_default_trace_config,
     update_column_config_based_on_eval_config,
@@ -1358,94 +1365,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             }
 
         # ----- Phase 8: Batch fetch eval scores from CH -----
-        eval_map = {}
-        try:
-            eval_table, eval_nd = eval_logger_source()
-            eval_query = f"""
-            SELECT
-                toString(observation_span_id) AS span_id,
-                toString(custom_eval_config_id) AS eval_config_id,
-                output_float,
-                output_bool,
-                output_str,
-                eval_explanation
-            FROM {eval_table} FINAL
-            WHERE trace_id = %(trace_id)s
-              AND {eval_nd}
-            """
-            eval_result = analytics.execute_ch_query(
-                eval_query, {"trace_id": str(trace_id)}, timeout_ms=30000
-            )
-            # Collect unique config IDs for name lookup
-            config_ids_set = set()
-            for row in eval_result.data:
-                cid = row.get("eval_config_id", "")
-                if cid:
-                    config_ids_set.add(cid)
-            # Lookup eval config names from PG
-            config_lookup = {}
-            if config_ids_set:
-                configs = CustomEvalConfig.objects.filter(
-                    id__in=list(config_ids_set), deleted=False
-                ).select_related("eval_template")
-                config_lookup = {
-                    str(c.id): {
-                        # Prefer the CustomEvalConfig's user-given name (e.g.
-                        # "voice_sentence_count"), fall back to the template
-                        # name only if unset. This keeps the drawer labels in
-                        # sync with the trace list column headers.
-                        "name": c.name
-                        or (c.eval_template.name if c.eval_template else str(c.id)),
-                        "output_type": (
-                            getattr(c.eval_template, "output_type_normalized", None)
-                            if c.eval_template
-                            else None
-                        ),
-                        "template_type": (
-                            getattr(c.eval_template, "template_type", None)
-                            if c.eval_template
-                            else None
-                        ),
-                    }
-                    for c in configs
-                }
-            # Pivot into per-span map
-            for row in eval_result.data:
-                sid = row.get("span_id", "")
-                if not sid:
-                    continue
-                if sid not in eval_map:
-                    eval_map[sid] = []
-                cid = row.get("eval_config_id", "")
-                info = config_lookup.get(cid, {})
-                # Compute score from output columns
-                output_float = row.get("output_float")
-                output_bool = row.get("output_bool")
-                output_str = row.get("output_str")
-                # Score: use float if non-zero, else bool (True=100, False=0)
-                if output_float and output_float != 0:
-                    score = round(output_float * 100, 2)
-                elif output_bool is not None:
-                    score = 100 if output_bool else 0
-                else:
-                    score = None
-
-                explanation = row.get("eval_explanation", "")
-
-                eval_map[sid].append(
-                    {
-                        "eval_config_id": cid,
-                        "eval_name": info.get("name", cid),
-                        "output_type": info.get("output_type"),
-                        "template_type": info.get("template_type"),
-                        "score": score,
-                        "result": output_str
-                        or (output_bool if output_bool is not None else None),
-                        "explanation": explanation if explanation else None,
-                    }
-                )
-        except Exception as e:
-            logger.warning(f"Failed to fetch trace eval scores: {e}")
+        # Shared with the voice-call-detail endpoint: one CH query for raw
+        # span-level eval rows + batched PG name lookups (config + task), all
+        # non-deleted. Grouping is pure Python over the fetched rows.
+        eval_rows, rows_by_span, config_lookup, task_lookup = fetch_grouped_eval_rows(
+            analytics, trace_id
+        )
 
         # ----- Phase 8: Batch fetch annotations from PG -----
         annotation_map = {}
@@ -1553,8 +1478,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 logger.warning(f"Failed to fetch span tags from PG: {e}")
 
         # ----- Attach evals + annotations to each span -----
+        # eval_scores is grouped eval_task -> eval -> {aggregate, spans}. Root
+        # spans (parent_span_id null) get the trace-level view (aggregate +
+        # span-wise across ALL spans, shared); every other span gets the same
+        # structure scoped to just its own rows. Shared with voice-call-detail.
+        span_targets = [
+            (
+                sid,
+                entry["observation_span"].get("name"),
+                entry["_parent_id"] is None,
+                entry,
+            )
+            for sid, entry in span_map.items()
+        ]
+        attach_grouped_eval_scores(
+            span_targets, eval_rows, rows_by_span, config_lookup, task_lookup
+        )
         for sid, entry in span_map.items():
-            entry["eval_scores"] = eval_map.get(sid, [])
             entry["annotations"] = annotation_map.get(sid, [])
 
         # Build tree: link children to parents
@@ -2878,22 +2818,24 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # _end_user_span_qs Subquery annotations + per-config EvalLogger
             # metric pivot + build_annotation_subqueries + 4-stage filter
             # combinator + Python pivot) was deleted. CH path lives in
-            # _list_traces_of_session_clickhouse via TraceListQueryBuilder.
-            # If TRACE_OF_SESSION_LIST isn't routed to CH that's a config
-            # error — surface as 400. (NOTE: the legacy PG path supported
-            # export=True by skipping pagination; the CH path always
-            # paginates. Export of traces-of-session beyond the first page
-            # is unsupported post-migration — feature parity tracked as a
+            # observe_list.build_traces_of_session_list via
+            # TraceListQueryBuilder. If TRACE_OF_SESSION_LIST isn't routed to
+            # CH that's a config error — surface as 400. (NOTE: the legacy PG
+            # path supported export=True by skipping pagination; the CH path
+            # always paginates. Export of traces-of-session beyond the first
+            # page is unsupported post-migration — parity tracked as a
             # follow-up if needed.)
             analytics = AnalyticsQueryService()
-            return self._list_traces_of_session_clickhouse(
+            response = build_traces_of_session_list(
                 request,
                 project_id,
                 validated_data,
                 analytics,
                 org_project_ids=org_project_ids,
                 org=org,
+                build_annotation_map=_build_annotation_map_from_scores,
             )
+            return self._gm.success_response(response)
 
         except Exception as e:
             logger.exception(f"Error in fetching the traces list of observe: {str(e)}")
@@ -2938,17 +2880,20 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # build_annotation_subqueries + 5-stage filter combinator +
             # ExtendedPageNumberPagination + populate_call_logs_result on
             # the PG queryset) was deleted. CH path lives in
-            # _list_voice_calls_clickhouse via VoiceCallListQueryBuilder.
+            # observe_list.build_voice_calls_list via VoiceCallListQueryBuilder.
             # Per-query routing gate was removed in the CH25 close-out — CH
             # is the single source of truth; CH failures propagate.
             analytics = AnalyticsQueryService()
-            return self._list_voice_calls_clickhouse(
-                request,
+            response_data = build_voice_calls_list(
                 project_id,
                 validated_data,
                 remove_simulation_calls,
                 analytics,
+                extract_voice_metrics=self._extract_voice_turn_and_talk_metrics,
+                heavy_keys=self._VOICE_CALL_HEAVY_KEYS,
+                build_annotation_map=_build_annotation_map_from_scores,
             )
+            return Response(response_data)
 
         except NotFound:
             raise
@@ -3035,10 +2980,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
     def _voice_call_detail_clickhouse(self, request, trace_id, analytics, project_id):
         """Return heavy voice-call detail fields from ClickHouse."""
-        from tracer.services.clickhouse.query_builders.trace_list import (
-            TraceListQueryBuilder,
-        )
-
         # 1. Fetch root conversation span for this trace
         root_query = """
         SELECT
@@ -3246,101 +3187,37 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        # Fetch ALL non-deleted eval configs for the project so the drawer
-        # renders the same set of evals as the list columns. Missing scores
-        # become placeholder entries with `output=None`.
-        eval_configs = CustomEvalConfig.objects.filter(
-            id__in=EvalLogger.objects.filter(
-                trace_id__in=Trace.objects.filter(project_id=project_id).values("id")
-            )
-            .values("custom_eval_config_id")
-            .distinct(),
-            deleted=False,
-        ).select_related("eval_template")
-        eval_config_ids = [str(c.id) for c in eval_configs]
-
-        eval_outputs = {}
-        trace_evals: dict[str, Any] = {}
-        if eval_config_ids:
-            eval_table, eval_nd = eval_logger_source()
-            eval_query = f"""
-            SELECT
-                trace_id,
-                toString(custom_eval_config_id) AS eval_config_id,
-                avg(output_float) AS avg_score,
-                avg(CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END) AS pass_rate,
-                count() AS eval_count,
-                any(output_str_list) AS output_str_list
-            FROM {eval_table} FINAL
-            WHERE {eval_nd}
-              AND trace_id = %(trace_id)s
-              AND custom_eval_config_id IN %(eval_config_ids)s
-            GROUP BY trace_id, custom_eval_config_id
-            """
-            eval_result = analytics.execute_ch_query(
-                eval_query,
-                {
-                    "trace_id": str(trace_id),
-                    "eval_config_ids": tuple(eval_config_ids),
-                },
-                timeout_ms=30000,
-            )
-            eval_map = TraceListQueryBuilder.pivot_eval_results(
-                [(list(r.values())) for r in eval_result.data],
-                list(eval_result.data[0].keys()) if eval_result.data else [],
-            )
-            trace_evals = eval_map.get(str(trace_id), {}) or {}
-
-        for config in eval_configs:
-            config_id = str(config.id)
-            metric_name = getattr(config, "name", None) or (
-                getattr(config, "eval_template", None).name
-                if getattr(config, "eval_template", None)
-                else None
-            )
-            eval_template_config = (
-                config.eval_template.config
-                if getattr(config, "eval_template", None)
-                else {}
-            ) or {}
-            output_type = eval_template_config.get("output", "score")
-
-            if config_id not in trace_evals:
-                eval_outputs[config_id] = {
-                    "name": metric_name,
-                    "output_type": output_type,
-                    "output": None,
-                    "reason": None,
-                    "error": None,
-                }
-                continue
-
-            scores = trace_evals[config_id]
-            metric_entry = {"name": metric_name, "output_type": output_type}
-            if isinstance(scores, dict):
-                if scores.get("per_choice"):
-                    metric_entry["output"] = [
-                        k for k, v in scores["per_choice"].items() if v > 0
-                    ]
-                elif "str_list" in scores and scores["str_list"]:
-                    metric_entry["output"] = scores["str_list"]
-                elif "avg_score" in scores:
-                    score_val = scores.get("avg_score") or scores.get("pass_rate")
-                    if output_type == "Pass/Fail":
-                        metric_entry["output"] = (
-                            "Pass" if score_val and score_val > 0 else "Fail"
-                        )
-                    else:
-                        metric_entry["output"] = (
-                            round(score_val * 100, 2)
-                            if isinstance(score_val, (int, float))
-                            else score_val
-                        )
-                else:
-                    metric_entry["output"] = None
-            else:
-                metric_entry["output"] = scores
-            eval_outputs[config_id] = metric_entry
+        # ----- Eval scores: grouped eval_task -> eval -> {aggregate, spans} -----
+        # Same format and shared helpers as _retrieve_clickhouse (trace detail):
+        # fetch_grouped_eval_rows runs one CH query + batched PG lookups (only
+        # non-deleted rows); attach_grouped_eval_scores writes per-span
+        # eval_scores. The root conversation span gets the trace-level view
+        # (aggregate + span-wise across ALL spans); each child gets its own
+        # span scope.
+        eval_rows, rows_by_span, config_lookup, task_lookup = fetch_grouped_eval_rows(
+            analytics, trace_id
+        )
+        span_targets = [
+            (s["id"], s.get("name"), str(s["id"]) == root_span_id, s)
+            for s in observation_span
+        ]
+        trace_level_scores = attach_grouped_eval_scores(
+            span_targets, eval_rows, rows_by_span, config_lookup, task_lookup
+        )
+        # DEPRECATED, kept for backwards compatibility (doc 02 additive): the
+        # flat ``{config_id: {name, output_type, target_type, output}}`` map.
+        # New consumers read ``eval_scores``. Derived from the grouped scores —
+        # no extra query. Scheduled for removal once the voice drawer migrates.
+        eval_outputs = {
+            ev["eval_config_id"]: {
+                "name": ev["eval_name"],
+                "output_type": ev["output_type"],
+                "target_type": ev.get("target_type"),
+                "output": ev["aggregate"],
+            }
+            for task in trace_level_scores.get("eval_tasks", [])
+            for ev in task.get("evals", [])
+        }
 
         # Duration from span attributes
         attrs_num = row.get("attrs_number") or {}
@@ -3359,6 +3236,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "recording": recording,
             "call_metadata": metadata,
             "observation_span": observation_span,
+            # Grouped eval_task -> eval -> {aggregate, spans} (same format as
+            # the trace-detail endpoint). Trace-level scope (all spans); each
+            # span in observation_span also carries its own eval_scores.
+            "eval_scores": trace_level_scores,
+            # Deprecated flat view; use eval_scores. Removed in a future release.
             "eval_outputs": eval_outputs,
             "turn_count": voice_metrics.get("turn_count"),
             "talk_ratio": voice_metrics.get("talk_ratio"),
@@ -3801,648 +3683,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             writer.writerow(row_data)
 
         return response
-
-    def _list_traces_of_session_clickhouse(
-        self,
-        request,
-        project_id,
-        validated_data,
-        analytics,
-        org_project_ids=None,
-        org=None,
-    ):
-        """List traces-of-session using ClickHouse backend.
-
-        When ``org_project_ids`` is provided (cross-project user-detail
-        mode), the builder is constructed with `project_ids=...` and the
-        view falls back to a PG-side EvalLogger lookup scoped to those
-        projects (the CH dict-lookup path requires a single project_id).
-
-        Builder class resolved via v1↔v2 dispatch — set
-        CH25_QUERY_TYPES_V2_PRIMARY=TRACE_LIST to flip to CH 25.3.
-        """
-        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
-
-        BuilderCls = get_query_builder_class("TRACE_LIST")  # noqa: N806
-
-        org_scope = bool(org_project_ids)
-        filters = list(validated_data.get("filters", []) or [])
-        page_number = validated_data["page_number"]
-        page_size = validated_data["page_size"]
-        session_id = (
-            str(validated_data["session_id"])
-            if validated_data.get("session_id")
-            else None
-        )
-        if session_id:
-            filters.append(
-                {
-                    "column_id": "trace_session_id",
-                    "filter_config": {
-                        "col_type": "NORMAL",
-                        "filter_type": "text",
-                        "filter_op": "equals",
-                        "filter_value": session_id,
-                    },
-                }
-            )
-
-        # Get eval config IDs. Project mode uses a CH dict-lookup (fast);
-        # org mode uses a PG scan because the CH dict-lookup takes a single
-        # project_id — multi-project CH variant not implemented yet.
-        eval_config_ids = []
-        if org_scope:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    trace_id__in=Trace.objects.filter(
-                        project_id__in=org_project_ids
-                    ).values("id")
-                )
-                .values("custom_eval_config_id")
-                .distinct(),
-                deleted=False,
-            ).select_related("eval_template")
-            eval_config_ids = [str(c.id) for c in eval_configs]
-        else:
-            eval_table, eval_nd = eval_logger_source()
-            ch_result = analytics.execute_ch_query(
-                "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-                f"FROM {eval_table} FINAL "
-                f"WHERE {eval_nd} "
-                "AND dictGet('trace_dict', 'project_id', "
-                "trace_id) = toUUID(%(pid)s)",
-                {"pid": str(project_id)},
-                timeout_ms=30000,
-            )
-            ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-            if ch_ids:
-                eval_configs = CustomEvalConfig.objects.filter(
-                    id__in=ch_ids, deleted=False
-                ).select_related("eval_template")
-                eval_config_ids = [str(c.id) for c in eval_configs]
-            else:
-                eval_configs = []
-
-        # Annotation labels — skip in org-scoped mode (deferred enhancement)
-        if org_scope:
-            annotation_labels = []
-        else:
-            annotation_labels = get_annotation_labels_for_project(project_id)
-        annotation_label_ids = [str(label.id) for label in annotation_labels]
-        label_types = {str(label.id): label.type for label in annotation_labels}
-
-        builder = BuilderCls(
-            project_id=None if org_scope else str(project_id),
-            project_ids=[str(p) for p in org_project_ids] if org_scope else None,
-            filters=filters,
-            page_number=page_number,
-            page_size=page_size,
-            eval_config_ids=eval_config_ids,
-            annotation_label_ids=annotation_label_ids,
-        )
-
-        # Phase 1: Paginated traces (light columns only — no input/output)
-        query, params = builder.build()
-        result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-        result.data = result.data[:page_size]
-
-        # Count
-        count_query, count_params = builder.build_count_query()
-        count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=30000
-        )
-        total_count = count_result.data[0].get("total", 0) if count_result.data else 0
-
-        # Phase 1b: Fetch heavy columns (input/output/attrs) for the page
-        trace_ids = [str(row.get("trace_id", "")) for row in result.data]
-        content_map = {}
-        if trace_ids:
-            content_query, content_params = builder.build_content_query(trace_ids)
-            if content_query:
-                content_result = analytics.execute_ch_query(
-                    content_query, content_params, timeout_ms=10000
-                )
-                for crow in content_result.data:
-                    content_map[str(crow.get("trace_id", ""))] = crow
-
-        # Merge content into Phase 1 results
-        for row in result.data:
-            tid = str(row.get("trace_id", ""))
-            content = content_map.get(tid, {})
-            row["input"] = content.get("input", "")
-            row["output"] = content.get("output", "")
-            row["attrs_string"] = content.get("attrs_string", {})
-            row["attrs_number"] = content.get("attrs_number", {})
-            raw_meta = content.get("metadata", "{}")
-            if isinstance(raw_meta, str):
-                try:
-                    row["metadata"] = json.loads(raw_meta)
-                except (json.JSONDecodeError, TypeError):
-                    row["metadata"] = {}
-            else:
-                row["metadata"] = raw_meta or {}
-            row["trace_tags"] = content.get("trace_tags", [])
-
-        user_id_map = builder.resolve_user_ids(trace_ids, analytics)
-
-        # Phase 2: Eval scores
-        eval_map = {}
-        if trace_ids and eval_config_ids:
-            eval_query, eval_params = builder.build_eval_query(trace_ids)
-            if eval_query:
-                eval_result = analytics.execute_ch_query(
-                    eval_query, eval_params, timeout_ms=30000
-                )
-                eval_map = builder.pivot_eval_results(
-                    [(list(row.values())) for row in eval_result.data],
-                    list(eval_result.data[0].keys()) if eval_result.data else [],
-                )
-
-        # Phase 3: Annotations — fetch from PG Score (unified annotation system)
-        annotation_map = _build_annotation_map_from_scores(
-            trace_ids, annotation_label_ids, label_types
-        )
-
-        # Phase 4: Aggregated span attributes for custom columns
-        _SKIP_ATTR_PREFIXES = (
-            "raw.",
-            "llm.input_messages",
-            "llm.output_messages",
-            "input.value",
-            "output.value",
-        )
-        aggregated_attrs = {}  # trace_id -> {attr_key -> [unique_values]}
-        if trace_ids:
-            try:
-                attr_query, attr_params = builder.build_span_attributes_query(trace_ids)
-                if attr_query:
-                    attr_result = analytics.execute_ch_query(
-                        attr_query, attr_params, timeout_ms=30000
-                    )
-                    for attr_row in attr_result.data:
-                        tid = str(attr_row.get("trace_id", ""))
-                        raw = attr_row.get("attributes_extra", "{}")
-                        try:
-                            attrs = (
-                                json.loads(raw) if isinstance(raw, str) else (raw or {})
-                            )
-                        except (json.JSONDecodeError, TypeError):
-                            attrs = {}
-                        # Fallback: merge from typed Map columns when raw is empty
-                        if not attrs:
-                            str_map = attr_row.get("attrs_string") or {}
-                            num_map = attr_row.get("attrs_number") or {}
-                            if isinstance(str_map, dict):
-                                attrs.update(str_map)
-                            if isinstance(num_map, dict):
-                                for k, v in num_map.items():
-                                    if k not in attrs:
-                                        attrs[k] = v
-                        if tid not in aggregated_attrs:
-                            aggregated_attrs[tid] = {}
-                        for key, value in attrs.items():
-                            if key.startswith(_SKIP_ATTR_PREFIXES):
-                                continue
-                            if isinstance(value, str) and len(value) > 500:
-                                continue
-                            if key not in aggregated_attrs[tid]:
-                                aggregated_attrs[tid][key] = (
-                                    set()
-                                    if isinstance(value, (str, int, float, bool))
-                                    else []
-                                )
-                            if isinstance(value, (str, int, float, bool)):
-                                aggregated_attrs[tid][key].add(
-                                    value
-                                    if not isinstance(value, bool)
-                                    else str(value).lower()
-                                )
-                            elif isinstance(value, (list, dict)):
-                                pass  # skip complex values for aggregation
-            except Exception as e:
-                logger.warning(f"Span attribute aggregation failed: {e}")
-
-        # Build column config — get_default_trace_config() already includes
-        # all standard columns (latency, tokens, cost, user_id, etc.)
-        column_config = get_default_trace_config()
-        column_config = update_column_config_based_on_eval_config(
-            column_config, eval_configs
-        )
-        column_config = update_span_column_config_based_on_annotations(
-            column_config, annotation_labels
-        )
-
-        # Format response matching PG format
-        table_data = []
-        for row in result.data:
-            trace_id = str(row.get("trace_id", ""))
-            raw_cost = row.get("cost")
-            entry = {
-                "trace_id": trace_id,
-                "project_id": (
-                    str(row.get("project_id")) if row.get("project_id") else None
-                ),
-                "input": row.get("input", ""),
-                "output": row.get("output", ""),
-                "created_at": (
-                    row.get("start_time").isoformat() + "Z"
-                    if row.get("start_time")
-                    else None
-                ),
-                "node_type": row.get("observation_type", ""),
-                "latency": row.get("latency_ms"),
-                "total_tokens": row.get("total_tokens"),
-                "prompt_tokens": row.get("prompt_tokens"),
-                "completion_tokens": row.get("completion_tokens"),
-                "cost": (
-                    round(raw_cost, 6)
-                    if isinstance(raw_cost, (int, float))
-                    and not isinstance(raw_cost, bool)
-                    and math.isfinite(raw_cost)
-                    else 0
-                ),
-                "trace_name": row.get("trace_name") or row.get("span_name") or "",
-                "start_time": row.get("start_time"),
-                "status": row.get("status"),
-                "model": row.get("model"),
-                "provider": row.get("provider"),
-                "tags": row.get("trace_tags") or [],
-                "user_id": user_id_map.get(trace_id),
-            }
-
-            # Add eval metrics
-            trace_evals = eval_map.get(trace_id, {})
-            for config in eval_configs:
-                config_id = str(config.id)
-                if config_id not in trace_evals:
-                    continue
-                scores = trace_evals[config_id]
-                # CHOICES eval: spread per-choice percentages into
-                # separate columns keyed ``{config_id}**{choice}``.
-                if isinstance(scores, dict) and scores.get("per_choice"):
-                    for choice, pct in scores["per_choice"].items():
-                        entry[f"{config_id}**{choice}"] = pct
-                elif isinstance(scores, dict) and "avg_score" in scores:
-                    # Prefer ``avg_score`` when it's present. A plain
-                    # ``avg_score or pass_rate`` drops a legitimate 0.0
-                    # (Fail) because ``0.0`` is falsy — use an explicit
-                    # ``None`` check so Fail doesn't silently fall
-                    # through to ``pass_rate``.
-                    avg_val = scores.get("avg_score")
-                    entry[config_id] = (
-                        avg_val if avg_val is not None else scores.get("pass_rate")
-                    )
-                else:
-                    entry[config_id] = scores
-
-            # Add annotations
-            trace_annotations = annotation_map.get(trace_id, {})
-            for label in annotation_labels:
-                label_id = str(label.id)
-                if label_id in trace_annotations:
-                    entry[label_id] = trace_annotations[label_id]
-
-            # Include metadata for custom columns
-            metadata = row.get("metadata") or {}
-            if isinstance(metadata, dict):
-                for key, value in metadata.items():
-                    if key not in entry:
-                        if isinstance(value, str) and len(value) > 500:
-                            entry[key] = value[:500] + "..."
-                        else:
-                            entry[key] = value
-
-            # Include aggregated span attributes — single value or array of unique values
-            trace_attrs = aggregated_attrs.get(trace_id, {})
-            for key, values in trace_attrs.items():
-                if key not in entry:
-                    if isinstance(values, set):
-                        vals = sorted(values, key=str)
-                        entry[key] = vals[0] if len(vals) == 1 else vals
-                    else:
-                        entry[key] = values
-
-            table_data.append(entry)
-
-        response = {
-            "metadata": {"total_rows": total_count},
-            "table": _sanitize_nonfinite_floats(table_data),
-            "config": column_config,
-        }
-
-        return self._gm.success_response(response)
-
-    def _list_voice_calls_clickhouse(
-        self, request, project_id, validated_data, remove_simulation_calls, analytics
-    ):
-        """List voice calls using ClickHouse backend.
-
-        Builder classes resolved via v1↔v2 dispatch — flip with
-        CH25_QUERY_TYPES_V2_PRIMARY=VOICE_CALL_LIST,TRACE_LIST.
-        """
-        from tracer.services.clickhouse.query_builders import VoiceCallListQueryBuilder
-        from tracer.services.clickhouse.query_builders.trace_list import (
-            TraceListQueryBuilder,
-        )
-        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
-
-        VoiceBuilderCls = get_query_builder_class("VOICE_CALL_LIST")  # noqa: N806
-
-        filters = validated_data.get("filters", [])
-        page = validated_data.get("page", 1)
-        page_size = validated_data.get("page_size", 30)
-        page_number = page - 1  # Convert 1-based to 0-based
-
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
-        eval_config_ids = []
-        eval_table, eval_nd = eval_logger_source()
-        ch_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            f"FROM {eval_table} FINAL "
-            f"WHERE {eval_nd} "
-            "AND dictGet('trace_dict', 'project_id', "
-            "trace_id) = toUUID(%(pid)s)",
-            {"pid": str(project_id)},
-            timeout_ms=30000,
-        )
-        ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-        if ch_ids:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=ch_ids, deleted=False
-            ).select_related("eval_template")
-            eval_config_ids = [str(c.id) for c in eval_configs]
-        else:
-            eval_configs = []
-
-        # Get annotation labels that have actual annotations/scores for this project
-        annotation_labels = get_annotation_labels_for_project(project_id)
-        annotation_label_ids = [str(label.id) for label in annotation_labels]
-        label_types = {str(label.id): label.type for label in annotation_labels}
-
-        sim_flag = remove_simulation_calls and str(
-            remove_simulation_calls
-        ).lower() not in ("false", "0", "")
-
-        builder = VoiceBuilderCls(
-            project_id=str(project_id),
-            filters=filters,
-            page_number=page_number,
-            page_size=page_size,
-            eval_config_ids=eval_config_ids,
-            remove_simulation_calls=sim_flag,
-            annotation_label_ids=annotation_label_ids,
-        )
-
-        # Phase 1: Paginated root conversation spans (light columns only)
-        query, params = builder.build()
-        result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-        result.data = result.data[:page_size]
-
-        # Phase 1b: Fetch span_attributes + provider for the paginated spans
-        # from the v2 `spans` table (CH25 close-out: was `tracer_observation_span`
-        # CDC mirror). fi-collector populates three sources, in priority order:
-        #   1. `attributes_extra` JSON — overflow keys that didn't match the
-        #      typed-Map classifier.
-        #   2. `attrs_string` / `attrs_number` / `attrs_bool` Maps — the
-        #      common-case typed attributes (gen_ai.* keys for LLM spans).
-        # We SELECT all three and reconstruct the flat dict on the Python
-        # side, matching the pattern used by the trace-tree fetch above
-        # (~line 1195). `FINAL` collapses ReplacingMergeTree duplicates;
-        # the `idx_id` bloom filter keeps the PREWHERE scan cheap.
-        page_rows = result.data[:page_size]
-        span_ids = [
-            str(row.get("span_id", "")) for row in page_rows if row.get("span_id")
-        ]
-        attrs_map = {}
-        if span_ids:
-            attrs_result = analytics.execute_ch_query(
-                "SELECT id, provider, "
-                "attributes_extra AS span_attributes, "
-                "attrs_string, attrs_number, attrs_bool "
-                "FROM spans FINAL "
-                "PREWHERE id IN %(span_ids)s "
-                "WHERE is_deleted = 0",
-                {"span_ids": tuple(span_ids)},
-                timeout_ms=10000,
-            )
-            for arow in attrs_result.data:
-                sid = str(arow.get("id", ""))
-                raw = arow.get("span_attributes", "{}")
-                try:
-                    parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
-                except (json.JSONDecodeError, TypeError):
-                    parsed = {}
-                # Fall back to the typed Maps when attributes_extra is empty
-                # (the common case for LLM spans, where everything is in
-                # attrs_string / attrs_number / attrs_bool).
-                if not parsed:
-                    parsed = {}
-                    for k, v in (arow.get("attrs_string") or {}).items():
-                        parsed[k] = v
-                    for k, v in (arow.get("attrs_number") or {}).items():
-                        parsed[k] = v
-                    for k, v in (arow.get("attrs_bool") or {}).items():
-                        parsed[k] = bool(v)
-                attrs_map[sid] = {
-                    "span_attributes": parsed,
-                    "provider": arow.get("provider"),
-                }
-
-        # Count
-        count_query, count_params = builder.build_count_query()
-        count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=30000
-        )
-        total_count = count_result.data[0].get("total", 0) if count_result.data else 0
-
-        trace_ids = [str(row.get("trace_id", "")) for row in page_rows]
-
-        # Phase 2: Eval scores
-        eval_map = {}
-        if trace_ids and eval_config_ids:
-            eval_query, eval_params = builder.build_eval_query(trace_ids)
-            if eval_query:
-                eval_result = analytics.execute_ch_query(
-                    eval_query, eval_params, timeout_ms=30000
-                )
-                eval_map = TraceListQueryBuilder.pivot_eval_results(
-                    [(list(row.values())) for row in eval_result.data],
-                    list(eval_result.data[0].keys()) if eval_result.data else [],
-                )
-
-        # Phase 3: Annotations — fetch from PG Score (unified annotation system)
-        annotation_map = _build_annotation_map_from_scores(
-            trace_ids, annotation_label_ids, label_types
-        )
-
-        # Phase 4 (child spans) removed — observation_span is a detail-only field.
-
-        # Build column config
-        column_config = update_column_config_based_on_eval_config(
-            [], eval_configs, is_simulator=True
-        )
-        column_config = update_span_column_config_based_on_annotations(
-            column_config, annotation_labels
-        )
-
-        # Assemble results
-        results = []
-        for row in page_rows:
-            trace_id = str(row.get("trace_id", ""))
-            span_id = str(row.get("span_id", ""))
-            provider = row.get("provider") or "vapi"
-
-            # Get span_attributes from CH CDC table (Phase 1b)
-            attr_row = attrs_map.get(span_id, {})
-            span_attrs = attr_row.get("span_attributes") or {}
-            provider = attr_row.get("provider") or provider
-
-            # Post-filter simulator calls in Python (can't do in CH without OOM)
-            if sim_flag and VoiceCallListQueryBuilder.is_simulator_call(
-                span_attrs, provider
-            ):
-                continue
-
-            raw_log = span_attrs.get("raw_log") or {}
-            voice_metrics = self._extract_voice_turn_and_talk_metrics(
-                span_attrs, raw_log
-            )
-
-            # Process raw_log through existing provider-specific logic
-            processed_log = ObservabilityService.process_raw_logs(
-                raw_log, provider, span_attributes=span_attrs
-            )
-
-            entry = {
-                **processed_log,
-                "id": trace_id,
-                "trace_id": trace_id,
-                "turn_count": voice_metrics.get("turn_count"),
-                "talk_ratio": voice_metrics.get("talk_ratio"),
-                "agent_talk_percentage": voice_metrics.get("agent_talk_percentage"),
-                "avg_agent_latency_ms": span_attrs.get("avg_agent_latency_ms"),
-                "user_wpm": span_attrs.get("call.user_wpm"),
-                "bot_wpm": span_attrs.get("call.bot_wpm"),
-                "user_interruption_count": span_attrs.get("user_interruption_count"),
-                "ai_interruption_count": span_attrs.get("ai_interruption_count"),
-            }
-            # Only override with voice_metrics if they have values —
-            # otherwise keep the ones computed by process_raw_logs.
-            if voice_metrics.get("turn_count") is not None:
-                entry["turn_count"] = voice_metrics["turn_count"]
-            if voice_metrics.get("talk_ratio") is not None:
-                entry["talk_ratio"] = voice_metrics["talk_ratio"]
-            if voice_metrics.get("agent_talk_percentage") is not None:
-                entry["agent_talk_percentage"] = voice_metrics["agent_talk_percentage"]
-            # Backfill response_time_ms from avg_agent_latency if VAPI didn't set it
-            if not entry.get("response_time_ms") and entry.get("avg_agent_latency_ms"):
-                entry["response_time_ms"] = entry["avg_agent_latency_ms"]
-
-            # Strip heavy fields from list response — these are served by
-            # the voice_call_detail endpoint.
-            for key in self._VOICE_CALL_HEAVY_KEYS:
-                entry.pop(key, None)
-            entry.setdefault("observation_span", [])
-
-            # Include span attributes for custom columns (skip heavy/nested values)
-            for key, value in span_attrs.items():
-                if key in ("raw_log", "call") or key in entry:
-                    continue
-                if isinstance(value, (str, int, float, bool)):
-                    entry[key] = value
-
-            # Add eval metrics
-            trace_evals = eval_map.get(trace_id, {})
-            if trace_evals:
-                metrics = {}
-                for config in eval_configs:
-                    config_id = str(config.id)
-                    if config_id in trace_evals:
-                        scores = trace_evals[config_id]
-                        metric_name = getattr(config, "name", None) or (
-                            getattr(config, "eval_template", None).name
-                            if getattr(config, "eval_template", None)
-                            else None
-                        )
-                        eval_template_config = (
-                            config.eval_template.config
-                            if getattr(config, "eval_template", None)
-                            else {}
-                        ) or {}
-                        output_type = eval_template_config.get("output", "score")
-                        metric_entry = {"name": metric_name, "output_type": output_type}
-                        # All eval rows errored — surface error to frontend
-                        if isinstance(scores, dict) and scores.get("error"):
-                            metric_entry["error"] = True
-                            metrics[config_id] = metric_entry
-                            continue
-                        if isinstance(scores, dict):
-                            if scores.get("per_choice"):
-                                metric_entry["output"] = [
-                                    k for k, v in scores["per_choice"].items() if v > 0
-                                ]
-                                metric_entry["output_type"] = "str_list"
-                            elif "str_list" in scores and scores["str_list"]:
-                                metric_entry["output"] = scores["str_list"]
-                                metric_entry["output_type"] = "str_list"
-                            elif "avg_score" in scores:
-                                score_val = scores.get("avg_score") or scores.get(
-                                    "pass_rate"
-                                )
-                                if output_type == "Pass/Fail":
-                                    metric_entry["output"] = (
-                                        "Pass"
-                                        if score_val and score_val > 0
-                                        else "Fail"
-                                    )
-                                else:
-                                    metric_entry["output"] = (
-                                        round(score_val, 2)
-                                        if isinstance(score_val, (int, float))
-                                        else score_val
-                                    )
-                        else:
-                            metric_entry["output"] = scores
-                        metrics[config_id] = metric_entry
-                if metrics:
-                    entry["eval_outputs"] = metrics
-
-            # Add annotation outputs — flatten onto the row for frontend grid compatibility
-            # Frontend valueGetter reads params.data[labelId] directly
-            trace_annotations = annotation_map.get(trace_id, {})
-            if trace_annotations:
-                annotation_outputs = {}
-                for label in annotation_labels:
-                    label_id = str(label.id)
-                    if label_id in trace_annotations:
-                        entry[label_id] = trace_annotations[label_id]
-                        annotation_outputs[label_id] = trace_annotations[label_id]
-                if annotation_outputs:
-                    entry["annotation_outputs"] = annotation_outputs
-
-            results.append(entry)
-
-        # Return DRF-style paginated response
-        import math
-
-        total_pages = math.ceil(total_count / page_size) if page_size else 1
-        response_data = {
-            "count": total_count,
-            "total_pages": total_pages,
-            "current_page": page,
-            "next": None,
-            "previous": None,
-            "results": results,
-            "config": column_config,
-        }
-        if page < total_pages:
-            response_data["next"] = page + 1
-        if page > 1:
-            response_data["previous"] = page - 1
-
-        from rest_framework.response import Response
-
-        return Response(response_data)
 
     def _list_traces_clickhouse(
         self, request, project_version_id, analytics, query_params

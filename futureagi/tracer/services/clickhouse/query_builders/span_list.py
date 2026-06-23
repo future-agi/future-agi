@@ -360,6 +360,14 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ), NULL) AS pass_rate,
+            -- Exact Pass/Fail span counts for the count-mode pivot
+            -- (list_spans_observe). Additive; default pivot mode ignores them.
+            countIf(
+                output_bool = 1 AND error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ) AS pass_count,
+            countIf(
+                output_bool = 0 AND error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ) AS fail_count,
             countIf(
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ) AS success_count,
@@ -419,15 +427,23 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     @staticmethod
     def pivot_eval_results(
         eval_rows: list[dict],
+        count_mode: bool = False,
     ) -> dict[str, dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by span_id.
 
+        Args:
+            eval_rows: Rows from the Phase-2 eval query.
+            count_mode: When True (used by ``list_spans_observe``), surface raw
+                appearance counts instead of averages — CHOICES rows return
+                ``{"choice_counts": {label: n}}`` and the score/passfail cell is
+                a dict carrying ``avg_score`` + exact ``pass_count`` /
+                ``fail_count`` (consumed by ``eval_count_cell``). Defaults to
+                False so existing callers keep the number / per-choice output.
+
         Returns:
             ``{span_id: {eval_config_id: score_value_or_error_marker}}``.
-            Value is a number for successful evals or ``{"error": True}``
-            when all rows for the (span, config) pair errored. For CHOICES
-            evals (non-empty ``str_lists``) the value is a ``{choice: pct}``
-            dict that the caller spreads into ``{config_id}**{choice}`` keys.
+            Default mode: a number for successful evals, ``{choice: pct}`` for
+            CHOICES, or ``{"error": True}``. count_mode: see above.
         """
         import json as _json
 
@@ -437,6 +453,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             config_id = str(row.get("eval_config_id", ""))
             avg_score = row.get("avg_score")
             pass_rate = row.get("pass_rate")
+            pass_count = row.get("pass_count", 0) or 0
+            fail_count = row.get("fail_count", 0) or 0
             success_count = row.get("success_count", 0) or 0
             error_count = row.get("error_count", 0) or 0
             str_lists = row.get("str_lists") or []
@@ -475,8 +493,31 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 for lst in parsed:
                     for choice in set(lst):
                         counts[choice] = counts.get(choice, 0) + 1
-                per_choice = {k: round(100.0 * v / total, 2) for k, v in counts.items()}
-                result.setdefault(span_id, {})[config_id] = per_choice
+                if count_mode:
+                    result.setdefault(span_id, {})[config_id] = {
+                        "choice_counts": counts,
+                    }
+                else:
+                    per_choice = {
+                        k: round(100.0 * v / total, 2) for k, v in counts.items()
+                    }
+                    result.setdefault(span_id, {})[config_id] = per_choice
+                continue
+
+            if count_mode:
+                # Chip-style cell consumed by ``eval_count_cell``: numeric
+                # average plus exact Pass/Fail counts. ``avg_score`` is the
+                # display value for Score evals (×100 to match PG format).
+                avg_display = (
+                    round(avg_score * 100, 2)
+                    if avg_score is not None and avg_score != 0
+                    else None
+                )
+                result.setdefault(span_id, {})[config_id] = {
+                    "avg_score": avg_display,
+                    "pass_count": pass_count,
+                    "fail_count": fail_count,
+                }
                 continue
 
             # Determine the score value matching PG format

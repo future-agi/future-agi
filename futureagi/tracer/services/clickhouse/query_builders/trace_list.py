@@ -451,6 +451,15 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ), NULL) AS pass_rate,
+            -- Exact Pass/Fail span counts for the count-mode pivot
+            -- (list_traces_of_session). Additive columns; consumers using
+            -- the default pivot mode ignore them.
+            countIf(
+                output_bool = 1 AND error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ) AS pass_count,
+            countIf(
+                output_bool = 0 AND error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ) AS fail_count,
             countIf(
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ) AS success_count,
@@ -644,12 +653,19 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     def pivot_eval_results(
         eval_rows: List[Tuple],
         eval_columns: List[str],
+        count_mode: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by trace_id.
 
         Args:
             eval_rows: Rows from the Phase-2 eval query.
             eval_columns: Column names for those rows.
+            count_mode: When True (used by ``list_traces_of_session``), surface
+                raw appearance counts instead of averages — CHOICES rows return
+                ``{"choice_counts": {label: n}}`` and the score/passfail dict
+                carries exact ``pass_count`` / ``fail_count``. Defaults to False
+                so every other caller keeps the avg/pass-rate/per-choice output
+                byte-for-byte.
 
         Returns:
             A dict of ``{trace_id: {eval_config_id: score_dict}}``.
@@ -673,9 +689,11 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             config_id = str(_get(row, "eval_config_id", 1, ""))
             avg_score = _get(row, "avg_score", 2)
             pass_rate = _get(row, "pass_rate", 3)
-            success_count = _get(row, "success_count", 4, 0) or 0
-            error_count = _get(row, "error_count", 5, 0) or 0
-            str_lists = _get(row, "str_lists", 7, []) or []
+            pass_count = _get(row, "pass_count", 4, 0) or 0
+            fail_count = _get(row, "fail_count", 5, 0) or 0
+            success_count = _get(row, "success_count", 6, 0) or 0
+            error_count = _get(row, "error_count", 7, 0) or 0
+            str_lists = _get(row, "str_lists", 9, []) or []
 
             # All rows errored — surface an explicit error marker so the
             # UI can render an error state (distinct from "no eval run").
@@ -712,12 +730,18 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 for lst in parsed:
                     for choice in set(lst):
                         counts[choice] = counts.get(choice, 0) + 1
-                per_choice = {
-                    k: round(100.0 * v / total, 2) for k, v in counts.items()
-                }
-                result.setdefault(trace_id, {})[config_id] = {
-                    "per_choice": per_choice,
-                }
+                if count_mode:
+                    # Raw appearance counts per choice (one column, chip-style).
+                    result.setdefault(trace_id, {})[config_id] = {
+                        "choice_counts": counts,
+                    }
+                else:
+                    per_choice = {
+                        k: round(100.0 * v / total, 2) for k, v in counts.items()
+                    }
+                    result.setdefault(trace_id, {})[config_id] = {
+                        "per_choice": per_choice,
+                    }
                 continue
 
             # ClickHouse ``avgIf`` returns NaN when no rows pass the
@@ -736,11 +760,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 "avg_score": (
                     round(avg_score * 100, 2) if _finite(avg_score) else None
                 ),
-                "pass_rate": (
-                    round(pass_rate, 2) if _finite(pass_rate) else None
-                ),
-                "count": _get(row, "eval_count", 6, 0) or 0,
+                "pass_rate": (round(pass_rate, 2) if _finite(pass_rate) else None),
+                "count": _get(row, "eval_count", 8, 0) or 0,
             }
+            if count_mode:
+                # Exact Pass/Fail span counts; the session view emits these as
+                # ``{"pass": n, "fail": n}`` for Pass/Fail evals.
+                score_data["pass_count"] = pass_count
+                score_data["fail_count"] = fail_count
             result.setdefault(trace_id, {})[config_id] = score_data
 
         return result

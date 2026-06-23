@@ -6212,9 +6212,9 @@ class TestVoiceCallListPhase1bMigration:
     def _voice_list_source() -> str:
         import inspect
 
-        from tracer.views.trace import TraceView
+        from tracer.services.observe_list import build_voice_calls_list
 
-        return inspect.getsource(TraceView._list_voice_calls_clickhouse)
+        return inspect.getsource(build_voice_calls_list)
 
     def test_phase_1b_does_not_query_legacy_cdc_mirror(self):
         """The Phase 1b hydration must NOT read `tracer_observation_span`.
@@ -6232,7 +6232,7 @@ class TestVoiceCallListPhase1bMigration:
         src = self._voice_list_source()
         # Ban the actual query, not the comments that document the cutover.
         assert not re.search(r"FROM\s+tracer_observation_span", src), (
-            "_list_voice_calls_clickhouse references the legacy CDC mirror; "
+            "build_voice_calls_list references the legacy CDC mirror; "
             "the Phase 1b query must read from the v2 `spans` table."
         )
         # Narrow the `_peerdb_is_deleted` ban to the Phase 1b block, found
@@ -6260,7 +6260,7 @@ class TestVoiceCallListPhase1bMigration:
         # v2 dedup contract. FINAL alone (without `spans`) is too permissive.
         assert re.search(
             r"FROM\s+spans\s+FINAL", src
-        ), "_list_voice_calls_clickhouse must hydrate from v2 `spans FINAL`."
+        ), "build_voice_calls_list must hydrate from v2 `spans FINAL`."
         assert "is_deleted = 0" in src
 
     def test_phase_1b_selects_typed_map_columns_for_reconstruction(self):

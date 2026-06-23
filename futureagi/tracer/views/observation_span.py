@@ -94,6 +94,8 @@ from tracer.utils.eval import (
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
     FieldConfig,
+    build_eval_task_map,
+    eval_count_cell,
     get_annotation_labels_for_project,
     get_default_span_config,
     update_column_config_based_on_eval_config,
@@ -1397,19 +1399,29 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
+        # Get eval config IDs (with the eval_task + target_type each was applied
+        # under) from CH. Only non-deleted rows count; build_eval_task_map keeps
+        # the most-recent surviving (task, target_type) per config.
         eval_config_ids = []
         ch_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
+            "SELECT toString(custom_eval_config_id) AS cid, "
+            "toString(eval_task_id) AS task_id, "
+            "target_type AS target_type, "
+            "max(created_at) AS last_seen "
             "FROM tracer_eval_logger FINAL "
             "WHERE _peerdb_is_deleted = 0 "
             "AND (deleted = 0 OR deleted IS NULL) "
             "AND dictGet('trace_dict', 'project_id', "
-            "trace_id) = toUUID(%(pid)s)",
+            "trace_id) = toUUID(%(pid)s) "
+            "GROUP BY cid, task_id, target_type",
             {"pid": str(project_id)},
             timeout_ms=30000,
         )
-        ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
+        discovery_rows = [
+            (r.get("cid"), r.get("task_id"), r.get("target_type"), r.get("last_seen"))
+            for r in ch_result.data
+        ]
+        ch_ids = [str(r[0]) for r in discovery_rows if r[0]]
         if ch_ids:
             eval_configs = CustomEvalConfig.objects.filter(
                 id__in=ch_ids, deleted=False
@@ -1417,6 +1429,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             eval_config_ids = [str(c.id) for c in eval_configs]
         else:
             eval_configs = []
+        eval_task_map = build_eval_task_map(discovery_rows, eval_config_ids)
 
         # Labels can be project-local or org/shared labels that are referenced
         # by span scores. Use the score-backed helper so span columns and
@@ -1476,7 +1489,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 eval_result = analytics.execute_ch_query(
                     eval_query, eval_params, timeout_ms=5000
                 )
-                eval_map = SpanListQueryBuilder.pivot_eval_results(eval_result.data)
+                eval_map = SpanListQueryBuilder.pivot_eval_results(
+                    eval_result.data, count_mode=True
+                )
 
         # Phase 3: Annotations
         annotation_map = {}
@@ -1539,8 +1554,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         column_config.append(
             asdict(FieldConfig(id="cost", name="Cost", is_visible=True, group_by=None))
         )
+        # skip_choices=True: CHOICES evals render as a SINGLE chip-style column
+        # carrying per-label counts, not one column per choice.
         column_config = update_column_config_based_on_eval_config(
-            column_config, eval_configs
+            column_config, eval_configs, skip_choices=True, eval_task_map=eval_task_map
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
@@ -1612,19 +1629,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 if config_id not in span_evals:
                     continue
                 val = span_evals[config_id]
-                # CHOICES eval: spread per-choice percentages into separate
-                # columns keyed ``{config_id}**{choice}`` to match the
-                # column config produced by
-                # ``update_column_config_based_on_eval_config``.
-                if isinstance(val, dict) and not val.get("error") and val:
-                    for choice, pct in val.items():
-                        entry[f"{config_id}**{choice}"] = pct
-                else:
+                # count_mode chip value (ONE column per eval): Pass/Fail ->
+                # {"pass","fail"}, Choices -> {label: count}, Score -> average.
+                if isinstance(val, dict) and val.get("error"):
                     entry[config_id] = val
-                    if isinstance(val, dict):
-                        entry[config_id] = val.get("score")
-                    else:
-                        entry[config_id] = val
+                    continue
+                entry[config_id] = eval_count_cell(val, config)
 
             # Add annotations
             span_annotations = annotation_map.get(span_id, {})
