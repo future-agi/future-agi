@@ -83,6 +83,7 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
 
+from tfc.billing.boundary import get_billing
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
@@ -93,10 +94,6 @@ try:
 except ImportError:
     OrganizationSubscription = None
     SubscriptionTierChoices = None
-try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
-except ImportError:
-    log_and_deduct_cost_for_resource_request = None
 
 logger = structlog.get_logger(__name__)
 
@@ -2029,20 +2026,16 @@ class ManageTeamView(APIView):
             ).values_list("user_id", flat=True)
             user_count = User.objects.filter(id__in=org_user_ids).count()
             logger.info(f"member_count: {len(members_data)} user_count: {user_count}")
-            # Resource limit / billing requires ee — skip the deduction and
-            # treat as always-allowed when absent.
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    organization,
-                    APICallTypeChoices.USER_ADD.value,
-                    config={"user_count": user_count, "extra_users": len(members_data)},
-                    workspace=workspace,
-                )
-            else:
-                call_log_row = None
-            if log_and_deduct_cost_for_resource_request is not None and (
-                call_log_row is None
-                or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+            billing = get_billing()
+            call_log_row = billing.log_and_deduct(
+                organization=organization,
+                api_call_type=APICallTypeChoices.USER_ADD.value,
+                config={"user_count": user_count, "extra_users": len(members_data)},
+                workspace=workspace,
+            )
+            if (
+                call_log_row is not None
+                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
             ):
                 config = json.loads(call_log_row.config)
                 return self._gm.too_many_requests(

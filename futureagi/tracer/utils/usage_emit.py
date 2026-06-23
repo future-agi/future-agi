@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import importlib.util
-
 import structlog
+
+from tfc.billing.boundary import BillingEventType, get_billing
 
 logger = structlog.get_logger(__name__)
 
@@ -58,35 +58,20 @@ def emit_span_ingestion_usage(
     source: str,
 ) -> None:
     try:
-        try:
-            from ee.usage.deployment import DeploymentMode
-        except ImportError:
-            # ee absent means OSS; ee present but failing to import means
-            # billing would silently turn off — surface that instead.
-            if importlib.util.find_spec("ee") is None:
-                return
-            raise
-
-        if DeploymentMode.is_oss():
-            return
-
-        from ee.usage.schemas.event_types import BillingEventType
-        from ee.usage.schemas.events import UsageEvent
-        from ee.usage.services.emitter import emit
-
+        # In OSS, get_billing() returns _NoopBilling which silently no-ops.
+        # In EE/Cloud, it delegates to ee.usage.
+        billing = get_billing()
         org_id_str = str(organization_id)
 
         # Voice recording rehost lands real bytes in our S3 — bill storage
         # regardless of the org's tracing billing mode.
         if source == "voice_recording_rehost":
             if payload_bytes:
-                emit(
-                    UsageEvent(
-                        org_id=org_id_str,
-                        event_type=BillingEventType.OBSERVE_ADD,
-                        amount=payload_bytes,
-                        properties={"source": source},
-                    )
+                billing.record_usage(
+                    org_id_str,
+                    BillingEventType.OBSERVE_ADD,
+                    amount=payload_bytes,
+                    source=source,
                 )
             return
 
@@ -95,16 +80,14 @@ def emit_span_ingestion_usage(
 
         if mode == "storage":
             if payload_bytes:
-                props = {"source": source}
+                props: dict = {"source": source}
                 if tracing_units:
                     props["units"] = tracing_units
-                emit(
-                    UsageEvent(
-                        org_id=org_id_str,
-                        event_type=BillingEventType.OBSERVE_ADD,
-                        amount=payload_bytes,
-                        properties=props,
-                    )
+                billing.record_usage(
+                    org_id_str,
+                    BillingEventType.OBSERVE_ADD,
+                    amount=payload_bytes,
+                    **props,
                 )
             return
 
@@ -112,13 +95,12 @@ def emit_span_ingestion_usage(
         # is not billed in events mode, and the only OBSERVE_ADD line in
         # events mode comes from the voice_recording_rehost branch above.
         if tracing_units:
-            emit(
-                UsageEvent(
-                    org_id=org_id_str,
-                    event_type=BillingEventType.TRACING_EVENT,
-                    amount=tracing_units,
-                    properties={"traces": tracing_units, "source": source},
-                )
+            billing.record_usage(
+                org_id_str,
+                BillingEventType.TRACING_EVENT,
+                amount=tracing_units,
+                traces=tracing_units,
+                source=source,
             )
     except Exception:
         logger.exception("usage_metering_skipped")

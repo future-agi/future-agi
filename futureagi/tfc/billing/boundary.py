@@ -90,6 +90,16 @@ class Billing:
         """Create an APICallLog row and gate on credits.  No-ops in OSS."""
         raise NotImplementedError
 
+    def log_and_deduct_resource(
+        self,
+        organization: Any,
+        api_call_type: str,
+        config: Optional[dict] = None,
+        workspace: Any = None,
+    ) -> Any:
+        """Gate resource creation (datasets, rows, KB) and log the attempt.  No-ops in OSS."""
+        raise NotImplementedError
+
     def ai_credits(self, cost_usd: float) -> int:
         """Convert a raw LLM cost (USD) to AI credits.  Returns 0 in OSS."""
         raise NotImplementedError
@@ -130,6 +140,9 @@ class _NoopBilling(Billing):
         return _ALLOW
 
     def log_and_deduct(self, **kw):
+        return None
+
+    def log_and_deduct_resource(self, organization, api_call_type, config=None, workspace=None):
         return None
 
     def ai_credits(self, cost_usd):
@@ -181,6 +194,13 @@ class _EeBilling(Billing):
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 
         return log_and_deduct_cost_for_api_request(**kw)
+
+    def log_and_deduct_resource(self, organization, api_call_type, config=None, workspace=None):
+        from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
+
+        return log_and_deduct_cost_for_resource_request(
+            organization, api_call_type, config=config, workspace=workspace
+        )
 
     def ai_credits(self, cost_usd):
         from ee.usage.services.config import BillingConfig

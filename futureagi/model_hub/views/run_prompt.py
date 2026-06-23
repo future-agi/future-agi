@@ -105,12 +105,8 @@ from tfc.utils.storage import (
     convert_image_from_url_to_base64,
     detect_audio_format,
 )
+from tfc.billing.boundary import get_billing
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-
-try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
-except ImportError:
-    log_and_deduct_cost_for_api_request = None
 
 
 def _request_organization(request):
@@ -1321,15 +1317,15 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
-                if log_and_deduct_cost_for_api_request is not None:
-                    try:
-                        api_call_config = {"reference_id": str(self.run_prompt_id)}
-                        api_call_log_row = log_and_deduct_cost_for_api_request(
-                            self.run_prompt_model.organization,
-                            APICallTypeChoices.DATASET_RUN_PROMPT.value,
-                            config=api_call_config,
-                            workspace=row.dataset.workspace,
-                        )
+                billing = get_billing()
+                try:
+                    api_call_config = {"reference_id": str(self.run_prompt_id)}
+                    api_call_log_row = billing.log_and_deduct(
+                        organization=self.run_prompt_model.organization,
+                        api_call_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
+                        config=api_call_config,
+                        workspace=row.dataset.workspace,
+                    )
                         logger.info(
                             "RunPrompts_process_row_api_call_logged",
                             run_prompt_id=str(self.run_prompt_id),
@@ -1380,26 +1376,12 @@ class RunPrompts:
 
                 # Dual-write: emit usage event for new billing system
                 try:
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
-
-                    if emit is not None and UsageEvent is not None:
-                        emit(
-                            UsageEvent(
-                                org_id=str(self.run_prompt_model.organization.id),
-                                event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
-                                properties={
-                                    "source": "dataset_run_prompt",
-                                    "source_id": str(self.run_prompt_id),
-                                },
-                            )
-                        )
+                    billing.record_usage(
+                        str(self.run_prompt_model.organization.id),
+                        APICallTypeChoices.DATASET_RUN_PROMPT.value,
+                        source="dataset_run_prompt",
+                        source_id=str(self.run_prompt_id),
+                    )
                 except Exception:
                     pass  # Metering failure must not break the action
 

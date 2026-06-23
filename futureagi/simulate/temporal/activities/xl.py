@@ -39,6 +39,7 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationOutput,
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
+from tfc.billing.boundary import get_billing
 
 logger = structlog.get_logger(__name__)
 
@@ -1253,10 +1254,6 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from tfc.utils.error_codes import get_specific_error_message
     from tracer.models.observability_provider import ProviderChoices
     from tfc.constants.api_calls import APICallStatusChoices
-    try:
-        from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
-    except ImportError:
-        log_and_deduct_cost_for_api_request = None
 
     try:
         # Skip if no service_provider_call_id for VOICE agents
@@ -1485,16 +1482,12 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
 
                 api_call_type = _get_api_call_type(model=None)
 
-                try:
-                    from ee.usage.services.metering import check_usage
-                except ImportError:
-                    check_usage = None
-
-                usage_check = check_usage(str(organization.id), api_call_type)
+                billing = get_billing()
+                usage_check = billing.check_usage(str(organization.id), api_call_type)
                 if not usage_check.allowed:
                     raise ValueError(usage_check.reason or "Usage limit exceeded")
 
-                api_call_log_row = log_and_deduct_cost_for_api_request(
+                api_call_log_row = billing.log_and_deduct(
                     organization=organization,
                     api_call_type=api_call_type,
                     config=source_config,
@@ -1551,20 +1544,8 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     f"Successfully evaluated {column_name} for call {call_execution.id}: {result_status}"
                 )
 
-                # Dual-write: emit cost-based usage event
+                # Emit cost-based usage event
                 try:
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.config import BillingConfig
-                    except ImportError:
-                        BillingConfig = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
                     try:
                         from ee.usage.utils.event_properties import llm_usage_properties
                     except ImportError:
@@ -1575,20 +1556,16 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                         actual_cost = getattr(agent.llm, "cost", {}).get(
                             "total_cost", 0
                         )
-                    credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+                    credits = billing.ai_credits(actual_cost)
 
-                    emit(
-                        UsageEvent(
-                            org_id=str(organization.id),
-                            event_type=api_call_type,
-                            amount=credits,
-                            properties={
-                                "source": "simulate_tool_evaluation",
-                                "source_id": str(test_execution.id),
-                                "raw_cost_usd": str(actual_cost),
-                                **llm_usage_properties(agent),
-                            },
-                        )
+                    billing.record_usage(
+                        str(organization.id),
+                        api_call_type,
+                        amount=credits,
+                        source="simulate_tool_evaluation",
+                        source_id=str(test_execution.id),
+                        raw_cost_usd=str(actual_cost),
+                        **llm_usage_properties(agent),
                     )
                 except Exception:
                     pass  # Metering failure must not break the action
