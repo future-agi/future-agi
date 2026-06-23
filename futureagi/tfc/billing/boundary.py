@@ -108,6 +108,15 @@ class Billing:
         """Entitlement gate — returns False (fail-CLOSED) in OSS."""
         raise NotImplementedError
 
+    def check_feature_gate(self, org_id: str, feature: str) -> UsageDecision:
+        """Feature gate check with denial reason (richer than has_feature).
+
+        Use this when the caller needs the denial reason (e.g. to return it
+        in an API response).  Returns UsageDecision(allowed=False) in OSS.
+        EE calls Entitlements.check_feature so existing test mocks work.
+        """
+        raise NotImplementedError
+
     def can_create(
         self,
         org_id: str,
@@ -174,6 +183,9 @@ class _NoopBilling(Billing):
 
     def has_feature(self, org_id, feature):
         return False  # entitlement: fail-CLOSED — avoids the develop_annotations leak
+
+    def check_feature_gate(self, org_id, feature):
+        return UsageDecision(allowed=False, reason="This feature requires an EE or Cloud plan.")
 
     def can_create(self, org_id, resource, current_count=0):
         return _ALLOW
@@ -253,6 +265,17 @@ class _EeBilling(Billing):
         from ee.usage.services.entitlements import Entitlements
 
         return Entitlements.has_feature_unified(str(org_id), feature)
+
+    def check_feature_gate(self, org_id, feature):
+        from ee.usage.services.entitlements import Entitlements
+
+        result = Entitlements.check_feature(str(org_id), feature)
+        return UsageDecision(
+            allowed=getattr(result, "allowed", True),
+            reason=getattr(result, "reason", ""),
+            error_code=getattr(result, "error_code", ""),
+            upgrade_cta=_cta_dict(getattr(result, "upgrade_cta", None)),
+        )
 
     def can_create(self, org_id, resource, current_count=0):
         from ee.usage.services.entitlements import Entitlements

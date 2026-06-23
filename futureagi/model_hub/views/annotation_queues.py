@@ -2878,8 +2878,9 @@ def _check_annotation_queue_create_limit(org, workspace=None):
 def _review_workflow_entitlement_denial(request):
     org = getattr(request, "organization", None) or request.user.organization
     billing = get_billing()
-    if not billing.has_feature(str(org.id), "has_review_workflow"):
-        return "Review workflow is not available on your plan."
+    result = billing.check_feature_gate(str(org.id), "has_review_workflow")
+    if not result.allowed:
+        return result.reason or "Review workflow is not available on your plan."
     return None
 
 
