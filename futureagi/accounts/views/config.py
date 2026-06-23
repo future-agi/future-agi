@@ -42,8 +42,11 @@ def public_config(request):
     Cloud returns the current region and available regions list.
 
     """
-    from tfc.ee_gating import is_cloud as _is_cloud_fn
-    is_cloud = _is_cloud_fn()
+    try:
+        from ee.usage.deployment import DeploymentMode as _DM
+        is_cloud = _DM.is_cloud()
+    except ImportError:
+        is_cloud = False
 
     return Response(
         {
