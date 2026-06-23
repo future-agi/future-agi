@@ -26,7 +26,7 @@ export const usePdfPreviewStore = create((set, get) => ({
 
 const getFileType = (name = "") => {
   const ext = name.split(".").pop()?.toLowerCase();
-  if (["pdf", "txt", "doc", "docx"].includes(ext)) return ext;
+  if (["pdf", "txt", "doc", "docx", "png", "jpg", "jpeg", "webp", "gif", "svg", "bmp"].includes(ext)) return ext;
   return "unknown";
 };
 
