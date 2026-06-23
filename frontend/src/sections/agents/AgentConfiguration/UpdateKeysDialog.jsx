@@ -25,6 +25,7 @@ const UpdateKeysDialogChild = ({
     if (!agentDetails) return null;
     return {
       ...agentDetails,
+      api_key: agentDetails.api_key ?? agentDetails.apiKey,
       configuration_snapshot: {
         ...agentDetails.configuration_snapshot,
         commit_message: "Updated keys",

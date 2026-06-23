@@ -13,7 +13,9 @@ from rest_framework.viewsets import ModelViewSet
 from retell.lib.webhook_auth import verify as verify_retell_webhook
 
 from accounts.utils import get_request_organization
-from simulate.models import AgentDefinition
+from simulate.models import AgentDefinition, AgentVersion
+from simulate.models.agent_definition import ProviderCredentials
+from simulate.services.agent_definition import is_masked, resolve_api_key_for_version
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
@@ -180,6 +182,10 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
         try:
             provider = request.data.get("provider")
             api_key = request.data.get("api_key")
+
+            if is_masked(api_key):
+                return self._gm.success_response("API key verified successfully.")
+
             if provider in [
                 ProviderChoices.VAPI,
                 ProviderChoices.RETELL,
@@ -210,6 +216,32 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             assistant_id = request.data.get("assistant_id")
             api_key = request.data.get("api_key")
             provider = request.data.get("provider")
+
+            if is_masked(api_key):
+                # Prefer the active/latest version's credentials to avoid
+                # picking up a version with an empty key.
+                agent = AgentDefinition.objects.filter(
+                    assistant_id=assistant_id,
+                ).first()
+                target_version = None
+                if agent:
+                    target_version = agent.active_version or agent.latest_version
+                creds = None
+                if target_version:
+                    try:
+                        creds = target_version.credentials
+                        if creds and not creds.get_api_key():
+                            creds = None
+                    except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                        creds = None
+                if not creds:
+                    creds = ProviderCredentials.objects.filter(
+                        assistant_id=assistant_id,
+                        provider_type=provider,
+                    ).exclude(api_key="").exclude(api_key__isnull=True).first()
+                if creds and creds.get_api_key():
+                    api_key = creds.get_api_key()
+
             if provider in [
                 ProviderChoices.VAPI,
                 ProviderChoices.RETELL,
@@ -240,20 +272,17 @@ class WebhookHandlerView(APIView):
 
     def get_api_key(self, agent_definition: AgentDefinition):
         try:
-            api_key = None
             if not agent_definition:
                 return None
 
             agent_version = agent_definition.latest_version
-            if agent_version:
-                api_key = agent_version.configuration_snapshot.get("api_key")
-            else:
+            if not agent_version:
                 logger.warning(
                     f"No agent version found for agent {agent_definition.id}"
                 )
                 return None
 
-            return api_key
+            return resolve_api_key_for_version(agent_version)
         except Exception as e:
             logger.exception(f"Error getting webhook secret: {e}")
             return None

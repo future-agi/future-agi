@@ -11,6 +11,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 import structlog
+from asgiref.sync import sync_to_async
 
 from simulate.models.chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
 from simulate.pydantic_schemas.chat import (
@@ -325,8 +326,6 @@ class FutureAGIChatService(ChatServiceBlueprint):
 
     async def send_message_async(self, input: SendMessageInput) -> SendMessageResult:
         """Async wrapper — delegates to sync send_message via thread."""
-        from asgiref.sync import sync_to_async
-
         return await sync_to_async(self.send_message)(input)
 
     # ------------------------------------------------------------------

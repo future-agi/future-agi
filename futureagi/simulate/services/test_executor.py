@@ -101,6 +101,7 @@ from simulate.models.run_test import CreateCallExecution
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import SimulationCallType
+from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
 try:
     from ee.voice.services.conversation_metrics import ConversationMetricsCalculator
@@ -273,12 +274,7 @@ class TestExecutor:
                                 if call.agent_version
                                 else agent_def.latest_version
                             )
-                            snapshot = agent_version.configuration_snapshot
-                            api_key = (
-                                snapshot.get("api_key")
-                                if snapshot and snapshot.get("api_key")
-                                else None
-                            )
+                            api_key = resolve_api_key_for_version(agent_version)
                             if not api_key:
                                 error_msg = f"Outbound call {call.id} is missing an api_key on AgentVersion {agent_version.id if agent_version else None}. Cancelling."
                                 logger.error(error_msg)
@@ -2112,20 +2108,30 @@ class TestExecutor:
                 if run_test.agent_version
                 else agent_definition.latest_version
             )
-            snapshot = agent_version.configuration_snapshot
 
-            if not snapshot.get("api_key"):
+            if not resolve_api_key_for_version(agent_version):
                 return (
                     False,
                     "API key required for outbound calls. Please configure api_key in agent definition.",
                 )
 
-            if not snapshot.get("assistant_id"):
+            assistant_id = None
+            if agent_version:
+                try:
+                    creds = agent_version.credentials
+                    if creds:
+                        assistant_id = creds.assistant_id
+                except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                    pass
+            if not assistant_id and agent_version and agent_version.configuration_snapshot:
+                assistant_id = agent_version.configuration_snapshot.get("assistant_id")
+            if not assistant_id:
                 return (
                     False,
                     "Assistant ID required for outbound calls. Please configure assistant_id in agent definition.",
                 )
 
+            snapshot = agent_version.configuration_snapshot if agent_version else {}
             if not snapshot.get("contact_number"):
                 return (
                     False,
@@ -2546,9 +2552,20 @@ class TestExecutor:
 
             if not inbound:
                 metadata["call_direction"] = "outbound"
-                metadata["user_assistant_id"] = snapshot.get("assistant_id")
                 metadata["user_phone_number"] = call_execution_phone_number
-                metadata["user_api_key"] = snapshot.get("api_key")
+
+                metadata["user_api_key"] = resolve_api_key_for_version(selected_version)
+                assistant_id = None
+                if selected_version:
+                    try:
+                        creds = selected_version.credentials
+                        if creds:
+                            assistant_id = creds.assistant_id
+                    except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                        pass
+                if not assistant_id:
+                    assistant_id = snapshot.get("assistant_id")
+                metadata["user_assistant_id"] = assistant_id
 
             # Ensure call_data metadata is a dictionary
             call_metadata = call_data.get("metadata", {})
@@ -2903,9 +2920,8 @@ class TestExecutor:
                     if call_execution.agent_version
                     else agent_def.latest_version
                 )
-                snapshot = agent_version.configuration_snapshot
                 voice_service_manager = VoiceServiceManager(
-                    api_key=snapshot.get("api_key")
+                    api_key=resolve_api_key_for_version(agent_version)
                 )
             else:
                 # Use system credentials for inbound calls
@@ -3011,21 +3027,17 @@ class TestExecutor:
             resolved_agent_version = call_execution.agent_version
             if not resolved_agent_version and agent_def:
                 resolved_agent_version = agent_def.latest_version
-            configuration_snapshot = (
-                resolved_agent_version.configuration_snapshot
-                if resolved_agent_version
-                else {}
-            )
-            customer_api_key = (
-                configuration_snapshot.get("api_key")
-                if configuration_snapshot
-                else None
-            )
-            customer_assistant_id = (
-                configuration_snapshot.get("assistant_id")
-                if configuration_snapshot
-                else None
-            )
+            customer_api_key = resolve_api_key_for_version(resolved_agent_version)
+            customer_assistant_id = None
+            if resolved_agent_version:
+                try:
+                    creds = resolved_agent_version.credentials
+                    if creds:
+                        customer_assistant_id = creds.assistant_id
+                except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                    pass
+            if not customer_assistant_id and resolved_agent_version and resolved_agent_version.configuration_snapshot:
+                customer_assistant_id = resolved_agent_version.configuration_snapshot.get("assistant_id")
 
             # Determine call direction and use appropriate service
             is_outbound = (
@@ -5166,17 +5178,17 @@ class TestExecutor:
                 # Extract tool calls from chat messages
                 tool_calls_data = agent._extract_tool_calls(call_data)
             else:
-                customer_api_key = (
-                    snapshot.get("api_key")
-                    if snapshot and snapshot.get("api_key")
-                    else None
-                )
-
-                customer_assistant_id = (
-                    snapshot.get("assistant_id")
-                    if snapshot and snapshot.get("assistant_id")
-                    else None
-                )
+                customer_api_key = resolve_api_key_for_version(agent_version)
+                customer_assistant_id = None
+                if agent_version:
+                    try:
+                        creds = agent_version.credentials
+                        if creds:
+                            customer_assistant_id = creds.assistant_id
+                    except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                        pass
+                if not customer_assistant_id and agent_version and agent_version.configuration_snapshot:
+                    customer_assistant_id = agent_version.configuration_snapshot.get("assistant_id")
 
                 # Handle VOICE agents (existing logic)
                 logger.info("Processing VOICE agent - using call data")

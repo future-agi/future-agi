@@ -200,7 +200,10 @@ const TestEvaluationPage = ({
         return;
       }
       const vapiApiKey =
-        configurationSnapshot?.api_key ?? configurationSnapshot?.apiKey;
+        agentVersionDetails?.api_key ??
+        agentVersionDetails?.apiKey ??
+        configurationSnapshot?.api_key ??
+        configurationSnapshot?.apiKey;
       const vapiAssistantId =
         configurationSnapshot?.assistant_id ??
         configurationSnapshot?.assistantId;

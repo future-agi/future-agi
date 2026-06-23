@@ -11,6 +11,7 @@ connection pool exhaustion when using PgBouncer. Without this, connections
 accumulate and hit PgBouncer's pool limit (~20 by default).
 """
 
+from asgiref.sync import sync_to_async
 from django.db import close_old_connections
 from temporalio import activity
 
@@ -209,15 +210,15 @@ async def check_call_balance(input: CheckBalanceInput) -> CheckBalanceOutput:
     try:
         activity.logger.info(f"Checking call usage for org_id={input.org_id}")
 
-        from asgiref.sync import sync_to_async
-
         try:
             from ee.usage.services.metering import check_usage
         except ImportError:
             check_usage = None
 
         # Check voice_call limit (covers both voice and text — both are sim calls)
-        result = await sync_to_async(check_usage)(input.org_id, "voice_call")
+        if check_usage is None:
+            return CheckBalanceOutput(sufficient=True)
+        result = await sync_to_async(check_usage, thread_sensitive=True)(input.org_id, "voice_call")
 
         if not result.allowed:
             activity.logger.warning(

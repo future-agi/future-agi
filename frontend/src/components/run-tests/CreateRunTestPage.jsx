@@ -738,7 +738,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
   // Without this branch, LiveKit agents hit a false "missing credentials"
   // gate and can't enable tool-call eval at all. [TH-4130]
   /** @param {Record<string, any> | null | undefined} snapshot */
-  const hasToolCallCredentials = (snapshot) => {
+  const hasToolCallCredentials = (agentVersionDetails, snapshot) => {
     if (!snapshot) return false;
     if (isLiveKitProvider(snapshot.provider)) {
       return Boolean(
@@ -748,7 +748,14 @@ const CreateRunTestPage = ({ open, onClose }) => {
           snapshot.livekitAgentName,
       );
     }
-    return Boolean(snapshot.apiKey && snapshot.assistantId);
+    const apiKey =
+      agentVersionDetails?.api_key ??
+      agentVersionDetails?.apiKey ??
+      snapshot.api_key ??
+      snapshot.apiKey;
+    const assistantId =
+      snapshot.assistant_id ?? snapshot.assistantId;
+    return Boolean(apiKey && assistantId);
   };
 
   useEffect(() => {
@@ -756,11 +763,15 @@ const CreateRunTestPage = ({ open, onClose }) => {
       const snapshot =
         agentVersionDetails?.configuration_snapshot ??
         agentVersionDetails?.configurationSnapshot;
-      const vapiApiKey = snapshot?.api_key ?? snapshot?.apiKey;
+      const vapiApiKey =
+        agentVersionDetails?.api_key ??
+        agentVersionDetails?.apiKey ??
+        snapshot?.api_key ??
+        snapshot?.apiKey;
       const vapiAssistantId = snapshot?.assistant_id ?? snapshot?.assistantId;
 
       if (
-        !hasToolCallCredentials(snapshot) &&
+        !hasToolCallCredentials(agentVersionDetails, snapshot) &&
         formData?.agentType !== AGENT_TYPES.CHAT
       ) {
         setFormData((prev) => ({
@@ -792,7 +803,11 @@ const CreateRunTestPage = ({ open, onClose }) => {
       const snapshot =
         agentVersionDetails?.configuration_snapshot ??
         agentVersionDetails?.configurationSnapshot;
-      const vapiApiKey = snapshot?.api_key ?? snapshot?.apiKey;
+      const vapiApiKey =
+        agentVersionDetails?.api_key ??
+        agentVersionDetails?.apiKey ??
+        snapshot?.api_key ??
+        snapshot?.apiKey;
       const vapiAssistantId = snapshot?.assistant_id ?? snapshot?.assistantId;
       if ((!vapiApiKey || !vapiAssistantId) && value) {
         setOpenUpdateKeysDialog(true);

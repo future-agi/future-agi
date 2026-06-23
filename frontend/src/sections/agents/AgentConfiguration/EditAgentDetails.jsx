@@ -147,7 +147,6 @@ const EditAgentDetails = ({
         shouldDirty: true,
       });
       setValue("description", providerData?.prompt, { shouldDirty: true });
-      setValue("apiKey", providerData?.api_key, { shouldDirty: true });
       setLastFetchedAt(new Date());
       setShowSyncSuccess(true);
     },
