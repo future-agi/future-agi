@@ -204,6 +204,25 @@ func TestConvertWithIdentities_NoTraceFromChildSpan(t *testing.T) {
 	}
 }
 
+func TestConvertWithIdentities_NoTraceWhenTraceIDZero(t *testing.T) {
+	traces := buildOTLPSpan()
+	// A root span with a missing/zero trace id formats to the all-zeros UUID
+	// (never ""), so it must be skipped — else every malformed trace collapses
+	// onto one all-zeros-keyed trace_dict row resolving to the wrong project.
+	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
+		SetTraceID(pcommon.NewTraceIDEmpty())
+	rows, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0]["trace_id"] != "00000000-0000-0000-0000-000000000000" {
+		t.Fatalf("precondition: zero trace id should format all-zeros, got %v", rows[0]["trace_id"])
+	}
+	if got := len(ids.Traces()); got != 0 {
+		t.Errorf("a zero-trace-id root span must NOT produce a trace row; got %d", got)
+	}
+}
+
 func TestConvertWithIdentities_NoTraceWhenProjectInvalid(t *testing.T) {
 	traces := buildOTLPSpan()
 	// Remove fi.project_id → coalesceUUID stamps a RANDOM project on the span;

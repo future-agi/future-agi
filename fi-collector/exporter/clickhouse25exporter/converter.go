@@ -43,6 +43,11 @@ const (
 	attrSessionID    = "session.id"
 	resAttrProjectTy = "project_type"
 
+	// zeroUUIDString is what traceIDToUUIDString yields for a missing/zero OTel
+	// trace id — used by collectTrace to skip writing an all-zeros-keyed traces
+	// row (it would pollute trace_dict across every malformed trace).
+	zeroUUIDString = "00000000-0000-0000-0000-000000000000"
+
 	// projectTypeObserve is ProjectType.OBSERVE.value from the SDK
 	// (fi_instrumentation fi_types.ProjectType). The Django end_user stamp is
 	// gated on `project.trace_type == "observe"`; the collector mirrors that
@@ -224,7 +229,11 @@ func collectTrace(ids *curatedwriter.Batch, row map[string]any, rawProjectID str
 		return // orphan span (no real project) — nothing to resolve to
 	}
 	traceID, _ := row["trace_id"].(string)
-	if traceID == "" {
+	// A missing/zero OTel trace id formats to the all-zeros UUID (never ""), so
+	// the bare `== ""` check can't catch it. Skip both: an all-zeros-keyed traces
+	// row would collapse every malformed trace onto one trace_dict entry and
+	// resolve them all to the last writer's project.
+	if traceID == "" || traceID == zeroUUIDString {
 		return
 	}
 	projectID, _ := row["project_id"].(string) // == span's coalesceUUID(projectID)
@@ -244,7 +253,15 @@ func collectTrace(ids *curatedwriter.Batch, row map[string]any, rawProjectID str
 		t.SessionID = sid // nil (no session) stays "" → NULL
 	}
 	if v, ok := row["_version"].(uint64); ok {
-		t.Version = v // root span start nanos; app mirror (time.time_ns) wins
+		// Root-span start nanos, but capped at ingest wall-clock: a producer
+		// clock skewed into the future must not let this collector row outrank
+		// the app mirror's time.time_ns() version for a trace the app also owns
+		// (provider/langfuse). No-op for normal (past) start times. NOTE: this
+		// does NOT prevent a late span from un-deleting a soft-deleted trace
+		// (is_deleted resets to 0 with a higher version) — a fundamental
+		// dual-writer+RMT property shared with the curated end_users/sessions
+		// writers; see the CDC-off runbook.
+		t.Version = min(v, uint64(time.Now().UTC().UnixNano()))
 	}
 	ids.AddTrace(t)
 }
@@ -792,8 +809,9 @@ func nullableUUID(s string) any {
 // traceIDToUUIDString formats an OTel 16-byte trace id as the canonical
 // 36-char dashed UUID (8-4-4-4-12), matching PG `tracer_trace.id` and the
 // migration backfill. Uses the same byte-formatting idiom as randomUUID.
-// An empty/zero trace id yields the all-zero UUID string; the caller's
-// upstream validation rejects spans without a trace before we get here.
+// An empty/zero trace id yields the all-zero UUID string (zeroUUIDString);
+// spans still get written (the span table tolerates it), but collectTrace skips
+// such a span so it never seeds an all-zeros-keyed traces / trace_dict row.
 func traceIDToUUIDString(t pcommon.TraceID) string {
 	b := t // pcommon.TraceID is [16]byte
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
