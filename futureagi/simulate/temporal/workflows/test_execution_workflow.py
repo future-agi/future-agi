@@ -17,7 +17,6 @@ Design:
 
 import asyncio
 from datetime import timedelta
-from typing import Optional
 
 from temporalio import workflow
 from temporalio.common import WorkflowIDReusePolicy
@@ -33,7 +32,6 @@ from simulate.temporal.constants import (
     QUEUE_S,
 )
 from simulate.temporal.retry_policies import DB_RETRY_POLICY
-from simulate.temporal.signals import SIGNAL_CALL_ANALYZING, SIGNAL_CALL_COMPLETED
 from simulate.temporal.types.activities import (
     CancelPendingCallsInput,
     CancelPendingCallsOutput,
@@ -78,9 +76,9 @@ class TestExecutionWorkflow:
 
     def __init__(self):
         self._status = "PENDING"
-        self._test_execution_id: Optional[str] = None
-        self._org_id: Optional[str] = None
-        self._workspace_id: Optional[str] = None
+        self._test_execution_id: str | None = None
+        self._org_id: str | None = None
+        self._workspace_id: str | None = None
 
         # Progress tracking
         self._total_calls = 0

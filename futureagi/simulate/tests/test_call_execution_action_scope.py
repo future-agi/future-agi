@@ -9,6 +9,8 @@ from model_hub.models.choices import StatusType
 from simulate.models import AgentDefinition, CallExecution, RunTest, Scenarios
 from simulate.models.test_execution import (
     EvalExplanationSummaryStatus,
+)
+from simulate.models.test_execution import (
     TestExecution as SimulationTestExecution,
 )
 

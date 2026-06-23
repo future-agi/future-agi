@@ -8,11 +8,9 @@ Tests cover:
 - NodeType class: Type validation utilities
 """
 
-import uuid
 
 import pytest
 from django.core.exceptions import ValidationError
-from django.core.validators import MaxValueValidator, MinValueValidator
 
 from model_hub.models.choices import StatusType
 from simulate.models import Scenarios
@@ -427,7 +425,7 @@ class TestScenarioGraphModel:
 
     def test_multiple_graphs_per_scenario(self, db, organization, scenario):
         """A scenario can have multiple graph versions."""
-        graph_v1 = ScenarioGraph.objects.create(
+        ScenarioGraph.objects.create(
             name="Graph V1",
             scenario=scenario,
             organization=organization,
@@ -435,7 +433,7 @@ class TestScenarioGraphModel:
             is_active=False,
         )
 
-        graph_v2 = ScenarioGraph.objects.create(
+        ScenarioGraph.objects.create(
             name="Graph V2",
             scenario=scenario,
             organization=organization,

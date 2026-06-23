@@ -11,7 +11,6 @@ connection pool exhaustion when using PgBouncer.
 from django.db import close_old_connections
 from temporalio import activity
 
-from simulate.temporal.signals import SIGNAL_CANCEL_CALL
 from simulate.temporal.types.rerun import (
     CancelRerunCallsInput,
     FinalizeRerunInput,

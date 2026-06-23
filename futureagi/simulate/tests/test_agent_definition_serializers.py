@@ -496,7 +496,7 @@ class TestAgentVersionResponseSerializer:
     """Tests for AgentVersionResponseSerializer output shape."""
 
     def test_serializes_all_fields(self, db, organization, workspace):
-        from simulate.models import AgentDefinition, AgentVersion
+        from simulate.models import AgentDefinition
         from simulate.serializers.response.agent_version import (
             AgentVersionResponseSerializer,
         )

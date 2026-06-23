@@ -1,4 +1,3 @@
-from typing import Optional
 
 import structlog
 from django.conf import settings
@@ -381,12 +380,12 @@ def get_agent_prompt_optimiser_run_steps(prompt_optimiser_run_id: str) -> list[d
 
 
 def update_agent_optimiser_run_step(
-    steps: Optional[list[dict]],
+    steps: list[dict] | None,
     step_number: int,
-    status: Optional[str] = None,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    error: Optional[str] = None,
+    status: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    error: str | None = None,
 ) -> None:
     """
     Helper to update agent prompt optimiser run step status.

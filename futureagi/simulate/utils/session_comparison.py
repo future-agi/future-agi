@@ -1,7 +1,6 @@
 import json
 from collections import ChainMap
 from datetime import datetime
-from typing import List
 
 from simulate.models import CallExecution
 from simulate.models.chat_message import ChatMessageModel
@@ -81,7 +80,7 @@ def fetch_base_session_metrics(session_id: str, *, organization=None):
     return base_session_metrics
 
 
-def convert_trace_to_chat_messages(traces: List[Trace]):
+def convert_trace_to_chat_messages(traces: list[Trace]):
     if not traces or len(traces) == 0:
         return []
 

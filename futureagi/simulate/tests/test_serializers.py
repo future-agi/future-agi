@@ -10,13 +10,12 @@ Tests cover:
 """
 
 import uuid
-from unittest.mock import MagicMock
 
 import pytest
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
-from model_hub.models.choices import DatasetSourceChoices, SourceChoices
+from model_hub.models.choices import DatasetSourceChoices
 from model_hub.models.develop_dataset import Dataset, Row
 from simulate.serializers.scenarios import (
     AddScenarioColumnsSerializer,
@@ -24,7 +23,6 @@ from simulate.serializers.scenarios import (
     CreateScenarioSerializer,
     EditScenarioPromptsSerializer,
     EditScenarioSerializer,
-    ScenariosSerializer,
 )
 
 # ============================================================================

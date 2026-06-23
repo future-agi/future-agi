@@ -9,21 +9,16 @@ The view layer should use:
   - simulate.serializers.response.run_test  — response/output serializers
 """
 
-import traceback
 
 import structlog
-from django.db.models import Count, Q
 from rest_framework import serializers
 
 logger = structlog.get_logger(__name__)
 
 from simulate.models import (
-    AgentDefinition,
     RunTest,
-    Scenarios,
     SimulateEvalConfig,
 )
-from simulate.models.test_execution import CallExecution
 from simulate.serializers.response.agent_definition import (
     AgentDefinitionResponseSerializer,
 )

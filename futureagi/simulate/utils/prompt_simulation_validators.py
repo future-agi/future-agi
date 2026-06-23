@@ -63,7 +63,7 @@ def validate_scenarios_in_org(scenario_ids, organization):
     scenarios = Scenarios.objects.filter(
         id__in=scenario_ids, organization=organization, deleted=False
     )
-    existing_ids = set(str(s.id) for s in scenarios)
+    existing_ids = {str(s.id) for s in scenarios}
     missing_ids = [str(sid) for sid in scenario_ids if str(sid) not in existing_ids]
 
     if missing_ids:

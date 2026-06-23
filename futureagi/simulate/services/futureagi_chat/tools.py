@@ -4,7 +4,7 @@ Defines tools available to the simulator LLM, including the endCall tool
 that signals conversation termination.
 """
 
-from typing import Any, List, Optional
+from typing import Any
 
 # Tool definition for endCall (matches Vapi behavior)
 # Keep description simple - detailed instructions are in the system prompt
@@ -30,7 +30,7 @@ END_CALL_TOOL = {
 }
 
 
-def check_for_end_call(tool_calls: Optional[List[Any]]) -> tuple[bool, Optional[str]]:
+def check_for_end_call(tool_calls: list[Any] | None) -> tuple[bool, str | None]:
     """Check if response contains endCall tool invocation.
 
     Args:
@@ -69,7 +69,7 @@ def check_for_end_call(tool_calls: Optional[List[Any]]) -> tuple[bool, Optional[
     return False, None
 
 
-def get_simulator_tools() -> List[dict]:
+def get_simulator_tools() -> list[dict]:
     """Get the list of tools available to the simulator.
 
     Returns:

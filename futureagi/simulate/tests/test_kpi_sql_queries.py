@@ -254,7 +254,7 @@ class TestGetKpiMetricsQuery:
             cursor.execute(query, params)
             columns = [col[0] for col in cursor.description]
             row = cursor.fetchone()
-        m = dict(zip(columns, row))
+        m = dict(zip(columns, row, strict=False))
 
         assert m["total_calls"] == 5
         assert m["pending_calls"] == 1
@@ -269,7 +269,7 @@ class TestGetKpiMetricsQuery:
             cursor.execute(query, params)
             columns = [col[0] for col in cursor.description]
             row = cursor.fetchone()
-        m = dict(zip(columns, row))
+        m = dict(zip(columns, row, strict=False))
 
         # avg_agent_latency: only completed calls have 150.0, so avg = 150
         assert float(m["avg_agent_latency"]) == 150.0
@@ -285,7 +285,7 @@ class TestGetKpiMetricsQuery:
             cursor.execute(query, params)
             columns = [col[0] for col in cursor.description]
             row = cursor.fetchone()
-        m = dict(zip(columns, row))
+        m = dict(zip(columns, row, strict=False))
 
         # 2 completed calls have duration > 0
         assert m["connected_voice_calls"] == 2
@@ -297,7 +297,7 @@ class TestGetKpiMetricsQuery:
             cursor.execute(query, params)
             columns = [col[0] for col in cursor.description]
             row = cursor.fetchone()
-        m = dict(zip(columns, row))
+        m = dict(zip(columns, row, strict=False))
 
         # completed calls: 120 + 150 = 270
         assert m["total_duration"] == 270
@@ -309,7 +309,7 @@ class TestGetKpiMetricsQuery:
             cursor.execute(query, params)
             columns = [col[0] for col in cursor.description]
             row = cursor.fetchone()
-        m = dict(zip(columns, row))
+        m = dict(zip(columns, row, strict=False))
 
         # total_tokens: (500 + 600 + 700) / 3 = 600
         assert float(m["avg_total_tokens"]) == 600
@@ -327,7 +327,7 @@ class TestGetKpiMetricsQuery:
             cursor.execute(query, params)
             columns = [col[0] for col in cursor.description]
             row = cursor.fetchone()
-        m = dict(zip(columns, row))
+        m = dict(zip(columns, row, strict=False))
 
         assert m["total_calls"] == 0
         assert m["total_duration"] == 0
@@ -339,7 +339,7 @@ class TestGetKpiMetricsQuery:
             cursor.execute(query, params)
             columns = [col[0] for col in cursor.description]
             row = cursor.fetchone()
-        m = dict(zip(columns, row))
+        m = dict(zip(columns, row, strict=False))
 
         # overall_score: 80.0 and 85.0 for the 2 completed calls → avg = 82.5
         assert float(m["avg_score"]) == 82.5

@@ -1,7 +1,7 @@
 import pytest
-from accounts.models import Workspace
 from rest_framework import status
 
+from accounts.models import Workspace
 from simulate.models import Persona
 
 

@@ -39,7 +39,7 @@ class RerunCoordinatorInput:
     state: Optional["RerunCoordinatorState"] = None
 
     # All call IDs seen so far (for continue-as-new, preserving cancellation list)
-    all_call_ids: Optional[list[str]] = None
+    all_call_ids: list[str] | None = None
 
 
 @dataclass
@@ -79,7 +79,7 @@ class RerunCoordinatorOutput:
     failed_calls: int = 0
 
     # Error information (if failed)
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass

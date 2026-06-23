@@ -3,7 +3,7 @@ Script to insert or update system personas in the database.
 Provides a create-or-update function similar to insert_evals_template.
 """
 
-from django.db import IntegrityError, transaction
+from django.db import transaction
 
 from simulate.models import Persona
 from simulate.services.system_personas import SYSTEM_PERSONAS
@@ -44,7 +44,7 @@ def insert_system_personas(personas_data=None):
     )
 
     # Get all persona_ids from the template
-    template_persona_ids = set(persona["persona_id"] for persona in personas_data)
+    template_persona_ids = {persona["persona_id"] for persona in personas_data}
 
     # Fetch all existing system personas in one query and create a dictionary with persona_id as key
     existing_personas = {
@@ -145,7 +145,7 @@ def insert_system_personas(personas_data=None):
                         is_default=True,  # Mark system personas as default
                     )
                 )
-        except Exception as e:
+        except Exception:
             continue
 
     # Perform bulk operations within a transaction
@@ -154,11 +154,11 @@ def insert_system_personas(personas_data=None):
         if to_delete:
             try:
                 deleted_ids = [p.persona_id for p in to_delete]
-                deleted_count = len(to_delete)
+                len(to_delete)
                 Persona.objects.filter(
                     persona_type=Persona.PersonaType.SYSTEM, persona_id__in=deleted_ids
                 ).delete()
-            except Exception as e:
+            except Exception:
                 pass
 
         # Bulk update
@@ -191,14 +191,14 @@ def insert_system_personas(personas_data=None):
                     ],
                 )
 
-            except Exception as e:
+            except Exception:
                 pass
 
         # Bulk create
         if to_create:
             try:
                 Persona.objects.bulk_create(to_create, ignore_conflicts=True)
-            except Exception as e:
+            except Exception:
                 pass
 
 

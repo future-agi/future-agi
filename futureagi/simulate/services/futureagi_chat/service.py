@@ -8,7 +8,7 @@ inspectable for debugging.
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import structlog
 from asgiref.sync import sync_to_async
@@ -54,8 +54,8 @@ class FutureAGIChatService(ChatServiceBlueprint):
 
     def __init__(
         self,
-        organization_id: Optional[str] = None,
-        workspace_id: Optional[str] = None,
+        organization_id: str | None = None,
+        workspace_id: str | None = None,
     ):
         self.organization_id = organization_id
         self.workspace_id = workspace_id
@@ -131,7 +131,7 @@ class FutureAGIChatService(ChatServiceBlueprint):
                 error=f"Assistant {input.assistant_id} not found",
             )
 
-        initial_messages: List[Dict[str, Any]] = []
+        initial_messages: list[dict[str, Any]] = []
         if input.initial_message and input.initial_message.content:
             initial_messages.append(
                 {
@@ -208,7 +208,7 @@ class FutureAGIChatService(ChatServiceBlueprint):
                 has_chat_ended=True,
             )
 
-        messages: List[Dict[str, Any]] = list(session.messages)
+        messages: list[dict[str, Any]] = list(session.messages)
 
         for msg in input.messages:
             content = (msg.content or "").strip()
@@ -332,13 +332,13 @@ class FutureAGIChatService(ChatServiceBlueprint):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _call_llm(self, **kwargs) -> Dict[str, Any]:
+    def _call_llm(self, **kwargs) -> dict[str, Any]:
         """Call the LLM synchronously."""
         return generate_simulator_response(**kwargs)
 
     def _convert_to_chat_messages(
-        self, messages: List[Dict[str, Any]]
-    ) -> List[ChatMessage]:
+        self, messages: list[dict[str, Any]]
+    ) -> list[ChatMessage]:
         result = []
         for msg in messages:
             role = ChatRole(msg.get("role", "user"))

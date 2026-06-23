@@ -11,7 +11,6 @@ Note: These tests focus on the data model and workflow integration points.
 Full API integration tests with mocked workflows are in test_activities.py.
 """
 
-import uuid
 
 import pytest
 
@@ -232,7 +231,7 @@ class TestGraphScenarioLifecycle:
         )
 
         # Create version 1
-        graph_v1 = ScenarioGraph.objects.create(
+        ScenarioGraph.objects.create(
             name="Graph V1",
             scenario=scenario,
             organization=organization,
@@ -241,7 +240,7 @@ class TestGraphScenarioLifecycle:
         )
 
         # Create version 2 (active)
-        graph_v2 = ScenarioGraph.objects.create(
+        ScenarioGraph.objects.create(
             name="Graph V2",
             scenario=scenario,
             organization=organization,
@@ -364,7 +363,7 @@ class TestConcurrentOperations:
 
     def test_scenarios_can_have_different_statuses(self, db, organization, workspace):
         """Scenarios in same org can have different statuses."""
-        running = Scenarios.objects.create(
+        Scenarios.objects.create(
             name="Running Scenario",
             source="source",
             scenario_type=Scenarios.ScenarioTypes.DATASET,
@@ -373,7 +372,7 @@ class TestConcurrentOperations:
             status=StatusType.RUNNING.value,
         )
 
-        completed = Scenarios.objects.create(
+        Scenarios.objects.create(
             name="Completed Scenario",
             source="source",
             scenario_type=Scenarios.ScenarioTypes.DATASET,
@@ -382,7 +381,7 @@ class TestConcurrentOperations:
             status=StatusType.COMPLETED.value,
         )
 
-        failed = Scenarios.objects.create(
+        Scenarios.objects.create(
             name="Failed Scenario",
             source="source",
             scenario_type=Scenarios.ScenarioTypes.DATASET,

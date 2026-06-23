@@ -1,15 +1,6 @@
-import json
-import uuid
-from datetime import datetime, timedelta
-from typing import Any, List, Optional, Tuple, Union
 
 import structlog
-from django.db import connection, transaction
-from django.db.models import Avg, Count, Q
-from django.utils import timezone
-
-from accounts.models.organization import Organization
-from accounts.models.workspace import Workspace
+from django.db import connection
 
 from tfc.ee_stub import _ee_stub
 
@@ -24,34 +15,19 @@ except ImportError:
     DeterministicEvaluator = _ee_stub("DeterministicEvaluator")
 from simulate.constants.csat_score_prompt import CSAT_SCORE_PROMPT
 from simulate.models import (  # SimulatorAgent
-    AgentDefinition,
     CallExecution,
-    TestExecution,
 )
 from simulate.models.chat_message import ChatMessageModel
-from simulate.models.simulator_agent import SimulatorAgent
-from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import (
     ChatMessage,
     ChatRole,
-    ChatSessionResponse,
-    ChatSessionSendMessageResponse,
-    SendChatRequest,
-    SimulationCallType,
-)
-from simulate.services.chat_initial_message import get_chat_initial_message
-from simulate.services.test_executor import (
-    TestExecutor,
-    _run_simulate_evaluations_task,
 )
 from simulate.utils.sql_query import get_chat_metrics_aggregation_query
-from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
 
 logger = structlog.get_logger(__name__)
-from tfc.temporal.drop_in import temporal_activity
 
 
-def _calculate_tokens_from_messages(messages: List[str], content: List[dict]) -> int:
+def _calculate_tokens_from_messages(messages: list[str], content: list[dict]) -> int:
     """
     Calculate total tokens from message content.
 
@@ -89,7 +65,7 @@ def _calculate_tokens_from_messages(messages: List[str], content: List[dict]) ->
     return total_tokens
 
 
-def _build_chat_transcript(chat_messages: List[ChatMessageModel]) -> str:
+def _build_chat_transcript(chat_messages: list[ChatMessageModel]) -> str:
     """
     Build a transcript string from chat messages for evaluation purposes.
     Format: "User: <message>\nAssistant: <message>\n..."
@@ -135,7 +111,7 @@ def _build_chat_transcript(chat_messages: List[ChatMessageModel]) -> str:
     return "\n".join(transcript_lines)
 
 
-def _calculate_csat_score(transcript: str) -> Optional[float]:
+def _calculate_csat_score(transcript: str) -> float | None:
     """
     Calculate CSAT score from chat transcript using DeterministicEvaluator.
     Returns a float between 1-10 or None if calculation fails.
@@ -271,7 +247,7 @@ def _swap_user_assistant_roles(items: list[dict]) -> list[dict]:
 
 
 def extract_message_from_chatmessages(
-    messages: List[Union[ChatMessage, dict]], role: ChatRole
+    messages: list[ChatMessage | dict], role: ChatRole
 ) -> list[str]:
     try:
         all_message_content = []

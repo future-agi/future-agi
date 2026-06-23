@@ -25,12 +25,12 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from simulate.models import AgentVersion
 from simulate.repositories import (
     CallExecutionRepository,
     CallTranscriptRepository,
     PhoneNumberRepository,
 )
-from simulate.models import AgentVersion
 from simulate.services.agent_definition import is_masked
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer

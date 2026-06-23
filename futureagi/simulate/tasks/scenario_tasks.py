@@ -1,11 +1,8 @@
 import asyncio
 import json
-import math
-import random
 import traceback
 import uuid
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 import structlog
@@ -23,13 +20,12 @@ try:
 except ImportError:
     EnhancedScenariosAgent = _ee_stub("EnhancedScenariosAgent")
     SyntheticDataAgent = _ee_stub("SyntheticDataAgent")
-from agentic_eval.core.llm.llm import LLM
 
 logger = structlog.get_logger(__name__)
 from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from simulate.models import Scenarios
-from simulate.models.scenario_graph import NodeType, ScenarioGraph
+from simulate.models.scenario_graph import ScenarioGraph
 from tfc.temporal.drop_in import temporal_activity
 
 
@@ -227,7 +223,7 @@ def add_scenario_columns_task(
         close_old_connections()
 
         dataset = Dataset.objects.get(id=dataset_id)
-        scenario = Scenarios.objects.get(id=scenario_id)
+        Scenarios.objects.get(id=scenario_id)
 
         logger.info(
             "Starting add_scenario_columns_task for dataset %s, scenario %s, columns: %s",

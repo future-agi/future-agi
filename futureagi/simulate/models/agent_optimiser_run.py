@@ -1,7 +1,6 @@
 import uuid
 
 from django.db import models
-from django.utils import timezone
 
 from simulate.models.agent_optimiser import AgentOptimiser
 from tfc.utils.base_model import BaseModel

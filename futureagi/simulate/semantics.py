@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import StrEnum
 from functools import partial
 from typing import Annotated, Any
 
@@ -7,7 +7,7 @@ from pydantic import AfterValidator
 from tracer.models.observability_provider import ProviderChoices
 
 
-class CallExecutionStatus(str, Enum):
+class CallExecutionStatus(StrEnum):
     PENDING = "pending"
     REGISTERED = "queued"
     ONGOING = "ongoing"
@@ -17,7 +17,7 @@ class CallExecutionStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class CallType(str, Enum):
+class CallType(StrEnum):
     INBOUND = "inbound"
     OUTBOUND = "outbound"
     WEB_CALL = "web"

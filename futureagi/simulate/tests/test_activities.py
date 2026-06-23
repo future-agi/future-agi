@@ -11,7 +11,7 @@ since running actual Temporal activities requires a Temporal worker environment.
 """
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from rest_framework import status
@@ -19,8 +19,6 @@ from rest_framework import status
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from simulate.models import AgentDefinition, Scenarios
-from simulate.models.scenario_graph import ScenarioGraph
-from simulate.models.simulator_agent import SimulatorAgent
 
 # ============================================================================
 # Fixtures
@@ -650,8 +648,8 @@ class TestDatasetCopyLogic:
 
     def test_cells_can_be_created_in_batch(self, db, source_dataset):
         """Cells can be created in batches (as activities do)."""
-        column = Column.objects.filter(dataset=source_dataset).first()
-        row = Row.objects.filter(dataset=source_dataset).first()
+        Column.objects.filter(dataset=source_dataset).first()
+        Row.objects.filter(dataset=source_dataset).first()
 
         initial_cell_count = Cell.objects.filter(
             dataset=source_dataset, deleted=False

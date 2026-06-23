@@ -7,7 +7,7 @@ in chat simulations, replacing the SDK-based agent definition approach.
 
 import re
 import time
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -31,8 +31,8 @@ class PromptBasedAgentAdapter:
         self,
         prompt_version: PromptVersion,
         organization_id: UUID,
-        workspace_id: Optional[UUID] = None,
-        variable_values: Optional[dict[str, Any]] = None,
+        workspace_id: UUID | None = None,
+        variable_values: dict[str, Any] | None = None,
     ):
         """
         Initialize the adapter with a prompt version.
@@ -207,7 +207,7 @@ class PromptBasedAgentAdapter:
     def generate_response(
         self,
         conversation_history: list[dict[str, str]],
-        additional_context: Optional[dict[str, Any]] = None,
+        additional_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Generate a response using the prompt template and RunPrompt wrapper.
@@ -334,7 +334,7 @@ class PromptBasedAgentAdapter:
                 return self._content_to_string(processed)
         return ""
 
-    def get_initial_message(self) -> Optional[str]:
+    def get_initial_message(self) -> str | None:
         """
         Get the initial assistant message from the prompt template if present.
 
@@ -351,8 +351,8 @@ class PromptBasedAgentAdapter:
 def create_adapter_from_run_test(
     run_test,
     organization_id: UUID,
-    workspace_id: Optional[UUID] = None,
-    variable_values: Optional[dict[str, Any]] = None,
+    workspace_id: UUID | None = None,
+    variable_values: dict[str, Any] | None = None,
 ) -> PromptBasedAgentAdapter:
     """
     Factory function to create a PromptBasedAgentAdapter from a RunTest.
@@ -388,8 +388,8 @@ def create_adapter_from_run_test(
 def create_adapter_from_scenario(
     scenario,
     organization_id: UUID,
-    workspace_id: Optional[UUID] = None,
-    variable_values: Optional[dict[str, Any]] = None,
+    workspace_id: UUID | None = None,
+    variable_values: dict[str, Any] | None = None,
 ) -> PromptBasedAgentAdapter:
     """
     Factory function to create a PromptBasedAgentAdapter from a Scenario.

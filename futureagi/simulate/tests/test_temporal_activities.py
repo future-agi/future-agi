@@ -15,12 +15,10 @@ Environment variables:
 
 import os
 import uuid
-from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from asgiref.sync import async_to_sync, sync_to_async
-from django.utils import timezone
 
 # Environment variables for sensitive test data
 VAPI_PHONE_NUMBER_ID = os.environ.get("VAPI_PHONE_NUMBER_ID", "phone-test-id-12345")
@@ -34,7 +32,6 @@ from simulate.models.run_test import CreateCallExecution, RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
 from simulate.semantics import CallType
-from tracer.models.observability_provider import ProviderChoices
 
 # ============================================================================
 # Fixtures
@@ -1649,7 +1646,6 @@ class TestCallExecutionWorkflowIntegration:
     @pytest.mark.asyncio
     async def test_workflow_activity_sequence_inbound(self, call_execution):
         """Test that CallExecutionWorkflow calls activities in correct order for inbound calls."""
-        from unittest.mock import call
 
         # Track activity calls in order
         activity_calls = []
@@ -2134,7 +2130,6 @@ class TestHeartbeatConfiguration:
 
     def test_workflow_has_heartbeat_timeout_for_fetch_and_persist(self):
         """Verify CallExecutionWorkflow sets heartbeat_timeout for fetch_and_persist_call_result."""
-        import ast
         import inspect
 
         CallExecutionWorkflow = _ee_call_execution_workflow().CallExecutionWorkflow

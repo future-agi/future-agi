@@ -7,11 +7,9 @@ ChatServiceBlueprint interface, enabling provider-agnostic chat simulation.
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import structlog
 
-from simulate.pydantic_schemas.chat import ChatMessage, ChatRole
 from simulate.services.chat_engine import ChatServiceBlueprint
 from simulate.services.types.chat import (
     CreateAssistantInput,

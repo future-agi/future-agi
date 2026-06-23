@@ -13,11 +13,10 @@ Each test verifies both API responses AND database state.
 
 import json
 import uuid
-from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, TransactionTestCase
+from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -31,7 +30,6 @@ from simulate.models.run_test import RunTest
 from simulate.models.scenarios import Scenarios
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
-from simulate.serializers.requests.run_test import CreatePromptSimulationSerializer
 from simulate.serializers.run_test import RunTestSerializer
 from simulate.serializers.scenarios import ScenariosSerializer
 from simulate.views.prompt_simulation import (
@@ -41,7 +39,10 @@ from simulate.views.prompt_simulation import (
     PromptSimulationScenariosView,
 )
 from tfc.constants.roles import OrganizationRoles
-from tfc.middleware.workspace_context import clear_workspace_context, set_workspace_context
+from tfc.middleware.workspace_context import (
+    clear_workspace_context,
+    set_workspace_context,
+)
 
 User = get_user_model()
 
@@ -262,7 +263,7 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         result_data = response.data.get("result", response.data)
         self.assertEqual(result_data.get("count", 0), 0)
-        print(f"✓ Empty list returns count=0")
+        print("✓ Empty list returns count=0")
 
     def test_flow3b_create_simulation_api(self):
         """Test creating a simulation via API."""
@@ -294,7 +295,7 @@ class E2EPromptSimulationTestCase(TestCase):
         # Verify response fields
         self.assertEqual(result_data.get("name"), "E2E Test Simulation")
         self.assertEqual(result_data.get("source_type"), "prompt")
-        print(f"✓ Response source_type: prompt")
+        print("✓ Response source_type: prompt")
 
         # Verify DB state
         simulation = RunTest.objects.get(id=created_id)
@@ -306,7 +307,7 @@ class E2EPromptSimulationTestCase(TestCase):
         print(f"✓ DB: source_type={simulation.source_type}")
         print(f"✓ DB: prompt_template={simulation.prompt_template_id}")
         print(f"✓ DB: prompt_version={simulation.prompt_version_id}")
-        print(f"✓ DB: agent_definition=None")
+        print("✓ DB: agent_definition=None")
 
         # Verify scenarios linked
         linked_scenarios = list(simulation.scenarios.all())
@@ -401,8 +402,8 @@ class E2EPromptSimulationTestCase(TestCase):
         # Verify response includes prompt details
         self.assertIsNotNone(result_data.get("prompt_template_detail"))
         self.assertIsNotNone(result_data.get("prompt_version_detail"))
-        print(f"✓ Response includes prompt_template_detail")
-        print(f"✓ Response includes prompt_version_detail")
+        print("✓ Response includes prompt_template_detail")
+        print("✓ Response includes prompt_version_detail")
 
         # Verify scenarios detail
         scenarios_detail = result_data.get("scenarios_detail")
@@ -546,7 +547,7 @@ class E2EPromptSimulationTestCase(TestCase):
         # Verify relationship
         self.assertEqual(test_execution.run_test.id, simulation.id)
         self.assertEqual(test_execution.run_test.source_type, "prompt")
-        print(f"✓ TestExecution linked to RunTest with source_type=prompt")
+        print("✓ TestExecution linked to RunTest with source_type=prompt")
 
         # Verify we can access prompt info through run_test
         self.assertEqual(
@@ -555,8 +556,8 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertEqual(
             test_execution.run_test.prompt_version_id, self.prompt_version.id
         )
-        print(f"✓ Can access prompt_template via test_execution.run_test")
-        print(f"✓ Can access prompt_version via test_execution.run_test")
+        print("✓ Can access prompt_template via test_execution.run_test")
+        print("✓ Can access prompt_version via test_execution.run_test")
 
     # =========================================================================
     # FLOW 5: Agent Definition vs Prompt Comparison Tests
@@ -584,7 +585,7 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertIsNone(simulation.prompt_version)
         print(f"✓ Agent definition simulation: source_type={simulation.source_type}")
         print(f"✓ agent_definition={simulation.agent_definition_id}")
-        print(f"✓ prompt_template=None")
+        print("✓ prompt_template=None")
 
     def test_flow5b_compare_serializer_output(self):
         """Compare serializer output for prompt vs agent_definition simulations."""
@@ -614,13 +615,13 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertIsNotNone(prompt_data.get("prompt_template_detail"))
         self.assertIsNotNone(prompt_data.get("prompt_version_detail"))
         self.assertIsNone(prompt_data.get("agent_definition_detail"))
-        print(f"✓ Prompt simulation has correct fields")
+        print("✓ Prompt simulation has correct fields")
 
         # Verify agent simulation fields
         self.assertEqual(agent_data.get("source_type"), "agent_definition")
         self.assertIsNone(agent_data.get("prompt_template_detail"))
         self.assertIsNone(agent_data.get("prompt_version_detail"))
-        print(f"✓ Agent simulation has correct fields")
+        print("✓ Agent simulation has correct fields")
 
     # =========================================================================
     # FLOW 6: Validation & Error Tests
@@ -648,7 +649,7 @@ class E2EPromptSimulationTestCase(TestCase):
         response = view(request, prompt_template_id=str(self.prompt_template.id))
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        print(f"✓ Empty name returns 400")
+        print("✓ Empty name returns 400")
 
     def test_flow6b_create_simulation_invalid_version(self):
         """Test validation error when version doesn't exist."""
@@ -668,7 +669,7 @@ class E2EPromptSimulationTestCase(TestCase):
         response = view(request, prompt_template_id=str(self.prompt_template.id))
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        print(f"✓ Invalid version ID returns 400")
+        print("✓ Invalid version ID returns 400")
 
     def test_flow6c_create_simulation_no_scenarios(self):
         """Test validation error when no scenarios selected."""
@@ -688,7 +689,7 @@ class E2EPromptSimulationTestCase(TestCase):
         response = view(request, prompt_template_id=str(self.prompt_template.id))
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        print(f"✓ Empty scenarios returns 400")
+        print("✓ Empty scenarios returns 400")
 
     def test_flow6d_get_nonexistent_simulation(self):
         """Test 404 when getting non-existent simulation."""
@@ -706,7 +707,7 @@ class E2EPromptSimulationTestCase(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        print(f"✓ Non-existent simulation returns 404")
+        print("✓ Non-existent simulation returns 404")
 
     # =========================================================================
     # FLOW 7: Response Format Tests (GeneralMethods gm pattern)
@@ -725,7 +726,7 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertIn("status", response.data)
         self.assertIn("result", response.data)
         self.assertTrue(response.data["status"])
-        print(f"✓ Success response has gm format: status=True, result=<data>")
+        print("✓ Success response has gm format: status=True, result=<data>")
 
     def test_flow7b_create_response_has_gm_format_with_201(self):
         """Test that create response returns 201 with gm format."""
@@ -748,7 +749,7 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertIn("status", response.data)
         self.assertTrue(response.data["status"])
         self.assertIn("result", response.data)
-        print(f"✓ Create response: 201 with gm format")
+        print("✓ Create response: 201 with gm format")
 
     def test_flow7c_error_response_has_gm_format(self):
         """Test that error responses follow gm format: {status: False, result: ...}."""
@@ -770,7 +771,7 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("status", response.data)
         self.assertFalse(response.data["status"])
-        print(f"✓ Error response: 400 with status=False")
+        print("✓ Error response: 400 with status=False")
 
     def test_flow7d_not_found_response_has_gm_format(self):
         """Test that 404 responses follow gm format."""
@@ -790,7 +791,7 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertIn("status", response.data)
         self.assertFalse(response.data["status"])
-        print(f"✓ Not found response: 404 with status=False")
+        print("✓ Not found response: 404 with status=False")
 
     def test_flow7e_delete_response_has_gm_format(self):
         """Test that delete response follows gm format."""
@@ -819,7 +820,7 @@ class E2EPromptSimulationTestCase(TestCase):
         if response.status_code == status.HTTP_200_OK:
             self.assertIn("status", response.data)
             self.assertTrue(response.data["status"])
-        print(f"✓ Delete response follows gm format")
+        print("✓ Delete response follows gm format")
 
     # =========================================================================
     # FLOW 8: RunTest.__str__ Null Safety
@@ -875,7 +876,7 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         # Should NOT have created a RunTest with a fallback version
         self.assertFalse(RunTest.objects.filter(name="No Fallback Test").exists())
-        print(f"✓ Invalid version UUID returns 400, no silent fallback")
+        print("✓ Invalid version UUID returns 400, no silent fallback")
 
     def test_flow9b_invalid_version_string_returns_explicit_error(self):
         """Test that a non-existent template_version string returns an explicit error."""
@@ -898,7 +899,7 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertFalse(
             RunTest.objects.filter(name="No Fallback String Test").exists()
         )
-        print(f"✓ Invalid version string returns 400, no silent fallback")
+        print("✓ Invalid version string returns 400, no silent fallback")
 
     def test_flow9c_valid_template_version_string_works(self):
         """Test that a valid template_version string (e.g. 'v1') resolves correctly."""
@@ -920,7 +921,7 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         sim = RunTest.objects.get(name="Version String Test")
         self.assertEqual(sim.prompt_version_id, self.prompt_version.id)
-        print(f"✓ Valid version string 'v1' resolves to correct version")
+        print("✓ Valid version string 'v1' resolves to correct version")
 
     # =========================================================================
     # FLOW 10: Execution-time Prompt Version Validation
@@ -955,7 +956,7 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("status", response.data)
         self.assertFalse(response.data["status"])
-        print(f"✓ Execute with deleted version returns 400")
+        print("✓ Execute with deleted version returns 400")
 
         # Restore for other tests
         self.prompt_version.deleted = False
@@ -984,7 +985,7 @@ class E2EPromptSimulationTestCase(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        print(f"✓ Execute with null version returns 400")
+        print("✓ Execute with null version returns 400")
 
     # =========================================================================
     # FLOW 11: PromptBasedAgentAdapter Config Validation
@@ -1008,7 +1009,7 @@ class E2EPromptSimulationTestCase(TestCase):
                 organization_id=self.organization.id,
             )
         self.assertIn("no prompt_config_snapshot", str(ctx.exception))
-        print(f"✓ Adapter rejects None config snapshot")
+        print("✓ Adapter rejects None config snapshot")
 
     def test_flow11b_adapter_rejects_non_dict_config(self):
         """Test adapter raises ValueError when config is not a dict."""
@@ -1028,7 +1029,7 @@ class E2EPromptSimulationTestCase(TestCase):
                 organization_id=self.organization.id,
             )
         self.assertIn("invalid prompt_config_snapshot format", str(ctx.exception))
-        print(f"✓ Adapter rejects non-dict config snapshot")
+        print("✓ Adapter rejects non-dict config snapshot")
 
     def test_flow11c_adapter_rejects_empty_messages(self):
         """Test adapter raises ValueError when messages list is empty."""
@@ -1050,7 +1051,7 @@ class E2EPromptSimulationTestCase(TestCase):
                 organization_id=self.organization.id,
             )
         self.assertIn("no messages", str(ctx.exception))
-        print(f"✓ Adapter rejects empty messages list")
+        print("✓ Adapter rejects empty messages list")
 
     def test_flow11d_adapter_loads_valid_config(self):
         """Test adapter successfully loads a valid config snapshot."""
@@ -1112,7 +1113,7 @@ class E2EPromptSimulationTestCase(TestCase):
         )
         self.assertEqual(adapter.model, "gpt-4o")
         self.assertEqual(len(adapter.base_messages), 1)
-        print(f"✓ Adapter handles dict config format")
+        print("✓ Adapter handles dict config format")
 
     # =========================================================================
     # FLOW 12: Variable Injection Tests
@@ -1208,7 +1209,7 @@ class E2EPromptSimulationTestCase(TestCase):
         )
         result = adapter.get_system_prompt()
         self.assertEqual(result, "Hello {{name}}.")
-        print(f"✓ No variables: placeholders untouched")
+        print("✓ No variables: placeholders untouched")
 
     # =========================================================================
     # FLOW 13: Update (PATCH) Tests
@@ -1268,7 +1269,7 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         simulation.refresh_from_db()
         self.assertEqual(simulation.prompt_version_id, self.prompt_version_v2.id)
-        print(f"✓ PATCH version updated to v2")
+        print("✓ PATCH version updated to v2")
 
     def test_flow13c_update_simulation_scenarios(self):
         """Test updating simulation scenarios via PATCH."""
@@ -1342,7 +1343,7 @@ class E2EPromptSimulationTestCase(TestCase):
         call_execution.refresh_from_db()
         self.assertEqual(call_execution.status, CallExecution.CallStatus.ONGOING)
 
-        print(f"✓ Status guard: REGISTERED rejected, ONGOING accepted")
+        print("✓ Status guard: REGISTERED rejected, ONGOING accepted")
 
     # =========================================================================
     # FLOW 15: Scenarios Endpoint Tests
@@ -1376,7 +1377,7 @@ class E2EPromptSimulationTestCase(TestCase):
         result_data = response.data.get("result", {})
         self.assertEqual(len(result_data.get("results", [])), 1)
         self.assertGreaterEqual(result_data.get("count", 0), 2)
-        print(f"✓ Scenario pagination: 1 item per page, total >= 2")
+        print("✓ Scenario pagination: 1 item per page, total >= 2")
 
 
 def run_comprehensive_e2e_test():
@@ -1384,14 +1385,12 @@ def run_comprehensive_e2e_test():
     Run all E2E tests and print a summary.
     This can be called from Django shell for manual testing.
     """
-    import sys
     from io import StringIO
 
     from django.test.runner import DiscoverRunner
-    from django.test.utils import setup_test_environment, teardown_test_environment
 
     # Capture output
-    output = StringIO()
+    StringIO()
 
     print("=" * 70)
     print("COMPREHENSIVE E2E TEST SUITE - PROMPT WORKBENCH SIMULATION")
@@ -1415,12 +1414,12 @@ def run_comprehensive_e2e_test():
 
     if result.failures:
         print("FAILURES:")
-        for test, traceback in result.failures:
+        for test, _traceback in result.failures:
             print(f"  - {test}")
 
     if result.errors:
         print("ERRORS:")
-        for test, traceback in result.errors:
+        for test, _traceback in result.errors:
             print(f"  - {test}")
 
     if not result.failures and not result.errors:

@@ -6,10 +6,9 @@ Organized by activity category (setup, call prep, execution, evaluation, etc.).
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
-from simulate.semantics import CallType, ProviderPayload
-from tracer.models.observability_provider import ProviderChoices
+from simulate.semantics import CallType
 
 # =============================================================================
 # Setup Activities (TestExecutionWorkflow initialization)
@@ -29,7 +28,7 @@ class SetupTestInput:
     test_execution_id: str
     run_test_id: str
     scenario_ids: list[str]
-    simulator_id: Optional[str] = None
+    simulator_id: str | None = None
 
 
 @dataclass
@@ -42,13 +41,13 @@ class SetupTestOutput:
     """
 
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
 
     # Loaded configuration
     scenarios: list[dict[str, Any]] = field(default_factory=list)
-    simulator_agent: Optional[dict[str, Any]] = None
-    agent_version: Optional[dict[str, Any]] = None  # Includes configuration_snapshot
-    workspace_id: Optional[str] = None  # Workspace ID from run_test.workspace
+    simulator_agent: dict[str, Any] | None = None
+    agent_version: dict[str, Any] | None = None  # Includes configuration_snapshot
+    workspace_id: str | None = None  # Workspace ID from run_test.workspace
 
 
 @dataclass
@@ -62,8 +61,8 @@ class CreateCallRecordsInput:
 
     test_execution_id: str
     scenarios: list[dict[str, Any]]
-    simulator_agent: Optional[dict[str, Any]] = None
-    agent_definition: Optional[dict[str, Any]] = None
+    simulator_agent: dict[str, Any] | None = None
+    agent_definition: dict[str, Any] | None = None
 
 
 @dataclass
@@ -76,7 +75,7 @@ class CreateCallRecordsOutput:
 
     call_ids: list[str] = field(default_factory=list)
     total_created: int = 0
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -185,7 +184,7 @@ class PrepareCallOutput:
 
     # Call configuration
     is_outbound: bool
-    to_number: Optional[str] = None
+    to_number: str | None = None
     system_prompt: str = ""
     voice_settings: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -198,32 +197,32 @@ class PrepareCallOutput:
     max_duration_minutes: int = 15
 
     # Context for downstream activities
-    situation_text: Optional[str] = None
+    situation_text: str | None = None
 
     # Call data for initiation (FAGICallData as dict)
     call_data: dict[str, Any] = field(default_factory=dict)
 
     # Client provider data (for outbound calls using user's credentials)
     client_uses_own_provider: bool = False
-    client_api_key: Optional[str] = None
-    client_assistant_id: Optional[str] = None
-    client_phone_number: Optional[str] = None  # User's phone to call FROM in outbound
+    client_api_key: str | None = None
+    client_assistant_id: str | None = None
+    client_phone_number: str | None = None  # User's phone to call FROM in outbound
     client_provider: str = "vapi"
 
     # System data for client call matching
-    system_assistant_id: Optional[str] = None
-    system_phone_number: Optional[str] = None
-    customer_phone_number: Optional[str] = None
-    system_phone_number_id: Optional[str] = None
+    system_assistant_id: str | None = None
+    system_phone_number: str | None = None
+    customer_phone_number: str | None = None
+    system_phone_number_id: str | None = None
 
     # Tool evaluation flag from RunTest
     enable_tool_evaluation: bool = False
 
     # WebRTC bridge connection type (None = SIP, "web_vapi", "web_retell")
-    connection_type: Optional[str] = None
+    connection_type: str | None = None
 
     # Error handling
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -248,9 +247,9 @@ class CheckBalanceOutput:
     """
 
     sufficient: bool
-    current_balance: Optional[float] = None
-    estimated_cost: Optional[float] = None
-    error: Optional[str] = None
+    current_balance: float | None = None
+    estimated_cost: float | None = None
+    error: str | None = None
 
 
 @dataclass
@@ -277,10 +276,10 @@ class AcquirePhoneOutput:
     """
 
     success: bool
-    phone_id: Optional[str] = None  # Django model ID
-    phone_number: Optional[str] = None  # Actual phone number string
-    provider_phone_id: Optional[str] = None  # Provider-specific phone number ID
-    error: Optional[str] = None
+    phone_id: str | None = None  # Django model ID
+    phone_number: str | None = None  # Actual phone number string
+    provider_phone_id: str | None = None  # Provider-specific phone number ID
+    error: str | None = None
 
 
 @dataclass
@@ -315,8 +314,8 @@ class BackgroundSoundOutput:
     Returns the selected background sound URL or preset name.
     """
 
-    selected_sound: Optional[str] = None
-    error: Optional[str] = None
+    selected_sound: str | None = None
+    error: str | None = None
 
 
 # =============================================================================
@@ -335,8 +334,8 @@ class CreateProviderCallInput:
 
     call_id: str
     is_outbound: bool
-    phone_number_id: Optional[str] = None
-    to_number: Optional[str] = None
+    phone_number_id: str | None = None
+    to_number: str | None = None
     system_prompt: str = ""
     voice_settings: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -355,7 +354,7 @@ class CreateProviderCallOutput:
     provider_call_id: str
     provider: str
     status: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -387,10 +386,10 @@ class MonitorCallOutput:
     """
 
     success: bool
-    status: Optional[str] = None  # "ended", "failed", "cancelled", etc.
-    duration_seconds: Optional[int] = None
-    end_reason: Optional[str] = None
-    error: Optional[str] = None
+    status: str | None = None  # "ended", "failed", "cancelled", etc.
+    duration_seconds: int | None = None
+    end_reason: str | None = None
+    error: str | None = None
 
 
 @dataclass
@@ -421,7 +420,7 @@ class UpdateCallStatusInput:
 
     call_id: str
     status: str  # PENDING, REGISTERED, ONGOING, COMPLETED, FAILED, CANCELLED
-    test_execution_id: Optional[str] = (
+    test_execution_id: str | None = (
         None  # If provided, marks TestExecution as RUNNING
     )
 
@@ -437,8 +436,8 @@ class PersistProcessingSkipStateInput:
     """
 
     call_id: str
-    processing_skipped: Optional[bool] = None
-    processing_skip_reason: Optional[str] = None
+    processing_skipped: bool | None = None
+    processing_skip_reason: str | None = None
     mark_eval_outputs_skipped: bool = False
 
 
@@ -469,13 +468,13 @@ class EvalResult:
     # - Pass/Fail: str ("passed"/"failed")
     # - Percentage: float (0.0-100.0)
     # - Deterministic: list[str] (array of choices)
-    output: Optional[str | float | list[str]] = None
+    output: str | float | list[str] | None = None
 
     # Reason/explanation for the eval result
-    reason: Optional[str] = None
+    reason: str | None = None
 
     # Error message if status is "error"
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -657,7 +656,7 @@ class RunEvaluationsOutput:
 
     success: bool
     eval_results: list[dict[str, Any]] = field(default_factory=list)
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -673,18 +672,18 @@ class FetchClientCallInput:
     """
 
     call_id: str
-    client_api_key: Optional[str] = ""
-    client_assistant_id: Optional[str] = ""
-    client_provider: Optional[str] = "vapi"
+    client_api_key: str | None = ""
+    client_assistant_id: str | None = ""
+    client_provider: str | None = "vapi"
 
     # Our call data for matching
-    customer_phone_number: Optional[str] = ""
+    customer_phone_number: str | None = ""
     call_type: str = CallType.INBOUND.value
 
     # System data for call matching (may be None for inbound calls)
-    system_assistant_id: Optional[str] = None
-    system_phone_number: Optional[str] = None
-    system_phone_number_id: Optional[str] = None
+    system_assistant_id: str | None = None
+    system_phone_number: str | None = None
+    system_phone_number_id: str | None = None
 
 
 @dataclass
@@ -696,14 +695,14 @@ class FetchClientCallOutput:
     """
 
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
 
     # Client call data
-    client_call_id: Optional[str] = None
-    client_metrics: Optional[dict[str, float]] = None  # Latency metrics
-    client_cost_breakdown: Optional[dict[str, Any]] = None
+    client_call_id: str | None = None
+    client_metrics: dict[str, float] | None = None  # Latency metrics
+    client_cost_breakdown: dict[str, Any] | None = None
     client_total_cost: float = 0.0
-    client_raw_data: Optional[dict[str, Any]] = None
+    client_raw_data: dict[str, Any] | None = None
 
 
 @dataclass
@@ -733,16 +732,16 @@ class InitiateCallInput:
     provider: str = "livekit"
 
     # For outbound calls - acquired phone info
-    phone_number: Optional[str] = None  # Acquired phone number string
-    provider_phone_id: Optional[str] = None  # Provider-specific phone ID
+    phone_number: str | None = None  # Acquired phone number string
+    provider_phone_id: str | None = None  # Provider-specific phone ID
 
     # For outbound calls - user credentials to initiate call
-    user_api_key: Optional[str] = None
-    user_assistant_id: Optional[str] = None
-    user_phone_number: Optional[str] = None  # User's phone to call from
+    user_api_key: str | None = None
+    user_assistant_id: str | None = None
+    user_phone_number: str | None = None  # User's phone to call from
 
     # WebRTC bridge connection type (None = SIP, "web_vapi", "web_retell")
-    connection_type: Optional[str] = None
+    connection_type: str | None = None
 
 
 @dataclass
@@ -754,9 +753,9 @@ class InitiateCallOutput:
     """
 
     success: bool
-    provider_call_id: Optional[str] = None
+    provider_call_id: str | None = None
     provider_data: dict[str, Any] = field(default_factory=dict)
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -783,7 +782,7 @@ class FetchTranscriptOutput:
 
     success: bool
     message_count: int = 0
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -806,8 +805,8 @@ class PersistResultInput:
     provider: (
         str  # Provider name — use str to avoid Temporal str,Enum deserialization bug
     )
-    duration_seconds: Optional[float] = None
-    end_reason: Optional[str] = None
+    duration_seconds: float | None = None
+    end_reason: str | None = None
 
 
 @dataclass
@@ -834,8 +833,8 @@ class FetchAndPersistCallResultInput:
         str  # Provider name — use str to avoid Temporal str,Enum deserialization bug
     )
     call_type: str  # "inbound" or "outbound" — use str to avoid Temporal str,Enum deserialization bug
-    duration_seconds: Optional[float] = None
-    end_reason: Optional[str] = None
+    duration_seconds: float | None = None
+    end_reason: str | None = None
     provider_data: dict[str, Any] = field(default_factory=dict)
     provider_config: dict[str, Any] = field(default_factory=dict)
 
@@ -853,7 +852,7 @@ class FetchAndPersistCallResultOutput:
     # Speaker presence flags for evaluation gating (silence-timeout cases)
     has_agent_message: bool = False
     has_customer_message: bool = False
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -951,8 +950,8 @@ class CalculateVoiceCSATOutput:
     """
 
     success: bool
-    csat_score: Optional[float] = None
-    error: Optional[str] = None
+    csat_score: float | None = None
+    error: str | None = None
     skipped: bool = False  # True if skipped (e.g., no recording or score already set)
 
 
@@ -969,7 +968,7 @@ class RunSimulateEvaluationsInput:
     """
 
     call_execution_id: str
-    eval_config_ids: Optional[list[str]] = None  # If None, runs all configs
+    eval_config_ids: list[str] | None = None  # If None, runs all configs
     skip_existing: bool = False  # If True, skip evaluations that already exist
 
 
@@ -980,7 +979,7 @@ class RunSimulateEvaluationsOutput:
     """
 
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
 
 
 # =============================================================================
@@ -1010,7 +1009,7 @@ class RunToolCallEvaluationOutput:
     """
 
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
 
 
 # =============================================================================

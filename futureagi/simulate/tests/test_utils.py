@@ -212,14 +212,14 @@ class TestPersonaStructure:
 
     def test_english_personas_have_diverse_genders(self):
         """English personas should include both male and female genders."""
-        genders = set(p["gender"] for p in ENGLISH_PERSONAS)
+        genders = {p["gender"] for p in ENGLISH_PERSONAS}
 
         assert "Male" in genders or "male" in genders
         assert "Female" in genders or "female" in genders
 
     def test_hindi_personas_have_diverse_genders(self):
         """Hindi personas should include both male and female genders."""
-        genders = set(p["gender"] for p in HINDI_PERSONAS)
+        genders = {p["gender"] for p in HINDI_PERSONAS}
 
         assert "Male" in genders or "male" in genders
         assert "Female" in genders or "female" in genders

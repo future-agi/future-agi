@@ -1,16 +1,15 @@
-from enum import Enum
-from typing import List, Optional
+from enum import StrEnum
 
 from pydantic import BaseModel, field_validator
 
 
-class ChatRole(str, Enum):
+class ChatRole(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"
     TOOL = "tool"
 
 
-class SimulationCallType(str, Enum):
+class SimulationCallType(StrEnum):
     VOICE = "voice"
     TEXT = "text"
 
@@ -32,17 +31,17 @@ class ChatMessage(BaseModel):
     """
 
     role: ChatRole
-    content: Optional[str] = None
-    tool_call_id: Optional[str] = None
-    name: Optional[str] = None
-    metadata: Optional[dict] = None
-    tool_calls: Optional[List[ToolCall]] = None
+    content: str | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
+    metadata: dict | None = None
+    tool_calls: list[ToolCall] | None = None
 
 
 class SendChatRequest(BaseModel):
-    messages: Optional[List[ChatMessage]] = None
-    metrics: Optional[dict[str, Optional[float | int]]] = None
-    initiate_chat: Optional[bool] = False
+    messages: list[ChatMessage] | None = None
+    metrics: dict[str, float | int | None] | None = None
+    initiate_chat: bool | None = False
 
     @field_validator("metrics")
     @classmethod
@@ -70,19 +69,19 @@ class SendChatRequest(BaseModel):
 
 
 class ChatSendMessageViewResponse(BaseModel):
-    input_message: Optional[List[ChatMessage]] = None
-    output_message: Optional[List[ChatMessage]] = None
-    message_history: List[ChatMessage]
-    chat_ended: Optional[bool] = False
+    input_message: list[ChatMessage] | None = None
+    output_message: list[ChatMessage] | None = None
+    message_history: list[ChatMessage]
+    chat_ended: bool | None = False
 
 
 class Costs(BaseModel):
     cost: float
     type: str
-    model: Optional[str] = None
-    total_tokens: Optional[int] = None
-    prompt_tokens: Optional[int] = None
-    completion_tokens: Optional[int] = None
+    model: str | None = None
+    total_tokens: int | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
 
 class ChatSessionResponse(BaseModel):
@@ -90,13 +89,13 @@ class ChatSessionResponse(BaseModel):
     name: str
     status: str
     assistant_id: str
-    messages: Optional[List[ChatMessage]] = None
+    messages: list[ChatMessage] | None = None
 
 
 class ChatSessionSendMessageResponse(BaseModel):
-    input: List[ChatMessage]
-    output: List[ChatMessage]
+    input: list[ChatMessage]
+    output: list[ChatMessage]
     id: str
-    has_chat_ended: Optional[bool] = False
-    session_id: Optional[str] = None
-    costs: Optional[List[Costs]] = None
+    has_chat_ended: bool | None = False
+    session_id: str | None = None
+    costs: list[Costs] | None = None

@@ -35,7 +35,7 @@ def calculate_aggregate_metrics(call_executions):
         failed_calls = call_executions.filter(
             status=CallExecution.CallStatus.FAILED
         ).count()
-        cancelled_calls = call_executions.filter(
+        call_executions.filter(
             status=CallExecution.CallStatus.CANCELLED
         ).count()
         calls_attempted = total_calls - pending_calls - queued_calls

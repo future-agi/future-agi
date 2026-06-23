@@ -13,8 +13,7 @@ Tests cover:
 """
 
 import uuid
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, Mock, patch
+from datetime import timedelta
 
 import pytest
 from django.utils import timezone
@@ -24,6 +23,7 @@ from simulate.models.run_test import RunTest
 from simulate.models.simulation_phone_number import SimulationPhoneNumber
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
+
 try:
     from ee.voice.services.phone_number_service import PhoneNumberService
 except ImportError:
@@ -499,10 +499,8 @@ class TestConcurrencyHandling:
         This tests that select_for_update() is used correctly.
         """
         # Create multiple call executions
-        from simulate.models import AgentDefinition
-        from simulate.models.run_test import RunTest
 
-        org = multiple_outbound_phones[0].phone_number  # Just need a unique org
+        multiple_outbound_phones[0].phone_number  # Just need a unique org
 
         # Acquire phones sequentially (since we can't easily test real concurrency)
         # But verify each acquisition gets a different phone
@@ -513,9 +511,8 @@ class TestConcurrencyHandling:
             phone.status = SimulationPhoneNumber.PhoneStatus.IDLE
             phone.save()
 
-        from simulate.models.test_execution import TestExecution
 
-        for i in range(3):
+        for _i in range(3):
             phone = PhoneNumberService.acquire_phone_number(
                 call_direction="outbound",
                 call_execution=None,

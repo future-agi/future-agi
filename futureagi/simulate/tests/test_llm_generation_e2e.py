@@ -14,12 +14,8 @@ Run live LLM tests (requires API keys):
     pytest simulate/tests/test_llm_generation_e2e.py -m "live_llm"
 """
 
-import asyncio
 import json
-import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import pandas as pd
 import pytest
 
 from model_hub.models.choices import (
@@ -368,7 +364,7 @@ class TestMockedLLMPipeline:
     def test_pipeline_handles_partial_persona_data(self, db, scenario_with_dataset):
         """Test that pipeline fills missing persona fields with defaults."""
         dataset = scenario_with_dataset.dataset
-        rows = list(
+        list(
             Row.objects.filter(dataset=dataset, deleted=False).order_by("order")
         )
 
@@ -947,7 +943,6 @@ class TestErrorHandling:
         }
 
         # Try to persist to non-existent column
-        row_data = {"nonexistent_column": "value"}
         column_names = ["nonexistent_column"]
 
         # This should not raise, just skip the column
@@ -968,7 +963,7 @@ class TestErrorHandling:
 
         # Should not raise
         cells_created = 0
-        for i, row_id in enumerate([str(r.id) for r in rows]):
+        for i, _row_id in enumerate([str(r.id) for r in rows]):
             if i >= len(generated_data):
                 continue
             cells_created += 1
@@ -1050,7 +1045,7 @@ class TestScenarioTypeE2E:
             source=DatasetSourceChoices.BUILD.value,
         )
 
-        source_col = Column.objects.create(
+        Column.objects.create(
             dataset=source,
             name="custom_input",
             data_type="text",

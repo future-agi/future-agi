@@ -5,7 +5,6 @@ Provides async-to-sync wrappers for starting test execution workflows.
 """
 
 import asyncio
-from typing import Optional
 
 import structlog
 from asgiref.sync import async_to_sync
@@ -26,7 +25,7 @@ def start_test_execution_workflow(
     run_test_id: str,
     org_id: str,
     scenario_ids: list[str],
-    simulator_id: Optional[str] = None,
+    simulator_id: str | None = None,
 ) -> str:
     """
     Start a TestExecutionWorkflow from sync Django code.
@@ -58,7 +57,7 @@ async def _start_test_execution_workflow_async(
     run_test_id: str,
     org_id: str,
     scenario_ids: list[str],
-    simulator_id: Optional[str] = None,
+    simulator_id: str | None = None,
 ) -> str:
     """Async implementation for starting test execution workflow."""
     from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
@@ -162,7 +161,7 @@ async def _cancel_test_execution_async(test_execution_id: str) -> bool:
     return await _cancel_with_retries(client, workflow_id)
 
 
-def cancel_workflow(workflow_id: str, cancel_signal: Optional[str] = None) -> bool:
+def cancel_workflow(workflow_id: str, cancel_signal: str | None = None) -> bool:
     """
     Cancel a Temporal workflow by its full workflow ID.
 
@@ -179,7 +178,7 @@ def cancel_workflow(workflow_id: str, cancel_signal: Optional[str] = None) -> bo
 
 
 async def _cancel_workflow_async(
-    workflow_id: str, cancel_signal: Optional[str] = None
+    workflow_id: str, cancel_signal: str | None = None
 ) -> bool:
     """Async implementation for cancelling any workflow by ID.
 
@@ -251,7 +250,7 @@ def rerun_call_executions(
     org_id: str,
     workspace_id: str,
     eval_only: bool = False,
-    active_workflow_id: Optional[str] = None,
+    active_workflow_id: str | None = None,
 ) -> dict:
     """
     Rerun specific call executions via RerunCoordinatorWorkflow.
@@ -292,7 +291,7 @@ async def _rerun_call_executions_async(
     org_id: str,
     workspace_id: str,
     eval_only: bool = False,
-    active_workflow_id: Optional[str] = None,
+    active_workflow_id: str | None = None,
 ) -> dict:
     """
     Async implementation for rerunning call executions.
