@@ -135,6 +135,30 @@ def mirror_eval_loggers_to_clickhouse(eval_logger_ids: Iterable[Any]) -> None:
         _reset_client()
 
 
+def soft_delete_eval_loggers(queryset, **extra_update: Any) -> int:
+    """Soft-delete the EvalLogger rows in ``queryset`` and mirror the deletion
+    to CH post-commit. Returns the number of rows soft-deleted.
+
+    A queryset ``.update()`` bypasses ``post_save``, so the always-on CH mirror
+    never sees the soft-delete and the rows would stay ``is_deleted = 0`` in CH
+    (stale verdicts in the eval read-back). Capture the ids first, bump
+    ``updated_at`` so the ReplacingMergeTree ``_version`` advances — else the
+    deleted row ties the live row's version and ``FINAL`` may keep the live one —
+    then mirror the ids after commit. Use this at every EvalLogger
+    soft-delete site instead of a bare ``.update(deleted=True)``.
+    """
+    from django.db import transaction
+    from django.utils import timezone
+
+    ids = list(queryset.values_list("id", flat=True))
+    if not ids:
+        return 0
+    _now = timezone.now()
+    queryset.update(deleted=True, deleted_at=_now, updated_at=_now, **extra_update)
+    transaction.on_commit(lambda: mirror_eval_loggers_to_clickhouse(ids))
+    return len(ids)
+
+
 def _on_eval_logger_saved(sender, instance, **kwargs) -> None:
     """post_save receiver — mirror every EvalLogger write into CH after commit.
 

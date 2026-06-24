@@ -60,13 +60,16 @@ class DeleteEvalTasksTool(BaseTool):
         count = eval_tasks.count()
         now = timezone.now()
 
+        from tracer.services.clickhouse.v2.eval_logger_writer import (
+            soft_delete_eval_loggers,
+        )
+
         eval_tasks.update(deleted=True, deleted_at=now, status=EvalTaskStatus.DELETED)
         EvalTaskLogger.objects.filter(eval_task_id__in=id_strs).update(
             deleted=True, deleted_at=now
         )
-        EvalLogger.objects.filter(eval_task_id__in=id_strs).update(
-            deleted=True, deleted_at=now
-        )
+        # mirror the EvalLogger soft-delete to CH (.update() bypasses post_save)
+        soft_delete_eval_loggers(EvalLogger.objects.filter(eval_task_id__in=id_strs))
 
         found_ids = {str(t.id) for t in eval_tasks}
         not_found = [eid for eid in id_strs if eid not in found_ids]

@@ -4,7 +4,6 @@ import traceback
 import structlog
 from django.db import close_old_connections
 from django.db.models import Q
-from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -371,11 +370,18 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             # ``EvalLogger.objects.filter(observation_span__in=<qs>)`` which
             # joined on the FK; substitute the PK ``__in`` form using the
             # collected CH span ids (EvalLogger.observation_span_id is the
-            # underlying column the FK resolves to).
-            EvalLogger.objects.filter(
-                observation_span_id__in=span_ids,
-                custom_eval_config=custom_eval_config,
-            ).update(deleted=True, deleted_at=timezone.now())
+            # underlying column the FK resolves to). soft_delete_eval_loggers
+            # mirrors the soft-delete to CH (queryset .update() bypasses post_save).
+            from tracer.services.clickhouse.v2.eval_logger_writer import (
+                soft_delete_eval_loggers,
+            )
+
+            soft_delete_eval_loggers(
+                EvalLogger.objects.filter(
+                    observation_span_id__in=span_ids,
+                    custom_eval_config=custom_eval_config,
+                )
+            )
 
             for span_id in span_ids:
                 evaluate_observation_span.delay(

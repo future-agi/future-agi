@@ -1,7 +1,8 @@
 """Unit tests for the eval-verdict PG -> CH mirror (TH-5642).
 
-Pins the EvalLogger -> tracer_eval_logger_v2 row mapping and the dual-write
-gate. No Django/live CH — the row builder is pure and the client is mocked.
+Pins the EvalLogger -> tracer_eval_logger_v2 row mapping, the always-on mirror
+(no dual-write gate), and the soft_delete_eval_loggers helper. No Django/live
+CH — the row builder is pure and the client/queryset are mocked.
 """
 
 import uuid
@@ -87,3 +88,87 @@ def test_mirror_empty_ids_noop(monkeypatch):
         elw, "_get_client", lambda: pytest.fail("should not insert for empty ids")
     )
     elw.mirror_eval_loggers_to_clickhouse([None, ""])
+
+
+@pytest.mark.unit
+def test_mirror_fires_insert_for_valid_id(monkeypatch):
+    """With the dual-write gate removed, a valid id ALWAYS reaches the CH client
+    (the inverse of the old gated-off behaviour)."""
+    e = _eval()
+    captured = {}
+
+    class _FakeMgr:
+        def filter(self, **kw):
+            captured["filter"] = kw
+            return [e]
+
+    import tracer.models.observation_span as obs
+
+    _mgr = _FakeMgr()
+    # both attrs: the mirror does getattr(EvalLogger, "all_objects", EvalLogger.objects)
+    # and the default arg eagerly accesses .objects.
+    monkeypatch.setattr(
+        obs, "EvalLogger", SimpleNamespace(all_objects=_mgr, objects=_mgr)
+    )
+
+    class _FakeClient:
+        def insert(self, table, rows, column_names=None):
+            captured["table"] = table
+            captured["rows"] = rows
+
+    monkeypatch.setattr(elw, "_get_client", lambda: _FakeClient())
+    elw.mirror_eval_loggers_to_clickhouse([e.id])
+
+    assert captured["table"] == elw._EVAL_LOGGER_V2_TABLE
+    assert captured["filter"]["id__in"] == [str(e.id)]
+    assert len(captured["rows"]) == 1
+
+
+@pytest.mark.unit
+def test_soft_delete_eval_loggers_bumps_version_and_mirrors(monkeypatch):
+    """soft_delete_eval_loggers captures ids, soft-deletes WITH an updated_at
+    bump (so the RMT _version advances and the deleted row wins under FINAL),
+    and mirrors the captured ids post-commit."""
+    from unittest.mock import MagicMock
+
+    import django.db.transaction as dj_tx
+
+    ids = [uuid.uuid4(), uuid.uuid4()]
+    qs = MagicMock()
+    qs.values_list.return_value = ids
+
+    on_commit_cbs = []
+    monkeypatch.setattr(dj_tx, "on_commit", on_commit_cbs.append)
+    mirrored = {}
+    monkeypatch.setattr(
+        elw,
+        "mirror_eval_loggers_to_clickhouse",
+        lambda x: mirrored.__setitem__("ids", x),
+    )
+
+    n = elw.soft_delete_eval_loggers(qs)
+
+    assert n == 2
+    qs.update.assert_called_once()
+    kw = qs.update.call_args.kwargs
+    assert kw["deleted"] is True
+    assert kw["deleted_at"] is not None
+    assert kw["updated_at"] == kw["deleted_at"]  # version-bump must match deleted_at
+    for cb in on_commit_cbs:
+        cb()
+    assert mirrored["ids"] == ids
+
+
+@pytest.mark.unit
+def test_soft_delete_eval_loggers_empty_is_noop(monkeypatch):
+    from unittest.mock import MagicMock
+
+    qs = MagicMock()
+    qs.values_list.return_value = []
+    monkeypatch.setattr(
+        elw,
+        "mirror_eval_loggers_to_clickhouse",
+        lambda x: pytest.fail("no mirror for empty set"),
+    )
+    assert elw.soft_delete_eval_loggers(qs) == 0
+    qs.update.assert_not_called()

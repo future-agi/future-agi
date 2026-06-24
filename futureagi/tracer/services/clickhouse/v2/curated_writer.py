@@ -140,6 +140,9 @@ def _get_client():
             import clickhouse_connect
 
             cfg = get_v2_config()
+            # Short connect_timeout so the always-on curated mirror (now on the
+            # SDK ingest hot path) fails fast when CH is unreachable instead of
+            # hanging the connect handshake; best-effort, reconciled by backfill.
             _client = clickhouse_connect.get_client(
                 host=cfg["host"],
                 port=cfg["http_port"],
@@ -147,6 +150,7 @@ def _get_client():
                 password=cfg["password"] or "",
                 database=cfg["database"],
                 send_receive_timeout=15,
+                connect_timeout=2,
             )
     return _client
 

@@ -105,6 +105,28 @@ def mirror_scores_to_clickhouse(score_ids: Iterable[Any]) -> None:
         _reset_client()
 
 
+def soft_delete_scores(queryset, **extra_update: Any) -> int:
+    """Soft-delete the Score rows in ``queryset`` and mirror the deletion to CH
+    post-commit. Returns the number of rows soft-deleted.
+
+    A queryset ``.update()`` bypasses ``post_save``, so the always-on CH mirror
+    never sees the soft-delete and the annotation filters would keep returning
+    the deleted rows. Capture ids first, bump ``updated_at`` so the RMT
+    ``_version`` advances (the deleted row must win under ``FINAL``), then mirror
+    the ids after commit. Use this at every bulk Score soft-delete site.
+    """
+    from django.db import transaction
+    from django.utils import timezone
+
+    ids = list(queryset.values_list("id", flat=True))
+    if not ids:
+        return 0
+    _now = timezone.now()
+    queryset.update(deleted=True, deleted_at=_now, updated_at=_now, **extra_update)
+    transaction.on_commit(lambda: mirror_scores_to_clickhouse(ids))
+    return len(ids)
+
+
 def _on_score_saved(sender, instance, **kwargs) -> None:
     """post_save receiver — mirror a Score write into CH after commit.
 

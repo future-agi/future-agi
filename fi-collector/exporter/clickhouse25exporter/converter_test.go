@@ -284,14 +284,19 @@ func TestConvertWithIdentities_TraceProjectCanonicalized(t *testing.T) {
 	traces := buildOTLPSpan()
 	// A valid-but-uppercase project id must land canonical (lowercase-dashed) in
 	// the traces row, matching end_users / the app mirror — else co-owned traces
-	// drift to two keys.
-	upper := strings.ToUpper("11111111-1111-4111-8111-111111111111")
+	// drift to two keys. Use a UUID with hex LETTERS so ToUpper is not a no-op
+	// (an all-digit uuid would make this assertion vacuous).
+	canonical := "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+	upper := strings.ToUpper(canonical)
+	if upper == canonical {
+		t.Fatal("test fixture bug: uppercase form must differ from canonical")
+	}
 	traces.ResourceSpans().At(0).Resource().Attributes().PutStr("fi.project_id", upper)
 	_, ids, err := ConvertWithIdentities(traces)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ids.Traces()[0].ProjectID; got != "11111111-1111-4111-8111-111111111111" {
+	if got := ids.Traces()[0].ProjectID; got != canonical {
 		t.Errorf("trace.ProjectID must be canonical lowercase-dashed; got %q", got)
 	}
 }
