@@ -21,7 +21,7 @@ import {
   useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { useSnackbar } from "notistack";
 import { AgGridReact } from "ag-grid-react";
@@ -1181,22 +1181,17 @@ const GroundTruthSetupForm = ({
 
   const save = useSaveGroundTruthSetup(template?.id);
   const [embedChainRunning, setEmbedChainRunning] = useState(false);
-  const seenPendingRef = useRef(false);
 
   useEffect(() => {
-    if (!embedChainRunning) {
-      seenPendingRef.current = false;
-      return;
-    }
-    if (embeddingStatus === "pending") {
-      seenPendingRef.current = true;
-      return;
-    }
-    if (seenPendingRef.current) {
+    if (!embedChainRunning) return;
+    if (embeddingStatus === "completed" || embeddingStatus === "failed") {
       setEmbedChainRunning(false);
-      seenPendingRef.current = false;
     }
   }, [embedChainRunning, embeddingStatus]);
+
+  useEffect(() => {
+    if (save.isError) setEmbedChainRunning(false);
+  }, [save.isError]);
 
   const mappingDirty = !shallowEqual(
     normalizeMapping(varMapping),
