@@ -274,10 +274,10 @@ const CreateScenarioView = () => {
     const agentOptions = agentDefinitionsLoading
       ? []
       : agentDefinitions?.map((agent) => ({
-          label: agent?.agentName,
+          label: agent?.agent_name,
           value: agent?.id,
           sourceType: SourceType.AGENT_DEFINITION,
-          agentType: agent?.agentType,
+          agentType: agent?.agent_type,
         })) ?? [];
 
     const promptOptions = isLoadingPrompts

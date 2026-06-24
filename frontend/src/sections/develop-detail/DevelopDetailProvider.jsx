@@ -17,7 +17,8 @@ const DevelopDetailProvider = ({ children }) => {
   };
 
   const refreshGrid = useCallback(
-    ({ purge } = {}) => {
+    (options) => {
+      const { purge } = options || {};
       queryClient.invalidateQueries({ queryKey: ["dataset-detail"] });
       if (typeof refetchTable?.current === "function") {
         refetchTable.current();
