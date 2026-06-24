@@ -122,7 +122,7 @@ Three compose files at the repo root. Pick one or compose them with `-f`.
 
 ### Mode 1 — OSS stack
 
-The default Compose stack runs frontend, backend, worker, agentcc-gateway, serving, code-executor, postgres, clickhouse, redis, minio, rabbitmq, and temporal from published images.
+The default Compose stack runs frontend, backend, worker, agentcc-gateway, serving, code-executor, postgres, clickhouse, redis, rabbitmq, minio, temporal, and fi-collector from published images.
 
 ```bash
 docker compose up                                # foreground
@@ -132,6 +132,22 @@ docker compose logs -f backend
 ```
 
 Binds the frontend on `0.0.0.0:3000`; data stores stay on `127.0.0.1`. Put a reverse proxy in front of the frontend for HTTPS in any non-laptop deployment.
+
+#### Mode 1b — Full stack with analytics (PeerDB)
+
+The default `light` profile leaves Observe / Trace analytics views empty — they're fed by PeerDB CDC streaming from Postgres into ClickHouse. Enable the `full` profile to start the PeerDB stack (9 extra containers):
+
+```bash
+COMPOSE_PROFILES=full docker compose up -d
+```
+
+After all services are healthy, register the mirrors (one-time):
+
+```bash
+docker compose exec peerdb-init bash /setup.sh
+```
+
+PeerDB UI: <http://localhost:3001> (login: `peerdb` / `peerdb`).
 
 ### Mode 2 — Development mode
 
@@ -230,7 +246,9 @@ To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port,
 |---|---|
 | `postgres` | Primary transactional store (users, traces, datasets, evals, prompts, annotations). |
 | `clickhouse` | Analytics store for traces, spans, dashboards, and evaluation queries. |
-| `redis` | Cache, rate limits, Celery/Django cache, WebSocket pub/sub. |
+| `redis` | Cache, rate limits, distributed locks, Django cache backend. |
+| `rabbitmq` | Celery broker + Django Channels layer (WebSocket pub/sub). |
+| `fi-collector` | OTLP gRPC/HTTP receiver. Writes spans straight to ClickHouse via the v2 typed-JSON schema. |
 | `minio` | S3-compatible object storage (uploaded files, eval artifacts). In production, swap for real S3 by setting `S3_ENDPOINT_URL` to an AWS endpoint. **Note:** the backend uses `S3_ENDPOINT_URL` (internal Docker hostname) to talk to MinIO, but URLs returned to the browser use `MINIO_URL` (defaults to `http://localhost:9005`). If you access the UI from anywhere other than the host machine — e.g. another machine on your LAN, a remote VM, or a domain name — set `MINIO_URL` in `.env` to a URL the browser can reach (e.g. `http://your-host.example.com:9005`). |
 
 ### Workflow engine
