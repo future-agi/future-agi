@@ -237,6 +237,65 @@ func TestConvertWithIdentities_NoTraceWhenProjectInvalid(t *testing.T) {
 	}
 }
 
+func TestConvertWithIdentities_NoTraceWhenStartTimeZero(t *testing.T) {
+	traces := buildOTLPSpan()
+	// A root span with no StartTimestamp → _version 0 + a 1970 created_at; that
+	// traces row partitions to 197001 and never merges with the app's real-month
+	// row (poisoning trace_dict). It must be skipped.
+	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
+		SetStartTimestamp(pcommon.Timestamp(0))
+	rows, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0]["_version"].(uint64) != 0 {
+		t.Fatalf("precondition: zero start should yield _version 0, got %v", rows[0]["_version"])
+	}
+	if got := len(ids.Traces()); got != 0 {
+		t.Errorf("a zero-start-time root span must NOT produce a trace row; got %d", got)
+	}
+}
+
+func TestConvertWithIdentities_VersionCappedForFutureStart(t *testing.T) {
+	traces := buildOTLPSpan()
+	// Producer clock skewed 24h into the future: the trace _version must be
+	// capped at ingest wall-clock so the app mirror's time.time_ns() still wins.
+	future := time.Now().Add(24 * time.Hour)
+	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
+		SetStartTimestamp(pcommon.NewTimestampFromTime(future))
+	rows, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := ids.Traces()
+	if len(ts) != 1 {
+		t.Fatalf("expected 1 trace, got %d", len(ts))
+	}
+	rawVersion := rows[0]["_version"].(uint64) // = future start nanos
+	if ts[0].Version >= rawVersion {
+		t.Errorf("future start: trace.Version=%d must be CAPPED below the raw start nanos=%d", ts[0].Version, rawVersion)
+	}
+	if ts[0].Version > uint64(time.Now().UTC().UnixNano()) {
+		t.Errorf("trace.Version=%d must not exceed ingest wall-clock", ts[0].Version)
+	}
+}
+
+func TestConvertWithIdentities_TraceProjectCanonicalized(t *testing.T) {
+	traces := buildOTLPSpan()
+	// A valid-but-uppercase project id must land canonical (lowercase-dashed) in
+	// the traces row, matching end_users / the app mirror — else co-owned traces
+	// drift to two keys.
+	upper := strings.ToUpper("11111111-1111-4111-8111-111111111111")
+	traces.ResourceSpans().At(0).Resource().Attributes().PutStr("fi.project_id", upper)
+	_, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids.Traces()[0].ProjectID; got != "11111111-1111-4111-8111-111111111111" {
+		t.Errorf("trace.ProjectID must be canonical lowercase-dashed; got %q", got)
+	}
+}
+
 func TestConvertWithIdentities_RootAndChild_OneTrace(t *testing.T) {
 	traces := buildOTLPSpan() // span[0] is the root
 	// Append a child span sharing the same trace_id with a parent set.

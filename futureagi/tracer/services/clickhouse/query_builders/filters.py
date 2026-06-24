@@ -10,12 +10,6 @@ Django ORM querysets.
 import re
 from collections.abc import Callable
 from typing import Any
-
-from tracer.services.clickhouse.eval_logger_table import (
-    end_user_source,
-    eval_logger_source,
-    score_source,
-)
 from tracer.utils.constants import (
     LIST_OPS,
     NO_VALUE_OPS,
@@ -296,13 +290,10 @@ class ClickHouseFilterBuilder:
         self.score_date_scope = score_date_scope
         self._param_counter: int = 0
         self._params: dict[str, Any] = {}
-        # CDC-off seam: the annotation-filter subqueries read ``model_hub_score``,
-        # a dropped PeerDB CDC table CH-off. Swap to the app-mirrored
-        # ``model_hub_score_v2`` (env CH25_SCORE_TABLE) — same column contract
-        # (incl. ``deleted``), so the subquery SQL is reused verbatim. Default
-        # keeps the legacy table so PeerDB stacks are unchanged. The v2 rewriter
-        # deliberately excludes this table, so the swap must happen here.
-        self._score_table = score_source()
+        # Annotation-filter subqueries read the app-mirrored ``model_hub_score_v2``
+        # RMT (the v2 rewriter deliberately excludes this table, so it is named
+        # directly here).
+        self._score_table = "model_hub_score_v2"
 
     def _score_date_filter(self, alias: str = "s") -> str:
         """Return a lower-bound ``created_at`` filter for ``model_hub_score``.
@@ -753,17 +744,15 @@ class ClickHouseFilterBuilder:
         if not inner:
             return None
 
-        # CDC-off seam: legacy ``tracer_enduser`` (id/_peerdb_is_deleted) is gone;
-        # read the v2 curated ``end_users`` RMT (end_user_id/is_deleted) instead.
-        # Env-gated (CH25_END_USER_TABLE) so PeerDB stacks keep the legacy table.
-        eu_table, eu_id_col, eu_not_deleted = end_user_source()
+        # The curated EndUser dimension is the ``end_users`` RMT
+        # (end_user_id / is_deleted).
         return (
             f"trace_id {outer_op} ("
             f"SELECT trace_id FROM {self.table} "
             f"WHERE end_user_id IN ("
-            f"SELECT {eu_id_col} FROM {eu_table} FINAL "
+            f"SELECT end_user_id FROM end_users FINAL "
             f"WHERE {inner} "
-            f"AND {eu_not_deleted}"
+            f"AND is_deleted = 0"
             f") AND _peerdb_is_deleted = 0)"
         )
 
@@ -1054,6 +1043,22 @@ class ClickHouseFilterBuilder:
             "trace_session_id",
         }
     )
+    # Ops that compare a nullable-UUID column as text — for these the column is
+    # wrapped in ``toString(...)`` so string operators (contains / starts_with /
+    # …) work and equality matches the textual form. Referenced by
+    # ``_build_column_condition``; without it that path raises AttributeError.
+    _UUID_TEXT_FILTER_OPS = frozenset(
+        {
+            "equals",
+            "not_equals",
+            "in",
+            "not_in",
+            "contains",
+            "not_contains",
+            "starts_with",
+            "ends_with",
+        }
+    )
 
     def _build_column_condition(
         self,
@@ -1308,14 +1313,11 @@ class ClickHouseFilterBuilder:
             negate_outer: bool = False,
         ) -> str:
             outer_operator = "NOT IN" if negate_outer else "IN"
-            # Respect CH25_EVAL_LOGGER_TABLE: the legacy peerdb CDC table is gone
-            # in CDC-off deployments (only tracer_eval_logger_v2 exists).
-            eval_table, eval_nd = eval_logger_source()
             return (
                 f"{outer_col} {outer_operator} ("
-                f"SELECT {inner_col} FROM {eval_table} FINAL "
+                f"SELECT {inner_col} FROM tracer_eval_logger_v2 FINAL "
                 f"WHERE custom_eval_config_id IN %({param_cfg})s "
-                f"AND {eval_nd} "
+                f"AND is_deleted = 0 "
                 f"{error_clause} "
                 f"AND {match_condition}"
                 f")"
@@ -1773,12 +1775,11 @@ class ClickHouseFilterBuilder:
         # (seeded by ``BaseQueryBuilder.__init__``), matching the pattern
         # used by ``_build_span_attr_condition`` above.
         # toString() casts UUID → String to match spans.trace_id (String type).
-        eval_table, eval_nd = eval_logger_source("el")
         return (
             "trace_id IN ("
-            f"SELECT DISTINCT toString(el.trace_id) FROM {eval_table} AS el FINAL "
+            f"SELECT DISTINCT toString(el.trace_id) FROM tracer_eval_logger_v2 AS el FINAL "
             f"INNER JOIN {self.table} AS sp ON sp.trace_id = toString(el.trace_id) "
-            f"WHERE {eval_nd} AND el.trace_id IS NOT NULL "
+            "WHERE el.is_deleted = 0 AND el.trace_id IS NOT NULL "
             "AND sp.is_deleted = 0 "
             f"AND {self._project_scope_predicate('sp')})"
         )

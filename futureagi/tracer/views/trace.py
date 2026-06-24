@@ -69,7 +69,6 @@ from tracer.serializers.trace import (
     UsersQuerySerializer,
     UsersResponseSerializer,
 )
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.graph_dispatch import (
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
@@ -1361,8 +1360,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # ----- Phase 8: Batch fetch eval scores from CH -----
         eval_map = {}
         try:
-            eval_table, eval_nd = eval_logger_source()
-            eval_query = f"""
+            eval_query = """
             SELECT
                 toString(observation_span_id) AS span_id,
                 toString(custom_eval_config_id) AS eval_config_id,
@@ -1370,9 +1368,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 output_bool,
                 output_str,
                 eval_explanation
-            FROM {eval_table} FINAL
+            FROM tracer_eval_logger_v2 FINAL
             WHERE trace_id = %(trace_id)s
-              AND {eval_nd}
+              AND is_deleted = 0
             """
             eval_result = analytics.execute_ch_query(
                 eval_query, {"trace_id": str(trace_id)}, timeout_ms=30000
@@ -3373,8 +3371,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         eval_outputs = {}
         trace_evals: dict[str, Any] = {}
         if eval_config_ids:
-            eval_table, eval_nd = eval_logger_source()
-            eval_query = f"""
+            eval_query = """
             SELECT
                 trace_id,
                 toString(custom_eval_config_id) AS eval_config_id,
@@ -3382,8 +3379,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 avg(CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END) AS pass_rate,
                 count() AS eval_count,
                 any(output_str_list) AS output_str_list
-            FROM {eval_table} FINAL
-            WHERE {eval_nd}
+            FROM tracer_eval_logger_v2 FINAL
+            WHERE is_deleted = 0
               AND trace_id = %(trace_id)s
               AND custom_eval_config_id IN %(eval_config_ids)s
             GROUP BY trace_id, custom_eval_config_id
@@ -3980,11 +3977,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
         else:
-            eval_table, eval_nd = eval_logger_source()
             ch_result = analytics.execute_ch_query(
                 "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-                f"FROM {eval_table} FINAL "
-                f"WHERE {eval_nd} "
+                "FROM tracer_eval_logger_v2 FINAL "
+                "WHERE is_deleted = 0 "
                 "AND dictGet('trace_dict', 'project_id', "
                 "trace_id) = toUUID(%(pid)s)",
                 {"pid": str(project_id)},
@@ -4271,11 +4267,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
         eval_config_ids = []
-        eval_table, eval_nd = eval_logger_source()
         ch_result = analytics.execute_ch_query(
             "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            f"FROM {eval_table} FINAL "
-            f"WHERE {eval_nd} "
+            "FROM tracer_eval_logger_v2 FINAL "
+            "WHERE is_deleted = 0 "
             "AND dictGet('trace_dict', 'project_id', "
             "trace_id) = toUUID(%(pid)s)",
             {"pid": str(project_id)},
@@ -4641,11 +4636,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
         eval_config_ids = []
-        eval_table, eval_nd = eval_logger_source()
         ch_result = analytics.execute_ch_query(
             "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            f"FROM {eval_table} FINAL "
-            f"WHERE {eval_nd} "
+            "FROM tracer_eval_logger_v2 FINAL "
+            "WHERE is_deleted = 0 "
             "AND dictGet('trace_dict', 'project_id', "
             "trace_id) = toUUID(%(pid)s)",
             {"pid": project_id},

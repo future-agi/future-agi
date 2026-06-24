@@ -7,10 +7,10 @@ with a three-phase ClickHouse query strategy:
 Phase 1 -- Paginated spans from the denormalized ``spans`` table (all spans,
 not just root spans).
 
-Phase 2 -- Eval scores from ``tracer_eval_logger FINAL`` for the page of
+Phase 2 -- Eval scores from ``tracer_eval_logger_v2 FINAL`` for the page of
 span IDs, grouped by ``(observation_span_id, custom_eval_config_id)``.
 
-Phase 3 -- Annotations from ``model_hub_score FINAL`` for the page of
+Phase 3 -- Annotations from ``model_hub_score_v2 FINAL`` for the page of
 span IDs, grouped by ``(observation_span_id, label_id)``.
 
 The three result sets are merged in Python to produce the final response.
@@ -40,7 +40,6 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     """
 
     TABLE = "spans"
-    ANNOTATION_TABLE = "model_hub_score"
 
     SORT_FIELD_MAP: dict[str, str] = {
         "created_at": "start_time",
@@ -324,12 +323,6 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         if not span_ids or not self.eval_config_ids:
             return "", {}
 
-        # CDC-off seam: legacy peerdb table + ``_peerdb_is_deleted`` are gone
-        # CH-off; read ``tracer_eval_logger_v2`` with ``is_deleted = 0``.
-        from tracer.services.clickhouse.eval_logger_table import eval_logger_source
-
-        eval_table, eval_nd = eval_logger_source()
-
         params: dict[str, Any] = {
             "span_ids": tuple(span_ids),
             "eval_config_ids": tuple(self.eval_config_ids),
@@ -351,7 +344,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         # ``avg_score``/``pass_rate`` NaN, and leaving eval columns blank
         # on the span list. Use ``ifNull(...)`` to keep the comparison
         # NULL-safe.
-        query = f"""
+        query = """
         SELECT
             observation_span_id,
             toString(custom_eval_config_id) AS eval_config_id,
@@ -376,8 +369,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 output_str_list,
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ) AS str_lists
-        FROM {eval_table} FINAL
-        WHERE {eval_nd}
+        FROM tracer_eval_logger_v2 FINAL
+        WHERE is_deleted = 0
           AND observation_span_id IN %(span_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
         GROUP BY observation_span_id, custom_eval_config_id
@@ -402,14 +395,15 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             "label_ids": tuple(self.annotation_label_ids),
         }
 
-        query = f"""
+        # CDC-off: annotations live in ``model_hub_score_v2`` (the legacy peerdb
+        # ``model_hub_score`` + ``_peerdb_is_deleted`` are gone).
+        query = """
         SELECT
             observation_span_id,
             toString(label_id) AS label_id,
             anyLast(value) AS value
-        FROM {self.ANNOTATION_TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
-          AND deleted = false
+        FROM model_hub_score_v2 FINAL
+        WHERE deleted = false
           AND observation_span_id IN %(span_ids)s
           AND label_id IN %(label_ids)s
         GROUP BY observation_span_id, label_id

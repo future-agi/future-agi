@@ -188,17 +188,10 @@ class AnalyticsQueryService:
 
     def get_eval_config_ids_with_data_ch(self, project_id: str) -> list[str]:
         """Get distinct eval config IDs that have data for a project in ClickHouse."""
-        # Route through the CDC-off seam: the legacy peerdb table +
-        # ``_peerdb_is_deleted`` column are gone CH-off, so read
-        # ``tracer_eval_logger_v2`` with ``is_deleted = 0`` instead (else this
-        # 500s and the trace/span-list Evals columns render empty).
-        from tracer.services.clickhouse.eval_logger_table import eval_logger_source
-
-        eval_table, eval_nd = eval_logger_source()
-        query = f"""
+        query = """
             SELECT DISTINCT toString(custom_eval_config_id) AS config_id
-            FROM {eval_table} FINAL
-            WHERE {eval_nd}
+            FROM tracer_eval_logger_v2 FINAL
+            WHERE is_deleted = 0
               AND trace_id IN (
                   SELECT DISTINCT trace_id
                   FROM spans

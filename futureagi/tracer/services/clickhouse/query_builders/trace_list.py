@@ -399,18 +399,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if not trace_ids or not self.eval_config_ids:
             return "", {}
 
-        # CDC-off seam: legacy peerdb table + ``_peerdb_is_deleted`` are gone
-        # CH-off; read ``tracer_eval_logger_v2`` with ``is_deleted = 0``.
-        from tracer.services.clickhouse.eval_logger_table import eval_logger_source
-
-        eval_table, eval_nd = eval_logger_source()
-
         params: Dict[str, Any] = {
             "trace_ids": tuple(trace_ids),
             "eval_config_ids": tuple(self.eval_config_ids),
         }
 
-        # Partition-prune `tracer_eval_logger` (PARTITION BY toYYYYMM(created_at))
+        # Partition-prune `tracer_eval_logger_v2` (PARTITION BY toYYYYMM(created_at))
         # so the FINAL merge can skip months that cannot match this page.
         # The page of trace_ids was selected by build() within the user's
         # [start_date, end_date] window on `start_time`, so the matching eval
@@ -465,8 +459,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 output_str_list,
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ) AS str_lists
-        FROM {eval_table} FINAL
-        WHERE {eval_nd}
+        FROM tracer_eval_logger_v2 FINAL
+        WHERE is_deleted = 0
           AND trace_id IN %(trace_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
           {created_at_fragment}
@@ -477,8 +471,6 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     # ------------------------------------------------------------------
     # Phase 3: Annotations for a set of trace IDs
     # ------------------------------------------------------------------
-
-    ANNOTATION_TABLE = "model_hub_score"
 
     def build_annotation_query(
         self,
@@ -494,6 +486,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             "label_ids": tuple(annotation_label_ids),
         }
 
+        # CDC-off: annotations live in ``model_hub_score_v2`` (no
+        # ``_peerdb_is_deleted``). ``sp`` (spans) ``_peerdb_is_deleted`` resolves
+        # via the schema-014 alias, so it stays.
         query = f"""
         SELECT
             if(
@@ -505,12 +500,11 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             toString(s.label_id) AS label_id,
             anyLast(s.value) AS value,
             toString(anyLast(s.annotator_id)) AS annotator_id
-        FROM {self.ANNOTATION_TABLE} AS s FINAL
+        FROM model_hub_score_v2 AS s FINAL
         LEFT JOIN {self.TABLE} AS sp
           ON sp.id = s.observation_span_id
          AND sp._peerdb_is_deleted = 0
-        WHERE s._peerdb_is_deleted = 0
-          AND s.deleted = false
+        WHERE s.deleted = false
           AND if(
                 isNull(s.trace_id)
                 OR s.trace_id = toUUID('00000000-0000-0000-0000-000000000000'),

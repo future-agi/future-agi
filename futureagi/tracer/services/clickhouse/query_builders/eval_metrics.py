@@ -21,7 +21,6 @@ Supports three eval output types:
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 
 # Eval output type constants (mirrors EvalOutputType from Django models)
@@ -78,11 +77,10 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
     ) -> None:
         super().__init__(project_id, **kwargs)
 
-        # Resolve the eval-logger table + its not-deleted predicate from the
-        # CDC-off seam. CDC-off the legacy peerdb table (and its
-        # ``_peerdb_is_deleted`` column) is gone, so the raw builders must read
-        # ``tracer_eval_logger_v2`` with the ``is_deleted = 0`` marker instead.
-        self.RAW_TABLE, self._eval_not_deleted = eval_logger_source()
+        # Raw eval rows live in ``tracer_eval_logger_v2`` (collector-written RMT,
+        # ``is_deleted = 0`` marker).
+        self.RAW_TABLE = "tracer_eval_logger_v2"
+        self._eval_not_deleted = "is_deleted = 0"
 
         # Resolve eval name to UUID if needed
         from tracer.utils.eval_helpers import resolve_eval_config_id

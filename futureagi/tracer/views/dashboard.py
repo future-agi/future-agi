@@ -1066,12 +1066,17 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 from model_hub.models.evals_metric import EvalTemplate
 
                 used_template_ids = []
-                if not filter_by_project:
+                from tfc.ee_gating import is_oss
+
+                if not filter_by_project and not is_oss():
                     # Workspace-wide eval-template catalog. Read the PG
                     # system-of-record (APICallLog), NOT CH ``usage_apicalllog``:
                     # that is a dropped PeerDB mirror CDC-off (UNKNOWN_TABLE 500)
                     # and PG is correct in BOTH modes. NOTE: the breakage was in
                     # the CH-DISABLED config too — this path no longer needs CH.
+                    # EE-gated: APICallLog lives in ee.usage, so on OSS this falls
+                    # through to the template-list path rather than silently
+                    # swallowing an ImportError (bible §3).
                     from ee.usage.models.usage import APICallLog
                     from tfc.constants.api_calls import APICallStatusChoices
 
@@ -1091,20 +1096,12 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     )
 
                     # Get eval config IDs that have results on traces in the given
-                    # project(s). Route through the CDC-off seam: the legacy peerdb
-                    # table + ``_peerdb_is_deleted`` column are gone CH-off, so read
-                    # ``tracer_eval_logger_v2`` with ``is_deleted = 0`` instead
-                    # (else this 500s and the dashboard Evals columns render empty).
-                    from tracer.services.clickhouse.eval_logger_table import (
-                        eval_logger_source,
-                    )
-
+                    # project(s) from ``tracer_eval_logger_v2`` (``is_deleted = 0``).
                     ch = get_clickhouse_client()
-                    eval_table, eval_nd = eval_logger_source()
                     result = ch.execute_read(
                         "SELECT DISTINCT toString(custom_eval_config_id) AS tid "
-                        f"FROM {eval_table} "
-                        f"WHERE {eval_nd} "
+                        "FROM tracer_eval_logger_v2 "
+                        "WHERE is_deleted = 0 "
                         "AND custom_eval_config_id != toUUID('00000000-0000-0000-0000-000000000000') "
                         "AND created_at >= now() - INTERVAL 90 DAY "
                         "AND dictGet('trace_dict', 'project_id', trace_id) IN %(project_ids)s",

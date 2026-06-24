@@ -109,7 +109,19 @@ def process_in_line_evals():
             inline_evals_to_update.append(inline_eval)
 
     if eval_loggers_to_create:
-        EvalLogger.objects.bulk_create(eval_loggers_to_create)
+        created = EvalLogger.objects.bulk_create(eval_loggers_to_create)
+        # bulk_create bypasses post_save, so the EvalLogger->CH mirror (wired on
+        # post_save) never fires for these rows. Mirror them explicitly
+        # post-commit, else CDC-off the eval columns/panels stay blank.
+        from tracer.services.clickhouse.v2.eval_logger_writer import (
+            mirror_eval_loggers_to_clickhouse,
+        )
+
+        _eval_ids = [e.id for e in created if e.id]
+        if _eval_ids:
+            transaction.on_commit(
+                lambda ids=_eval_ids: mirror_eval_loggers_to_clickhouse(ids)
+            )
 
     if inline_evals_to_update:
         InlineEval.objects.bulk_update(inline_evals_to_update, ["status"])

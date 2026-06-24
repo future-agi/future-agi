@@ -1,18 +1,10 @@
 """App-level PG -> CH mirror for unified-annotation Scores (TH-5642).
 
 Annotation Scores are written to PG ``model_hub_score`` (the unified Score
-model), but the observe annotation filters read them back from a CH
-``model_hub_score`` subquery (``filters.py`` ``_score_*`` builders). That CH
-table was populated only by the PeerDB CDC chain, dropped by default
-(``CH25_DROP_LEGACY_CDC_CHAIN``) — so CDC-off every annotation filter 500s with
-UNKNOWN_TABLE. This is the steady-state replacement: a ``Score`` post-save
-mirror that upserts the row into ``model_hub_score_v2`` (schema 020,
-ReplacingMergeTree on ``_version``), gated by the same ``dual_write_enabled()``
-flag as the trace/eval mirrors so PeerDB stacks are untouched. The read side
-flips via the ``score_source()`` seam (env ``CH25_SCORE_TABLE``).
-
-Column names match the legacy filter-read contract (incl. the plain ``deleted``
-column) so the existing filter SQL is reused verbatim — only the table swaps.
+model); the observe annotation filters read them back from the CH
+``model_hub_score_v2`` RMT (``filters.py`` ``_score_*`` builders). A ``Score``
+post-save mirror upserts each row into ``model_hub_score_v2`` (schema 020,
+ReplacingMergeTree on ``_version``). Best-effort; the app is the sole CH writer.
 """
 
 from __future__ import annotations
@@ -26,13 +18,12 @@ import structlog
 from tracer.services.clickhouse.v2.trace_writer import (
     _get_client,
     _reset_client,
-    dual_write_enabled,
 )
 
 log = structlog.get_logger(__name__)
 
-# CDC-off home for unified-annotation Scores (schema 020). Deployments flip
-# CH25_SCORE_TABLE to this same table for the READ side (score_source()).
+# CH home for unified-annotation Scores (schema 020); also the READ side
+# (``filters.py`` annotation subqueries read this same table).
 _SCORE_V2_TABLE = "model_hub_score_v2"
 
 _SCORE_COLUMNS = (
@@ -98,8 +89,6 @@ def mirror_scores_to_clickhouse(score_ids: Iterable[Any]) -> None:
     state (covers create + edit + soft-delete in one place). Call inside
     ``transaction.on_commit`` (wired via the Score post-save signal).
     """
-    if not dual_write_enabled():
-        return
     ids = [str(i) for i in score_ids if i]
     if not ids:
         return

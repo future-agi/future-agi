@@ -30,7 +30,7 @@ class SdkConfig(AppConfig):
 
         # CDC-off replacement: mirror eval verdicts PG -> CH on write so the
         # CH-only eval read-back (eval columns/panels) is populated without
-        # PeerDB. Gated by dual_write_enabled() inside the mirror.
+        # PeerDB.
         from tracer.services.clickhouse.v2.eval_logger_writer import (
             connect_eval_logger_mirror,
         )
@@ -39,7 +39,7 @@ class SdkConfig(AppConfig):
 
         # CDC-off replacement: mirror unified-annotation Scores PG -> CH on write
         # so the observe annotation filters (has_annotation / annotator /
-        # per-label value) resolve without PeerDB. Gated by dual_write_enabled().
+        # per-label value) resolve without PeerDB.
         from tracer.services.clickhouse.v2.score_writer import (
             connect_score_mirror,
         )

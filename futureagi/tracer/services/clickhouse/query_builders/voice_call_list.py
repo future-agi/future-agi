@@ -7,9 +7,9 @@ multi-phase ClickHouse query strategy:
 Phase 1 -- Paginated root conversation spans from the denormalized ``spans``
 table (``WHERE parent_span_id IS NULL AND observation_type = 'conversation'``).
 
-Phase 2 -- Eval scores from ``tracer_eval_logger FINAL`` for those trace IDs.
+Phase 2 -- Eval scores from ``tracer_eval_logger_v2 FINAL`` for those trace IDs.
 
-Phase 3 -- Annotations from ``model_hub_score FINAL`` for those trace IDs.
+Phase 3 -- Annotations from ``model_hub_score_v2 FINAL`` for those trace IDs.
 
 Phase 4 -- Child spans for those trace IDs (for the observation_span field).
 
@@ -55,7 +55,6 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
     """
 
     TABLE = "spans"
-    ANNOTATION_TABLE = "model_hub_score"
 
     def __init__(
         self,
@@ -215,12 +214,6 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         if not trace_ids or not self.eval_config_ids:
             return "", {}
 
-        # CDC-off seam: the legacy peerdb table + ``_peerdb_is_deleted`` column
-        # are gone CH-off; read ``tracer_eval_logger_v2`` with ``is_deleted = 0``.
-        from tracer.services.clickhouse.eval_logger_table import eval_logger_source
-
-        eval_table, eval_nd = eval_logger_source()
-
         params: Dict[str, Any] = {
             "trace_ids": tuple(trace_ids),
             "eval_config_ids": tuple(self.eval_config_ids),
@@ -233,7 +226,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         # Column order must match what ``pivot_eval_results`` expects:
         # trace_id, eval_config_id, avg_score, pass_rate, success_count,
         # error_count, eval_count, str_lists.
-        query = f"""
+        query = """
         SELECT
             trace_id,
             toString(custom_eval_config_id) AS eval_config_id,
@@ -258,8 +251,8 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
                 output_str_list,
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ) AS str_lists
-        FROM {eval_table} FINAL
-        WHERE {eval_nd}
+        FROM tracer_eval_logger_v2 FINAL
+        WHERE is_deleted = 0
           AND trace_id IN %(trace_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
         GROUP BY trace_id, custom_eval_config_id
@@ -289,6 +282,9 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             "label_ids": tuple(annotation_label_ids),
         }
 
+        # CDC-off: annotations live in ``model_hub_score_v2`` (no
+        # ``_peerdb_is_deleted``). The ``sp`` (spans) ``_peerdb_is_deleted``
+        # below resolves via the schema-014 alias, so it stays as-is.
         query = f"""
         SELECT
             if(
@@ -300,12 +296,11 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             toString(s.label_id) AS label_id,
             toString(s.annotator_id) AS user_id,
             s.value
-        FROM {self.ANNOTATION_TABLE} AS s FINAL
+        FROM model_hub_score_v2 AS s FINAL
         LEFT JOIN {self.TABLE} AS sp
           ON sp.id = s.observation_span_id
          AND sp._peerdb_is_deleted = 0
-        WHERE s._peerdb_is_deleted = 0
-          AND s.deleted = false
+        WHERE s.deleted = false
           AND if(
                 isNull(s.trace_id)
                 OR s.trace_id = toUUID('00000000-0000-0000-0000-000000000000'),

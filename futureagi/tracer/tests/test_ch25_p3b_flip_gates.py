@@ -94,10 +94,8 @@ class _FakeCHClient:
 
 @pytest.fixture
 def fake_ch(monkeypatch):
-    """Dual-write ON, but every CH client is a FAKE — nothing hits real CH and we
-    can inject E's failure. Returns the fake so tests can flip ``.fail`` / inspect
-    ``.inserts``."""
-    monkeypatch.setenv("CH25_TRACE_DUAL_WRITE", "true")
+    """Every CH client is a FAKE — nothing hits real CH and we can inject E's
+    failure. Returns the fake so tests can flip ``.fail`` / inspect ``.inserts``."""
     fake = _FakeCHClient()
     import tracer.services.clickhouse.v2.curated_writer as cw
     import tracer.services.clickhouse.v2.trace_writer as tw

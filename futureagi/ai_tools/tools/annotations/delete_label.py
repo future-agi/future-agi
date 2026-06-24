@@ -54,6 +54,7 @@ class DeleteLabelTool(BaseTool):
         # rows would otherwise stay live in CH and the annotation filters would
         # keep returning them.
         from django.db import transaction
+        from django.utils import timezone
 
         from tracer.services.clickhouse.v2.score_writer import (
             mirror_scores_to_clickhouse,
@@ -61,7 +62,13 @@ class DeleteLabelTool(BaseTool):
 
         affected_scores = Score.objects.filter(label_id=params.label_id)
         affected_ids = list(affected_scores.values_list("id", flat=True))
-        affected_scores.update(deleted=True)
+        # Bump updated_at: the CH mirror derives the ReplacingMergeTree `_version`
+        # from it, and the read collapses with FINAL on `_version`. Without the
+        # bump the deleted=1 row carries the SAME version as the live deleted=0
+        # row -> non-deterministic merge winner -> the soft-delete can lose
+        # (queryset .update() does not fire auto_now).
+        _now = timezone.now()
+        affected_scores.update(deleted=True, deleted_at=_now, updated_at=_now)
         if affected_ids:
             transaction.on_commit(
                 lambda ids=affected_ids: mirror_scores_to_clickhouse(ids)

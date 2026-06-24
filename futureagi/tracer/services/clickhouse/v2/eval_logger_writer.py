@@ -1,14 +1,10 @@
 """App-level PG -> CH mirror for eval verdicts (TH-5642).
 
 Eval verdicts are written to PG ``tracer_eval_logger`` (EvalLogger.objects
-.create at ~11 sites), but every display reads them back from CH via
-``eval_logger_source()``. That CH table was populated only by the PeerDB CDC
-chain, which is dropped by default (``CH25_DROP_LEGACY_CDC_CHAIN``) — so with no
-CDC the eval columns/panels go blank. This is the steady-state replacement: an
-``EvalLogger`` post-save mirror that upserts the verdict into the v2 CH table
-``tracer_eval_logger_v2`` (the CDC-off read target, ReplacingMergeTree on
-``_version``/``is_deleted``), gated by the same ``dual_write_enabled()`` flag as
-the trace mirror so PeerDB stacks are untouched.
+.create at ~11 sites); every display reads them back from the CH
+``tracer_eval_logger_v2`` table. An ``EvalLogger`` post-save mirror upserts the
+verdict into ``tracer_eval_logger_v2`` (ReplacingMergeTree on
+``_version``/``is_deleted``). Best-effort; the app is the sole CH writer here.
 
 Mirrors the column order of ee/internal/scripts/sync_pg_to_clickhouse.py plus the
 v2-only columns (trace_session_id, target_type, deleted_at, is_deleted,
@@ -26,13 +22,12 @@ import structlog
 from tracer.services.clickhouse.v2.trace_writer import (
     _get_client,
     _reset_client,
-    dual_write_enabled,
 )
 
 log = structlog.get_logger(__name__)
 
-# The v2 table is the CDC-off home for eval verdicts (schema 011_eval_logger_v2).
-# Deployments flip CH25_EVAL_LOGGER_TABLE to this same table for the READ side.
+# CH home for eval verdicts (schema 011_eval_logger_v2); also the READ side
+# (the trace/voice/user eval-config discovery queries read this same table).
 _EVAL_LOGGER_V2_TABLE = "tracer_eval_logger_v2"
 
 _EVAL_COLUMNS = (
@@ -119,10 +114,9 @@ def mirror_eval_loggers_to_clickhouse(eval_logger_ids: Iterable[Any]) -> None:
 
     Best-effort: never raises. Re-reads PG so the row mirrored is exactly what
     committed. Call inside ``transaction.on_commit`` from the EvalLogger write
-    sites (wired via a post-save signal).
+    sites. Wired via a post-save signal for single saves; bulk_create /
+    queryset .update() bypass post_save, so those sites call this explicitly.
     """
-    if not dual_write_enabled():
-        return
     ids = [str(i) for i in eval_logger_ids if i]
     if not ids:
         return

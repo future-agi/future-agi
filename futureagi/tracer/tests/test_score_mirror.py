@@ -69,14 +69,5 @@ def test_score_row_soft_delete_and_empty_value():
 
 
 @pytest.mark.unit
-def test_mirror_gated_off_when_dual_write_disabled(monkeypatch):
-    touched = {"insert": False}
-    monkeypatch.setattr(sw, "dual_write_enabled", lambda: False)
-    monkeypatch.setattr(sw, "_get_client", lambda: touched.__setitem__("insert", True))
-    sw.mirror_scores_to_clickhouse([uuid.uuid4()])
-    assert touched["insert"] is False  # gated off -> no client touched
-
-
-@pytest.mark.unit
 def test_mirror_targets_v2_table():
     assert sw._SCORE_V2_TABLE == "model_hub_score_v2"

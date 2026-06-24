@@ -818,24 +818,6 @@ CLICKHOUSE_V2 = {
     "QUERY_TYPES_DISABLED": os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
-# Eval-logger table read by the trace/voice/user eval-config discovery queries.
-# The CH25 spans cutover intentionally kept the legacy peerdb CDC table
-# `tracer_eval_logger` (`_peerdb_is_deleted`/`deleted` columns); the v2 table
-# `tracer_eval_logger_v2` (`is_deleted`) is its prepared replacement. Flip this
-# per-deployment (default = legacy so the peerdb-backed stacks are unaffected;
-# CH-direct stacks set it to `tracer_eval_logger_v2`). See
-# tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
-CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
-# Curated EndUser table the ClickHouse filter builder's user_id / user_id_type
-# subquery reads. Legacy PeerDB CDC table ``tracer_enduser`` (id,
-# _peerdb_is_deleted, deleted) is the default; CDC-off stacks flip to the v2
-# collector-written ``end_users`` RMT (end_user_id, is_deleted) — schema 017.
-CH25_END_USER_TABLE = os.getenv("CH25_END_USER_TABLE", "tracer_enduser")
-# Unified-annotation Score table the observe filter builder reads (annotation
-# filters). Legacy PeerDB CDC mirror ``model_hub_score`` is the default; CDC-off
-# stacks flip to the app-mirrored ``model_hub_score_v2`` RMT (schema 020).
-CH25_SCORE_TABLE = os.getenv("CH25_SCORE_TABLE", "model_hub_score")
-
 # Where the eval runner reads span data from.
 #   "postgres"   — current behavior; reads from tracer_observation_span (Django ORM)
 #   "clickhouse" — reads span data from CH 25.3 via the hybrid loader

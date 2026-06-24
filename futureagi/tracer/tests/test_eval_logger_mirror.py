@@ -82,17 +82,7 @@ def test_eval_row_bool_and_deleted():
 
 
 @pytest.mark.unit
-def test_mirror_gated_off_when_dual_write_disabled(monkeypatch):
-    called = {"insert": False}
-    monkeypatch.setattr(elw, "dual_write_enabled", lambda: False)
-    monkeypatch.setattr(elw, "_get_client", lambda: called.__setitem__("insert", True))
-    elw.mirror_eval_loggers_to_clickhouse([uuid.uuid4()])
-    assert called["insert"] is False  # gated off -> no client touched
-
-
-@pytest.mark.unit
 def test_mirror_empty_ids_noop(monkeypatch):
-    monkeypatch.setattr(elw, "dual_write_enabled", lambda: True)
     monkeypatch.setattr(
         elw, "_get_client", lambda: pytest.fail("should not insert for empty ids")
     )
