@@ -39,63 +39,29 @@ from tracer.utils.trace_ingestion import _sanitize_nonfinite_floats
 logger = structlog.get_logger(__name__)
 
 
-def build_traces_of_session_list(
-    request,
-    project_id,
-    validated_data,
-    analytics,
-    org_project_ids=None,
-    org=None,
-    *,
-    build_annotation_map,
-):
-    """List traces-of-session using ClickHouse backend.
+def discover_eval_configs(analytics, project_id, org_project_ids=None):
+    """Single selector for the (project) ↔ (eval_config + eval_task +
+    target_type) discovery that every Observe list endpoint needs.
 
-    When ``org_project_ids`` is provided (cross-project user-detail
-    mode), the builder is constructed with `project_ids=...` and the
-    view falls back to a PG-side EvalLogger lookup scoped to those
-    projects (the CH dict-lookup path requires a single project_id).
+    Shared by ``build_traces_of_session_list``, ``build_voice_calls_list``, and
+    ``list_spans_observe`` (PR #943 review: the dictGet CH query, the
+    discovery_rows wrangling, and ``build_eval_task_map`` were copy-pasted in
+    three places). Returns:
 
-    Builder class resolved via v1↔v2 dispatch — set
-    CH25_QUERY_TYPES_V2_PRIMARY=TRACE_LIST to flip to CH 25.3.
+      * ``eval_configs``    — ``[CustomEvalConfig]`` (non-deleted), ready for
+        ``update_column_config_based_on_eval_config``.
+      * ``eval_config_ids`` — ``[str]`` of the surviving config ids.
+      * ``eval_task_map``   — ``{config_id: {eval_task_id, eval_task_name,
+        target_type}}``, the clustering each column carries to the UI.
+
+    When ``org_project_ids`` is set (cross-project user-detail view), the
+    discovery scans PG ``EvalLogger`` rows because the CH dictGet path takes a
+    single project_id; otherwise it uses the fast CH path against
+    ``trace_dict``. Only non-deleted ``EvalLogger`` rows count;
+    ``build_eval_task_map`` keeps the most-recent surviving ``(task,
+    target_type)`` per config.
     """
-    from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
-
-    BuilderCls = get_query_builder_class("TRACE_LIST")  # noqa: N806
-
-    org_scope = bool(org_project_ids)
-    filters = list(validated_data.get("filters", []) or [])
-    page_number = validated_data["page_number"]
-    page_size = validated_data["page_size"]
-    session_id = (
-        str(validated_data["session_id"]) if validated_data.get("session_id") else None
-    )
-    if session_id:
-        filters.append(
-            {
-                "column_id": "trace_session_id",
-                "filter_config": {
-                    "col_type": "NORMAL",
-                    "filter_type": "text",
-                    "filter_op": "equals",
-                    "filter_value": session_id,
-                },
-            }
-        )
-
-    # Get eval config IDs together with the (eval_task, target_type) each
-    # config was actually applied under. Project mode uses a CH dict-lookup
-    # (fast); org mode uses a PG scan because the CH dict-lookup takes a
-    # single project_id — multi-project CH variant not implemented yet.
-    #
-    # Only NON-DELETED EvalLogger rows are considered. ``build_eval_task_map``
-    # groups the surviving rows by (config, task, target_type), so a config
-    # whose loggers under a given task are all soft-deleted drops out of
-    # that task; one deleted everywhere disappears entirely. It keeps the
-    # most-recent surviving (task, target_type) per config.
-    eval_config_ids = []
-    discovery_rows = []  # (config_id, eval_task_id, target_type, last_seen)
-    if org_scope:
+    if org_project_ids:
         rows = (
             EvalLogger.objects.filter(
                 trace_id__in=Trace.objects.filter(
@@ -143,14 +109,72 @@ def build_traces_of_session_list(
 
     ch_ids = [str(r[0]) for r in discovery_rows if r[0]]
     if ch_ids:
-        eval_configs = CustomEvalConfig.objects.filter(
-            id__in=ch_ids, deleted=False
-        ).select_related("eval_template")
+        eval_configs = list(
+            CustomEvalConfig.objects.filter(
+                id__in=ch_ids, deleted=False
+            ).select_related("eval_template")
+        )
         eval_config_ids = [str(c.id) for c in eval_configs]
     else:
         eval_configs = []
+        eval_config_ids = []
 
     eval_task_map = build_eval_task_map(discovery_rows, eval_config_ids)
+    return eval_configs, eval_config_ids, eval_task_map
+
+
+def build_traces_of_session_list(
+    request,
+    project_id,
+    validated_data,
+    analytics,
+    org_project_ids=None,
+    org=None,
+    *,
+    build_annotation_map,
+):
+    """List traces-of-session using ClickHouse backend.
+
+    When ``org_project_ids`` is provided (cross-project user-detail
+    mode), the builder is constructed with `project_ids=...` and the
+    view falls back to a PG-side EvalLogger lookup scoped to those
+    projects (the CH dict-lookup path requires a single project_id).
+
+    Builder class resolved via v1↔v2 dispatch — set
+    CH25_QUERY_TYPES_V2_PRIMARY=TRACE_LIST to flip to CH 25.3.
+    """
+    from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+    BuilderCls = get_query_builder_class("TRACE_LIST")  # noqa: N806
+
+    org_scope = bool(org_project_ids)
+    filters = list(validated_data.get("filters", []) or [])
+    page_number = validated_data["page_number"]
+    page_size = validated_data["page_size"]
+    session_id = (
+        str(validated_data["session_id"]) if validated_data.get("session_id") else None
+    )
+    if session_id:
+        filters.append(
+            {
+                "column_id": "trace_session_id",
+                "filter_config": {
+                    "col_type": "NORMAL",
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": session_id,
+                },
+            }
+        )
+
+    # Eval-config discovery (shared selector — see ``discover_eval_configs``).
+    # Project mode uses a CH dictGet against ``trace_dict``; org mode falls back
+    # to a PG scan because dictGet takes a single project_id.
+    eval_configs, eval_config_ids, eval_task_map = discover_eval_configs(
+        analytics,
+        project_id,
+        org_project_ids=org_project_ids if org_scope else None,
+    )
 
     # Annotation labels — skip in org-scoped mode (deferred enhancement)
     if org_scope:
@@ -222,11 +246,7 @@ def build_traces_of_session_list(
             eval_result = analytics.execute_ch_query(
                 eval_query, eval_params, timeout_ms=30000
             )
-            eval_map = builder.pivot_eval_results(
-                [(list(row.values())) for row in eval_result.data],
-                list(eval_result.data[0].keys()) if eval_result.data else [],
-                count_mode=True,
-            )
+            eval_map = builder.pivot_eval_results(eval_result.data, count_mode=True)
 
     # Phase 3: Annotations — fetch from PG Score (unified annotation system)
     annotation_map = build_annotation_map(trace_ids, annotation_label_ids, label_types)
@@ -419,37 +439,10 @@ def build_voice_calls_list(
     page_size = validated_data.get("page_size", 30)
     page_number = page - 1  # Convert 1-based to 0-based
 
-    # Get eval config IDs (with the eval_task + target_type each was applied
-    # under) from CH. Only non-deleted rows count; build_eval_task_map keeps
-    # the most-recent surviving (task, target_type) per config.
-    eval_config_ids = []
-    eval_table, eval_nd = eval_logger_source()
-    ch_result = analytics.execute_ch_query(
-        "SELECT toString(custom_eval_config_id) AS cid, "
-        "toString(eval_task_id) AS task_id, "
-        "target_type AS target_type, "
-        "max(created_at) AS last_seen "
-        f"FROM {eval_table} FINAL "
-        f"WHERE {eval_nd} "
-        "AND dictGet('trace_dict', 'project_id', "
-        "trace_id) = toUUID(%(pid)s) "
-        "GROUP BY cid, task_id, target_type",
-        {"pid": str(project_id)},
-        timeout_ms=30000,
+    # Eval-config discovery (shared selector — see ``discover_eval_configs``).
+    eval_configs, eval_config_ids, eval_task_map = discover_eval_configs(
+        analytics, project_id
     )
-    discovery_rows = [
-        (r.get("cid"), r.get("task_id"), r.get("target_type"), r.get("last_seen"))
-        for r in ch_result.data
-    ]
-    ch_ids = [str(r[0]) for r in discovery_rows if r[0]]
-    if ch_ids:
-        eval_configs = CustomEvalConfig.objects.filter(
-            id__in=ch_ids, deleted=False
-        ).select_related("eval_template")
-        eval_config_ids = [str(c.id) for c in eval_configs]
-    else:
-        eval_configs = []
-    eval_task_map = build_eval_task_map(discovery_rows, eval_config_ids)
 
     # Get annotation labels that have actual annotations/scores for this project
     annotation_labels = get_annotation_labels_for_project(project_id)
@@ -534,9 +527,7 @@ def build_voice_calls_list(
                 eval_query, eval_params, timeout_ms=30000
             )
             eval_map = TraceListQueryBuilder.pivot_eval_results(
-                [(list(row.values())) for row in eval_result.data],
-                list(eval_result.data[0].keys()) if eval_result.data else [],
-                count_mode=True,
+                eval_result.data, count_mode=True
             )
 
     # Phase 3: Annotations — fetch from PG Score (unified annotation system)

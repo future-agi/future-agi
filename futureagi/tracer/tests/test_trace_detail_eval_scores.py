@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from tracer.utils.helper import (
+    EvalFetchError,
     attach_grouped_eval_scores,
     build_task_grouped_eval_scores,
     fetch_grouped_eval_rows,
@@ -329,6 +330,8 @@ def test_fetch_builds_rows_and_batched_lookups(custom_eval_config, eval_task):
     # Batched PG name lookups resolved.
     assert config_lookup[cid]["name"] == custom_eval_config.name
     assert config_lookup[cid]["output"] == "score"  # template has no "output"
+    # ``choices_map`` always present (empty here — template has no map).
+    assert config_lookup[cid]["choices_map"] == {}
     assert task_lookup[tid] == eval_task.name
     # Explanation normalised ("" -> None handled at row level).
     assert rows_by_span["SPANA"][0]["explanation"] == "ok"
@@ -338,18 +341,17 @@ def test_fetch_builds_rows_and_batched_lookups(custom_eval_config, eval_task):
 
 
 @pytest.mark.django_db
-def test_fetch_returns_empty_on_ch_failure():
+def test_fetch_raises_eval_fetch_error_on_ch_failure():
+    """CH fetch failure raises ``EvalFetchError`` so the view can render an
+    explicit error state (distinguishable from "trace has no evals")."""
+
     def boom(*a, **k):
         raise RuntimeError("CH unavailable")
 
     analytics = SimpleNamespace(execute_ch_query=boom)
-    eval_rows, rows_by_span, config_lookup, task_lookup = fetch_grouped_eval_rows(
-        analytics, "trace-1"
-    )
-    assert eval_rows == []
-    assert rows_by_span == {}
-    assert config_lookup == {}
-    assert task_lookup == {}
+    with pytest.raises(EvalFetchError) as excinfo:
+        fetch_grouped_eval_rows(analytics, "trace-1")
+    assert "CH unavailable" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

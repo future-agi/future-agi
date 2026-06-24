@@ -445,7 +445,11 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             Default mode: a number for successful evals, ``{choice: pct}`` for
             CHOICES, or ``{"error": True}``. count_mode: see above.
         """
-        import json as _json
+        from tracer.utils.helper import (
+            _finite_number,
+            build_count_eval_cell,
+            parse_choice_lists,
+        )
 
         result: dict[str, dict[str, Any]] = {}
         for row in eval_rows:
@@ -459,71 +463,43 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             error_count = row.get("error_count", 0) or 0
             str_lists = row.get("str_lists") or []
 
-            # All rows errored — surface an explicit error marker so the
-            # UI can render an error state (distinct from "no eval run").
+            parsed = parse_choice_lists(str_lists)
+
+            if count_mode:
+                # Shared with TraceListQueryBuilder so the count-mode cell
+                # shape stays in one place (PR #943 review: an earlier copy
+                # blanked legitimate 0.0 scores via ``avg_score != 0``).
+                cell = build_count_eval_cell(
+                    success_count=success_count,
+                    error_count=error_count,
+                    parsed_choice_lists=parsed,
+                    avg_score=avg_score,
+                    pass_count=pass_count,
+                    fail_count=fail_count,
+                )
+                result.setdefault(span_id, {})[config_id] = cell
+                continue
+
+            # Default (non-count) mode: legacy span pivot shape.
             if success_count == 0 and error_count > 0:
                 result.setdefault(span_id, {})[config_id] = {"error": True}
                 continue
 
-            # CHOICES eval: compute per-choice percentage across all
-            # non-errored eval rows for this (span, config) pair.
-            #
-            # ClickHouse stores ``output_str_list`` as ``String DEFAULT '[]'``,
-            # so non-CHOICES evals (Pass/Fail, score) come back as the string
-            # ``'[]'`` — truthy, slipping past the ``if not sl`` guard. Only
-            # treat entries with actual choice values as CHOICES data; empty
-            # inner lists must fall through to ``avg_score``/``pass_rate``.
-            parsed = []
-            for sl in str_lists:
-                if not sl:
-                    continue
-                if isinstance(sl, list):
-                    if sl:
-                        parsed.append([str(x) for x in sl])
-                elif isinstance(sl, str) and sl.startswith("["):
-                    try:
-                        p = _json.loads(sl)
-                        if isinstance(p, list) and p:
-                            parsed.append([str(x) for x in p])
-                    except _json.JSONDecodeError:
-                        continue
             if parsed:
                 total = len(parsed)
                 counts: dict[str, int] = {}
                 for lst in parsed:
                     for choice in set(lst):
                         counts[choice] = counts.get(choice, 0) + 1
-                if count_mode:
-                    result.setdefault(span_id, {})[config_id] = {
-                        "choice_counts": counts,
-                    }
-                else:
-                    per_choice = {
-                        k: round(100.0 * v / total, 2) for k, v in counts.items()
-                    }
-                    result.setdefault(span_id, {})[config_id] = per_choice
+                per_choice = {k: round(100.0 * v / total, 2) for k, v in counts.items()}
+                result.setdefault(span_id, {})[config_id] = per_choice
                 continue
 
-            if count_mode:
-                # Chip-style cell consumed by ``eval_count_cell``: numeric
-                # average plus exact Pass/Fail counts. ``avg_score`` is the
-                # display value for Score evals (×100 to match PG format).
-                avg_display = (
-                    round(avg_score * 100, 2)
-                    if avg_score is not None and avg_score != 0
-                    else None
-                )
-                result.setdefault(span_id, {})[config_id] = {
-                    "avg_score": avg_display,
-                    "pass_count": pass_count,
-                    "fail_count": fail_count,
-                }
-                continue
-
-            # Determine the score value matching PG format
-            if avg_score is not None and avg_score != 0:
+            # Score / Pass-Fail scalar: keep a legitimate 0.0 (a real score)
+            # by using a finite check instead of a truthiness guard.
+            if _finite_number(avg_score):
                 score = round(avg_score * 100, 2)
-            elif pass_rate is not None:
+            elif _finite_number(pass_rate):
                 score = round(pass_rate, 2)
             else:
                 score = None

@@ -85,6 +85,7 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_system_metric_graph_ch,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.observe_list import discover_eval_configs
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.create_otel_span import create_single_otel_span
 from tracer.utils.eval import (
@@ -94,7 +95,6 @@ from tracer.utils.eval import (
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
     FieldConfig,
-    build_eval_task_map,
     eval_count_cell,
     get_annotation_labels_for_project,
     get_default_span_config,
@@ -1399,37 +1399,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        # Get eval config IDs (with the eval_task + target_type each was applied
-        # under) from CH. Only non-deleted rows count; build_eval_task_map keeps
-        # the most-recent surviving (task, target_type) per config.
-        eval_config_ids = []
-        ch_result = analytics.execute_ch_query(
-            "SELECT toString(custom_eval_config_id) AS cid, "
-            "toString(eval_task_id) AS task_id, "
-            "target_type AS target_type, "
-            "max(created_at) AS last_seen "
-            "FROM tracer_eval_logger FINAL "
-            "WHERE _peerdb_is_deleted = 0 "
-            "AND (deleted = 0 OR deleted IS NULL) "
-            "AND dictGet('trace_dict', 'project_id', "
-            "trace_id) = toUUID(%(pid)s) "
-            "GROUP BY cid, task_id, target_type",
-            {"pid": str(project_id)},
-            timeout_ms=30000,
+        # Eval-config discovery (shared selector — see ``discover_eval_configs``).
+        # Picks up the configured eval-logger table (peerdb vs v2) and applies
+        # the right not-deleted predicate; reused by the trace/voice list paths.
+        eval_configs, eval_config_ids, eval_task_map = discover_eval_configs(
+            analytics, project_id
         )
-        discovery_rows = [
-            (r.get("cid"), r.get("task_id"), r.get("target_type"), r.get("last_seen"))
-            for r in ch_result.data
-        ]
-        ch_ids = [str(r[0]) for r in discovery_rows if r[0]]
-        if ch_ids:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=ch_ids, deleted=False
-            ).select_related("eval_template")
-            eval_config_ids = [str(c.id) for c in eval_configs]
-        else:
-            eval_configs = []
-        eval_task_map = build_eval_task_map(discovery_rows, eval_config_ids)
 
         # Labels can be project-local or org/shared labels that are referenced
         # by span scores. Use the score-backed helper so span columns and

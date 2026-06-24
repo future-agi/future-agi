@@ -91,6 +91,7 @@ from tracer.utils.annotations import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
+    EvalFetchError,
     attach_grouped_eval_scores,
     fetch_grouped_eval_rows,
     get_annotation_labels_for_project,
@@ -1368,9 +1369,24 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Shared with the voice-call-detail endpoint: one CH query for raw
         # span-level eval rows + batched PG name lookups (config + task), all
         # non-deleted. Grouping is pure Python over the fetched rows.
-        eval_rows, rows_by_span, config_lookup, task_lookup = fetch_grouped_eval_rows(
-            analytics, trace_id
-        )
+        eval_fetch_error: str | None = None
+        try:
+            (
+                eval_rows,
+                rows_by_span,
+                config_lookup,
+                task_lookup,
+            ) = fetch_grouped_eval_rows(analytics, trace_id)
+        except EvalFetchError as e:
+            # CH read failed — render an explicit error state so the UI can
+            # distinguish "fetch broke" from "no evals ran" (PR #943 review).
+            eval_rows, rows_by_span, config_lookup, task_lookup = [], {}, {}, {}
+            eval_fetch_error = str(e)
+            logger.warning(
+                "trace_detail_eval_fetch_failed",
+                trace_id=str(trace_id),
+                error=eval_fetch_error,
+            )
 
         # ----- Phase 8: Batch fetch annotations from PG -----
         annotation_map = {}
@@ -1520,14 +1536,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         observation_spans_response = root_spans + orphan_spans
 
-        return self._gm.success_response(
-            {
-                "trace": trace_data,
-                "observation_spans": observation_spans_response,
-                "summary": summary,
-                "graph": graph,
-            }
-        )
+        response_payload = {
+            "trace": trace_data,
+            "observation_spans": observation_spans_response,
+            "summary": summary,
+            "graph": graph,
+        }
+        if eval_fetch_error is not None:
+            # Explicit signal to the UI that eval fetch broke (so it can render
+            # an error chip rather than a misleading "no evals" state).
+            response_payload["eval_fetch_error"] = eval_fetch_error
+        return self._gm.success_response(response_payload)
 
     # Keys to strip from the list response (heavy / detail-only fields).
     _VOICE_CALL_HEAVY_KEYS = frozenset(
@@ -3194,9 +3213,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # eval_scores. The root conversation span gets the trace-level view
         # (aggregate + span-wise across ALL spans); each child gets its own
         # span scope.
-        eval_rows, rows_by_span, config_lookup, task_lookup = fetch_grouped_eval_rows(
-            analytics, trace_id
-        )
+        eval_fetch_error: str | None = None
+        try:
+            (
+                eval_rows,
+                rows_by_span,
+                config_lookup,
+                task_lookup,
+            ) = fetch_grouped_eval_rows(analytics, trace_id)
+        except EvalFetchError as e:
+            eval_rows, rows_by_span, config_lookup, task_lookup = [], {}, {}, {}
+            eval_fetch_error = str(e)
+            logger.warning(
+                "voice_call_detail_eval_fetch_failed",
+                trace_id=str(trace_id),
+                error=eval_fetch_error,
+            )
+
         span_targets = [
             (s["id"], s.get("name"), str(s["id"]) == root_span_id, s)
             for s in observation_span
@@ -3204,20 +3237,58 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         trace_level_scores = attach_grouped_eval_scores(
             span_targets, eval_rows, rows_by_span, config_lookup, task_lookup
         )
+
         # DEPRECATED, kept for backwards compatibility (doc 02 additive): the
         # flat ``{config_id: {name, output_type, target_type, output}}`` map.
-        # New consumers read ``eval_scores``. Derived from the grouped scores —
-        # no extra query. Scheduled for removal once the voice drawer migrates.
-        eval_outputs = {
-            ev["eval_config_id"]: {
-                "name": ev["eval_name"],
-                "output_type": ev["output_type"],
-                "target_type": ev.get("target_type"),
-                "output": ev["aggregate"],
+        #
+        # Restored stable keys (PR #943 review): start from ALL non-deleted
+        # project eval configs (the same set the list view's column config
+        # uses), then OVERLAY any aggregates we found on this call. A config
+        # with no score on the selected call surfaces as ``output=None`` —
+        # without this, any client keyed off ``eval_outputs`` silently lost
+        # metrics for configs that didn't fire on this particular trace.
+        project_eval_configs = list(
+            CustomEvalConfig.objects.filter(
+                id__in=EvalLogger.objects.filter(
+                    trace_id__in=Trace.objects.filter(project_id=project_id).values(
+                        "id"
+                    ),
+                    deleted=False,
+                )
+                .values("custom_eval_config_id")
+                .distinct(),
+                deleted=False,
+            ).select_related("eval_template")
+        )
+
+        eval_outputs: dict[str, dict[str, Any]] = {}
+        for cfg in project_eval_configs:
+            cfg_id = str(cfg.id)
+            template = getattr(cfg, "eval_template", None)
+            template_config = (getattr(template, "config", None) or {}) or {}
+            metric_name = cfg.name or (template.name if template else cfg_id)
+            eval_outputs[cfg_id] = {
+                "name": metric_name,
+                "output_type": template_config.get("output", "score"),
+                "target_type": None,
+                "output": None,
             }
-            for task in trace_level_scores.get("eval_tasks", [])
-            for ev in task.get("evals", [])
-        }
+        for task in trace_level_scores.get("eval_tasks", []):
+            for ev in task.get("evals", []):
+                cfg_id = str(ev["eval_config_id"])
+                entry = eval_outputs.setdefault(
+                    cfg_id,
+                    {
+                        "name": ev["eval_name"],
+                        "output_type": ev["output_type"],
+                        "target_type": None,
+                        "output": None,
+                    },
+                )
+                # Prefer the live aggregate + the eval-row's target_type when
+                # we have actual data; keep the placeholder name otherwise.
+                entry["target_type"] = ev.get("target_type")
+                entry["output"] = ev["aggregate"]
 
         # Duration from span attributes
         attrs_num = row.get("attrs_number") or {}
@@ -3258,6 +3329,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         }
         if stored_duration is not None:
             result["duration_seconds"] = int(stored_duration)
+        if eval_fetch_error is not None:
+            # Distinguishable from "no evals" so the drawer can render an error
+            # chip instead of an empty Evals tab.
+            result["eval_fetch_error"] = eval_fetch_error
         return self._gm.success_response(result)
 
     def _get_trace_id_by_index_observe_clickhouse(
@@ -3767,10 +3842,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 eval_result = analytics.execute_ch_query(
                     eval_query, eval_params, timeout_ms=30000
                 )
-                eval_map = builder.pivot_eval_results(
-                    [(list(row.values())) for row in eval_result.data],
-                    list(eval_result.data[0].keys()) if eval_result.data else [],
-                )
+                eval_map = builder.pivot_eval_results(eval_result.data)
 
         # Phase 3: Annotations — fetch from PG Score (unified annotation system)
         annotation_map = _build_annotation_map_from_scores(

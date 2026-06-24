@@ -13,14 +13,13 @@ trace IDs, grouped by ``(trace_id, custom_eval_config_id)``.
 The two result sets are merged in Python.
 """
 
-import math
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 
-#TODO: switch this to "start_time" once we create an index on that column .
+# TODO: switch this to "start_time" once we create an index on that column .
 TIME_FILTER_COLUMN = "created_at"  # Options: "created_at" | "start_time"
 
 
@@ -418,9 +417,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         created_at_fragment = ""
         if self.start_date is not None:
             params["start_date"] = self.start_date
-            created_at_fragment = (
-                "AND created_at >= %(start_date)s - INTERVAL 1 DAY"
-            )
+            created_at_fragment = "AND created_at >= %(start_date)s - INTERVAL 1 DAY"
 
         # Include errored rows but compute aggregates only over successful
         # rows (error = 0). ``success_count`` / ``error_count`` let the
@@ -529,9 +526,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
-    def build_user_id_query(
-        self, trace_ids: List[str]
-    ) -> Tuple[str, Dict[str, Any]]:
+    def build_user_id_query(self, trace_ids: List[str]) -> Tuple[str, Dict[str, Any]]:
         """Fetch user_id strings from ClickHouse for a page of trace IDs.
 
         Uses enduser_dict to resolve end_user_id UUIDs to user_id strings
@@ -564,9 +559,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
-    def resolve_user_ids(
-        self, trace_ids: List[str], analytics
-    ) -> Dict[str, str]:
+    def resolve_user_ids(self, trace_ids: List[str], analytics) -> Dict[str, str]:
         """Resolve user_id strings for a page of trace IDs.
 
         Single-query lookup using ClickHouse enduser_dict:
@@ -587,9 +580,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if not user_query:
             return {}
 
-        result = analytics.execute_ch_query(
-            user_query, user_params, timeout_ms=10000
-        )
+        result = analytics.execute_ch_query(user_query, user_params, timeout_ms=10000)
 
         # Build trace_id → user_id mapping (filter already applied in query)
         user_id_map = {
@@ -651,15 +642,23 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
     @staticmethod
     def pivot_eval_results(
-        eval_rows: List[Tuple],
-        eval_columns: List[str],
+        eval_rows: List[Dict] | List[Tuple],
+        eval_columns: List[str] | None = None,
         count_mode: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by trace_id.
 
+        Production callers pass dicts (``execute_ch_query`` returns rows
+        already keyed by SELECT column name). The pre-existing tuple-based
+        tests still work by passing tuples + ``eval_columns``; we zip them to
+        dicts so every read goes by column NAME — never by positional index
+        (that's the drift the PR #943 review called out).
+
         Args:
-            eval_rows: Rows from the Phase-2 eval query.
-            eval_columns: Column names for those rows.
+            eval_rows: Rows from the Phase-2 eval query — dicts (preferred) or
+                positional tuples (legacy, paired with ``eval_columns``).
+            eval_columns: Column names, required when ``eval_rows`` is tuples.
+                Ignored when rows are dicts.
             count_mode: When True (used by ``list_traces_of_session``), surface
                 raw appearance counts instead of averages — CHOICES rows return
                 ``{"choice_counts": {label: n}}`` and the score/passfail dict
@@ -670,104 +669,74 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         Returns:
             A dict of ``{trace_id: {eval_config_id: score_dict}}``.
         """
+        from tracer.utils.helper import (
+            _finite_number,
+            build_count_eval_cell,
+            parse_choice_lists,
+        )
+
+        # Normalise to dict rows so every read goes through ``row.get(name)``.
+        if eval_rows and not isinstance(eval_rows[0], dict):
+            columns = eval_columns or []
+            eval_rows = [dict(zip(columns, r)) for r in eval_rows]
+
         result: Dict[str, Dict[str, Any]] = {}
-        col_idx = {name: i for i, name in enumerate(eval_columns)}
-
-        def _get(row, key, idx, default=None):
-            if isinstance(row, dict):
-                return row.get(key, default)
-            return (
-                row[col_idx.get(key, idx)]
-                if len(row) > col_idx.get(key, idx)
-                else default
-            )
-
-        import json as _json
 
         for row in eval_rows:
-            trace_id = str(_get(row, "trace_id", 0, ""))
-            config_id = str(_get(row, "eval_config_id", 1, ""))
-            avg_score = _get(row, "avg_score", 2)
-            pass_rate = _get(row, "pass_rate", 3)
-            pass_count = _get(row, "pass_count", 4, 0) or 0
-            fail_count = _get(row, "fail_count", 5, 0) or 0
-            success_count = _get(row, "success_count", 6, 0) or 0
-            error_count = _get(row, "error_count", 7, 0) or 0
-            str_lists = _get(row, "str_lists", 9, []) or []
+            trace_id = str(row.get("trace_id", ""))
+            config_id = str(row.get("eval_config_id", ""))
+            avg_score = row.get("avg_score")
+            pass_rate = row.get("pass_rate")
+            pass_count = row.get("pass_count", 0) or 0
+            fail_count = row.get("fail_count", 0) or 0
+            success_count = row.get("success_count", 0) or 0
+            error_count = row.get("error_count", 0) or 0
+            eval_count = row.get("eval_count", 0) or 0
+            str_lists = row.get("str_lists") or []
 
-            # All rows errored — surface an explicit error marker so the
-            # UI can render an error state (distinct from "no eval run").
+            parsed = parse_choice_lists(str_lists)
+
+            if count_mode:
+                cell = build_count_eval_cell(
+                    success_count=success_count,
+                    error_count=error_count,
+                    parsed_choice_lists=parsed,
+                    avg_score=avg_score,
+                    pass_count=pass_count,
+                    fail_count=fail_count,
+                    pass_rate=pass_rate,
+                    eval_count=eval_count,
+                )
+                result.setdefault(trace_id, {})[config_id] = cell
+                continue
+
+            # Default (non-count) mode: keep the historical avg/pass-rate /
+            # per-choice output every other caller has consumed since launch.
             if success_count == 0 and error_count > 0:
                 result.setdefault(trace_id, {})[config_id] = {"error": True}
                 continue
 
-            # CHOICES eval: compute per-choice percentage across all
-            # non-errored eval rows for this (trace, config) pair. Caller
-            # spreads into ``{config_id}**{choice}`` columns.
-            #
-            # ClickHouse stores ``output_str_list`` as ``String DEFAULT '[]'``,
-            # so non-CHOICES evals (Pass/Fail, score) come back as the string
-            # ``'[]'`` — truthy, slipping past the ``if not sl`` guard. Only
-            # treat entries with actual choice values as CHOICES data; empty
-            # inner lists must fall through to ``avg_score``/``pass_rate``.
-            parsed = []
-            for sl in str_lists:
-                if not sl:
-                    continue
-                if isinstance(sl, list):
-                    if sl:
-                        parsed.append([str(x) for x in sl])
-                elif isinstance(sl, str) and sl.startswith("["):
-                    try:
-                        p = _json.loads(sl)
-                        if isinstance(p, list) and p:
-                            parsed.append([str(x) for x in p])
-                    except _json.JSONDecodeError:
-                        continue
             if parsed:
                 total = len(parsed)
                 counts: Dict[str, int] = {}
                 for lst in parsed:
                     for choice in set(lst):
                         counts[choice] = counts.get(choice, 0) + 1
-                if count_mode:
-                    # Raw appearance counts per choice (one column, chip-style).
-                    result.setdefault(trace_id, {})[config_id] = {
-                        "choice_counts": counts,
-                    }
-                else:
-                    per_choice = {
-                        k: round(100.0 * v / total, 2) for k, v in counts.items()
-                    }
-                    result.setdefault(trace_id, {})[config_id] = {
-                        "per_choice": per_choice,
-                    }
+                per_choice = {k: round(100.0 * v / total, 2) for k, v in counts.items()}
+                result.setdefault(trace_id, {})[config_id] = {
+                    "per_choice": per_choice,
+                }
                 continue
-
-            # ClickHouse ``avgIf`` returns NaN when no rows pass the
-            # condition (or when all matching values are NULL). Python's
-            # ``bool(float('nan'))`` is True, so a plain ``if avg_score``
-            # guard leaks NaN into the JSON response and trips DRF's
-            # strict encoder. Filter non-finite values explicitly.
-            def _finite(v):
-                return (
-                    isinstance(v, (int, float))
-                    and not isinstance(v, bool)
-                    and math.isfinite(v)
-                )
 
             score_data = {
                 "avg_score": (
-                    round(avg_score * 100, 2) if _finite(avg_score) else None
+                    round(avg_score * 100, 2) if _finite_number(avg_score) else None
                 ),
-                "pass_rate": (round(pass_rate, 2) if _finite(pass_rate) else None),
-                "count": _get(row, "eval_count", 8, 0) or 0,
+                "pass_rate": (
+                    round(pass_rate, 2) if _finite_number(pass_rate) else None
+                ),
+                "count": eval_count,
             }
-            if count_mode:
-                # Exact Pass/Fail span counts; the session view emits these as
-                # ``{"pass": n, "fail": n}`` for Pass/Fail evals.
-                score_data["pass_count"] = pass_count
-                score_data["fail_count"] = fail_count
             result.setdefault(trace_id, {})[config_id] = score_data
 
         return result

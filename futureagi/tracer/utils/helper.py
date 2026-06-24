@@ -1,4 +1,5 @@
 import json
+import math
 from collections.abc import MutableMapping
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
@@ -355,6 +356,103 @@ def update_column_config_based_on_eval_config(
     return column_config
 
 
+def parse_choice_lists(str_lists):
+    """Decode ``output_str_list`` rows into a list of non-empty label arrays.
+
+    Shared by both pivot_eval_results implementations (span_list / trace_list).
+    ClickHouse stores ``output_str_list`` as ``String DEFAULT '[]'`` so
+    non-CHOICES evals come back as the literal string ``'[]'`` (truthy). Only
+    entries that decode to a non-empty list of labels are treated as CHOICES
+    data; everything else falls through so the cell builder picks
+    avg_score/pass_count.
+    """
+    parsed: list[list[str]] = []
+    for sl in str_lists or []:
+        if not sl:
+            continue
+        if isinstance(sl, list):
+            if sl:
+                parsed.append([str(x) for x in sl])
+            continue
+        if isinstance(sl, str) and sl.startswith("["):
+            try:
+                p = json.loads(sl)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(p, list) and p:
+                parsed.append([str(x) for x in p])
+    return parsed
+
+
+def _finite_number(value):
+    """True iff ``value`` is a finite int/float (excludes bool, NaN, inf).
+
+    Centralised guard for the Score-eval cell builders: ClickHouse ``avgIf``
+    returns NaN when no rows match, and ``bool(float('nan'))`` is True, so a
+    plain truthiness check leaks NaN into the JSON response. Also: a real 0.0
+    must survive — pre-existing ``avg_score != 0`` style guards blanked it.
+    """
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def build_count_eval_cell(
+    *,
+    success_count,
+    error_count,
+    parsed_choice_lists,
+    avg_score,
+    pass_count,
+    fail_count,
+    pass_rate=None,
+    eval_count=None,
+):
+    """Single source of truth for the count-mode pivot cell shape.
+
+    Shared by ``TraceListQueryBuilder.pivot_eval_results`` and
+    ``SpanListQueryBuilder.pivot_eval_results`` (PR #943 review: the previous
+    span/trace duplication produced a real 0-score divergence). Returns the
+    cell dict ``eval_count_cell`` consumes downstream:
+
+      * all-errored        -> ``{"error": True}`` (explicit, distinct from
+                              "no eval run" which has no entry at all).
+      * Choices            -> ``{"choice_counts": {label: n}}`` (one chip
+                              column, label counts across non-errored rows).
+      * Score / Pass/Fail  -> ``{"avg_score", "pass_count", "fail_count",
+                              [optional pass_rate, count]}`` — a real 0.0
+                              survives via ``_finite_number`` (avoids the
+                              span_list bug).
+
+    ``parsed_choice_lists`` is the already-decoded list of non-empty choice
+    label arrays for this (pivot_key, config) pair (the caller parses
+    ``output_str_list`` once). ``pass_rate`` and ``eval_count`` are surfaced
+    only for the trace-list pivot, which keeps them additive for
+    backwards-compat with the non-count callers.
+    """
+    if success_count == 0 and error_count > 0:
+        return {"error": True}
+
+    if parsed_choice_lists:
+        counts: dict[str, int] = {}
+        for lst in parsed_choice_lists:
+            for choice in set(lst):
+                counts[choice] = counts.get(choice, 0) + 1
+        return {"choice_counts": counts}
+
+    cell: dict[str, Any] = {
+        "avg_score": (round(avg_score * 100, 2) if _finite_number(avg_score) else None),
+        "pass_count": int(pass_count or 0),
+        "fail_count": int(fail_count or 0),
+    }
+    if pass_rate is not None or eval_count is not None:
+        cell["pass_rate"] = round(pass_rate, 2) if _finite_number(pass_rate) else None
+        cell["count"] = int(eval_count or 0)
+    return cell
+
+
 def _eval_chip_value(cell, output_type, choices):
     """Map a count cell to its chip value given an output type + choice labels.
 
@@ -481,11 +579,22 @@ def _aggregate_eval_cell(rows, output_type):
 def _per_span_eval_value(rows, output_type):
     """Raw per-span value (one span's rows): Score -> number, Pass/Fail ->
     ``"pass"``/``"fail"``, Choices -> ``[labels]``. Uses the latest non-errored
-    row (re-runs); ``None`` when every row errored."""
+    row (re-runs); ``None`` when every row errored.
+
+    "Latest" is determined by ``created_at`` explicitly — ``fetch_grouped_eval_rows``
+    selects ``created_at`` and orders by it, but a rerun could still arrive out
+    of order from CH, so pick the max-created row here rather than relying on
+    scan order (PR #943 review)."""
     live = [r for r in rows if not _eval_row_is_error(r)]
     if not live:
         return None
-    row = live[-1]
+
+    def _created_key(r):
+        # None ``created_at`` sorts before any value (older).
+        ts = r.get("created_at")
+        return (ts is not None, ts)
+
+    row = max(live, key=_created_key)
 
     if output_type == EvalOutputType.CHOICES.value:
         return _eval_row_choice_labels(row.get("output_str_list"))
@@ -510,7 +619,8 @@ def build_task_grouped_eval_scores(
     rows for the root span, or one span's rows for a child). Each dict needs
     ``span_id``, ``eval_config_id``, ``eval_task_id``, ``output_float``,
     ``output_bool``, ``output_str``, ``output_str_list``, ``error``,
-    ``explanation``. ``config_lookup``: ``{cid: {"name","output","choices"}}``.
+    ``explanation``. ``config_lookup``:
+    ``{cid: {"name","output","choices","choices_map"}}``.
     ``task_lookup``: ``{eval_task_id: name}``. ``span_name_map``:
     ``{span_id: name}``. ``scope``: ``"trace"`` (root) or ``"span"``.
 
@@ -571,6 +681,10 @@ def build_task_grouped_eval_scores(
                     "eval_name": info.get("name", cid),
                     "output_type": output_type,
                     "target_type": target_type,
+                    # Same shape the observe column config already sends:
+                    # ``{"<label>": "pass" | "fail" | "neutral"}`` — drives
+                    # choice-chip colouring in the trace + voice drawers.
+                    "choices_map": info.get("choices_map", {}),
                     "aggregate": aggregate,
                     "spans": spans,
                 }
@@ -587,6 +701,15 @@ def build_task_grouped_eval_scores(
     return {"scope": scope, "eval_tasks": eval_tasks}
 
 
+class EvalFetchError(Exception):
+    """Raised by ``fetch_grouped_eval_rows`` when the CH read fails.
+
+    Detail endpoints catch this and surface the failure to the client (503 /
+    error payload) rather than rendering as "no eval scores" — silent
+    fail-open here was indistinguishable from a trace that genuinely has no
+    evals (PR #943 review)."""
+
+
 def fetch_grouped_eval_rows(analytics, trace_id):
     """Fetch non-deleted span-level eval rows for a trace + the batched name
     lookups needed to group them.
@@ -595,16 +718,23 @@ def fetch_grouped_eval_rows(analytics, trace_id):
     query against the eval-logger table plus two batched PG lookups (config
     names/output/choices via ``select_related`` — no extra query; task names) —
     soft-deleted rows, configs and tasks are all excluded. Trace/session-level
-    rows (no ``observation_span_id``) are skipped. Any CH/PG failure is logged
-    and returns empty structures (non-fatal).
+    rows (no ``observation_span_id``) are skipped. The CH query orders by
+    ``created_at`` ASC so per-span "latest rerun" logic downstream can pick
+    ``max(created_at)`` deterministically.
 
     Returns ``(eval_rows, rows_by_span, config_lookup, task_lookup)``:
       * ``eval_rows``    — normalised dicts (``span_id``, ``eval_config_id``,
         ``eval_task_id``, ``output_float``/``bool``/``str``/``str_list``,
-        ``error``, ``explanation``)
+        ``error``, ``explanation``, ``created_at``)
       * ``rows_by_span`` — ``{span_id: [rows]}``
-      * ``config_lookup``— ``{config_id: {"name", "output", "choices"}}``
+      * ``config_lookup``— ``{config_id: {"name", "output", "choices",
+        "choices_map"}}``
       * ``task_lookup``  — ``{eval_task_id: name}``
+
+    Raises:
+        EvalFetchError: the CH read failed. Callers should render an explicit
+            error state — silently returning empty would look like "no evals
+            ran" to the client.
     """
     from tracer.models.eval_task import EvalTask
     from tracer.services.clickhouse.eval_logger_table import eval_logger_source
@@ -626,10 +756,12 @@ def fetch_grouped_eval_rows(analytics, trace_id):
             output_str,
             output_str_list,
             error,
-            eval_explanation
+            eval_explanation,
+            created_at
         FROM {eval_table} FINAL
         WHERE trace_id = %(trace_id)s
           AND {eval_nd}
+        ORDER BY created_at ASC
         """
         eval_result = analytics.execute_ch_query(
             eval_query, {"trace_id": str(trace_id)}, timeout_ms=30000
@@ -668,6 +800,14 @@ def fetch_grouped_eval_rows(analytics, trace_id):
                     "choices": (
                         (c.eval_template.choices or []) if c.eval_template else []
                     ),
+                    # ``choices_map`` colours each chip in the FE drawer
+                    # ({"<label>": "pass"|"fail"|"neutral"}); without it the
+                    # grouped eval_scores chips render neutral.
+                    "choices_map": (
+                        (c.eval_template.config or {}).get("choices_map", {})
+                        if c.eval_template
+                        else {}
+                    ),
                     "template_type": (
                         getattr(c.eval_template, "template_type", None)
                         if c.eval_template
@@ -704,11 +844,20 @@ def fetch_grouped_eval_rows(analytics, trace_id):
                 "error": row.get("error"),
                 "explanation": row.get("eval_explanation") or None,
                 "template_type": row.get("template_type"),
+                # ``created_at`` lets the per-span value picker resolve "latest
+                # rerun" deterministically rather than relying on scan order.
+                "created_at": row.get("created_at"),
             }
             eval_rows.append(normalized)
             rows_by_span.setdefault(sid, []).append(normalized)
+    except EvalFetchError:
+        raise
     except Exception as e:
-        logger.warning("fetch_grouped_eval_rows_failed", error=str(e))
+        # CH-read failure is a data read, not a best-effort side effect;
+        # converting it to ``EvalFetchError`` lets the view distinguish
+        # "fetch broke" from "no evals" (silent empty was the prior bug).
+        logger.error("fetch_grouped_eval_rows_failed", error=str(e))
+        raise EvalFetchError(str(e)) from e
 
     return eval_rows, rows_by_span, config_lookup, task_lookup
 
