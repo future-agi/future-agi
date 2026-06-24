@@ -9973,6 +9973,10 @@ export interface GroundTruthItemApi {
   storage_type?: string;
   created_at?: string;
   embeddings_stale?: boolean;
+  is_active?: boolean;
+  enabled?: boolean;
+  max_examples?: number;
+  similarity_threshold?: number;
 }
 
 export interface GroundTruthListResponseResultApi {
@@ -11339,15 +11343,6 @@ export interface GroundTruthEmbedResponseApi {
  */
 export type GroundTruthSetupRequestApiVariableMapping = { [key: string]: unknown };
 
-export type GroundTruthSetupRequestApiInjectionFormat = typeof GroundTruthSetupRequestApiInjectionFormat[keyof typeof GroundTruthSetupRequestApiInjectionFormat];
-
-
-export const GroundTruthSetupRequestApiInjectionFormat = {
-  structured: 'structured',
-  conversational: 'conversational',
-  xml: 'xml',
-} as const;
-
 export interface GroundTruthSetupRequestApi {
   /** Map of template variable name to GT column name (string) or list of column names. Keys are dynamic per-template. */
   variable_mapping: GroundTruthSetupRequestApiVariableMapping;
@@ -11357,17 +11352,28 @@ export interface GroundTruthSetupRequestApi {
      * @maximum 20
      */
   max_examples: number;
-  injection_format?: GroundTruthSetupRequestApiInjectionFormat;
-  /** Whether this template should inject GT few-shot examples at run time. Default True for back-compat with older FE clients; current FE always sends explicitly. */
   enabled?: boolean;
+}
+
+export interface GroundTruthRuntimeConfigApi {
+  enabled: boolean;
+  ground_truth_id: string;
+  /**
+     * @minimum 1
+     * @maximum 20
+     */
+  max_examples: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  similarity_threshold: number;
 }
 
 /**
  * Map of template variable name to GT column name (string) or list of column names.
  */
 export type GroundTruthSetupResponseResultApiVariableMapping = { [key: string]: unknown };
-
-export type GroundTruthSetupResponseResultApiConfig = { [key: string]: unknown };
 
 export interface GroundTruthSetupResponseResultApi {
   id: string;
@@ -11378,7 +11384,7 @@ export interface GroundTruthSetupResponseResultApi {
   /** @minLength 1 */
   embedding_status: string;
   embeddings_stale?: boolean;
-  config?: GroundTruthSetupResponseResultApiConfig;
+  config: GroundTruthRuntimeConfigApi;
 }
 
 export interface GroundTruthSetupResponseApi {

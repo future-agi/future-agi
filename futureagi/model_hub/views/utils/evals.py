@@ -291,7 +291,12 @@ def run_eval_func(
             if isinstance(code_eval_params, dict):
                 _run_kwargs.update(code_eval_params)
 
-        GroundTruthService.inject_context(_run_kwargs, template)
+        GroundTruthService.inject_context(
+            _run_kwargs,
+            template,
+            organization_id=org.id if org else None,
+            workspace_id=workspace.id if workspace else None,
+        )
 
         # Preprocess inputs for code evals that need external data (e.g. CLIP embeddings)
         if _is_code_eval:
@@ -333,7 +338,10 @@ def run_eval_func(
             response["warnings"] = [partial_input_warning]
 
         response["ground_truth_examples"] = GroundTruthService.resolve_preview_examples(
-            eval_template=template, eval_inputs=_run_kwargs
+            eval_template=template,
+            eval_inputs=_run_kwargs,
+            organization_id=org.id if org else None,
+            workspace_id=workspace.id if workspace else None,
         )
 
         metadata = response.get("metadata")
@@ -670,7 +678,10 @@ def process_eval_for_single_row(
         output["runtime"] = response.get("runtime")
 
         output["ground_truth_examples"] = GroundTruthService.resolve_preview_examples(
-            eval_template=eval_template, eval_inputs=eval_inputs
+            eval_template=eval_template,
+            eval_inputs=eval_inputs,
+            organization_id=runner.organization_id,
+            workspace_id=runner.workspace_id,
         )
 
         # if source == DatasetSourceChoices.SDK.value:

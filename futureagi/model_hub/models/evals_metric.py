@@ -926,11 +926,28 @@ class EvalGroundTruth(ModelBaseModel):
         related_name="eval_ground_truths",
     )
 
+    is_active = models.BooleanField(default=False)
+    enabled = models.BooleanField(default=True)
+    max_examples = models.PositiveSmallIntegerField(default=3)
+    similarity_threshold = models.FloatField(default=0.7)
+
     class Meta:
         db_table = "model_hub_eval_ground_truth"
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["eval_template", "created_at"]),
+            models.Index(
+                fields=["eval_template", "organization", "workspace"],
+                condition=Q(deleted=False, is_active=True),
+                name="gt_tenant_active_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["eval_template", "organization", "workspace"],
+                condition=Q(deleted=False, is_active=True),
+                name="uniq_active_gt_per_tenant_template",
+            ),
         ]
 
     def __str__(self):

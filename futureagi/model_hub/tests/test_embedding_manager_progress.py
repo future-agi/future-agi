@@ -167,3 +167,71 @@ def test_progress_callback_failure_is_swallowed(manager_module):
         patcher.stop()
 
     assert instance.bulk_upsert_vectors.call_count == 2
+
+
+def _stub_text_model(*_args, **_kwargs):
+    return [0.1, 0.2, 0.3]
+
+
+def test_data_formatter_url_check_does_not_crash_on_numeric_values(manager_module):
+    manager = manager_module.EmbeddingManager()
+    with patch.object(
+        manager_module.EmbeddingManager,
+        "input_checker",
+        return_value={"q": "text"},
+    ), patch.object(
+        manager_module.model_manager,
+        "_use_serving",
+        True,
+    ), patch.object(
+        type(manager_module.model_manager),
+        "text_model",
+        new_callable=lambda: property(lambda _self: _stub_text_model),
+    ), patch.object(
+        manager_module.EmbeddingManager,
+        "encode_path",
+    ) as encode_path:
+        for raw in (1, 1.5, True, False):
+            row = {"q": raw, "item_id": "id-x"}
+            vectors, metadata = manager.data_formatter(
+                row_dict=row,
+                inputs_formater=["q"],
+                table_name=manager_module.GROUND_TRUTH_TABLE_NAME,
+                organization_id="org-1",
+                workspace_id="ws-1",
+            )
+            assert vectors
+            assert metadata
+        encode_path.assert_not_called()
+
+
+def test_data_formatter_url_check_still_encodes_http_strings(manager_module):
+    manager = manager_module.EmbeddingManager()
+    with patch.object(
+        manager_module.EmbeddingManager,
+        "input_checker",
+        return_value={"q": "text"},
+    ), patch.object(
+        manager_module.model_manager,
+        "_use_serving",
+        True,
+    ), patch.object(
+        type(manager_module.model_manager),
+        "text_model",
+        new_callable=lambda: property(lambda _self: _stub_text_model),
+    ), patch.object(
+        manager_module.EmbeddingManager,
+        "encode_path",
+        return_value="encoded://x",
+    ) as encode_path:
+        row = {"q": "http://example.com/x", "item_id": "id-x"}
+        vectors, metadata = manager.data_formatter(
+            row_dict=row,
+            inputs_formater=["q"],
+            table_name=manager_module.GROUND_TRUTH_TABLE_NAME,
+            organization_id="org-1",
+            workspace_id="ws-1",
+        )
+        assert vectors
+        assert metadata
+        encode_path.assert_called_once_with("http://example.com/x")

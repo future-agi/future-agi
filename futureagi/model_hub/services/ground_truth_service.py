@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 import structlog
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
 
 from model_hub.models.evals_metric import EvalGroundTruth, EvalTemplate
 from model_hub.utils.eval_input_validation import is_empty_value
@@ -16,6 +17,8 @@ if TYPE_CHECKING:
     from accounts.models.organization import Organization
     from accounts.models.workspace import Workspace
     from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
+
+TenantId = str | UUID | None
 
 
 logger = structlog.get_logger(__name__)
@@ -82,12 +85,9 @@ class GroundTruthService:
         variable_mapping: dict[str, Any],
         role_mapping: dict[str, Any],
         max_examples: int,
-        injection_format: str = "structured",
         enabled: bool = True,
     ) -> dict[str, Any] | ServiceError:
-        """Persist mappings + injection config atomically."""
-        from django.db import transaction
-
+        """Persist mappings and runtime knobs as the active GT for the tenant."""
         if is_empty_value(role_mapping.get("output")) and is_empty_value(
             role_mapping.get("expected_output")
         ):
@@ -140,31 +140,41 @@ class GroundTruthService:
         embeddings_stale = variable_mapping_changed and has_prior_vectors
 
         with transaction.atomic():
+            EvalGroundTruth.objects.filter(
+                eval_template=gt.eval_template,
+                organization=gt.organization,
+                workspace=gt.workspace,
+                deleted=False,
+                is_active=True,
+            ).exclude(id=gt.id).update(is_active=False)
+
             gt.variable_mapping = variable_mapping
             gt.role_mapping = role_mapping
-            gt_update_fields = ["variable_mapping", "role_mapping", "updated_at"]
+            gt.is_active = True
+            gt.enabled = bool(enabled)
+            gt.max_examples = int(max_examples)
+            update_fields = [
+                "variable_mapping",
+                "role_mapping",
+                "is_active",
+                "enabled",
+                "max_examples",
+                "updated_at",
+            ]
             if (
                 variable_mapping_changed
                 and gt.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
             ):
                 gt.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING
-                gt_update_fields.append("embedding_status")
-            gt.save(update_fields=gt_update_fields)
-
-            template_config = dict(eval_template.config or {})
-            template_config["ground_truth"] = {
-                "enabled": bool(enabled),
-                "ground_truth_id": str(gt.id),
-                "max_examples": int(max_examples),
-                "injection_format": injection_format,
-            }
-            eval_template.config = template_config
-            eval_template.save(update_fields=["config", "updated_at"])
+                update_fields.append("embedding_status")
+            gt.save(update_fields=update_fields)
 
         logger.info(
             "ground_truth_setup_updated",
             ground_truth_id=str(gt.id),
             template_id=str(eval_template.id),
+            organization_id=str(gt.organization_id) if gt.organization_id else None,
+            workspace_id=str(gt.workspace_id) if gt.workspace_id else None,
             embeddings_stale=embeddings_stale,
             variable_mapping_changed=variable_mapping_changed,
         )
@@ -175,27 +185,38 @@ class GroundTruthService:
             "role_mapping": gt.role_mapping,
             "embedding_status": gt.embedding_status,
             "embeddings_stale": embeddings_stale,
-            "config": template_config["ground_truth"],
+            "config": {
+                "enabled": bool(gt.enabled),
+                "ground_truth_id": str(gt.id),
+                "max_examples": int(gt.max_examples),
+                "similarity_threshold": float(gt.similarity_threshold),
+            },
         }
 
     @staticmethod
-    def load_config(eval_template: EvalTemplate) -> dict | None:
-        """Return the GT config dict from the template, or ``None``.
-
-        Treats ``enabled=False`` and missing ``ground_truth_id`` as
-        "not configured"; callers should fall through silently.
-        """
-        config = (getattr(eval_template, "config", None) or {}).get("ground_truth")
-        if not config or not config.get("enabled"):
-            return None
-        if not config.get("ground_truth_id"):
-            return None
-        return config
+    def load_active_gt(
+        *,
+        eval_template: EvalTemplate,
+        organization_id: TenantId,
+        workspace_id: TenantId,
+    ) -> EvalGroundTruth | None:
+        """Return the active, enabled GT row for ``(template, org, ws)`` or ``None``."""
+        return EvalGroundTruth.objects.filter(
+            eval_template=eval_template,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            deleted=False,
+            is_active=True,
+            enabled=True,
+        ).first()
 
     @staticmethod
     def inject_context(
         mapped: dict,
         eval_template: EvalTemplate,
+        *,
+        organization_id: TenantId = None,
+        workspace_id: TenantId = None,
     ) -> dict:
         """Attach retrieved GT content blocks to ``mapped['ground_truth_blocks']`` when GT is configured; evaluators read the kwarg and concatenate into their content array without adding their own framing."""
         from model_hub.utils.ground_truth_retrieval import (
@@ -203,16 +224,11 @@ class GroundTruthService:
             has_usable_inputs_for_gt,
         )
 
-        gt_config = GroundTruthService.load_config(eval_template)
-        if not gt_config:
-            return mapped
-
-        try:
-            gt = EvalGroundTruth.objects.filter(
-                id=gt_config["ground_truth_id"], deleted=False
-            ).first()
-        except (DatabaseError, ValueError):
-            gt = None
+        gt = GroundTruthService.load_active_gt(
+            eval_template=eval_template,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
         if gt is None:
             return mapped
 
@@ -230,7 +246,7 @@ class GroundTruthService:
         examples = GroundTruthService.retrieve_few_shot(
             gt=gt,
             inputs=mapped,
-            max_results=int(gt_config.get("max_examples", 3)),
+            max_results=int(gt.max_examples or 3),
         )
         if not examples:
             return mapped
@@ -252,23 +268,20 @@ class GroundTruthService:
 
     @staticmethod
     def resolve_preview_examples(
-        *, eval_template: EvalTemplate, eval_inputs: dict[str, Any]
+        *,
+        eval_template: EvalTemplate,
+        eval_inputs: dict[str, Any],
+        organization_id: TenantId = None,
+        workspace_id: TenantId = None,
     ) -> list[dict[str, Any]] | None:
         """Return retrieved GT rows for the playground; None when disabled."""
-        gt_config = GroundTruthService.load_config(eval_template)
-        if not gt_config:
-            return None
         if not isinstance(eval_inputs, dict) or not eval_inputs:
             return None
 
-        gt = (
-            EvalGroundTruth.objects.filter(
-                eval_template=eval_template,
-                id=gt_config.get("ground_truth_id"),
-                deleted=False,
-            )
-            .only("variable_mapping", "role_mapping", "embedding_status")
-            .first()
+        gt = GroundTruthService.load_active_gt(
+            eval_template=eval_template,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
         )
         if gt is None:
             return None
@@ -281,7 +294,7 @@ class GroundTruthService:
                 GroundTruthService.retrieve_few_shot(
                     gt=gt,
                     inputs=eval_inputs,
-                    max_results=int(gt_config.get("max_examples", 3)),
+                    max_results=int(gt.max_examples or 3),
                 )
                 or []
             )
@@ -650,5 +663,3 @@ def _mark_failed(gt: EvalGroundTruth, reason: str) -> EmbedDatasetResult:
         status=EvalGroundTruth.EmbeddingStatus.FAILED,
         error=reason,
     )
-
-

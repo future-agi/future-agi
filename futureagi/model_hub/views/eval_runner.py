@@ -2157,7 +2157,12 @@ class EvaluationRunner:
         if getattr(self.eval_template, "config", None):
             from model_hub.services.ground_truth_service import GroundTruthService
 
-            GroundTruthService.inject_context(_mapped, self.eval_template)
+            GroundTruthService.inject_context(
+                _mapped,
+                self.eval_template,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+            )
 
         # For code evals, inject static user-defined params stored in the
         # UserEvalMetric config so they reach evaluate() as **kwargs.

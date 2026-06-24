@@ -498,6 +498,31 @@ class GroundTruthItem(BaseModel):
     storage_type: str = "db"
     created_at: str = ""
     embeddings_stale: bool = False
+    is_active: bool = False
+    enabled: bool = True
+    max_examples: int = 3
+    similarity_threshold: float = 0.7
+
+
+class GroundTruthRuntimeConfig(BaseModel):
+    """Per-tenant runtime knobs that drive GT retrieval at eval time."""
+
+    enabled: bool
+    ground_truth_id: str
+    max_examples: int
+    similarity_threshold: float
+
+
+class GroundTruthSetupResult(BaseModel):
+    """Shape returned by GroundTruthService.update_setup."""
+
+    id: str
+    template_id: str
+    variable_mapping: dict[str, MappingValue] | None = None
+    role_mapping: dict[str, MappingValue] | None = None
+    embedding_status: str
+    embeddings_stale: bool = False
+    config: GroundTruthRuntimeConfig
 
 
 class GroundTruthListResponse(BaseModel):

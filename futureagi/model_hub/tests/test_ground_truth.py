@@ -45,6 +45,8 @@ def ground_truth(eval_template, organization):
             {"input": "alpha", "expected": "beta", "score": 1.0, "notes": "perfect"},
         ],
         row_count=3,
+        variable_mapping={"input": "input"},
+        role_mapping={"output": "expected"},
         organization=organization,
         workspace=eval_template.workspace,
     )
@@ -380,13 +382,7 @@ class TestGroundTruthListAPI:
 @pytest.mark.e2e
 @pytest.mark.django_db
 class TestGroundTruthSetupAPI:
-    """Contract tests for PUT /model-hub/ground-truth/<id>/setup/.
-
-    Covers the baseline gates: happy path, missing required field,
-    unknown field, invalid type, auth, response shape. Adds focused
-    coverage of the ``enabled`` toggle and its persistence on
-    ``EvalTemplate.config["ground_truth"]``.
-    """
+    """Contract tests for PUT /model-hub/ground-truth/<id>/setup/."""
 
     def _setup_url(self, gt_id):
         return f"/model-hub/ground-truth/{gt_id}/setup/"
@@ -416,20 +412,14 @@ class TestGroundTruthSetupAPI:
             "output": "score",
             "explanation": "notes",
         }
-        template_gt_config = (ground_truth.eval_template.config or {}).get(
-            "ground_truth"
-        )
-        assert template_gt_config is not None
-        assert template_gt_config["enabled"] is True
-        assert template_gt_config["ground_truth_id"] == str(ground_truth.id)
-        assert template_gt_config["max_examples"] == 3
-        assert "similarity_threshold" not in template_gt_config
+        assert ground_truth.is_active is True
+        assert ground_truth.enabled is True
+        assert ground_truth.max_examples == 3
+        assert "ground_truth" not in (ground_truth.eval_template.config or {})
 
     def test_setup_persists_enabled_false_for_pause_without_delete(
         self, auth_client, ground_truth
     ):
-        """Toggling GT off keeps the dataset and embeddings; the
-        runtime skips injection because config.enabled is False."""
         response = auth_client.put(
             self._setup_url(ground_truth.id),
             self._valid_payload(enabled=False),
@@ -437,17 +427,13 @@ class TestGroundTruthSetupAPI:
         )
         assert response.status_code == 200
 
-        ground_truth.eval_template.refresh_from_db()
-        template_gt_config = (ground_truth.eval_template.config or {}).get(
-            "ground_truth"
-        )
-        assert template_gt_config["enabled"] is False
+        ground_truth.refresh_from_db()
+        assert ground_truth.enabled is False
+        assert ground_truth.is_active is True
 
     def test_setup_defaults_enabled_to_true_when_field_omitted(
         self, auth_client, ground_truth
     ):
-        """Back-compat: older FE clients omit `enabled`. Default is
-        True so saving the setup turns GT on."""
         payload = self._valid_payload()
         payload.pop("enabled")
         response = auth_client.put(
@@ -455,11 +441,8 @@ class TestGroundTruthSetupAPI:
         )
         assert response.status_code == 200
 
-        ground_truth.eval_template.refresh_from_db()
-        template_gt_config = (ground_truth.eval_template.config or {}).get(
-            "ground_truth"
-        )
-        assert template_gt_config["enabled"] is True
+        ground_truth.refresh_from_db()
+        assert ground_truth.enabled is True
 
     def test_setup_rejects_unknown_field(self, auth_client, ground_truth):
         payload = self._valid_payload()
@@ -767,6 +750,48 @@ class TestGroundTruthDeleteAPI:
         )
         assert response.status_code == 200
         assert response.data["result"]["total"] == 0
+
+    def test_delete_inactive_upload_preserves_active_row(
+        self, auth_client, eval_template, ground_truth, organization, workspace
+    ):
+        from model_hub.models.evals_metric import EvalGroundTruth
+
+        ground_truth.is_active = True
+        ground_truth.save(update_fields=["is_active", "updated_at"])
+
+        inactive = EvalGroundTruth.objects.create(
+            eval_template=eval_template,
+            name="inactive",
+            description="",
+            file_name="",
+            columns=["q"],
+            data=[{"q": "x"}],
+            row_count=1,
+            embedding_status="pending",
+            organization=organization,
+            workspace=workspace,
+            is_active=False,
+        )
+
+        response = auth_client.delete(self._url(inactive.id))
+        assert response.status_code == 200
+
+        ground_truth.refresh_from_db()
+        assert ground_truth.is_active is True
+        assert ground_truth.deleted is False
+
+    def test_delete_active_upload_clears_active_flag(
+        self, auth_client, ground_truth
+    ):
+        ground_truth.is_active = True
+        ground_truth.save(update_fields=["is_active", "updated_at"])
+
+        response = auth_client.delete(self._url(ground_truth.id))
+        assert response.status_code == 200
+
+        ground_truth.refresh_from_db()
+        assert ground_truth.deleted is True
+        assert ground_truth.is_active is False
 
 
 # Search API coverage lives in test_ground_truth_service.py (unit) and

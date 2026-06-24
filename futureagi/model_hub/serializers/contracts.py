@@ -2443,13 +2443,7 @@ class GroundTruthRoleMappingSerializer(serializers.Serializer):
 
 
 class GroundTruthSetupRequestSerializer(serializers.Serializer):
-    """Single atomic write covering variable mapping, role mapping, and
-    injection config. Backs the FE single-Save UX on the GT tab.
-
-    ``role_mapping`` MUST carry a non-empty ``output`` (or legacy
-    ``expected_output``) column. ``explanation`` is optional. The
-    service layer rejects any other keys.
-    """
+    """Atomic write covering variable mapping, role mapping, max_examples, enabled."""
 
     variable_mapping = JsonObjectRequestField(
         help_text=(
@@ -2459,20 +2453,7 @@ class GroundTruthSetupRequestSerializer(serializers.Serializer):
     )
     role_mapping = GroundTruthRoleMappingSerializer()
     max_examples = serializers.IntegerField(min_value=1, max_value=20)
-    injection_format = serializers.ChoiceField(
-        choices=["structured", "conversational", "xml"],
-        required=False,
-        default="structured",
-    )
-    enabled = serializers.BooleanField(
-        required=False,
-        default=True,
-        help_text=(
-            "Whether this template should inject GT few-shot examples at "
-            "run time. Default True for back-compat with older FE clients; "
-            "current FE always sends explicitly."
-        ),
-    )
+    enabled = serializers.BooleanField(required=False, default=True)
 
 
 class GroundTruthItemSerializer(serializers.Serializer):
@@ -2496,6 +2477,10 @@ class GroundTruthItemSerializer(serializers.Serializer):
     storage_type = serializers.CharField(required=False)
     created_at = serializers.CharField(required=False, allow_blank=True)
     embeddings_stale = serializers.BooleanField(required=False, default=False)
+    is_active = serializers.BooleanField(required=False, default=False)
+    enabled = serializers.BooleanField(required=False, default=True)
+    max_examples = serializers.IntegerField(required=False, default=3)
+    similarity_threshold = serializers.FloatField(required=False, default=0.7)
 
 
 class GroundTruthListResponseResultSerializer(serializers.Serializer):
@@ -2522,6 +2507,15 @@ class GroundTruthUploadResponseSerializer(serializers.Serializer):
     result = GroundTruthUploadResponseResultSerializer()
 
 
+class GroundTruthRuntimeConfigSerializer(serializers.Serializer):
+    """Per-tenant runtime knobs that drive GT retrieval at eval time."""
+
+    enabled = serializers.BooleanField()
+    ground_truth_id = serializers.UUIDField()
+    max_examples = serializers.IntegerField(min_value=1, max_value=20)
+    similarity_threshold = serializers.FloatField(min_value=0.0, max_value=1.0)
+
+
 class GroundTruthSetupResponseResultSerializer(serializers.Serializer):
     """Shape returned by GroundTruthService.update_setup."""
 
@@ -2538,7 +2532,7 @@ class GroundTruthSetupResponseResultSerializer(serializers.Serializer):
     role_mapping = GroundTruthRoleMappingSerializer(required=False, allow_null=True)
     embedding_status = serializers.CharField()
     embeddings_stale = serializers.BooleanField(required=False, default=False)
-    config = serializers.JSONField(required=False, allow_null=True)
+    config = GroundTruthRuntimeConfigSerializer()
 
 
 class GroundTruthSetupResponseSerializer(serializers.Serializer):

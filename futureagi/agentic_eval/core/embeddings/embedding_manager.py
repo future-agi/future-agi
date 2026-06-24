@@ -542,11 +542,13 @@ class EmbeddingManager:
                 mod_dict = row_dict.copy()
 
                 for inp2 in inputs_formater:
+                    val = mod_dict.get(str(inp2))
                     if (
-                        "http" in mod_dict[str(inp2)]
+                        isinstance(val, str)
+                        and "http" in val
                         and table_name in _TENANT_SCOPED_TABLES
                     ):
-                        mod_dict[inp2] = self.encode_path(mod_dict[str(inp2)])
+                        mod_dict[inp2] = self.encode_path(val)
 
                 mod_dict["input_type"] = input_dict[inp]
                 if table_name == GROUND_TRUTH_TABLE_NAME:

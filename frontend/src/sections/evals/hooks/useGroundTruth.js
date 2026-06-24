@@ -118,7 +118,6 @@ export function useSaveGroundTruthSetup(templateId) {
       variableMapping,
       roleMapping,
       maxExamples,
-      injectionFormat = "structured",
       enabled,
     }) => {
       const { data } = await axios.put(
@@ -127,7 +126,6 @@ export function useSaveGroundTruthSetup(templateId) {
           variable_mapping: variableMapping,
           role_mapping: roleMapping,
           max_examples: maxExamples,
-          injection_format: injectionFormat,
           enabled,
         },
       );

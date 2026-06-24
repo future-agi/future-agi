@@ -19664,6 +19664,10 @@ export const ModelHubEvalTemplatesGroundTruthListParams = zod.object({
 
 
 export const modelHubEvalTemplatesGroundTruthListResponseResultItemsItemEmbeddingsStaleDefault = false;
+export const modelHubEvalTemplatesGroundTruthListResponseResultItemsItemIsActiveDefault = false;
+export const modelHubEvalTemplatesGroundTruthListResponseResultItemsItemEnabledDefault = true;
+export const modelHubEvalTemplatesGroundTruthListResponseResultItemsItemMaxExamplesDefault = 3;
+export const modelHubEvalTemplatesGroundTruthListResponseResultItemsItemSimilarityThresholdDefault = 0.7;
 
 export const ModelHubEvalTemplatesGroundTruthListResponse = zod.object({
   "status": zod.boolean(),
@@ -19688,7 +19692,11 @@ export const ModelHubEvalTemplatesGroundTruthListResponse = zod.object({
   "embedded_row_count": zod.number().optional(),
   "storage_type": zod.string().min(1).optional(),
   "created_at": zod.string().optional(),
-  "embeddings_stale": zod.boolean().default(modelHubEvalTemplatesGroundTruthListResponseResultItemsItemEmbeddingsStaleDefault)
+  "embeddings_stale": zod.boolean().default(modelHubEvalTemplatesGroundTruthListResponseResultItemsItemEmbeddingsStaleDefault),
+  "is_active": zod.boolean().default(modelHubEvalTemplatesGroundTruthListResponseResultItemsItemIsActiveDefault),
+  "enabled": zod.boolean().default(modelHubEvalTemplatesGroundTruthListResponseResultItemsItemEnabledDefault),
+  "max_examples": zod.number().default(modelHubEvalTemplatesGroundTruthListResponseResultItemsItemMaxExamplesDefault),
+  "similarity_threshold": zod.number().default(modelHubEvalTemplatesGroundTruthListResponseResultItemsItemSimilarityThresholdDefault)
 })),
   "total": zod.number()
 })
@@ -22005,7 +22013,6 @@ export const ModelHubGroundTruthSetupUpdateParams = zod.object({
 
 export const modelHubGroundTruthSetupUpdateBodyMaxExamplesMax = 20;
 
-export const modelHubGroundTruthSetupUpdateBodyInjectionFormatDefault = `structured`;
 export const modelHubGroundTruthSetupUpdateBodyEnabledDefault = true;
 
 export const ModelHubGroundTruthSetupUpdateBody = zod.object({
@@ -22018,8 +22025,7 @@ export const ModelHubGroundTruthSetupUpdateBody = zod.object({
   "reason": zod.string().min(1).optional().describe('Legacy alias for `explanation`.')
 }),
   "max_examples": zod.number().min(1).max(modelHubGroundTruthSetupUpdateBodyMaxExamplesMax),
-  "injection_format": zod.enum(['structured', 'conversational', 'xml']).default(modelHubGroundTruthSetupUpdateBodyInjectionFormatDefault),
-  "enabled": zod.boolean().default(modelHubGroundTruthSetupUpdateBodyEnabledDefault).describe('Whether this template should inject GT few-shot examples at run time. Default True for back-compat with older FE clients; current FE always sends explicitly.')
+  "enabled": zod.boolean().default(modelHubGroundTruthSetupUpdateBodyEnabledDefault)
 })
 
 
@@ -22029,6 +22035,12 @@ export const ModelHubGroundTruthSetupUpdateBody = zod.object({
 
 
 export const modelHubGroundTruthSetupUpdateResponseResultEmbeddingsStaleDefault = false;
+export const modelHubGroundTruthSetupUpdateResponseResultConfigMaxExamplesMax = 20;
+
+export const modelHubGroundTruthSetupUpdateResponseResultConfigSimilarityThresholdMin = 0;
+export const modelHubGroundTruthSetupUpdateResponseResultConfigSimilarityThresholdMax = 1;
+
+
 
 export const ModelHubGroundTruthSetupUpdateResponse = zod.object({
   "status": zod.boolean(),
@@ -22046,8 +22058,11 @@ export const ModelHubGroundTruthSetupUpdateResponse = zod.object({
   "embedding_status": zod.string().min(1),
   "embeddings_stale": zod.boolean().default(modelHubGroundTruthSetupUpdateResponseResultEmbeddingsStaleDefault),
   "config": zod.object({
-
-}).passthrough().optional()
+  "enabled": zod.boolean(),
+  "ground_truth_id": zod.string().uuid(),
+  "max_examples": zod.number().min(1).max(modelHubGroundTruthSetupUpdateResponseResultConfigMaxExamplesMax),
+  "similarity_threshold": zod.number().min(modelHubGroundTruthSetupUpdateResponseResultConfigSimilarityThresholdMin).max(modelHubGroundTruthSetupUpdateResponseResultConfigSimilarityThresholdMax)
+})
 })
 })
 

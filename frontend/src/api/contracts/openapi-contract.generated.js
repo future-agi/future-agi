@@ -56797,19 +56797,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "maximum": 20,
           "minimum": 1
         },
-        "injection_format": {
-          "title": "Injection format",
-          "type": "string",
-          "enum": [
-            "structured",
-            "conversational",
-            "xml"
-          ],
-          "default": "structured"
-        },
         "enabled": {
           "title": "Enabled",
-          "description": "Whether this template should inject GT few-shot examples at run time. Default True for back-compat with older FE clients; current FE always sends explicitly.",
           "type": "boolean",
           "default": true
         }
@@ -81949,7 +81938,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "required": [
         "id",
         "template_id",
-        "embedding_status"
+        "embedding_status",
+        "config"
       ],
       "type": "object",
       "properties": {
@@ -81984,9 +81974,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "default": false
         },
         "config": {
-          "title": "Config",
-          "type": "object",
-          "x-nullable": true
+          "$ref": "#/definitions/GroundTruthRuntimeConfig"
         }
       }
     },
@@ -93968,6 +93956,58 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Embeddings stale",
           "type": "boolean",
           "default": false
+        },
+        "is_active": {
+          "title": "Is active",
+          "type": "boolean",
+          "default": false
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean",
+          "default": true
+        },
+        "max_examples": {
+          "title": "Max examples",
+          "type": "integer",
+          "default": 3
+        },
+        "similarity_threshold": {
+          "title": "Similarity threshold",
+          "type": "number",
+          "default": 0.7
+        }
+      }
+    },
+    "GroundTruthRuntimeConfig": {
+      "required": [
+        "enabled",
+        "ground_truth_id",
+        "max_examples",
+        "similarity_threshold"
+      ],
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "ground_truth_id": {
+          "title": "Ground truth id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "max_examples": {
+          "title": "Max examples",
+          "type": "integer",
+          "maximum": 20,
+          "minimum": 1
+        },
+        "similarity_threshold": {
+          "title": "Similarity threshold",
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0
         }
       }
     },

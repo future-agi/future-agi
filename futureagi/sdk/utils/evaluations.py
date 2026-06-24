@@ -176,7 +176,13 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
     gt_inputs = dict(inputs) if inputs else {}
     from model_hub.services.ground_truth_service import GroundTruthService
 
-    GroundTruthService.inject_context(gt_inputs, eval_template)
+    user_org = getattr(user, "organization", None)
+    GroundTruthService.inject_context(
+        gt_inputs,
+        eval_template,
+        organization_id=user_org.id if user_org else None,
+        workspace_id=workspace.id if workspace else None,
+    )
 
     # --- Cost tracking (caller-side, before engine call) ---
     api_call_log_row = _log_and_deduct_cost_for_standalone_eval(

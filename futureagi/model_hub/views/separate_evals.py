@@ -4428,6 +4428,10 @@ class GroundTruthListView(APIView):
                         storage_type=gt.storage_type,
                         created_at=gt.created_at.isoformat() if gt.created_at else "",
                         embeddings_stale=stale,
+                        is_active=gt.is_active,
+                        enabled=gt.enabled,
+                        max_examples=gt.max_examples,
+                        similarity_threshold=gt.similarity_threshold,
                     )
                 )
 
@@ -4563,6 +4567,7 @@ class GroundTruthSetupView(APIView):
             GroundTruthService,
             ServiceError,
         )
+        from model_hub.types import GroundTruthSetupResult
 
         try:
             gt = _get_accessible_ground_truth(ground_truth_id, request)
@@ -4576,12 +4581,13 @@ class GroundTruthSetupView(APIView):
             variable_mapping=data.get("variable_mapping") or {},
             role_mapping=data.get("role_mapping") or {},
             max_examples=int(data.get("max_examples")),
-            injection_format=data.get("injection_format", "structured"),
             enabled=bool(data.get("enabled", True)),
         )
         if isinstance(result, ServiceError):
             return self._gm.bad_request(result.message)
-        return self._gm.success_response(result)
+        return self._gm.success_response(
+            GroundTruthSetupResult(**result).model_dump()
+        )
 
 
 class GroundTruthDataView(APIView):
@@ -4707,14 +4713,8 @@ class GroundTruthDeleteView(APIView):
             with transaction.atomic():
                 gt.deleted = True
                 gt.deleted_at = timezone.now()
-                gt.save(update_fields=["deleted", "deleted_at", "updated_at"])
-
-                template = gt.eval_template
-                if template is not None:
-                    config = template.config or {}
-                    if config.pop("ground_truth", None) is not None:
-                        template.config = config
-                        template.save(update_fields=["config", "updated_at"])
+                gt.is_active = False
+                gt.save(update_fields=["deleted", "deleted_at", "is_active", "updated_at"])
 
             return self._gm.success_response({"deleted": True, "id": str(gt.id)})
 

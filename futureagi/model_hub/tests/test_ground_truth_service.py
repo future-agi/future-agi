@@ -22,6 +22,14 @@ from model_hub.services.ground_truth_service import (
 # ─────────────────────────────────────────────────────────────────────
 
 
+class _NoopCM:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 @dataclass
 class _FakeOrg:
     id: str = "org-fake"
@@ -38,6 +46,11 @@ class _FakeTemplate:
     output_type_normalized: str | None = None
     choice_scores: dict[str, float] | None = None
     pass_threshold: float | None = None
+    owner: str = "user"
+    config: dict[str, Any] = field(default_factory=dict)
+
+    def save(self, update_fields=None):
+        pass
 
 
 @dataclass
@@ -45,6 +58,7 @@ class _FakeGT:
     """Honours every attribute the service touches and records save calls."""
 
     id: str = "gt-fake"
+    eval_template: Any = None
     columns: list[str] = field(default_factory=list)
     variable_mapping: dict[str, Any] = field(default_factory=dict)
     role_mapping: dict[str, Any] = field(default_factory=dict)
@@ -56,6 +70,11 @@ class _FakeGT:
     workspace: _FakeWorkspace = field(default_factory=_FakeWorkspace)
     organization_id: str = "org-fake"
     workspace_id: str = "ws-fake"
+    is_active: bool = False
+    enabled: bool = True
+    max_examples: int = 3
+    similarity_threshold: float = 0.7
+    injection_format: str = "structured"
     save_calls: list[list[str]] = field(default_factory=list)
     refresh_overrides: dict[str, Any] = field(default_factory=dict)
 
@@ -414,144 +433,110 @@ def test_retrieve_few_shot_skips_empty_groups():
     ]
 
 
-# resolve_preview_examples: pure helper, no DB / DRF / Temporal.
-
-
-def test_resolve_preview_examples_returns_none_when_gt_config_missing():
-    """No GT config: returns None so the FE panel hides."""
+def test_resolve_preview_examples_returns_none_when_no_active_gt():
     template = _FakeTemplate()
     with patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.load_config",
+        "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
         return_value=None,
     ):
         result = GroundTruthService.resolve_preview_examples(
-            eval_template=template, eval_inputs={"q": "hi"}
+            eval_template=template,
+            eval_inputs={"q": "hi"},
+            organization_id="org-fake",
+            workspace_id="ws-fake",
         )
     assert result is None
 
 
 def test_resolve_preview_examples_returns_none_when_inputs_blank():
-    """No usable inputs: returns None so the FE panel hides."""
     template = _FakeTemplate()
-    with patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.load_config",
-        return_value={"ground_truth_id": "gt-fake", "enabled": True},
-    ):
-        result = GroundTruthService.resolve_preview_examples(
-            eval_template=template, eval_inputs={}
-        )
+    result = GroundTruthService.resolve_preview_examples(
+        eval_template=template,
+        eval_inputs={},
+        organization_id="org-fake",
+        workspace_id="ws-fake",
+    )
     assert result is None
 
 
-def test_resolve_preview_examples_returns_empty_list_when_enabled_but_no_matches():
-    """GT enabled with zero matches: returns [] so the FE panel
-    renders the empty-state row."""
+def test_resolve_preview_examples_returns_empty_list_when_active_but_no_matches():
     template = _FakeTemplate()
-
-    class _FakeQuerySet:
-        def only(self, *_a, **_kw):
-            return self
-
-        def first(self):
-            return type(
-                "GT", (), {"variable_mapping": {"q": "question"}, "role_mapping": {}}
-            )()
-
-    class _FakeManager:
-        def filter(self, **_kw):
-            return _FakeQuerySet()
+    gt = _FakeGT(variable_mapping={"q": "question"}, role_mapping={})
 
     with patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.load_config",
-        return_value={"ground_truth_id": "gt-fake", "enabled": True},
+        "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
+        return_value=gt,
     ), patch(
         "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
         return_value=[],
-    ), patch(
-        "model_hub.services.ground_truth_service.EvalGroundTruth"
-    ) as mock_gt_model:
-        mock_gt_model.objects = _FakeManager()
+    ):
         result = GroundTruthService.resolve_preview_examples(
-            eval_template=template, eval_inputs={"q": "hi"}
+            eval_template=template,
+            eval_inputs={"q": "hi"},
+            organization_id="org-fake",
+            workspace_id="ws-fake",
         )
     assert result == []
 
 
 def test_resolve_preview_examples_swallows_database_error_returning_none():
-    """Transient store failures during retrieval do not tank the eval response."""
     from django.db import DatabaseError
 
     template = _FakeTemplate()
     gt = _FakeGT(variable_mapping={"q": "input"}, role_mapping={"output": "answer"})
     with patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.load_config",
-        return_value={"ground_truth_id": "gt-1", "max_examples": 3},
+        "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
+        return_value=gt,
     ), patch(
-        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter"
-    ) as _filter, patch(
         "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
         side_effect=DatabaseError("ch down"),
     ):
-        _filter.return_value.only.return_value.first.return_value = gt
         result = GroundTruthService.resolve_preview_examples(
-            eval_template=template, eval_inputs={"q": "hi"}
+            eval_template=template,
+            eval_inputs={"q": "hi"},
+            organization_id="org-fake",
+            workspace_id="ws-fake",
         )
     assert result is None
 
 
 def test_resolve_preview_examples_propagates_programmer_errors():
-    """Non-recoverable failures (config load, ORM misuse) must propagate."""
     template = _FakeTemplate()
     with patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.load_config",
+        "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
         side_effect=RuntimeError("boom"),
     ), pytest.raises(RuntimeError, match="boom"):
         GroundTruthService.resolve_preview_examples(
-            eval_template=template, eval_inputs={"q": "hi"}
+            eval_template=template,
+            eval_inputs={"q": "hi"},
+            organization_id="org-fake",
+            workspace_id="ws-fake",
         )
 
 
 def test_resolve_preview_examples_enriches_rows_with_mappings():
-    """Happy path: each retrieved row is enriched with the GT's
-    variable_mapping and role_mapping so the FE can render the card
-    without a follow-up fetch."""
     template = _FakeTemplate()
     retrieved_rows = [
         {"question": "What is 2+2?", "answer": "4", "notes": "trivial"},
         {"question": "Capital of France?", "answer": "Paris", "notes": "easy"},
     ]
-    fake_gt = type(
-        "FakeGTRow",
-        (),
-        {
-            "variable_mapping": {"q": "question"},
-            "role_mapping": {"output": "answer", "explanation": "notes"},
-        },
-    )()
-
-    class _FakeQuerySet:
-        def only(self, *_args, **_kwargs):
-            return self
-
-        def first(self):
-            return fake_gt
-
-    class _FakeManager:
-        def filter(self, **_kwargs):
-            return _FakeQuerySet()
+    gt = _FakeGT(
+        variable_mapping={"q": "question"},
+        role_mapping={"output": "answer", "explanation": "notes"},
+    )
 
     with patch(
-        "model_hub.services.ground_truth_service.GroundTruthService.load_config",
-        return_value={"ground_truth_id": "gt-fake", "enabled": True},
+        "model_hub.services.ground_truth_service.GroundTruthService.load_active_gt",
+        return_value=gt,
     ), patch(
         "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
         return_value=retrieved_rows,
-    ), patch(
-        "model_hub.services.ground_truth_service.EvalGroundTruth"
-    ) as mock_gt_model:
-        mock_gt_model.objects = _FakeManager()
+    ):
         result = GroundTruthService.resolve_preview_examples(
-            eval_template=template, eval_inputs={"q": "hi"}
+            eval_template=template,
+            eval_inputs={"q": "hi"},
+            organization_id="org-fake",
+            workspace_id="ws-fake",
         )
 
     assert len(result) == 2
@@ -562,3 +547,168 @@ def test_resolve_preview_examples_enriches_rows_with_mappings():
             "output": "answer",
             "explanation": "notes",
         }
+
+
+def test_update_setup_writes_runtime_knobs_onto_the_row():
+    template = _FakeTemplate(owner="system")
+    gt = _FakeGT(columns=["q", "a"], variable_mapping={"q": "q"}, eval_template=template)
+
+    class _NoopQS:
+        def exclude(self, **_):
+            return self
+
+        def update(self, **_):
+            return 0
+
+    with patch(
+        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
+        return_value=_NoopQS(),
+    ), patch(
+        "model_hub.services.ground_truth_service.transaction.atomic",
+        return_value=_NoopCM(),
+    ):
+        result = GroundTruthService.update_setup(
+            gt=gt,
+            eval_template=template,
+            variable_mapping={"q": "q"},
+            role_mapping={"output": "a"},
+            max_examples=5,
+            enabled=True,
+        )
+
+    assert not isinstance(result, ServiceError)
+    assert gt.is_active is True
+    assert gt.enabled is True
+    assert gt.max_examples == 5
+    assert gt.variable_mapping == {"q": "q"}
+    assert gt.role_mapping == {"output": "a"}
+
+
+def test_update_setup_does_not_mutate_eval_template_config():
+    """The runtime config no longer rides on the (possibly shared)
+    EvalTemplate.config dict - that was the cross-tenant leak."""
+    template = _FakeTemplate(owner="system", config={"existing_key": "preserved"})
+    gt = _FakeGT(columns=["q", "a"], variable_mapping={"q": "q"}, eval_template=template)
+
+    class _NoopQS:
+        def exclude(self, **_):
+            return self
+
+        def update(self, **_):
+            return 0
+
+    with patch(
+        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
+        return_value=_NoopQS(),
+    ), patch(
+        "model_hub.services.ground_truth_service.transaction.atomic",
+        return_value=_NoopCM(),
+    ):
+        GroundTruthService.update_setup(
+            gt=gt,
+            eval_template=template,
+            variable_mapping={"q": "q"},
+            role_mapping={"output": "a"},
+            max_examples=3,
+            enabled=True,
+        )
+
+    assert "ground_truth" not in template.config
+    assert template.config["existing_key"] == "preserved"
+
+
+def test_update_setup_clears_sibling_active_flag():
+    template = _FakeTemplate()
+    gt = _FakeGT(columns=["q", "a"], variable_mapping={"q": "q"}, eval_template=template)
+    sibling_updates = {}
+
+    class _SiblingQS:
+        def __init__(self):
+            self._excluded_ids = []
+
+        def exclude(self, **kw):
+            self._excluded_ids.append(kw.get("id"))
+            return self
+
+        def update(self, **kw):
+            sibling_updates["fields"] = kw
+            sibling_updates["excluded_ids"] = list(self._excluded_ids)
+            return 1
+
+    with patch(
+        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
+        return_value=_SiblingQS(),
+    ), patch(
+        "model_hub.services.ground_truth_service.transaction.atomic",
+        return_value=_NoopCM(),
+    ):
+        GroundTruthService.update_setup(
+            gt=gt,
+            eval_template=template,
+            variable_mapping={"q": "q"},
+            role_mapping={"output": "a"},
+            max_examples=3,
+            enabled=True,
+        )
+
+    assert sibling_updates["fields"] == {"is_active": False}
+    assert gt.id in sibling_updates["excluded_ids"]
+
+
+def test_create_from_upload_succeeds_for_system_template():
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return type("GT", (), kwargs)()
+
+    with patch(
+        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.create",
+        side_effect=fake_create,
+    ):
+        gt = GroundTruthService.create_from_upload(
+            eval_template=_FakeTemplate(owner="system"),
+            name="ds",
+            description="",
+            file_name="ds.csv",
+            columns=["q", "a"],
+            data=[{"q": "hi", "a": "yo"}],
+            variable_mapping={"q": "q"},
+            role_mapping={"output": "a"},
+            organization=_FakeOrg(),
+            workspace=_FakeWorkspace(),
+        )
+
+    assert not isinstance(gt, ServiceError)
+    assert captured["organization"].id == "org-fake"
+    assert captured["workspace"].id == "ws-fake"
+    assert captured["embedding_status"] == EvalGroundTruth.EmbeddingStatus.PENDING
+
+
+def test_load_active_gt_filters_by_tenant_scope():
+    template = _FakeTemplate(owner="system")
+    captured = {}
+
+    class _QS:
+        def first(self):
+            return None
+
+    def fake_filter(**kw):
+        captured.update(kw)
+        return _QS()
+
+    with patch(
+        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
+        side_effect=fake_filter,
+    ):
+        GroundTruthService.load_active_gt(
+            eval_template=template,
+            organization_id="org-A",
+            workspace_id="ws-A",
+        )
+
+    assert captured["organization_id"] == "org-A"
+    assert captured["workspace_id"] == "ws-A"
+    assert captured["is_active"] is True
+    assert captured["enabled"] is True
+    assert captured["deleted"] is False

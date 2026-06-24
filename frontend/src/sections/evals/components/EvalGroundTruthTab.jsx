@@ -1086,6 +1086,16 @@ const OUTPUT_TYPE_HINTS = {
   percentage: "Use a number between 0 and 1.",
 };
 
+export function shouldTriggerEmbed({
+  enabled,
+  mappingDirty,
+  embeddingsReady,
+  hasOnEmbed,
+}) {
+  return Boolean(enabled && (mappingDirty || !embeddingsReady) && hasOnEmbed);
+}
+
+
 function describeReferenceOutputColumn(evalConfig) {
   if (!evalConfig) {
     return "The correct answer for each row.";
@@ -1241,7 +1251,9 @@ const GroundTruthSetupForm = ({
   const handleCtaClick = async () => {
     try {
       if (configDirty) await save.mutateAsync(buildPayload());
-      if ((mappingDirty || !embeddingsReady) && onEmbed) {
+      if (shouldTriggerEmbed({
+        enabled, mappingDirty, embeddingsReady, hasOnEmbed: !!onEmbed,
+      })) {
         setEmbedChainRunning(true);
         await onEmbed();
       }
