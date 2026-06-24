@@ -732,8 +732,6 @@ def process_eval_for_single_row(
             eval_template
             and eval_template.config.get("eval_type_id") == "DeterministicEvaluator"
         ):
-            metadata_json = eval_result.eval_results[0].get("metadata", "{}")
-            json.loads(metadata_json)
             config_dict.update(
                 {"output": {"output": value, "reason": response["reason"]}}
             )
