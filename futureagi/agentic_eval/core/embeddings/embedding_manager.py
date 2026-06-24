@@ -1335,7 +1335,10 @@ class EmbeddingManager:
         organization_id: str,
         workspace_id: str | None = None,
     ) -> None:
-        """Mark vectors as deleted; ALTER UPDATE is async, reads filter deleted=0."""
+        """Mark vectors as deleted. Waits for the mutation to settle on the
+        local replica so a re-embed (insert-after-delete) does not race the
+        soft-delete and leave the prior rows readable.
+        """
         table_exists = self.db_client.client.execute(
             f"EXISTS TABLE {table_name}"
         )[0][0]
@@ -1359,7 +1362,8 @@ class EmbeddingManager:
             )
         where = " AND ".join(clauses)
         self.db_client.client.execute(
-            f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE {where}"
+            f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE {where} "
+            "SETTINGS mutations_sync = 2"
         )
         logger.info(
             "vectors_soft_deleted",
