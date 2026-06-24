@@ -29,6 +29,7 @@ import Iconify from "src/components/iconify";
 import useRequestDetail from "./hooks/useRequestDetail";
 import FeedbackWidget from "../guardrails/FeedbackWidget";
 import { formatCost } from "../utils/formatters";
+import { canonicalEntries, canonicalizeDeep } from "src/utils/utils";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -325,7 +326,7 @@ function ResponseTab({ log }) {
 MetadataTab.propTypes = { log: PropTypes.object.isRequired };
 
 function MetadataTab({ log }) {
-  const entries = Object.entries(log.metadata || {});
+  const entries = canonicalEntries(log.metadata || {});
 
   if (entries.length === 0) {
     return (
@@ -352,7 +353,7 @@ function MetadataTab({ log }) {
               <TableCell>{key}</TableCell>
               <TableCell sx={{ wordBreak: "break-all" }}>
                 {typeof value === "object"
-                  ? JSON.stringify(value)
+                  ? JSON.stringify(canonicalizeDeep(value))
                   : String(value)}
               </TableCell>
             </TableRow>

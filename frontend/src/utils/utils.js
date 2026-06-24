@@ -808,6 +808,24 @@ export const canonicalValues = (obj) => {
   return canonicalKeys(obj).map((key) => obj[key]);
 };
 
+// Recursively strip camelCase aliases from nested metadata objects before
+// rendering or serializing them in gateway drawers.
+export const canonicalizeDeep = (value) => {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeDeep(item));
+  }
+  if (typeof value !== "object") return value;
+
+  const aliases = buildAliasSet(value);
+  const out = {};
+  Object.entries(value).forEach(([key, val]) => {
+    if (aliases.has(key)) return;
+    out[key] = canonicalizeDeep(val);
+  });
+  return out;
+};
+
 export const objectCamelToSnake = (obj) => {
   if (obj === null || obj === undefined) {
     return obj;
