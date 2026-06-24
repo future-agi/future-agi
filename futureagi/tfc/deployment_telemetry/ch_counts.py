@@ -16,27 +16,51 @@ instead of masking a CH outage as genuine zero usage.
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime
-
-import structlog
-
-logger = structlog.get_logger(__name__)
 
 _QUERY_TIMEOUT_MS = 15000
 
+_ch25_client = None
+_ch25_lock = threading.Lock()
+
+
+def _get_ch25_client():
+    """Return a ClickHouseClient bound to the CH25 database (singleton).
+
+    The legacy ``get_clickhouse_client()`` connects to ``CH_DATABASE``,
+    but fi-collector writes spans to ``CH25_DATABASE``.  In any deployment
+    where those differ the legacy client reads the wrong ``spans`` table.
+    """
+    global _ch25_client
+    if _ch25_client is not None:
+        return _ch25_client
+    with _ch25_lock:
+        if _ch25_client is not None:
+            return _ch25_client
+        from tracer.services.clickhouse.client import ClickHouseClient
+        from tracer.services.clickhouse.v2 import get_v2_config
+
+        cfg = get_v2_config()
+        _ch25_client = ClickHouseClient(
+            host=cfg["host"],
+            port=cfg["tcp_port"],
+            user=cfg["user"],
+            password=cfg["password"],
+            database=cfg["database"],
+        )
+        return _ch25_client
+
 
 def clickhouse_available() -> bool:
-    """True when CH is enabled, configured, and reachable."""
-    from tracer.services.clickhouse.client import is_clickhouse_enabled
-
-    return is_clickhouse_enabled()
+    """True when the CH25 client is enabled and configured."""
+    client = _get_ch25_client()
+    return client.is_enabled and client.is_configured and client.is_available
 
 
 def _scalar(query: str, params: dict) -> int:
     """Run a single-cell aggregate query and return it as an int."""
-    from tracer.services.clickhouse.client import get_clickhouse_client
-
-    rows, _columns, _ms = get_clickhouse_client().execute_read(
+    rows, _columns, _ms = _get_ch25_client().execute_read(
         query,
         params,
         timeout_ms=_QUERY_TIMEOUT_MS,
@@ -94,9 +118,7 @@ def ingesting_project_ids(
     Used to derive active users from real ingest activity (SDK-only users
     who never touch the UI), not just app-entity creators.
     """
-    from tracer.services.clickhouse.client import get_clickhouse_client
-
-    rows, _columns, _ms = get_clickhouse_client().execute_read(
+    rows, _columns, _ms = _get_ch25_client().execute_read(
         """
         SELECT DISTINCT project_id
         FROM spans FINAL

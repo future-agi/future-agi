@@ -5,6 +5,11 @@ These run in the main repo, where both the sender schema
 (``ee.usage.deployment_telemetry_schema``) are importable. They fail loudly
 if the two diverge, if a sender-built payload stops validating on the
 receiver, or if the HMAC signing computed by the two sides disagrees.
+
+CI REQUIREMENT: these must run in a gate that has both the main repo and
+``ee/`` checked out.  If ``ee`` is absent the import below errors (not
+skips), which is intentional — a silently-skipped contract test is no
+contract test.
 """
 
 from __future__ import annotations
@@ -12,18 +17,8 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
+from ee.usage import deployment_telemetry_schema as receiver_schema
 from tfc.deployment_telemetry import schema as sender_schema
-
-# These are pure cross-repo contract checks — schema constants, DRF
-# serializer validation, and HMAC computation. None touch the database, so
-# they deliberately avoid the django_db fixture (and its CH schema-apply
-# setup), keeping the contract verifiable as a fast unit test.
-
-
-def _receiver_schema():
-    return pytest.importorskip("ee.usage.deployment_telemetry_schema")
 
 
 def _public_constants(module) -> dict:
@@ -36,22 +31,18 @@ def _public_constants(module) -> dict:
 
 
 def test_schema_constants_match_across_repos():
-    receiver = _receiver_schema()
     sender_constants = _public_constants(sender_schema)
 
-    # Compare the *whole* set of public constants in both directions so a
-    # newly added cap (version/deployment-type/email/domain length, etc.)
-    # can't silently drift between the two vendored copies — nothing is
-    # exempt just because this test predates it.
-    assert set(sender_constants) == set(_public_constants(receiver))
+    assert set(sender_constants) == set(_public_constants(receiver_schema))
     for name, value in sender_constants.items():
-        assert value == getattr(receiver, name), name
+        assert value == getattr(receiver_schema, name), name
 
 
 def test_derive_domain_matches():
-    receiver = _receiver_schema()
     for email in ("a@b.com", "User@Example.COM", "x@sub.domain.io"):
-        assert sender_schema.derive_domain(email) == receiver.derive_domain(email)
+        assert sender_schema.derive_domain(email) == receiver_schema.derive_domain(
+            email
+        )
 
 
 def test_sender_heartbeat_payload_validates_on_receiver():
