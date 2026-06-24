@@ -604,6 +604,33 @@ class TestTraceSessionWorkspaceScopeAPI:
             {"value": session_id, "label": "session-alpha"}
         ]
 
+    def test_session_filter_values_dedupe_straddlers_through_remap(
+        self, auth_client, observe_project
+    ):
+        survivor_id = str(uuid.uuid4())
+        analytics = mock.Mock()
+        analytics.execute_ch_query.return_value = mock.Mock(
+            data=[{"val": survivor_id, "label": "session-alpha"}]
+        )
+
+        with mock.patch(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService",
+            return_value=analytics,
+        ):
+            response = auth_client.get(
+                "/tracer/trace-session/get_session_filter_values/",
+                {"project_id": str(observe_project.id), "column": "session_id"},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert get_result(response)["values"] == [
+            {"value": survivor_id, "label": "session-alpha"}
+        ]
+        query = analytics.execute_ch_query.call_args.args[0]
+        assert "trace_session_id_remap" in query
+        assert "GROUP BY val_id" in query
+        assert "toString(val_id) AS val" in query
+
     def test_generic_delete_cascades_session_traces_spans_and_eval_logs(
         self, auth_client, observe_project
     ):
@@ -674,6 +701,34 @@ class TestTraceSessionOverlayWritePath:
         assert overlay.project_id == trace_session.project_id
         # display_name mirrors current name (the fixture session's name).
         assert overlay.display_name == trace_session.name
+
+    def test_patch_bookmark_writes_overlay_for_ch_only_session(
+        self, auth_client, observe_project
+    ):
+        session_id = uuid.uuid4()
+        assert not TraceSession.objects.filter(id=session_id).exists()
+
+        with mock.patch(
+            "tracer.views.trace_session._resolve_ch_session_fields",
+            return_value={
+                "project_id": observe_project.id,
+                "bookmarked": False,
+                "display_name": "collector-session",
+                "first_seen": None,
+            },
+        ):
+            response = auth_client.patch(
+                f"/tracer/trace-session/{session_id}/",
+                {"bookmarked": True},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert not TraceSession.objects.filter(id=session_id).exists()
+        overlay = TraceSessionOverlay.objects.get(trace_session_id=session_id)
+        assert overlay.project_id == observe_project.id
+        assert overlay.bookmarked is True
+        assert overlay.display_name == "collector-session"
 
     def test_patch_rename_sets_overlay_display_name(self, auth_client, trace_session):
         """PATCH name='renamed-via-2b' → overlay.display_name reflects the rename."""

@@ -2646,6 +2646,31 @@ class TestSessionListQueryBuilder:
         )
         assert params.get("user_id") == "user-123"
 
+    def test_user_null_filter_presence_resolves_session_ids_before_membership(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "end_user_id",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "is_not_null",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+        )
+
+        query, _params = builder.build()
+
+        assert "trace_session_id IN (" in query
+        assert "trace_session_id_remap" in query
+        assert "user_presence_ts_remap.survivor_id" in query
+        assert "GROUP BY trace_session_id" in query
+        assert "end_user_id IS NOT NULL" in query
+
     def test_build_excludes_null_session_ids(self):
         """Query should filter out rows without a session ID."""
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
@@ -2753,6 +2778,22 @@ class TestSessionListQueryBuilder:
         assert "HAVING first_message ILIKE %(having_" in query
         assert "%recursion%" in params.values()
         assert "argMin(input, start_time) AS first_message" in count_query
+
+    def test_first_message_sort_projects_message_aggregates(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            sort_params=[{"column_id": "first_message", "direction": "asc"}],
+        )
+
+        query, _params = builder.build()
+
+        assert "argMin(input, start_time) AS first_message" in query
+        assert "argMax(input, start_time) AS last_message" in query
+        assert "SELECT trace_session_id, trace_id, start_time, end_time, cost, total_tokens, input" in query
+        assert "ORDER BY first_message ASC" in query
 
     def test_v2_span_attributes_query_uses_native_ch25_columns(self):
         from tracer.services.clickhouse.v2.query_builders.session_list import (

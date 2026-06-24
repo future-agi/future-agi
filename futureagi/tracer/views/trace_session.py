@@ -190,6 +190,56 @@ def _resolve_ch_session_fields(request, trace_session_id):
     return session_fields
 
 
+def _resolve_end_user_ids_for_user_id(user_id, *, org, org_scope, project_id):
+    """Resolve a string ``user_id`` to the set of CH ``end_user`` UUIDs.
+
+    The CH ``spans`` table keys users by the UUID ``end_user_id``, not the
+    string ``user_id``, so a string filter must be reverse-resolved. Prefers
+    the curated CH ``end_users`` dimension (state-robust across the P3b id
+    cutover); falls back to PG ``EndUser`` only when CH yields nothing.
+
+    Returns ``(ids, display_row)`` where ``display_row`` is the first matched
+    PG row's display fields (``user_id``/``user_id_type``/``user_id_hash``) or
+    ``None`` — used to label the single-user (cross-project) detail page.
+    """
+    from tracer.services.clickhouse.v2.end_user_dict_reader import (
+        resolve_end_user_ids_by_user_id,
+    )
+
+    try:
+        ids = resolve_end_user_ids_by_user_id(
+            user_id,
+            organization_id=org.id if org else None,
+            project_id=(project_id if (not org_scope and project_id) else None),
+        )
+    except Exception as e:
+        logger.warning(
+            "session_list_user_id_ch_resolve_failed", error=str(e)[:200]
+        )
+        ids = []
+
+    display_row = None
+    if not ids:
+        try:
+            end_user_qs = EndUser.objects.filter(user_id=user_id)
+            if org:
+                end_user_qs = end_user_qs.filter(organization=org)
+            if not org_scope and project_id:
+                end_user_qs = end_user_qs.filter(project_id=project_id)
+            end_user_rows = list(
+                end_user_qs.values("id", "user_id", "user_id_type", "user_id_hash")
+            )
+            ids = [str(row.get("id")) for row in end_user_rows if row.get("id")]
+            if end_user_rows:
+                display_row = end_user_rows[0]
+        except Exception as e:
+            logger.warning(
+                "session_list_user_id_pg_fallback_failed", error=str(e)[:200]
+            )
+            ids = []
+    return ids, display_row
+
+
 def _soft_delete_trace_session_tree(trace_sessions):
     now = timezone.now()
     sessions = list(trace_sessions)
@@ -325,6 +375,67 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     "display_name": instance.name,
                 },
             )
+
+    def update(self, request, *args, **kwargs):
+        """Update a session's bookmark / name, including CH-only sessions.
+
+        fi-collector sessions live only in CH (no PG ``TraceSession`` row), so
+        the default ``get_object()`` (PG queryset) 404s for them. But the
+        writable state — ``bookmarked`` / ``name`` — lives in the PG
+        ``TraceSessionOverlay``, which is soft-id keyed by ``trace_session_id``
+        and needs NO PG session row (DESIGN §5.1). So when the PG lookup misses
+        we re-run the SAME tenant gate the read path uses
+        (``_resolve_ch_session_fields``) and write the overlay directly, instead
+        of failing the bookmark / rename PATCH for collector sessions.
+        """
+        partial = kwargs.get("partial", False)
+        try:
+            return super().update(request, *args, **kwargs)
+        except Http404:
+            return self._update_ch_only_session(request, partial=partial)
+
+    def _update_ch_only_session(self, request, *, partial):
+        """Overlay-only write path for a CH-only (collector) session."""
+        trace_session_id = self.kwargs.get("pk")
+        session_fields = _resolve_ch_session_fields(request, trace_session_id)
+        if not session_fields:
+            raise Http404("Trace session not found")
+
+        serializer = self.get_serializer(data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        validated = serializer.validated_data
+
+        from tracer.models.trace_session import TraceSessionOverlay
+
+        project_id = session_fields["project_id"]
+        with transaction.atomic():
+            # Seed a new overlay from the session's current (CH-merged) state so
+            # a partial PATCH (only ``bookmarked`` or only ``name``) never
+            # clobbers the other field.
+            overlay, _ = TraceSessionOverlay.objects.get_or_create(
+                trace_session_id=trace_session_id,
+                defaults={
+                    "project_id": project_id,
+                    "bookmarked": bool(session_fields.get("bookmarked")),
+                    "display_name": session_fields.get("display_name"),
+                },
+            )
+            overlay.project_id = project_id
+            if validated.get("bookmarked") is not None:
+                overlay.bookmarked = validated["bookmarked"]
+            if "name" in validated:
+                overlay.display_name = validated["name"]
+            overlay.save()
+
+        return Response(
+            {
+                "id": str(trace_session_id),
+                "project": str(project_id),
+                "bookmarked": overlay.bookmarked,
+                "name": overlay.display_name,
+                "created_at": session_fields.get("first_seen"),
+            }
+        )
 
     def perform_destroy(self, instance):
         _soft_delete_trace_session_tree([instance])
@@ -647,20 +758,45 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             analytics = AnalyticsQueryService()
 
             if ch_column == "trace_session_id":
+                from tracer.services.clickhouse.v2.id_remap_sql import (
+                    remap_left_join,
+                    resolved_id_expr,
+                )
+
+                # Resolve new→old through trace_session_id_remap and group by
+                # the survivor id so a cross-cutover straddler (which has BOTH
+                # an old and a deterministic row in trace_sessions) is listed
+                # ONCE — matching the span-backed value paths below. Reading
+                # trace_sessions directly would surface both rows as duplicates.
                 search_clause = (
                     "AND (external_session_id ILIKE %(search)s "
                     "OR toString(trace_session_id) ILIKE %(search)s)"
                     if search
                     else ""
                 )
+                ts_join = remap_left_join(
+                    "ts.trace_session_id", "trace_session_id_remap", "ts_remap"
+                )
+                resolved_ts = resolved_id_expr("ts.trace_session_id", "ts_remap")
                 query = f"""
                 SELECT
-                    toString(trace_session_id) AS val,
-                    external_session_id AS label
-                FROM trace_sessions FINAL
-                WHERE project_id = %(project_id)s
-                  AND is_deleted = 0
-                  {search_clause}
+                    toString(val_id) AS val,
+                    any(label) AS label
+                FROM (
+                    SELECT
+                        {resolved_ts} AS val_id,
+                        ts.external_session_id AS label
+                    FROM (
+                        SELECT trace_session_id, external_session_id
+                        FROM trace_sessions FINAL
+                        WHERE project_id = %(project_id)s
+                          AND is_deleted = 0
+                          {search_clause}
+                    ) AS ts
+                    {ts_join}
+                )
+                WHERE val_id != toUUID('{NIL_UUID}')
+                GROUP BY val_id
                 ORDER BY label, val
                 LIMIT %(limit)s OFFSET %(offset)s
                 """
@@ -1817,109 +1953,113 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             request, "query_params", {}
         ).get("user_id")
 
-        # Support user_id injected as a structural filter (the cross-project
-        # user detail page prepends one). Extract the raw user_id string from
-        # either query_params or filters, strip it from the filter list, then
-        # resolve it to a set of EndUser UUIDs and pass an end_user_id IN(...)
-        # synthetic filter instead (the CH `spans` table keys users via the
-        # UUID column `end_user_id`, not the string `user_id`).
-        user_id_raw = user_id_qp or None
+        # Support user_id supplied as a structural filter (the cross-project
+        # user-detail page prepends one) or as a query param. The CH `spans`
+        # table keys users by the UUID `end_user_id`, not the string `user_id`,
+        # so we strip every user_id filter out, reverse-resolve the string
+        # value(s) to end_user UUIDs and re-inject a synthetic `end_user_id`
+        # filter. The original OPERATOR and the FULL value list are preserved:
+        # `user_id in [alice, bob]` must match BOTH, and not_equals / is_null
+        # must not be silently rewritten to `in`.
+        user_id_op: str | None = None
+        user_id_values: list[str] = []
         _remaining = []
         for _f in filters:
             _col, _cfg = FilterEngine._normalize_filter_params(_f)
             if _col == "user_id":
+                if user_id_op is None:
+                    user_id_op = _cfg.get("filter_op") or "in"
                 _val = _cfg.get("filter_value")
                 if isinstance(_val, list):
-                    _val = _val[0] if _val else None
-                if _val and not user_id_raw:
-                    user_id_raw = _val
+                    user_id_values.extend(
+                        str(v) for v in _val if v not in (None, "")
+                    )
+                elif _val not in (None, ""):
+                    user_id_values.append(str(_val))
                 continue
             _remaining.append(_f)
         filters = _remaining
 
-        # Resolve the raw user_id to a list of end_user UUIDs and inject as
-        # a synthetic end_user_id IN(...) filter. Scope by org (and project
-        # if we're in project mode).
-        #
-        # P3b step2 precondition — the reverse-resolve is now CH `end_users`, not
-        # PG `EndUser.objects` (PG_ORM_READ_MIGRATION, Slice B). The old PG lookup
-        # FREEZES post-step2: a NET-NEW user (first seen after the ingest
-        # get_or_create is dropped) has NO `tracer_enduser` row, so PG returned []
-        # → `_ids = [NIL_UUID]` → a SILENTLY EMPTY session list for it. The curated
-        # CH `end_users` dimension instead yields the state-robust id-SET:
-        # historical OLD-id row + net-new DETERMINISTIC-id row + a straddler's
-        # BOTH. This is the `_ids` that gets the NET-NEW user its sessions.
-        #
-        # P3b step1.5 (DESIGN §3 / id_remap_sql) — still the downstream mechanism:
-        # `_ids` are the CURATED keys (OLD pre-sweep). The SessionListQueryBuilder
-        # extracts this synthetic `end_user_id` filter (`_ENDUSER_ID_FILTER_COLS`)
-        # and binds it to the id-remap-RESOLVED `end_user_id` column
-        # (`_build_resolved_user_clause`), so a STRADDLER's NEW (deterministic-id)
-        # spans resolve new→old and select under the same OLD id. The earlier
-        # "do NOT expand `_ids` with deterministic ids here" caveat was
-        # STRADDLER-scoped (a straddler already had an old id, so adding its new id
-        # was redundant with the join-resolve). NET-NEW is different: it has ONLY
-        # the deterministic id and NO old id, so that curated deterministic id MUST
-        # be in `_ids` or the list is silently empty — and `end_users` supplies it
-        # directly (no deterministic_id compute here), no double-count because a
-        # net-new id has no remap entry (resolves to itself).
-        end_user_display = None
-        if user_id_raw:
-            from tracer.services.clickhouse.v2.end_user_dict_reader import (
-                resolve_end_user_ids_by_user_id,
-            )
+        # The query-param user_id (cross-project user-detail page) is an
+        # implicit single-user match and also drives per-row user-display.
+        if user_id_qp:
+            user_id_values.insert(0, str(user_id_qp))
+            if user_id_op is None:
+                user_id_op = "in"
 
-            try:
-                _ids = resolve_end_user_ids_by_user_id(
-                    user_id_raw,
-                    organization_id=org.id if org else None,
-                    project_id=(project_id if (not org_scope and project_id) else None),
-                )
-            except Exception as e:
-                logger.warning(
-                    "session_list_user_id_ch_resolve_failed",
-                    error=str(e)[:200],
-                )
-                _ids = []
-            if not _ids:
-                try:
-                    end_user_qs = EndUser.objects.filter(user_id=user_id_raw)
-                    if org:
-                        end_user_qs = end_user_qs.filter(organization=org)
-                    if not org_scope and project_id:
-                        end_user_qs = end_user_qs.filter(project_id=project_id)
-                    end_user_rows = list(
-                        end_user_qs.values(
-                            "id",
-                            "user_id",
-                            "user_id_type",
-                            "user_id_hash",
-                        )
-                    )
-                    _ids = [
-                        str(row.get("id")) for row in end_user_rows if row.get("id")
-                    ]
-                    if end_user_rows:
-                        end_user_display = end_user_rows[0]
-                except Exception as e:
-                    logger.warning(
-                        "session_list_user_id_pg_fallback_failed",
-                        error=str(e)[:200],
-                    )
-                    _ids = []
-            if not _ids:
-                _ids = [NIL_UUID]
+        # Resolve the raw user_id(s) to end_user UUIDs and inject a synthetic
+        # end_user_id filter (scoped by org, and project when in project mode).
+        #
+        # P3b step2 precondition — the reverse-resolve prefers the curated CH
+        # `end_users` dimension over PG `EndUser.objects` (PG_ORM_READ_MIGRATION,
+        # Slice B). PG FREEZES post-step2: a NET-NEW user (first seen after the
+        # ingest get_or_create is dropped) has NO `tracer_enduser` row, so PG
+        # returns [] → empty list. The curated CH dimension instead yields the
+        # state-robust id-SET (historical OLD-id row + net-new DETERMINISTIC-id
+        # row + a straddler's BOTH) — see `_resolve_end_user_ids_for_user_id`.
+        #
+        # P3b step1.5 (DESIGN §3 / id_remap_sql) — the resolved ids are CURATED
+        # keys (OLD pre-sweep). SessionListQueryBuilder extracts this synthetic
+        # `end_user_id` filter (`_ENDUSER_ID_FILTER_COLS`) and binds it to the
+        # id-remap-RESOLVED `end_user_id` column (`_build_resolved_user_clause`),
+        # so a STRADDLER's NEW (deterministic-id) spans resolve new→old and
+        # select under the same OLD id. A net-new id has no remap entry (resolves
+        # to itself), so no double-count.
+        _NULL_USER_OPS = {"is_null", "is_not_null"}
+        _NEGATED_USER_OPS = {"not_in", "not_equals", "ne", "neq"}
+
+        end_user_display = None
+        if user_id_op in _NULL_USER_OPS:
+            # Presence/absence of any user — no value resolution needed; the
+            # builder maps this to session membership over end_user_id.
             filters.append(
                 {
                     "column_id": "end_user_id",
                     "filter_config": {
                         "col_type": "SYSTEM_METRIC",
                         "filter_type": "text",
-                        "filter_op": "in",
-                        "filter_value": _ids,
+                        "filter_op": user_id_op,
                     },
                 }
             )
+        elif user_id_values:
+            _ids: list[str] = []
+            for _uv in dict.fromkeys(user_id_values):  # dedup, keep order
+                _resolved, _display = _resolve_end_user_ids_for_user_id(
+                    _uv, org=org, org_scope=org_scope, project_id=project_id
+                )
+                _ids.extend(_resolved)
+                # Only the single query-param user labels the displayed rows.
+                if (
+                    _display is not None
+                    and end_user_display is None
+                    and user_id_qp is not None
+                    and _uv == str(user_id_qp)
+                ):
+                    end_user_display = _display
+            _ids = list(dict.fromkeys(_ids))
+            _out_op = "not_in" if user_id_op in _NEGATED_USER_OPS else "in"
+            # An unresolved value-set means "no such user". For inclusive ops
+            # that is an empty result (NIL sentinel matches nothing); for
+            # negated ops it is a no-op (everything matches), so skip injection.
+            inject = True
+            if not _ids:
+                if _out_op == "in":
+                    _ids = [NIL_UUID]
+                else:
+                    inject = False
+            if inject:
+                filters.append(
+                    {
+                        "column_id": "end_user_id",
+                        "filter_config": {
+                            "col_type": "SYSTEM_METRIC",
+                            "filter_type": "text",
+                            "filter_op": _out_op,
+                            "filter_value": _ids,
+                        },
+                    }
+                )
 
         # Three-state bookmark filter (DESIGN §5.2): a synthetic
         # ``trace_session_id`` IN/NOT-IN over the PG overlay's bookmarked ids,

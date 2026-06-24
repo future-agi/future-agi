@@ -565,9 +565,68 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         return " AND ".join(clauses)
 
+    def _user_null_filter_op(self) -> str | None:
+        """Return ``is_null``/``is_not_null`` when a user filter tests presence.
+
+        A ``user_id``/``end_user_id`` filter with a null operator carries no
+        value to resolve — it asks "does this session have a user at all" —
+        and is answered by ``_build_user_presence_clause`` instead of the
+        id-set membership in ``_build_resolved_user_clause``.
+        """
+        for f in self.filters:
+            col_id = f.get("column_id") or f.get("columnId")
+            if col_id not in self._ENDUSER_ID_FILTER_COLS:
+                continue
+            config = f.get("filter_config") or f.get("filterConfig") or {}
+            op = config.get("filter_op") or config.get("filterOp")
+            if op in ("is_null", "is_not_null"):
+                return op
+        return None
+
+    def _build_user_presence_clause(self, null_op: str) -> str:
+        """Membership over sessions that have ANY end user.
+
+        ``is_not_null`` → the session IS in that set; ``is_null`` → it is NOT.
+        The outer session query groups by remap-resolved ``trace_session_id``,
+        so the presence set must resolve session ids too. Otherwise a straddler
+        whose user appears only on its deterministic-id spans can be compared
+        against the old survivor id and misclassified as user-less.
+        """
+        ts_join = remap_left_join(
+            "us.trace_session_id", "trace_session_id_remap", "user_presence_ts_remap"
+        )
+        resolved_ts = resolved_id_expr(
+            "us.trace_session_id", "user_presence_ts_remap"
+        )
+        membership = f"""(
+            SELECT trace_session_id
+            FROM (
+                SELECT {resolved_ts} AS trace_session_id
+                FROM (
+                    SELECT trace_session_id
+                    FROM {self.TABLE}
+                    {self.project_where()}
+                      AND trace_session_id IS NOT NULL
+                      AND trace_session_id != toUUID('{NIL_UUID}')
+                      AND end_user_id IS NOT NULL
+                      AND end_user_id != toUUID('{NIL_UUID}')
+                      AND start_time >= %(start_date)s
+                      AND start_time < %(end_date)s
+                ) AS us
+                {ts_join}
+            )
+            GROUP BY trace_session_id
+        )"""
+        op = "NOT IN" if null_op == "is_null" else "IN"
+        return f"trace_session_id {op} {membership}"
+
     def _build_session_user_membership_clause(
         self, params: dict[str, Any]
     ) -> str:
+        null_op = self._user_null_filter_op()
+        if null_op:
+            return self._build_user_presence_clause(null_op)
+
         resolved_user_clause = self._build_resolved_user_clause(params)
         if not resolved_user_clause:
             return ""
@@ -658,7 +717,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         # Inner scan projects only columns required by session aggregation.
         scan_cols = list(self._SESSION_SCAN_COLS)
-        if self._has_message_filters():
+        if self._needs_message_aggregates():
             scan_cols.append("input")
         outer_select = [f"{resolved_ts} AS trace_session_id"] + [
             f"rs.{c} AS {c}" for c in scan_cols if c != "trace_session_id"
@@ -765,8 +824,23 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             for f in self.filters
         )
 
+    def _has_message_sort(self) -> bool:
+        return any(
+            (s.get("column_id") or s.get("columnId")) in self.MESSAGE_FILTER_MAP
+            for s in self.sort_params
+        )
+
+    def _needs_message_aggregates(self) -> bool:
+        """The argMin/argMax message aggregates must be projected whenever a
+        message column is filtered OR sorted on. Sorting alone (without a
+        matching filter) still emits ``ORDER BY first_message`` via
+        ``translate_sort``, so the column must be selected or CH fails with
+        "Unknown expression identifier".
+        """
+        return self._has_message_filters() or self._has_message_sort()
+
     def _message_aggregate_select(self) -> str:
-        if not self._has_message_filters():
+        if not self._needs_message_aggregates():
             return ""
         return (
             ",\n            argMin(input, start_time) AS first_message,"
