@@ -9,7 +9,7 @@ import csv
 import io
 import json
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -54,6 +54,11 @@ _SKIP_ATTR_PREFIXES = (
 )
 
 _CH_TIMEOUT_MS = 30000
+
+# Hard cap on export rows. Bounds worker memory + latency for the large-workspace
+# case this feature targets (matches agentcc's MAX_EXPORT_ROWS); a hit is logged
+# and signalled in-band rather than silently truncating the download.
+MAX_EXPORT_ROWS = 10_000
 
 
 def _users_attr_enrichment_query(project_id=None):
@@ -113,12 +118,12 @@ class UsersListManager:
     def __init__(
         self,
         *,
-        organization_id: Any,
-        allowed_project_ids: list,
+        organization_id: str,
+        allowed_project_ids: list[str],
         project_id: str | None = None,
         search: str | None = None,
-        filters: list | None = None,
-        sort_params: list | None = None,
+        filters: list[dict] | None = None,
+        sort_params: list[dict] | None = None,
     ):
         self.organization_id = str(organization_id)
         self.project_id = str(project_id) if project_id else None
@@ -131,7 +136,7 @@ class UsersListManager:
 
     @staticmethod
     def _resolve_scope(
-        project_id: str | None, allowed_project_ids: list
+        project_id: str | None, allowed_project_ids: list[str]
     ) -> tuple[list[str], bool]:
         """Intersect the requested project with the caller's allowed projects.
 
@@ -147,7 +152,7 @@ class UsersListManager:
         return scoped, not scoped
 
     def _fetch_rows(
-        self, *, limit: int | None, offset: int | None
+        self, *, limit: int | None, offset: int | None, max_rows: int | None = None
     ) -> tuple[list[dict], int]:
         analytics = AnalyticsQueryService()
         builder = UserListQueryBuilder(
@@ -156,6 +161,7 @@ class UsersListManager:
             search=self.search,
             limit=limit,
             offset=offset,
+            max_rows=max_rows,
             filters=self.filters,
             sort_params=self.sort_params,
             empty_scope=self.empty_scope,
@@ -232,11 +238,6 @@ class UsersListManager:
         total_pages = (count // page_size) + (1 if count % page_size > 0 else 0)
         return {"table": rows, "total_count": count, "total_pages": total_pages}
 
-    def export_rows(self) -> list[dict]:
-        """Unpaginated rows for CSV export (no span-attribute enrichment)."""
-        rows, _ = self._fetch_rows(limit=None, offset=None)
-        return rows
-
     @classmethod
     def _format_export_cell(cls, value: Any):
         if value is None:
@@ -247,14 +248,55 @@ class UsersListManager:
             return "'" + value
         return value
 
-    def iter_export_csv(self, rows: list[dict]) -> Iterator[str]:
-        """Yield CSV text one row at a time so the response can stream."""
+    def iter_export_csv(self) -> Iterator[str]:
+        """Stream the export as CSV text, header row first.
+
+        The header is yielded BEFORE the ClickHouse fetch so the socket stays
+        warm while the (slow) query runs — a buffered response would leave it
+        idle past the LB read timeout. Rows are hard-capped at
+        ``MAX_EXPORT_ROWS``; a cap hit or a mid-stream failure is logged and
+        signalled in-band, since headers are already sent and the status can no
+        longer change (otherwise a partial body reads as a clean 200).
+        """
         buffer = io.StringIO()
         writer = csv.writer(buffer)
+
+        def _drain() -> str:
+            chunk = buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate()
+            return chunk
+
         writer.writerow([header for header, _ in USERS_EXPORT_COLUMNS])
-        yield buffer.getvalue()
-        buffer.seek(0)
-        buffer.truncate()
+        yield _drain()
+
+        try:
+            # Fetch cap + 1 so a full page can be distinguished from a truncation.
+            rows, _ = self._fetch_rows(
+                limit=None, offset=None, max_rows=MAX_EXPORT_ROWS + 1
+            )
+        except Exception:
+            logger.exception(
+                "users_export_failed",
+                organization_id=self.organization_id,
+                project_id=self.project_id,
+            )
+            writer.writerow(
+                ["# export failed before completion; data may be incomplete"]
+            )
+            yield _drain()
+            return
+
+        truncated = len(rows) > MAX_EXPORT_ROWS
+        if truncated:
+            rows = rows[:MAX_EXPORT_ROWS]
+            logger.warning(
+                "users_export_truncated",
+                organization_id=self.organization_id,
+                project_id=self.project_id,
+                max_rows=MAX_EXPORT_ROWS,
+            )
+
         for row in rows:
             writer.writerow(
                 [
@@ -262,12 +304,14 @@ class UsersListManager:
                     for _, field in USERS_EXPORT_COLUMNS
                 ]
             )
-            yield buffer.getvalue()
-            buffer.seek(0)
-            buffer.truncate()
+            yield _drain()
+
+        if truncated:
+            writer.writerow([f"# export truncated at {MAX_EXPORT_ROWS} rows"])
+            yield _drain()
 
     def export_filename(self) -> str:
         return (
             f"users_{self.project_id or 'all'}_"
-            f"{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.csv"
+            f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.csv"
         )

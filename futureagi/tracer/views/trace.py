@@ -4617,7 +4617,8 @@ class UsersView(APIView):
         try:
             query_data = request.validated_query_data
 
-            export = bool(query_data.get("export"))
+            # Serializer is BooleanField(default=False), so this is already a bool.
+            export = query_data.get("export", False)
             search = query_data.get("search", "")
 
             try:
@@ -4631,10 +4632,13 @@ class UsersView(APIView):
             # projects here and pass the plain list to the manager (CH25: the
             # curated source has no workspace_id column to filter on).
             manager = UsersListManager(
-                organization_id=request.user.organization.id,
-                allowed_project_ids=list(
-                    _project_queryset_for_request(request).values_list("id", flat=True)
-                ),
+                organization_id=str(request.user.organization.id),
+                allowed_project_ids=[
+                    str(pid)
+                    for pid in _project_queryset_for_request(request).values_list(
+                        "id", flat=True
+                    )
+                ],
                 project_id=query_data.get("project_id") or None,
                 search=search.strip() if search else None,
                 filters=query_data.get("filters", []),
@@ -4642,8 +4646,11 @@ class UsersView(APIView):
             )
 
             if export:
+                # iter_export_csv() pulls rows lazily inside the generator and
+                # yields the header first, so the slow CH fetch happens while the
+                # socket is already streaming — not eagerly before the response.
                 response = StreamingHttpResponse(
-                    manager.iter_export_csv(manager.export_rows()),
+                    manager.iter_export_csv(),
                     content_type="text/csv",
                 )
                 response["Content-Disposition"] = (

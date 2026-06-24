@@ -67,6 +67,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         sort_params: list[dict[str, Any]] | None = None,
         limit: int | None = None,
         offset: int | None = None,
+        max_rows: int | None = None,
         end_user_id: str | None = None,
         include_null_workspace: bool = False,
         empty_scope: bool = False,
@@ -88,6 +89,10 @@ class UserListQueryBuilder(BaseQueryBuilder):
         self.sort_params = sort_params or []
         self.limit = limit
         self.offset = offset
+        # Export-only hard row cap (applied as a LIMIT *without* the window
+        # count), so an unpaginated export can't `.all()` an unbounded result
+        # into worker memory. Independent of `limit`/`offset` paging.
+        self.max_rows = max_rows
         self.end_user_id = str(end_user_id) if end_user_id else None
         self.include_null_workspace = include_null_workspace
         # When the caller resolved an EMPTY workspace-project set, the read must
@@ -113,6 +118,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
         if self.limit is not None and self.offset is not None:
             self.params["limit"] = int(self.limit)
             self.params["offset"] = int(self.offset)
+        if self.max_rows is not None:
+            self.params["max_rows"] = int(self.max_rows)
 
         span_filters = self._span_filters()
         fb = ClickHouseFilterBuilder(
@@ -154,7 +161,15 @@ class UserListQueryBuilder(BaseQueryBuilder):
         final_filter = f"WHERE {output_where}" if output_where else ""
         order_by = self._order_by()
         paginated = self.limit is not None and self.offset is not None
-        pagination = "LIMIT %(limit)s OFFSET %(offset)s" if paginated else ""
+        if paginated:
+            pagination = "LIMIT %(limit)s OFFSET %(offset)s"
+        elif self.max_rows is not None:
+            # Export path: cap rows WITHOUT the window count, so CH streams the
+            # ordered scan up to the cap instead of materializing a worktable
+            # to count the full (unbounded) result.
+            pagination = "LIMIT %(max_rows)s"
+        else:
+            pagination = ""
         # Skip the window count for unpaginated exports — avoids materializing a worktable.
         total_count_select = (
             "count() OVER() AS total_count" if paginated else "0 AS total_count"

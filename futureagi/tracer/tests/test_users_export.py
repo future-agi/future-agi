@@ -10,7 +10,13 @@ from django.http import StreamingHttpResponse
 from django.utils import timezone
 from rest_framework import status
 
+from tracer.serializers.trace import UsersTableRowSerializer
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.users_list_manager import (
+    MAX_EXPORT_ROWS,
+    USERS_EXPORT_COLUMNS,
+    UsersListManager,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.api]
 
@@ -142,15 +148,18 @@ class TestUsersExport:
                     "export": "true",
                 },
             )
+            # Rows stream lazily, so the body must be consumed while the CH stub
+            # is still patched (this also proves the fetch is not eager).
+            csv_rows = _parse_csv(response)
 
         assert response.status_code == status.HTTP_200_OK
-        # Guards the 60s LB-timeout fix — buffered HttpResponse would regress this.
+        # Response type only: the header-first / mid-stream-failure behaviour that
+        # actually keeps the socket warm is asserted in the dedicated tests below.
         assert isinstance(response, StreamingHttpResponse)
         assert response["Content-Type"].startswith("text/csv")
         assert "attachment;" in response["Content-Disposition"]
         assert f"users_{observe_project.id}_" in response["Content-Disposition"]
 
-        csv_rows = _parse_csv(response)
         assert csv_rows[0] == _EXPECTED_HEADER
         data_rows = [r for r in csv_rows[1:] if r]
         target = next(r for r in data_rows if r[0] == user_id)
@@ -198,9 +207,9 @@ class TestUsersExport:
                     "current_page_index": 2,
                 },
             )
+            csv_rows = _parse_csv(response)
 
         assert response.status_code == status.HTTP_200_OK
-        csv_rows = _parse_csv(response)
         emitted = {r[0] for r in csv_rows[1:] if r}
         for uid in user_ids:
             assert uid in emitted
@@ -235,12 +244,17 @@ class TestUsersExport:
                     "current_page_index": 3,
                 },
             )
+            # Consume the stream so the lazy fetch (and the builder) actually runs.
+            _parse_csv(response)
 
         assert response.status_code == status.HTTP_200_OK
         builder_cls.assert_called_once()
         kwargs = builder_cls.call_args.kwargs
         assert kwargs["limit"] is None
         assert kwargs["offset"] is None
+        # Export is unpaginated but capped: the builder gets a hard row ceiling
+        # (cap + 1 so a truncation can be distinguished from a full page).
+        assert kwargs["max_rows"] == MAX_EXPORT_ROWS + 1
         assert kwargs["filters"] == filters
         # Post-CH25: workspace isolation rides on project_ids + empty_scope.
         # Project requested IS in the workspace, so empty_scope must be False
@@ -276,8 +290,8 @@ class TestUsersExport:
                     "export": "true",
                 },
             )
+            csv_rows = _parse_csv(response)
 
-        csv_rows = _parse_csv(response)
         data_row = next(r for r in csv_rows[1:] if r)
         assert data_row[_EXPECTED_HEADER.index("Last Active")] == ""
 
@@ -318,8 +332,8 @@ class TestUsersExport:
                     "export": "true",
                 },
             )
+            csv_rows = _parse_csv(response)
 
-        csv_rows = _parse_csv(response)
         data_row = next(r for r in csv_rows[1:] if r)
         cell = data_row[_EXPECTED_HEADER.index("User ID")]
         assert cell == "'" + raw_user_id
@@ -367,6 +381,8 @@ class TestUsersExport:
                 "/tracer/users/",
                 {"project_id": foreign_project_id, "export": "true"},
             )
+            # Consume inside the patch so the lazy fetch / builder runs here.
+            csv_rows = _parse_csv(response)
 
         assert response.status_code == status.HTTP_200_OK
         # Builder must be told the scope is empty so the SQL contracts to "no rows"
@@ -376,7 +392,6 @@ class TestUsersExport:
         assert kwargs["project_ids"] == []
 
         # Response is still a valid streamed CSV with just the header row.
-        csv_rows = _parse_csv(response)
         assert csv_rows[0] == _EXPECTED_HEADER
         assert [r for r in csv_rows[1:] if r] == []
 
@@ -412,3 +427,106 @@ class TestUserListQueryBuilderUnpaginated:
         query, _ = builder.build()
         assert "count() OVER() AS total_count" in query
         assert "LIMIT %(limit)s OFFSET %(offset)s" in query
+
+    def test_export_cap_limits_without_window_count(self):
+        from tracer.services.clickhouse.query_builders.user_list import (
+            UserListQueryBuilder,
+        )
+
+        builder = UserListQueryBuilder(
+            organization_id=str(uuid.uuid4()),
+            project_ids=[str(uuid.uuid4())],
+            limit=None,
+            offset=None,
+            max_rows=10_000,
+        )
+        query, params = builder.build()
+        # The export cap applies a LIMIT but NOT the window count, so CH streams
+        # the ordered scan up to the cap instead of materializing a worktable.
+        assert "LIMIT %(max_rows)s" in query
+        assert "count() OVER()" not in query
+        assert params["max_rows"] == 10_000
+
+
+class TestUsersExportStreaming:
+    """Manager-level streaming behaviour (no HTTP / no ClickHouse)."""
+
+    @staticmethod
+    def _manager():
+        pid = str(uuid.uuid4())
+        return UsersListManager(
+            organization_id=str(uuid.uuid4()),
+            allowed_project_ids=[pid],
+            project_id=pid,
+        )
+
+    def test_export_yields_header_before_fetch(self):
+        # The header row must be produced BEFORE the (slow) CH fetch, so the
+        # socket starts streaming immediately instead of idling past the LB
+        # read timeout.
+        manager = self._manager()
+        with patch.object(
+            UsersListManager, "_fetch_rows", return_value=([], 0)
+        ) as fetch:
+            gen = manager.iter_export_csv()
+            first_chunk = next(gen)
+            assert fetch.call_count == 0  # header emitted before any fetch
+            list(gen)  # drain the rest
+            assert fetch.call_count == 1
+
+        header = next(csv.reader(io.StringIO(first_chunk)))
+        assert header == [h for h, _ in USERS_EXPORT_COLUMNS]
+
+    def test_export_signals_failure_mid_stream(self):
+        # A failure after headers are sent can't change the 200 status, so it
+        # must be signalled in-band rather than read as a clean partial download.
+        manager = self._manager()
+        with patch.object(
+            UsersListManager, "_fetch_rows", side_effect=RuntimeError("ch down")
+        ):
+            body = "".join(manager.iter_export_csv())
+
+        rows = [r for r in csv.reader(io.StringIO(body)) if r]
+        assert rows[0] == [h for h, _ in USERS_EXPORT_COLUMNS]
+        assert any("export failed" in r[0] for r in rows[1:])
+
+    def test_export_caps_rows_and_signals_truncation(self):
+        manager = self._manager()
+        oversized = [
+            {"user_id": f"u{i}", "end_user_id": uuid.uuid4()}
+            for i in range(MAX_EXPORT_ROWS + 5)
+        ]
+        with patch.object(UsersListManager, "_fetch_rows", return_value=(oversized, 0)):
+            body = "".join(manager.iter_export_csv())
+
+        rows = [r for r in csv.reader(io.StringIO(body)) if r]
+        data_rows = rows[1:]  # drop header
+        marker = data_rows[-1]
+        assert "truncated" in marker[0]
+        assert len(data_rows[:-1]) == MAX_EXPORT_ROWS
+
+    def test_list_enrichment_fails_open(self):
+        # The list path enriches rows with span attributes; if that secondary
+        # query fails it must log and return the base rows, not 500 the list.
+        manager = self._manager()
+        base_rows = [{"user_id": "u1", "end_user_id": uuid.uuid4()}]
+        with (
+            patch.object(UsersListManager, "_fetch_rows", return_value=(base_rows, 1)),
+            patch.object(
+                AnalyticsQueryService,
+                "execute_ch_query",
+                side_effect=RuntimeError("attr query down"),
+            ),
+        ):
+            payload = manager.list_payload(page_size=30, current_page=0)
+
+        assert payload["table"] == base_rows
+        assert payload["total_count"] == 1
+
+    def test_export_columns_match_serializer_fields(self):
+        # The CSV columns must stay a subset of the JSON contract's serializer
+        # fields, so the export can't silently drift from the list response.
+        serializer_fields = set(UsersTableRowSerializer().fields.keys())
+        export_fields = {field for _, field in USERS_EXPORT_COLUMNS}
+        missing = export_fields - serializer_fields
+        assert not missing, f"export columns not on serializer: {missing}"

@@ -58,6 +58,8 @@ const ObserveHeader = ({
   selectedTab,
   filterSession,
   filterUsers,
+  searchUsers,
+  sortUsers,
   refreshData,
   resetFilters,
 }) => {
@@ -221,6 +223,12 @@ const ObserveHeader = ({
         url = endpoints.project.getUsersList();
         filters = filterUsers;
         extraParams.export = true;
+        // Match the grid: it fetches with search + sort_params too, so the CSV
+        // reflects a searched/sorted table rather than just the filter set.
+        if (searchUsers) extraParams.search = searchUsers;
+        if (sortUsers && sortUsers.length) {
+          extraParams.sort_params = JSON.stringify(sortUsers);
+        }
       } else if (selectedTab === "spans") {
         url = endpoints.project.getSpansForObserveExport;
         filters = filterSpan;
@@ -262,13 +270,20 @@ const ObserveHeader = ({
         type: "text/csv;charset=utf-8;",
       });
 
+      // Users export names the file server-side (users_<id>_<utc>.csv via
+      // Content-Disposition); prefer it so there's a single source of truth.
+      // Other exporters keep the project-label name.
+      let downloadName = `${currentProject?.label || "project"}-${fileSuffix}.csv`;
+      if (text === "Users") {
+        const disposition = response.headers?.["content-disposition"] || "";
+        const match = /filename="?([^";]+)"?/i.exec(disposition);
+        if (match?.[1]) downloadName = match[1];
+      }
+
       const link = document.createElement("a");
       const url = window.URL.createObjectURL(blob);
       link.href = url;
-      link.setAttribute(
-        "download",
-        `${currentProject?.label || "project"}-${fileSuffix}.csv`,
-      );
+      link.setAttribute("download", downloadName);
       document.body.appendChild(link);
       link.click();
 
@@ -675,6 +690,8 @@ ObserveHeader.propTypes = {
   selectedTab: PropTypes.string,
   filterSession: PropTypes.array,
   filterUsers: PropTypes.array,
+  searchUsers: PropTypes.string,
+  sortUsers: PropTypes.array,
   refreshData: PropTypes.func,
   resetFilters: PropTypes.func,
 };
