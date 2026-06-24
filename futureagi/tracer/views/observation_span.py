@@ -2614,9 +2614,18 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     "Cannot delete label: it is in use by active annotation tasks"
                 )
             label.delete()
-            Score.objects.filter(
-                label_id=label_id, organization=_get_request_organization(request)
-            ).update(deleted=True)
+            # mirror the Score soft-delete to CH (queryset .update() bypasses
+            # post_save, so the annotation filters would keep returning the rows)
+            from tracer.services.clickhouse.v2.score_writer import (
+                soft_delete_scores,
+            )
+
+            soft_delete_scores(
+                Score.objects.filter(
+                    label_id=label_id,
+                    organization=_get_request_organization(request),
+                )
+            )
 
             return self._gm.success_response(
                 {"message": "Annotation label deleted successfully"}

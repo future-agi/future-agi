@@ -73,8 +73,10 @@ _LEGIT_ALIAS_RE = re.compile(
 )
 
 # Only these `build*` methods may legitimately be excluded from the rewrite:
-# they read the legacy `tracer_eval_logger` / `model_hub_score` tables, which are
-# not part of the CH 25.3 migration and still carry `_peerdb_is_deleted`.
+# they hand-write SQL for the eval/annotation tables (`tracer_eval_logger_v2` /
+# `model_hub_score_v2`), whose column conventions differ from the spans schema the
+# rewriter targets, so the rewriter must not touch them. Their v2 routing is
+# pinned positively by `test_eval_and_annotation_methods_route_to_v2_tables`.
 _ALLOWED_EXCLUSIONS = frozenset({"build_eval_query", "build_annotation_query"})
 
 # Builders cheap to construct (project_id only) whose build* methods compile SQL
@@ -190,12 +192,14 @@ class TestRewriteBoundaryContract:
     def test_known_legacy_methods_stay_excluded_and_unwrapped(self):
         from tracer.services.clickhouse.v2.query_builders._rewrite import _WRAPPED_ATTR
 
-        # build_eval_query / build_annotation_query read tracer_eval_logger /
-        # model_hub_score, which are NOT in the CH 25.3 migration and keep
-        # `_peerdb_is_deleted`. They MUST stay excluded. If one is dropped from
-        # _v2_rewrite_exclude the mixin wraps it, the rewriter strips the token,
-        # and the no-v1-token check still passes — but it 500s at runtime. Pin
-        # them: each must be listed in the exclude set AND genuinely unwrapped.
+        # build_eval_query / build_annotation_query hand-write SQL for the
+        # eval/annotation tables (``tracer_eval_logger_v2`` / ``model_hub_score_v2``),
+        # whose column conventions differ from the spans schema the rewriter
+        # targets — e.g. ``model_hub_score_v2`` keeps a plain ``deleted`` column,
+        # which the spans-oriented rewriter must not touch. They MUST stay
+        # excluded so the rewriter never rewrites them against the wrong schema.
+        # (That they emit the v2 tables and no `_peerdb_is_deleted` is pinned
+        # positively by ``test_eval_and_annotation_methods_route_to_v2_tables``.)
         checked = 0
         for qt in _LIST_BUILDER_TYPES:
             cls = _load(_registry()[qt])
@@ -261,4 +265,54 @@ class TestListBuilderOutputContract:
         assert exercised >= len(_LIST_BUILDER_TYPES), (
             f"expected to exercise at least one build* per list builder, "
             f"only ran {exercised}"
+        )
+
+    def test_eval_and_annotation_methods_route_to_v2_tables(self):
+        """Re-homes the deleted ``test_eval_logger_source_seam`` builder-routing
+        assertion. The excluded eval/annotation build* methods are NOT covered by
+        the v1-token scan above (they're skipped), so pin them positively: each
+        must read the v2 table (``tracer_eval_logger_v2`` / ``model_hub_score_v2``)
+        — never the dropped legacy CDC table or ``_peerdb_is_deleted``."""
+        import uuid as _uuid
+
+        registry = _registry()
+        # (method, required v2 table, the bare legacy table that must NOT appear)
+        cases = (
+            ("build_eval_query", "tracer_eval_logger_v2", "tracer_eval_logger"),
+            ("build_annotation_query", "model_hub_score_v2", "model_hub_score"),
+        )
+        checked = {name: 0 for name, _, _ in cases}
+        for qt in _LIST_BUILDER_TYPES:
+            cls = _load(registry[qt])
+            try:
+                builder = cls(
+                    project_id="contract-test-proj",
+                    eval_config_ids=[str(_uuid.uuid4())],
+                    annotation_label_ids=[str(_uuid.uuid4())],
+                )
+            except TypeError:
+                continue  # builder doesn't take these (e.g. SESSION_LIST)
+            for name, v2_table, legacy in cases:
+                method = getattr(builder, name, None)
+                if method is None:
+                    continue
+                result = method(["dummy-id-1", "dummy-id-2"])
+                sql = result[0] if isinstance(result, tuple) else result
+                if not sql:
+                    continue
+                assert v2_table in sql, (
+                    f"{cls.__name__}.{name} must read {v2_table}; got:\n{sql}"
+                )
+                assert "_peerdb_is_deleted" not in sql, (
+                    f"{cls.__name__}.{name} still emits _peerdb_is_deleted:\n{sql}"
+                )
+                # \b boundary: the legacy name is followed by '_v2' (a word char),
+                # so this never matches the v2 table — only a bare legacy ref.
+                assert re.search(rf"\b{legacy}\b", sql) is None, (
+                    f"{cls.__name__}.{name} reads the dropped legacy {legacy}:\n{sql}"
+                )
+                checked[name] += 1
+        assert checked["build_eval_query"] >= 1, "no build_eval_query was pinned"
+        assert checked["build_annotation_query"] >= 1, (
+            "no build_annotation_query was pinned"
         )

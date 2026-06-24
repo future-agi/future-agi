@@ -422,13 +422,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     def perform_destroy(self, instance):
         # Cascade soft-delete to the task's loggers and eval results so they
         # don't outlive the deleted task (mirrors mark_eval_tasks_deleted).
+        from tracer.services.clickhouse.v2.eval_logger_writer import (
+            soft_delete_eval_loggers,
+        )
+
         now = timezone.now()
         EvalTaskLogger.objects.filter(eval_task_id=instance.id).update(
             deleted=True, deleted_at=now
         )
-        EvalLogger.objects.filter(eval_task_id=instance.id).update(
-            deleted=True, deleted_at=now
-        )
+        # mirror the EvalLogger soft-delete to CH (queryset .update() bypasses post_save)
+        soft_delete_eval_loggers(EvalLogger.objects.filter(eval_task_id=instance.id))
         instance.delete()
 
     @validated_request(
@@ -1210,11 +1213,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 deleted=True, deleted_at=timezone.now(), status=EvalTaskStatus.DELETED
             )
 
+            from tracer.services.clickhouse.v2.eval_logger_writer import (
+                soft_delete_eval_loggers,
+            )
+
             EvalTaskLogger.objects.filter(eval_task_id__in=eval_task_ids).update(
                 deleted=True, deleted_at=timezone.now()
             )
-            EvalLogger.objects.filter(eval_task_id__in=eval_task_ids).update(
-                deleted=True, deleted_at=timezone.now()
+            # mirror the EvalLogger soft-delete to CH (.update() bypasses post_save)
+            soft_delete_eval_loggers(
+                EvalLogger.objects.filter(eval_task_id__in=eval_task_ids)
             )
 
             return self._gm.success_response(
@@ -1568,11 +1576,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         if not new_evals:
             return
 
-        # Mark evaluations not in new set as deleted
-        deleted_count = (
-            EvalLogger.objects.filter(eval_task_id=eval_task.id, deleted=False)
-            .exclude(custom_eval_config_id__in=new_evals)
-            .update(deleted=True, deleted_at=timezone.now())
+        # Mark evaluations not in new set as deleted (mirror soft-delete to CH;
+        # queryset .update() bypasses post_save)
+        from tracer.services.clickhouse.v2.eval_logger_writer import (
+            soft_delete_eval_loggers,
+        )
+
+        deleted_count = soft_delete_eval_loggers(
+            EvalLogger.objects.filter(
+                eval_task_id=eval_task.id, deleted=False
+            ).exclude(custom_eval_config_id__in=new_evals)
         )
 
         # Update eval task assignments
@@ -1585,10 +1598,15 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
     def _handle_fresh_run(self, eval_task, eval_task_logger):
         """Handle fresh run logic - delete all results and reset state"""
-        # Mark all existing evaluation results as deleted
-        deleted_count = EvalLogger.objects.filter(
-            eval_task_id=eval_task.id, deleted=False
-        ).update(deleted=True, deleted_at=timezone.now())
+        # Mark all existing evaluation results as deleted (mirror soft-delete to
+        # CH; queryset .update() bypasses post_save)
+        from tracer.services.clickhouse.v2.eval_logger_writer import (
+            soft_delete_eval_loggers,
+        )
+
+        deleted_count = soft_delete_eval_loggers(
+            EvalLogger.objects.filter(eval_task_id=eval_task.id, deleted=False)
+        )
 
         # Reset logger state
         eval_task_logger.spanids_processed = []

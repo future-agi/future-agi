@@ -5,7 +5,6 @@ from dataclasses import asdict
 
 import structlog
 from django.db import transaction
-from django.utils import timezone
 
 from accounts.models.workspace import Workspace
 
@@ -1903,10 +1902,17 @@ def evaluate_observation_span(
             f"ObservationSpan with id {observation_span_id} does not exist."
         ) from None
 
-    # mark all previous eval_logger as deleted
-    EvalLogger.objects.filter(
-        observation_span=observation_span, custom_eval_config=custom_eval_config
-    ).update(deleted=True, deleted_at=timezone.now())
+    # mark all previous eval_logger as deleted (mirror the soft-delete to CH:
+    # queryset .update() bypasses post_save, so the always-on mirror never sees it)
+    from tracer.services.clickhouse.v2.eval_logger_writer import (
+        soft_delete_eval_loggers,
+    )
+
+    soft_delete_eval_loggers(
+        EvalLogger.objects.filter(
+            observation_span=observation_span, custom_eval_config=custom_eval_config
+        )
+    )
 
     try:
         run_params = _process_mapping(
@@ -2006,32 +2012,19 @@ def evaluate_observation_span_observe(
         )
         return
 
-    # mark all previous eval_logger as deleted
-    _stale = EvalLogger.objects.filter(
-        observation_span=observation_span,
-        custom_eval_config=custom_eval_config,
-        eval_task_id=eval_task_id,
+    # mark all previous eval_logger as deleted (mirror the soft-delete to CH:
+    # queryset .update() bypasses post_save, so the always-on mirror never sees it)
+    from tracer.services.clickhouse.v2.eval_logger_writer import (
+        soft_delete_eval_loggers,
     )
-    _stale_ids = list(_stale.values_list("id", flat=True))
-    _now = timezone.now()
-    # Bump updated_at alongside the soft-delete: the CH mirror derives the
-    # ReplacingMergeTree ``_version`` from updated_at, so without the bump the
-    # deleted row ties the live row's version and FINAL may keep the live one.
-    _stale.update(deleted=True, deleted_at=_now, updated_at=_now)
-    # queryset .update() bypasses post_save, so the EvalLogger->CH mirror never
-    # sees this soft-delete — the rows would stay live (is_deleted=0) in CH and
-    # the eval read-back would keep returning the stale verdicts. Mirror the
-    # soft-deleted ids explicitly post-commit.
-    if _stale_ids:
-        from django.db import transaction
 
-        from tracer.services.clickhouse.v2.eval_logger_writer import (
-            mirror_eval_loggers_to_clickhouse,
+    soft_delete_eval_loggers(
+        EvalLogger.objects.filter(
+            observation_span=observation_span,
+            custom_eval_config=custom_eval_config,
+            eval_task_id=eval_task_id,
         )
-
-        transaction.on_commit(
-            lambda ids=_stale_ids: mirror_eval_loggers_to_clickhouse(ids)
-        )
+    )
 
     try:
         run_params = _process_mapping(
