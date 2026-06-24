@@ -14,7 +14,10 @@ const StopOptimizationModal = ({ onSuccess }) => {
 
   const { mutate, isPending } = useMutation({
     mutationFn: () =>
-      axios.post(endpoints.optimization.stopOptimization(stopOptimizationId)),
+      axios.post(
+        endpoints.optimization.stopOptimization(stopOptimizationId),
+        {},
+      ),
     onSuccess: () => {
       setStopOptimizationId(null);
       onSuccess?.();

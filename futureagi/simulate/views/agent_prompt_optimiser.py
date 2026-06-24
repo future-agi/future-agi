@@ -28,6 +28,8 @@ from simulate.models import (
 )
 from simulate.serializers.agent_prompt_optimiser import (
     OPTIMISER_REQUIRED_CONFIG_KEYS,
+    AgentPromptOptimiserApplyTrialRequestSerializer,
+    AgentPromptOptimiserApplyTrialResponseSerializer,
     AgentPromptOptimiserGraphResponseSerializer,
     AgentPromptOptimiserRunCreateSerializer,
     AgentPromptOptimiserRunDetailResponseSerializer,
@@ -48,6 +50,7 @@ from simulate.utils.agent_prompt_optimiser import (
 from tfc.temporal.agent_prompt_optimiser.client import (
     start_agent_prompt_optimiser_workflow,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -445,6 +448,143 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
         except Exception as e:
             logger.exception(f"Error retrieving trial prompt: {str(e)}")
+            return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
+
+    @validated_request(
+        request_serializer=AgentPromptOptimiserApplyTrialRequestSerializer,
+        responses={
+            200: AgentPromptOptimiserApplyTrialResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"trial/(?P<trial_id>[^/.]+)/apply",
+    )
+    def apply_trial(self, request, trial_id=None, *args, **kwargs):
+        """Apply an optimised trial as a NEW PromptVersion (TH-5642).
+
+        "Directly apply the fix" = create a new, non-destructive version carrying
+        the trial's optimised prompt; the POST is the user's confirmation, so the
+        new version goes live as the template's default. The baseline is untouched.
+
+        URL: POST /agent-prompt-optimiser/{id}/trial/{trial_id}/apply/
+        Body (optional): {"make_default": bool}  (default true)
+        """
+        try:
+            instance = self.get_object()
+            trial = instance.trials.get(id=trial_id)
+
+            if trial.is_baseline:
+                return self._gm.bad_request("Cannot apply the baseline trial.")
+            if not (trial.prompt or "").strip():
+                return self._gm.bad_request("Trial has no prompt to apply.")
+
+            run_test = getattr(
+                getattr(instance, "test_execution", None), "run_test", None
+            )
+            base_version = getattr(run_test, "prompt_version", None)
+            if base_version is None:
+                # Agent-definition runs: the prompt lives on the PROVIDER, so
+                # applying writes through the provider's management API
+                # (read -> write -> read-back verify).
+                agent_def = getattr(run_test, "agent_definition", None)
+                if agent_def is None:
+                    return self._gm.bad_request(
+                        "This optimiser run is not linked to a prompt version or "
+                        "agent definition to apply to."
+                    )
+                from simulate.services.provider_prompt_apply import (
+                    PromptApplyError,
+                    PromptApplyUnsupported,
+                    apply_config_to_provider_agent,
+                    apply_prompt_to_provider_agent,
+                )
+
+                # Kit trials carry the WHOLE candidate config (model, voice,
+                # first message, ... — not just the prompt); apply all of it.
+                candidate_config = (trial.metadata or {}).get("candidate_config")
+                config_for_apply = (
+                    dict(candidate_config)
+                    if candidate_config
+                    else {"instructions": trial.prompt}
+                )
+                try:
+                    if candidate_config:
+                        applied = apply_config_to_provider_agent(
+                            agent_def, dict(candidate_config)
+                        )
+                    else:
+                        applied = apply_prompt_to_provider_agent(
+                            agent_def, trial.prompt
+                        )
+                    return self._gm.success_response(
+                        {
+                            "applied": True,
+                            "target": "provider_agent",
+                            "provider": applied["provider"],
+                            "assistant_id": applied["assistant_id"],
+                            "applied_fields": applied.get("applied_fields"),
+                            "skipped_fields": applied.get("skipped_fields"),
+                            "previous_prompt": applied.get("previous_prompt"),
+                            "previous_config": applied.get("previous_config"),
+                            "source_trial_id": str(trial.id),
+                        }
+                    )
+                except PromptApplyUnsupported as e:
+                    # No writable provider-hosted prompt (self-hosted LiveKit/
+                    # Pipecat/Deepgram, Twilio TwiML, Bland pathway, Agora-gated):
+                    # apply the fix platform-side as a new, non-destructive
+                    # AgentVersion instead of refusing. The fix is recorded and
+                    # becomes the active version the customer's deployment adopts.
+                    from simulate.services.agent_definition_apply import (
+                        apply_config_as_new_agent_version,
+                    )
+
+                    new_version, applied_fields = apply_config_as_new_agent_version(
+                        agent_def, config_for_apply
+                    )
+                    return self._gm.success_response(
+                        {
+                            "applied": True,
+                            "target": "agent_version",
+                            "provider": (agent_def.provider or "").lower(),
+                            "reason": str(e),
+                            "new_agent_version_id": str(new_version.id),
+                            "version_number": new_version.version_number,
+                            "applied_fields": applied_fields,
+                            "source_trial_id": str(trial.id),
+                        }
+                    )
+                except PromptApplyError as e:
+                    return self._gm.bad_request(str(e))
+
+            from simulate.services.optimizer_apply import (
+                apply_optimized_prompt_as_new_version,
+            )
+
+            make_default = bool(request.data.get("make_default", True))
+            new_version = apply_optimized_prompt_as_new_version(
+                base_version, trial.prompt, make_default=make_default
+            )
+
+            return self._gm.success_response(
+                {
+                    "applied": True,
+                    "new_prompt_version_id": str(new_version.id),
+                    "template_version": new_version.template_version,
+                    "original_template_id": str(new_version.original_template_id),
+                    "is_default": new_version.is_default,
+                    "source_trial_id": str(trial.id),
+                }
+            )
+        except PromptTrial.DoesNotExist:
+            return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
+        except Exception as e:
+            logger.exception(f"Error applying trial prompt: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
     @swagger_auto_schema(

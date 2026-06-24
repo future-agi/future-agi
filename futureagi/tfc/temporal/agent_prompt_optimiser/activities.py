@@ -11,12 +11,11 @@ Design notes:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import structlog
 from asgiref.sync import sync_to_async
 from django.db import close_old_connections
-from django.db.models import Max
 from temporalio import activity
 
 # Activity-aware stub: invocations raise a Temporal non-retryable
@@ -49,7 +48,7 @@ def _safe_close_db():
         pass
 
 
-def _compute_total_trials(optimiser_type: str, config: Dict[str, Any]) -> int:
+def _compute_total_trials(optimiser_type: str, config: dict[str, Any]) -> int:
     """
     Calculate total trials based on optimizer type and configuration.
 
@@ -88,7 +87,7 @@ def _compute_total_trials(optimiser_type: str, config: Dict[str, Any]) -> int:
         # Subsequent rounds: start with beam_size prompts
         total = 0
         current_beam = 1  # Initial prompt
-        for round_num in range(num_rounds):
+        for _round_num in range(num_rounds):
             # Expansion: each prompt in beam generates new candidates
             expanded = current_beam * num_gradients * prompts_per_gradient
             # Candidate pool = current beam + expanded prompts
@@ -133,7 +132,7 @@ def _compute_total_trials(optimiser_type: str, config: Dict[str, Any]) -> int:
         return 0
 
 
-def _select_scenario_manifest(execution_data: dict) -> List[str]:
+def _select_scenario_manifest(execution_data: dict) -> list[str]:
     call_executions = execution_data.get("call_executions", [])
     total = len(call_executions)
     if total == 0:
@@ -181,7 +180,7 @@ def _calc_best_from_trials_by_id(run_id: str):
 
 
 @activity.defn
-async def setup_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
+async def setup_run_activity(input: dict[str, Any]) -> dict[str, Any]:
     """
     Mark run as RUNNING, pin scenario manifest, compute totals.
     Simplified without locks - workflows are guaranteed not to conflict.
@@ -198,7 +197,7 @@ async def setup_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
             try:
                 run = AgentPromptOptimiserRun.objects.get(id=run_id)
             except AgentPromptOptimiserRun.DoesNotExist:
-                raise ValueError(f"Run {run_id} does not exist")
+                raise ValueError(f"Run {run_id} does not exist") from None
 
             # Update status if not already running
             if run.status != AgentPromptOptimiserRun.Status.RUNNING:
@@ -215,9 +214,18 @@ async def setup_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
             execution_data = get_full_test_execution_data(test_execution_id)
 
             if execution_data is None:
-                raise ValueError(
-                    f"Test execution {test_execution_id} not found or has no data"
-                )
+                # The kit optimiser builds its inputs from the agent definition,
+                # not from per-call execution data — don't fail setup for it
+                # (e.g. a still-running execution with no completed calls yet).
+                if (
+                    optimiser_type
+                    == AgentPromptOptimiserRun.OptimiserType.AGENT_LEARNING_KIT
+                ):
+                    execution_data = {}
+                else:
+                    raise ValueError(
+                        f"Test execution {test_execution_id} not found or has no data"
+                    )
 
             # Pin scenario manifest deterministically
             scenario_manifest = _select_scenario_manifest(execution_data)
@@ -263,7 +271,7 @@ async def setup_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @activity.defn
-async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
+async def run_optimization_activity(input: dict[str, Any]) -> dict[str, Any]:
     """
     Run entire optimization in one activity. Resume from latest PromptTrial if exists.
     Uses callback to persist each trial immediately after completion.
@@ -280,7 +288,32 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
             try:
                 run = AgentPromptOptimiserRun.objects.get(id=run_id)
             except AgentPromptOptimiserRun.DoesNotExist:
-                raise ValueError(f"Run {run_id} does not exist")
+                raise ValueError(f"Run {run_id} does not exist") from None
+
+            # TH-5642: the agent-learning-kit optimiser has no trial loop — it runs
+            # through the kit bridge in one shot. Without this branch the type fell
+            # into _compute_total_trials' unknown-type 0, silently completing the
+            # run as a no-op with a NULL result.
+            if (
+                run.optimiser_type
+                == AgentPromptOptimiserRun.OptimiserType.AGENT_LEARNING_KIT
+            ):
+                from simulate.utils.agent_prompt_optimiser import (
+                    _run_agent_learning_kit_optimisation,
+                )
+
+                _run_agent_learning_kit_optimisation(run)
+                run.refresh_from_db()
+                if run.status == AgentPromptOptimiserRun.Status.FAILED:
+                    raise ValueError(
+                        run.error_message or "agent-learning-kit optimisation failed"
+                    )
+                kit_summary = (run.result or {}).get("summary") or {}
+                return {
+                    "trials_run": 0,
+                    "best_score": kit_summary.get("best_score"),
+                    "best_prompt": None,
+                }
 
             # Check for existing trials (resume case)
             latest_trial = (
@@ -383,7 +416,7 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @activity.defn
-async def finalize_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
+async def finalize_run_activity(input: dict[str, Any]) -> dict[str, Any]:
     """
     Mark run as completed/failed/canceled.
     Simplified without locks - workflows are guaranteed not to conflict.
@@ -405,7 +438,7 @@ async def finalize_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
             run = AgentPromptOptimiserRun.objects.get(id=run_id)
         except AgentPromptOptimiserRun.DoesNotExist:
             logger.error("Run does not exist in finalize", run_id=run_id)
-            raise ValueError(f"Run {run_id} does not exist")
+            raise ValueError(f"Run {run_id} does not exist") from None
 
         # Update status based on input
         if status == "completed":

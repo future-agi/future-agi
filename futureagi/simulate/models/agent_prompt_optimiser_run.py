@@ -21,6 +21,11 @@ class AgentPromptOptimiserRun(BaseModel):
         BAYESIAN = "bayesian", "Bayesian"
         METAPROMPT = "metaprompt", "Metaprompt"
         PROMPTWIZARD = "promptwizard", "PromptWizard"
+        # TH-5642: route the optimisation through the agent-learning-kit bridge
+        # (simulate.services.agent_learning_bridge) so the kit drives optimisation
+        # from the real "Fix My Agent" flow ("use agent-learning-kit ... in
+        # optimisation we directly apply the fix").
+        AGENT_LEARNING_KIT = "agent_learning_kit", "Agent Learning Kit"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
