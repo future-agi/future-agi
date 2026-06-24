@@ -3,11 +3,9 @@ import json
 import os
 import re
 import traceback
-from datetime import datetime, timedelta
 from decimal import Decimal
-from difflib import SequenceMatcher
 from itertools import chain
-from typing import Any, Dict, Optional
+from typing import Any
 from uuid import uuid4
 
 import structlog
@@ -62,12 +60,14 @@ try:
 except ImportError:
     DeterministicEvaluator = _ee_stub("DeterministicEvaluator")
 
-from model_hub.models.choices import StatusType
-from model_hub.models.develop_dataset import Cell, Column, Row
-from model_hub.tasks.user_evaluation import trigger_error_localization_for_simulate
-from model_hub.views.utils.evals import run_eval_func
-from sdk.utils.helpers import _get_api_call_type
-from simulate.constants.persona_prompt_guides import (
+from model_hub.models.choices import StatusType  # noqa: E402
+from model_hub.models.develop_dataset import Cell, Column, Row  # noqa: E402
+from model_hub.tasks.user_evaluation import (  # noqa: E402
+    trigger_error_localization_for_simulate,  # noqa: E402
+)
+from model_hub.views.utils.evals import run_eval_func  # noqa: E402
+from sdk.utils.helpers import _get_api_call_type  # noqa: E402
+from simulate.constants.persona_prompt_guides import (  # noqa: E402
     CHAT_COMMUNICATION_STYLE_GUIDES,
     CHAT_EMOJI_FREQUENCY_GUIDES,
     CHAT_PERSONALITY_GUIDES,
@@ -80,13 +80,14 @@ from simulate.constants.persona_prompt_guides import (
     VOICE_COMMUNICATION_STYLE_GUIDES,
     VOICE_PERSONALITY_GUIDES,
 )
+
 try:
     from ee.voice.constants.voice_mapper import (
         select_voice_id,
     )
 except ImportError:
     select_voice_id = None
-from simulate.models import (
+from simulate.models import (  # noqa: E402
     AgentDefinition,
     AgentVersion,
     CallExecution,
@@ -97,11 +98,14 @@ from simulate.models import (
     SimulateEvalConfig,
     TestExecution,
 )
-from simulate.models.run_test import CreateCallExecution
-from simulate.models.simulator_agent import SimulatorAgent
-from simulate.models.test_execution import EvalExplanationSummaryStatus
-from simulate.pydantic_schemas.chat import SimulationCallType
-from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
+from simulate.models.run_test import CreateCallExecution  # noqa: E402
+from simulate.models.simulator_agent import SimulatorAgent  # noqa: E402
+from simulate.models.test_execution import EvalExplanationSummaryStatus  # noqa: E402
+from simulate.pydantic_schemas.chat import SimulationCallType  # noqa: E402
+from simulate.services.branch_deviation_analyzer import (  # noqa: E402
+    BranchDeviationAnalyzer,  # noqa: E402
+)
+
 try:
     from ee.voice.services.conversation_metrics import ConversationMetricsCalculator
     from ee.voice.services.phone_number_service import PhoneNumberService
@@ -110,18 +114,20 @@ except ImportError:
     ConversationMetricsCalculator = None
     PhoneNumberService = None
     decide_processing_skip = None
-from simulate.utils.eval_summary import derive_kpi_output_type
-from simulate.utils.processing_outcomes import (
+from simulate.utils.eval_summary import derive_kpi_output_type  # noqa: E402
+from simulate.utils.processing_outcomes import (  # noqa: E402
     build_skipped_eval_output_payload,
     set_processing_skip_metadata,
 )
-from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
-from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
-from tfc.temporal.drop_in import temporal_activity
+from simulate.utils.test_execution_utils import (  # noqa: E402
+    generate_simulator_agent_prompt,  # noqa: E402
+)
+from tfc.constants.api_calls import APICallStatusChoices  # noqa: E402
+from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID  # noqa: E402
+from tfc.temporal.drop_in import temporal_activity  # noqa: E402
 
 # Note: run_eval_summary_task imported lazily to avoid circular imports
-from tfc.utils.error_codes import get_specific_error_message
-from tfc.constants.api_calls import APICallStatusChoices
+from tfc.utils.error_codes import get_specific_error_message  # noqa: E402
 
 try:
     from ee.usage.models.usage import APICallType
@@ -132,7 +138,10 @@ try:
 except ImportError:
     check_usage = None
 try:
-    from ee.usage.utils.usage_entries import deduct_cost_for_request, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        deduct_cost_for_request,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     deduct_cost_for_request = None
     log_and_deduct_cost_for_api_request = None
@@ -867,9 +876,9 @@ class TestExecutor:
 
     def _format_persona_voice_text(
         self,
-        persona_data: Dict[str, Any],
+        persona_data: dict[str, Any],
         agent_version: AgentVersion | None,
-        row_data: Dict[str, Any] = None,
+        row_data: dict[str, Any] = None,
         call_type: str = "inbound",
     ) -> str:
         """
@@ -1008,7 +1017,7 @@ class TestExecutor:
                 # Personality-specific guidance
                 guidance = VOICE_PERSONALITY_GUIDES.get(
                     personality_lower,
-                    f"Let this personality trait guide your reactions, responses, and overall demeanor.",
+                    "Let this personality trait guide your reactions, responses, and overall demeanor.",
                 )
                 personality_section += f"{guidance}\n\n"
 
@@ -1027,7 +1036,7 @@ class TestExecutor:
                 # Communication style-specific guidance
                 guidance = VOICE_COMMUNICATION_STYLE_GUIDES.get(
                     comm_style_lower,
-                    f"Let this style guide how you express yourself throughout the conversation.",
+                    "Let this style guide how you express yourself throughout the conversation.",
                 )
                 personality_section += f"{guidance}\n\n"
 
@@ -1063,7 +1072,7 @@ class TestExecutor:
                     else [language_data]
                 )
                 lang_str = (
-                    ", ".join(str(l) for l in langs)
+                    ", ".join(str(lang) for lang in langs)
                     if isinstance(langs, list)
                     else str(language_data)
                 )
@@ -1072,7 +1081,7 @@ class TestExecutor:
 
                 # Special handling for multilingual contexts
                 if persona_data.get("multilingual"):
-                    language_section += f"You are multilingual. Switch languages naturally based on context while maintaining your persona traits in all languages.\n"
+                    language_section += "You are multilingual. Switch languages naturally based on context while maintaining your persona traits in all languages.\n"
 
                 # Special handling for Hinglish speakers
                 # if (accent and "indian" in accent.lower()) or any("hindi" in str(l).lower() for l in langs): # operator precedence
@@ -1093,7 +1102,7 @@ class TestExecutor:
                         else [language_data]
                     )
                     lang_str_check = (
-                        ", ".join(str(l) for l in langs)
+                        ", ".join(str(lang) for lang in langs)
                         if isinstance(langs, list)
                         else str(language_data)
                     )
@@ -1230,9 +1239,9 @@ class TestExecutor:
 
     def _format_persona_chat_text(
         self,
-        persona_data: Dict[str, Any],
+        persona_data: dict[str, Any],
         agent_version: AgentVersion | None,
-        row_data: Dict[str, Any] = None,
+        row_data: dict[str, Any] = None,
         call_type: str = "inbound",
     ) -> str:
         """
@@ -1362,7 +1371,7 @@ class TestExecutor:
                 # Personality-specific guidance
                 guidance = CHAT_PERSONALITY_GUIDES.get(
                     personality_lower,
-                    f"Let this personality trait guide your reactions, responses, and overall messaging style.",
+                    "Let this personality trait guide your reactions, responses, and overall messaging style.",
                 )
                 personality_section += f"{guidance}\n\n"
 
@@ -1381,7 +1390,7 @@ class TestExecutor:
                 # Communication style-specific guidance
                 guidance = CHAT_COMMUNICATION_STYLE_GUIDES.get(
                     comm_style_lower,
-                    f"Let this style guide how you express yourself throughout the chat conversation.",
+                    "Let this style guide how you express yourself throughout the chat conversation.",
                 )
                 personality_section += f"{guidance}\n\n"
 
@@ -1600,7 +1609,7 @@ class TestExecutor:
                 language_data if isinstance(language_data, list) else [language_data]
             )
             lang_str = (
-                ", ".join(str(l) for l in langs)
+                ", ".join(str(lang) for lang in langs)
                 if isinstance(langs, list)
                 else str(language_data)
             )
@@ -1610,7 +1619,7 @@ class TestExecutor:
 
             # Special handling for multilingual contexts
             if persona_data.get("multilingual"):
-                language_section += f"You are multilingual. Switch languages naturally based on context while maintaining your persona traits in all languages.\n"
+                language_section += "You are multilingual. Switch languages naturally based on context while maintaining your persona traits in all languages.\n"
 
             language_section += "\n"
             sections.append(language_section)
@@ -1716,7 +1725,7 @@ class TestExecutor:
     def _generate_dynamic_prompt(
         self,
         prompt_template: str,
-        row_data: Dict[str, Any],
+        row_data: dict[str, Any],
         agent_version: AgentVersion | None,
         call_type: str | None = None,
     ) -> str:
@@ -1976,7 +1985,7 @@ class TestExecutor:
     def _check_call_balance(
         self,
         organization,
-        call_type: Optional[str] = SimulationCallType.VOICE,
+        call_type: str | None = SimulationCallType.VOICE,
     ):
         """Check whether an organization is allowed to run a simulation call.
 
@@ -2013,9 +2022,7 @@ class TestExecutor:
         """
         try:
             event_type = (
-                "text_call"
-                if call_type == SimulationCallType.TEXT
-                else "voice_call"
+                "text_call" if call_type == SimulationCallType.TEXT else "voice_call"
             )
             result = check_usage(str(organization.id), event_type)
 
@@ -2062,11 +2069,23 @@ class TestExecutor:
             if not run_test.agent_definition:
                 return False, "Agent definition not found for this test run"
 
-            # Check if phone number is configured (for voice simulations)
-            if run_test.agent_version and run_test.agent_version.configuration_snapshot:
-                if not run_test.agent_version.configuration_snapshot.get(
-                    "contact_number"
-                ):
+            # Check if phone number is configured (for voice simulations).
+            # TEXT (chat) agents have no phone surface — the check is
+            # voice-only, and web-connector voice providers resolve their
+            # transport from the registry, not from a stored number.
+            snapshot = (
+                run_test.agent_version.configuration_snapshot
+                if run_test.agent_version
+                else None
+            ) or {}
+            snapshot_agent_type = snapshot.get("agent_type") or snapshot.get(
+                "agentType"
+            )
+            if (
+                snapshot
+                and snapshot_agent_type != AgentDefinition.AgentTypeChoices.TEXT
+            ):
+                if not snapshot.get("contact_number"):
                     return (
                         False,
                         "Phone number not configured in this version of agent definition",
@@ -2142,11 +2161,11 @@ class TestExecutor:
         self,
         run_test: RunTest,
         scenario: Scenarios,
-        call_data: Dict[str, Any],
+        call_data: dict[str, Any],
         test_execution_record: TestExecution,
         user_id: str,
         simulator_id=None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Execute an inbound call where simulation agent calls user's agent (existing logic)
 
@@ -2203,7 +2222,10 @@ class TestExecutor:
             )
             inbound = snapshot.get("inbound", True)
 
-            if not inbound:
+            # Outbound prerequisites are phone-pool checks — they only apply to
+            # voice. A TEXT (chat) agent marked outbound has no phone to dial,
+            # so requiring contact_number here failed every chat run.
+            if not inbound and agent_type != CallExecution.SimulationCallType.TEXT:
                 is_valid, validation_error = self._validate_outbound_call_prerequisites(
                     run_test
                 )
@@ -2345,10 +2367,15 @@ class TestExecutor:
 
                 # Use REGISTERED status for TEXT simulations so the
                 # process_prompt_based_chat_simulations activity picks them up.
-                # Voice simulations use PENDING (picked up by Temporal workflow).
+                # That covers prompt-based runs AND hosted TEXT agent
+                # definitions (the trigger's server_side_chat_filter claims
+                # both); gating on is_prompt_based alone left agent-definition
+                # chats PENDING forever. Voice simulations use PENDING
+                # (picked up by Temporal workflow).
                 initial_status = (
                     CallExecution.CallStatus.REGISTERED
                     if is_prompt_based
+                    or agent_type == CallExecution.SimulationCallType.TEXT
                     else CallExecution.CallStatus.PENDING
                 )
 
@@ -3110,7 +3137,7 @@ class TestExecutor:
                                     time_window_seconds=10,
                                 )
                             )
-                        except Exception as e:
+                        except Exception:
                             logger.warning("Unable to locate matching customer call ID")
 
                     if customer_call_id:
@@ -3118,7 +3145,7 @@ class TestExecutor:
                             customer_call_data = voice_service_manager.get_call(
                                 customer_call_id, True
                             )
-                        except Exception as e:
+                        except Exception:
                             logger.warning("Failed to fetch customer call data")
 
                 if customer_call_data:
@@ -3293,7 +3320,7 @@ class TestExecutor:
                                     csat_score=csat_score,
                                 )
 
-                            except:
+                            except Exception:
                                 logger.warning(
                                     "csat_evaluation_parse_failed",
                                     call_execution_id=str(call_execution.id),
@@ -3472,6 +3499,28 @@ class TestExecutor:
                     "call_metadata",  # JSONFields that may be modified in-place
                 ]
                 call_execution.save(update_fields=fields_to_update)
+
+                # Attach eval results onto the sim trace's root span (deterministic
+                # id), so eval verdicts are filterable at span granularity in the
+                # trace UI alongside the conversation spans (TH-5642). Idempotent +
+                # best-effort: a no-op if the trace wasn't emitted.
+                try:
+                    from simulate.services.sim_observability import (
+                        attach_sim_evals_to_trace,
+                    )
+
+                    _eval_attrs = {}
+                    if call_execution.overall_score is not None:
+                        _eval_attrs["gen_ai.evaluation.overall_score"] = float(
+                            call_execution.overall_score
+                        )
+                    _cmd = call_execution.conversation_metrics_data or {}
+                    if isinstance(_cmd, dict) and _cmd:
+                        _eval_attrs["gen_ai.evaluation.conversation_metrics"] = _cmd
+                    if _eval_attrs:
+                        attach_sim_evals_to_trace(call_execution, _eval_attrs)
+                except Exception:
+                    logger.exception(f"sim_eval_attach_failed for {call_execution.id}")
                 # Calculate call duration and deduct cost if call is completed and has recording
                 if (
                     call_execution.status == CallExecution.CallStatus.COMPLETED
@@ -3654,36 +3703,47 @@ class TestExecutor:
                     f"Successfully deducted cost for chat call {call_execution.id}"
                 )
 
-                # Dual-write: emit usage event for text sim
+                # Dual-write: emit usage event for text sim. This is the SINGLE
+                # canonical TEXT_CALL emit — it is reached on every chat terminal
+                # path (interactive endCall, prompt-chat endCall via
+                # store_chat_messages, and prompt-chat max-turns via
+                # finalize_chat_execution). Do NOT emit TEXT_CALL anywhere else
+                # for the same source_id, or the call is double-billed.
                 try:
-                    try:
-                        from ee.usage.schemas.event_types import BillingEventType
-                    except ImportError:
-                        BillingEventType = None
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
+                    from ee.usage.schemas.event_types import BillingEventType
+                    from ee.usage.schemas.events import UsageEvent
+                    from ee.usage.services.emitter import emit
+                except ImportError:
+                    BillingEventType = UsageEvent = emit = None
 
-                    emit(
-                        UsageEvent(
-                            org_id=str(organization.id),
-                            event_type=BillingEventType.TEXT_CALL,
-                            amount=total_tokens,
-                            properties={
-                                "source": "simulate",
-                                "source_id": str(call_execution.id),
-                                "turns": no_of_fagi_agent_turns,
-                                "total_tokens": total_tokens,
-                            },
+                if emit and UsageEvent and BillingEventType:
+                    try:
+                        emit(
+                            UsageEvent(
+                                org_id=str(organization.id),
+                                event_type=BillingEventType.TEXT_CALL,
+                                # Floor at 1 so a token-tracking miss still bills a
+                                # non-zero TEXT_CALL (mirrors the voice
+                                # max(1, duration_minutes) floor) — never silent $0.
+                                amount=max(1, total_tokens),
+                                properties={
+                                    "source": "simulate",
+                                    "source_id": str(call_execution.id),
+                                    "turns": no_of_fagi_agent_turns,
+                                    "total_tokens": total_tokens,
+                                },
+                            )
                         )
+                    except Exception:
+                        logger.exception(
+                            "chat_usage_emit_failed",
+                            call_execution_id=str(call_execution.id),
+                        )
+                else:
+                    logger.error(
+                        "chat_usage_emit_unavailable",
+                        call_execution_id=str(call_execution.id),
                     )
-                except Exception:
-                    pass
 
                 return
 
@@ -4499,12 +4559,10 @@ class TestExecutor:
                                 if SpeakerRoleResolver is None:
                                     eval_role = transcript.speaker_role
                                 else:
-                                    eval_role = (
-                                        SpeakerRoleResolver.get_eval_role_label(
-                                            transcript.speaker_role,
-                                            provider=eval_provider,
-                                            is_outbound=eval_is_outbound,
-                                        )
+                                    eval_role = SpeakerRoleResolver.get_eval_role_label(
+                                        transcript.speaker_role,
+                                        provider=eval_provider,
+                                        is_outbound=eval_is_outbound,
                                     )
                                 transcript_text.append(
                                     f"{eval_role}: {transcript.content}"
@@ -4839,9 +4897,9 @@ class TestExecutor:
                             "output_type": derive_kpi_output_type(eval_template),
                         }
                         call_execution.eval_outputs[str(eval_config.id)] = error_result
-                        call_execution.eval_outputs[str(eval_config.id)][
-                            "status"
-                        ] = StatusType.FAILED.value
+                        call_execution.eval_outputs[str(eval_config.id)]["status"] = (
+                            StatusType.FAILED.value
+                        )
                         call_execution.save(update_fields=["eval_outputs"])
                         raise ValueError(error_message)
 
@@ -4942,9 +5000,9 @@ class TestExecutor:
                 "output_type": derive_kpi_output_type(eval_config.eval_template),
             }
             call_execution.eval_outputs[str(eval_config.id)] = error_result
-            call_execution.eval_outputs[str(eval_config.id)][
-                "status"
-            ] = StatusType.FAILED.value
+            call_execution.eval_outputs[str(eval_config.id)]["status"] = (
+                StatusType.FAILED.value
+            )
             call_execution.save(update_fields=["eval_outputs"])
             raise
 
@@ -5287,9 +5345,7 @@ class TestExecutor:
             call_column_order = []
             tool_eval_ids_map = {}  # Map idx to tool_eval_id for the second phase
             columns_updated = False
-            tool_name_counts = (
-                {}
-            )  # tool_name -> occurrence count (per-call) for stable column naming
+            tool_name_counts = {}  # tool_name -> occurrence count (per-call) for stable column naming
 
             for idx, tool_call in enumerate(tool_calls_data):
                 try:

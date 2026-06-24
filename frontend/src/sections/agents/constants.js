@@ -93,12 +93,20 @@ export const AGENT_TYPES = {
   VOICE: "voice",
 };
 
+// Provider options for the Agent Definition config — values MUST match the
+// backend ProviderSpec registry keys (simulate/providers/registry.py) and
+// tracer ProviderChoices, so the agent's observability_provider + simulation
+// connector resolve. The full multi-provider set (TH-5642).
 export const VOICE_CHAT_PROVIDERS = [
   { label: "Vapi", value: "vapi" },
   { label: "Retell", value: "retell" },
-  // Hidden until LiveKit server stability is restored.
-  // { label: "LiveKit", value: "livekit_bridge" },
-  // { label: "ElevenLabs", value: "elevenlabs" },
+  { label: "ElevenLabs", value: "elevenlabs" },
+  { label: "Deepgram", value: "deepgram" },
+  { label: "Agora", value: "agora" },
+  { label: "Pipecat", value: "pipecat" },
+  { label: "Twilio", value: "twilio" },
+  { label: "Bland.ai", value: "bland" },
+  { label: "LiveKit", value: "livekit_bridge" },
   { label: "Others", value: "others" },
 ];
 
@@ -127,6 +135,12 @@ export const AUTH_METHODS_BY_PROVIDER = {
   vapi: AUTH_METHODS,
   retell: AUTH_METHODS,
   elevenlabs: AUTH_METHODS,
+  deepgram: AUTH_METHODS,
+  agora: AUTH_METHODS,
+  pipecat: AUTH_METHODS,
+  twilio: AUTH_METHODS,
+  bland: AUTH_METHODS,
+  livekit_bridge: AUTH_METHODS,
   others: OTHER_AUTH_METHODS,
 };
 

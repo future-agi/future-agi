@@ -228,4 +228,5 @@ frontend/scripts/.artifacts/
 # bin/install timestamped logs
 install-*.log
 uninstall-*.log
+futureagi/agora*.dat
 *.core

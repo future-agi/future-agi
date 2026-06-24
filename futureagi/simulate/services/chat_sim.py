@@ -320,26 +320,34 @@ def run_prompt_based_conversation(
         True if conversation completed successfully, False otherwise
     """
     from simulate.pydantic_schemas.chat import ChatMessage, ChatRole
-    from simulate.services.prompt_based_agent_adapter import (
-        create_adapter_from_run_test,
+    from simulate.services.chat_agent_adapter_factory import (
+        create_chat_agent_adapter,
     )
 
     try:
         run_test = call_execution.test_execution.run_test
 
-        # Create the prompt-based agent adapter
-        # Get variable values from scenario row data if available
+        # Resolve the agent-under-test driver (prompt template, or an external
+        # hosted chat provider the platform drives server-side — TH-5642).
+        # Get variable values from scenario row data if available.
         variable_values = {}
         if call_execution.call_metadata:
             row_data = call_execution.call_metadata.get("row_data", {})
             variable_values.update(row_data)
 
-        adapter = create_adapter_from_run_test(
+        adapter = create_chat_agent_adapter(
             run_test,
             organization_id=organization.id,
             workspace_id=workspace.id if workspace else None,
             variable_values=variable_values,
         )
+        if adapter is None:
+            # SDK-push agent (e.g. LiveKit/custom) — driven by the customer's SDK,
+            # not server-side. This server-side loop must never be triggered for it.
+            raise ValueError(
+                "run_prompt_based_conversation invoked for an SDK-push agent "
+                f"(run_test={run_test.id}); routing should keep it on SDK-push."
+            )
 
         # Build conversation history from existing messages
         conversation_history = []

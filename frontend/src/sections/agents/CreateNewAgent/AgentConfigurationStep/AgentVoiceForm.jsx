@@ -33,6 +33,21 @@ import { spin } from "../../../../animations/animations";
 import { pinCodeOptions } from "src/components/agent-definitions/helper";
 import { useAuthContext } from "src/auth/hooks";
 
+// Providers whose credential is two values joined by a colon (validated
+// backend-side the same way: api_key.partition(":")).
+const COMPOSITE_API_KEY_HINTS = {
+  twilio: {
+    placeholder: "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:your_auth_token",
+    helper:
+      "Twilio: Account SID and Auth Token joined by a colon (SID:AUTH_TOKEN)",
+  },
+  agora: {
+    placeholder: "customer_key:customer_secret",
+    helper:
+      "Agora: RESTful API Customer Key and Secret joined by a colon (KEY:SECRET)",
+  },
+};
+
 export default function AgentVoiceForm() {
   const { orgLimit } = useAuthContext();
   const { control, setValue: setFormValue } = useFormContext();
@@ -399,7 +414,11 @@ export default function AgentVoiceForm() {
             control={control}
             fieldName="apiKey"
             label="Provider API Key"
-            placeholder="Enter your provider’s API key to authenticate the agent"
+            placeholder={
+              COMPOSITE_API_KEY_HINTS[selectedProvider]?.placeholder ||
+              "Enter your provider’s API key to authenticate the agent"
+            }
+            helperText={COMPOSITE_API_KEY_HINTS[selectedProvider]?.helper}
             required={observabilityEnabled || keysRequired}
             size="small"
             fullWidth

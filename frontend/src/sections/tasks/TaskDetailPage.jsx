@@ -129,7 +129,7 @@ const TaskDetailPage = () => {
   });
 
   const { mutate: pauseTask } = useMutation({
-    mutationFn: () => axios.post(endpoints.project.pauseEvalTask(taskId)),
+    mutationFn: () => axios.post(endpoints.project.pauseEvalTask(taskId), {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
       queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
@@ -138,7 +138,7 @@ const TaskDetailPage = () => {
   });
 
   const { mutate: resumeTask } = useMutation({
-    mutationFn: () => axios.post(endpoints.project.resumeEvalTask(taskId)),
+    mutationFn: () => axios.post(endpoints.project.resumeEvalTask(taskId), {}),
     meta: { errorHandled: true },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
