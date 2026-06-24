@@ -73,6 +73,24 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "cors wildcard with credentials rejected",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = []string{"*"}
+			},
+			wantErr: true,
+		},
+		{
+			name: "cors explicit origins with credentials allowed",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = []string{"https://app.example.com"}
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
