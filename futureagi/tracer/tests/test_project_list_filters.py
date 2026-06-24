@@ -5,7 +5,7 @@ Two concerns, both backed by Postgres (these features never touch ClickHouse —
 project name/tags and alert monitors live in PG; only volume/last-active come
 from CH):
 
-  1. ``_apply_project_list_filters`` — the ``filters`` JSON operator support on
+  1. ``apply_project_list_filters`` — the ``filters`` JSON operator support on
      ``GET /tracer/project/list_projects/`` (name/tags ×
      equals/contains/not_equals/not_contains). Tested directly against a
      ``Project`` queryset — no view, no auth, no ClickHouse.
@@ -33,7 +33,7 @@ from tracer.models.monitor import (
     UserAlertMonitor,
 )
 from tracer.models.project import Project
-from tracer.views.project import _apply_project_list_filters
+from tracer.queries.projects import apply_project_list_filters
 
 LIST_URL = "/tracer/project/list_projects/"
 
@@ -92,31 +92,31 @@ class TestApplyProjectListFiltersName:
     """`filters` operator on the `name` column (direct, Postgres-only)."""
 
     def test_equals_is_exact_and_case_insensitive(self, organization, filter_projects):
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization), _filters(("name", "equals", "checkout service"))
         )
         assert _names(qs) == ["Checkout Service"]
 
     def test_equals_no_partial_match(self, organization, filter_projects):
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization), _filters(("name", "equals", "Checkout"))
         )
         assert _names(qs) == []
 
     def test_contains_substring(self, organization, filter_projects):
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization), _filters(("name", "contains", "Service"))
         )
         assert _names(qs) == ["Checkout Service", "Search Service"]
 
     def test_not_contains(self, organization, filter_projects):
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization), _filters(("name", "not_contains", "Service"))
         )
         assert _names(qs) == ["Billing API"]
 
     def test_not_equals(self, organization, filter_projects):
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization), _filters(("name", "not_equals", "Checkout Service"))
         )
         assert _names(qs) == ["Billing API", "Search Service"]
@@ -125,7 +125,7 @@ class TestApplyProjectListFiltersName:
         raw = json.dumps(
             [{"column_id": "name", "filter_config": {"filter_value": "Service"}}]
         )
-        qs = _apply_project_list_filters(_base_qs(organization), raw)
+        qs = apply_project_list_filters(_base_qs(organization), raw)
         assert _names(qs) == ["Checkout Service", "Search Service"]
 
 
@@ -135,32 +135,44 @@ class TestApplyProjectListFiltersTags:
 
     def test_equals_is_exact_tag_membership(self, organization, filter_projects):
         # 'prod' is an exact tag on Checkout Service; 'production' must NOT match.
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization), _filters(("tags", "equals", "prod"))
         )
         assert _names(qs) == ["Checkout Service"]
 
     def test_equals_distinct_tag(self, organization, filter_projects):
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization), _filters(("tags", "equals", "production"))
         )
         assert _names(qs) == ["Search Service"]
 
     def test_contains_substring_across_tag_values(self, organization, filter_projects):
         # 'prod' substring matches the exact tag 'prod' AND the tag 'production'.
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization), _filters(("tags", "contains", "prod"))
         )
         assert _names(qs) == ["Checkout Service", "Search Service"]
 
+    def test_contains_does_not_match_serialized_array_artifacts(
+        self, organization, filter_projects
+    ):
+        # Matched per element via jsonb_array_elements_text, so the serialized
+        # array's separator/quotes are not matchable — only the tag *values*.
+        # A whole-array text cast of '["prod", "critical"]' would falsely match
+        # the inter-element separator '", "'.
+        qs = apply_project_list_filters(
+            _base_qs(organization), _filters(("tags", "contains", '", "'))
+        )
+        assert _names(qs) == []
+
     def test_not_contains(self, organization, filter_projects):
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization), _filters(("tags", "not_contains", "prod"))
         )
         assert _names(qs) == ["Billing API"]
 
     def test_not_equals(self, organization, filter_projects):
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization), _filters(("tags", "not_equals", "prod"))
         )
         assert _names(qs) == ["Billing API", "Search Service"]
@@ -171,33 +183,33 @@ class TestApplyProjectListFiltersEdgeCases:
     """Combined filters + malformed / empty / unknown input (Postgres-only)."""
 
     def test_name_and_tag_combined_are_anded(self, organization, filter_projects):
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization),
             _filters(("name", "contains", "Service"), ("tags", "contains", "prod")),
         )
         assert _names(qs) == ["Checkout Service", "Search Service"]
 
     def test_none_param_is_noop(self, organization, filter_projects):
-        qs = _apply_project_list_filters(_base_qs(organization), None)
+        qs = apply_project_list_filters(_base_qs(organization), None)
         assert _names(qs) == ["Billing API", "Checkout Service", "Search Service"]
 
     def test_empty_filters_is_noop(self, organization, filter_projects):
-        qs = _apply_project_list_filters(_base_qs(organization), "[]")
+        qs = apply_project_list_filters(_base_qs(organization), "[]")
         assert _names(qs) == ["Billing API", "Checkout Service", "Search Service"]
 
     def test_malformed_json_is_noop_not_raise(self, organization, filter_projects):
         # Must not raise — the list should still render unfiltered.
-        qs = _apply_project_list_filters(_base_qs(organization), "{not valid json")
+        qs = apply_project_list_filters(_base_qs(organization), "{not valid json")
         assert _names(qs) == ["Billing API", "Checkout Service", "Search Service"]
 
     def test_blank_value_is_skipped(self, organization, filter_projects):
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization), _filters(("name", "equals", ""))
         )
         assert _names(qs) == ["Billing API", "Checkout Service", "Search Service"]
 
     def test_unknown_column_is_skipped(self, organization, filter_projects):
-        qs = _apply_project_list_filters(
+        qs = apply_project_list_filters(
             _base_qs(organization), _filters(("description", "contains", "x"))
         )
         assert _names(qs) == ["Billing API", "Checkout Service", "Search Service"]
