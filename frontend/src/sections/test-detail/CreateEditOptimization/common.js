@@ -37,6 +37,12 @@ export const OPTIMIZER_OPTIONS = [
     icon: "/assets/icons/theorems/ic_gepa.svg",
     description: "Genetic Pareto evolutionary optimization",
   },
+  {
+    label: "Agent Learning Kit",
+    value: "agent_learning_kit",
+    icon: "/assets/icons/theorems/ic_metaprompt.svg",
+    description: "Agent-learning-kit candidate optimization (TH-5642)",
+  },
 ];
 
 export const OPTIMIZER_TYPE = {
@@ -46,6 +52,7 @@ export const OPTIMIZER_TYPE = {
   METAPROMPT: "metaprompt",
   PROMPTWIZARD: "promptwizard",
   GEPA: "gepa",
+  AGENT_LEARNING_KIT: "agent_learning_kit",
 };
 
 const RandomSearchOptimizerSchema = z.object({
@@ -122,6 +129,37 @@ const GEPAOptimizerSchema = z.object({
     .min(1, "Max metric calls must be at least 1"),
 });
 
+// Whole-agent optimization: the backend derives base_agent from the run's
+// agent definition; searchSpace (dot-path -> candidate values, JSON) widens
+// the search beyond instructions (e.g. {"model": [...], "voice_id": [...]}).
+const AgentLearningKitOptimizerSchema = z.object({
+  taskDescription: z.string().optional(),
+  searchSpace: z
+    .string()
+    .optional()
+    .refine(
+      (value) => {
+        if (!value || !value.trim()) return true;
+        try {
+          const parsed = JSON.parse(value);
+          return (
+            parsed &&
+            typeof parsed === "object" &&
+            !Array.isArray(parsed) &&
+            Object.values(parsed).every((v) => Array.isArray(v))
+          );
+        } catch {
+          return false;
+        }
+      },
+      {
+        message:
+          'Must be a JSON object mapping config paths to value lists, e.g. {"model": ["gpt-4o", "gpt-4o-mini"]}',
+      },
+    ),
+  dryRun: z.boolean().optional(),
+});
+
 export const createEditOptimizerSchema = z.discriminatedUnion("optimiserType", [
   z.object({
     optimiserType: z.literal("random_search"),
@@ -159,6 +197,12 @@ export const createEditOptimizerSchema = z.discriminatedUnion("optimiserType", [
     model: z.string().min(1, "Model is required"),
     configuration: GEPAOptimizerSchema,
   }),
+  z.object({
+    optimiserType: z.literal("agent_learning_kit"),
+    name: z.string().min(1, "Name is required"),
+    model: z.string().min(1, "Model is required"),
+    configuration: AgentLearningKitOptimizerSchema,
+  }),
 ]);
 
 export const KeyOptimizerMapping = {
@@ -168,6 +212,7 @@ export const KeyOptimizerMapping = {
   metaprompt: "Meta-Prompt",
   promptwizard: "PromptWizard",
   gepa: "GEPA",
+  agent_learning_kit: "Agent Learning Kit",
 };
 
 export const OptimizerConfigurationMapping = {
@@ -202,6 +247,11 @@ export const OptimizerConfigurationMapping = {
   gepa: {
     taskDescription: "",
     maxMetricCalls: 40,
+  },
+  agent_learning_kit: {
+    taskDescription: "",
+    searchSpace: "",
+    dryRun: false,
   },
 };
 

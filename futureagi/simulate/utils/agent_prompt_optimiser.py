@@ -1,4 +1,4 @@
-from typing import Optional
+from collections.abc import Mapping
 
 import structlog
 from django.conf import settings
@@ -7,8 +7,6 @@ from django.db.models import Avg
 from django.db.models.functions import Round
 
 from model_hub.utils.dataset_optimization import calculate_percentage_point_change
-
-logger = structlog.get_logger(__name__)
 from simulate.constants.agent_prompt_optimiser import (
     AGENT_PROMPT_OPTIMISER_RUN_STEPS,
     TRIAL_TABLE_BASE_COLUMNS,
@@ -28,6 +26,8 @@ from simulate.serializers.agent_prompt_optimiser import (
 )
 from simulate.utils.agent_optimiser import get_full_test_execution_data
 from simulate.utils.llm import get_api_key_for_model
+
+logger = structlog.get_logger(__name__)
 
 
 def fetch_agent_level_issues_from_run(optimiser_run: AgentOptimiserRun) -> list[dict]:
@@ -82,6 +82,9 @@ def _create_prompt_trial(
         is_baseline=is_baseline,
         prompt=trial_data.get("prompt", ""),
         average_score=trial_data.get("average_score", 0),
+        # Kit-run searches carry candidate_id/candidate_config here so apply can
+        # push the whole agent config; legacy trials simply have no metadata.
+        metadata=trial_data.get("metadata") or {},
     )
 
 
@@ -284,20 +287,213 @@ def store_optimization_results(
     )
 
 
-def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
+def _resolve_optimiser_base_prompt(prompt_optimiser_run) -> str:
+    """Best-effort current system prompt for the agent under optimisation (TH-5642).
+
+    Canonical implementation moved to simulate.services.optimize_via_kit
+    (Phase-10A Tier-1 cutover #1); this alias keeps existing imports working.
+    """
+    from simulate.services.optimize_via_kit import resolve_base_prompt
+
+    return resolve_base_prompt(prompt_optimiser_run)
+
+
+def _resolve_optimiser_base_agent(prompt_optimiser_run) -> dict:
+    """Build the WHOLE-agent base config from the run's agent definition (TH-5642).
+
+    Canonical implementation moved to simulate.services.optimize_via_kit
+    (Phase-10A Tier-1 cutover #1); this alias keeps existing imports working.
+    """
+    from simulate.services.optimize_via_kit import resolve_base_agent
+
+    return resolve_base_agent(prompt_optimiser_run)
+
+
+def _run_agent_learning_kit_optimisation(prompt_optimiser_run) -> None:
+    """Drive a prompt-optimiser run through the agent-learning-kit bridge (TH-5642).
+
+    Wires simulate.services.agent_learning_bridge into the real "Fix My Agent" flow so
+    the kit performs the optimisation + applies the fix. Candidates default to the
+    agent's current prompt (plus any in the run configuration); the kit scores them and
+    returns the winning config, stored as the run result.
+    """
+    from simulate.services import agent_learning_bridge as alb
+
+    if not alb.is_available():
+        prompt_optimiser_run.mark_as_failed(
+            "agent-learning-kit is not installed; cannot run the AGENT_LEARNING_KIT optimiser."
+        )
+        return
+
+    config = prompt_optimiser_run.configuration or {}
+    base_agent = config.get("base_agent") or _resolve_optimiser_base_agent(
+        prompt_optimiser_run
+    )
+    candidates = config.get("agent_candidates") or [base_agent]
+    # search_space extends the search over the WHOLE agent config via dot-paths
+    # (e.g. {"agent.model": [...], "agent.instructions": [...]}), so the kit
+    # optimises the agent, not just its prompt.
+    search_space = config.get("search_space") or None
+    evaluation_config = config.get("evaluation_config") or {
+        "metrics": [{"name": "task_completion"}]
+    }
+    try:
+        result = alb.optimize_and_apply_for_agent(
+            name=str(prompt_optimiser_run.id),
+            agent_candidates=candidates,
+            evaluation_config=evaluation_config,
+            search_space=search_space,
+            base_agent=base_agent,
+            dry_run=config.get("dry_run", True),
+        )
+    except Exception as e:  # surface on the run; don't crash the task
+        logger.exception("agent_learning_kit optimiser failed")
+        prompt_optimiser_run.mark_as_failed(str(e))
+        return
+
+    prompt_optimiser_run.result = result
+    prompt_optimiser_run.status = AgentPromptOptimiserRun.Status.COMPLETED
+    prompt_optimiser_run.save(update_fields=["result", "status", "updated_at"])
+    _store_kit_candidates_as_trials(prompt_optimiser_run, result, candidates)
+    logger.info(
+        f"Agent prompt optimiser run {prompt_optimiser_run.id} completed via agent-learning-kit."
+    )
+
+
+def _store_kit_candidates_as_trials(prompt_optimiser_run, result, candidates) -> None:
+    """Persist the kit's candidate history as PromptTrial rows (TH-5642).
+
+    apply_trial ("directly apply the fix") is trial-based, so without rows a kit
+    run's winning prompt could never be applied. Each history entry carries the
+    candidate's full patch; an empty patch means the baseline candidate, whose
+    instructions come from the submitted candidate list.
+    """
+    history = (result or {}).get("optimization", {}).get("history") or []
+    if not history:
+        return
+    baseline_agent: dict = {}
+    for cand in candidates or []:
+        if isinstance(cand, Mapping):
+            baseline_agent = dict(cand)
+            break
+    baseline_prompt = str(baseline_agent.get("instructions") or "")
+    best_id = (result.get("summary") or {}).get("best_candidate_id")
+    try:
+        for idx, entry in enumerate(history):
+            patch_agent = (entry.get("candidate_patch") or {}).get("agent") or {}
+            prompt = str(patch_agent.get("instructions") or "") or baseline_prompt
+            is_baseline = not (entry.get("candidate_patch") or {})
+            # The WHOLE candidate config (baseline overlaid with this candidate's
+            # patch) — what apply pushes to the provider, beyond just the prompt.
+            candidate_config = {**baseline_agent, **patch_agent}
+            PromptTrial.objects.create(
+                agent_prompt_optimiser_run=prompt_optimiser_run,
+                trial_number=idx,
+                is_baseline=is_baseline,
+                prompt=prompt,
+                average_score=float(entry.get("score") or 0.0),
+                metadata={
+                    "candidate_id": entry.get("candidate_id"),
+                    "selected": entry.get("candidate_id") == best_id,
+                    "evaluation_score": entry.get("evaluation_score"),
+                    "candidate_config": candidate_config,
+                    "source": "agent_learning_kit",
+                },
+            )
+    except Exception:  # trials are an apply convenience; never fail the run on them
+        logger.exception("failed to store kit candidates as PromptTrials")
+
+
+def _run_kit_search_optimisation(prompt_optimiser_run) -> None:
+    """Phase-10A Tier-1 cutover #1: kit drives the SEARCH for legacy optimiser types.
+
+    The kit replaces the FixYourAgent candidate-generation + trial loop; the
+    platform keeps everything else byte-compatible — the result lands in the
+    legacy ``OptimizationResult.dict()`` contract (mapped by optimize_via_kit),
+    trials persist through the SAME ``store_optimization_results`` path the
+    legacy engine used, and apply semantics (optimizer_apply → PromptVersion)
+    are untouched.
+    """
+    from simulate.services import optimize_via_kit
+
+    try:
+        result_dict = optimize_via_kit.run_prompt_optimisation_search(
+            prompt_optimiser_run
+        )
+    except Exception as e:  # surface on the run; don't crash the task
+        logger.exception("agent_learning_kit search optimisation failed")
+        prompt_optimiser_run.mark_as_failed(str(e))
+        return
+
+    # Platform-native persistence, unchanged: PromptTrial rows via the same
+    # storage path the legacy engine fed.
+    store_optimization_results(
+        prompt_optimiser_run, result_dict, starting_trial_number=0
+    )
+
+    prompt_optimiser_run.result = result_dict
+    prompt_optimiser_run.status = AgentPromptOptimiserRun.Status.COMPLETED
+    prompt_optimiser_run.save(update_fields=["result", "status", "updated_at"])
+    logger.info(
+        f"Agent prompt optimiser run {prompt_optimiser_run.id} completed via "
+        "agent-learning-kit search."
+    )
+
+
+def run_agent_prompt_optimiser(
+    prompt_optimiser_run_id: str, *, _legacy: bool = False
+) -> None:
     """
     Runs the agent prompt optimiser and stores the results.
+
+    Phase-10A Tier-1 cutover #1: the SEARCH engine is the agent-learning-kit for
+    all optimiser types. The legacy FixYourAgent engine stays callable behind
+    ``_legacy=True`` (or ``configuration.use_legacy_search``) until parity
+    sign-off; it is deleted in a later pass.
     """
+    prompt_optimiser_run = AgentPromptOptimiserRun.objects.get(
+        id=prompt_optimiser_run_id
+    )
+
+    # TH-5642: route through the agent-learning-kit bridge when requested. This makes
+    # simulate.services.agent_learning_bridge reachable from the real optimisation flow
+    # (the ticket: "use agent-learning-kit ... in optimisation we directly apply the
+    # fix"), rather than living only behind its own tests.
+    if (
+        prompt_optimiser_run.optimiser_type
+        == AgentPromptOptimiserRun.OptimiserType.AGENT_LEARNING_KIT
+    ):
+        _run_agent_learning_kit_optimisation(prompt_optimiser_run)
+        return
+
+    from simulate.services import agent_learning_bridge as alb
+
+    use_legacy = (
+        _legacy
+        or bool((prompt_optimiser_run.configuration or {}).get("use_legacy_search"))
+        or not alb.is_available()
+    )
+    if not use_legacy:
+        _run_kit_search_optimisation(prompt_optimiser_run)
+        return
+
+    _run_legacy_agent_prompt_optimiser(prompt_optimiser_run)
+
+
+def _run_legacy_agent_prompt_optimiser(prompt_optimiser_run) -> None:
+    """LEGACY platform-native search engine (FixYourAgent), kept callable for the
+    Phase-10A parity window only — superseded by _run_kit_search_optimisation.
+    Scheduled for deletion after parity sign-off."""
     try:
         from ee.agenthub.fix_your_agent.fix_your_agent import FixYourAgent
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.fix_your_agent.fix_your_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.fix_your_agent.fix_your_agent",
+                exc_info=True,
+            )
         return
 
-    prompt_optimiser_run = AgentPromptOptimiserRun.objects.get(
-        id=prompt_optimiser_run_id
-    )
     optimiser_run = prompt_optimiser_run.agent_optimiser_run
     test_execution = prompt_optimiser_run.test_execution
 
@@ -324,7 +520,7 @@ def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
         use_evals=True,
         optimizer_config=prompt_optimiser_run.configuration,
         agent_optimiser_run_steps=get_agent_prompt_optimiser_run_steps(
-            prompt_optimiser_run_id
+            str(prompt_optimiser_run.id)
         ),
         api_key=api_key,
     )
@@ -341,7 +537,7 @@ def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
     prompt_optimiser_run.status = AgentPromptOptimiserRun.Status.COMPLETED
     prompt_optimiser_run.save(update_fields=["result", "status", "updated_at"])
 
-    logger.info(f"Agent prompt optimiser run {prompt_optimiser_run_id} completed.")
+    logger.info(f"Agent prompt optimiser run {prompt_optimiser_run.id} completed.")
 
 
 def create_agent_prompt_optimiser_run_steps(prompt_optimiser_run_id: str) -> None:
@@ -381,12 +577,12 @@ def get_agent_prompt_optimiser_run_steps(prompt_optimiser_run_id: str) -> list[d
 
 
 def update_agent_optimiser_run_step(
-    steps: Optional[list[dict]],
+    steps: list[dict] | None,
     step_number: int,
-    status: Optional[str] = None,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    error: Optional[str] = None,
+    status: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    error: str | None = None,
 ) -> None:
     """
     Helper to update agent prompt optimiser run step status.
