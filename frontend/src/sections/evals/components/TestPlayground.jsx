@@ -673,8 +673,7 @@ const TestPlayground = React.forwardRef(
       if (urlVersionParam) {
         const match = list.find(
       ver =>
-            String(ver.version_number ?? ver.versionNumber) ===
-            String(urlVersionParam),
+            String(ver.version_number) === String(urlVersionParam),
         );
         if (match && match.id !== selectedVersionId) {
           setSelectedVersionId(match.id);

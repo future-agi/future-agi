@@ -46,14 +46,11 @@ def test_is_empty_value(value, expected):
     assert is_empty_value(value) is expected
 
 
-# ─────────────────────────────────────────────────────────────────────
-# has_usable_inputs_for_gt — the eval-runner skip rule
-# ─────────────────────────────────────────────────────────────────────
+# has_usable_inputs_for_gt: the eval-runner skip rule
 
 
 def test_skip_when_variable_mapping_is_empty():
-    """Evals that declare no template variables (or haven't been mapped)
-    should never get GT injection — there's nothing to query against."""
+    """Evals that declare no template variables (or haven't been mapped) should never get GT injection; there's nothing to query against."""
     assert has_usable_inputs_for_gt({}, {"question": "hi"}) is False
     assert has_usable_inputs_for_gt(None, {"question": "hi"}) is False
 

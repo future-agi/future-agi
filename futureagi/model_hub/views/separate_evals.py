@@ -81,8 +81,6 @@ from model_hub.serializers.contracts import (
     GroundTruthDeleteResponseSerializer,
     GroundTruthEmbedResponseSerializer,
     GroundTruthListResponseSerializer,
-    GroundTruthSearchRequestSerializer,
-    GroundTruthSearchResponseSerializer,
     GroundTruthSetupRequestSerializer,
     GroundTruthSetupResponseSerializer,
     GroundTruthStatusResponseSerializer,
@@ -4718,51 +4716,6 @@ class GroundTruthDeleteView(APIView):
                 f"Error in GroundTruthDeleteView: {str(e)}\n{traceback.format_exc()}"
             )
             return self._gm.bad_request(str(e))
-
-
-class GroundTruthSearchView(APIView):
-    """POST /model-hub/ground-truth/<id>/search/ — test retrieval with a query."""
-
-    _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
-
-    @validated_request(
-        request_serializer=GroundTruthSearchRequestSerializer,
-        responses={
-            200: GroundTruthSearchResponseSerializer,
-            **MODEL_HUB_ERROR_RESPONSES,
-        },
-        reject_unknown_fields=True,
-    )
-    def post(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
-        from model_hub.services.ground_truth_service import (
-            GroundTruthService,
-            ServiceError,
-        )
-        from model_hub.types import GroundTruthSearchRequest
-
-        try:
-            req = GroundTruthSearchRequest(**request.validated_data)
-        except Exception as e:
-            from tfc.utils.errors import format_request_error
-
-            return self._gm.bad_request(format_request_error(e))
-
-        try:
-            gt = _get_accessible_ground_truth(ground_truth_id, request)
-        except EvalGroundTruth.DoesNotExist:
-            return self._gm.not_found("Ground truth not found.")
-
-        result = GroundTruthService.search(
-            gt=gt,
-            inputs=req.inputs,
-            query=req.query,
-            max_results=req.max_results,
-        )
-        if isinstance(result, ServiceError):
-            return self._gm.bad_request(result.message)
-        return self._gm.success_response(result)
 
 
 class GroundTruthTriggerEmbeddingView(APIView):

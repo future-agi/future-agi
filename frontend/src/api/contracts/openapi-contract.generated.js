@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 969,
+  "endpointCount": 968,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -20274,40 +20274,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/GroundTruthEmbedResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "409": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/ModelHubErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/model-hub/ground-truth/{ground_truth_id}/search/": {
-      "post": {
-        "operationId": "model-hub_ground-truth_search_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/GroundTruthSearchRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/GroundTruthSearchResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -56808,45 +56774,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "GroundTruthSearchRequest": {
-      "type": "object",
-      "properties": {
-        "query": {
-          "title": "Query",
-          "description": "Legacy single-text query. Prefer `inputs` for multi-variable.",
-          "type": "string"
-        },
-        "inputs": {
-          "title": "Inputs",
-          "description": "Multi-variable runtime inputs: {\"variable_name\": \"value\", ...}",
-          "type": "object",
-          "x-nullable": true,
-          "additionalProperties": true
-        },
-        "max_results": {
-          "title": "Max results",
-          "type": "integer",
-          "maximum": 20,
-          "minimum": 1
-        }
-      }
-    },
-    "GroundTruthSearchResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/GroundTruthSearchResponseResult"
-        }
-      }
-    },
     "GroundTruthSetupRequest": {
       "required": [
         "variable_mapping",
@@ -81976,35 +81903,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "array",
           "items": {
             "$ref": "#/definitions/GroundTruthItem"
-          }
-        },
-        "total": {
-          "title": "Total",
-          "type": "integer"
-        }
-      }
-    },
-    "GroundTruthSearchResponseResult": {
-      "required": [
-        "query",
-        "results",
-        "total"
-      ],
-      "type": "object",
-      "properties": {
-        "query": {
-          "title": "Query",
-          "type": "string"
-        },
-        "inputs": {
-          "title": "Inputs",
-          "type": "object",
-          "x-nullable": true
-        },
-        "results": {
-          "type": "array",
-          "items": {
-            "type": "object"
           }
         },
         "total": {

@@ -261,7 +261,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
           const arr = Array.isArray(parsed) ? parsed : parsed.data || [parsed];
           if (arr.length > 0) setParsedColumns(Object.keys(arr[0]));
         } catch {
-          /* ignore */
+          /* preview-only; non-JSON files just skip column detection */
         }
       };
       reader.readAsText(f.slice(0, 65536));
@@ -1133,12 +1133,12 @@ const GroundTruthSetupForm = ({
   }, [evalVariables, rulePrompt]);
 
   const persistedVarMapping = useMemo(
-    () => normalizeMapping(gt.variable_mapping || gt.variableMapping || {}),
-    [gt.variable_mapping, gt.variableMapping],
+    () => normalizeMapping(gt.variable_mapping || {}),
+    [gt.variable_mapping],
   );
   const persistedRoleMapping = useMemo(
-    () => gt.role_mapping || gt.roleMapping || {},
-    [gt.role_mapping, gt.roleMapping],
+    () => gt.role_mapping || {},
+    [gt.role_mapping],
   );
 
   const initialOutputColumn =
@@ -1637,10 +1637,8 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
     // through `processing` before settling on a terminal status - both
     // need polling so the UI can react.
     enabled:
-      ((activeDataset?.embedding_status || activeDataset?.embeddingStatus) ===
-        "pending" ||
-        (activeDataset?.embedding_status || activeDataset?.embeddingStatus) ===
-          "processing"),
+      activeDataset?.embedding_status === "pending" ||
+      activeDataset?.embedding_status === "processing",
   });
 
   const deleteGt = useDeleteGroundTruth();
@@ -1649,11 +1647,9 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
   const embeddingStatus =
     statusData?.embedding_status ||
     activeDataset?.embedding_status ||
-    activeDataset?.embeddingStatus ||
     "pending";
-  const embeddedCount =
-    statusData?.embedded_row_count || statusData?.embeddedRowCount || 0;
-  const totalRows = activeDataset?.row_count || activeDataset?.rowCount || 0;
+  const embeddedCount = statusData?.embedded_row_count || 0;
+  const totalRows = activeDataset?.row_count || 0;
 
   const handleDelete = useCallback(async () => {
     if (!activeDataset) return;

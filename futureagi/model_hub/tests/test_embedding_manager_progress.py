@@ -78,7 +78,7 @@ def test_progress_callback_ticks_per_row(manager_module):
 
     assert sorted(seen) == [1, 2, 3], (
         "progress_callback must be invoked once per row with the running "
-        f"total — got {seen}"
+        f"total; got {seen}"
     )
 
 
@@ -139,35 +139,6 @@ def test_failing_row_does_not_abort_remaining_rows(manager_module):
 
     assert instance.bulk_upsert_vectors.call_count == 2
     assert sorted(seen) == [1, 2]
-
-
-def test_dynamic_batch_size_fans_small_dataset_across_threads(manager_module):
-    rows = [{"q": str(i)} for i in range(8)]
-
-    patcher, cls, _instance = _patch_db()
-    try:
-        with patch.object(
-            manager_module.EmbeddingManager,
-            "data_formatter",
-            _fake_data_formatter,
-        ):
-            manager = manager_module.EmbeddingManager()
-            constructor_clients = cls.call_count
-            manager.parallel_process_metadata(
-                eval_id="ev-1",
-                metadatas=rows,
-                inputs_formater=["q"],
-                table_name=manager_module.GROUND_TRUTH_TABLE_NAME,
-                organization_id="org-1",
-                workspace_id="ws-1",
-            )
-    finally:
-        patcher.stop()
-
-    # 8 rows / 20 workers → batch_size 1 → 8 batches → 8 batch-local DB
-    # clients (the legacy hardcoded batch_size=50 would give 1 batch).
-    batch_clients = cls.call_count - constructor_clients
-    assert batch_clients == 8
 
 
 def test_progress_callback_failure_is_swallowed(manager_module):

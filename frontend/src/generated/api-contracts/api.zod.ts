@@ -21992,38 +21992,6 @@ export const ModelHubGroundTruthEmbedCreateResponse = zod.object({
 
 
 /**
- * POST /model-hub/ground-truth/<id>/search/ — test retrieval with a query.
- */
-export const ModelHubGroundTruthSearchCreateParams = zod.object({
-  "ground_truth_id": zod.string()
-})
-
-export const modelHubGroundTruthSearchCreateBodyMaxResultsMax = 20;
-
-
-
-export const ModelHubGroundTruthSearchCreateBody = zod.object({
-  "query": zod.string().optional().describe('Legacy single-text query. Prefer `inputs` for multi-variable.'),
-  "inputs": zod.record(zod.string(), zod.unknown()).optional().describe('Multi-variable runtime inputs: {\"variable_name\": \"value\", ...}'),
-  "max_results": zod.number().min(1).max(modelHubGroundTruthSearchCreateBodyMaxResultsMax).optional()
-})
-
-export const ModelHubGroundTruthSearchCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "query": zod.string(),
-  "inputs": zod.object({
-
-}).passthrough().optional(),
-  "results": zod.array(zod.object({
-
-}).passthrough()),
-  "total": zod.number()
-})
-})
-
-
-/**
  * PUT /model-hub/ground-truth/<id>/setup/
  */
 export const ModelHubGroundTruthSetupUpdateParams = zod.object({

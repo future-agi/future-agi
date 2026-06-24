@@ -535,7 +535,6 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
         "/model-hub/ground-truth/{ground_truth_id}/",
         "/model-hub/ground-truth/{ground_truth_id}/data/",
         "/model-hub/ground-truth/{ground_truth_id}/embed/",
-        "/model-hub/ground-truth/{ground_truth_id}/search/",
         "/model-hub/ground-truth/{ground_truth_id}/setup/",
         "/model-hub/ground-truth/{ground_truth_id}/status/",
         "/model-hub/kb/",
@@ -1136,9 +1135,6 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/ground-truth/{ground_truth_id}/embed/"): (
             "ModelHubEmptyRequest"
         ),
-        ("POST", "/model-hub/ground-truth/{ground_truth_id}/search/"): (
-            "GroundTruthSearchRequest"
-        ),
         (
             "POST",
             "/model-hub/experiments/v2/{experiment_id}/feedback/submit-feedback/",
@@ -1487,9 +1483,6 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ),
         ("POST", "/model-hub/ground-truth/{ground_truth_id}/embed/"): (
             "GroundTruthEmbedResponse"
-        ),
-        ("POST", "/model-hub/ground-truth/{ground_truth_id}/search/"): (
-            "GroundTruthSearchResponse"
         ),
         ("GET", "/model-hub/ground-truth/{ground_truth_id}/status/"): (
             "GroundTruthStatusResponse"

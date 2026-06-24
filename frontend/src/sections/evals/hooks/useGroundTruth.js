@@ -187,35 +187,3 @@ export function useTriggerEmbedding() {
   });
 }
 
-// ── Search ground truth (test retrieval) ──
-// Accepts either `inputs` (multi-variable dict - preferred) or a legacy
-// single `query` string. Mirrors the runtime path so the test reflects
-// what the eval pipeline will see.
-export function useSearchGroundTruth() {
-  return useMutation({
-    mutationFn: async ({
-      gtId,
-      inputs,
-      query,
-      maxResults = 3,
-      similarityThreshold = 0,
-    }) => {
-      const payload = {
-        max_results: maxResults,
-        similarity_threshold: similarityThreshold,
-      };
-      if (inputs && typeof inputs === "object" && Object.keys(inputs).length) {
-        payload.inputs = inputs;
-      }
-      if (typeof query === "string" && query.trim()) {
-        payload.query = query;
-      }
-      const { data } = await axios.post(
-        endpoints.develop.eval.groundTruthSearch(gtId),
-        payload,
-      );
-      return data?.result;
-    },
-  });
-}
-

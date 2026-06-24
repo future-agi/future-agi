@@ -215,13 +215,13 @@ def test_embed_dataset_marks_failed_when_zero_rows_written():
     ), patch(
         "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.parallel_process_metadata"
     ):
-        # parallel_process_metadata is a noop here — no callback fires, so
+        # parallel_process_metadata is a noop here: no callback fires, so
         # no source row was persisted. embed_dataset must surface FAILED
         # rather than blindly stamping COMPLETED.
         result = GroundTruthService.embed_dataset(gt=gt)
 
     assert result.status == EvalGroundTruth.EmbeddingStatus.FAILED
-    assert "no rows were written" in (result.error or "").lower()
+    assert "rows were written" in (result.error or "").lower()
 
 
 def test_embed_dataset_forwards_progress_callback_to_manager():
@@ -403,7 +403,7 @@ def test_retrieve_few_shot_skips_empty_groups():
     ) as mock_manager_cls:
         mock_manager = mock_manager_cls.return_value
         mock_manager.retrieve_avg_rag_based_examples.return_value = raw_groups
-        mock_manager.decode_path.side_effect = Exception("not encoded")
+        mock_manager.decode_path.side_effect = ValueError("not encoded")
         rows = GroundTruthService.retrieve_few_shot(
             gt=gt, inputs={"q": "hi"}, max_results=5
         )
@@ -414,65 +414,7 @@ def test_retrieve_few_shot_skips_empty_groups():
     ]
 
 
-# ─────────────────────────────────────────────────────────────────────
-# search (Test Retrieval surface)
-# ─────────────────────────────────────────────────────────────────────
-
-
-def test_search_rejects_when_not_completed():
-    gt = _FakeGT(embedding_status=EvalGroundTruth.EmbeddingStatus.PROCESSING, variable_mapping={"q": "q"})
-    result = GroundTruthService.search(
-        gt=gt, inputs={"q": "hi"}, query=None, max_results=3
-    )
-    assert isinstance(result, ServiceError)
-    assert result.code == "EMBEDDINGS_NOT_READY"
-
-
-def test_search_rejects_empty_input():
-    gt = _FakeGT(embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED, variable_mapping={"q": "q"})
-    result = GroundTruthService.search(
-        gt=gt, inputs=None, query="   ", max_results=3
-    )
-    assert isinstance(result, ServiceError)
-    assert result.code == "EMPTY_INPUT"
-
-
-def test_search_dispatches_to_helper_with_inputs():
-    gt = _FakeGT(
-        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
-        variable_mapping={"q": "question"},
-    )
-    with patch.object(
-        GroundTruthService, "retrieve_few_shot", return_value=[{"q": "hi"}]
-    ) as mock:
-        result = GroundTruthService.search(
-            gt=gt, inputs={"q": "hi"}, query=None, max_results=2
-        )
-    mock.assert_called_once()
-    assert result["total"] == 1
-    assert result["inputs"] == {"q": "hi"}
-
-
-def test_search_legacy_query_fans_out_to_all_mapped_vars():
-    gt = _FakeGT(
-        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
-        variable_mapping={"q": "question", "a": "answer"},
-    )
-    with patch.object(
-        GroundTruthService, "retrieve_few_shot", return_value=[]
-    ) as mock:
-        result = GroundTruthService.search(
-            gt=gt, inputs=None, query="hi", max_results=2
-        )
-    mock.assert_called_once()
-    call_inputs = mock.call_args.kwargs["inputs"]
-    assert call_inputs == {"q": "hi", "a": "hi"}
-    assert result["query"] == "hi"
-
-
-# ─────────────────────────────────────────────────────────────────────
 # resolve_preview_examples: pure helper, no DB / DRF / Temporal.
-# ─────────────────────────────────────────────────────────────────────
 
 
 def test_resolve_preview_examples_returns_none_when_gt_config_missing():

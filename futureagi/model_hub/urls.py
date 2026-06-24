@@ -222,7 +222,6 @@ from model_hub.views.separate_evals import (
     GroundTruthDataView,
     GroundTruthDeleteView,
     GroundTruthListView,
-    GroundTruthSearchView,
     GroundTruthSetupView,
     GroundTruthStatusView,
     GroundTruthTriggerEmbeddingView,
@@ -1185,11 +1184,6 @@ urlpatterns = [
         "ground-truth/<uuid:ground_truth_id>/status/",
         GroundTruthStatusView.as_view(),
         name="ground-truth-status",
-    ),
-    path(
-        "ground-truth/<uuid:ground_truth_id>/search/",
-        GroundTruthSearchView.as_view(),
-        name="ground-truth-search",
     ),
     path(
         "ground-truth/<uuid:ground_truth_id>/embed/",

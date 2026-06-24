@@ -337,7 +337,8 @@ class EmbeddingManager:
             if model_manager._use_serving:
                 try:
                     embedding_vector = model(query)
-                except:
+                except Exception as exc:
+                    logger.warning("audio_embedding_failed", error=str(exc))
                     embedding_vector = []
                 return embedding_vector
             else:
@@ -1055,8 +1056,8 @@ class EmbeddingManager:
                     ]
                 else:
                     results[inp] = {i[-2]["item_id"]: i for i in x}
-            except:
-                traceback.print_exc()
+            except Exception as exc:
+                logger.exception("retrieve_rag_based_examples_per_input_failed", error=str(exc))
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(

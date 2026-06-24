@@ -541,16 +541,6 @@ class GroundTruthStatusResponse(BaseModel):
     embeddings_stale: bool = False
 
 
-class GroundTruthSearchRequest(BaseModel):
-    """Request for POST /model-hub/ground-truth/{id}/search/"""
-
-    query: str = ""
-    inputs: dict[str, object] | None = None
-    max_results: int = Field(default=3, ge=1, le=20)
-
-
-
-
 # =============================================================================
 # Usage & Feedback Types (Phase 10)
 # =============================================================================

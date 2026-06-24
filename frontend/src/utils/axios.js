@@ -927,10 +927,6 @@ export const endpoints = {
         apiPath("/model-hub/ground-truth/{ground_truth_id}/status/", {
           ground_truth_id: id,
         }),
-      groundTruthSearch: (id) =>
-        apiPath("/model-hub/ground-truth/{ground_truth_id}/search/", {
-          ground_truth_id: id,
-        }),
       groundTruthEmbed: (id) =>
         apiPath("/model-hub/ground-truth/{ground_truth_id}/embed/", {
           ground_truth_id: id,

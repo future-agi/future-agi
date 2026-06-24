@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -14,6 +15,7 @@ from model_hub.utils.eval_input_validation import is_empty_value
 if TYPE_CHECKING:
     from accounts.models.organization import Organization
     from accounts.models.workspace import Workspace
+    from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 
 
 logger = structlog.get_logger(__name__)
@@ -195,14 +197,7 @@ class GroundTruthService:
         mapped: dict,
         eval_template: EvalTemplate,
     ) -> dict:
-        """Mutate ``mapped`` with retrieved GT content blocks when GT is enabled.
-
-        Single path for every evaluator: retrieve similar GT rows, build
-        OpenAI content blocks (text inline, image / audio as media blocks,
-        wrapped in delimiter tags), and attach as ``ground_truth_blocks``.
-        Evaluators read the kwarg and concatenate into their content array
-        without adding their own framing.
-        """
+        """Attach retrieved GT content blocks to ``mapped['ground_truth_blocks']`` when GT is configured; evaluators read the kwarg and concatenate into their content array without adding their own framing."""
         from model_hub.utils.ground_truth_retrieval import (
             build_ground_truth_blocks,
             has_usable_inputs_for_gt,
@@ -278,7 +273,7 @@ class GroundTruthService:
         if gt is None:
             return []
 
-        # Retrieval reaches PG + CH. Soft-fail this call only — a transient
+        # Retrieval reaches PG + CH. Soft-fail this call only: a transient
         # store failure should not tank the eval-run response; programmer
         # errors above (malformed config, bad ORM call) still propagate.
         try:
@@ -319,7 +314,7 @@ class GroundTruthService:
     def embed_dataset(
         *,
         gt: EvalGroundTruth,
-        heartbeat: "callable | None" = None,
+        heartbeat: Callable[[int], None] | None = None,
     ) -> EmbedDatasetResult:
         """Embed every row of ``gt`` into the CH ``ground_truths`` table."""
         from agentic_eval.core.embeddings.embedding_manager import (
@@ -525,54 +520,6 @@ class GroundTruthService:
         )
         return matches
 
-    @staticmethod
-    def search(
-        *,
-        gt: EvalGroundTruth,
-        inputs: dict[str, Any] | None,
-        query: str | None,
-        max_results: int,
-    ) -> dict[str, Any] | ServiceError:
-        if gt.embedding_status != EvalGroundTruth.EmbeddingStatus.COMPLETED:
-            return ServiceError(
-                f"Embeddings not ready. Status: {gt.embedding_status}. "
-                "Wait for embedding generation to complete.",
-                code="EMBEDDINGS_NOT_READY",
-            )
-
-        resolved_inputs: dict[str, Any]
-        if isinstance(inputs, dict) and inputs:
-            resolved_inputs = inputs
-        else:
-            stripped = (query or "").strip()
-            if not stripped:
-                return ServiceError(
-                    "Provide either a non-empty `query` string or an `inputs` "
-                    "dict matching the rule prompt's template variables.",
-                    code="EMPTY_INPUT",
-                )
-            # Project the legacy single-text query onto every mapped variable.
-            mapped = _flatten_variable_mapping(gt.variable_mapping)
-            if not mapped:
-                return ServiceError(
-                    "variable_mapping is empty; cannot route the legacy "
-                    "`query` string to a column.",
-                    code="VARIABLE_MAPPING_MISSING",
-                )
-            resolved_inputs = dict.fromkeys(mapped, stripped)
-
-        results = GroundTruthService.retrieve_few_shot(
-            gt=gt,
-            inputs=resolved_inputs,
-            max_results=max_results,
-        )
-
-        return {
-            "query": (query or "").strip(),
-            "inputs": resolved_inputs,
-            "results": results,
-            "total": len(results),
-        }
 
 def _first_missing_column(
     mapping: dict[str, Any],
@@ -667,7 +614,7 @@ _INTERNAL_CH_KEYS = frozenset(
 def _row_from_ch_metadata(
     meta: dict[str, Any],
     dataset_columns: set[str],
-    manager,
+    manager: EmbeddingManager,
 ) -> dict[str, Any]:
     row: dict[str, Any] = {}
     for key, value in (meta or {}).items():

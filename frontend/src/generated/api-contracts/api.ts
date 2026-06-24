@@ -524,8 +524,6 @@ import type {
   GroundTruthDeleteResponseApi,
   GroundTruthEmbedResponseApi,
   GroundTruthListResponseApi,
-  GroundTruthSearchRequestApi,
-  GroundTruthSearchResponseApi,
   GroundTruthSetupRequestApi,
   GroundTruthSetupResponseApi,
   GroundTruthStatusResponseApi,
@@ -40082,76 +40080,6 @@ export const modelHubGroundTruthEmbedCreate = async (groundTruthId: string,
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
       modelHubEmptyRequestApi,)
-  }
-);}
-
-
-
-export type modelHubGroundTruthSearchCreateResponse200 = {
-  data: GroundTruthSearchResponseApi
-  status: 200
-}
-
-export type modelHubGroundTruthSearchCreateResponse400 = {
-  data: ModelHubErrorResponseApi
-  status: 400
-}
-
-export type modelHubGroundTruthSearchCreateResponse403 = {
-  data: ModelHubErrorResponseApi
-  status: 403
-}
-
-export type modelHubGroundTruthSearchCreateResponse404 = {
-  data: ModelHubErrorResponseApi
-  status: 404
-}
-
-export type modelHubGroundTruthSearchCreateResponse409 = {
-  data: ModelHubErrorResponseApi
-  status: 409
-}
-
-export type modelHubGroundTruthSearchCreateResponse500 = {
-  data: ModelHubErrorResponseApi
-  status: 500
-}
-
-export type modelHubGroundTruthSearchCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
-}
-
-export type modelHubGroundTruthSearchCreateResponseSuccess = (modelHubGroundTruthSearchCreateResponse200) & {
-  headers: Headers;
-};
-export type modelHubGroundTruthSearchCreateResponseError = (modelHubGroundTruthSearchCreateResponse400 | modelHubGroundTruthSearchCreateResponse403 | modelHubGroundTruthSearchCreateResponse404 | modelHubGroundTruthSearchCreateResponse409 | modelHubGroundTruthSearchCreateResponse500 | modelHubGroundTruthSearchCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type modelHubGroundTruthSearchCreateResponse = (modelHubGroundTruthSearchCreateResponseSuccess | modelHubGroundTruthSearchCreateResponseError)
-
-export const getModelHubGroundTruthSearchCreateUrl = (groundTruthId: string,) => {
-
-
-
-
-  return `/model-hub/ground-truth/${groundTruthId}/search/`
-}
-
-/**
- * POST /model-hub/ground-truth/<id>/search/ — test retrieval with a query.
- */
-export const modelHubGroundTruthSearchCreate = async (groundTruthId: string,
-    groundTruthSearchRequestApi: GroundTruthSearchRequestApi, options?: RequestInit): Promise<modelHubGroundTruthSearchCreateResponse> => {
-
-  return apiMutator<modelHubGroundTruthSearchCreateResponse>(getModelHubGroundTruthSearchCreateUrl(groundTruthId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      groundTruthSearchRequestApi,)
   }
 );}
 

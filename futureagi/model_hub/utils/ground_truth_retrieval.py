@@ -101,7 +101,8 @@ def detect_input_column_types(
             inputs=sample_inputs,
             required_keys=list(sample_inputs.keys()),
         )
-    except Exception:
+    except Exception as exc:
+        logger.debug("input_column_type_detection_failed", error=str(exc))
         return {}
     return {col: modality for col, modality in key_types.items() if modality}
 

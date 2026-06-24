@@ -11335,39 +11335,6 @@ export interface GroundTruthEmbedResponseApi {
 }
 
 /**
- * Multi-variable runtime inputs: {"variable_name": "value", ...}
- */
-export type GroundTruthSearchRequestApiInputs = { [key: string]: unknown };
-
-export interface GroundTruthSearchRequestApi {
-  /** Legacy single-text query. Prefer `inputs` for multi-variable. */
-  query?: string;
-  /** Multi-variable runtime inputs: {"variable_name": "value", ...} */
-  inputs?: GroundTruthSearchRequestApiInputs;
-  /**
-     * @minimum 1
-     * @maximum 20
-     */
-  max_results?: number;
-}
-
-export type GroundTruthSearchResponseResultApiInputs = { [key: string]: unknown };
-
-export type GroundTruthSearchResponseResultApiResultsItem = { [key: string]: unknown };
-
-export interface GroundTruthSearchResponseResultApi {
-  query: string;
-  inputs?: GroundTruthSearchResponseResultApiInputs;
-  results: GroundTruthSearchResponseResultApiResultsItem[];
-  total: number;
-}
-
-export interface GroundTruthSearchResponseApi {
-  status: boolean;
-  result: GroundTruthSearchResponseResultApi;
-}
-
-/**
  * Map of template variable name to GT column name (string) or list of column names. Keys are dynamic per-template.
  */
 export type GroundTruthSetupRequestApiVariableMapping = { [key: string]: unknown };

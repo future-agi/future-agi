@@ -2475,28 +2475,6 @@ class GroundTruthSetupRequestSerializer(serializers.Serializer):
     )
 
 
-class GroundTruthSearchRequestSerializer(serializers.Serializer):
-    query = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        trim_whitespace=False,
-        help_text="Legacy single-text query. Prefer `inputs` for multi-variable.",
-    )
-    inputs = JsonObjectRequestField(
-        required=False,
-        allow_null=True,
-        help_text='Multi-variable runtime inputs: {"variable_name": "value", ...}',
-    )
-    max_results = serializers.IntegerField(required=False, min_value=1, max_value=20)
-
-    def validate(self, attrs):
-        if not attrs.get("query") and not attrs.get("inputs"):
-            raise serializers.ValidationError(
-                "Either `query` or `inputs` must be provided."
-            )
-        return attrs
-
-
 class GroundTruthItemSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     name = serializers.CharField()
@@ -2605,18 +2583,6 @@ class GroundTruthDeleteResponseResultSerializer(serializers.Serializer):
 class GroundTruthDeleteResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = GroundTruthDeleteResponseResultSerializer()
-
-
-class GroundTruthSearchResponseResultSerializer(serializers.Serializer):
-    query = serializers.CharField(allow_blank=True)
-    inputs = serializers.JSONField(required=False, allow_null=True)
-    results = serializers.ListField(child=serializers.JSONField())
-    total = serializers.IntegerField()
-
-
-class GroundTruthSearchResponseSerializer(serializers.Serializer):
-    status = serializers.BooleanField()
-    result = GroundTruthSearchResponseResultSerializer()
 
 
 class GroundTruthEmbedResponseResultSerializer(serializers.Serializer):
