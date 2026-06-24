@@ -135,43 +135,49 @@ export const createAgentDefinitionSchema = (options) => {
         data.agentType === AGENT_TYPES.VOICE &&
         !isLiveKitProvider(data.provider)
       ) {
-        // Phone number is optional when API key + assistant ID are provided (web bridge)
-        // const hasWebBridgeCreds =
-        //   data.apiKey?.trim() && data.assistantId?.trim();
+        // Phone number is optional when API key + assistant ID are provided:
+        // the backend serializer accepts phone-less web-bridge agents
+        // ("Contact number is required (or provide API Key and Assistant ID
+        // for web bridge)"), and web-connector providers (Vapi/ElevenLabs/
+        // Deepgram/Agora/Pipecat) have no phone surface at all.
+        const hasWebBridgeCreds =
+          data.apiKey?.trim() && data.assistantId?.trim();
         const hasCountryCode = !!data.countryCode?.trim();
         const hasContactNumber = !!data.contactNumber?.trim();
-        // if (!hasWebBridgeCreds) {
-        if (!hasCountryCode) {
-          ctx.addIssue({
-            path: ["countryCode"],
-            message: "Country code is required",
-            code: z.ZodIssueCode.custom,
-          });
+        if (!hasWebBridgeCreds) {
+          if (!hasCountryCode) {
+            ctx.addIssue({
+              path: ["countryCode"],
+              message: "Country code is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!hasContactNumber) {
+            ctx.addIssue({
+              path: ["contactNumber"],
+              message: "Contact number is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+        } else {
+          // Both are optional, but if one is provided the other is required
+          if (hasContactNumber && !hasCountryCode) {
+            ctx.addIssue({
+              path: ["countryCode"],
+              message:
+                "Country code is required when contact number is provided",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (hasCountryCode && !hasContactNumber) {
+            ctx.addIssue({
+              path: ["contactNumber"],
+              message:
+                "Contact number is required when country code is provided",
+              code: z.ZodIssueCode.custom,
+            });
+          }
         }
-        if (!hasContactNumber) {
-          ctx.addIssue({
-            path: ["contactNumber"],
-            message: "Contact number is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        // } else {
-        // Both are optional, but if one is provided the other is required
-        if (hasContactNumber && !hasCountryCode) {
-          ctx.addIssue({
-            path: ["countryCode"],
-            message: "Country code is required when contact number is provided",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (hasCountryCode && !hasContactNumber) {
-          ctx.addIssue({
-            path: ["contactNumber"],
-            message: "Contact number is required when country code is provided",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        // }
         if (hasContactNumber) {
           // Validate contact number format only if it's provided
           const trimmedNumber = data.contactNumber.trim();

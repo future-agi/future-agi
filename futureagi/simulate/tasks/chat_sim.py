@@ -257,6 +257,19 @@ def store_chat_messages(
 
             logger.info(f"CallExecution {call_execution.id} marked as COMPLETED")
 
+            # Emit the simulation trace (span tree) so this chat sim shows up in the
+            # trace/Session UI like a production trace (TH-5642 observability). A
+            # trace failure must never break the sim.
+            try:
+                from simulate.services.sim_observability import emit_sim_trace
+
+                emit_sim_trace(call_execution)
+            except Exception:
+                logger.exception(
+                    "sim_trace_emit_failed",
+                    call_execution_id=str(call_execution.id),
+                )
+
             # Trigger test execution monitoring to update TestExecution status
             try:
                 monitor_test_execution_for_chat.apply_async(
@@ -516,30 +529,38 @@ def monitor_chat_timeout_call_executions():
 )
 def process_prompt_based_chat_simulations():
     """
-    Process REGISTERED CallExecutions for prompt-based simulations.
+    Process REGISTERED CallExecutions for server-side chat simulations.
 
     This activity picks up CallExecutions that:
     - Have status REGISTERED
     - Are TEXT type simulations
-    - Belong to prompt-based RunTests (source_type="prompt")
+    - Are driven server-side: prompt-based RunTests, OR agent_definition TEXT
+      RunTests on an external hosted chat provider (see _server_side_chat_filter).
 
     For each CallExecution, it initiates the chat and runs the full conversation.
     """
     # Lazy import: simulate.services.chat_sim imports from this module (circular)
+    from simulate.services.chat_agent_adapter_factory import server_side_chat_filter
 
     try:
         # Per-organisation concurrency limit.  Each org uses its own LLM API
         # keys, so there is no need for an application-wide cap.
         MAX_PER_ORG = int(os.getenv("PROMPT_SIM_MAX_CONCURRENT_PER_ORG", "10"))
 
-        # Atomically claim REGISTERED CallExecutions to prevent duplicates on retry
+        # Atomically claim REGISTERED CallExecutions to prevent duplicates on retry.
+        # of=("self",): the server_side_chat_filter OR spans the nullable
+        # agent_definition FK, which Django renders as a LEFT JOIN — a bare
+        # FOR UPDATE then raises NotSupportedError ("nullable side of an outer
+        # join"), the broad except below ate it, and the trigger silently
+        # returned 0 forever for agent-definition chat sims (TH-5642 bug #22).
+        # Lock only the CallExecution rows.
         with transaction.atomic():
             registered = list(
-                CallExecution.objects.select_for_update(skip_locked=True)
+                CallExecution.objects.select_for_update(of=("self",), skip_locked=True)
                 .filter(
+                    server_side_chat_filter(),
                     status=CallExecution.CallStatus.REGISTERED,
                     simulation_call_type=CallExecution.SimulationCallType.TEXT,
-                    test_execution__run_test__source_type=RunTest.SourceTypes.PROMPT,
                 )
                 .select_related("test_execution__run_test")
                 .order_by("created_at")[:50]
@@ -552,9 +573,9 @@ def process_prompt_based_chat_simulations():
             org_ids = {ce.test_execution.run_test.organization_id for ce in registered}
             org_ongoing = dict(
                 CallExecution.objects.filter(
+                    server_side_chat_filter(),
                     status=CallExecution.CallStatus.ONGOING,
                     simulation_call_type=CallExecution.SimulationCallType.TEXT,
-                    test_execution__run_test__source_type=RunTest.SourceTypes.PROMPT,
                     test_execution__run_test__organization_id__in=org_ids,
                 )
                 .values_list("test_execution__run_test__organization_id")
@@ -661,42 +682,12 @@ def run_single_prompt_chat(call_execution_id: str):
             max_turns=10,
         )
 
-        try:
-            call_execution.refresh_from_db()
-            from django.db.models import Sum
-
-            from simulate.models import ChatMessageModel
-
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-
-            total_tokens = (
-                ChatMessageModel.objects.filter(
-                    call_execution=call_execution
-                ).aggregate(total=Sum("tokens"))["total"]
-                or 0
-            )
-
-            emit(
-                UsageEvent(
-                    org_id=str(organization.id),
-                    event_type=BillingEventType.TEXT_CALL,
-                    amount=total_tokens,
-                    properties={
-                        "source": "simulate_prompt_chat",
-                        "source_id": str(call_execution.id),
-                        "total_tokens": total_tokens,
-                    },
-                )
-            )
-        except Exception:
-            pass  # Metering failure must not break the action
+        # Billing is emitted exactly once by the canonical path
+        # (TestExecutor._deduct_call_cost), which runs on BOTH terminal exits of
+        # run_prompt_based_conversation: the endCall exit (via
+        # store_chat_messages(chat_ended=True)) and the max-turns/empty exit (via
+        # finalize_chat_execution()). Emitting a second TEXT_CALL UsageEvent here
+        # for the same source_id double-billed every prompt-based chat — removed.
 
         logger.info(
             "prompt_chat_simulation_completed",

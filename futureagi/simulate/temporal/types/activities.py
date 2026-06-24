@@ -740,6 +740,12 @@ class InitiateCallInput:
     user_api_key: Optional[str] = None
     user_assistant_id: Optional[str] = None
     user_phone_number: Optional[str] = None  # User's phone to call from
+    # The user's agent provider (retell/bland/...) — selects the user-side outbound
+    # dialer instead of the Vapi default (TH-5642). None → Vapi engine path.
+    # NOTE: this is THE imported copy (call_execution_workflow and voice_large both
+    # import from simulate.temporal.types.activities); the duplicate in
+    # ee/voice/temporal/types/voice_activities.py mirrors it and must stay in sync.
+    user_provider: Optional[str] = None
 
     # WebRTC bridge connection type (None = SIP, "web_vapi", "web_retell")
     connection_type: Optional[str] = None

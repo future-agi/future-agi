@@ -19,6 +19,17 @@ export const useGetTestDetail = (testId, options = {}) => {
   });
 };
 
+export const useApplyTrialPrompt = (options = {}) => {
+  return useMutation({
+    mutationFn: async ({ optimizationId, trialId }) =>
+      axios.post(
+        endpoints.optimizeSimulate.applyTrial(optimizationId, trialId),
+        {},
+      ),
+    ...options,
+  });
+};
+
 export const useOptimizeTrialPrompts = ({ optimizationId, trialId }) => {
   return useQuery({
     queryKey: ["fix-my-agent-trail-prompts", optimizationId, trialId],

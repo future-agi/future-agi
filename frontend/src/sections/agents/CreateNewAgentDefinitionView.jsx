@@ -158,6 +158,10 @@ const CreateNewAgentDefinitionView = () => {
 
       // Only process and include voice-specific fields for voice agents
       if (data.agentType === AGENT_TYPES.VOICE) {
+        // country_code is a UI-only field — it gets merged into
+        // contact_number below; the backend serializer rejects it as an
+        // unknown field (caught live: 400 "country_code: Unknown field").
+        delete payload.country_code;
         if (isLiveKitProvider(data.provider)) {
           // LiveKit: no phone number needed, ensure config is a dict
           payload.contact_number = "";

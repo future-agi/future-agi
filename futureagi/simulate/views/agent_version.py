@@ -548,9 +548,14 @@ class AgentVersionCallExecutionView(APIView):
                 deleted=False,
             )
 
+            # A completed call is a valid log entry whether or not evals ran.
+            # The old eval_outputs__isnull=False filter hid every call from
+            # runs without evaluations attached — the Call Logs tab showed
+            # "No calls found" for agents with real completed simulations
+            # (reported for Retell, applied to any provider).
             call_executions = CallExecution.objects.filter(
-                agent_version=version, status="completed", eval_outputs__isnull=False
-            ).exclude(eval_outputs={})
+                agent_version=version, status="completed"
+            ).order_by("-created_at")
 
             paginator = ExtendedPageNumberPagination()
             result_page = paginator.paginate_queryset(call_executions, request)

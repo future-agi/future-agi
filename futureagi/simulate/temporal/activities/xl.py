@@ -199,7 +199,6 @@ def _build_transcript_data(call_execution):
     Assembles transcript text from CallTranscript (VOICE) or ChatMessageModel (TEXT)
     records, and reads recording URLs from call_execution fields.
     """
-    from simulate.models import CallTranscript, ChatMessageModel
 
     transcript_data = {
         "transcript": "",
@@ -317,7 +316,7 @@ def _build_transcript_data(call_execution):
         # Read assistant/customer recordings from provider_call_data
         if call_execution.provider_call_data:
             for (
-                provider_key,
+                _provider_key,
                 provider_data,
             ) in call_execution.provider_call_data.items():
                 if not isinstance(provider_data, dict):
@@ -524,6 +523,151 @@ def _build_simulation_context_map(call_execution, agent_version):
     return ctx
 
 
+# ============================================================================
+# INLINE SIM EVALS VIA AGENT-LEARNING-KIT (Phase-10A Tier-1 cutover #2)
+# ============================================================================
+# The kit's local agent-report evaluator replaces run_eval_func as the inline
+# simulation eval ENGINE. The platform keeps everything around it byte-
+# compatible: mapping resolution, eval_outputs persistence, error-localizer
+# triggering, eval_config status, completion checks, and the API shape of the
+# stored entry ({"output", "reason", "output_type", "name"}).
+# The legacy engine stays selectable (config engine="legacy" or
+# settings.SIMULATE_EVALS_VIA_KIT=False) until parity sign-off.
+# ============================================================================
+
+
+def _eval_engine_uses_kit(eval_config) -> bool:
+    """Route an inline sim eval to the kit engine or the legacy run_eval_func.
+
+    Per-config override wins (config.engine / config.run_config.engine =
+    "legacy" | "agent_learning_kit"), then the global cutover switch
+    (settings.SIMULATE_EVALS_VIA_KIT, default True), gated on the kit being
+    importable so environments without it degrade to the legacy engine.
+    """
+    from simulate.services import agent_learning_bridge as alb
+
+    cfg = eval_config.config or {}
+    engine = (cfg.get("run_config") or {}).get("engine") or cfg.get("engine")
+    if engine == "legacy":
+        return False
+    if engine in ("agent_learning_kit", "kit"):
+        return alb.is_available()
+    if not getattr(settings, "SIMULATE_EVALS_VIA_KIT", True):
+        return False
+    return alb.is_available()
+
+
+# Mapping keys most likely to carry the conversation input/output. Used to pick
+# the evidence input/output out of the resolved eval mapping; transcript fields
+# are the fallback so any mapping still evaluates.
+_KIT_EVIDENCE_INPUT_KEYS = ("input", "query", "question", "prompt", "context")
+_KIT_EVIDENCE_OUTPUT_KEYS = (
+    "output",
+    "response",
+    "hypothesis",
+    "actual_output",
+    "answer",
+)
+
+
+def _kit_eval_result_to_platform_output(kit_result, *, output_type) -> dict:
+    """Map the kit's artifact-evaluation payload to run_eval_func's result shape.
+
+    Contract target (what _run_single_evaluation persists into eval_outputs):
+    ``{"output": <bool|float|str>, "reason": str, "output_type": str}`` —
+    bool for Pass/Fail templates (error-localizer checks isinstance(.., bool)),
+    0..1 float for score templates, choice-string for deterministic ones.
+    """
+    result = dict(kit_result or {})
+    summary = dict(result.get("summary") or {})
+    evaluation = dict(result.get("evaluation") or {})
+    passed = bool(evaluation.get("passed", result.get("status") == "passed"))
+    score_raw = summary.get("score", evaluation.get("score"))
+    score = round(float(score_raw if score_raw is not None else 0.0), 4)
+
+    reasons = [
+        str(f.get("reason"))
+        for f in (result.get("findings") or [])
+        if isinstance(f, dict) and f.get("reason")
+    ]
+    reason = (
+        "; ".join(reasons[:5])
+        if reasons
+        else (
+            f"Agent-learning-kit evaluation {'passed' if passed else 'failed'} "
+            f"with score {score} (threshold {summary.get('threshold', 0.7)})."
+        )
+    )
+
+    if output_type == "Pass/Fail":
+        output = passed
+    elif output_type == "choices":
+        output = "Passed" if passed else "Failed"
+    else:  # "score"
+        output = score
+
+    return {"output": output, "reason": reason, "output_type": output_type}
+
+
+def _run_eval_engine_via_kit(
+    eval_config, eval_template, updated_mapping, transcript_data
+):
+    """Execute one inline sim eval through the kit (replaces run_eval_func).
+
+    Builds kit task evidence from the platform's resolved mapping + transcript
+    data, scores it with the kit's local evaluator (credential-free), and
+    returns the legacy engine's result shape so persistence stays unchanged.
+    """
+    from simulate.services import agent_learning_bridge as alb
+
+    mapping = {k: v for k, v in (updated_mapping or {}).items() if isinstance(v, str)}
+    transcript = (transcript_data or {}).get("transcript", "")
+
+    input_text = (
+        next((mapping[k] for k in _KIT_EVIDENCE_INPUT_KEYS if mapping.get(k)), "")
+        or (transcript_data or {}).get("user_chat_transcript", "")
+        or transcript
+    )
+    output_text = (
+        next((mapping[k] for k in _KIT_EVIDENCE_OUTPUT_KEYS if mapping.get(k)), "")
+        or (transcript_data or {}).get("assistant_chat_transcript", "")
+        or transcript
+    )
+
+    task_description = str(
+        getattr(eval_template, "criteria", None)
+        or getattr(eval_template, "description", None)
+        or eval_config.name
+        or getattr(eval_template, "name", None)
+        or "Evaluate the agent's conversation."
+    )
+    criteria = getattr(eval_template, "criteria", None)
+    success_criteria = [str(criteria)] if criteria else []
+
+    cfg = eval_config.config or {}
+    threshold = float(
+        (cfg.get("run_config") or {}).get("pass_threshold")
+        or cfg.get("pass_threshold")
+        or 0.7
+    )
+
+    kit_result = alb.run_eval_for_evidence(
+        name=str(eval_config.id),
+        evidence=alb.build_eval_evidence(
+            input_text=input_text,
+            output_text=output_text,
+            transcript=transcript,
+            metadata=mapping,
+        ),
+        task_description=task_description,
+        success_criteria=success_criteria,
+        threshold=threshold,
+    )
+    return _kit_eval_result_to_platform_output(
+        kit_result, output_type=derive_kpi_output_type(eval_template)
+    )
+
+
 def _run_single_evaluation(eval_config, call_execution, transcript_data):
     """
     Run a single SimulateEvalConfig evaluation.
@@ -534,7 +678,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
     from model_hub.models.develop_dataset import Cell, Column
     from model_hub.tasks.user_evaluation import trigger_error_localization_for_simulate
     from model_hub.views.utils.evals import run_eval_func
-    from simulate.models import Scenarios, SimulateEvalConfig
+    from simulate.models import Scenarios
     from tfc.utils.error_codes import get_specific_error_message
 
     try:
@@ -752,29 +896,45 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 "call_type": call_execution.call_type,
                 "simulation_call_type": call_execution.simulation_call_type,
                 "phone_number": call_execution.phone_number,
-                "started_at": str(call_execution.started_at) if call_execution.started_at else None,
-                "ended_at": str(call_execution.ended_at) if call_execution.ended_at else None,
+                "started_at": str(call_execution.started_at)
+                if call_execution.started_at
+                else None,
+                "ended_at": str(call_execution.ended_at)
+                if call_execution.ended_at
+                else None,
                 "duration_seconds": call_execution.duration_seconds,
                 "recording_url": call_execution.recording_url,
                 "call_summary": call_execution.call_summary,
                 "ended_reason": call_execution.ended_reason,
                 "error_message": call_execution.error_message,
                 "message_count": call_execution.message_count,
-                "overall_score": float(call_execution.overall_score) if call_execution.overall_score is not None else None,
+                "overall_score": float(call_execution.overall_score)
+                if call_execution.overall_score is not None
+                else None,
             }
 
-        eval_result = run_eval_func(
-            config=config,
-            mappings=updated_mapping,
-            template=eval_template,
-            org=organization,
-            model=eval_config.model,
-            kb_id=eval_config.kb_id,
-            error_localizer=eval_config.error_localizer,
-            workspace=call_execution.test_execution.run_test.workspace,
-            source="simulate",
-            call_context=_call_context,
-        )
+        if _eval_engine_uses_kit(eval_config):
+            # Phase-10A Tier-1 cutover #2: kit executes the eval. Everything
+            # below this branch (persistence, error localizer, status, API
+            # shape) is shared with the legacy engine, unchanged.
+            eval_result = _run_eval_engine_via_kit(
+                eval_config, eval_template, updated_mapping, transcript_data
+            )
+        else:
+            # LEGACY engine — kept for the Phase-10A parity window; scheduled
+            # for removal after parity sign-off.
+            eval_result = run_eval_func(
+                config=config,
+                mappings=updated_mapping,
+                template=eval_template,
+                org=organization,
+                model=eval_config.model,
+                kb_id=eval_config.kb_id,
+                error_localizer=eval_config.error_localizer,
+                workspace=call_execution.test_execution.run_test.workspace,
+                source="simulate",
+                call_context=_call_context,
+            )
 
         if isinstance(eval_result, str):
             if (
@@ -1245,14 +1405,18 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
         from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.tool_eval_agent.tool_eval_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.tool_eval_agent.tool_eval_agent",
+                exc_info=True,
+            )
         return
     from model_hub.models.choices import EvalOutputType
     from sdk.utils.helpers import _get_api_call_type
     from simulate.models import AgentDefinition
+    from tfc.constants.api_calls import APICallStatusChoices
     from tfc.utils.error_codes import get_specific_error_message
     from tracer.models.observability_provider import ProviderChoices
-    from tfc.constants.api_calls import APICallStatusChoices
+
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
     except ImportError:
@@ -1296,7 +1460,10 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.tool_eval_agent.adapters", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.tool_eval_agent.adapters",
+                        exc_info=True,
+                    )
                 return
 
             try:
@@ -1313,7 +1480,10 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.tool_eval_agent.adapters", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.tool_eval_agent.adapters",
+                        exc_info=True,
+                    )
                 return
 
             customer_api_key = (
@@ -1568,7 +1738,9 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     try:
                         from ee.usage.utils.event_properties import llm_usage_properties
                     except ImportError:
-                        llm_usage_properties = lambda obj: {}
+
+                        def llm_usage_properties(obj):
+                            return {}
 
                     actual_cost = 0
                     if hasattr(agent, "llm") and agent.llm:

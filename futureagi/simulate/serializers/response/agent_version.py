@@ -3,6 +3,34 @@ from rest_framework import serializers
 from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentVersion
 
+# Provider-secret fields that may live in an AgentVersion.configuration_snapshot
+# and must never be returned to API clients in cleartext (they mirror the
+# credentials encrypted in ProviderCredentials). "Keys" get a partial mask
+# (first/last 4) so the UI can show *which* credential is set; the raw secret is
+# fully hidden. Keep in sync with the snapshot schema.
+_SNAPSHOT_MASKED_KEYS = ("api_key", "livekit_api_key")
+_SNAPSHOT_HIDDEN_SECRETS = ("livekit_api_secret",)
+
+
+def mask_snapshot_secrets(snapshot):
+    """Return a shallow copy of an agent configuration_snapshot with every
+    provider secret masked.
+
+    Safe on any input: a non-dict is returned unchanged. Use this everywhere a
+    configuration_snapshot is embedded in an API response so plaintext provider
+    secrets never reach clients, logs, or browser history.
+    """
+    if not isinstance(snapshot, dict):
+        return snapshot
+    masked = dict(snapshot)
+    for field in _SNAPSHOT_MASKED_KEYS:
+        if masked.get(field):
+            masked[field] = mask_key(masked[field])
+    for field in _SNAPSHOT_HIDDEN_SECRETS:
+        if masked.get(field):
+            masked[field] = "********"
+    return masked
+
 
 class AgentVersionResponseSerializer(serializers.ModelSerializer):
     """
@@ -49,11 +77,10 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
             for key in ["organization", "knowledge_base", "workspace", "id"]:
                 if key in snapshot and snapshot[key] is not None:
                     snapshot[key] = str(snapshot[key])
-            # Mask sensitive secret so frontend knows it's set but can't read it
-            if "api_key" in snapshot and snapshot["api_key"]:
-                snapshot["api_key"] = mask_key(snapshot["api_key"])
-            if "livekit_api_secret" in snapshot and snapshot["livekit_api_secret"]:
-                snapshot["livekit_api_secret"] = "********"
+            # Mask every provider secret so the frontend knows a credential is
+            # set but can't read it. livekit_api_key was previously left in
+            # cleartext — mask_snapshot_secrets closes that gap.
+            snapshot = mask_snapshot_secrets(snapshot)
         data["configuration_snapshot"] = snapshot
         return data
 

@@ -258,16 +258,35 @@ class CreateAgentDefinitionView(APIView):
             replay_session_id = validated.get("replay_session_id")
             observability_provider = None
 
+            # Resolve the client-provider string to its canonical observability
+            # key via the registry (elevenlabs -> eleven_labs,
+            # livekit_bridge -> livekit, ...). Unknown strings fall back to the
+            # raw value ("vapi"/"retell"/"others" are already canonical).
+            from simulate.providers import get_spec
+
+            _spec = get_spec(provider)
+            _obs_key = (_spec.observability_key if _spec else None) or provider
+
+            # 3rd-party observability is PULL-based: like Vapi, we fetch the
+            # call data from the provider's API on a schedule
+            # (tracer.services.observability_providers.ObservabilityService),
+            # so credentials are required. Pull is implemented for these
+            # canonical keys; the rest (livekit/pipecat/deepgram/agora) have
+            # nothing hosted to pull — their conversation-level observability
+            # comes from the simulation side (CallTranscript -> sim trace).
+            _pull_obs_keys = [
+                ProviderChoices.VAPI,
+                ProviderChoices.RETELL,
+                ProviderChoices.ELEVEN_LABS,
+                ProviderChoices.BLAND,
+                ProviderChoices.TWILIO,
+                ProviderChoices.OTHERS,
+            ]
             if (
                 enable_observability
+                and _obs_key in _pull_obs_keys
                 and assistant_id != ""
                 and api_key != ""
-                and provider
-                in [
-                    ProviderChoices.VAPI,
-                    ProviderChoices.RETELL,
-                    ProviderChoices.OTHERS,
-                ]
             ):
                 observability_provider = create_observability_provider(
                     enabled=True,
@@ -275,7 +294,20 @@ class CreateAgentDefinitionView(APIView):
                     organization=organization,
                     workspace=workspace,
                     project_name=project_name,
-                    provider=provider,
+                    provider=_obs_key,
+                )
+            elif enable_observability and _obs_key not in _pull_obs_keys and _spec:
+                # No pull API exists: keep the agent-def -> ObservabilityProvider
+                # -> Project link so simulation-side traces land in the agent's
+                # project (no fetch creds needed; the scheduled fetcher skips
+                # these gracefully).
+                observability_provider = create_observability_provider(
+                    enabled=True,
+                    user_id=user_id,
+                    organization=organization,
+                    workspace=workspace,
+                    project_name=project_name,
+                    provider=_obs_key,
                 )
 
             # Create agent definition — livekit_* fields are NOT model

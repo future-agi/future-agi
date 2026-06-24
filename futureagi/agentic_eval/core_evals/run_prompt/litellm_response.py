@@ -1400,6 +1400,10 @@ class RunPrompt:
             },
             "cost": calculate_total_cost(chunk.model, dict(chunk.usage)),
             "response_time": end_time - start_time,
+            # Expose structured tool calls (additive) so callers like the simulation
+            # mock-tool loop can intercept them instead of parsing the appended
+            # tool_calls_str out of the content (TH-5642).
+            "tool_calls": tool_calls or [],
         }
 
         # Note: Thinking content is now streamed during the loop above, not appended here
@@ -1506,6 +1510,8 @@ class RunPrompt:
             },
             "cost": calculate_total_cost(response.model, dict(response.usage)),
             "response_time": completion_time,  # Assuming a static time or calculated elsewhere
+            # Structured tool calls (additive) for the simulation mock-tool loop.
+            "tool_calls": [],
         }
 
         if self.tools and response.choices[0].message.tool_calls:
@@ -1521,6 +1527,7 @@ class RunPrompt:
                 }
                 for tool_call in response.choices[0].message.tool_calls
             ]
+            metadata["tool_calls"] = tool_calls_list
 
             # Convert to JSON string
             tool_calls_str = json.dumps(tool_calls_list)
@@ -3110,6 +3117,10 @@ class RunPrompt:
             },
             "cost": calculate_total_cost(chunk.model, dict(chunk.usage)),
             "response_time": end_time - start_time,
+            # Expose structured tool calls (additive) so callers like the simulation
+            # mock-tool loop can intercept them instead of parsing the appended
+            # tool_calls_str out of the content (TH-5642).
+            "tool_calls": tool_calls or [],
         }
 
         # Note: Thinking content is now streamed during the loop above, not appended here
