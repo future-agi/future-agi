@@ -674,6 +674,7 @@ class ClickHouseFilterBuilder:
         filter_value: Any,
     ) -> str | None:
         """Dispatch to the appropriate condition builder based on column type."""
+        col_type = self._normalize_col_type_for_dispatch(col_id, col_type)
 
         # TODO: run migrations to normalize filter_op to canonical form , then remove this handling .
         if col_type != self.SPAN_ATTRIBUTE:
@@ -693,8 +694,63 @@ class ClickHouseFilterBuilder:
             return self._build_annotation_condition(
                 col_id, filter_type, filter_op, filter_value
             )
+        elif col_type == self.NORMAL:
+            return self._build_column_condition(
+                col_id, filter_type, filter_op, filter_value
+            )
         else:
             raise ValueError(f"Unsupported col_type: {col_type!r}")
+
+    def _normalize_col_type_for_dispatch(self, col_id: str, col_type: str) -> str:
+        """Normalize routing before the type-specific condition switch.
+
+        ``NORMAL`` is the default col_type the frontend sends, so columns that
+        are really top-level CH metrics / end-user fields must be promoted to
+        their real handler here (else they fall through to the bare-column path
+        or, for an unrecognised type, raise)."""
+        # Legacy ``TRACE_END_USER`` is migrated: user resolution now goes through
+        # SYSTEM_METRIC -> end_users (the legacy tracer_enduser table is gone
+        # CDC-off). Map any stale saved-filter tag onto the v2 path.
+        if col_type == self.TRACE_END_USER:
+            return self.SYSTEM_METRIC
+
+        if col_id in self._ENDUSER_STRING_COLUMNS:
+            return self.SYSTEM_METRIC
+
+        # Attribute discovery can surface denormalised columns like
+        # gen_ai.usage.total_tokens as SPAN_ATTRIBUTE. These must still route
+        # through SYSTEM_METRIC so trace-mode filters match displayed root
+        # metrics and use the top-level CH columns.
+        if col_id in self.SYSTEM_METRIC_MAP and col_type != self.SYSTEM_METRIC:
+            return self.SYSTEM_METRIC
+
+        # Voice list metrics are derived from span attributes/expressions, not
+        # top-level ClickHouse columns. Treat them as system metrics even when
+        # API callers omit col_type, matching the rest of the public filters.
+        if (
+            col_id in self.VOICE_SYSTEM_METRIC_EXPRS
+            or col_id in self.VOICE_SYSTEM_METRIC_STR_MAP
+            or col_id in self.VOICE_SYSTEM_METRIC_STR_EXPRS
+        ) and col_type != self.SYSTEM_METRIC:
+            return self.SYSTEM_METRIC
+
+        # Stale filter state may tag an eval template UUID as SYSTEM_METRIC.
+        # Keep this backend defensive because saved views can outlive FE fixes.
+        if col_type == self.SYSTEM_METRIC and col_id not in self.SYSTEM_METRIC_MAP:
+            try:
+                import uuid as _uuid
+
+                _uuid.UUID(str(col_id))
+                from model_hub.models.evals_metric import EvalTemplate
+
+                if EvalTemplate.no_workspace_objects.filter(
+                    id=col_id, deleted=False
+                ).exists():
+                    return self.EVAL_METRIC
+            except (ValueError, AttributeError, Exception):
+                pass
+
+        return col_type
 
     _ENDUSER_STRING_COLUMNS = {
         "user_id": "user_id",
