@@ -284,15 +284,8 @@ def _export_provider_call_to_collector(span, provider: str, provider_log_id: str
         organization_id = str(getattr(project, "organization_id", "") or "")
         if not organization_id:
             return
-        # Gate the whole export on dual_write_enabled(): CDC-off (the default,
-        # CH25_DROP_LEGACY_CDC_CHAIN) this collector emit is how the PG
-        # conversation span reaches CH; CDC-on, PeerDB already replicates that
-        # PG row, so emitting here too would write a SECOND conversation root for
-        # the same call. Matches the langfuse emit's gating.
-        from tracer.services.clickhouse.v2.trace_writer import dual_write_enabled
-
-        if not dual_write_enabled():
-            return
+        # CDC-off, this collector emit is how the PG conversation span reaches CH
+        # (the collector is the sole CH `spans` writer).
         # OTLP can't carry the nested provider raw_log; drop it so the read
         # path's empty-raw_log branch derives status/duration/recording from the
         # call.* scalar attrs the provider processors already set.
@@ -350,8 +343,8 @@ def _export_provider_call_to_collector(span, provider: str, provider_log_id: str
         # app-side trace mirror. The app's own SDK ingestion paths already mirror
         # (create_otel_span / trace_ingestion); collector-routed provider pulls
         # must too, else evals (and any trace_dict-keyed read) never resolve to a
-        # project for provider calls. Post-commit + best-effort, self-gated on
-        # dual_write_enabled() (no-op when CDC is on / PG trace absent).
+        # project for provider calls. Post-commit + best-effort (no-op when the
+        # PG trace is absent).
         from django.db import transaction
 
         from tracer.services.clickhouse.v2.trace_writer import (

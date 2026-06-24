@@ -36,8 +36,8 @@ Design (mirrors ``trace_writer`` 1:1):
     curated fields already on the span (one row per identity in the batch) so no PG
     read is needed — there is no PG entity row to read post-flip, and the
     deterministic id makes the CH row self-keying.
-  • Flag-gated. Shares ``dual_write_enabled()`` with ``trace_writer`` — same
-    migration gate (the CDC chain being dropped is what turns both on).
+  • Always-on. Like ``trace_writer``, the app is the sole CH writer for these
+    curated rows (the PeerDB CDC chain they replaced is gone).
 
 NOTE — ``version`` is a CH ``DateTime64(6,'UTC')`` (schema 017/018), NOT the
 integer-ns ``_version`` of ``traces``. So unlike ``trace_writer`` we pass a
@@ -60,10 +60,6 @@ from typing import Any
 import structlog
 
 from tracer.services.clickhouse.v2 import get_v2_config
-
-# Reuse trace_writer's gate verbatim — same migration, same switch. Keeping a
-# single definition means the curated dual-write turns on/off with the traces one.
-from tracer.services.clickhouse.v2.trace_writer import dual_write_enabled
 
 log = structlog.get_logger("ch25.curated_writer")
 
@@ -307,9 +303,6 @@ def mirror_curated_dimensions_to_clickhouse(
     included) so a CH outage or a malformed row can NEVER break or slow PG
     ingestion. Call inside ``transaction.on_commit`` from the ingest creators.
     """
-    if not dual_write_enabled():
-        return
-
     eu_list = [eu for eu in (end_users or []) if eu is not None]
     s_list = [s for s in (sessions or []) if s is not None]
     if not eu_list and not s_list:

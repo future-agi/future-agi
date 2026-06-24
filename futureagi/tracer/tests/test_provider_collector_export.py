@@ -55,7 +55,6 @@ def test_export_builds_conversation_span_and_drops_raw_log(monkeypatch):
     import tracer.services.collector_ingest as ci
 
     monkeypatch.setattr(ci, "emit_spans_to_collector", _fake_emit)
-    monkeypatch.setenv("CH25_TRACE_DUAL_WRITE", "true")  # dual_write_enabled() -> True
 
     project = SimpleNamespace(
         id=SimpleNamespace(hex="0123456789abcdef0123456789abcdef"),
@@ -115,7 +114,6 @@ def test_export_stashes_normalized_transcript(monkeypatch):
     from tracer.services.observability_providers import ObservabilityService
 
     monkeypatch.setattr(ci, "emit_spans_to_collector", _fake_emit)
-    monkeypatch.setenv("CH25_TRACE_DUAL_WRITE", "true")  # dual_write_enabled() -> True
     # The detail drawer builds the transcript from raw_log (dropped on export),
     # so the export must stash the normalized transcript for the read path.
     monkeypatch.setattr(
@@ -164,39 +162,3 @@ def test_export_no_org_is_noop(monkeypatch):
     span = SimpleNamespace(project=project)
     op._export_provider_call_to_collector(span, "vapi", "call_1")
     assert called["n"] == 0  # no org -> skipped, never raises
-
-
-@pytest.mark.unit
-def test_export_gated_off_when_cdc_on(monkeypatch):
-    """Regression (TH-5642): with CDC ON (dual_write disabled) the PG conversation
-    span is already replicated to CH by PeerDB, so this collector emit must be a
-    no-op — otherwise a SECOND conversation root is written for the same call.
-    """
-    called = {"n": 0}
-    import tracer.services.collector_ingest as ci
-
-    monkeypatch.setattr(
-        ci, "emit_spans_to_collector", lambda *a, **k: called.__setitem__("n", 1)
-    )
-    monkeypatch.setenv(
-        "CH25_TRACE_DUAL_WRITE", "false"
-    )  # dual_write_enabled() -> False
-    project = SimpleNamespace(
-        id=SimpleNamespace(hex="0" * 32),
-        name="pull-vapi",
-        trace_type="observe",
-        organization_id="org-1",
-        workspace_id=None,
-    )
-    span = SimpleNamespace(
-        project=project,
-        trace=SimpleNamespace(id=SimpleNamespace(hex="f" * 32)),
-        name="Vapi Call Log",
-        input=None,
-        output=None,
-        start_time=None,
-        end_time=None,
-        span_attributes={"raw_log": {"id": "c1"}},
-    )
-    op._export_provider_call_to_collector(span, "vapi", "c1")
-    assert called["n"] == 0  # CDC on -> collector emit skipped (no duplicate root)

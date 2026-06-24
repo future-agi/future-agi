@@ -92,15 +92,10 @@ def build_langfuse_otlp_spans(trace, external_id: str, root_span_id: str) -> lis
 def emit_langfuse_spans_to_collector(trace, external_id: str, root_span_id: str) -> int:
     """Post-commit, best-effort: ship the trace's Langfuse spans to the collector.
 
-    Self-gated on ``dual_write_enabled()`` so PeerDB-on deployments (where PG
-    spans still reach CH via CDC) do NOT double-write; CDC-off it is the only path
-    that lands these spans in CH ``spans``. Never raises into the caller.
+    The collector is the sole CH ``spans`` writer, so this is the only path that
+    lands these Langfuse spans in CH. Never raises into the caller.
     """
     try:
-        from tracer.services.clickhouse.v2.trace_writer import dual_write_enabled
-
-        if not dual_write_enabled():
-            return 0
         from tracer.models.project import Project
         from tracer.services.collector_ingest import emit_spans_to_collector
 

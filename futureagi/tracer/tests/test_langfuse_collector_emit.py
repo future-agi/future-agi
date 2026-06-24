@@ -66,7 +66,6 @@ def test_langfuse_spans_emitted_to_collector(
     from tracer.models.trace import Trace
     from tracer.utils.langfuse_upsert import upsert_langfuse_trace
 
-    monkeypatch.setenv("CH25_TRACE_DUAL_WRITE", "true")  # dual_write_enabled() -> True
     # Don't hit real CH for the trace mirror; only the collector emit matters here.
     import tracer.services.clickhouse.v2.trace_writer as tw
 
@@ -141,7 +140,6 @@ def test_langfuse_span_ids_deterministic(
     from integrations.transformers.langfuse_transformer import LangfuseTransformer
     from tracer.utils.langfuse_upsert import upsert_langfuse_trace
 
-    monkeypatch.setenv("CH25_TRACE_DUAL_WRITE", "true")
     monkeypatch.setattr(tw, "mirror_traces_to_clickhouse", lambda *a, **k: None)
     runs = []
     monkeypatch.setattr(

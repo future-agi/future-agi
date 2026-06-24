@@ -225,7 +225,13 @@ func collectTrace(ids *curatedwriter.Batch, row map[string]any, rawProjectID str
 	if parent, _ := row["parent_span_id"].(string); parent != "" {
 		return // not the root — the root span of this trace writes the row
 	}
-	if _, ok := canonicalUUID(rawProjectID); !ok {
+	// Key the trace on the CANONICAL project (lowercase-dashed) — the same form
+	// end_users and the app's trace mirror use — so a valid-but-noncanonical
+	// (uppercase/braced) producer id can't make this row's project_id drift from
+	// the app's for a co-owned trace. The gate also rejects an orphan span whose
+	// project coalesceUUID would have randomized.
+	pid, ok := canonicalUUID(rawProjectID)
+	if !ok {
 		return // orphan span (no real project) — nothing to resolve to
 	}
 	traceID, _ := row["trace_id"].(string)
@@ -236,32 +242,36 @@ func collectTrace(ids *curatedwriter.Batch, row map[string]any, rawProjectID str
 	if traceID == "" || traceID == zeroUUIDString {
 		return
 	}
-	projectID, _ := row["project_id"].(string) // == span's coalesceUUID(projectID)
+	// A span with no/zero StartTimestamp yields _version 0 and a 1970 created_at.
+	// `traces` is PARTITION BY toYYYYMM(created_at) and RMT dedup is partition-
+	// local, so a 1970 row never merges with the app's real-month row for the
+	// same trace (trace_dict, sourced without FINAL, would then serve both); a
+	// version-0 row also loses every merge. Skip the poisoned trace.
+	version, ok := row["_version"].(uint64)
+	if !ok || version == 0 {
+		return
+	}
 	name, _ := row["name"].(string)
 	input, _ := row["input"].(string)
 	output, _ := row["output"].(string)
 	createdAt, _ := row["start_time"].(string)
 	t := curatedwriter.Trace{
 		ID:        traceID,
-		ProjectID: projectID,
+		ProjectID: pid,
 		Name:      name,
 		Input:     input,
 		Output:    output,
 		CreatedAt: createdAt,
+		// Cap at ingest wall-clock: a producer clock skewed into the future must
+		// not let this collector row outrank the app mirror's time.time_ns()
+		// version for a trace the app also owns (provider/langfuse). No-op for
+		// normal (past) start times. NOTE: does NOT prevent a late span from
+		// un-deleting a soft-deleted trace — a fundamental dual-writer+RMT
+		// property shared with the curated writers; see the CDC-off runbook.
+		Version: min(version, uint64(time.Now().UTC().UnixNano())),
 	}
 	if sid, ok := row["trace_session_id"].(string); ok {
 		t.SessionID = sid // nil (no session) stays "" → NULL
-	}
-	if v, ok := row["_version"].(uint64); ok {
-		// Root-span start nanos, but capped at ingest wall-clock: a producer
-		// clock skewed into the future must not let this collector row outrank
-		// the app mirror's time.time_ns() version for a trace the app also owns
-		// (provider/langfuse). No-op for normal (past) start times. NOTE: this
-		// does NOT prevent a late span from un-deleting a soft-deleted trace
-		// (is_deleted resets to 0 with a higher version) — a fundamental
-		// dual-writer+RMT property shared with the curated end_users/sessions
-		// writers; see the CDC-off runbook.
-		t.Version = min(v, uint64(time.Now().UTC().UnixNano()))
 	}
 	ids.AddTrace(t)
 }

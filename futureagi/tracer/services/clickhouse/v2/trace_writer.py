@@ -19,13 +19,12 @@ Design:
   • Idempotent + amplification-aware. ReplacingMergeTree dedups by ``id``
     (latest ``_version`` wins, ``_version = updated_at`` in ns). Callers gate
     on created/changed so a 100-span trace doesn't fire 100 identical upserts.
-  • Flag-gated. Enabled whenever the CDC chain is dropped (its replacement) or
-    when CH25_TRACE_DUAL_WRITE is explicitly set.
+  • Always-on. The app is the sole CH writer for these rows (the PeerDB CDC
+    chain it replaced is gone), so every committed PG write mirrors to CH.
 """
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 from datetime import timezone
@@ -55,20 +54,6 @@ _client = None
 _client_lock = threading.Lock()
 
 
-def _truthy(v: str | None) -> bool:
-    return str(v).strip().lower() in ("1", "true", "yes", "on") if v is not None else False
-
-
-def dual_write_enabled() -> bool:
-    """Mirror traces to CH when the CDC chain has been dropped (this path
-    replaces it) or when explicitly switched on. An explicit ``false`` wins so
-    the behaviour can be disabled even with the CDC flag set."""
-    explicit = os.getenv("CH25_TRACE_DUAL_WRITE")
-    if explicit is not None:
-        return _truthy(explicit)
-    return _truthy(os.getenv("CH25_DROP_LEGACY_CDC_CHAIN"))
-
-
 def _get_client():
     """Lazily build a cached clickhouse-connect client. Reset on error so a
     transient CH outage doesn't wedge the cached handle permanently."""
@@ -79,10 +64,15 @@ def _get_client():
         if _client is None:
             import clickhouse_connect
             cfg = get_v2_config()
+            # Short connect_timeout so the always-on mirrors fail fast when CH is
+            # unreachable (a blackholed/firewalled host would otherwise hang the
+            # connect handshake on every write). The mirror is best-effort; a
+            # missed CH write is reconciled by the periodic backfill.
             _client = clickhouse_connect.get_client(
                 host=cfg["host"], port=cfg["http_port"],
                 username=cfg["user"], password=cfg["password"] or "",
                 database=cfg["database"], send_receive_timeout=15,
+                connect_timeout=2,
             )
     return _client
 
@@ -145,8 +135,6 @@ def mirror_traces_to_clickhouse(trace_ids: Iterable[Any]) -> None:
     committed (covers create + name promotion + status update in one place).
     Call inside ``transaction.on_commit`` from the PG write sites.
     """
-    if not dual_write_enabled():
-        return
     ids = [str(i) for i in trace_ids if i]
     if not ids:
         return
