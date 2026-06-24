@@ -966,7 +966,21 @@ def _run_evaluation(
         value = runner.format_output(result_data=response, eval_template=eval_model)
 
         if api_call_log_row is not None:
-            config_dict = json.loads(api_call_log_row.config)
+            config_dict = api_call_log_row.config
+
+            if isinstance(config_dict, str):
+
+                try:
+
+                    config_dict = json.loads(config_dict)
+
+                except Exception:
+
+                    config_dict = {}
+
+            if not isinstance(config_dict, dict):
+
+                config_dict = {}
             output_payload = {"output": value, "reason": response["reason"]}
             if response.get("warnings"):
                 output_payload["warnings"] = response["warnings"]
@@ -1066,7 +1080,21 @@ def _run_evaluation(
         try:
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                current_config = json.loads(api_call_log_row.config)
+                current_config = api_call_log_row.config
+
+                if isinstance(current_config, str):
+
+                    try:
+
+                        current_config = json.loads(current_config)
+
+                    except Exception:
+
+                        current_config = {}
+
+                if not isinstance(current_config, dict):
+
+                    current_config = {}
                 current_config.update({"output": {"output": None, "reason": str(e)}})
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()
@@ -1648,7 +1676,21 @@ def _execute_evaluation(
         # rides on the single save below — avoids losing the warning if a
         # follow-up save were to fail (see _build_apicall_output).
         if api_call_log_row is not None:
-            config_dict = json.loads(api_call_log_row.config)
+            config_dict = api_call_log_row.config
+
+            if isinstance(config_dict, str):
+
+                try:
+
+                    config_dict = json.loads(config_dict)
+
+                except Exception:
+
+                    config_dict = {}
+
+            if not isinstance(config_dict, dict):
+
+                config_dict = {}
             config_dict.update(
                 {
                     "input": result.data,
@@ -1718,7 +1760,21 @@ def _execute_evaluation(
         try:
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                current_config = json.loads(api_call_log_row.config)
+                current_config = api_call_log_row.config
+
+                if isinstance(current_config, str):
+
+                    try:
+
+                        current_config = json.loads(current_config)
+
+                    except Exception:
+
+                        current_config = {}
+
+                if not isinstance(current_config, dict):
+
+                    current_config = {}
                 current_config.update({"output": {"output": None, "reason": str(e)}})
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()
@@ -2976,7 +3032,21 @@ def _execute_evaluation_for_trace(
         )
 
         if api_call_log_row is not None:
-            config_dict = json.loads(api_call_log_row.config)
+            config_dict = api_call_log_row.config
+
+            if isinstance(config_dict, str):
+
+                try:
+
+                    config_dict = json.loads(config_dict)
+
+                except Exception:
+
+                    config_dict = {}
+
+            if not isinstance(config_dict, dict):
+
+                config_dict = {}
             config_dict.update(
                 {
                     "input": result.data,
@@ -3043,7 +3113,21 @@ def _execute_evaluation_for_trace(
         try:
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                current_config = json.loads(api_call_log_row.config)
+                current_config = api_call_log_row.config
+
+                if isinstance(current_config, str):
+
+                    try:
+
+                        current_config = json.loads(current_config)
+
+                    except Exception:
+
+                        current_config = {}
+
+                if not isinstance(current_config, dict):
+
+                    current_config = {}
                 current_config.update({"output": {"output": None, "reason": str(e)}})
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()
@@ -3219,7 +3303,21 @@ def _execute_evaluation_for_session(
         )
 
         if api_call_log_row is not None:
-            config_dict = json.loads(api_call_log_row.config)
+            config_dict = api_call_log_row.config
+
+            if isinstance(config_dict, str):
+
+                try:
+
+                    config_dict = json.loads(config_dict)
+
+                except Exception:
+
+                    config_dict = {}
+
+            if not isinstance(config_dict, dict):
+
+                config_dict = {}
             config_dict.update(
                 {
                     "input": result.data,
@@ -3291,7 +3389,21 @@ def _execute_evaluation_for_session(
         try:
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                current_config = json.loads(api_call_log_row.config)
+                current_config = api_call_log_row.config
+
+                if isinstance(current_config, str):
+
+                    try:
+
+                        current_config = json.loads(current_config)
+
+                    except Exception:
+
+                        current_config = {}
+
+                if not isinstance(current_config, dict):
+
+                    current_config = {}
                 current_config.update({"output": {"output": None, "reason": str(e)}})
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()

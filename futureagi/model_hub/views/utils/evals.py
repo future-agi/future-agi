@@ -401,7 +401,21 @@ def run_eval_func(
 
         if api_call_log_row is None:
             return response
-        config_dict = json.loads(api_call_log_row.config)
+        config_dict = api_call_log_row.config
+
+        if isinstance(config_dict, str):
+
+            try:
+
+                config_dict = json.loads(config_dict)
+
+            except Exception:
+
+                config_dict = {}
+
+        if not isinstance(config_dict, dict):
+
+            config_dict = {}
         output_payload = {"output": value, "reason": response["reason"]}
         # Mirror the dataset path: propagate partial-input warnings into
         # the API call log so the eval usage view (which reads APICallLog)
@@ -567,7 +581,21 @@ def run_eval_func(
         try:
             if api_call_log_row:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                current_config = json.loads(api_call_log_row.config)
+                current_config = api_call_log_row.config
+
+                if isinstance(current_config, str):
+
+                    try:
+
+                        current_config = json.loads(current_config)
+
+                    except Exception:
+
+                        current_config = {}
+
+                if not isinstance(current_config, dict):
+
+                    current_config = {}
                 current_config.update(
                     {
                         "output": {"output": None, "reason": str(e)},
@@ -677,7 +705,28 @@ def process_eval_for_single_row(
 
         value = runner.format_output(response)
 
-        config_dict = json.loads(api_call_log_row.config)
+        config_dict = api_call_log_row.config
+
+
+        if isinstance(config_dict, str):
+
+
+            try:
+
+
+                config_dict = json.loads(config_dict)
+
+
+            except Exception:
+
+
+                config_dict = {}
+
+
+        if not isinstance(config_dict, dict):
+
+
+            config_dict = {}
 
         if (
             eval_template
@@ -729,7 +778,21 @@ def process_eval_for_single_row(
     except Exception as e:
         try:
             api_call_log_row.status = APICallStatusChoices.ERROR.value
-            current_config = json.loads(api_call_log_row.config)
+            current_config = api_call_log_row.config
+
+            if isinstance(current_config, str):
+
+                try:
+
+                    current_config = json.loads(current_config)
+
+                except Exception:
+
+                    current_config = {}
+
+            if not isinstance(current_config, dict):
+
+                current_config = {}
             current_config.update({"output": {"output": None, "reason": str(e)}})
             api_call_log_row.config = json.dumps(current_config, default=str)
             api_call_log_row.save()

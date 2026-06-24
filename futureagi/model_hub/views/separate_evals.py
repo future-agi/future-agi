@@ -576,7 +576,14 @@ class GetAPICallLogView(APIView):
                 )
             row_data = {}
 
-            config = json.loads(log_row.config)
+            config = log_row.config
+            if isinstance(config, str):
+                try:
+                    config = json.loads(config)
+                except Exception:
+                    config = {}
+            if not isinstance(config, dict):
+                config = {}
             error_localizer = config.get("error_localizer", {})
             if not isinstance(error_localizer, dict):
                 error_localizer = {}
@@ -6616,7 +6623,14 @@ class EvalPlayGroundFeedbackAPIView(APIView):
                     organization=getattr(request, "organization", None)
                     or request.user.organization,
                 )
-                config = json.loads(log.config)
+                config = log.config
+                if isinstance(config, str):
+                    try:
+                        config = json.loads(config)
+                    except Exception:
+                        config = {}
+                if not isinstance(config, dict):
+                    config = {}
                 required_keys = config.get("required_keys", [])
                 input_data_types = config.get("input_data_types", {})
                 if not required_keys or len(required_keys) == 0:
@@ -7209,7 +7223,14 @@ def populate_log_row_data(eval_template, logs, key_map):
     try:
         row_data = []
         for log in logs:
-            config = json.loads(log.config)
+            config = log.config
+            if isinstance(config, str):
+                try:
+                    config = json.loads(config)
+                except Exception:
+                    config = {}
+            if not isinstance(config, dict):
+                config = {}
             row_id = str(uuid.uuid4())
             column_config = {
                 "row_id": row_id,
