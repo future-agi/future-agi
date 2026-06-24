@@ -611,7 +611,13 @@ class EvalTemplateVersionManager(models.Manager):
 
     def get_default(self, eval_template):
         """Get the default (active) version for a template.
-        Falls back to the latest version if no default is marked."""
+
+        Falls back to highest version_number when no default is marked.
+        version_number auto-increments (EvalTemplateVersion.save), so the
+        highest number is always the most-recently created version.
+        Using -version_number hits the existing integer index on
+        (eval_template, version_number) rather than ordering by timestamp.
+        """
         ver = self.filter(eval_template=eval_template, is_default=True, deleted=False).first()
         if not ver:
             ver = self.filter(

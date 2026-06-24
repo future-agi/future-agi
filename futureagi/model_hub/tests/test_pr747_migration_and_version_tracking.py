@@ -522,3 +522,162 @@ class TestEvalUsageResponseContract:
             f"EvalUsageStatsResponse serializer rejected valid payload: "
             f"{serializer.errors}"
         )
+
+
+# ── Direct unit tests for _resolve_uem_version ───────────────────────────────
+
+@pytest.mark.django_db
+class TestResolveUemVersion:
+    """Unit tests for _resolve_uem_version covering all branches.
+
+    Each test constructs the minimum required objects itself so the coverage
+    is explicit and does not depend on shared fixtures.
+    """
+
+    def _setup(self, db, organization, workspace, user):
+        """Create a fresh template + UEM for each test."""
+        template = EvalTemplate.no_workspace_objects.create(
+            name=f"ver-test-{id(self)}",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            criteria="test criteria",
+            model="turing_large",
+            config={"output": "score", "eval_type_id": "DeterministicEvaluator"},
+        )
+        from model_hub.models.develop_dataset import Dataset
+        from model_hub.models.choices import DatasetSourceChoices
+        dataset = Dataset.objects.create(
+            name=f"ver-test-ds-{id(self)}",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        from model_hub.models.evals_metric import UserEvalMetric
+        uem = UserEvalMetric.objects.create(
+            name=f"uem-{id(self)}",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=template,
+            status="NotStarted",
+        )
+        return template, uem
+
+    def _make_version(self, template, number, is_default, organization, workspace, user):
+        return EvalTemplateVersion.objects.create_version(
+            eval_template=template,
+            config_snapshot={"criteria": f"v{number}"},
+            criteria=f"v{number} criteria",
+            model="turing_large",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        ) if hasattr(EvalTemplateVersion.objects, 'create_version') else \
+            EvalTemplateVersion.objects.create(
+                eval_template=template,
+                version_number=number,
+                is_default=is_default,
+                config_snapshot={"criteria": f"v{number}"},
+            )
+
+    def test_pin_returns_pin_not_default(self, db, organization, workspace, user):
+        """Pinned non-deleted version is returned instead of the default."""
+        from tracer.utils.eval import _resolve_uem_version
+
+        template, uem = self._setup(db, organization, workspace, user)
+        v1 = EvalTemplateVersion.objects.create(
+            eval_template=template, version_number=1, is_default=False,
+            config_snapshot={"criteria": "v1"},
+        )
+        EvalTemplateVersion.objects.create(
+            eval_template=template, version_number=2, is_default=True,
+            config_snapshot={"criteria": "v2"},
+        )
+        uem.pinned_version = v1
+        uem.save(update_fields=["pinned_version"])
+        uem.refresh_from_db()
+
+        result = _resolve_uem_version(uem)
+        assert result is not None
+        assert result.id == v1.id, "Pinned v1 should win over default v2"
+
+    def test_deleted_pin_falls_back_to_default(self, db, organization, workspace, user):
+        """Soft-deleted pinned version falls back to the active default."""
+        from tracer.utils.eval import _resolve_uem_version
+
+        template, uem = self._setup(db, organization, workspace, user)
+        v1 = EvalTemplateVersion.objects.create(
+            eval_template=template, version_number=1, is_default=False,
+            config_snapshot={"criteria": "v1"}, deleted=True,
+        )
+        v2 = EvalTemplateVersion.objects.create(
+            eval_template=template, version_number=2, is_default=True,
+            config_snapshot={"criteria": "v2"},
+        )
+        uem.pinned_version = v1
+        uem.save(update_fields=["pinned_version"])
+        uem.refresh_from_db()
+
+        result = _resolve_uem_version(uem)
+        assert result is not None
+        assert result.id == v2.id, "Deleted pin should fall back to default v2"
+
+    def test_no_pin_returns_default(self, db, organization, workspace, user):
+        """No pin set → returns the default version."""
+        from tracer.utils.eval import _resolve_uem_version
+
+        template, uem = self._setup(db, organization, workspace, user)
+        EvalTemplateVersion.objects.create(
+            eval_template=template, version_number=1, is_default=False,
+            config_snapshot={"criteria": "v1"},
+        )
+        v2 = EvalTemplateVersion.objects.create(
+            eval_template=template, version_number=2, is_default=True,
+            config_snapshot={"criteria": "v2"},
+        )
+
+        result = _resolve_uem_version(uem)
+        assert result is not None
+        assert result.id == v2.id, "No pin → default v2"
+
+    def test_no_default_marked_returns_highest_version(self, db, organization, workspace, user):
+        """When no version is marked default, highest version_number wins."""
+        from tracer.utils.eval import _resolve_uem_version
+
+        template, uem = self._setup(db, organization, workspace, user)
+        EvalTemplateVersion.objects.create(
+            eval_template=template, version_number=1, is_default=False,
+            config_snapshot={"criteria": "v1"},
+        )
+        v3 = EvalTemplateVersion.objects.create(
+            eval_template=template, version_number=3, is_default=False,
+            config_snapshot={"criteria": "v3"},
+        )
+
+        result = _resolve_uem_version(uem)
+        assert result is not None
+        assert result.id == v3.id, "No default → highest version_number (v3)"
+
+    def test_tracer_path_always_returns_default(self, db, organization, workspace, user):
+        """_resolve_eval_version (tracer) returns get_default — no FK to UEM.
+
+        There is no FK path from CustomEvalConfig to UserEvalMetric so the
+        pin cannot be resolved on the tracer path. version_id IS populated
+        (with the template default), it just cannot reflect the user's pin.
+        """
+        from tracer.utils.eval import _resolve_eval_version
+        from unittest.mock import MagicMock
+
+        template, _ = self._setup(db, organization, workspace, user)
+        v2 = EvalTemplateVersion.objects.create(
+            eval_template=template, version_number=2, is_default=True,
+            config_snapshot={"criteria": "v2"},
+        )
+
+        mock_config = MagicMock()
+        mock_config.eval_template = template
+
+        result = _resolve_eval_version(mock_config, template)
+        assert result is not None, "Tracer path must always populate version_id"
+        assert result.id == v2.id, "Tracer path returns template default"
