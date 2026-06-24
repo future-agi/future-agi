@@ -1668,6 +1668,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
         err?.response?.data?.message || "Failed to trigger embedding",
         { variant: "error" },
       );
+      throw err;
     }
   }, [activeDataset, triggerEmbed, enqueueSnackbar]);
 
