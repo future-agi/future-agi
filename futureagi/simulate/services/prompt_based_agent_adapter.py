@@ -33,6 +33,7 @@ class PromptBasedAgentAdapter:
         organization_id: UUID,
         workspace_id: Optional[UUID] = None,
         variable_values: Optional[dict[str, Any]] = None,
+        mock_tool_returns: Optional[dict[str, Any]] = None,
     ):
         """
         Initialize the adapter with a prompt version.
@@ -42,11 +43,19 @@ class PromptBasedAgentAdapter:
             organization_id: The organization ID for API key lookup
             workspace_id: Optional workspace ID for API key lookup
             variable_values: Optional dict of variable values to inject into the prompt
+            mock_tool_returns: Optional scenario-aligned mock tool returns (TH-5642);
+                when set, the agent's tool calls are answered with these mocks so the
+                tool-call paths are exercised deterministically.
         """
         self.prompt_version = prompt_version
         self.organization_id = organization_id
         self.workspace_id = workspace_id
         self.variable_values = variable_values or {}
+        # Mock tool returns may arrive explicitly, via variable_values, or (set in
+        # _load_config) from the prompt config snapshot.
+        self.mock_tool_returns = (
+            mock_tool_returns or self.variable_values.get("mock_tool_returns") or {}
+        )
         self._load_config()
 
     def _load_config(self) -> None:
@@ -203,6 +212,29 @@ class PromptBasedAgentAdapter:
 
         return messages
 
+    def _call_llm(self, messages: list[dict[str, Any]]):
+        """One LLM completion via RunPrompt; returns ``(content, value_info)``.
+
+        ``value_info["metadata"]["tool_calls"]`` carries structured tool calls when
+        the agent invokes a tool (TH-5642), letting the mock-tool loop intercept.
+        """
+        run_prompt = RunPrompt(
+            model=self.model,
+            messages=messages,
+            organization_id=str(self.organization_id),
+            output_format=None,
+            temperature=self.temperature,
+            frequency_penalty=self.frequency_penalty,
+            presence_penalty=self.presence_penalty,
+            max_tokens=self.max_tokens,
+            top_p=self.top_p,
+            response_format=None,
+            tool_choice=self.tool_choice,
+            tools=self.tools,
+            workspace_id=str(self.workspace_id) if self.workspace_id else None,
+        )
+        return run_prompt.litellm_response()
+
     @retry(stop_max_attempt_number=3, wait_fixed=2000)
     def generate_response(
         self,
@@ -229,27 +261,30 @@ class PromptBasedAgentAdapter:
                 prompt_version_id=str(self.prompt_version.id),
             )
 
-            run_prompt = RunPrompt(
-                model=self.model,
-                messages=messages,
-                organization_id=str(self.organization_id),
-                output_format=None,
-                temperature=self.temperature,
-                frequency_penalty=self.frequency_penalty,
-                presence_penalty=self.presence_penalty,
-                max_tokens=self.max_tokens,
-                top_p=self.top_p,
-                response_format=None,
-                tool_choice=self.tool_choice,
-                tools=self.tools,
-                workspace_id=str(self.workspace_id) if self.workspace_id else None,
-            )
-
             start_time = time.perf_counter()
-            response_text, value_info = run_prompt.litellm_response()
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
+            last_info: dict[str, Any] = {}
 
-            content = response_text or ""
+            def _llm(msgs):
+                text, info = self._call_llm(msgs)
+                last_info.clear()
+                last_info.update(info or {})
+                tool_calls = (info.get("metadata") or {}).get("tool_calls") or []
+                return text, tool_calls
+
+            if self.mock_tool_returns:
+                # Drive the agent's tool calls with scenario-aligned mocks so the
+                # tool-call paths are exercised deterministically (TH-5642).
+                from simulate.services.mock_tools import run_mock_tool_loop
+
+                content, _rounds = run_mock_tool_loop(
+                    _llm, messages, self.mock_tool_returns
+                )
+            else:
+                response_text, last_info = self._call_llm(messages)
+                content = response_text or ""
+
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+            value_info = last_info
             usage = value_info.get("metadata", {}).get("usage", {})
 
             result = {
@@ -382,6 +417,10 @@ def create_adapter_from_run_test(
         organization_id=organization_id,
         workspace_id=workspace_id,
         variable_values=variable_values,
+        # Scenario-aligned mock tool returns live in the run_test metadata (TH-5642).
+        mock_tool_returns=(getattr(run_test, "metadata", None) or {}).get(
+            "mock_tool_returns"
+        ),
     )
 
 
@@ -419,4 +458,8 @@ def create_adapter_from_scenario(
         organization_id=organization_id,
         workspace_id=workspace_id,
         variable_values=variable_values,
+        # Scenario-aligned mock tool returns live in the scenario metadata (TH-5642).
+        mock_tool_returns=(getattr(scenario, "metadata", None) or {}).get(
+            "mock_tool_returns"
+        ),
     )
