@@ -1287,24 +1287,16 @@ def process_single_error_localization(task_id):
                 cell.save(update_fields=["value_infos"])
 
                 metadata = task.metadata
-                if metadata.get("log_id", None):
+                if metadata.get("log_id", None) and APICallLog is not None:
                     try:
-                        if APICallLog is not None:
-                            log = APICallLog.objects.get(log_id=metadata.get("log_id"))
+                        log = APICallLog.objects.get(log_id=metadata.get("log_id"))
                         config = log.config
-
                         if isinstance(config, str):
-
                             try:
-
                                 config = json.loads(config)
-
                             except Exception:
-
                                 config = {}
-
                         if not isinstance(config, dict):
-
                             config = {}
                         config["error_localizer"] = {
                             "error_analysis": error_analysis,
@@ -1339,24 +1331,16 @@ def process_single_error_localization(task_id):
                 eval_logger.save(update_fields=["output_metadata"])
 
                 metadata = task.metadata
-                if metadata.get("log_id", None):
+                if metadata.get("log_id", None) and APICallLog is not None:
                     try:
-                        if APICallLog is not None:
-                            log = APICallLog.objects.get(log_id=metadata.get("log_id"))
+                        log = APICallLog.objects.get(log_id=metadata.get("log_id"))
                         config = log.config
-
                         if isinstance(config, str):
-
                             try:
-
                                 config = json.loads(config)
-
                             except Exception:
-
                                 config = {}
-
                         if not isinstance(config, dict):
-
                             config = {}
                         config["error_localizer"] = {
                             "error_analysis": error_analysis,
@@ -1377,23 +1361,17 @@ def process_single_error_localization(task_id):
 
         elif task.source == ErrorLocalizerSource.PLAYGROUND:
             try:
-                if APICallLog is not None:
-                    eval_logger = APICallLog.objects.get(log_id=task.source_id)
+                if APICallLog is None:
+                    return  # OSS: no APICallLog model, skip update
+                eval_logger = APICallLog.objects.get(log_id=task.source_id)
                 config = eval_logger.config
-
                 if isinstance(config, str):
-
                     try:
-
                         config = json.loads(config)
-
                     except Exception:
-
                         config = {}
-
                 if not isinstance(config, dict):
-
-                    config = {}  # or {}
+                    config = {}
                 config["error_localizer"] = {
                     "error_analysis": error_analysis,
                     "selected_input_key": selected_input_key,
