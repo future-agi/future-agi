@@ -1547,7 +1547,7 @@ function FilterRow({
       );
     }
 
-    if (filter.fieldType === "text") {
+    if (filter.fieldType === "text" || filter.fieldType === "string") {
       return (
         <TextField
           size="small"
