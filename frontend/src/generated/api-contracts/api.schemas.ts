@@ -3721,43 +3721,6 @@ export interface LangfuseIngestionResponseApi {
   errors: LangfuseIngestionErrorApi[];
 }
 
-export interface OTLPHTTPTraceResponseApi { [key: string]: unknown }
-
-export type OTLPHTTPErrorResponseApiType = typeof OTLPHTTPErrorResponseApiType[keyof typeof OTLPHTTPErrorResponseApiType];
-
-
-export const OTLPHTTPErrorResponseApiType = {
-  validation_error: 'validation_error',
-  authentication_error: 'authentication_error',
-  payment_required: 'payment_required',
-  entitlement_error: 'entitlement_error',
-  permission_error: 'permission_error',
-  not_found: 'not_found',
-  conflict: 'conflict',
-  client_error: 'client_error',
-  rate_limit: 'rate_limit',
-  server_error: 'server_error',
-  service_unavailable: 'service_unavailable',
-  timeout: 'timeout',
-  api_error: 'api_error',
-} as const;
-
-export type OTLPHTTPErrorResponseApiDetails = {[key: string]: string[]};
-
-export interface OTLPHTTPErrorResponseApi {
-  status?: boolean;
-  type?: OTLPHTTPErrorResponseApiType;
-  code?: string;
-  detail?: string;
-  /** @minLength 1 */
-  result?: string;
-  /** @minLength 1 */
-  message?: string;
-  error?: string;
-  attr?: string;
-  details?: OTLPHTTPErrorResponseApiDetails;
-}
-
 export type LangfuseTracesResponseApiDataItem = { [key: string]: unknown };
 
 export interface LangfuseTracesMetaApi {
@@ -6625,6 +6588,11 @@ export interface AnnotationsLabelsApi {
   readonly archived?: boolean;
 }
 
+export interface AnnotationLabelCreateResponseApi {
+  status?: boolean;
+  result: AnnotationsLabelsApi;
+}
+
 export interface AnnotationLabelRestoreResponseApi {
   status?: boolean;
   result: AnnotationsLabelsApi;
@@ -8771,6 +8739,7 @@ export interface UserEvalUpdateRequestApi {
   save_as_template?: boolean;
   experiment_id?: string;
   composite_weight_overrides?: UserEvalUpdateRequestApiCompositeWeightOverrides;
+  pinned_version_id?: string;
 }
 
 export type DatasetBehaviorRequestApiColumnConfig = { [key: string]: unknown };
@@ -14257,6 +14226,32 @@ export const CallExecutionApiSimulationCallType = {
   text: 'text',
 } as const;
 
+export type CallExecutionErrorLocalizerTaskApiEvalResult = { [key: string]: unknown };
+
+export type CallExecutionErrorLocalizerTaskApiInputData = { [key: string]: unknown };
+
+export type CallExecutionErrorLocalizerTaskApiInputTypes = { [key: string]: unknown };
+
+export type CallExecutionErrorLocalizerTaskApiErrorAnalysis = { [key: string]: unknown };
+
+export interface CallExecutionErrorLocalizerTaskApi {
+  /** @minLength 1 */
+  task_id: string;
+  eval_config_id: string;
+  status: string;
+  eval_result: CallExecutionErrorLocalizerTaskApiEvalResult;
+  eval_explanation?: string;
+  input_data?: CallExecutionErrorLocalizerTaskApiInputData;
+  input_keys?: string[];
+  input_types?: CallExecutionErrorLocalizerTaskApiInputTypes;
+  rule_prompt?: string;
+  error_analysis?: CallExecutionErrorLocalizerTaskApiErrorAnalysis;
+  selected_input_key?: string;
+  error_message?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface CallExecutionApi {
   readonly id?: string;
   /**
@@ -14370,7 +14365,8 @@ export interface CallExecutionApi {
   recording_available?: boolean;
   /** Evaluation output */
   eval_outputs?: CallExecutionApiEvalOutputs;
-  readonly error_localizer_tasks?: string;
+  /** Get error localizer tasks for this call execution. */
+  readonly error_localizer_tasks?: readonly CallExecutionErrorLocalizerTaskApi[];
   /** Call summary from the service */
   call_summary?: string;
   agent_version?: string;
@@ -16059,6 +16055,43 @@ export const CallExecutionDetailApiStatus = {
 } as const;
 
 /**
+ * number | bool | string | list[string] | null
+ */
+export type CallExecutionEvalMetricApiValue = { [key: string]: unknown };
+
+export type CallExecutionEvalMetricApiErrorAnalysis = { [key: string]: unknown };
+
+export type CallExecutionEvalMetricApiInputData = { [key: string]: unknown };
+
+export type CallExecutionEvalMetricApiInputTypes = { [key: string]: unknown };
+
+export interface CallExecutionEvalMetricApi {
+  id?: string;
+  name?: string;
+  /** number | bool | string | list[string] | null */
+  value?: CallExecutionEvalMetricApiValue;
+  reason?: string;
+  type?: string;
+  template_type?: string;
+  visible?: boolean;
+  error?: boolean;
+  status?: string;
+  skipped?: boolean;
+  error_localizer?: boolean;
+  error_analysis?: CallExecutionEvalMetricApiErrorAnalysis;
+  error_localizer_status?: string;
+  error_localizer_message?: string;
+  selected_input_key?: string;
+  input_data?: CallExecutionEvalMetricApiInputData;
+  input_types?: CallExecutionEvalMetricApiInputTypes;
+}
+
+/**
+ * Get evaluation metrics in a format suitable for the UI
+ */
+export type CallExecutionDetailApiEvalMetrics = {[key: string]: CallExecutionEvalMetricApi};
+
+/**
  * Tool evaluation output - separate from standard evaluations
  */
 export type CallExecutionDetailApiToolOutputs = { [key: string]: unknown };
@@ -16117,7 +16150,8 @@ export interface CallExecutionDetailApi {
   /** @minLength 1 */
   readonly customer_name?: string;
   readonly eval_outputs?: string;
-  readonly eval_metrics?: string;
+  /** Get evaluation metrics in a format suitable for the UI */
+  readonly eval_metrics?: CallExecutionDetailApiEvalMetrics;
   readonly scenario_columns?: string;
   /**
      * Reason why the call ended
@@ -21021,15 +21055,6 @@ export interface OTLPHealthResponseApi {
   service: string;
 }
 
-export interface OTLPPartialSuccessApi {
-  rejected_spans?: number;
-  error_message?: string;
-}
-
-export interface OTLPTraceResponseApi {
-  partial_success?: OTLPPartialSuccessApi;
-}
-
 export type WebhookRequestApiCall = { [key: string]: unknown };
 
 export interface WebhookRequestApi {
@@ -23303,16 +23328,6 @@ export type AgentccWebhooksList200 = {
   previous?: string;
   results: AgentccWebhookApi[];
 };
-
-/**
- * Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.
- */
-export type ApiPublicOtelV1TracesCreateBodyOne = { [key: string]: unknown };
-
-/**
- * Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.
- */
-export type ApiPublicOtelV1TracesCreateBodyTwo = { [key: string]: unknown };
 
 export type ApiTracesSpanAttributeDetailListParams = {
 project_id: string;
@@ -25670,16 +25685,6 @@ export type TracerObservationSpanRootSpans200 = {
   previous?: string;
   results: ObservationSpanApi[];
 };
-
-/**
- * Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.
- */
-export type TracerOtlpV1TracesCreateBodyOne = { [key: string]: unknown };
-
-/**
- * Legacy OTLP JSON/protobuf trace payload. Prefer /tracer/v1/traces for new integrations.
- */
-export type TracerOtlpV1TracesCreateBodyTwo = { [key: string]: unknown };
 
 export type TracerProjectVersionListParams = {
 /**

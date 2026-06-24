@@ -975,7 +975,6 @@ CREATE TABLE IF NOT EXISTS span_metrics_hourly (
 ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/span_metrics_hourly', '{replica}')
 PARTITION BY toYYYYMM(hour)
 ORDER BY (project_id, hour, observation_type, model, status)
-TTL hour + INTERVAL 365 DAY
 SETTINGS index_granularity = 8192, allow_nullable_key = 1;
 """
 
@@ -1037,7 +1036,6 @@ CREATE TABLE IF NOT EXISTS eval_metrics_hourly (
 ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/eval_metrics_hourly', '{replica}')
 PARTITION BY toYYYYMM(hour)
 ORDER BY (project_id, custom_eval_config_id, hour)
-TTL hour + INTERVAL 365 DAY
 SETTINGS index_granularity = 8192, allow_nullable_key = 1;
 """
 
@@ -1912,6 +1910,14 @@ POST_DDL_ALTERS: list[str] = [
     "idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1",
     "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
     "idx_target_type target_type TYPE bloom_filter GRANULARITY 1",
+    # Strip the legacy 365d TTL from the v1 hourly rollup tables. The CREATE
+    # strings above no longer declare TTL, but existing prod clusters carry
+    # the original TTL on the live tables — these ALTERs remove it.
+    # In dev/test where the legacy CDC chain is gated off, the tables don't
+    # exist and these ALTERs error out; _ensure_analytics_schema() catches
+    # those as warnings (model_hub/apps.py:88-93).
+    "ALTER TABLE span_metrics_hourly REMOVE TTL",
+    "ALTER TABLE eval_metrics_hourly REMOVE TTL",
 ]
 
 

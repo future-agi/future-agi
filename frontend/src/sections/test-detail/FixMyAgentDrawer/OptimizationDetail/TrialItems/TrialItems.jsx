@@ -87,8 +87,8 @@ const TrialItems = ({ optimizationId, trialId }) => {
   );
 
   const columnDefs = useMemo(() => {
-    return getTrialItemsColumnConfig(trialItems?.columnConfig);
-  }, [trialItems?.columnConfig]);
+    return getTrialItemsColumnConfig(trialItems?.column_config);
+  }, [trialItems?.column_config]);
 
   return (
     <Box

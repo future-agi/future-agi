@@ -15,6 +15,7 @@ logger = structlog.get_logger(__name__)
 
 VAPI_PAGE_LIMIT = 100
 VAPI_MAX_PAGES = 10
+OBSERVABILITY_VERIFY_TIMEOUT_SECONDS = 30
 
 
 class ObservabilityService:
@@ -36,7 +37,11 @@ class ObservabilityService:
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
         headers = {"Authorization": f"Bearer {api_key}"}
-        response = requests.get(api_endpoint, headers=headers)
+        response = requests.get(
+            api_endpoint,
+            headers=headers,
+            timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+        )
         return response.status_code
 
     @staticmethod
@@ -59,7 +64,7 @@ class ObservabilityService:
         response = requests.get(
             endpoint,
             headers=headers,
-            timeout=30,
+            timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
         )
         return response.status_code
 

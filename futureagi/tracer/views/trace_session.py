@@ -791,31 +791,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         trace_ids = [r["trace_id"] for r in traces_data]
         eval_configs: list = []
         if trace_ids:
-            try:
-                config_id_result = analytics.execute_ch_query(
-                    """
-                    SELECT DISTINCT toString(custom_eval_config_id) AS config_id
-                    FROM tracer_eval_logger FINAL
-                    WHERE trace_id IN %(trace_ids)s
-                      AND _peerdb_is_deleted = 0
-                      AND (deleted = 0 OR deleted IS NULL)
-                    """,
-                    {"trace_ids": trace_ids},
-                    timeout_ms=3000,
-                )
-                pre_config_ids = [
-                    row["config_id"]
-                    for row in config_id_result.data
-                    if row.get("config_id")
-                ]
-            except Exception as e:
-                logger.warning(
-                    "ch_eval_config_id_lookup_failed",
-                    session_id=str(trace_session_id),
-                    error=str(e),
-                )
-                pre_config_ids = []
-
+            # A CH read failure must surface (via retrieve()'s outer error
+            # handler), not fail open to "this session has no eval scores".
+            pre_config_ids = analytics.get_eval_config_ids_for_traces_ch(trace_ids)
             if pre_config_ids:
                 eval_configs = list(
                     CustomEvalConfig.objects.filter(
@@ -827,31 +805,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         eval_map = {}
         if eval_configs and trace_ids:
             config_ids = [str(c.id) for c in eval_configs]
-            eval_query = """
-                SELECT
-                    toString(trace_id) AS trace_id,
-                    toString(custom_eval_config_id) AS config_id,
-                    round(avg(output_float) * 100, 2) AS float_score,
-                    round(avg(CASE WHEN output_bool = 1 THEN 100.0
-                                   WHEN output_bool = 0 THEN 0.0
-                                   ELSE NULL END), 2) AS bool_score,
-                    count(output_float) AS float_count,
-                    count(output_bool) AS bool_count
-                FROM tracer_eval_logger FINAL
-                WHERE trace_id IN %(trace_ids)s
-                  AND custom_eval_config_id IN %(config_ids)s
-                  AND _peerdb_is_deleted = 0
-                  AND (deleted = 0 OR deleted IS NULL)
-                  AND output_str != 'ERROR'
-                  AND (error = 0 OR error IS NULL)
-                GROUP BY trace_id, custom_eval_config_id
-            """
-            eval_result = analytics.execute_ch_query(
-                eval_query,
-                {"trace_ids": trace_ids, "config_ids": config_ids},
-                timeout_ms=5000,
-            )
-            for row in eval_result.data:
+            eval_rows = analytics.get_trace_eval_scores_ch(trace_ids, config_ids)
+            for row in eval_rows:
                 key = (row["trace_id"], row["config_id"])
                 if row.get("float_count", 0) > 0:
                     eval_map[key] = {"score": row["float_score"], "type": "float"}

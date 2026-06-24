@@ -162,7 +162,7 @@ const ModelOptions = ({
                     setValue?.(`${fieldNamePrefix}.toolChoice`, e.target.value);
                   }}
                   options={[
-                    ...(runPromptOptions?.toolChoices || []),
+                    ...(runPromptOptions?.tool_choices || []),
                     { value: "none", label: "None" },
                   ]}
                   sx={{ width: 200 }}
@@ -179,7 +179,7 @@ const ModelOptions = ({
                     },
                   }}
                   options={[
-                    ...(runPromptOptions?.toolChoices || []),
+                    ...(runPromptOptions?.tool_choices || []),
                     { value: "none", label: "None" },
                   ]}
                 />

@@ -236,7 +236,12 @@ const getDataSource = (
           search,
           { enabled: true, staleTime: 5 * 1000, pageSize: DATASET_ROWS_LIMIT },
         );
-        const data = await queryClient.fetchQuery({ ...queryOptions });
+        const cachedState = queryClient.getQueryState(queryOptions.queryKey);
+        const servedFromCache =
+          cachedState?.data !== undefined && !cachedState.isInvalidated;
+        const data = servedFromCache
+          ? cachedState.data
+          : await queryClient.fetchQuery({ ...queryOptions });
         const result = data?.data?.result;
         const processingData = getResultIsProcessingData(result);
 
@@ -283,16 +288,12 @@ const getDataSource = (
           if (getResultIsSyntheticDataset(result)) {
             updateProcessingSyntheticData(false);
           }
-          // Infinite-scroll: don't expose total upfront
           const fetchedRows = rows || [];
           const isLastPage = fetchedRows.length < DATASET_ROWS_LIMIT;
-          const lastRow = isLastPage
-            ? request.startRow + fetchedRows.length
-            : -1;
 
           params.success({
             rowData: fetchedRows,
-            rowCount: lastRow,
+            rowCount: totalRows,
           });
 
           // Prefetch the next two pages so scrolling stays ahead of the
@@ -574,7 +575,11 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
   // (CustomCellRender) and the datapoint drawer can synchronously look up
   // the eval_type for an eval column. This is the same query key the
   // EvaluationDrawer uses, so the request is deduped.
-  useEvalsList(dataset, { eval_type: "user" }, "dataset");
+  useEvalsList(
+    _viewOptions.showEvals ? dataset : undefined,
+    { eval_type: "user" },
+    "dataset",
+  );
   const isRefreshingColumns = useRef(false);
   const { setGridApi, setRefetchTable } = useDevelopDetailContext();
   const setEditCell = useEditCellStoreShallow((s) => s.setEditCell);

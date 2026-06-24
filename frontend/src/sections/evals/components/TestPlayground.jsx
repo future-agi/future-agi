@@ -636,7 +636,6 @@ const TestPlayground = React.forwardRef(
       codeLanguage = "python",
       isSystemEval = false,
       onReadyChange,
-      multiChoice = false,
     },
     ref,
   ) => {
@@ -961,7 +960,6 @@ const TestPlayground = React.forwardRef(
             template_id: tid,
             model,
             error_localizer: errorLocalizerEnabled,
-            multi_choice: multiChoice,
             config: {
               mapping,
               ...(evalType === "code" ? { params } : {}),
@@ -1017,7 +1015,6 @@ const TestPlayground = React.forwardRef(
       compositeAdhocConfig,
       executeCompositeAdhoc,
       handleCreditError,
-      multiChoice,
     ]);
 
     // Expose runTest and switchToVersion to parent via ref
@@ -1234,6 +1231,12 @@ const TestPlayground = React.forwardRef(
                             ? {
                                 error_localizer_status:
                                   errorLocalizerState.status,
+                              }
+                            : {}),
+                          ...(errorLocalizerState.message
+                            ? {
+                                error_localizer_message:
+                                  errorLocalizerState.message,
                               }
                             : {}),
                           ...(errorLocalizerState.details
@@ -1890,7 +1893,6 @@ TestPlayground.propTypes = {
   codeLanguage: PropTypes.string,
   onReadyChange: PropTypes.func,
   isSystemEval: PropTypes.bool,
-  multiChoice: PropTypes.bool,
 };
 
 export default TestPlayground;

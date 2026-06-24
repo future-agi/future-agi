@@ -26,11 +26,14 @@ import (
 func TestServerEnd2End(t *testing.T) {
 	var seen int32
 	var seenBody string
+	var seenMu sync.Mutex
 	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&seen, 1)
 		b := make([]byte, 1<<14)
 		n, _ := r.Body.Read(b)
+		seenMu.Lock()
 		seenBody = string(b[:n])
+		seenMu.Unlock()
 		w.WriteHeader(200)
 	}))
 	defer chSrv.Close()
@@ -46,7 +49,7 @@ func TestServerEnd2End(t *testing.T) {
 		DeadLetterFile: t.TempDir() + "/dl.jsonl",
 	})
 
-	s := New(Config{GRPCAddr: "127.0.0.1:0", BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w)
+	s := New(Config{GRPCAddr: "127.0.0.1:0", BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
 	// We need a known listen address to dial; replicate Run's bind step.
 	// Easier: use a non-zero port — pick one that's likely free.
 	addr := "127.0.0.1:24317"
@@ -90,8 +93,11 @@ func TestServerEnd2End(t *testing.T) {
 	if atomic.LoadInt32(&seen) != 1 {
 		t.Fatalf("CH not POST'd; seen=%d", seen)
 	}
-	if !strings.Contains(seenBody, "e2e-test-span") {
-		t.Errorf("CH body missing span name: %q", seenBody)
+	seenMu.Lock()
+	body := seenBody
+	seenMu.Unlock()
+	if !strings.Contains(body, "e2e-test-span") {
+		t.Errorf("CH body missing span name: %q", body)
 	}
 	if !strings.Contains(seenBody, "33333333-3333-4333-8333-333333333333") {
 		t.Errorf("CH body missing project_id: %q", seenBody)
@@ -106,11 +112,14 @@ func startServerWithHTTP(t *testing.T) (httpAddr, grpcAddr string, sawCH func() 
 	t.Helper()
 	var seen int32
 	var seenBody string
+	var seenMu sync.Mutex
 	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&seen, 1)
 		b := make([]byte, 1<<14)
 		n, _ := r.Body.Read(b)
+		seenMu.Lock()
 		seenBody = string(b[:n])
+		seenMu.Unlock()
 		w.WriteHeader(200)
 	}))
 
@@ -135,7 +144,7 @@ func startServerWithHTTP(t *testing.T) (httpAddr, grpcAddr string, sawCH func() 
 		HTTPAddr:     httpAddr,
 		BatchMaxRows: 1,
 		BatchMaxAge:  50 * time.Millisecond,
-	}, w)
+	}, w, nil, nil, nil)
 
 	ctx, cancelFn := context.WithCancel(context.Background())
 	go func() { _ = s.Run(ctx) }()
@@ -151,7 +160,12 @@ func startServerWithHTTP(t *testing.T) (httpAddr, grpcAddr string, sawCH func() 
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	return httpAddr, grpcAddr, func() (int32, string) { return atomic.LoadInt32(&seen), seenBody },
+	return httpAddr, grpcAddr, func() (int32, string) {
+			seenMu.Lock()
+			b := seenBody
+			seenMu.Unlock()
+			return atomic.LoadInt32(&seen), b
+		},
 		func() {
 			cancelFn()
 			chSrv.Close()
@@ -442,7 +456,7 @@ func TestDrainAggregatesCuratedAcrossPayloads(t *testing.T) {
 	}
 	// Big batch threshold + no flusher goroutine: we drive enqueue/drainNow
 	// directly so the test is deterministic (no timing).
-	s := New(Config{GRPCAddr: "", HTTPAddr: "", BatchMaxRows: 1_000_000, BatchMaxAge: time.Hour}, w)
+	s := New(Config{GRPCAddr: "", HTTPAddr: "", BatchMaxRows: 1_000_000, BatchMaxAge: time.Hour}, w, nil, nil, nil)
 
 	// Payload 1: userA / sessX.  Payload 2: userA again (dup) + userB / sessY.
 	r1, ids1, err := chexp.ConvertWithIdentities(makeObserveTraces(proj, org, "userA", "sessX", 0x01))
