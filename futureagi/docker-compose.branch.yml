@@ -6,8 +6,8 @@
 # host network → reachable from compose containers via host.docker.internal).
 x-livekit-env: &livekit-env
   LIVEKIT_URL: ws://host.docker.internal:7880
-  LIVEKIT_API_KEY: APIe0919c953e2fa7b0
-  LIVEKIT_API_SECRET: qjPNcqBF+c4C7/mQUbiySYGCkH4ijiVlWI2mIjsCUTU=
+  LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?set in your gitignored .env}
+  LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set in your gitignored .env}
   # Voice executions are orchestrated by TestExecutionWorkflow (creates
   # CallExecutions + launches ee CallExecutionWorkflow children). The legacy
   # monitor-based pickup is commented out in tfc/temporal/schedules/simulate.py,
@@ -19,15 +19,15 @@ x-livekit-env: &livekit-env
   # The lksip agent worker pushes transcripts/metrics/call-end to the backend's
   # internal livekit API (Authorization: Bearer <INTERNAL_API_SECRET>); must match
   # the worker's INTERNAL_API_SECRET.
-  INTERNAL_API_SECRET: devsecret
+  INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-devsecret}
   # Callback URL the backend embeds in LiveKit agent-dispatch metadata; the
   # lksip job process pushes transcripts/lifecycle THERE (it overrides the
   # worker's own BACKEND_URL env). Default is :8000 → pushes vanish; the lksip
   # containers run host-network, so the branch backend is host :8003.
   LIVEKIT_BACKEND_CALLBACK_URL: http://localhost:8003
   # Agora RTC connector (web_agora): RTC tokens + ConvAI agent llm/tts defaults.
-  AGORA_APP_ID: aa038cecadcc47e7b3e493cef42e7d49
-  AGORA_APP_CERT: 1466bc6a58bf48759a7b2f3641b1758a
+  AGORA_APP_ID: ${AGORA_APP_ID:?set in your gitignored .env}
+  AGORA_APP_CERT: ${AGORA_APP_CERT:?set in your gitignored .env}
   # Local v2 span store (TH-5642 browser E2E): the CH 25.3 test sidecar is
   # connected to futureagi-network and hosts the v2 spans schema in
   # `local_app`, backfilled from PG via tracer.services.clickhouse.v2.backfill.
@@ -43,8 +43,8 @@ x-livekit-env: &livekit-env
   CH25_TCP_PORT: "9000"
   CH25_DATABASE: local_app
   CH25_QUERY_TYPES_V2_ONLY: "trace_list,span_list,trace_detail,trace_of_session_list,session_list,voice_call_list,voice_call_detail,eval_metrics,time_series,span_graph"
-  CARTESIA_API_KEY: sk_car_K7SEemFZgJwBhWwW2N9W78
-  ELEVENLABS_API_KEY: sk_594e200cd46087427a7bc27e3852e78ba5e5c0f2eaf16ce5
+  CARTESIA_API_KEY: ${CARTESIA_API_KEY:?set in your gitignored .env}
+  ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:?set in your gitignored .env}
 
 services:
   backend:
