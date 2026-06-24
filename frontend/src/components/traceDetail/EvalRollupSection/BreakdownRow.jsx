@@ -19,7 +19,7 @@ const BreakdownRow = ({
 }) => {
   const [open, setOpen] = useState(false);
   const chip = spanResultChip(span, outputType, choicesMap);
-  const canExpand = spanHasDetail(span);
+  const canExpand = spanHasDetail(span, outputType);
 
   return (
     <>
@@ -58,7 +58,12 @@ const BreakdownRow = ({
           <ResultChip label={chip.label} tone={chip.tone} dense />
         </Box>
         <Box
-          sx={{ flex: 1, display: "flex", justifyContent: "flex-end", flexShrink: 0 }}
+          sx={{
+            flex: 1,
+            display: "flex",
+            justifyContent: "flex-end",
+            flexShrink: 0,
+          }}
         >
           {span.span_id && onSelectSpan && (
             <Box

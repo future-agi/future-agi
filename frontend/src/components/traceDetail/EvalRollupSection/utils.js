@@ -50,6 +50,9 @@ export const spanPassed = (span, outputType) => {
   return true;
 };
 
-// A span expands when it has an explanation or errored — the localizer then
-// fetches deeper detail via get_evaluation_details (span_id + config_id).
-export const spanHasDetail = (span) => !!(span.explanation || span.error);
+// A span expands when it has an explanation, errored, or failed — failures open
+// so the inline Fix-with-Falcon CTA is reachable (same gate as the CTA itself),
+// and the localizer fetches deeper detail via get_evaluation_details
+// (span_id + config_id). Passing and choice evals stay collapsed (nothing to fix).
+export const spanHasDetail = (span, outputType) =>
+  !!(span.explanation || span.error) || !spanPassed(span, outputType);

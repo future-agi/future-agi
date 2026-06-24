@@ -11,7 +11,7 @@ import { evalShape } from "./shapes";
 // explanation + error localizer.
 const EvalSingleRow = ({ ev, onFixWithFalcon }) => {
   const span = (ev.spans || [])[0] || {};
-  const canExpand = spanHasDetail(span);
+  const canExpand = spanHasDetail(span, ev.output_type);
   const [open, setOpen] = useState(false);
   const chip = spanResultChip(span, ev.output_type, ev.choices_map);
 
@@ -41,7 +41,10 @@ const EvalSingleRow = ({ ev, onFixWithFalcon }) => {
             />
           )}
         </Box>
-        <Typography noWrap sx={{ width: NAME_W, fontSize: 11.5, fontWeight: 500 }}>
+        <Typography
+          noWrap
+          sx={{ width: NAME_W, fontSize: 11.5, fontWeight: 500 }}
+        >
           {ev.eval_name}
         </Typography>
         <Box sx={{ flex: 1, display: "flex", gap: 0.5, flexWrap: "wrap" }}>

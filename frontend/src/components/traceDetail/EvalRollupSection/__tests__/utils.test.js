@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { spanResultChip, spanPassed, colFromEval } from "../utils";
+import {
+  spanResultChip,
+  spanPassed,
+  spanHasDetail,
+  colFromEval,
+} from "../utils";
 
 describe("spanResultChip", () => {
   // Failure path first
@@ -72,11 +77,40 @@ describe("spanPassed", () => {
   });
 });
 
+describe("spanHasDetail", () => {
+  it("expands when there is an explanation or error, regardless of pass", () => {
+    expect(spanHasDetail({ value: 90, explanation: "why" }, "score")).toBe(
+      true,
+    );
+    expect(spanHasDetail({ error: true, value: null }, "score")).toBe(true);
+  });
+  it("expands a failed eval with no explanation so Fix-with-Falcon is reachable", () => {
+    expect(spanHasDetail({ value: 30 }, "score")).toBe(true);
+    expect(spanHasDetail({ value: "fail" }, "Pass/Fail")).toBe(true);
+  });
+  it("stays collapsed for a passing eval with no explanation", () => {
+    expect(spanHasDetail({ value: 80 }, "score")).toBe(false);
+    expect(spanHasDetail({ value: "pass" }, "Pass/Fail")).toBe(false);
+  });
+  it("stays collapsed for choice evals (nothing to fix)", () => {
+    expect(spanHasDetail({ value: ["anger"] }, "choices")).toBe(false);
+  });
+});
+
 describe("colFromEval", () => {
   it("shims an eval into the col shape evalCellChips expects", () => {
     expect(
-      colFromEval({ eval_config_id: "c1", eval_name: "tone", output_type: "choices" }),
-    ).toEqual({ id: "c1", name: "tone", outputType: "choices", choicesMap: {} });
+      colFromEval({
+        eval_config_id: "c1",
+        eval_name: "tone",
+        output_type: "choices",
+      }),
+    ).toEqual({
+      id: "c1",
+      name: "tone",
+      outputType: "choices",
+      choicesMap: {},
+    });
   });
 
   it("carries the eval's choices_map through when present", () => {
