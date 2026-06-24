@@ -47773,7 +47773,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "eval_outputs": {
           "title": "Eval outputs",
-          "type": "string",
+          "description": "Get evaluation outputs in a structured format",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/CallExecutionEvalOutput"
+          },
           "readOnly": true
         },
         "eval_metrics": {
@@ -76758,6 +76762,62 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "input_types": {
           "title": "Input types",
           "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
+    "CallExecutionEvalOutput": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "object",
+          "x-nullable": true
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "error": {
+          "title": "Error",
+          "type": "boolean"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "skipped": {
+          "title": "Skipped",
+          "type": "boolean"
+        },
+        "output_pass": {
+          "title": "Output pass",
+          "type": "boolean",
+          "x-nullable": true
+        },
+        "output_score": {
+          "title": "Output score",
+          "type": "number",
+          "x-nullable": true
+        },
+        "output_choice": {
+          "title": "Output choice",
+          "type": "string",
+          "x-nullable": true
+        },
+        "output_choices": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
           "x-nullable": true
         }
       }

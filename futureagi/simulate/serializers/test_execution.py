@@ -234,6 +234,28 @@ class CallExecutionEvalMetricSerializer(serializers.Serializer):
     input_types = serializers.JSONField(required=False, allow_null=True)
 
 
+class CallExecutionEvalOutputSerializer(serializers.Serializer):
+    """One entry of ``eval_outputs``."""
+
+    value = serializers.JSONField(required=False, allow_null=True)
+    reason = serializers.CharField(allow_blank=True, required=False)
+    type = serializers.CharField(allow_blank=True, required=False)
+    name = serializers.CharField(allow_blank=True, required=False)
+    error = serializers.BooleanField(required=False)
+    status = serializers.CharField(allow_blank=True, required=False)
+    skipped = serializers.BooleanField(required=False)
+    output_pass = serializers.BooleanField(required=False, allow_null=True)
+    output_score = serializers.FloatField(required=False, allow_null=True)
+    output_choice = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    output_choices = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+    )
+
+
 class CallExecutionErrorLocalizerTaskSerializer(serializers.Serializer):
     """One entry in ``error_localizer_tasks``."""
 
@@ -651,22 +673,40 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             return round(response_time_ms / 1000, 3)
         return None
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.DictField(
+            child=CallExecutionEvalOutputSerializer()
+        )
+    )
     def get_eval_outputs(self, obj):
         """Get evaluation outputs in a structured format"""
-        # Handle both model instances and dictionaries (from grouping)
+        from evaluations.engine.normalize import resolve_eval_axes
+        from simulate.models.eval_config import SimulateEvalConfig
+
         if hasattr(obj, "eval_outputs"):
             eval_outputs = obj.eval_outputs
         else:
             eval_outputs = obj.get("eval_outputs") if isinstance(obj, dict) else {}
 
-        # For grouped results, return empty dict as eval outputs are not available
         if isinstance(obj, dict) and "count" in obj:
             return {}
 
         if not eval_outputs:
             return {}
 
-        # Transform eval_outputs to a more structured format
+        eval_meta: dict[str, tuple[str, bool]] = {}
+        if eval_outputs:
+            for cfg in (
+                SimulateEvalConfig.objects.filter(id__in=list(eval_outputs.keys()))
+                .select_related("eval_template")
+                .only("id", "eval_template__config", "eval_template__multi_choice")
+            ):
+                config = cfg.eval_template.config or {}
+                eval_meta[str(cfg.id)] = (
+                    config.get("output", "score"),
+                    bool(cfg.eval_template.multi_choice),
+                )
+
         structured_outputs = {}
         for eval_id, eval_data in eval_outputs.items():
             if isinstance(eval_data, dict):
@@ -676,6 +716,12 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 raw_error = eval_data.get("error")
                 is_error = bool(raw_error is True or raw_error == "error") or (
                     eval_data.get("status") == "error"
+                )
+                config_output, multi_choice = eval_meta.get(
+                    eval_id, ("score", False)
+                )
+                axes = resolve_eval_axes(
+                    eval_data.get("output"), config_output, multi_choice
                 )
                 structured_outputs[eval_id] = {
                     "value": _normalize_eval_value(
@@ -691,6 +737,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
+                    **axes,
                 }
 
         return structured_outputs

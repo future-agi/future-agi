@@ -16061,6 +16061,27 @@ export const CallExecutionDetailApiStatus = {
   cancelled: 'cancelled',
 } as const;
 
+export type CallExecutionEvalOutputApiValue = { [key: string]: unknown };
+
+export interface CallExecutionEvalOutputApi {
+  value?: CallExecutionEvalOutputApiValue;
+  reason?: string;
+  type?: string;
+  name?: string;
+  error?: boolean;
+  status?: string;
+  skipped?: boolean;
+  output_pass?: boolean;
+  output_score?: number;
+  output_choice?: string;
+  output_choices?: string[];
+}
+
+/**
+ * Get evaluation outputs in a structured format
+ */
+export type CallExecutionDetailApiEvalOutputs = {[key: string]: CallExecutionEvalOutputApi};
+
 /**
  * number | bool | string | list[string] | null
  */
@@ -16156,7 +16177,8 @@ export interface CallExecutionDetailApi {
   readonly audio_url?: string;
   /** @minLength 1 */
   readonly customer_name?: string;
-  readonly eval_outputs?: string;
+  /** Get evaluation outputs in a structured format */
+  readonly eval_outputs?: CallExecutionDetailApiEvalOutputs;
   /** Get evaluation metrics in a format suitable for the UI */
   readonly eval_metrics?: CallExecutionDetailApiEvalMetrics;
   readonly scenario_columns?: string;
