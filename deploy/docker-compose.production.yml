@@ -14,6 +14,7 @@ services:
       RABBITMQ_USER: ${RABBITMQ_USER:?must be set for production}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?must be set for production}
       FRONTEND_URL: ${FRONTEND_URL:?must be set for production}
+      CODE_EXECUTOR_INTERNAL_API_KEY: ${CODE_EXECUTOR_INTERNAL_API_KEY:?must be set for production}
     restart: always
 
   worker:
@@ -26,6 +27,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?must be set for production}
       RABBITMQ_USER: ${RABBITMQ_USER:?must be set for production}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?must be set for production}
+      CODE_EXECUTOR_INTERNAL_API_KEY: ${CODE_EXECUTOR_INTERNAL_API_KEY:?must be set for production}
     restart: always
 
   agentcc-gateway:
@@ -56,4 +58,6 @@ services:
     restart: always
 
   code-executor:
+    environment:
+      CODE_EXECUTOR_INTERNAL_API_KEY: ${CODE_EXECUTOR_INTERNAL_API_KEY:?must be set for production}
     restart: always
