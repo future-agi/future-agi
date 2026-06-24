@@ -455,17 +455,17 @@ function ColumnTreeSelect({
           </InputAdornment>
         ),
       }}
-      sx={{
+      sx={(theme) => ({
         ...(isUnmapped && {
           "& .MuiOutlinedInput-notchedOutline": {
-            borderColor: "#EAB308",
+            borderColor: theme.palette.amber[500],
             borderWidth: "1.5px",
           },
           "&:hover .MuiOutlinedInput-notchedOutline": {
-            borderColor: "#CA8A04",
+            borderColor: theme.palette.amber[600],
           },
         }),
-      }}
+      })}
     />
   );
 

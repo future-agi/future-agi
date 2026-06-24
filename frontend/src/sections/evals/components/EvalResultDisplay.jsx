@@ -101,9 +101,6 @@ const FormattedResult = ({ result }) => {
   const normalizedRaw = normalizeEvalCellValue(rawInput);
 
   let raw = normalizedRaw;
-  // For choice-scored evals the backend sends a hybrid {score, choice} shape.
-  // Capture the score here before the label is split out, so the Result chip
-  // can show it alongside the choice label.
   let choiceScore = null;
   if (
     normalizedRaw &&

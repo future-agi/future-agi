@@ -1965,7 +1965,7 @@ const EvalDetailPage = () => {
                         fontSize: "11px",
                         color: (theme) =>
                           theme.palette.mode === "light"
-                            ? "#A16207"
+                            ? theme.palette.amber[700]
                             : theme.palette.warning.main,
                       }}
                     >
