@@ -1,3 +1,5 @@
+import iconManifestPlugin from "../plugins/vite-plugin-icon-manifest.mjs";
+
 /** @type { import('@storybook/react-vite').StorybookConfig } */
 const config = {
   stories: ["../src/**/*.mdx", "../src/**/*.stories.@(js|jsx|mjs|ts|tsx)"],
@@ -8,6 +10,10 @@ const config = {
   framework: {
     name: "@storybook/react-vite",
     options: {},
+  },
+  async viteFinal(config) {
+    config.plugins.push(iconManifestPlugin());
+    return config;
   },
 };
 export default config;
