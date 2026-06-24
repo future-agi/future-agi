@@ -57,9 +57,9 @@ class AgentLearningUnavailable(RuntimeError):
 
 
 def is_available() -> bool:
-    """True if ``agent_learning`` can be imported in this runtime."""
+    """True if the agent-learning-kit (``fi.alk``) can be imported in this runtime."""
     try:
-        import agent_learning  # noqa: F401
+        import fi.alk  # noqa: F401
 
         return True
     except Exception:
@@ -67,8 +67,11 @@ def is_available() -> bool:
 
 
 def _kit_submodule(attr: str) -> Any:
+    # The agent-learning-kit ships as the ``fi`` distribution and exposes its
+    # red-team / simulate / optimize / evals flows under the ``fi.alk`` namespace
+    # (lazily loaded submodules). There is no top-level ``agent_learning`` module.
     try:
-        import agent_learning
+        import fi.alk as agent_learning
 
         return getattr(agent_learning, attr)
     except Exception as exc:  # pragma: no cover - exercised via is_available() in tests
