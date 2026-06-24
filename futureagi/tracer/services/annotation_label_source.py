@@ -40,12 +40,11 @@ class AnnotationLabelScoresPG:
 class AnnotationLabelScoresCH:
     """v2: label ids of scores in a project, via CH ``model_hub_score`` scoped by ``spans``."""
 
-    # ``s.deleted = false`` is the real soft-delete marker on model_hub_score;
-    # the table keeps peerdb CDC columns (no ``is_deleted``) — matches filters.py.
     _QUERY = """
         SELECT DISTINCT toString(label_id) AS label_id
         FROM model_hub_score AS s FINAL
         WHERE s.deleted = false
+          AND s._peerdb_is_deleted = 0
           AND (
             (isNotNull(s.trace_id) AND toString(s.trace_id) IN (
                 SELECT DISTINCT trace_id FROM spans
