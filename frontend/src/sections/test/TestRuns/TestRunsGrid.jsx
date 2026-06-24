@@ -93,17 +93,18 @@ function AgentDefinitionCell({ row }) {
   );
 }
 
-function StatusCell({ getValue, row }) {
+function StatusCell({ getValue, row, column }) {
   const status = getValue();
   const showStop = STOPPABLE_STATUSES.includes(status);
-  const { mutate: cancelExecution } = useCancelExecution();
-  const { refreshTestRunGrid } = useTestDetailContext();
+  // The cancel mutation is LIFTED to the grid: hooks called inside a MUI
+  // DataGrid renderCell get a `mutate` that no-ops after the virtualised
+  // cell's observer is torn down (react-query v5), so the Stop button fired
+  // nothing. The grid passes a stable onStop(id) through column.meta.
+  const onStop = column?.meta?.onStop;
 
   const handleStop = (e) => {
     e.stopPropagation();
-    cancelExecution(row.original.id, {
-      onSuccess: () => refreshTestRunGrid?.(),
-    });
+    onStop?.(row.original.id);
   };
 
   return (
@@ -143,7 +144,7 @@ function StatusCell({ getValue, row }) {
 
 // ── Column defs by type ──
 
-function buildColumns(agentType, simulationType) {
+function buildColumns(agentType, simulationType, onStop) {
   // Prompt simulations
   if (simulationType === SIMULATION_TYPE.PROMPT) {
     return [
@@ -195,6 +196,7 @@ function buildColumns(agentType, simulationType) {
         size: 180,
         enableSorting: false,
         cell: StatusCell,
+        meta: { onStop },
       },
       {
         id: "duration",
@@ -242,6 +244,7 @@ function buildColumns(agentType, simulationType) {
         size: 180,
         enableSorting: false,
         cell: StatusCell,
+        meta: { onStop },
       },
       {
         id: "total_number_of_fagi_agent_turns",
@@ -319,6 +322,7 @@ function buildColumns(agentType, simulationType) {
       size: 180,
       enableSorting: false,
       cell: StatusCell,
+      meta: { onStop },
     },
     {
       id: "duration",
@@ -433,9 +437,25 @@ const TestRunsGrid = ({ agentType, simulationType }) => {
     [items],
   );
 
+  const { mutate: cancelExecution } = useCancelExecution();
+  const { refreshTestRunGrid } = useTestDetailContext();
+  const handleStopExecution = useCallback(
+    (executionId) => {
+      cancelExecution(executionId, {
+        onSuccess: () => refreshTestRunGrid?.(),
+      });
+    },
+    [cancelExecution, refreshTestRunGrid],
+  );
+
   const columns = useMemo(
-    () => buildColumns(agentType ?? AGENT_TYPES.VOICE, simulationType),
-    [agentType, simulationType],
+    () =>
+      buildColumns(
+        agentType ?? AGENT_TYPES.VOICE,
+        simulationType,
+        handleStopExecution,
+      ),
+    [agentType, simulationType, handleStopExecution],
   );
 
   const handleRowClick = useCallback(
