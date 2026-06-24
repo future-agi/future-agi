@@ -27,16 +27,18 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import time
-from typing import Any
+import urllib.error
+import urllib.request
 
 import structlog
-import urllib.request
 
 logger = structlog.get_logger(__name__)
 
 # Code executor service URL (nsjail-based sandbox container)
 CODE_EXECUTOR_URL = os.environ.get("CODE_EXECUTOR_URL", "http://code-executor:8060")
+# Dedicated executor key. When set, the executor is the mandated path and failures
+# fail closed instead of silently using the weaker in-process fallback.
+CODE_EXECUTOR_API_KEY = os.environ.get("CODE_EXECUTOR_INTERNAL_API_KEY", "")
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -354,6 +356,16 @@ delete globalThis.__filename;
 delete globalThis.__dirname;
 delete globalThis.Buffer;
 delete globalThis.global;
+// Node 18+ ships fetch/WebSocket/etc. as globals — strip the network surface so the
+// in-process fallback can't reach out even without nsjail's network namespace.
+delete globalThis.fetch;
+delete globalThis.XMLHttpRequest;
+delete globalThis.WebSocket;
+delete globalThis.EventSource;
+delete globalThis.Request;
+delete globalThis.Response;
+delete globalThis.Headers;
+delete globalThis.navigator;
 
 // Replace process with a frozen stub (no env, no exit, no binding)
 const frozenProcess = _freeze(Object.create(null));
@@ -451,33 +463,51 @@ def _set_resource_limits():
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def _call_executor_service(code: str, input_data: dict, language: str, timeout: int) -> dict | None:
-    """Call the nsjail code-executor service via HTTP. Returns None if unavailable."""
-    try:
-        # default=str so non-JSON-native types coming through trace/span column
-        # mapping (Decimal from clickhouse-driver, datetime, UUID) serialize
-        # cleanly. The eval body still gets a string for those keys, which
-        # matches what `str(kwargs.get(...))` already expects in every system eval.
-        payload = json.dumps({
-            "code": code,
-            "input_data": input_data,
-            "language": language,
-            "timeout": timeout,
-        }, default=str).encode("utf-8")
+class ExecutorUnavailable(Exception):
+    """Executor unreachable or auth-rejected — distinct from "ran and the code errored"."""
 
-        req = urllib.request.Request(
-            f"{CODE_EXECUTOR_URL}/execute",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+
+_FAIL_CLOSED = {
+    "status": "error",
+    "data": "code executor unavailable; refusing to run untrusted code in the weaker local sandbox (fail-closed)",
+}
+
+
+def _call_executor_service(code: str, input_data: dict, language: str, timeout: int) -> dict:
+    """Call the nsjail code-executor service via HTTP.
+
+    Returns the executor's result dict on HTTP 200 — including ``{"status": "error"}``
+    when the executor ran and the user code errored. Raises :class:`ExecutorUnavailable`
+    when the service is unreachable or rejects auth, so the caller can fail closed
+    instead of silently downgrading to the in-process sandbox.
+    """
+    # default=str so non-JSON-native types coming through trace/span column mapping
+    # (Decimal from clickhouse-driver, datetime, UUID) serialize cleanly.
+    payload = json.dumps({
+        "code": code,
+        "input_data": input_data,
+        "language": language,
+        "timeout": timeout,
+    }, default=str).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{CODE_EXECUTOR_URL}/execute",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "X-Internal-Api-Key": CODE_EXECUTOR_API_KEY,
+        },
+        method="POST",
+    )
+    try:
         with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
             result = json.loads(resp.read().decode("utf-8"))
-            logger.info("code_executor_service_used", language=language, status=result.get("status"))
-            return result
+        logger.info("code_executor_service_used", language=language, status=result.get("status"))
+        return result
+    except urllib.error.HTTPError as e:
+        raise ExecutorUnavailable(f"executor returned HTTP {e.code}") from e
     except Exception as e:
-        logger.debug("code_executor_service_unavailable", error=str(e))
-        return None  # Fall back to local sandbox
+        raise ExecutorUnavailable(f"executor unreachable: {e}") from e
 
 
 def execute_sandboxed_python(code: str, input_data: dict, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
@@ -487,10 +517,15 @@ def execute_sandboxed_python(code: str, input_data: dict, timeout: int = DEFAULT
     Tries the nsjail code-executor service first (Tier 1: full namespace isolation).
     Falls back to RestrictedPython subprocess sandbox (Tier 2).
     """
-    # Try nsjail executor service first
-    result = _call_executor_service(code, input_data, "python", timeout)
-    if result is not None:
-        return result
+    # Tier 1: the executor is the mandated path whenever a key is configured; a failed
+    # call fails closed rather than dropping untrusted code into the local sandbox.
+    if CODE_EXECUTOR_API_KEY:
+        try:
+            return _call_executor_service(code, input_data, "python", timeout)
+        except ExecutorUnavailable as e:
+            logger.warning("code_executor_fail_closed", language="python", error=str(e))
+            return dict(_FAIL_CLOSED)
+    # Tier 2: in-process RestrictedPython fallback (local dev / OSS without the executor).
     script = _build_python_sandbox_script(code, input_data)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="sandbox_") as f:
@@ -545,14 +580,15 @@ def execute_sandboxed_javascript(code: str, input_data: dict, timeout: int = DEF
     Tries the nsjail code-executor service first (Tier 1).
     Falls back to local Function() sandbox (Tier 2).
     """
-    # Try nsjail executor service first
-    result = _call_executor_service(code, input_data, "javascript", timeout)
-    if result is not None:
-        return result
+    # Tier 1: same fail-closed gate as execute_sandboxed_python.
+    if CODE_EXECUTOR_API_KEY:
+        try:
+            return _call_executor_service(code, input_data, "javascript", timeout)
+        except ExecutorUnavailable as e:
+            logger.warning("code_executor_fail_closed", language="javascript", error=str(e))
+            return dict(_FAIL_CLOSED)
 
-    # Fallback: local sandbox
-    """
-    """
+    # Tier 2: local Function() sandbox (local dev / OSS without the executor).
     # Check if Node.js is available
     node_path = None
     for candidate in ["/usr/local/bin/node", "/usr/bin/node"]:
