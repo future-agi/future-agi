@@ -1244,10 +1244,12 @@ const GroundTruthSetupForm = ({
   };
 
   const handleCtaClick = async () => {
-    setEmbedChainRunning(true);
     try {
       if (configDirty) await save.mutateAsync(buildPayload());
-      if ((mappingDirty || !embeddingsReady) && onEmbed) await onEmbed();
+      if ((mappingDirty || !embeddingsReady) && onEmbed) {
+        setEmbedChainRunning(true);
+        await onEmbed();
+      }
     } catch (err) {
       setEmbedChainRunning(false);
       throw err;
