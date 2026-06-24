@@ -212,10 +212,8 @@ const OutputTypeConfig = ({
               }
               label={
                 <Typography variant="caption" color="text.secondary">
-                  By default a higher score is better — 1 shows green (good) and
-                  0 shows red (bad). Turn this on for metrics where a low score
-                  is the good outcome (e.g. toxicity, hallucination): the
-                  colours flip so 0 is green and 1 is red.
+                  On for metrics where a low score is good (e.g. toxicity) —
+                  flips the colours so 0 is green and 1 is red.
                 </Typography>
               }
               sx={{ alignItems: "flex-start", mb: 1.5, mx: 0 }}

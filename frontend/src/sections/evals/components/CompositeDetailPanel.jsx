@@ -408,7 +408,7 @@ const CompositeDetailPanel = ({
 
       {/* Child list */}
       <Box>
-        <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+        <Typography sx={{ typography: "body2", fontWeight: 600, mb: 0.5 }}>
           Children ({childrenList.length})
         </Typography>
         <Typography
@@ -416,10 +416,8 @@ const CompositeDetailPanel = ({
           color="text.secondary"
           sx={{ display: "block", mb: 1 }}
         >
-          Each child is a regular eval that scores the same input. Add the ones
-          you want to measure together (e.g. accuracy, tone, safety) — their
-          scores show side by side, and turning on aggregation above combines
-          them into one score.
+          Add evals that score the same input on different dimensions (e.g.
+          accuracy, tone, safety); aggregation above combines them.
         </Typography>
         <Stack spacing={1}>
           {childrenList.map((child) => {
@@ -578,8 +576,7 @@ const CompositeDetailPanel = ({
                 borderColor: "divider",
               }}
             >
-              No child evals yet — add 2 or more to measure different dimensions
-              of the same input and combine them into one composite score.
+              No child evals yet — add 2 or more to combine into one score.
             </Typography>
           )}
 
