@@ -78,6 +78,8 @@ func CORS(cfg config.CORSConfig) func(http.Handler) http.Handler {
 		originSet[o] = true
 	}
 
+	allowCredentials := cfg.AllowCredentials && !allowAll
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
@@ -95,15 +97,14 @@ func CORS(cfg config.CORSConfig) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Set the allowed origin (use the specific origin, not "*", when credentials are enabled).
-			if allowAll && !cfg.AllowCredentials {
+			if allowAll {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
 			} else {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 			}
 
-			if cfg.AllowCredentials {
+			if allowCredentials {
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 			}
 
