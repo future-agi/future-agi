@@ -19,10 +19,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-import clickhouse_connect
 import structlog
 
-from tracer.services.clickhouse.v2 import get_reader, get_v2_config
+from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.span_reader import CHSpan
 
 logger = structlog.get_logger(__name__)
@@ -103,29 +103,23 @@ def _ids_list(trace_ids: Iterable[str]) -> list[str]:
     return [str(t) for t in trace_ids if t]
 
 
-def _v2_client():
-    """A clickhouse_connect client on the v2 cluster (``get_v2_config``) — the
-    same one CHSpanReader uses, so the agent's reads stay on one CH client.
-    """
-    cfg = get_v2_config()
-    return clickhouse_connect.get_client(
-        host=cfg["host"],
-        port=cfg["http_port"],
-        username=cfg["user"],
-        password=cfg["password"],
-        database=cfg["database"],
-    )
+# Pooled clickhouse-driver client (the analytics layer's singleton); the agent's
+# raw-SQL reads share it instead of opening a fresh HTTP client per query.
+_analytics = AnalyticsQueryService()
+
+# Per-query CH timeout for the agent's aggregation reads (ms).
+_READ_TIMEOUT_MS = 10000
 
 
 def _execute_read(query: str, params: dict) -> list:
-    # IN-clauses bind from tuples on clickhouse_connect; normalize any sequence.
-    norm = {k: tuple(v) if isinstance(v, list | set) else v for k, v in params.items()}
+    # Route through AnalyticsQueryService (pooled clickhouse-driver). It returns
+    # column-keyed dicts; re-tuple in driver column order so the positional
+    # consumers in this file keep working unchanged. clickhouse-driver binds a
+    # list directly for ``IN %(x)s``, so no tuple normalization is needed.
     try:
-        client = _v2_client()
-        try:
-            return client.query(query, parameters=norm).result_rows
-        finally:
-            client.close()
+        result = _analytics.execute_ch_query(query, params, timeout_ms=_READ_TIMEOUT_MS)
+        cols = result.columns or []
+        return [tuple(row[c] for c in cols) for row in result.data]
     except Exception as e:
         logger.warning("cluster_rca_ch_span_read_failed", error=str(e))
         return []
