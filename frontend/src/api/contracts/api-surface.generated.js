@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 974,
+  "endpointCount": 969,
   "groups": {
     "accounts": {
       "/accounts/2fa/recovery-codes/": [
@@ -723,9 +723,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "get"
       ],
       "/api/public/ingestion": [
-        "post"
-      ],
-      "/api/public/otel/v1/traces": [
         "post"
       ],
       "/api/public/traces": [
@@ -2758,9 +2755,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "patch",
         "put"
       ],
-      "/tracer/otlp/v1/traces": [
-        "post"
-      ],
       "/tracer/project-version/": [
         "get",
         "post"
@@ -3035,12 +3029,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/v1/health": [
         "get"
       ],
-      "/tracer/v1/traces": [
-        "post"
-      ],
-      "/tracer/v1/traces/": [
-        "post"
-      ],
       "/tracer/webhook/": [
         "post"
       ]
@@ -3304,9 +3292,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
     "v1": {
       "/v1/health": [
         "get"
-      ],
-      "/v1/traces/": [
-        "post"
       ]
     }
   }
@@ -4020,9 +4005,6 @@ export const API_SURFACE_PATHS = Object.freeze({
     "get"
   ],
   "/api/public/ingestion": [
-    "post"
-  ],
-  "/api/public/otel/v1/traces": [
     "post"
   ],
   "/api/public/traces": [
@@ -6035,9 +6017,6 @@ export const API_SURFACE_PATHS = Object.freeze({
     "patch",
     "put"
   ],
-  "/tracer/otlp/v1/traces": [
-    "post"
-  ],
   "/tracer/project-version/": [
     "get",
     "post"
@@ -6312,12 +6291,6 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/v1/health": [
     "get"
   ],
-  "/tracer/v1/traces": [
-    "post"
-  ],
-  "/tracer/v1/traces/": [
-    "post"
-  ],
   "/tracer/webhook/": [
     "post"
   ],
@@ -6577,8 +6550,5 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/v1/health": [
     "get"
-  ],
-  "/v1/traces/": [
-    "post"
   ]
 });

@@ -1012,9 +1012,6 @@ function ValuePicker({
           })()
         ) : (
           selectedValues.slice(0, 3).map((v) => {
-            // Resolve the display label from static choices or rendered
-            // options. Falls back to the raw value (e.g. plain strings
-            // without a label).
             const match = options.find((o) => {
               const ov = typeof o === "string" ? o : o.value;
               return ov === v;
@@ -1550,7 +1547,7 @@ function FilterRow({
       );
     }
 
-    if (filter.fieldType === "text") {
+    if (filter.fieldType === "text" || filter.fieldType === "string") {
       return (
         <TextField
           size="small"

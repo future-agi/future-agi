@@ -133,21 +133,45 @@ def compute_drain_state(eval_task, eval_task_logger=None):
     }
 
 
-def parsing_evaltask_filters(filters: dict) -> tuple[Q, dict]:
+def annotation_source_q_for_row_type(row_type: RowType | str) -> Q:
+    """Q matching Score rows against a span-outer queryset, scoped per row_type.
+
+    Mirrors each row_type's grid so the runner selects the same rows the
+    user previewed. Voice/trace annotations are stored trace-scoped, so
+    those bridge trace OR span; spans and sessions match their own scope.
+    """
+    row_type = RowType(row_type)
+    if row_type in (RowType.TRACES, RowType.VOICE_CALLS):
+        return Q(trace_id=OuterRef("trace_id")) | Q(
+            observation_span__trace_id=OuterRef("trace_id")
+        )
+    if row_type == RowType.SESSIONS:
+        return Q(trace_session_id=OuterRef("trace__session_id"))
+    return Q(observation_span_id=OuterRef("id"))
+
+
+def parsing_evaltask_filters(
+    filters: dict, *, row_type: RowType | str
+) -> tuple[Q, dict]:
     """Combine eval-task filter JSON into ``(Q, annotation_kwargs)``.
 
     Per-handler dispatch mirrors ``list_spans_observe``
     (``tracer/views/observation_span.py:1755-1826``): one flat ``filters``
     list, each item carrying ``col_type``, passed to every handler.
 
+    ANNOTATION predicates are scoped per ``row_type`` (see
+    ``annotation_source_q_for_row_type``); everything else stays span-outer.
+
     Callers must apply ``.annotate(**extra_annotations).filter(combined_q)``.
     Per-label ANNOTATION filters (e.g. ``columnId == "<label_uuid>"``)
-    additionally require ``build_annotation_subqueries`` to have been
-    applied to the queryset first — ``process_eval_task`` does that;
-    other callers must mirror it if they accept per-label filters.
+    additionally require ``build_annotation_subqueries`` (with the same
+    row_type source Q) to have been applied to the queryset first —
+    ``process_eval_task`` does that; other callers must mirror it if they
+    accept per-label filters.
 
     Accepts both ``filters`` and legacy ``span_attributes_filters`` keys.
     """
+    annotation_source_q = annotation_source_q_for_row_type(row_type)
     combined_q = Q()
     extra_anns: dict = {}
 
@@ -178,14 +202,12 @@ def parsing_evaltask_filters(filters: dict) -> tuple[Q, dict]:
             if q_eval:
                 combined_q &= q_eval
 
-            # span_filter_kwargs re-targets the Score join to span scope
-            # (filters.py:1683-1692); user_id=None because we're in a
-            # background activity, which makes my_annotations a no-op.
+            # user_id=None: background activity, so my_annotations is a no-op.
             q_anno, anno_anns = (
                 FilterEngine.get_filter_conditions_for_voice_call_annotations(
                     items,
                     user_id=None,
-                    span_filter_kwargs={"observation_span_id": OuterRef("id")},
+                    source_q=annotation_source_q,
                 )
             )
             if q_anno:
@@ -203,7 +225,7 @@ def parsing_evaltask_filters(filters: dict) -> tuple[Q, dict]:
             if q_has_eval:
                 combined_q &= q_has_eval
             q_has_anno = FilterEngine.get_filter_conditions_for_has_annotation(
-                items, observe_type="span"
+                items, source_q=annotation_source_q
             )
             if q_has_anno:
                 combined_q &= q_has_anno
@@ -414,18 +436,18 @@ def process_eval_task(eval_task_id: str):
         filters = Q()
         extra_anns: dict = {}
         if eval_task.filters is not None:
-            filters, extra_anns = parsing_evaltask_filters(eval_task.filters)
+            filters, extra_anns = parsing_evaltask_filters(
+                eval_task.filters, row_type=eval_task.row_type
+            )
 
-        # Pre-annotate ``annotation_<label_id>`` JSON columns on the span
-        # queryset (mirrors list_spans_observe at observation_span.py:1164-1172)
-        # so per-label ANNOTATION filters resolve. ``extra_anns`` is reserved
-        # for any future per-handler annotate kwargs.
+        # Pre-annotate the ``annotation_<label_id>`` columns that per-label
+        # ANNOTATION filters reference, scoped to the row_type's Score sources.
         annotation_labels = get_annotation_labels_for_project(eval_task.project_id)
         span_qs = build_annotation_subqueries(
             ObservationSpan.objects.all(),
             annotation_labels,
             eval_task.project.organization,
-            span_filter_kwargs={"observation_span_id": OuterRef("id")},
+            source_q=annotation_source_q_for_row_type(eval_task.row_type),
         )
         span_qs = span_qs.annotate(**extra_anns).filter(filters)
 

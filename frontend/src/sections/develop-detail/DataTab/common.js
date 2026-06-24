@@ -1068,6 +1068,8 @@ export const getDatasetViewOptions = (viewOptions) => {
       viewOptions?.showDrawer !== undefined ? viewOptions?.showDrawer : true,
     bottomRow:
       viewOptions?.bottomRow !== undefined ? viewOptions?.bottomRow : true,
+    showEvals:
+      viewOptions?.showEvals !== undefined ? viewOptions?.showEvals : true,
   };
 };
 

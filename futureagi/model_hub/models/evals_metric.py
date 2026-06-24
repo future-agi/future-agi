@@ -399,6 +399,15 @@ class UserEvalMetric(ModelBaseModel):
         ),
     )
 
+    pinned_version = models.ForeignKey(
+        "model_hub.EvalTemplateVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pinned_user_metrics",
+        help_text="Pin to a specific template version for runtime.",
+    )
+
     def clean(self):
         super().clean()
         # try:

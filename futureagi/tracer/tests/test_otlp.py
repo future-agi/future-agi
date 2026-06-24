@@ -6,6 +6,7 @@ Tests for the enhanced OTLP/HTTP endpoints following OpenTelemetry Protocol spec
 
 import gzip
 import json
+import unittest
 from unittest.mock import patch
 
 import pytest
@@ -75,6 +76,12 @@ def create_test_otlp_request(num_spans: int = 1) -> ExportTraceServiceRequest:
     return request
 
 
+# TODO: Re-enable after PII scrubbing is ported to fi-collector (tracer/urls.py routes re-activated at that point)
+pytestmark_trace_routes_skip = pytest.mark.skip(
+    reason="OTLP trace routes migrated to fi-collector — pending PII scrubbing port"
+)
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestOTLPHealthEndpoint:
@@ -96,6 +103,7 @@ class TestOTLPHealthEndpoint:
         assert "application/json" in response["Content-Type"]
 
 
+@pytestmark_trace_routes_skip
 @pytest.mark.integration
 @pytest.mark.api
 class TestOTLPTraceEndpointAuth:
@@ -120,6 +128,7 @@ class TestOTLPTraceEndpointAuth:
         assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
 
+@pytestmark_trace_routes_skip
 @pytest.mark.integration
 @pytest.mark.api
 class TestOTLPTraceEndpointProtobuf:
@@ -170,6 +179,7 @@ class TestOTLPTraceEndpointProtobuf:
         assert not mock_task.apply_async.called
 
 
+@pytestmark_trace_routes_skip
 @pytest.mark.integration
 @pytest.mark.api
 class TestOTLPTraceEndpointJSON:
@@ -228,6 +238,7 @@ class TestOTLPTraceEndpointJSON:
         assert not mock_task.apply_async.called
 
 
+@pytestmark_trace_routes_skip
 @pytest.mark.integration
 @pytest.mark.api
 class TestOTLPTraceEndpointGzip:
@@ -286,6 +297,7 @@ class TestOTLPTraceEndpointGzip:
         assert not mock_task.apply_async.called
 
 
+@pytestmark_trace_routes_skip
 @pytest.mark.integration
 @pytest.mark.api
 class TestOTLPTraceEndpointContentNegotiation:
@@ -339,6 +351,7 @@ class TestOTLPTraceEndpointContentNegotiation:
         assert not mock_task.apply_async.called
 
 
+@pytestmark_trace_routes_skip
 @pytest.mark.integration
 @pytest.mark.api
 class TestOTLPTraceEndpointResponse:

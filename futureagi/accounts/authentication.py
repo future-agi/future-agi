@@ -39,6 +39,7 @@ logger = structlog.get_logger(__name__)
 # Rate limiting settings with defaults
 MAX_LOGIN_ATTEMPTS_PER_HOUR: int = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
 IP_BLOCK_DURATION: int = getattr(settings, "IP_BLOCK_DURATION", 3600)
+RATE_LIMIT_WINDOW_SECONDS: int = 3600
 
 ANNOTATION_QUEUE_ROLE_SCOPED_WRITE_PATHS = (
     re.compile(
@@ -663,7 +664,9 @@ class AuthMonitoringMiddleware:
             now = time.time()
 
             # Remove requests older than 1 hour
-            requests = [req for req in requests if now - req < 1000]
+            requests = [
+                req for req in requests if now - req < RATE_LIMIT_WINDOW_SECONDS
+            ]
 
             if len(requests) >= MAX_LOGIN_ATTEMPTS_PER_HOUR:
                 cache.set(f"rate_limit_{client_ip}", True, IP_BLOCK_DURATION)
@@ -673,7 +676,9 @@ class AuthMonitoringMiddleware:
                 )
 
             requests.append(now)
-            cache.set(f"rate_limit_requests_{client_ip}", requests, 1200)
+            cache.set(
+                f"rate_limit_requests_{client_ip}", requests, RATE_LIMIT_WINDOW_SECONDS
+            )
 
         if (
             request.path.endswith("login/")
@@ -693,7 +698,9 @@ class AuthMonitoringMiddleware:
             now = time.time()
 
             # Remove requests older than 1 hour
-            requests = [req for req in requests if now - req < 1000]
+            requests = [
+                req for req in requests if now - req < RATE_LIMIT_WINDOW_SECONDS
+            ]
 
             if len(requests) >= MAX_LOGIN_ATTEMPTS_PER_HOUR:
                 cache.set(f"blocked_ip_{client_ip}", True, IP_BLOCK_DURATION)
@@ -704,7 +711,7 @@ class AuthMonitoringMiddleware:
                 )
 
             requests.append(now)
-            cache.set(f"ip_requests_{client_ip}", requests, 1200)
+            cache.set(f"ip_requests_{client_ip}", requests, RATE_LIMIT_WINDOW_SECONDS)
 
         return self.get_response(request)
 
