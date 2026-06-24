@@ -706,7 +706,7 @@ class ClickHouseFilterBuilder:
         filter_value: Any,
     ) -> str | None:
         """Resolve an end-user string field (user_id / user_id_type) on
-        tracer_enduser, then map to end_user_id on spans."""
+        end_users, then map to end_user_id on spans."""
 
         if filter_op in NO_VALUE_OPS:
             comparison_op = "=" if filter_op == "is_null" else "!="
@@ -736,19 +736,19 @@ class ClickHouseFilterBuilder:
 
         inner_value = values if inner_op == "in" else values[0]
         inner = self._build_column_condition(
-            enduser_column, "text", inner_op, inner_value
+            f"eu.{enduser_column}", "text", inner_op, inner_value
         )
         if not inner:
             return None
 
         return (
             f"trace_id {outer_op} ("
-            f"SELECT trace_id FROM {self.table} "
-            f"WHERE end_user_id IN ("
-            f"SELECT id FROM tracer_enduser FINAL "
+            f"SELECT sp.trace_id FROM {self.table} AS sp "
+            f"WHERE sp.end_user_id IN ("
+            f"SELECT eu.end_user_id FROM end_users AS eu FINAL "
             f"WHERE {inner} "
-            f"AND _peerdb_is_deleted = 0 AND deleted = 0"
-            f") AND _peerdb_is_deleted = 0)"
+            f"AND eu.is_deleted = 0"
+            f") AND sp._peerdb_is_deleted = 0)"
         )
 
     def _build_system_metric_condition(

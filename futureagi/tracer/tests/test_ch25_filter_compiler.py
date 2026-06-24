@@ -180,3 +180,28 @@ class TestClickHouseFilterBuilderV2:
         assert meta["text"][0]    == cols.ATTRS_STRING
         assert meta["number"][0]  == cols.ATTRS_NUMBER
         assert meta["boolean"][0] == cols.ATTRS_BOOL
+
+    def test_user_id_filter_uses_v2_end_users_dimension(self):
+        builder = ClickHouseFilterBuilderV2(table="spans")
+        sql, params = builder.translate(
+            [
+                {
+                    "column_id": "user_id",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "alice",
+                    },
+                }
+            ]
+        )
+
+        assert "FROM end_users AS eu FINAL" in sql
+        assert "SELECT eu.end_user_id" in sql
+        assert "eu.user_id = %(col_1)s" in sql
+        assert "eu.is_deleted = 0" in sql
+        assert "sp.is_deleted = 0" in sql
+        assert "tracer_enduser" not in sql
+        assert "AND deleted = 0" not in sql
+        assert params == {"col_1": "alice"}
