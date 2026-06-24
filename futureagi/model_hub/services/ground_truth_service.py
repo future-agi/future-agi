@@ -271,7 +271,7 @@ class GroundTruthService:
             .first()
         )
         if gt is None:
-            return []
+            return None
 
         # Retrieval reaches PG + CH. Soft-fail this call only: a transient
         # store failure should not tank the eval-run response; programmer

@@ -4694,6 +4694,8 @@ class GroundTruthDeleteView(APIView):
         }
     )
     def delete(self, request, ground_truth_id, *args, **kwargs):
+        from django.db import transaction
+
         from model_hub.models.evals_metric import EvalGroundTruth
 
         try:
@@ -4702,12 +4704,17 @@ class GroundTruthDeleteView(APIView):
             except EvalGroundTruth.DoesNotExist:
                 return self._gm.not_found("Ground truth not found.")
 
-            gt.deleted = True
-            gt.deleted_at = timezone.now()
-            gt.save(update_fields=["deleted", "deleted_at", "updated_at"])
+            with transaction.atomic():
+                gt.deleted = True
+                gt.deleted_at = timezone.now()
+                gt.save(update_fields=["deleted", "deleted_at", "updated_at"])
 
-            # Also soft-delete embeddings
-            gt.embeddings.update(ground_truth=gt)
+                template = gt.eval_template
+                if template is not None:
+                    config = template.config or {}
+                    if config.pop("ground_truth", None) is not None:
+                        template.config = config
+                        template.save(update_fields=["config", "updated_at"])
 
             return self._gm.success_response({"deleted": True, "id": str(gt.id)})
 
