@@ -1239,13 +1239,22 @@ def _reopen_items_missing_required_labels(queue):
 def _span_notes_target_for_queue_item(item):
     """Return the span that stores whole-item notes for queue annotation.
 
-    Span-source items return the FK-loaded Django ``ObservationSpan`` (writes
-    still live in PG). Trace-source items pick the trace's root span from
+    Span-source items return the PG ``ObservationSpan`` (writes still live in
+    PG), falling back to the CH span for collector data with no PG row.
+    Trace-source items pick the trace's root span from
     CH 25 — preference order is ``observation_type="conversation"`` root span
     (voice projects) → first root span by start_time → ``None``.
     """
     if item.source_type == "observation_span" and item.observation_span_id:
-        return item.observation_span
+        try:
+            return item.observation_span
+        except ObservationSpan.DoesNotExist:
+            # Collector span: no PG row. Resolve from CH — downstream only reads
+            # `.id` (CHSpan exposes it), same as the trace-root CH spans below.
+            from tracer.services.clickhouse.v2 import get_reader
+
+            with get_reader() as reader:
+                return reader.get(str(item.observation_span_id))
     if item.source_type != "trace" or not item.trace_id:
         return None
 
@@ -5269,9 +5278,14 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         item_notes = data.get("item_notes")
         submitted = 0
 
-        # Resolve source FK for Score creation
+        # Score FK soft id: read the raw FK id column, NOT the related object —
+        # collector trace/span/session FKs (db_constraint=False) have no PG row,
+        # so getattr(item, source_fk_field) would raise DoesNotExist. The Score
+        # FK is db_constraint=False too, so the bare id persists.
         source_fk_field = SCORE_SOURCE_FK_MAP.get(item.source_type)
-        source_obj = getattr(item, source_fk_field) if source_fk_field else None
+        source_id = (
+            getattr(item, f"{source_fk_field}_id", None) if source_fk_field else None
+        )
         span_notes_target = _span_notes_target_for_queue_item(item)
         # Older clients sent one top-level `notes` field. For trace/span items that
         # can store whole-item notes, treat that legacy field as the item note so it
@@ -5320,12 +5334,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             # Use no_workspace_objects + _id fields to avoid the LEFT JOIN
             # on nullable workspace FK that triggers PostgreSQL's "FOR UPDATE
             # cannot be applied to the nullable side of an outer join".
-            if source_obj and source_fk_field:
+            if source_id and source_fk_field:
                 # Scope the upsert by queue_item so each queue review context
                 # owns its own Score row even when the same annotator scores
                 # the same label across multiple queues.
                 score, _ = Score.no_workspace_objects.update_or_create(
-                    **{f"{source_fk_field}_id": source_obj.pk},
+                    **{f"{source_fk_field}_id": source_id},
                     label_id=label.pk,
                     annotator_id=request.user.pk,
                     queue_item=item,
@@ -7220,9 +7234,14 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             except User.DoesNotExist:
                 return self._gm.bad_request("Annotator not found in this workspace.")
 
-        # Resolve source FK for Score creation
+        # Score FK soft id: read the raw FK id column, NOT the related object —
+        # collector trace/span/session FKs (db_constraint=False) have no PG row,
+        # so getattr(item, source_fk_field) would raise DoesNotExist. The Score
+        # FK is db_constraint=False too, so the bare id persists.
         source_fk_field = SCORE_SOURCE_FK_MAP.get(item.source_type)
-        source_obj = getattr(item, source_fk_field) if source_fk_field else None
+        source_id = (
+            getattr(item, f"{source_fk_field}_id", None) if source_fk_field else None
+        )
         queue_label_ids = set(
             item.queue.queue_labels.filter(deleted=False).values_list(
                 "label_id",
@@ -7259,14 +7278,14 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             except ValueError as exc:
                 return self._gm.bad_request(str(exc))
 
-            if source_obj and source_fk_field:
+            if source_id and source_fk_field:
                 # Scope the upsert by queue_item so an import lands in this
                 # queue's review context. Without queue_item in the lookup
                 # we'd hit the per-queue uniqueness constraint as soon as
                 # the same (source, label, annotator) is imported into a
                 # second queue.
                 score, _ = Score.no_workspace_objects.update_or_create(
-                    **{f"{source_fk_field}_id": source_obj.pk},
+                    **{f"{source_fk_field}_id": source_id},
                     label_id=label.pk,
                     annotator_id=annotator.pk,
                     queue_item=item,
