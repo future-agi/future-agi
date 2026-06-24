@@ -41,6 +41,7 @@ import {
   getPickerOptionSearchText,
   getPickerOptionSecondaryLabel,
   getPickerOptionValue,
+  usesFreeTextValue,
 } from "./filterValuePickerUtils";
 import { ID_ONLY_FIELDS } from "./idFields";
 
@@ -1547,7 +1548,7 @@ function FilterRow({
       );
     }
 
-    if (filter.fieldType === "text" || filter.fieldType === "string") {
+    if (usesFreeTextValue(filter.fieldType, source)) {
       return (
         <TextField
           size="small"
@@ -1573,9 +1574,7 @@ function FilterRow({
         source={source}
         property={properties.find((p) => p.id === filter.field)}
         freeSoloValues={rowFreeSoloValues}
-        singleSelect={
-          ID_ONLY_FIELDS.has(filter.field) || SINGLE_VALUE_OPS.has(safeOperator)
-        }
+        singleSelect={SINGLE_VALUE_OPS.has(safeOperator)}
         onChange={(newVal) => updateRow({ value: newVal })}
       />
     );
