@@ -11,25 +11,29 @@ import React, {
   useState,
 } from "react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
-import { getRandomId, safeParse } from "src/utils/utils";
+import { safeParse } from "src/utils/utils";
 import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "src/routes/hooks";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 
 import {
-  AllowedGroups,
   applyQuickFilters,
   FILTER_FOR_HAS_EVAL,
   SPAN_DEFAULT_COLUMNS,
   mergeCellStyle,
   generateAnnotationColumnsForTracing,
+  normalizeConfigKeys,
 } from "./common";
+import { buildColumnBlocks } from "./evalTaskGrouping";
+import EvalTaskGroupHeader from "./Renderers/EvalTaskGroupHeader";
 import CustomTraceRenderer from "./Renderers/CustomTraceRenderer";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
+import EvalResultChips from "./Renderers/EvalResultChips";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { statusBar } from "src/components/run-insights/traces-tab/common";
 import LLMTracingSpanDetailDrawer from "./LLMTracingSpanDetailDrawer";
 import { useLLMTracingStoreShallow, useSpanGridStore } from "./states";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
 import IPOPTooltipComponent from "./Renderers/IPOPTooltipComponent";
 import { RENDERER_CONFIG } from "./Renderers/common";
@@ -40,16 +44,6 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
 
 const ROWS_LIMIT = 100;
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
 
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;
@@ -108,11 +102,21 @@ const getSpanListColumnDefs = (col) => {
     },
     cellRendererSelector: (params) => {
       const value = params.value;
+      const column = params?.colDef?.context?.sourceColumn;
+      // Chips for object-valued eval cells (pass/fail or choice counts);
+      // scalar score cells fall through to the default renderer.
+      if (
+        column?.groupBy === "Evaluation Metrics" &&
+        value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value)
+      ) {
+        return { component: EvalResultChips };
+      }
       if (isCellValueEmpty(value)) {
         // No renderer for empty values
         return null;
       }
-      const column = params?.colDef?.context?.sourceColumn;
       const colId = column?.id;
 
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
@@ -130,12 +134,29 @@ const getSpanListColumnDefs = (col) => {
     },
     cellStyle: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
+      const isEvalMetric =
+        params?.colDef?.context?.sourceColumn?.groupBy === "Evaluation Metrics";
+      const structured =
+        isEvalMetric &&
+        value &&
+        typeof value === "object" &&
+        !Array.isArray(value);
+      if (isCellValueEmpty(value) && !structured) {
         return {
           display: "flex",
           alignItems: "center",
           height: "100%",
           justifyContent: "center",
+        };
+      }
+      if (isEvalMetric) {
+        return {
+          display: "flex",
+          height: "100%",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          padding: 0,
+          overflow: "hidden",
         };
       }
     },
@@ -200,6 +221,7 @@ const SpanGrid = React.forwardRef(
     const { setSpanDetailDrawerOpen } = useLLMTracingStoreShallow((state) => ({
       setSpanDetailDrawerOpen: state.setSpanDetailDrawerOpen,
     }));
+    const [, setDrawerTab] = useUrlState("drawerTab");
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [selectedAll, setSelectedAll] = useState(false);
 
@@ -290,47 +312,60 @@ const SpanGrid = React.forwardRef(
         };
       }
 
-      // If columns are populated → process normally
-      const grouping = {};
       const bottomRowObj = {};
-
-      for (const eachCol of columns) {
-        if (eachCol?.groupBy) {
-          if (!grouping[eachCol?.groupBy]) {
-            grouping[eachCol?.groupBy] = [eachCol];
-          } else {
-            grouping[eachCol?.groupBy].push(eachCol);
-          }
-        } else {
-          grouping[getRandomId()] = [eachCol];
-        }
-      }
-      const annotationColumns = generateAnnotationColumnsForTracing(
-        grouping["Annotation Metrics"] || [],
-        showMetricsIds,
+      const annotationCols = columns.filter(
+        (c) => c?.groupBy === "Annotation Metrics",
       );
-      delete grouping["Annotation Metrics"];
-      const columnDefsResult = Object.entries(grouping).map(([group, cols]) => {
-        if (!AllowedGroups.includes(group) && cols.length === 1) {
-          const c = cols[0];
+      const customCols = columns.filter((c) => c?.groupBy === "Custom Columns");
+      const mainCols = columns.filter(
+        (c) =>
+          c?.groupBy !== "Annotation Metrics" &&
+          c?.groupBy !== "Custom Columns",
+      );
+
+      // Eval columns grouped under their parent Eval Task (two-tier header with
+      // T/S glyph); non-eval columns stay flat. Same util/component as TraceGrid.
+      const columnDefsResult = buildColumnBlocks(mainCols).map((block) => {
+        if (block.type === "col") {
+          const c = block.col;
           bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
           return getSpanListColumnDefs(c);
-        } else {
-          return {
-            headerName: group,
-            children: cols.map((c) => {
-              bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
-              const colDef = getSpanListColumnDefs(c);
-              return {
-                ...colDef,
-                minWidth: 200,
-                flex: 1,
-                cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
-              };
-            }),
-          };
         }
+        const task = block.group;
+        return {
+          headerName: task.taskName,
+          headerGroupComponent: EvalTaskGroupHeader,
+          headerGroupComponentParams: { rowType: task.rowType },
+          marryChildren: true,
+          children: task.evals.map((c) => {
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            return getSpanListColumnDefs(c);
+          }),
+        };
       });
+
+      // Custom columns under their own group (kept as-is)
+      if (customCols.length > 0) {
+        columnDefsResult.push({
+          headerName: "Custom Columns",
+          children: customCols.map((c) => {
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            const colDef = getSpanListColumnDefs(c);
+            return {
+              ...colDef,
+              minWidth: 200,
+              flex: 1,
+              cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
+            };
+          }),
+        });
+      }
+
+      // Annotation columns as flat columns (not grouped)
+      const annotationColumns = generateAnnotationColumnsForTracing(
+        annotationCols,
+        showMetricsIds,
+      );
       if (annotationColumns?.length > 0) {
         for (const group of annotationColumns) {
           if (group.children) {
@@ -568,6 +603,11 @@ const SpanGrid = React.forwardRef(
         if (!traceId || !spanId) {
           return;
         }
+        // Eval-cell click pre-focuses the drawer's Evals tab (read once on
+        // open); any other cell clears it for the default tab.
+        const isEvalCell =
+          event?.colDef?.context?.sourceColumn?.groupBy === "Evaluation Metrics";
+        setDrawerTab(isEvalCell ? "evals" : null);
         setSpanDetailDrawerOpen({
           trace_id: traceId,
           span_id: spanId,
@@ -577,7 +617,7 @@ const SpanGrid = React.forwardRef(
 
         trackEvent(Events.observeSpanidClicked);
       },
-      [filters, setSpanDetailDrawerOpen],
+      [filters, setSpanDetailDrawerOpen, setDrawerTab],
     );
 
     useEffect(() => {

@@ -17,6 +17,7 @@ import {
   formatCost,
 } from "src/sections/projects/LLMTracing/formatters";
 import { getTypeConfig } from "./spanTypeConfig";
+import { spanOwnEvalRows, collectSubtreeEvals } from "./evalScores";
 
 // ---------------------------------------------------------------------------
 // Helpers (same logic as TraceTreeV2)
@@ -57,29 +58,6 @@ function countErrors(entry) {
     for (const child of entry.children) count += countErrors(child);
   }
   return count;
-}
-
-function collectSubtreeEvals(entry) {
-  const evals = entry?.eval_scores || [];
-  let pass = 0;
-  let fail = 0;
-  let total = evals.length;
-  for (const e of evals) {
-    const score =
-      e?.score ?? (e?.result === true ? 100 : e?.result === false ? 0 : null);
-    if (score === null || score === undefined) continue;
-    if (score >= 50 || score === true || score === 100) pass++;
-    else fail++;
-  }
-  if (entry.children?.length) {
-    for (const child of entry.children) {
-      const childEvals = collectSubtreeEvals(child);
-      pass += childEvals.pass;
-      fail += childEvals.fail;
-      total += childEvals.total;
-    }
-  }
-  return { pass, fail, total };
 }
 
 function getRootLatency(spans) {
@@ -264,7 +242,8 @@ const TimelineRow = ({
 
   // Eval scores
   const subtreeEvals = useMemo(() => collectSubtreeEvals(entry), [entry]);
-  const ownEvals = entry?.eval_scores || [];
+  // This span's own eval rows flattened from the task-grouped eval_scores.
+  const ownEvalRows = spanOwnEvalRows(entry);
 
   // Bar label — duration only (metrics are in the left panel)
   const durationLabel = formatLatency(durationMs);
@@ -488,19 +467,14 @@ const TimelineRow = ({
                     </Typography>
                   )}
                   {!isRoot &&
-                    ownEvals.length > 0 &&
+                    ownEvalRows.length > 0 &&
                     (() => {
-                      const ownPass = ownEvals.filter((e) => {
-                        const s =
-                          e?.score ??
-                          (e?.result === true
-                            ? 100
-                            : e?.result === false
-                              ? 0
-                              : null);
-                        return s != null && s >= 50;
-                      }).length;
-                      const ownFail = ownEvals.length - ownPass;
+                      const ownPass = ownEvalRows.filter(
+                        (r) => r.pass === true,
+                      ).length;
+                      const ownFail = ownEvalRows.filter(
+                        (r) => r.pass === false,
+                      ).length;
                       return (
                         <CustomTooltip
                           show
@@ -516,17 +490,10 @@ const TimelineRow = ({
                                   mb: 0.25,
                                 }}
                               >
-                                {ownPass}/{ownEvals.length} passed
+                                {ownPass}/{ownEvalRows.length} passed
                               </Typography>
-                              {ownEvals.map((e, i) => {
-                                const s =
-                                  e?.score ??
-                                  (e?.result === true
-                                    ? 100
-                                    : e?.result === false
-                                      ? 0
-                                      : null);
-                                const p = s != null && s >= 50;
+                              {ownEvalRows.map((r, i) => {
+                                const p = r.pass === true;
                                 return (
                                   <Box
                                     key={i}
@@ -553,7 +520,7 @@ const TimelineRow = ({
                                         flex: 1,
                                       }}
                                     >
-                                      {e.eval_name || "eval"}
+                                      {r.evalName || "eval"}
                                     </Typography>
                                     <Typography
                                       sx={{
@@ -562,7 +529,7 @@ const TimelineRow = ({
                                         fontWeight: 600,
                                       }}
                                     >
-                                      {s != null ? `${s}%` : "\u2014"}
+                                      {r.label}
                                     </Typography>
                                   </Box>
                                 );

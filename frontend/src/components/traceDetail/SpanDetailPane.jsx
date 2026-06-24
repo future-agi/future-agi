@@ -40,7 +40,7 @@ import ScoresListSection from "src/components/ScoresListSection/ScoresListSectio
 import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
-import EvalsTabView, { collectAllEvalsFromEntry } from "./EvalsTabView";
+import EvalRollupSection from "./EvalRollupSection";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import ImageCard from "src/components/multimodal/ImageCard";
 import AudioCellRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/AudioCellRenderer";
@@ -619,7 +619,10 @@ const LogViewRow = ({
   const provider = span.provider;
   const totalTokens = span.total_tokens;
   const cost = span.cost;
-  const evalCount = entry?.eval_scores?.length || 0;
+  const evalCount = (entry?.eval_scores?.eval_tasks || []).reduce(
+    (n, t) => n + (t.evals?.length || 0),
+    0,
+  );
   const annotationCount = entry?.annotations?.length || 0;
   const isDimmed = entry?._filterMatch === false;
   const hasAnyContent = input || output || Object.keys(attributes).length > 0;
@@ -1743,8 +1746,14 @@ const SpanDetailPane = ({
   onAction,
   onSelectSpan,
   drawerOpen = true,
+  initialTab,
 }) => {
-  const [activeTab, setActiveTab] = useState("preview");
+  // Seed once on mount from the `initialTab` prop (the parent remounts this
+  // pane per drawer-open via a key, so this re-runs each open). Never watched
+  // after — the user can switch tabs/spans freely without being pulled back.
+  const [activeTab, setActiveTab] = useState(() =>
+    initialTab === "evals" ? "evals" : "preview",
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState("markdown"); // "markdown" | "json" | "chat"
 
@@ -2144,50 +2153,48 @@ const SpanDetailPane = ({
           />
         )}
 
-        {/* Evals Tab — this span + child span evals. Rendered via the
-            shared EvalsTabView component so the trace drawer and the
-            voice drawer use the same eval UI. */}
+        {/* Evals tab — renders this span's eval_scores. */}
         {activeTab === "evals" && (
-          <EvalsTabView
-            evals={collectAllEvalsFromEntry(entry)}
+          <EvalRollupSection
+            evalScores={entry?.eval_scores}
             onSelectSpan={onSelectSpan}
             emptyMessage="No evaluations for this span or its children"
-            onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
+            onFixWithFalcon={({
+              level,
+              ev,
+              failingEvals,
+              passed = 0,
+              total = 0,
+            }) => {
               const traceId = span?.trace;
               if (level === "eval" && ev) {
                 openFixWithFalcon({
                   level: "eval",
                   context: {
                     trace_id: traceId,
-                    span_id: ev.spanId || ev.observation_span_id || span?.id,
-                    eval_log_id: ev.eval_log_id || ev.cell_id || ev.log_id,
-                    custom_eval_config_id:
-                      ev.custom_eval_config_id || ev.eval_config_id,
+                    span_id: ev.span_id || span?.id,
+                    custom_eval_config_id: ev.eval_config_id,
                     eval_name: ev.eval_name,
                     score: ev.score,
-                    explanation: ev.explanation || ev.eval_explanation,
-                    span_name: ev.spanName,
+                    explanation: ev.explanation,
+                    span_name: ev.span_name,
                     project_id: projectId,
                   },
                 });
                 return;
               }
-              // Span-level or trace-level — include pass/fail summary so
-              // Falcon can gate (no fabricated failures when everything passes).
-              const total = (allEvals || []).length;
-              const passCount = (allEvals || []).filter(
-                (e) => e.score != null && e.score >= 50,
-              ).length;
+              // Span-level or trace-level — pass/fail summary (precomputed by
+              // EvalRollupSection from the backend aggregates) so Falcon can
+              // gate (no fabricated failures when everything passes).
               openFixWithFalcon({
                 level: isRootSpan ? "trace" : "span",
                 context: {
                   trace_id: traceId,
                   span_id: isRootSpan ? undefined : span?.id,
                   span_name: isRootSpan ? undefined : span?.name,
-                  evals_summary: `${passCount}/${total} passed`,
+                  evals_summary: `${passed}/${total} passed`,
                   failing_evals: (failingEvals || []).map((e) => ({
                     name: e.eval_name,
-                    score: e.score,
                   })),
                   project_id: projectId,
                 },
@@ -2755,7 +2762,7 @@ SpanDetailPane.propTypes = {
   entry: PropTypes.shape({
     observation_span: PropTypes.object,
     observationSpan: PropTypes.object,
-    eval_scores: PropTypes.array,
+    eval_scores: PropTypes.object,
     evalScores: PropTypes.array,
     annotations: PropTypes.array,
   }),
@@ -2768,6 +2775,7 @@ SpanDetailPane.propTypes = {
   onAction: PropTypes.func,
   onSelectSpan: PropTypes.func,
   drawerOpen: PropTypes.bool,
+  initialTab: PropTypes.string,
 };
 
 export default React.memo(SpanDetailPane);

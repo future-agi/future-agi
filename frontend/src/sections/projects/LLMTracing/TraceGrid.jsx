@@ -22,6 +22,7 @@ import {
   getTraceListColumnDefs,
   FILTER_FOR_HAS_EVAL,
   generateAnnotationColumnsForTracing,
+  normalizeConfigKeys,
 } from "./common";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
@@ -32,19 +33,11 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import { useReplaySessionsStoreShallow } from "../SessionsView/ReplaySessions/store";
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
+import { buildColumnBlocks } from "./evalTaskGrouping";
+import EvalTaskGroupHeader from "./Renderers/EvalTaskGroupHeader";
 
 const ROWS_LIMIT = 100;
 const EMPTY_EXTRA_FILTERS = [];
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
 
 const TraceGrid = React.forwardRef(
   (
@@ -70,6 +63,7 @@ const TraceGrid = React.forwardRef(
     const agTheme = useAgTheme();
     const theme = useTheme();
     const [dateInterval] = useUrlState("dateInterval", "day");
+    const [, setDrawerTab] = useUrlState("drawerTab");
     const { openReplaySessionDrawer, currentStep, validatedSteps } =
       useReplaySessionsStoreShallow((state) => ({
         openReplaySessionDrawer: state.openReplaySessionDrawer,
@@ -364,22 +358,34 @@ const TraceGrid = React.forwardRef(
         };
       }
 
-      // Flat columns — no grouping for eval/annotation metrics
       const bottomRowObj = {};
       const annotationCols = columns.filter(
         (c) => c?.groupBy === "Annotation Metrics",
       );
       const customCols = columns.filter((c) => c?.groupBy === "Custom Columns");
-      const otherCols = columns.filter(
+      const mainCols = columns.filter(
         (c) =>
           c?.groupBy !== "Annotation Metrics" &&
           c?.groupBy !== "Custom Columns",
       );
 
-      // Build flat column defs for non-annotation, non-custom columns
-      const columnDefsResult = otherCols.map((c) => {
-        bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-        return getTraceListColumnDefs(c);
+      const columnDefsResult = buildColumnBlocks(mainCols).map((block) => {
+        if (block.type === "col") {
+          const c = block.col;
+          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+          return getTraceListColumnDefs(c);
+        }
+        const task = block.group;
+        return {
+          headerName: task.taskName,
+          headerGroupComponent: EvalTaskGroupHeader,
+          headerGroupComponentParams: { rowType: task.rowType },
+          marryChildren: true,
+          children: task.evals.map((c) => {
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            return getTraceListColumnDefs(c);
+          }),
+        };
       });
 
       // Group custom columns under a "Custom Columns" header (TH-4151)
@@ -512,11 +518,18 @@ const TraceGrid = React.forwardRef(
         if (!traceId) {
           return;
         }
+        // Eval-cell click pre-focuses the drawer's Evals tab (read once on
+        // open); any other cell clears it for the default tab.
+        setDrawerTab(
+          event?.colDef?.headerComponentParams?.group === "Evaluation Metrics"
+            ? "evals"
+            : null,
+        );
         setTraceDetailDrawerOpen({ traceId: traceId, filters: filters });
 
         // trackEvent(Events.observeTraceidClicked);
       },
-      [filters, setTraceDetailDrawerOpen],
+      [filters, setTraceDetailDrawerOpen, setDrawerTab],
     );
 
     const shouldDisable = useMemo(() => {

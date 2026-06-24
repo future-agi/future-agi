@@ -16,6 +16,7 @@ import {
   formatTokenCount,
   formatCost,
 } from "src/sections/projects/LLMTracing/formatters";
+import { spanOwnEvalRows, collectSubtreeEvals } from "./evalScores";
 
 // ---------------------------------------------------------------------------
 // Type config — icon path + color
@@ -33,30 +34,6 @@ function countErrors(entry) {
     for (const child of entry.children) count += countErrors(child);
   }
   return count;
-}
-
-/** Collect all eval scores from a subtree (recursive) */
-function collectSubtreeEvals(entry) {
-  const evals = entry?.eval_scores || [];
-  let pass = 0;
-  let fail = 0;
-  let total = evals.length;
-  for (const e of evals) {
-    const score =
-      e?.score ?? (e?.result === true ? 100 : e?.result === false ? 0 : null);
-    if (score === null || score === undefined) continue;
-    if (score >= 50 || score === true || score === 100) pass++;
-    else fail++;
-  }
-  if (entry.children?.length) {
-    for (const child of entry.children) {
-      const childEvals = collectSubtreeEvals(child);
-      pass += childEvals.pass;
-      fail += childEvals.fail;
-      total += childEvals.total;
-    }
-  }
-  return { pass, fail, total };
 }
 
 function getRootLatency(spans) {
@@ -270,13 +247,8 @@ const TreeNodeRow = ({
   const evalFailCount = subtreeEvals.fail;
   const evalTotal = subtreeEvals.total;
 
-  // This span's own evals — check if THIS span has failed evals (for red dot indicator)
-  const ownEvals = entry?.eval_scores || [];
-  const hasOwnFailedEval = ownEvals.some((e) => {
-    const score =
-      e?.score ?? (e?.result === true ? 100 : e?.result === false ? 0 : null);
-    return score != null && score < 50;
-  });
+  // This span's own eval rows for the chip + tooltip; red-dot if any failed.
+  const ownEvalRows = spanOwnEvalRows(entry);
 
   // Search filtering
   const matchesSearch =
@@ -488,19 +460,14 @@ const TreeNodeRow = ({
               )}
               {/* Non-root: single eval status chip with hover breakdown */}
               {!isRoot &&
-                ownEvals.length > 0 &&
+                ownEvalRows.length > 0 &&
                 (() => {
-                  const ownPass = ownEvals.filter((e) => {
-                    const s =
-                      e?.score ??
-                      (e?.result === true
-                        ? 100
-                        : e?.result === false
-                          ? 0
-                          : null);
-                    return s != null && s >= 50;
-                  }).length;
-                  const ownFail = ownEvals.length - ownPass;
+                  const ownPass = ownEvalRows.filter(
+                    (r) => r.pass === true,
+                  ).length;
+                  const ownFail = ownEvalRows.filter(
+                    (r) => r.pass === false,
+                  ).length;
                   return (
                     <CustomTooltip
                       show
@@ -516,17 +483,10 @@ const TreeNodeRow = ({
                               mb: 0.25,
                             }}
                           >
-                            {ownPass}/{ownEvals.length} passed
+                            {ownPass}/{ownEvalRows.length} passed
                           </Typography>
-                          {ownEvals.map((e, i) => {
-                            const s =
-                              e?.score ??
-                              (e?.result === true
-                                ? 100
-                                : e?.result === false
-                                  ? 0
-                                  : null);
-                            const pass = s != null && s >= 50;
+                          {ownEvalRows.map((r, i) => {
+                            const pass = r.pass === true;
                             return (
                               <Box
                                 key={i}
@@ -549,7 +509,7 @@ const TreeNodeRow = ({
                                 <Typography
                                   sx={{ fontSize: 10, color: "#fff", flex: 1 }}
                                 >
-                                  {e.eval_name || "eval"}
+                                  {r.evalName || "eval"}
                                 </Typography>
                                 <Typography
                                   sx={{
@@ -558,7 +518,7 @@ const TreeNodeRow = ({
                                     fontWeight: 600,
                                   }}
                                 >
-                                  {s != null ? `${s}%` : "—"}
+                                  {r.label}
                                 </Typography>
                               </Box>
                             );

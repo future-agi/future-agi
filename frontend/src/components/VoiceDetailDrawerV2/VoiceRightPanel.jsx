@@ -15,6 +15,7 @@ import { isLiveKitProvider } from "src/sections/agents/constants";
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
 import { buildVoiceCallScoreSource } from "src/components/voiceAnnotationSources";
 import EvalsTabView from "src/components/traceDetail/EvalsTabView";
+import EvalRollupSection from "src/components/traceDetail/EvalRollupSection";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import VoiceLogsView from "./VoiceLogsView";
 import LoadingStateComponent from "src/components/CallLogsDetailDrawer/LoadingStateComponent";
@@ -52,7 +53,14 @@ const VoiceRightPanel = ({
   hiddenActionIds = [],
   hideAnnotationTab,
 }) => {
-  const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
+  // Seed the tab once on open: eval-cell clicks set ?drawerTab=evals so the
+  // drawer lands on Evals. Read once (lazy init) — never watched after, so
+  // the user can switch tabs freely without being pulled back.
+  const [currentTab, setCurrentTab] = useState(() =>
+    new URLSearchParams(window.location.search).get("drawerTab") === "evals"
+      ? TABS.EVALUATIONS
+      : TABS.ANALYTICS,
+  );
   const isSimulate = data?.module === "simulate";
   // Prefer the conversation root span (where voice-call attributes/raw_log
   // live). `trace.observation_spans.all()` is returned without a guaranteed
@@ -192,6 +200,13 @@ const VoiceRightPanel = ({
     };
   }, [isSimulate, data, observationSpan]);
 
+  // Observe returns grouped eval_scores (like trace detail); simulate emits the
+  // flat map → fall back to EvalsTabView.
+  const groupedEvalScores =
+    !isSimulate && data?.eval_scores?.eval_tasks?.length
+      ? data.eval_scores
+      : null;
+
   const evalRows = useMemo(() => {
     if (isSimulate) {
       return data?.eval_metrics || data?.eval_outputs || null;
@@ -247,6 +262,7 @@ const VoiceRightPanel = ({
       return {
         id: `eval-${id}-${i}`,
         eval_name: e?.name || e?.metric || String(id),
+        eval_task_name: e?.eval_task_name || null,
         score,
         score_label: scoreLabel,
         score_items: scoreItems,
@@ -393,11 +409,64 @@ const VoiceRightPanel = ({
             <CallAnalyticsView {...analyticsProps} />
           </ShowComponent>
 
-          <ShowComponent condition={currentTab === TABS.EVALUATIONS}>
+          <ShowComponent
+            condition={currentTab === TABS.EVALUATIONS && !!groupedEvalScores}
+          >
+            <EvalRollupSection
+              evalScores={groupedEvalScores}
+              emptyMessage="No evaluations for this call"
+              showGlyph={false}
+              onFixWithFalcon={({
+                level,
+                ev,
+                failingEvals,
+                passed = 0,
+                total = 0,
+              }) => {
+                const projectId = data?.project_id;
+                const callId = data?.id;
+                if (level === "eval" && ev) {
+                  openFixWithFalcon({
+                    level: "eval",
+                    context: {
+                      trace_id: traceId,
+                      call_id: callId,
+                      span_id: ev.span_id,
+                      custom_eval_config_id: ev.eval_config_id,
+                      eval_name: ev.eval_name,
+                      score: ev.score,
+                      explanation: ev.explanation,
+                      project_id: projectId,
+                      module: data?.module,
+                    },
+                  });
+                  return;
+                }
+                openFixWithFalcon({
+                  level: "voice",
+                  context: {
+                    trace_id: traceId,
+                    call_id: callId,
+                    project_id: projectId,
+                    module: data?.module,
+                    evals_summary: `${passed}/${total} passed`,
+                    failing_evals: (failingEvals || []).map((e) => ({
+                      name: e.eval_name,
+                    })),
+                  },
+                });
+              }}
+            />
+          </ShowComponent>
+
+          <ShowComponent
+            condition={currentTab === TABS.EVALUATIONS && !groupedEvalScores}
+          >
             <EvalsTabView
               evals={normalizedEvals}
               emptyMessage="No evaluations for this call"
               showSpanColumn={false}
+              groupByTask
               onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
                 const projectId = data?.project_id;
                 const callId = data?.id;

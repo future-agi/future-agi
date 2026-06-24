@@ -11,12 +11,27 @@
  * Returns: { nodes: [...], edges: [...] } ready for AgentGraph/React Flow.
  */
 
+import { spanOwnEvalRows } from "./evalScores";
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function getSpan(entry) {
   return entry?.observation_span || {};
+}
+
+/** This span's own evals as graph-node rows (snake_case for node.evals). */
+function flattenEntryEvals(entry) {
+  return spanOwnEvalRows(entry).map((r) => ({
+    eval_name: r.evalName,
+    eval_config_id: r.evalConfigId,
+    output_type: r.outputType,
+    eval_task_name: r.taskName,
+    score: r.score,
+    result: r.result,
+    error: r.error,
+  }));
 }
 
 /** Flatten span tree into a list of { span, entry, depth, parentSpanId } */
@@ -113,7 +128,7 @@ function buildExplicitGraph(flatSpans) {
       node._hasMatch = true;
     }
     // Collect evals and annotations
-    const entryEvals = item.entry?.eval_scores || [];
+    const entryEvals = flattenEntryEvals(item.entry);
     const entryAnnotations = item.entry?.annotations || [];
     if (entryEvals.length) node.evals.push(...entryEvals);
     if (entryAnnotations.length) node.annotations.push(...entryAnnotations);
@@ -272,7 +287,7 @@ function buildInferredGraph(flatSpans) {
     ) {
       node._hasMatch = true;
     }
-    const entryEvals = item.entry?.eval_scores || [];
+    const entryEvals = flattenEntryEvals(item.entry);
     const entryAnnotations = item.entry?.annotations || [];
     if (entryEvals.length) node.evals.push(...entryEvals);
     if (entryAnnotations.length) node.annotations.push(...entryAnnotations);

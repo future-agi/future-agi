@@ -6,10 +6,12 @@ import VoiceCostCell from "./CallLogs/VoiceCostCell";
 import VoiceLatencyCell from "./CallLogs/VoiceLatencyCell";
 import VoiceTokenCell from "./CallLogs/VoiceTokenCell";
 import TalkRatioCell from "./CallLogs/TalkRatioCell";
-import EvalCellRenderer from "../test-detail/CellRenderers/EvalCellRenderer";
+import { evalCellChips } from "src/sections/projects/LLMTracing/evalCellModel";
+import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import logger from "src/utils/logger";
 import { Box, Skeleton } from "@mui/material";
 import { AGENT_TYPES, isLiveKitProvider } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
@@ -385,6 +387,9 @@ export const generateEvalColumnsFromConfig = (items = []) => {
     return {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,
+      evalTaskId: item.eval_task_id || null,
+      evalTaskName: item.eval_task_name || null,
+      evalTaskCreatedAt: item.eval_task_created_at || null,
       flex: 1,
       minWidth: isReason ? 240 : 140,
       hide: item.is_visible === false,
@@ -410,14 +415,49 @@ export const generateEvalColumnsFromConfig = (items = []) => {
             </Box>
           );
         }
+        if (evalData?.error) {
+          return (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                height: "100%",
+                px: "8px",
+              }}
+            >
+              <ResultChip label="Errored" tone="errored" dense />
+            </Box>
+          );
+        }
+        const chips = evalCellChips(evalData.output, {
+          outputType: evalData.output_type,
+          choicesMap: item.choices_map,
+        });
         return (
-          <EvalCellRenderer
-            value={{
-              ...evalData,
-              type: evalData?.output_type,
-              value: evalData.output,
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+              flexWrap: "nowrap",
+              height: "100%",
+              width: "100%",
+              px: "8px",
+              overflow: "hidden",
+              minWidth: 0,
             }}
-          />
+          >
+            {chips.length
+              ? chips.map((c) => (
+                  <ResultChip
+                    key={c.label}
+                    label={c.label}
+                    tone={c.tone}
+                    dense
+                  />
+                ))
+              : "-"}
+          </Box>
         );
       },
     };
@@ -860,11 +900,16 @@ export const useVoiceCallDetail = (traceId, enabled = false) => {
   return useQuery({
     queryKey: ["voiceCallDetail", traceId],
     queryFn: () =>
-      axios.get(endpoints.project.getVoiceCallDetail, {
-        params: { trace_id: traceId },
-      }),
+      axios
+        .get(endpoints.project.getVoiceCallDetail, {
+          params: { trace_id: traceId },
+        })
+        .catch((err) => {
+          logger.error("voice_call_detail fetch failed", err);
+          return { data: { result: null } };
+        }),
     enabled: !!traceId && enabled,
-    select: (data) => data?.data?.result,
+    select: (data) => data?.data?.result || null,
     staleTime: 5 * 60 * 1000,
     meta: { errorHandled: true },
   });

@@ -27,6 +27,9 @@ import {
   prefetchCallLogs,
 } from "../helper";
 import Iconify from "src/components/iconify";
+import { buildColumnBlocks } from "src/sections/projects/LLMTracing/evalTaskGrouping";
+import { useUrlState } from "src/routes/hooks/use-url-state";
+import EvalTaskGroupHeader from "src/sections/projects/LLMTracing/Renderers/EvalTaskGroupHeader";
 import { useAgentDetailsStore } from "../store/agentDetailsStore";
 import TestDetailSideDrawer from "src/sections/test-detail/TestDetailDrawer/TestDetailSideDrawer";
 import {
@@ -191,6 +194,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     }),
     [],
   );
+  const [, setDrawerTab] = useUrlState("drawerTab");
   const { data, isLoading, queryKey } = useCallLogs({
     module,
     id: id,
@@ -241,6 +245,8 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
           groupBy: c.field.match(/^[0-9a-f-]{36}/)
             ? "Evaluation Metrics"
             : "Call Columns",
+          evalTaskId: c.evalTaskId ?? null,
+          evalTaskName: c.evalTaskName ?? null,
         }));
       onConfigLoaded(colConfig);
     }
@@ -307,8 +313,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     const updated = callLogsColumnDefs
       .map((col) => ({
         ...col,
-        ...(col.field &&
-          col.field in visMap && { hide: !visMap[col.field] }),
+        ...(col.field && col.field in visMap && { hide: !visMap[col.field] }),
       }))
       .sort((a, b) => {
         const ai = orderIndex.get(a?.field) ?? Infinity;
@@ -361,14 +366,29 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         },
       }));
 
+    // Group eval columns under one header per eval task (parity with the
+    // trace/span grids). Non-eval columns pass through flat; voice tasks
+    // carry no rowType, so the header renders without a T/S glyph.
+    const grouped = buildColumnBlocks(updated).map((block) =>
+      block.type === "col"
+        ? block.col
+        : {
+            headerName: block.group.taskName,
+            headerGroupComponent: EvalTaskGroupHeader,
+            headerGroupComponentParams: { rowType: block.group.rowType },
+            marryChildren: true,
+            children: block.group.evals,
+          },
+    );
+
     // Group under a "Custom Columns" header for parity with the other grids.
     if (newCustomDefs.length > 0) {
       return [
-        ...updated,
+        ...grouped,
         { headerName: "Custom Columns", children: newCustomDefs },
       ];
     }
-    return updated;
+    return grouped;
   }, [callLogsColumnDefs, columnVisibility, isLoading]);
   useEffect(() => {
     return () => {
@@ -379,7 +399,12 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   // Propagate reorder to parent so the View columns dropdown stays in sync.
   const onColumnMoved = useCallback(
     (params) => {
-      if (!params?.finished || !params?.api || typeof onColumnsChange !== "function") return;
+      if (
+        !params?.finished ||
+        !params?.api ||
+        typeof onColumnsChange !== "function"
+      )
+        return;
       const newOrder = (params?.api?.getColumnState() ?? [])
         .map((s) => s.colId)
         .filter((id) => id !== APP_CONSTANTS.AG_GRID_SELECTION_COLUMN);
@@ -394,8 +419,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       const sameOrder =
         next.length === cols.length &&
         next.every(
-          (c, i) =>
-            (c?.field || c?.id) === (cols[i]?.field || cols[i]?.id),
+          (c, i) => (c?.field || c?.id) === (cols[i]?.field || cols[i]?.id),
         );
       if (!sameOrder) onColumnsChange(next);
     },
@@ -468,6 +492,16 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               )
             }
             getRowStyle={getRowStyle}
+            onCellClicked={(params) => {
+              // Eval-cell click pre-focuses the drawer's Evals tab (read once
+              // on drawer open). Any other cell clears it so normal opens
+              // land on the default tab.
+              setDrawerTab(
+                params?.colDef?.field?.startsWith("eval_outputs.")
+                  ? "evals"
+                  : null,
+              );
+            }}
             onRowClicked={(params) => {
               onRowClicked(params, page, pageLimit);
             }}
