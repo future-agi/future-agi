@@ -51,7 +51,34 @@ type geminiPart struct {
 // or thinking-enabled tool calling 400s with "missing thought_signature".
 // The OpenAI ToolCall struct has no extension slot, so we smuggle it through
 // the only string field the client is guaranteed to preserve: the id.
+//
+// Because the signature rides on the id, the id is no longer a clean
+// identifier: the client echoes it back as tool_call_id on the tool-result
+// message. Anywhere we read the id we must split it back apart — recover the
+// signature for the assistant turn (see toolCallIDSignature), and strip it off
+// before using the id as a Gemini functionResponse.Name (see toolCallIDName),
+// otherwise the next turn sends "call_0::sig::<sig>" as the function name and
+// Gemini rejects it because it no longer matches the functionCall name.
 const toolCallIDDelim = "::sig::"
+
+// toolCallIDSignature recovers the base64 thoughtSignature smuggled into a
+// synthetic tool_call id, or "" if none was packed in.
+func toolCallIDSignature(id string) string {
+	if idx := strings.Index(id, toolCallIDDelim); idx != -1 {
+		return id[idx+len(toolCallIDDelim):]
+	}
+	return ""
+}
+
+// toolCallIDName strips the smuggled thoughtSignature suffix off a tool_call
+// id, yielding the original identifier ("call_0"). Safe on ids that never
+// carried a signature — they pass through unchanged.
+func toolCallIDName(id string) string {
+	if idx := strings.Index(id, toolCallIDDelim); idx != -1 {
+		return id[:idx]
+	}
+	return id
+}
 
 type geminiFileData struct {
 	MimeType string `json:"mimeType"`
@@ -152,6 +179,19 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 
 	model := resolveModelName(req.Model)
 
+	// Map each tool_call id -> its function name from the assistant turns. A
+	// tool-result message may omit `name` (the OpenAI spec only requires
+	// tool_call_id), yet Gemini still needs functionResponse.Name to match the
+	// originating functionCall.Name. Hence the established id->name fallback.
+	toolCallNames := make(map[string]string)
+	for _, msg := range req.Messages {
+		for _, tc := range msg.ToolCalls {
+			if tc.ID != "" {
+				toolCallNames[tc.ID] = tc.Function.Name
+			}
+		}
+	}
+
 	// Extract system messages.
 	var systemParts []geminiPart
 	for _, msg := range req.Messages {
@@ -163,7 +203,7 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 			continue
 		}
 
-		gc := translateMessage(msg)
+		gc := translateMessage(msg, toolCallNames)
 
 		// Coalesce consecutive tool-result messages into a single Gemini user
 		// turn. Gemini requires a turn's functionResponse part count to equal
@@ -328,7 +368,7 @@ func isFunctionResponseContent(c *geminiContent) bool {
 	return true
 }
 
-func translateMessage(msg models.Message) geminiContent {
+func translateMessage(msg models.Message, toolCallNames map[string]string) geminiContent {
 	gc := geminiContent{
 		Role: mapRoleToGemini(msg.Role),
 	}
@@ -338,11 +378,20 @@ func translateMessage(msg models.Message) geminiContent {
 		text := extractTextContent(msg.Content)
 		gc.Role = "user" // Gemini uses "user" role for function responses.
 
-		// Gemini requires function Name in FunctionResponse.
-		// OpenAI tool messages may have name in msg.Name, or only tool_call_id.
+		// Gemini requires functionResponse.Name and it must match the
+		// originating functionCall.Name. An OpenAI tool-result message may carry
+		// the name in msg.Name, but the spec lets clients send only
+		// tool_call_id. Resolve it the established way: prefer msg.Name, then
+		// look the id up against the function names from the assistant turn's
+		// tool_calls. Only as a last resort fall back to the id stem (with any
+		// smuggled thoughtSignature suffix stripped) so we never emit
+		// "call_0::sig::<sig>" as the name.
 		funcName := msg.Name
 		if funcName == "" {
-			funcName = msg.ToolCallID // fallback: use the tool call ID as identifier
+			funcName = toolCallNames[msg.ToolCallID]
+		}
+		if funcName == "" {
+			funcName = toolCallIDName(msg.ToolCallID)
 		}
 		if funcName == "" {
 			funcName = "unknown_function"
@@ -366,12 +415,8 @@ func translateMessage(msg models.Message) geminiContent {
 			// outbound response (see translateResponse). Without restoring
 			// this, thinking-enabled Gemini 3+ models reject the request
 			// with "Function call is missing a thought_signature".
-			signature := ""
-			if idx := strings.Index(tc.ID, toolCallIDDelim); idx != -1 {
-				signature = tc.ID[idx+len(toolCallIDDelim):]
-			}
 			gc.Parts = append(gc.Parts, geminiPart{
-				ThoughtSignature: signature,
+				ThoughtSignature: toolCallIDSignature(tc.ID),
 				FunctionCall: &geminiFunctionCall{
 					Name: tc.Function.Name,
 					Args: json.RawMessage(tc.Function.Arguments),
