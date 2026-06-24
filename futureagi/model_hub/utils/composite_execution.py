@@ -90,8 +90,12 @@ def _execute_child(
 
         # Version pinning: if this child is pinned, snapshot overrides the
         # template's live config/criteria/model for this run only.
-        if link.pinned_version:
-            version = link.pinned_version
+        # Track which version was actually applied so run_eval_func logs the
+        # version that ran — not a version whose config wasn't used.
+        applied_version = None
+        if link.pinned_version and not getattr(link.pinned_version, "deleted", False):
+            applied_version = link.pinned_version
+            version = applied_version
             if version.config_snapshot:
                 runtime_config.update(version.config_snapshot)
             if version.criteria:
@@ -129,7 +133,7 @@ def _execute_child(
             trace_context=trace_context,
             session_context=session_context,
             call_context=call_context,
-            resolved_version=link.pinned_version if link.pinned_version else None,
+            resolved_version=applied_version,
         )
 
         score: float | None = None

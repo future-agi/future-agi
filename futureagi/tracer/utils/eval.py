@@ -69,23 +69,13 @@ def _resolve_uem_version(uem):
 
 
 def _resolve_eval_version(custom_eval_config, eval_template):
-    """Return the pinned EvalTemplateVersion or the template's default, or None.
+    """Return the default EvalTemplateVersion for the tracer/span/session path.
 
-    pinned_version lives on UserEvalMetric, not on CustomEvalConfig.
-    Look up the owning UserEvalMetric to read the pin.
+    CustomEvalConfig has no FK to UserEvalMetric (which carries pinned_version),
+    so pin resolution is not possible on this path — use the template default.
+    Version pinning for tracer evals requires passing the pin through the
+    dispatch chain (tracked as follow-up).
     """
-    from model_hub.models.evals_metric import UserEvalMetric
-
-    uem = (
-        UserEvalMetric.objects.filter(
-            custom_eval_config_id=custom_eval_config.id, deleted=False
-        )
-        .select_related("pinned_version")
-        .order_by("-updated_at")  # most-recently configured pin wins
-        .first()
-    )
-    if uem:
-        return _resolve_uem_version(uem)
     return EvalTemplateVersion.objects.get_default(eval_template)
 
 
@@ -1583,8 +1573,8 @@ def _execute_evaluation(
         if _ver:
             source_config["version_id"] = str(_ver.id)
             source_config["version_number"] = _ver.version_number
-    except Exception:
-        logger.warning("version_tracking_failed", exc_info=True)
+    except Exception as _ver_err:
+        logger.warning("version_tracking_failed", error=str(_ver_err), exc_info=True)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
     workspace = observation_span.project.workspace
@@ -2911,8 +2901,8 @@ def _execute_evaluation_for_trace(
         if _ver:
             source_config["version_id"] = str(_ver.id)
             source_config["version_number"] = _ver.version_number
-    except Exception:
-        logger.warning("version_tracking_failed", exc_info=True)
+    except Exception as _ver_err:
+        logger.warning("version_tracking_failed", error=str(_ver_err), exc_info=True)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
     api_call_log_row = None
@@ -3154,8 +3144,8 @@ def _execute_evaluation_for_session(
         if _ver:
             source_config["version_id"] = str(_ver.id)
             source_config["version_number"] = _ver.version_number
-    except Exception:
-        logger.warning("version_tracking_failed", exc_info=True)
+    except Exception as _ver_err:
+        logger.warning("version_tracking_failed", error=str(_ver_err), exc_info=True)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
     api_call_log_row = None

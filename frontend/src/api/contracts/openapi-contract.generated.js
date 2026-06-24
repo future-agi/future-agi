@@ -79603,11 +79603,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "array",
           "items": {
             "type": "object",
-            "additionalProperties": {
-              "type": "object",
-              "x-json-value": true,
-              "description": "Any valid JSON value."
-            }
+            "additionalProperties": {},
+            "x-json-value": true,
+            "description": "Row with dynamic columns — cell values are any valid JSON."
           }
         },
         "column_config": {
@@ -80539,11 +80537,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "array",
           "items": {
             "type": "object",
-            "additionalProperties": {
-              "type": "object",
-              "x-json-value": true,
-              "description": "Any valid JSON value."
-            }
+            "additionalProperties": {},
+            "x-json-value": true,
+            "description": "Row with dynamic columns — cell values are any valid JSON."
           }
         },
         "logs": {
@@ -85793,11 +85789,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "array",
           "items": {
             "type": "object",
-            "additionalProperties": {
-              "type": "object",
-              "x-json-value": true,
-              "description": "Any valid JSON value."
-            }
+            "additionalProperties": {},
+            "x-json-value": true,
+            "description": "Row with dynamic columns — cell values are any valid JSON."
           }
         },
         "config": {

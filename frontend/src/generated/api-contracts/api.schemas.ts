@@ -10176,7 +10176,10 @@ export interface EvalUsagePaginationApi {
   page_size: number;
 }
 
-export type EvalUsageStatsResponseResultApiTableItem = {[key: string]: { [key: string]: unknown }};
+/**
+ * Row with dynamic columns — cell values are any valid JSON.
+ */
+export type EvalUsageStatsResponseResultApiTableItem = {[key: string]: unknown};
 
 export interface EvalUsageStatsResponseResultApi {
   template_id: string;
@@ -11175,7 +11178,10 @@ export interface EvalApiLogTableMetadataApi {
   total_pages: number;
 }
 
-export type EvalApiLogTableResponseResultApiTableItem = {[key: string]: { [key: string]: unknown }};
+/**
+ * Row with dynamic columns — cell values are any valid JSON.
+ */
+export type EvalApiLogTableResponseResultApiTableItem = {[key: string]: unknown};
 
 export interface EvalApiLogTableResponseResultApi {
   table: EvalApiLogTableResponseResultApiTableItem[];
@@ -12534,7 +12540,10 @@ export interface PromptMetricsMetadataApi {
   total_rows: number;
 }
 
-export type PromptMetricsResultApiTableItem = {[key: string]: { [key: string]: unknown }};
+/**
+ * Row with dynamic columns — cell values are any valid JSON.
+ */
+export type PromptMetricsResultApiTableItem = {[key: string]: unknown};
 
 export type PromptMetricsResultApiConfig = { [key: string]: unknown };
 

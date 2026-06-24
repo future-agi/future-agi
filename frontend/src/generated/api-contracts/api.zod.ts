@@ -19948,9 +19948,7 @@ export const ModelHubEvalTemplatesUsageListResponse = zod.object({
   "pass_count": zod.number().optional(),
   "fail_count": zod.number().optional()
 })),
-  "table": zod.array(zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.'))),
+  "table": zod.array(zod.record(zod.string(), zod.unknown()).describe('Row with dynamic columns — cell values are any valid JSON.')),
   "logs": zod.object({
   "total": zod.number(),
   "page": zod.number(),
@@ -21855,9 +21853,7 @@ export const ModelHubGetEvalLogsDetailsListQueryParams = zod.object({
 export const ModelHubGetEvalLogsDetailsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-  "table": zod.array(zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.'))),
+  "table": zod.array(zod.record(zod.string(), zod.unknown()).describe('Row with dynamic columns — cell values are any valid JSON.')),
   "column_config": zod.array(zod.object({
   "id": zod.string().min(1),
   "name": zod.string().min(1),
@@ -25326,9 +25322,7 @@ export const ModelHubPromptMetricsListResponse = zod.object({
   "result": zod.object({
   "prompt_template_id": zod.string().uuid().optional(),
   "prompt_template_name": zod.string().min(1).optional(),
-  "table": zod.array(zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.'))),
+  "table": zod.array(zod.record(zod.string(), zod.unknown()).describe('Row with dynamic columns — cell values are any valid JSON.')),
   "config": zod.object({
 
 }).passthrough(),
@@ -25379,9 +25373,7 @@ export const ModelHubPromptSpanMetricsListResponse = zod.object({
   "result": zod.object({
   "prompt_template_id": zod.string().uuid().optional(),
   "prompt_template_name": zod.string().min(1).optional(),
-  "table": zod.array(zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.'))),
+  "table": zod.array(zod.record(zod.string(), zod.unknown()).describe('Row with dynamic columns — cell values are any valid JSON.')),
   "config": zod.object({
 
 }).passthrough(),

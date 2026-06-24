@@ -10,7 +10,7 @@ from model_hub.serializers.optimize_dataset import (
 )
 from model_hub.serializers.performance_report import PerformanceReportSerializer
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
-from tfc.utils.serializer_fields import JsonValueField
+from tfc.utils.serializer_fields import AnyValueDictField, JsonValueField, StringOrObjectField
 from tracer.serializers.filters import (
     SortParamField,
     StrictInputSerializer,
@@ -507,7 +507,7 @@ class PromptMetricsResultSerializer(serializers.Serializer):
     prompt_template_id = serializers.UUIDField(required=False)
     prompt_template_name = serializers.CharField(required=False)
     # table rows have dynamic column keys — typed as record<string, JSON>
-    table = serializers.ListField(child=serializers.DictField(child=JsonValueField()))
+    table = serializers.ListField(child=AnyValueDictField())
     config = serializers.JSONField()
     metadata = PromptMetricsMetadataSerializer()
 
@@ -1740,7 +1740,7 @@ class EvalUsageStatsResponseResultSerializer(serializers.Serializer):
     chart = EvalUsageChartPointSerializer(many=True)
     # table rows have dynamic input_var_X columns — typed as record<string, JSON>
     # so Zod gets z.record(z.string(), z.any()) rather than z.any() for the whole item
-    table = serializers.ListField(child=serializers.DictField(child=JsonValueField()))
+    table = serializers.ListField(child=AnyValueDictField())
     logs = EvalUsagePaginationSerializer()
 
 
@@ -1815,7 +1815,7 @@ class EvalColumnConfigItemSerializer(serializers.Serializer):
 
 class EvalApiLogTableResponseResultSerializer(serializers.Serializer):
     # table rows have dynamic column keys — typed as record<string, JSON>
-    table = serializers.ListField(child=serializers.DictField(child=JsonValueField()))
+    table = serializers.ListField(child=AnyValueDictField())
     column_config = EvalColumnConfigItemSerializer(many=True)
     metadata = EvalApiLogTableMetadataSerializer(required=False)
 
