@@ -1395,8 +1395,9 @@ const TestRetrieval = ({ gtId }) => {
 const EvalGroundTruthTab = ({ templateId }) => {
   const { enqueueSnackbar } = useSnackbar();
   const { role } = useAuthContext();
-  const canEdit =
-    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
+  const canEdit = Boolean(
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role]
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Eval data — to get required_keys (variables)

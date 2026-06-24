@@ -799,8 +799,9 @@ const DetailPanelContent = ({
   onFeedbackSubmitted,
 }) => {
   const { role } = useAuthContext();
-  const canEditEvals =
-    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
+  const canEditEvals = Boolean(
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role]
+  );
   const [viewMode, setViewMode] = useState("formatted");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 

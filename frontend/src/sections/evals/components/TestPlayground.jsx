@@ -662,8 +662,9 @@ const TestPlayground = React.forwardRef(
       useErrorLocalizerPoll();
 
     const { role } = useAuthContext();
-    const canEditEvals =
-      RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
+    const canEditEvals = Boolean(
+      RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role]
+    );
 
     // Version hover menu state
     const [versionMenuAnchor, setVersionMenuAnchor] = useState(null);
