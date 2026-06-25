@@ -4,15 +4,14 @@ Called when org configs are created, activated, or deleted.
 """
 
 import copy
-from types import UnionType
-from typing import Union, get_args, get_origin
 
 import structlog
 from django.conf import settings as django_settings
-from pydantic import BaseModel
 
 from agentcc.contracts.gateway_admin import (
     OrgConfig as GatewayOrgConfig,
+)
+from agentcc.contracts.gateway_admin import (
     ProviderConfig as GatewayProviderConfig,
 )
 from agentcc.models import AgentccOrgConfig
@@ -59,7 +58,37 @@ _RULE_PROVIDER_DEFAULTS = {
     "mcp-security": "mcp_security",
 }
 
-_PROVIDER_FIELDS = frozenset(GatewayProviderConfig.model_fields)
+_PROVIDER_CREDENTIAL_ALIASES = {
+    "access_key": "aws_access_key_id",
+    "secret_key": "aws_secret_access_key",
+    "region": "aws_region",
+}
+
+
+def _contract_input_names(contract_model):
+    names = set(contract_model.model_fields)
+    for field in contract_model.model_fields.values():
+        if field.alias:
+            names.add(field.alias)
+        validation_alias = field.validation_alias
+        if validation_alias is None:
+            continue
+        choices = getattr(validation_alias, "choices", (validation_alias,))
+        names.update(choice for choice in choices if isinstance(choice, str))
+    return frozenset(names)
+
+
+_PROVIDER_INPUT_FIELDS = _contract_input_names(GatewayProviderConfig)
+
+
+class UnsupportedProviderCredentialFields(ValueError):
+    def __init__(self, provider_name, fields):
+        self.provider_name = provider_name
+        self.fields = tuple(sorted(fields))
+        super().__init__(
+            "Unsupported gateway credential fields for provider "
+            f"{provider_name}: {', '.join(self.fields)}"
+        )
 
 
 def _normalize_eval_ids(cfg):
@@ -336,6 +365,44 @@ def _inject_fi_credentials(checks, org_id):
         )
 
 
+def _normalize_provider_credentials(provider_name, decrypted):
+    normalized = {}
+    unsupported = []
+    for key, value in decrypted.items():
+        if value in (None, ""):
+            continue
+        canonical_key = _PROVIDER_CREDENTIAL_ALIASES.get(key, key)
+        if canonical_key in GatewayProviderConfig.model_fields:
+            normalized[canonical_key] = value
+        else:
+            unsupported.append(key)
+
+    if unsupported:
+        raise UnsupportedProviderCredentialFields(provider_name, unsupported)
+    return normalized
+
+
+def _normalize_provider_extra_config(provider_name, extra_config):
+    if not isinstance(extra_config, dict):
+        return {}
+
+    normalized = {}
+    ignored = []
+    for key, value in extra_config.items():
+        if key in _PROVIDER_INPUT_FIELDS:
+            normalized[key] = value
+        elif value not in (None, "", [], {}):
+            ignored.append(key)
+
+    if ignored:
+        logger.warning(
+            "provider_extra_config_ignored",
+            provider=provider_name,
+            keys=sorted(ignored),
+        )
+    return normalized
+
+
 def _assemble_providers(org_id):
     """Build providers dict from AgentccProviderCredential rows for an org."""
     from agentcc.models.provider_credential import AgentccProviderCredential
@@ -357,90 +424,33 @@ def _assemble_providers(org_id):
                 provider=cred.provider_name,
             )
             continue
-        raw = {
-            **cred.extra_config,
-            **decrypted,
-            "api_key": decrypted.get("api_key", ""),
-            "base_url": cred.base_url,
-            "api_format": cred.api_format,
-            "models": cred.models_list,
-            "enabled": True,
-            "timeout": cred.default_timeout_seconds,
-            "max_concurrent": cred.max_concurrent,
-            "conn_pool_size": cred.conn_pool_size,
-        }
-        providers[cred.provider_name] = {
-            k: v for k, v in raw.items() if k in _PROVIDER_FIELDS
-        }
-    return providers
 
-
-def _snake_to_camel(value):
-    head, *tail = value.split("_")
-    return head + "".join(part[:1].upper() + part[1:] for part in tail)
-
-
-def _unwrap_optional(annotation):
-    origin = get_origin(annotation)
-    if origin not in (Union, UnionType):
-        return annotation
-
-    args = [arg for arg in get_args(annotation) if arg is not type(None)]
-    return args[0] if len(args) == 1 else annotation
-
-
-def _contract_model_type(annotation):
-    annotation = _unwrap_optional(annotation)
-    return (
-        annotation
-        if isinstance(annotation, type) and issubclass(annotation, BaseModel)
-        else None
-    )
-
-
-def _normalize_contract_value(value, annotation):
-    annotation = _unwrap_optional(annotation)
-    model_type = _contract_model_type(annotation)
-    if model_type is not None:
-        return _normalize_contract_aliases(value, model_type)
-
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if origin is list and args and isinstance(value, list):
-        return [_normalize_contract_value(item, args[0]) for item in value]
-    if origin is dict and len(args) == 2 and isinstance(value, dict):
-        return {
-            key: _normalize_contract_value(item, args[1]) for key, item in value.items()
-        }
-    return value
-
-
-def _normalize_contract_aliases(data, contract_model):
-    if not isinstance(data, dict):
-        return data
-
-    result = {**data}
-    for field_name, field in contract_model.model_fields.items():
-        aliases = []
-        if field.alias and field.alias != field_name:
-            aliases.append(field.alias)
-        camel_alias = _snake_to_camel(field_name)
-        if camel_alias != field_name and camel_alias not in aliases:
-            aliases.append(camel_alias)
-
-        source_key = field_name if field_name in data else None
-        if source_key is None:
-            source_key = next((alias for alias in aliases if alias in data), None)
-
-        if source_key is not None:
-            result[field_name] = _normalize_contract_value(
-                data[source_key], field.annotation
+        try:
+            raw = {
+                **_normalize_provider_extra_config(
+                    cred.provider_name, cred.extra_config
+                ),
+                **_normalize_provider_credentials(cred.provider_name, decrypted),
+                "base_url": cred.base_url,
+                "api_format": cred.api_format,
+                "models": cred.models_list,
+                "enabled": True,
+                "timeout": cred.default_timeout_seconds,
+                "max_concurrent": cred.max_concurrent,
+                "conn_pool_size": cred.conn_pool_size,
+            }
+            providers[cred.provider_name] = GatewayProviderConfig.model_validate(
+                raw
+            ).model_dump(by_alias=True, exclude_none=True)
+        except UnsupportedProviderCredentialFields as e:
+            logger.warning(
+                "provider_credential_unsupported_fields",
+                org_id=str(org_id),
+                provider=cred.provider_name,
+                fields=list(e.fields),
             )
-
-        for alias in aliases:
-            result.pop(alias, None)
-
-    return result
+            continue
+    return providers
 
 
 def _normalize_alerting(alerting):
@@ -462,7 +472,13 @@ def _extract_budget_action(entry):
     if not isinstance(entry, dict):
         return None
 
-    action = entry.get("action") or entry.get("action_mode") or entry.get("on_exceed")
+    action = (
+        entry.get("action")
+        or entry.get("action_mode")
+        or entry.get("actionMode")
+        or entry.get("on_exceed")
+        or entry.get("onExceed")
+    )
     if isinstance(action, str) and action:
         return action.lower()
     return None
@@ -577,7 +593,6 @@ def _build_payload(org_id, config):
         "model_database": config.model_database,
         "model_map": config.model_map,
     }
-    payload = _normalize_contract_aliases(payload, GatewayOrgConfig)
     return GatewayOrgConfig.model_validate(payload).model_dump(
         by_alias=True,
         exclude_none=True,
@@ -639,12 +654,15 @@ def push_all_org_configs():
     failed = 0
     for cfg in configs:
         org_id = str(cfg.organization_id)
-        payload = _build_payload(org_id, cfg)
         try:
+            payload = _build_payload(org_id, cfg)
             client.set_org_config(org_id, payload)
             success += 1
         except GatewayClientError as e:
             logger.warning("config_push_failed", org_id=org_id, error=str(e))
+            failed += 1
+        except Exception as e:
+            logger.warning("config_push_error", org_id=org_id, error=str(e))
             failed += 1
 
     logger.info("config_push_all_complete", success=success, failed=failed)
