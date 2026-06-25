@@ -55,6 +55,7 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 	transport := &http.Transport{
 		MaxIdleConns:        poolSize,
 		MaxIdleConnsPerHost: poolSize,
+		MaxConnsPerHost:     maxConcurrent,
 		IdleConnTimeout:     90 * time.Second,
 		ForceAttemptHTTP2:   true,
 	}
