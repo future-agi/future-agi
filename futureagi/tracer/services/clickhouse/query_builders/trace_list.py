@@ -39,6 +39,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
     TABLE = "spans"
     EVAL_TABLE = "tracer_eval_logger"
+    # Filter compiler class; the v2 list builder overrides this to the v2
+    # builder so it reads the v2 dimension tables (end_users, etc.).
+    _FILTER_BUILDER_CLS = ClickHouseFilterBuilder
 
     # Mapping from sort column names the frontend sends to actual
     # ClickHouse column names on the root span.
@@ -118,7 +121,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = self.end_date
 
         # Translate attribute / metric filters
-        fb = ClickHouseFilterBuilder(
+        fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -289,7 +292,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         Returns:
             A ``(query_string, params)`` tuple returning a single count.
         """
-        fb = ClickHouseFilterBuilder(
+        fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,

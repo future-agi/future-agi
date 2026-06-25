@@ -8,6 +8,7 @@ import React, { useMemo, useRef, useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
+  Collapse,
   CircularProgress,
   IconButton,
   Typography,
@@ -414,6 +415,8 @@ const AgentPathInner = ({
   const [containerWidth, setContainerWidth] = useState(900);
   const [containerHeight, setContainerHeight] = useState(200);
   const [isHovering, setIsHovering] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [zoom, setZoom] = useState(1);
   const layout = useMemo(() => computeSankeyLayout(data), [data]);
 
   useEffect(() => {
@@ -460,57 +463,124 @@ const AgentPathInner = ({
     );
   }
 
+  const chartHeight = isFullscreen ? Math.max(containerHeight, 320) : 200;
+  const chartWidth = Math.max(320, Math.round(containerWidth * zoom));
+  const scaledChartHeight = Math.max(120, Math.round(chartHeight * zoom));
+  const controlInset = isFullscreen ? 24 : 8;
+  const collapsedToolbarHeight = controlInset * 2 + 28;
+  const showToolbar = isHovering || isFullscreen || isCollapsed;
+  const btnSx = {
+    p: 0.5,
+    borderRadius: 0,
+    borderRight: "1px solid",
+    borderRightColor: "divider",
+    "&:last-child": { borderRight: "none" },
+    color: "text.secondary",
+  };
+
   return (
     <Box
       ref={containerRef}
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
       sx={{
+        display: "flex",
+        flexDirection: "column",
         position: "relative",
         bgcolor: "background.paper",
+        overflow: isCollapsed ? "visible" : "hidden",
         ...(isFullscreen
-          ? { height: "100%", width: "100%" }
-          : { mx: 2, my: 1 }),
+          ? { height: isCollapsed ? collapsedToolbarHeight : "100%", width: "100%" }
+          : { mx: 2, my: 1, minHeight: isCollapsed ? collapsedToolbarHeight : undefined }),
       }}
     >
-      {/* Reveal on hover */}
-      {(isHovering || isFullscreen) && (
+      {/* Zoom controls, top right (matches AgentGraph) */}
+      {showToolbar && (
         <Box
           sx={{
             position: "absolute",
-            top: 8,
-            right: 8,
-            zIndex: 10,
+            top: controlInset,
+            right: controlInset,
+            zIndex: isFullscreen ? (t) => t.zIndex.modal + 1 : 10,
             display: "flex",
             bgcolor: "background.paper",
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "6px",
-            boxShadow: (t) => `0 1px 3px ${alpha(t.palette.common.black, 0.06)}`,
+            boxShadow: (t) =>
+              `0 1px 3px ${alpha(t.palette.common.black, 0.06)}`,
             overflow: "hidden",
           }}
         >
           <IconButton
             size="small"
+            title="Zoom in"
+            onClick={() => setZoom((value) => Math.min(2, value + 0.2))}
+            sx={btnSx}
+          >
+            <Iconify icon="mdi:plus" width={14} />
+          </IconButton>
+          <IconButton
+            size="small"
+            title="Zoom out"
+            onClick={() => setZoom((value) => Math.max(0.6, value - 0.2))}
+            sx={btnSx}
+          >
+            <Iconify icon="mdi:minus" width={14} />
+          </IconButton>
+          <IconButton
+            size="small"
+            title="Fit"
+            onClick={() => setZoom(1)}
+            sx={btnSx}
+          >
+            <Iconify icon="mdi:crosshairs-gps" width={14} />
+          </IconButton>
+          <IconButton
+            size="small"
             title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
             onClick={onToggleFullscreen}
-            sx={{ p: 0.5, borderRadius: 0, color: "text.secondary" }}
+            sx={btnSx}
           >
             <Iconify
               icon={isFullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen"}
               width={14}
             />
           </IconButton>
+          <IconButton
+            size="small"
+            title={isCollapsed ? "Expand" : "Collapse"}
+            onClick={() => setIsCollapsed((value) => !value)}
+            sx={btnSx}
+          >
+            <Iconify
+              icon={isCollapsed ? "mdi:chevron-up" : "mdi:chevron-down"}
+              width={14}
+            />
+          </IconButton>
         </Box>
       )}
 
-      <SankeyChart
-        layout={layout}
-        width={containerWidth}
-        height={isFullscreen ? Math.max(containerHeight, 200) : 200}
-        onNodeClick={onNodeClick}
-        theme={theme}
-      />
+      <Collapse
+        in={!isCollapsed}
+        timeout="auto"
+        sx={isFullscreen ? { flex: 1, minHeight: 0 } : { minHeight: 0 }}
+      >
+        <Box
+          sx={{
+            height: "100%",
+            overflow: "auto",
+          }}
+        >
+          <SankeyChart
+            layout={layout}
+            width={chartWidth}
+            height={scaledChartHeight}
+            onNodeClick={onNodeClick}
+            theme={theme}
+          />
+        </Box>
+      </Collapse>
     </Box>
   );
 };

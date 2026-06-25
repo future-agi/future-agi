@@ -493,8 +493,11 @@ def get_annotation_labels_for_project(project_id, organization=None):
     """Find annotation labels that have at least one Score in a project.
 
     Labels may not have a direct ``project`` FK set (e.g. org-wide centralized
-    labels), so we look for labels referenced by Score records whose trace or
-    observation_span belongs to the project.
+    labels), so we also look for labels referenced by Score records in the project.
+
+    The score→project lookup is routed via ``_REGISTRY["ANNOTATION_LABELS"]``:
+    V1_ONLY reads PG (Score joins legacy trace/observation_span), V2_ONLY reads
+    CH (model_hub_score scoped via spans). See ``annotation_label_source``.
 
     Pre-deprecation this method also union'd in ``TraceAnnotation``-referenced
     labels. Score is the unified store now (the dual-write mirrors every
@@ -504,18 +507,10 @@ def get_annotation_labels_for_project(project_id, organization=None):
     """
     from django.db.models import Q
 
-    from model_hub.models.score import Score
+    from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
 
-    # Labels with scores for this project
-    score_label_ids = (
-        Score.objects.filter(
-            Q(trace__project_id=project_id)
-            | Q(observation_span__project_id=project_id),
-            deleted=False,
-        )
-        .values("label_id")
-        .distinct()
-    )
+    SourceCls = get_query_builder_class("ANNOTATION_LABELS")  # noqa: N806
+    score_label_ids = SourceCls().label_ids_for_project(project_id)
 
     return AnnotationsLabels.objects.filter(
         Q(project_id=project_id) | Q(id__in=score_label_ids),

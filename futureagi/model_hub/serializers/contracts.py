@@ -9,6 +9,7 @@ from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetSerializer,
 )
 from model_hub.serializers.performance_report import PerformanceReportSerializer
+from model_hub.services.ai_eval_writer_service import OUTPUT_FORMAT_PROMPTS
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
 from tracer.serializers.filters import (
     SortParamField,
@@ -259,14 +260,24 @@ class EvalSummaryTemplateDeleteResponseSerializer(serializers.Serializer):
 class AIEvalWriterRequestSerializer(serializers.Serializer):
     description = serializers.CharField()
     output_format = serializers.ChoiceField(
-        choices=["prompt", "messages"],
+        # Single source of truth: the dispatch dict in the service. Adding a
+        # format there automatically extends the accepted choices here.
+        choices=list(OUTPUT_FORMAT_PROMPTS),
         required=False,
         default="prompt",
     )
 
 
 class AIEvalWriterResultSerializer(serializers.Serializer):
-    prompt = serializers.CharField()
+    # Exactly one field is set, matching the request's output_format:
+    #   prompt    -> instruction text (string)
+    #   messages  -> LLM-as-a-Judge messages (list of {role, content})
+    #   test_data -> generated test data (object of variable -> value)
+    prompt = serializers.CharField(required=False, allow_null=True)
+    messages = serializers.ListField(
+        child=serializers.DictField(), required=False, allow_null=True
+    )
+    test_data = serializers.DictField(required=False, allow_null=True)
 
 
 class AIEvalWriterResponseSerializer(serializers.Serializer):

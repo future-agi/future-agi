@@ -11501,7 +11501,7 @@ export const modelHubAiEvalWriterCreateBodyOutputFormatDefault = `prompt`;
 
 export const ModelHubAiEvalWriterCreateBody = zod.object({
   "description": zod.string().min(1),
-  "output_format": zod.enum(['prompt', 'messages']).default(modelHubAiEvalWriterCreateBodyOutputFormatDefault)
+  "output_format": zod.enum(['prompt', 'messages', 'test_data']).default(modelHubAiEvalWriterCreateBodyOutputFormatDefault)
 })
 
 export const modelHubAiEvalWriterCreateResponseStatusDefault = true;
@@ -11510,7 +11510,9 @@ export const modelHubAiEvalWriterCreateResponseStatusDefault = true;
 export const ModelHubAiEvalWriterCreateResponse = zod.object({
   "status": zod.boolean().default(modelHubAiEvalWriterCreateResponseStatusDefault),
   "result": zod.object({
-  "prompt": zod.string().min(1)
+  "prompt": zod.string().min(1).optional(),
+  "messages": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "test_data": zod.record(zod.string(), zod.string()).optional()
 })
 })
 

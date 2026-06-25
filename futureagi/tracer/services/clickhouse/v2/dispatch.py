@@ -102,6 +102,12 @@ _REGISTRY: dict[str, _BuilderEntry] = {
         v2_module="tracer.services.clickhouse.v2.query_builders.filters",
         v2_class="ClickHouseFilterBuilderV2",
     ),
+    "ANNOTATION_LABELS": _BuilderEntry(
+        v1_module="tracer.services.annotation_label_source",
+        v1_class="AnnotationLabelScoresPG",
+        v2_module="tracer.services.annotation_label_source",
+        v2_class="AnnotationLabelScoresCH",
+    ),
 }
 
 

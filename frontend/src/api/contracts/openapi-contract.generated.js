@@ -41314,7 +41314,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "enum": [
             "prompt",
-            "messages"
+            "messages",
+            "test_data"
           ],
           "default": "prompt"
         }
@@ -74436,15 +74437,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
       }
     },
     "AIEvalWriterResult": {
-      "required": [
-        "prompt"
-      ],
       "type": "object",
       "properties": {
         "prompt": {
           "title": "Prompt",
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "x-nullable": true
+            }
+          },
+          "x-nullable": true
+        },
+        "test_data": {
+          "title": "Test data",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          },
+          "x-nullable": true
         }
       }
     },
