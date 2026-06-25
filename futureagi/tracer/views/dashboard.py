@@ -2056,6 +2056,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         metric_type = query_params["metric_type"]
         source = query_params["source"]
         project_ids = query_params.get("project_ids", [])
+        search = query_params.get("search", "").strip()
 
         # Route by source
         if source == "datasets":
@@ -2217,6 +2218,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "AND parent_span_id IS NULL " if metric_name == "name" else ""
                     )
 
+                    ch_params: dict = {"project_ids": project_ids}
                     if metric_name == "session":
                         ts_remap_join = remap_left_join(
                             "sp.trace_session_id",
@@ -2238,6 +2240,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             f"LIMIT 500"
                         )
                     else:
+                        limit = 20 if search else 500
+                        if search:
+                            ch_params["search_pattern"] = f"%{search}%"
+                        search_clause = (
+                            f"AND toString({col_expr}) ILIKE %(search_pattern)s "
+                            if search
+                            else ""
+                        )
                         sql = (
                             f"SELECT DISTINCT {col_expr} AS val "
                             f"FROM spans "
@@ -2245,11 +2255,12 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             f"AND is_deleted = 0 "
                             f"AND {col_expr} NOT IN ('', '{null_uuid}') "
                             f"{root_only_clause}"
+                            f"{search_clause}"
                             f"ORDER BY val "
-                            f"LIMIT 500"
+                            f"LIMIT {limit}"
                         )
                     result = analytics.execute_ch_query(
-                        sql, {"project_ids": project_ids}, timeout_ms=5000
+                        sql, ch_params, timeout_ms=5000
                     )
                     values = [row["val"] for row in result.data]
                 except Exception as e:

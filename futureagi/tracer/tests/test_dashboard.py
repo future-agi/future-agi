@@ -879,6 +879,71 @@ class TestMetricsEndpoint:
         sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args[0][0]
         assert "parent_span_id" not in sql_arg
 
+    @pytest.mark.parametrize("metric_name", ["trace_id", "span_id"])
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_search_adds_ilike_and_limits_to_20(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        metric_name,
+        auth_client,
+        observe_project,
+    ):
+        mock_result = MagicMock()
+        mock_result.data = [{"val": "ff70bcda-1723-0cd5-c4d9-c2c9bcee7a2a"}]
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            f"?metric_name={metric_name}"
+            "&metric_type=system_metric"
+            f"&project_ids={observe_project.id}"
+            "&source=traces"
+            "&search=ff70bc"
+        )
+        assert response.status_code == 200
+        values = response.json()["result"]["values"]
+        assert any("ff70bcda" in str(v) for v in values)
+
+        call_args = mock_analytics_cls.return_value.execute_ch_query.call_args
+        sql_arg = call_args[0][0]
+        params_arg = call_args[0][1]
+        assert "ILIKE" in sql_arg
+        assert "LIMIT 20" in sql_arg
+        assert params_arg.get("search_pattern") == "%ff70bc%"
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_no_search_uses_limit_500_without_ilike(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        mock_result = MagicMock()
+        mock_result.data = [{"val": "000012db-aaaa-bbbb-cccc-ddddeeee0000"}]
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=trace_id"
+            "&metric_type=system_metric"
+            f"&project_ids={observe_project.id}"
+            "&source=traces"
+        )
+        assert response.status_code == 200
+
+        call_args = mock_analytics_cls.return_value.execute_ch_query.call_args
+        sql_arg = call_args[0][0]
+        params_arg = call_args[0][1]
+        assert "ILIKE" not in sql_arg
+        assert "LIMIT 500" in sql_arg
+        assert "search_pattern" not in params_arg
+
 
 class TestChartsView:
     @pytest.mark.django_db
