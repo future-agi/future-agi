@@ -208,19 +208,40 @@ describe("Scores API contract", () => {
       "queue_item",
     ];
 
+    const DRAWER_BOTTOM_CONSUMED = [
+      "id",
+      "label_id",
+      "label_name",
+      "label_type",
+      "label_settings",
+      "value",
+      "score_source",
+      "notes",
+      "annotator_name",
+      "annotator_email",
+      "updated_at",
+    ];
+
+    const HOOK_CONSUMED = [
+      ...new Set([...SCORES_LIST_CONSUMED, ...DRAWER_BOTTOM_CONSUMED]),
+    ];
+
     it("ScoresListSection reads only fields present in ScoresForSource", () => {
       const available = arrayItemKeys(ModelHubScoresForSourceResponse);
       expect(available).toEqual(expect.arrayContaining(SCORES_LIST_CONSUMED));
     });
 
-
+    it("drawer-bottom reads only fields present in ScoresForSource", () => {
+      const available = arrayItemKeys(ModelHubScoresForSourceResponse);
+      expect(available).toEqual(expect.arrayContaining(DRAWER_BOTTOM_CONSUMED));
+    });
 
     it("runtime SCORE_ITEM_CONSUMED_FIELDS stays within the contract and the consumed reads", () => {
       const available = arrayItemKeys(ModelHubScoresForSourceResponse);
       expect(available).toEqual(
         expect.arrayContaining([...SCORE_ITEM_CONSUMED_FIELDS]),
       );
-      expect(SCORES_LIST_CONSUMED).toEqual(
+      expect(HOOK_CONSUMED).toEqual(
         expect.arrayContaining([...SCORE_ITEM_CONSUMED_FIELDS]),
       );
     });

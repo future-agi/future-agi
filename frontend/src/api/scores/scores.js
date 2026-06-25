@@ -11,12 +11,18 @@ import {
 import { ModelHubScoresForSourceResponse } from "src/generated/api-contracts/api.zod";
 
 export const SCORE_ITEM_CONSUMED_FIELDS = [
+  "id",
+  "source_type",
+  "source_id",
   "label_id",
   "label_name",
   "label_type",
+  "label_settings",
   "value",
   "score_source",
+  "notes",
   "annotator_name",
+  "annotator_email",
   "updated_at",
   "queue_id",
   "queue_item",
