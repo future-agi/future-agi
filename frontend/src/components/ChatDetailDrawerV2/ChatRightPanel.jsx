@@ -42,7 +42,12 @@ const TABS = {
  *   - No "Logs" tab — chat doesn't have a vapi/callLogs equivalent yet.
  *   - Eval normalization logic mirrors `VoiceRightPanel.normalizedEvals`.
  */
-const ChatRightPanel = ({ data, onCompareBaseline, onAction }) => {
+const ChatRightPanel = ({
+  data,
+  onCompareBaseline,
+  onAction,
+  hideAnnotationTab = false,
+}) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
   const isSimulate = data?.module === "simulate";
 
@@ -106,12 +111,16 @@ const ChatRightPanel = ({ data, onCompareBaseline, onAction }) => {
         value: TABS.ATTRIBUTES,
         icon: "mdi:code-json",
       },
-      {
+    ];
+    // Hidden in the annotation workspace, where annotation happens in the
+    // host's side panel (parity with VoiceRightPanel's hideAnnotationTab).
+    if (!hideAnnotationTab) {
+      t.push({
         label: "Annotations",
         value: TABS.ANNOTATIONS,
         icon: "mdi:pencil-outline",
-      },
-    ];
+      });
+    }
     if (hasScenarioData) {
       t.push({
         label: "Scenario",
@@ -120,7 +129,7 @@ const ChatRightPanel = ({ data, onCompareBaseline, onAction }) => {
       });
     }
     return t;
-  }, [hasScenarioData]);
+  }, [hasScenarioData, hideAnnotationTab]);
 
   // Eval normalization — mirrors VoiceRightPanel.normalizedEvals byte-for-byte
   // so the Evals pane renders consistently across both drawers. If this logic
@@ -395,6 +404,7 @@ ChatRightPanel.propTypes = {
   data: PropTypes.object.isRequired,
   onCompareBaseline: PropTypes.func,
   onAction: PropTypes.func,
+  hideAnnotationTab: PropTypes.bool,
 };
 
 export default ChatRightPanel;

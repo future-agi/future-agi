@@ -80,6 +80,9 @@ const ChatDetailDrawerV2 = ({
   // and the VoiceDrawerHeader (close/nav/fullscreen) — and just render
   // the chat body so it fits the host's layout.
   embedded = false,
+  // Hide the right-panel "Annotations" tab (e.g. in the annotation
+  // workspace, where annotation happens in the host's side panel).
+  hideAnnotationTab = false,
 }) => {
   const queryClient = useQueryClient();
   const { observeId } = useParams();
@@ -492,7 +495,10 @@ const ChatDetailDrawerV2 = ({
               <ChatRightPanel
                 data={data}
                 onCompareBaseline={onCompareBaseline}
-                onAction={handleChatAction}
+                // No drawer-level Actions dropdown when embedded (e.g. the
+                // annotation workspace, which provides its own actions).
+                onAction={embedded ? undefined : handleChatAction}
+                hideAnnotationTab={hideAnnotationTab}
               />
             </Box>
           </>
@@ -600,6 +606,7 @@ ChatDetailDrawerV2.propTypes = {
   isLoading: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   embedded: PropTypes.bool,
+  hideAnnotationTab: PropTypes.bool,
 };
 
 export default ChatDetailDrawerV2;
