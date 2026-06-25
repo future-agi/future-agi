@@ -361,12 +361,23 @@ def test_retrieve_few_shot_builds_rows_from_ch_metadata():
                 "image": encoded_url,
                 "verdict": "Pass",
                 "item_id": "abc",
+                "input_type": "text",
+                "column_name": "question",
+                "index_column": "what is this",
+                "organization_id": "org",
+                "workspace_id": "ws",
+            },
+            {
+                "question": "what is this",
+                "image": encoded_url,
+                "verdict": "Pass",
+                "item_id": "abc",
                 "input_type": "image",
                 "column_name": "image",
                 "index_column": "<binary>",
                 "organization_id": "org",
                 "workspace_id": "ws",
-            }
+            },
         ],
         [
             {
@@ -406,7 +417,7 @@ def test_retrieve_few_shot_builds_rows_from_ch_metadata():
             "verdict": "Fail",
         },
     ]
-    assert column_types == {"image": "image", "question": "text"}
+    assert column_types == {"question": "text", "image": "image"}
 
 
 def test_retrieve_few_shot_skips_empty_groups():

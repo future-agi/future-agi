@@ -541,12 +541,14 @@ class GroundTruthService:
         for group in raw or []:
             if not group:
                 continue
-            first = group[0] or {}
-            col = first.get("column_name")
-            itype = first.get("input_type")
-            if col and itype:
-                column_types[col] = itype
-            row = _row_from_ch_metadata(first, dataset_columns, manager)
+            for entry in group:
+                if not isinstance(entry, dict):
+                    continue
+                col = entry.get("column_name")
+                itype = entry.get("input_type")
+                if col and itype:
+                    column_types[col] = itype
+            row = _row_from_ch_metadata(group[0] or {}, dataset_columns, manager)
             if row:
                 matches.append(row)
 
