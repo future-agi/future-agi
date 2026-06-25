@@ -20,7 +20,8 @@ import DatapointCard from "src/sections/common/DatapointCard";
 import AudioDatapointCard from "src/components/custom-audio/AudioDatapointCard";
 import ViewDetailsModal from "./ViewDetailsModal";
 import { LoadingButton } from "@mui/lab";
-import { getUniqueColorPalette } from "src/utils/utils";
+import { getUniqueColorPalette, copyToClipboard } from "src/utils/utils";
+import { enqueueSnackbar } from "notistack";
 import {
   getLabel,
   getStatusColor,
@@ -157,6 +158,11 @@ export default function ExperimentDetailDrawerContent({
   const [activeTab, setActiveTab] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [openDetailRow, setOpenDetailRow] = useState(null);
+  const handleCopyRowId = () => {
+    if(!row?.rowId) return;
+    copyToClipboard(row.rowId);
+    enqueueSnackbar("Copied to clipboard", { variant: "success" });
+  };
   const [showDescription, setShowDescription] = useState(false);
   const theme = useTheme();
   const agTheme = useAgThemeWith(EXPERIMENT_DRAWER_THEME_PARAMS);
@@ -553,9 +559,46 @@ export default function ExperimentDetailDrawerContent({
             justifyContent: "space-between",
           }}
         >
-          <Typography variant="m3" fontWeight={700} color="text.primary">
-            Experiments
-          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <Typography variant="m3" fontWeight={700} color="text.primary">
+              Experiments
+            </Typography>
+            <ShowComponent condition={!!row?.rowId}>
+              <Box
+                sx={{
+                  border: "1px solid",
+                  borderColor: "divider",
+                  display: "flex",
+                  gap: "8px",
+                  alignItems: "center",
+                  borderRadius: "8px",
+                  padding: "2px 8px",
+                  maxWidth: "320px",
+                }}
+              >
+                <Typography
+                  variant="s2"
+                  fontWeight={"fontWeightRegular"}
+                  color="text.primary"
+                  noWrap
+                >
+                  Row ID: {row?.rowId}
+                </Typography>
+                <SvgColor
+                  src="/assets/icons/ic_copy.svg"
+                  alt="Copy"
+                  sx={{
+                    width: "12px",
+                    height: "12px",
+                    color: "text.disabled",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                  onClick={handleCopyRowId}
+                />
+              </Box>
+            </ShowComponent>
+          </Box>
           <Stack direction={"row"} gap={"12px"} alignItems={"center"}>
             <ShowComponent condition={showDiff}>
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
