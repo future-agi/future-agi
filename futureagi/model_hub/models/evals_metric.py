@@ -936,11 +936,6 @@ class EvalGroundTruth(ModelBaseModel):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["eval_template", "created_at"]),
-            models.Index(
-                fields=["eval_template", "organization", "workspace"],
-                condition=Q(deleted=False, is_active=True),
-                name="gt_tenant_active_idx",
-            ),
         ]
         constraints = [
             models.UniqueConstraint(

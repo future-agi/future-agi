@@ -61,14 +61,6 @@ class Migration(migrations.Migration):
             name="similarity_threshold",
             field=models.FloatField(default=0.7),
         ),
-        migrations.AddIndex(
-            model_name="evalgroundtruth",
-            index=models.Index(
-                fields=["eval_template", "organization", "workspace"],
-                condition=Q(deleted=False, is_active=True),
-                name="gt_tenant_active_idx",
-            ),
-        ),
         migrations.RunPython(
             backfill_then_strip_template_config,
             reverse_code=migrations.RunPython.noop,
