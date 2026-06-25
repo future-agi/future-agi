@@ -76,6 +76,58 @@ class TestValidateAgentApiKey:
         assert result is None
 
 
+class TestVerifyApiKey:
+    """Tests for provider API key verification requests."""
+
+    @patch("tracer.services.observability_providers.requests.get")
+    def test_vapi_verification_request_uses_timeout(self, mock_requests_get):
+        from tracer.constants.external_endpoints import ObservabilityRoutes
+        from tracer.services.observability_providers import (
+            OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            ObservabilityService,
+        )
+
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_requests_get.return_value = mock_response
+
+        result = ObservabilityService.verify_api_key(
+            ProviderChoices.VAPI,
+            "vapi-api-key",
+        )
+
+        assert result == 204
+        mock_requests_get.assert_called_once_with(
+            f"{ObservabilityRoutes.VAPI_CALL_URL.value}?limit=0",
+            headers={"Authorization": "Bearer vapi-api-key"},
+            timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+        )
+
+    @patch("tracer.services.observability_providers.requests.get")
+    def test_retell_verification_request_uses_timeout(self, mock_requests_get):
+        from tracer.constants.external_endpoints import ObservabilityRoutes
+        from tracer.services.observability_providers import (
+            OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            ObservabilityService,
+        )
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_requests_get.return_value = mock_response
+
+        result = ObservabilityService.verify_api_key(
+            ProviderChoices.RETELL,
+            "retell-api-key",
+        )
+
+        assert result == 200
+        mock_requests_get.assert_called_once_with(
+            f"{ObservabilityRoutes.RETELL_LIST_ASSISTANTS_URL.value}?limit=1",
+            headers={"Authorization": "Bearer retell-api-key"},
+            timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+        )
+
+
 class TestFetchVapiLogs:
     """Tests for _fetch_vapi_logs method."""
 

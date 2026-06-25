@@ -28,6 +28,7 @@ import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import axios, { endpoints } from "src/utils/axios";
 import { extractCodeEvaluateParams } from "src/utils/codeEvalParams";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
+import logger from "src/utils/logger";
 import { canonicalEntries } from "src/utils/utils";
 import { camelCaseToTitleCase } from "src/utils/utils";
 import CodeEditor from "./CodeEditor";
@@ -60,11 +61,13 @@ const CustomJsonInput = ({
   inputValues,
   onInputChange,
   instructions,
+  evalName,
   onColumnsLoaded,
 }) => {
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState(null);
   const followUpRef = useRef(null);
+  const { enqueueSnackbar } = useSnackbar();
 
   // AI bar state
   const [aiOpen, setAiOpen] = useState(false);
@@ -208,21 +211,33 @@ const CustomJsonInput = ({
       const varList = variables.join(", ");
       const currentData =
         jsonText && jsonText.trim() !== "{}" ? jsonText : null;
-      const description = currentData
-        ? `Current test data JSON:\n${currentData}\n\nUser wants to: ${userPrompt}\n\nGenerate updated JSON with keys: ${varList}. Return ONLY valid JSON.`
-        : `Generate realistic test data as JSON for variables: ${varList}.\n${instructions ? `Eval context: ${instructions.slice(0, 300)}` : ""}\nUser request: ${userPrompt}\nReturn ONLY valid JSON.`;
+
+      // Context so the model knows the test data is for THIS evaluation.
+      const evalContext = [
+        "The test data you generate will be used to run the following evaluation.",
+        evalName ? `Evaluation name: ${evalName}` : "",
+        instructions
+          ? `Evaluation instruction:\n${instructions.slice(0, 4000)}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+      const task = currentData
+        ? `Current test data JSON:\n${currentData}\n\nUser wants to: ${userPrompt}\n\nGenerate updated JSON with keys: ${varList}.`
+        : `User request: ${userPrompt}\n\nGenerate JSON with keys: ${varList}.`;
+
+      const description = `${evalContext}\n\n${task}`;
 
       const { data } = await axios.post(endpoints.develop.eval.aiEvalWriter, {
         description,
+        output_format: "test_data",
       });
-      const raw = data?.result?.prompt;
-      if (raw) {
-        const match = raw.match(/\{[\s\S]*\}/);
-        if (match) return match[0];
-      }
-      return null;
+      // Backend parses + validates the test_data object for us now.
+      const testData = data?.result?.test_data;
+      return testData && typeof testData === "object" ? testData : null;
     },
-    [variables, jsonText, instructions],
+    [variables, jsonText, instructions, evalName],
   );
 
   // Submit prompt
@@ -235,20 +250,22 @@ const CustomJsonInput = ({
       try {
         const result = await callAI(prompt.trim());
         if (result) {
-          const parsed = JSON.parse(result);
-          const formatted = JSON.stringify(parsed, null, 2);
+          const formatted = JSON.stringify(result, null, 2);
           handleJsonChange(formatted);
           setHasResult(true);
           setAiPrompt(prompt.trim());
           setTimeout(() => followUpRef.current?.focus(), 100);
         }
-      } catch {
-        // silent
+      } catch (err) {
+        logger.error("Falcon test-data generation failed", err);
+        enqueueSnackbar("Couldn't generate test data. Please try again.", {
+          variant: "error",
+        });
       } finally {
         setAiLoading(false);
       }
     },
-    [jsonText, originalJson, callAI, handleJsonChange],
+    [jsonText, originalJson, callAI, handleJsonChange, enqueueSnackbar],
   );
 
   const handleAccept = useCallback(() => {
@@ -607,6 +624,7 @@ CustomJsonInput.propTypes = {
   inputValues: PropTypes.object.isRequired,
   onInputChange: PropTypes.func.isRequired,
   instructions: PropTypes.string,
+  evalName: PropTypes.string,
   onColumnsLoaded: PropTypes.func,
 };
 
@@ -615,6 +633,7 @@ const TestPlayground = React.forwardRef(
     {
       templateId,
       instructions = "",
+      evalName = "",
       evalType,
       model = "turing_large",
       requiredKeys = [],
@@ -1218,6 +1237,7 @@ const TestPlayground = React.forwardRef(
                     inputValues={inputValues}
                     onInputChange={handleInputChange}
                     instructions={instructions}
+                    evalName={evalName}
                     onColumnsLoaded={onColumnsLoaded}
                   />
 
@@ -1231,6 +1251,12 @@ const TestPlayground = React.forwardRef(
                             ? {
                                 error_localizer_status:
                                   errorLocalizerState.status,
+                              }
+                            : {}),
+                          ...(errorLocalizerState.message
+                            ? {
+                                error_localizer_message:
+                                  errorLocalizerState.message,
                               }
                             : {}),
                           ...(errorLocalizerState.details
@@ -1866,6 +1892,7 @@ TestPlayground.displayName = "TestPlayground";
 TestPlayground.propTypes = {
   templateId: PropTypes.string,
   instructions: PropTypes.string,
+  evalName: PropTypes.string,
   evalType: PropTypes.string,
   requiredKeys: PropTypes.array,
   showVersions: PropTypes.bool,

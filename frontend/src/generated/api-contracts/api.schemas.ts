@@ -5185,6 +5185,7 @@ export type AIEvalWriterRequestApiOutputFormat = typeof AIEvalWriterRequestApiOu
 export const AIEvalWriterRequestApiOutputFormat = {
   prompt: 'prompt',
   messages: 'messages',
+  test_data: 'test_data',
 } as const;
 
 export interface AIEvalWriterRequestApi {
@@ -5193,9 +5194,15 @@ export interface AIEvalWriterRequestApi {
   output_format?: AIEvalWriterRequestApiOutputFormat;
 }
 
+export type AIEvalWriterResultApiMessagesItem = {[key: string]: string};
+
+export type AIEvalWriterResultApiTestData = {[key: string]: string};
+
 export interface AIEvalWriterResultApi {
   /** @minLength 1 */
-  prompt: string;
+  prompt?: string;
+  messages?: AIEvalWriterResultApiMessagesItem[];
+  test_data?: AIEvalWriterResultApiTestData;
 }
 
 export interface AIEvalWriterResponseApi {

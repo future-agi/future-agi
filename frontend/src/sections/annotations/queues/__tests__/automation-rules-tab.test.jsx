@@ -64,7 +64,6 @@ vi.mock("src/components/custom-dialog", () => ({
 
 vi.mock("../view/create-rule-dialog", () => ({
   default: () => null,
-  TRIGGER_FREQUENCY_OPTIONS: [{ value: "manual", label: "Manually" }],
 }));
 
 vi.mock("../view/edit-rule-dialog", () => ({

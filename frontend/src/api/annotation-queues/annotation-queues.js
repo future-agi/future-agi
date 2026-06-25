@@ -1325,6 +1325,7 @@ export const useEvaluateRule = () => {
     mutationFn: ({ queueId, ruleId }) =>
       axios.post(
         annotationQueueEndpoints.automationRuleEvaluate(queueId, ruleId),
+        {},
       ),
     onSuccess: (response, variables) => {
       // 200 → ran inline (≤ sync threshold). 202 → too large; backend

@@ -41,6 +41,7 @@ import {
   getPickerOptionSearchText,
   getPickerOptionSecondaryLabel,
   getPickerOptionValue,
+  usesFreeTextValue,
 } from "./filterValuePickerUtils";
 import { ID_ONLY_FIELDS } from "./idFields";
 
@@ -1547,7 +1548,7 @@ function FilterRow({
       );
     }
 
-    if (filter.fieldType === "text") {
+    if (usesFreeTextValue(filter.fieldType, source)) {
       return (
         <TextField
           size="small"
@@ -1573,9 +1574,7 @@ function FilterRow({
         source={source}
         property={properties.find((p) => p.id === filter.field)}
         freeSoloValues={rowFreeSoloValues}
-        singleSelect={
-          ID_ONLY_FIELDS.has(filter.field) || SINGLE_VALUE_OPS.has(safeOperator)
-        }
+        singleSelect={SINGLE_VALUE_OPS.has(safeOperator)}
         onChange={(newVal) => updateRow({ value: newVal })}
       />
     );
@@ -1965,6 +1964,14 @@ const TraceFilterPanel = ({
     }
   }, [aiQuery, aiParseQuery, observeId, source, properties, onApply, onClose]);
 
+  const handlePrimaryApply = useCallback(() => {
+    if (showAi && aiQuery.trim()) {
+      handleAiFilter();
+      return;
+    }
+    handleApply();
+  }, [showAi, aiQuery, handleAiFilter, handleApply]);
+
   return (
     <Popover
       open={open}
@@ -2134,7 +2141,8 @@ const TraceFilterPanel = ({
                   size="small"
                   variant="contained"
                   data-filter-panel-action="apply"
-                  onClick={handleApply}
+                  onClick={handlePrimaryApply}
+                  disabled={aiLoading}
                   sx={{
                     textTransform: "none",
                     fontSize: 12,
