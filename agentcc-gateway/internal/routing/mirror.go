@@ -41,11 +41,19 @@ type ProductionInfo struct {
 	StatusCode   int
 }
 
+// defaultMirrorConcurrency bounds in-flight mirror goroutines when the config
+// leaves MaxConcurrent unset.
+const defaultMirrorConcurrency = 64
+
 // Mirror manages traffic mirroring for shadow testing.
 type Mirror struct {
 	rules  []MirrorRule
 	lookup MirrorProviderLookup
 	Store  *ShadowStore // nil when capture is disabled
+	// sem bounds concurrent in-flight mirror goroutines. Shadow traffic is
+	// best-effort, so a full semaphore drops the mirror rather than queueing it,
+	// preventing unbounded goroutine/connection growth under load.
+	sem chan struct{}
 }
 
 // NewMirror creates a mirror from config rules.
@@ -72,9 +80,15 @@ func NewMirror(cfg config.MirrorConfig, lookup MirrorProviderLookup) *Mirror {
 		}
 	}
 
+	maxConcurrent := cfg.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = defaultMirrorConcurrency
+	}
+
 	return &Mirror{
 		rules:  rules,
 		lookup: lookup,
+		sem:    make(chan struct{}, maxConcurrent),
 	}
 }
 
@@ -139,7 +153,25 @@ func (m *Mirror) ExecuteAsync(req *models.ChatCompletionRequest, sourceProvider,
 	experimentID := rule.ExperimentID
 	promptHash := hashPrompt(req)
 
+	// Bound concurrent mirror goroutines. A full semaphore means we're already at
+	// the in-flight budget, so drop this shadow request rather than spawning an
+	// unbounded number of goroutines (and upstream connections) under load.
+	if m.sem != nil {
+		select {
+		case m.sem <- struct{}{}:
+		default:
+			slog.Debug("mirror dropped: concurrency limit reached",
+				"target_provider", rule.TargetProvider,
+				"source_model", sourceModel,
+			)
+			return
+		}
+	}
+
 	go func() {
+		if m.sem != nil {
+			defer func() { <-m.sem }()
+		}
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("mirror goroutine panicked",
