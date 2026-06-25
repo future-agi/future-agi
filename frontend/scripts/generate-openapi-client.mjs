@@ -215,6 +215,20 @@ async function runGeneration(schemaPath) {
   });
 
   normalizeGeneratedQueryParamSerialization();
+  // AnyValueDictField (used for eval usage table rows) has additionalProperties:{}
+  // which orval doesn't convert to .passthrough(). Post-process to fix.
+  if (fs.existsSync(zodOutputPath)) {
+    let zod = fs.readFileSync(zodOutputPath, "utf8");
+    // Match any zod.object({}).passthrough() with description 'Row with dynamic columns'
+    zod = zod.replace(
+      /zod\.object\(\{\s*\}\)\.passthrough\(\)(\.optional\(\)|\.default\([^)]+\))?(\.optional\(\))?\.describe\('Row with dynamic columns[^']*'\)/g,
+      (m) => m.replace(
+        "zod.object({\n\n}).passthrough()",
+        "zod.record(zod.string(), zod.unknown())",
+      ),
+    );
+    fs.writeFileSync(zodOutputPath, zod);
+  }
   normalizeGeneratedFileEndings();
 }
 

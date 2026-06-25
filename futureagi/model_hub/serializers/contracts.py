@@ -2981,3 +2981,7 @@ class EvalUsageQuerySerializer(serializers.Serializer):
         required=False,
         default="30d",
     )
+    # Optional explicit date range — when provided, overrides the period string.
+    # Sent by the frontend for Today, Yesterday, and Custom date picker selections.
+    start_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    end_date = serializers.DateTimeField(required=False, allow_null=True, default=None)

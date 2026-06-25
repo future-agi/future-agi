@@ -23723,6 +23723,8 @@ page?: number;
  */
 page_size?: number;
 period?: ModelHubEvalTemplatesFeedbackListListPeriod;
+start_date?: string;
+end_date?: string;
 };
 
 export type ModelHubEvalTemplatesFeedbackListListPeriod = typeof ModelHubEvalTemplatesFeedbackListListPeriod[keyof typeof ModelHubEvalTemplatesFeedbackListListPeriod];
@@ -23751,6 +23753,8 @@ page?: number;
  */
 page_size?: number;
 period?: ModelHubEvalTemplatesUsageListPeriod;
+start_date?: string;
+end_date?: string;
 };
 
 export type ModelHubEvalTemplatesUsageListPeriod = typeof ModelHubEvalTemplatesUsageListPeriod[keyof typeof ModelHubEvalTemplatesUsageListPeriod];

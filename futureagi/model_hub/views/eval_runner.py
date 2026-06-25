@@ -924,7 +924,10 @@ class EvaluationRunner:
             )
 
         if self.version_number is None and self.user_eval_metric.pinned_version_id:
-            self.version_number = self.user_eval_metric.pinned_version.version_number
+            pv = self.user_eval_metric.pinned_version
+            # Guard against soft-deleted pins — fall back to default (same as _resolve_uem_version)
+            if pv and not getattr(pv, "deleted", False):
+                self.version_number = pv.version_number
 
         self.user_eval_metric.status = StatusType.RUNNING.value
         self.user_eval_metric.save(update_fields=["status"])

@@ -5083,32 +5083,48 @@ class EvalUsageStatsView(APIView):
                     "table": [],
                     "logs": {"total": 0, "page": 0, "page_size": 25},
                 })
-            try:
-                template = EvalTemplate.no_workspace_objects.get(
-                    id=template_id, deleted=False
-                )
-            except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
-
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
+            workspace = getattr(request, "workspace", None)
+
+            # Scope template fetch to the active workspace to prevent cross-workspace reads.
+            try:
+                template_qs = EvalTemplate.objects.filter(
+                    id=template_id, deleted=False, organization=organization
+                )
+                if workspace:
+                    from django.db.models import Q
+                    template_qs = template_qs.filter(
+                        Q(workspace=workspace) | Q(workspace__isnull=True)
+                    )
+                template = template_qs.get()
+            except EvalTemplate.DoesNotExist:
+                return self._gm.not_found("Eval template not found.")
 
             query = request.validated_query_data
             page = query["page"]
             page_size = query["page_size"]
             period = query["period"]
+            start_date_param = query.get("start_date")
+            end_date_param = query.get("end_date")
 
-            period_delta = self.PERIOD_MAP.get(period, timedelta(days=30))
             end_date = timezone.now()
-            start_date = end_date - period_delta
+            if start_date_param and end_date_param:
+                start_date = start_date_param
+                end_date = end_date_param
+            else:
+                period_delta = self.PERIOD_MAP.get(period, timedelta(days=30))
+                start_date = end_date - period_delta
 
-            # Base queryset
+            # Scope logs to the active workspace so one workspace cannot read another's data.
             base_qs = APICallLog.objects.filter(
                 organization=organization,
                 source_id=str(template_id),
                 deleted=False,
             )
+            if workspace:
+                base_qs = base_qs.filter(workspace=workspace)
             total_runs = base_qs.count()
 
             # Period-filtered queryset
@@ -5143,19 +5159,22 @@ class EvalUsageStatsView(APIView):
 
                 for log in period_qs.values("created_at", "config", "status"):
                     ts = log["created_at"]
-                    # Round to bucket
-                    bucket_ts = ts.replace(
-                        minute=(
-                            (ts.minute // max(bucket_minutes, 1))
-                            * min(bucket_minutes, 60)
-                            if bucket_minutes < 1440
-                            else 0
-                        ),
-                        second=0,
-                        microsecond=0,
-                    )
-                    if bucket_minutes >= 1440:
-                        bucket_ts = bucket_ts.replace(hour=0)
+                    # Round to bucket boundary.
+                    # For sub-hour buckets (10m): round minute, keep hour.
+                    # For multi-hour buckets (6h for 1d): ALSO round hour — without
+                    # this, a log at 14:35 gets key 14:00 while zero-fill emits
+                    # 0:00/6:00/12:00/18:00, so most logs never match any bucket.
+                    if bucket_minutes >= 60:
+                        hour_size = bucket_minutes // 60
+                        rounded_hour = (ts.hour // hour_size) * hour_size
+                        bucket_ts = ts.replace(hour=rounded_hour, minute=0, second=0, microsecond=0)
+                    elif bucket_minutes >= 1440:
+                        bucket_ts = ts.replace(hour=0, minute=0, second=0, microsecond=0)
+                    else:
+                        bucket_ts = ts.replace(
+                            minute=(ts.minute // bucket_minutes) * bucket_minutes,
+                            second=0, microsecond=0,
+                        )
                     bucket_key = bucket_ts.isoformat()
                     buckets_calls[bucket_key] += 1
 
@@ -5188,6 +5207,16 @@ class EvalUsageStatsView(APIView):
                                         buckets_pass[bucket_key] += 1
                                     elif agg_pass is False:
                                         buckets_fail[bucket_key] += 1
+                            elif isinstance(score, dict):
+                                # Choice output: {"label": "Good", "score": 0.9}
+                                numeric = score.get("score")
+                                if isinstance(numeric, (int, float)):
+                                    buckets_scores[bucket_key].append(float(numeric))
+                                label = score.get("label", "")
+                                if label in ("Passed", "Pass"):
+                                    buckets_pass[bucket_key] += 1
+                                elif label in ("Failed", "Fail"):
+                                    buckets_fail[bucket_key] += 1
                             elif score in ("Passed", "Pass"):
                                 buckets_pass[bucket_key] += 1
                                 buckets_scores[bucket_key].append(1.0)

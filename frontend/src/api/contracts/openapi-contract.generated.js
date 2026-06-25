@@ -17760,6 +17760,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
               ],
               "default": "30d"
             }
+          },
+          "start_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "end_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
           }
         },
         "responses": {
@@ -17991,6 +18005,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "365d"
               ],
               "default": "30d"
+            }
+          },
+          "start_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "end_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
             }
           }
         },

@@ -19635,7 +19635,9 @@ export const modelHubEvalTemplatesFeedbackListListQueryPeriodDefault = `30d`;
 export const ModelHubEvalTemplatesFeedbackListListQueryParams = zod.object({
   "page": zod.number().min(modelHubEvalTemplatesFeedbackListListQueryPageMin).max(modelHubEvalTemplatesFeedbackListListQueryPageMax).default(modelHubEvalTemplatesFeedbackListListQueryPageDefault),
   "page_size": zod.number().min(1).max(modelHubEvalTemplatesFeedbackListListQueryPageSizeMax).default(modelHubEvalTemplatesFeedbackListListQueryPageSizeDefault),
-  "period": zod.enum(['30m', '6h', '1d', '7d', '30d', '90d', '180d', '365d']).default(modelHubEvalTemplatesFeedbackListListQueryPeriodDefault)
+  "period": zod.enum(['30m', '6h', '1d', '7d', '30d', '90d', '180d', '365d']).default(modelHubEvalTemplatesFeedbackListListQueryPeriodDefault),
+  "start_date": zod.string().datetime({"offset":true}).optional(),
+  "end_date": zod.string().datetime({"offset":true}).optional()
 })
 
 
@@ -19910,7 +19912,9 @@ export const modelHubEvalTemplatesUsageListQueryPeriodDefault = `30d`;
 export const ModelHubEvalTemplatesUsageListQueryParams = zod.object({
   "page": zod.number().min(modelHubEvalTemplatesUsageListQueryPageMin).max(modelHubEvalTemplatesUsageListQueryPageMax).default(modelHubEvalTemplatesUsageListQueryPageDefault),
   "page_size": zod.number().min(1).max(modelHubEvalTemplatesUsageListQueryPageSizeMax).default(modelHubEvalTemplatesUsageListQueryPageSizeDefault),
-  "period": zod.enum(['30m', '6h', '1d', '7d', '30d', '90d', '180d', '365d']).default(modelHubEvalTemplatesUsageListQueryPeriodDefault)
+  "period": zod.enum(['30m', '6h', '1d', '7d', '30d', '90d', '180d', '365d']).default(modelHubEvalTemplatesUsageListQueryPeriodDefault),
+  "start_date": zod.string().datetime({"offset":true}).optional(),
+  "end_date": zod.string().datetime({"offset":true}).optional()
 })
 
 

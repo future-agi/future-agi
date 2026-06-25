@@ -72,12 +72,14 @@ const EvalUsageTab = ({
   const { data: chartData, isLoading: chartLoading } = useEvalUsageChart(
     templateId,
     period,
+    dateOption,
+    dateFilter,
   );
   const {
     data: logsData,
     isLoading: logsLoading,
     isFetching: logsFetching,
-  } = useEvalUsageLogs(templateId, { page, pageSize, period });
+  } = useEvalUsageLogs(templateId, { page, pageSize, period, dateOption, dateFilter });
 
   const stats = chartData?.stats || {};
   const chart = chartData?.chart || [];
