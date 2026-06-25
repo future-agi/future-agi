@@ -27,6 +27,7 @@ from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.serializers.scores import ScoreSerializer
 from model_hub.utils.annotation_queue_helpers import (
     FIELD_MAPPING,
+    CollectorSourceCache,
     get_fk_field_name,
     resolve_source_content,
     resolve_source_object,
@@ -436,6 +437,17 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
         return instance
 
 
+class QueueItemListSerializer(serializers.ListSerializer):
+    """Builds one :class:`CollectorSourceCache` for the page so ``source_preview``
+    resolves collector spans/sessions from a single CH read instead of one point-read
+    per item. Stashed in context for the child's ``get_source_preview`` to pick up."""
+
+    def to_representation(self, data):
+        items = list(data)
+        self.context["ch_source_cache"] = CollectorSourceCache.for_items(items)
+        return super().to_representation(items)
+
+
 class QueueItemSerializer(serializers.ModelSerializer):
     source_id = serializers.CharField(write_only=True, required=False)
     source_preview = serializers.SerializerMethodField()
@@ -484,6 +496,7 @@ class QueueItemSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = ["queue"]
+        list_serializer_class = QueueItemListSerializer
 
     def get_assigned_users(self, obj):
         assignments = getattr(obj, "active_assignments", None)
@@ -499,7 +512,7 @@ class QueueItemSerializer(serializers.ModelSerializer):
         ]
 
     def get_source_preview(self, obj):
-        return resolve_source_preview(obj)
+        return resolve_source_preview(obj, ch_cache=self.context.get("ch_source_cache"))
 
     def get_workflow_status(self, obj):
         if (

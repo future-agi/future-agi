@@ -693,6 +693,93 @@ def _ch_session_fields_for_item(session_id):
         return None
 
 
+def _batch_ch_spans(span_ids):
+    """Batch CH point-read for a render path: ``{str(id): CHSpan}`` over *span_ids*
+    in one query. CH error → ``{}`` (FAIL OPEN — the per-item collector branch then
+    renders the ``deleted`` sentinel, same as a single-read miss). Backs
+    :class:`CollectorSourceCache` so list/export pages do one CH read, not one per item."""
+    if not span_ids:
+        return {}
+    from tracer.services.clickhouse.v2 import get_reader
+
+    try:
+        with get_reader() as reader:
+            spans = reader.list_by_ids([str(s) for s in span_ids])
+    except Exception as exc:
+        logger.warning(
+            "ch_span_batch_render_error", count=len(span_ids), error=str(exc)
+        )
+        return {}
+    return {str(span.id): span for span in spans}
+
+
+def _batch_ch_session_fields(session_ids):
+    """Batch CH read of session identity fields: ``{str(id): fields}`` in one query.
+    CH error → ``{}`` (FAIL OPEN). Companion to :func:`_batch_ch_spans`."""
+    if not session_ids:
+        return {}
+    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+        resolve_session_fields,
+    )
+
+    try:
+        return resolve_session_fields([str(s) for s in session_ids]) or {}
+    except Exception as exc:
+        logger.warning(
+            "ch_session_batch_render_error", count=len(session_ids), error=str(exc)
+        )
+        return {}
+
+
+class CollectorSourceCache:
+    """Page-scoped batch cache of CH-resolved collector sources.
+
+    ``resolve_source_preview`` / ``resolve_source_content`` run once per item; for
+    collector spans/sessions (CH-only, no PG row) each call would otherwise do its
+    own CH point-read — an N+1 against ClickHouse on every list/export page (PG
+    sources are prefetchable, CH has no ORM prefetch). Build one cache per page with
+    :meth:`for_items` and pass it as ``ch_cache=`` so the page does a single CH read
+    per kind. Only the collector branch consults it (a PG hit never does); a cache
+    miss returns ``None`` → ``deleted`` sentinel, matching the single-read fail-open.
+    """
+
+    __slots__ = ("_spans", "_sessions")
+
+    def __init__(self, *, spans=None, sessions=None):
+        self._spans = spans or {}
+        self._sessions = sessions or {}
+
+    @classmethod
+    def for_items(cls, items):
+        """Collect the collector span/session ids across *items* and batch-resolve
+        each kind from CH in one read. ``source_type=trace`` is PG-backed this wave,
+        so only spans and sessions are cached. PG-backed ids may also be fetched (one
+        bounded query); harmless, since the cache is consulted only on a PG miss."""
+        span_ids, session_ids = set(), set()
+        for item in items or []:
+            source_type = getattr(item, "source_type", None)
+            if (
+                source_type == QueueItemSourceType.OBSERVATION_SPAN.value
+                and item.observation_span_id
+            ):
+                span_ids.add(str(item.observation_span_id))
+            elif (
+                source_type == QueueItemSourceType.TRACE_SESSION.value
+                and item.trace_session_id
+            ):
+                session_ids.add(str(item.trace_session_id))
+        return cls(
+            spans=_batch_ch_spans(span_ids),
+            sessions=_batch_ch_session_fields(session_ids),
+        )
+
+    def span(self, span_id):
+        return self._spans.get(str(span_id)) if span_id else None
+
+    def session_fields(self, session_id):
+        return self._sessions.get(str(session_id)) if session_id else None
+
+
 class _CHTraceSessionSource:
     """Duck-typed stand-in for a PG ``TraceSession`` resolved from CH. Carries only
     the attributes the annotation scope/store/render path reads off a session
@@ -798,8 +885,12 @@ def _get_source_workspace(obj):
     return None
 
 
-def resolve_source_preview(item):
-    """Return a standardized preview dict for a QueueItem's source."""
+def resolve_source_preview(item, *, ch_cache=None):
+    """Return a standardized preview dict for a QueueItem's source.
+
+    ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, collector
+    span/session sources read from the page-batched map instead of a per-item CH
+    point-read. Single-item callers pass ``None`` and keep the per-item read."""
     try:
         if item.source_type == QueueItemSourceType.DATASET_ROW.value:
             row = item.dataset_row
@@ -831,7 +922,11 @@ def resolve_source_preview(item):
             span = _safe_related(item, "observation_span")
             if not span:
                 # collector span: no PG row, resolve from CH by the soft id
-                ch_span = _ch_span_for_item(item.observation_span_id)
+                ch_span = (
+                    ch_cache.span(item.observation_span_id)
+                    if ch_cache is not None
+                    else _ch_span_for_item(item.observation_span_id)
+                )
                 if ch_span is None:
                     return {"type": "observation_span", "deleted": True}
                 return {
@@ -882,7 +977,11 @@ def resolve_source_preview(item):
             session = _safe_related(item, "trace_session")
             if not session:
                 # collector session: no PG row, resolve identity from CH
-                fields = _ch_session_fields_for_item(item.trace_session_id)
+                fields = (
+                    ch_cache.session_fields(item.trace_session_id)
+                    if ch_cache is not None
+                    else _ch_session_fields_for_item(item.trace_session_id)
+                )
                 if fields is None:
                     return {"type": "trace_session", "deleted": True}
                 return {
@@ -908,8 +1007,12 @@ def resolve_source_preview(item):
     return {"type": item.source_type, "error": "Could not resolve preview"}
 
 
-def resolve_source_content(item):
-    """Return full renderable content for a QueueItem's source (used in annotation view)."""
+def resolve_source_content(item, *, ch_cache=None):
+    """Return full renderable content for a QueueItem's source (used in annotation view).
+
+    ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, collector
+    span/session sources read from the page-batched map instead of a per-item CH
+    point-read. Single-item callers pass ``None`` and keep the per-item read."""
     try:
         if item.source_type == QueueItemSourceType.DATASET_ROW.value:
             row = item.dataset_row
@@ -1004,7 +1107,11 @@ def resolve_source_content(item):
             span = _safe_related(item, "observation_span")
             if not span:
                 # collector span: no PG row, rebuild content from CH via the mapper
-                ch_span = _ch_span_for_item(item.observation_span_id)
+                ch_span = (
+                    ch_cache.span(item.observation_span_id)
+                    if ch_cache is not None
+                    else _ch_span_for_item(item.observation_span_id)
+                )
                 if ch_span is None:
                     return {"type": "observation_span", "deleted": True}
                 from tracer.services.clickhouse.v2.span_reader import (
@@ -1113,7 +1220,11 @@ def resolve_source_content(item):
             if not session:
                 # collector session: no PG row, resolve from CH (first_seen is the
                 # created_at/updated_at proxy — CH has no audit columns)
-                fields = _ch_session_fields_for_item(item.trace_session_id)
+                fields = (
+                    ch_cache.session_fields(item.trace_session_id)
+                    if ch_cache is not None
+                    else _ch_session_fields_for_item(item.trace_session_id)
+                )
                 if fields is None:
                     return {"type": "trace_session", "deleted": True}
                 first_seen = fields.get("first_seen")

@@ -114,6 +114,7 @@ from model_hub.services.bulk_selection import (
     resolve_filtered_trace_ids,
 )
 from model_hub.utils.annotation_queue_helpers import (
+    CollectorSourceCache,
     assign_items_to_all_annotators,
     auto_assign_items,
     calculate_agreement,
@@ -2298,7 +2299,10 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
         "evaluation_data",
         "customer_latency_metrics",
     )
-    sample_contents = [(item, resolve_source_content(item)) for item in sample_items]
+    ch_cache = CollectorSourceCache.for_items(sample_items)
+    sample_contents = [
+        (item, resolve_source_content(item, ch_cache=ch_cache)) for item in sample_items
+    ]
     source_types = {
         content.get("type") or item.source_type
         for item, content in sample_contents
@@ -2395,7 +2399,7 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
     }
 
 
-def _infer_attribute_field_data_type(field_id, sample_items):
+def _infer_attribute_field_data_type(field_id, sample_items, ch_cache=None):
     source_type, path = _parse_attribute_field_id(field_id)
     if not path:
         return DataTypeChoices.TEXT.value
@@ -2403,13 +2407,13 @@ def _infer_attribute_field_data_type(field_id, sample_items):
     for item in sample_items or []:
         if source_type and item.source_type != source_type:
             continue
-        value = _nested_get(resolve_source_content(item), path)
+        value = _nested_get(resolve_source_content(item, ch_cache=ch_cache), path)
         if value not in (None, ""):
             return _infer_dataset_type(value)
     return DataTypeChoices.TEXT.value
 
 
-def _custom_attribute_export_field(field_id, sample_items=None):
+def _custom_attribute_export_field(field_id, sample_items=None, ch_cache=None):
     if not field_id.startswith("attr:"):
         return None
     source_type, path = _parse_attribute_field_id(field_id)
@@ -2419,7 +2423,7 @@ def _custom_attribute_export_field(field_id, sample_items=None):
         field_id,
         path.replace("_", " "),
         path,
-        _infer_attribute_field_data_type(field_id, sample_items),
+        _infer_attribute_field_data_type(field_id, sample_items, ch_cache=ch_cache),
         f"From {_source_export_label(source_type)}" if source_type else "Attributes",
         False,
         path=path,
@@ -3380,10 +3384,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         scores_by_item = _scores_for_queue_items(items_list, queue_label_ids)
         item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
         eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
+        ch_source_cache = CollectorSourceCache.for_items(items_list)
 
         result = []
         for item in items_list:
-            content = resolve_source_content(item)
+            content = resolve_source_content(item, ch_cache=ch_source_cache)
             annotations = [
                 _serialize_score_for_export(score)
                 for score in scores_by_item.get(item.id, [])
@@ -3697,6 +3702,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         if status_filter:
             items_qs = items_qs.filter(status=status_filter)
         items_list = list(items_qs.order_by("order", "created_at"))
+        ch_source_cache = CollectorSourceCache.for_items(items_list)
 
         export_field_defs = _build_annotation_queue_export_fields(
             queue, sample_items=items_list[:100]
@@ -3713,7 +3719,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 continue
             field_id = entry.get("field") or entry.get("id")
             field_def = fields_by_id.get(field_id) or _custom_attribute_export_field(
-                field_id or "", items_list[:100]
+                field_id or "", items_list[:100], ch_cache=ch_source_cache
             )
             if not field_def:
                 continue
@@ -3794,7 +3800,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
         eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
         for i, item in enumerate(items_list):
-            content = resolve_source_content(item)
+            content = resolve_source_content(item, ch_cache=ch_source_cache)
             scores = scores_by_item.get(item.id, [])
             annotations_metadata = {}
             for score in scores:

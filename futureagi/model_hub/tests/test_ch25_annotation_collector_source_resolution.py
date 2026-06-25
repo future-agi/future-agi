@@ -729,3 +729,104 @@ def test_collector_span_round_trips_create_to_annotate(
     # Score persists the collector soft id — and NO PG ObservationSpan backs it.
     assert str(score.observation_span_id) == str(span.id)
     assert not ObservationSpan.objects.filter(id=span.id).exists()
+
+
+# ───────────────────── N+1 batch (CollectorSourceCache) ───────────────────────
+
+
+class _CountingReaderCM:
+    """Reader stub recording ``list_by_ids`` vs per-item ``get`` so a test can prove
+    a page does ONE batch CH read, not a point-read per item (the N+1 the cache removes)."""
+
+    def __init__(self, spans):
+        self._by_id = {str(s.id): s for s in spans}
+        self.list_by_ids_calls = []
+        self.get_calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def list_by_ids(self, span_ids):
+        ids = [str(s) for s in span_ids]
+        self.list_by_ids_calls.append(ids)
+        return [self._by_id[i] for i in ids if i in self._by_id]
+
+    def get(self, span_id):  # the per-item path — must NOT be hit when batched
+        self.get_calls.append(str(span_id))
+        return self._by_id.get(str(span_id))
+
+
+@pytest.mark.django_db
+def test_list_serializer_batches_collector_ch_reads(organization, workspace, user):
+    """Serializing a page of N collector spans + M collector sessions does ONE batch
+    CH read per kind (``list_by_ids`` / ``resolve_session_fields`` once each), not a
+    per-item point-read. FAILS — per-item ``get`` / N ``resolve_session_fields`` calls
+    — if the ``CollectorSourceCache`` wiring (or its DRF context plumbing) regresses.
+    A correctness-only test would still pass on regression; this asserts call counts."""
+    from model_hub.serializers.annotation_queues import QueueItemSerializer
+
+    project = _make_project(organization=organization, workspace=workspace)
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+
+    spans = [_make_chspan(project_id=project.id) for _ in range(3)]
+    span_items = [
+        _collector_item(
+            organization=organization, workspace=workspace, queue=queue, span=s
+        )
+        for s in spans
+    ]
+
+    session_ids = [str(uuid.uuid4()) for _ in range(2)]
+    session_fields = {
+        sid: {
+            "external_session_id": f"ext-{i}",
+            "first_seen": datetime(2025, 5, 2, 9, 0, 0, tzinfo=UTC),
+            "project_id": str(project.id),
+            "bookmarked": False,
+            "display_name": None,
+        }
+        for i, sid in enumerate(session_ids)
+    }
+    session_items = [
+        QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE_SESSION.value,
+            trace_session_id=sid,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+        for sid in session_ids
+    ]
+
+    items = span_items + session_items
+    reader_cm = _CountingReaderCM(spans)
+
+    with (
+        mock.patch(CH_READER_PATH, return_value=reader_cm) as get_reader,
+        mock.patch(
+            SESSION_FIELDS_PATH, return_value=session_fields
+        ) as resolve_sessions,
+    ):
+        data = QueueItemSerializer(items, many=True).data
+
+    # one batch span read, carrying every collector span id — never a per-item point read
+    assert len(reader_cm.list_by_ids_calls) == 1, reader_cm.list_by_ids_calls
+    assert reader_cm.get_calls == [], reader_cm.get_calls
+    assert get_reader.call_count == 1
+    assert set(reader_cm.list_by_ids_calls[0]) == {str(s.id) for s in spans}
+    # one batch session read, carrying every collector session id
+    assert resolve_sessions.call_count == 1
+    assert set(resolve_sessions.call_args.args[0]) == set(session_ids)
+
+    # previews actually resolved from CH (not the deleted sentinel)
+    previews = [row["source_preview"] for row in data]
+    assert all("deleted" not in p for p in previews), previews
+    span_previews = [p for p in previews if p["type"] == "observation_span"]
+    assert len(span_previews) == 3
+    assert all(p["name"] == "collector root span" for p in span_previews)
