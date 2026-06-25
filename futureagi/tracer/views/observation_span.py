@@ -284,6 +284,60 @@ def _project_workspace_scope_q(request, project_prefix="project__"):
     return Q(**{workspace_field: workspace})
 
 
+def allowed_root_spans_for_request(
+    trace_ids: list[str],
+    *,
+    organization,
+    project_scope_q,
+) -> dict[str, str]:
+    """Resolve ``{trace_id: root_span_id}`` for *trace_ids*, returning only traces
+    whose owning project is org/workspace-accessible. Collector traces have no PG
+    ``Trace`` row, so the project_id is learned from CH and re-checked against the
+    PG ``Project`` authority. FAIL CLOSED: an untenanted / cross-org trace is dropped
+    (no key) — same response shape as before.
+    """
+    if not trace_ids:
+        return {}
+
+    from tracer.services.clickhouse.v2 import get_reader
+
+    with get_reader() as reader:
+        ch_spans = reader.list_by_trace_ids([str(tid) for tid in trace_ids])
+
+    # Root spans only (CH stores parent_span_id as a non-nullable String; root
+    # spans carry ""). Collect the candidate project_ids to verify against PG.
+    root_spans = [s for s in ch_spans if not s.parent_span_id]
+    candidate_project_ids = {
+        str(s.project_id) for s in root_spans if s.project_id
+    }
+    if not candidate_project_ids:
+        return {}
+
+    allowed_project_ids = {
+        str(pid)
+        for pid in Project.objects.filter(
+            project_scope_q,
+            id__in=candidate_project_ids,
+            organization=organization,
+        ).values_list("id", flat=True)
+    }
+    if not allowed_project_ids:
+        return {}
+
+    result: dict[str, str] = {}
+    for span in root_spans:
+        pid = str(span.project_id) if span.project_id else None
+        if pid is None or pid not in allowed_project_ids:
+            # FAIL CLOSED: untenanted or cross-org span — never returned.
+            continue
+        tid = str(span.trace_id)
+        # list_by_trace_ids orders by (trace_id, start_time, id) so the first
+        # parentless span per trace wins.
+        if tid not in result:
+            result[tid] = str(span.id)
+    return result
+
+
 class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -835,43 +889,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not trace_ids:
                 return self._gm.bad_request("trace_ids is required")
 
-            # Tenant gate via PG (CH spans don't carry org_id filterability).
-            # Reduce the caller-supplied set to only those traces visible to
-            # the request org/workspace.
+            # Collector traces have no PG ``Trace`` row; the gate resolves the root
+            # span + tenant from CH/PG-Project instead (fail closed). See selector.
             org = _get_request_organization(request)
-            allowed_trace_ids = list(
-                Trace.objects.filter(
-                    _project_workspace_scope_q(request),
-                    id__in=trace_ids,
-                    project__organization=org,
-                ).values_list("id", flat=True)
+            result = allowed_root_spans_for_request(
+                trace_ids,
+                organization=org,
+                project_scope_q=_project_workspace_scope_q(request, project_prefix=""),
             )
-            if not allowed_trace_ids:
-                return self._gm.success_response({})
-
-            # Read root spans from CH and pick the first parentless span per
-            # trace_id (mirrors the pattern in feed.py::_get_root_spans_batch
-            # committed in 50561eb5c).
-            from tracer.services.clickhouse.v2 import get_reader
-
-            with get_reader() as reader:
-                ch_spans = reader.list_by_trace_ids(
-                    [str(tid) for tid in allowed_trace_ids]
-                )
-
-            result: dict[str, str] = {}
-            for span in ch_spans:
-                # CH stores parent_span_id as a non-nullable String; root
-                # spans use "" (empty). list_by_trace_ids orders by
-                # (trace_id, start_time, id) so the first parentless span
-                # per trace wins.
-                if span.parent_span_id:
-                    continue
-                tid = str(span.trace_id)
-                if tid not in result:
-                    result[tid] = str(span.id)
             return self._gm.success_response(result)
         except Exception as e:
+            # fail closed: any CH/PG error returns no data, never a partial leak
             return self._gm.bad_request(f"Error fetching root spans: {str(e)}")
 
     @action(detail=False, methods=["post"])

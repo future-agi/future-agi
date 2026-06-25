@@ -1810,17 +1810,8 @@ class CHSpanReader:
             metadata_parsed = {}
         # span_attributes is the legacy serializer field that flattens
         # attrs_string/number/bool + attributes_extra into one dict — the
-        # shape v1 consumers expect.
-        span_attributes: dict[str, Any] = {}
-        span_attributes.update(span.attrs_string or {})
-        span_attributes.update(span.attrs_number or {})
-        span_attributes.update(span.attrs_bool or {})
-        try:
-            extra = json.loads(span.attributes_extra) if span.attributes_extra else {}
-            if isinstance(extra, dict):
-                span_attributes.update(extra)
-        except json.JSONDecodeError:
-            pass
+        # shape v1 consumers expect. Single source of truth: _ch_span_attributes.
+        span_attributes = _ch_span_attributes(span)
         # tags / span_events come from CH as JSON strings; the serializer
         # returns them as Python objects.
         try:
@@ -1868,6 +1859,80 @@ class CHSpanReader:
             "eval_status": span.eval_status,
             "prompt_version": span.prompt_version_id,
         }
+
+
+def _ch_span_attributes(span: CHSpan) -> dict[str, Any]:
+    """Flatten ``attrs_string/number/bool`` + ``attributes_extra`` into the one
+    ``span_attributes`` dict v1 consumers (and the annotation render) expect.
+
+    Malformed ``attributes_extra`` JSON is skipped (not raised) so a single bad
+    span never 500s a render page.
+    """
+    out: dict[str, Any] = {}
+    out.update(span.attrs_string or {})
+    out.update(span.attrs_number or {})
+    out.update(span.attrs_bool or {})
+    try:
+        extra = json.loads(span.attributes_extra) if span.attributes_extra else {}
+        if isinstance(extra, dict):
+            out.update(extra)
+    except json.JSONDecodeError:
+        pass
+    return out
+
+
+def _ch_json_obj(raw: str, *, default: Any) -> Any:
+    """``json.loads`` a CH JSON-string column, returning *default* (``{}`` / ``[]``)
+    on null/empty/malformed input rather than raising — so one bad span row does
+    not 500 the annotate-detail render. Parse failures are the caller's to log."""
+    if not raw:
+        return default
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return default
+    return parsed
+
+
+def chspan_to_annotation_source_dict(span: CHSpan) -> dict[str, Any]:
+    """Map a :class:`CHSpan` to the ``observation_span`` content/preview dict the
+    annotation selectors emit for a PG ``ObservationSpan`` — the single place that
+    owns the CHSpan field renames (attrs_* merge, json.loads of the string columns,
+    latency→response_time, start/end→created/updated, eval_attributes={}) so the
+    preview and content branches never diverge. Pure (no IO)."""
+    metadata = _ch_json_obj(span.metadata, default={})
+    return {
+        "type": "observation_span",
+        "span_id": str(span.id),
+        "trace_id": str(span.trace_id) if span.trace_id else None,
+        "name": span.name or "",
+        "observation_type": span.observation_type or "",
+        "project_id": str(span.project_id) if span.project_id else None,
+        "created_at": span.start_time,
+        "updated_at": span.end_time,
+        "start_time": span.start_time,
+        "end_time": span.end_time,
+        "input": _maybe_json(span.input),
+        "output": _maybe_json(span.output),
+        "metadata": metadata if isinstance(metadata, dict) else {},
+        "events": _ch_json_obj(span.span_events, default=[]),
+        "latency_ms": span.latency_ms,
+        # CH has no response_time column; latency_ms is the only timing signal.
+        "response_time_ms": span.latency_ms,
+        "model": span.model or None,
+        "provider": span.provider or None,
+        "cost": span.cost,
+        "prompt_tokens": span.prompt_tokens,
+        "completion_tokens": span.completion_tokens,
+        "total_tokens": span.total_tokens,
+        "status": span.status or None,
+        "status_message": span.status_message or None,
+        "tags": _ch_json_obj(span.tags, default=[]),
+        "span_attributes": _ch_span_attributes(span),
+        "resource_attributes": _ch_json_obj(span.resource_attrs, default={}),
+        # empty (not omitted) for PG-branch shape parity — CH has no per-eval dict
+        "eval_attributes": {},
+    }
 
 
 # Provider → logo URL map. Mirrors what the serializer's get_provider_logo() does
