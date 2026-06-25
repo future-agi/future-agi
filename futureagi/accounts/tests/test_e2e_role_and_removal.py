@@ -19,11 +19,7 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from tfc.constants.levels import Level
-from tfc.constants.roles import OrganizationRoles
-from tfc.middleware.workspace_context import (
-    clear_workspace_context,
-    set_workspace_context,
-)
+from tfc.middleware.workspace_context import set_workspace_context
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1487,3 +1483,103 @@ class TestOrgRoleUpdateWorkspaceAccess:
         assert str(second_workspace.id) not in invite_ws_ids
         # Level offer is updated to the new org level too.
         assert invite.level == Level.VIEWER
+
+    # Promote-to-admin must rewrite a pending invite to grant *every* workspace
+    # on accept, mirroring _promote_to_workspace_admin_everywhere on the active
+    # path — otherwise an accepted admin invite would under-grant.
+
+    def test_promote_to_admin_grants_all_workspaces_on_pending_invite(
+        self, auth_client, user, organization, workspace, second_workspace
+    ):
+        target = _make_user(
+            organization, "wsinvite-admin@futureagi.com", "Member", Level.MEMBER
+        )
+        # Stale invite listing only one workspace.
+        invite = OrganizationInvite.objects.create(
+            organization=organization,
+            target_email=target.email,
+            level=Level.MEMBER,
+            workspace_access=[
+                {"workspace_id": str(workspace.id), "level": Level.WORKSPACE_MEMBER}
+            ],
+            invited_by=user,
+            status=InviteStatus.PENDING,
+        )
+
+        resp = self._update_role(
+            auth_client,
+            {"user_id": str(target.id), "org_level": Level.ADMIN},
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.json()
+        invite.refresh_from_db()
+        invite_ws_ids = {entry["workspace_id"] for entry in invite.workspace_access}
+        # Every org workspace is granted at admin level.
+        assert invite_ws_ids == {str(workspace.id), str(second_workspace.id)}
+        assert all(
+            entry["level"] == Level.WORKSPACE_ADMIN for entry in invite.workspace_access
+        )
+        assert invite.level == Level.ADMIN
+
+    # The invite rewrite must honor the actor's revoke scope, exactly like the
+    # active-membership revoke: a workspace-admin org-member dropping a workspace
+    # they don't administer must NOT have it stripped from the pending invite
+    # (it would otherwise vanish on accept — an out-of-scope revocation).
+
+    def test_scoped_actor_preserves_out_of_scope_workspace_on_invite(
+        self, organization, workspace, second_workspace
+    ):
+        # Actor: org MEMBER, workspace admin in ``workspace`` (A) only.
+        actor = _make_user(
+            organization, "wsinvite-actor-wsadmin@futureagi.com", "Member", Level.MEMBER
+        )
+        _add_ws_membership(actor, workspace, organization, Level.WORKSPACE_ADMIN)
+        actor_client = _make_client(actor, workspace)
+
+        # Target: org VIEWER (manageable by the member actor), active in A and B.
+        target = _make_user(
+            organization, "wsinvite-target-scope@futureagi.com", "Viewer", Level.VIEWER
+        )
+        _add_ws_membership(target, workspace, organization, Level.WORKSPACE_MEMBER)
+        _add_ws_membership(
+            target, second_workspace, organization, Level.WORKSPACE_MEMBER
+        )
+
+        # Pending invite currently grants BOTH workspaces.
+        invite = OrganizationInvite.objects.create(
+            organization=organization,
+            target_email=target.email,
+            level=Level.VIEWER,
+            workspace_access=[
+                {"workspace_id": str(workspace.id), "level": Level.WORKSPACE_MEMBER},
+                {
+                    "workspace_id": str(second_workspace.id),
+                    "level": Level.WORKSPACE_MEMBER,
+                },
+            ],
+            invited_by=actor,
+            status=InviteStatus.PENDING,
+        )
+
+        # Desired set omits B; the actor doesn't administer B, so B must survive
+        # on both the active membership and the invite.
+        resp = self._update_role(
+            actor_client,
+            {
+                "user_id": str(target.id),
+                "org_level": Level.VIEWER,
+                "workspace_access": [
+                    {"workspace_id": str(workspace.id), "level": Level.WORKSPACE_VIEWER}
+                ],
+            },
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.json()
+        # Active membership: B preserved (outside the actor's revoke scope).
+        active = self._ws_member_ids(target, organization)
+        assert second_workspace.id in active
+        # Invite: B preserved too, so accept() won't silently drop it.
+        invite.refresh_from_db()
+        invite_ws_ids = {entry["workspace_id"] for entry in invite.workspace_access}
+        assert str(workspace.id) in invite_ws_ids
+        assert str(second_workspace.id) in invite_ws_ids

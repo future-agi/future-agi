@@ -176,6 +176,34 @@ def _invite_workspace_access(
     ]
 
 
+def _merge_invite_workspace_access(
+    *,
+    existing: Optional[list[dict]],
+    desired: list[dict],
+    revoke_scope: Optional[set[UUID]],
+) -> list[dict]:
+    """The ``workspace_access`` to write onto a pending invite, honoring the
+    actor's revoke scope (the same rule the active-membership revoke uses).
+
+    - ``revoke_scope is None`` → org-wide authority: ``desired`` is authoritative.
+    - otherwise the actor may only drop workspaces they administer, so existing
+      invite entries for workspaces **outside** that scope (and not re-granted by
+      ``desired``) are preserved rather than revoked on the invite path.
+    """
+    if revoke_scope is None:
+        return desired
+    scope_strs = {str(w) for w in revoke_scope}
+    desired_ids = {entry["workspace_id"] for entry in desired}
+    preserved = [
+        entry
+        for entry in (existing or [])
+        if entry.get("workspace_id")
+        and str(entry["workspace_id"]) not in desired_ids
+        and str(entry["workspace_id"]) not in scope_strs
+    ]
+    return desired + preserved
+
+
 def _apply_org_level_change(
     *,
     organization: Organization,
@@ -239,16 +267,30 @@ def _apply_org_level_change(
         # grants memberships from invite.workspace_access, so a stale value would
         # re-grant the workspaces this update just revoked once the invite is
         # accepted (the revocation-not-sticking bug, on the invite path).
-        invite_ws_access = _invite_workspace_access(
+        desired = _invite_workspace_access(
             organization=organization,
             new_level=new_level,
             workspace_access=workspace_access,
             workspace_access_provided=workspace_access_provided,
         )
-        if invite_ws_access is None:
+        if desired is None:
+            # Single-workspace edit that omitted workspace_access — touch level only.
             pending_invites.update(level=new_level)
         else:
-            pending_invites.update(level=new_level, workspace_access=invite_ws_access)
+            # The invite rewrite carries the same revoke scope as the active path:
+            # a workspace-admin org-member may only drop workspaces they administer,
+            # so out-of-scope entries already on the invite are preserved rather
+            # than silently revoked on the invite path. (≤1 pending invite per
+            # org+email by unique constraint, so per-row save is cheap.)
+            revoke_scope = _revocable_workspace_ids(organization, actor)
+            for invite in pending_invites:
+                invite.level = new_level
+                invite.workspace_access = _merge_invite_workspace_access(
+                    existing=invite.workspace_access,
+                    desired=desired,
+                    revoke_scope=revoke_scope,
+                )
+                invite.save(update_fields=["level", "workspace_access"])
 
 
 def _enforce_not_last_owner(organization: Organization) -> None:
