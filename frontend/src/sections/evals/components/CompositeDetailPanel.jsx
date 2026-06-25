@@ -240,8 +240,9 @@ const CompositeDetailPanel = ({
           color="text.secondary"
           sx={{ display: "block" }}
         >
-          A composite eval runs multiple child evals against the same input and
-          optionally aggregates their scores into a single value.
+          A composite eval bundles several child evals that all score the same
+          input — each on a different dimension (e.g. accuracy, tone, safety) —
+          and optionally rolls them into one combined score.
         </Typography>
       </Box>
 
@@ -407,8 +408,16 @@ const CompositeDetailPanel = ({
 
       {/* Child list */}
       <Box>
-        <Typography variant="body2" fontWeight={600} sx={{ mb: 1 }}>
+        <Typography sx={{ typography: "body2", fontWeight: 600, mb: 0.5 }}>
           Children ({childrenList.length})
+        </Typography>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", mb: 1 }}
+        >
+          Add evals that score the same input on different dimensions (e.g.
+          accuracy, tone, safety); aggregation above combines them.
         </Typography>
         <Stack spacing={1}>
           {childrenList.map((child) => {
@@ -553,6 +562,23 @@ const CompositeDetailPanel = ({
               </Box>
             );
           })}
+
+          {childrenList.length === 0 && (
+            <Typography
+              variant="caption"
+              color="text.disabled"
+              sx={{
+                display: "block",
+                py: 1.5,
+                px: 1.25,
+                borderRadius: 1,
+                border: "1px dashed",
+                borderColor: "divider",
+              }}
+            >
+              No child evals yet — add 2 or more to combine into one score.
+            </Typography>
+          )}
 
           {editable && (
             <Button
