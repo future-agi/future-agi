@@ -5164,12 +5164,12 @@ class EvalUsageStatsView(APIView):
                     # For multi-hour buckets (6h for 1d): ALSO round hour — without
                     # this, a log at 14:35 gets key 14:00 while zero-fill emits
                     # 0:00/6:00/12:00/18:00, so most logs never match any bucket.
-                    if bucket_minutes >= 60:
+                    if bucket_minutes >= 1440:
+                        bucket_ts = ts.replace(hour=0, minute=0, second=0, microsecond=0)
+                    elif bucket_minutes >= 60:
                         hour_size = bucket_minutes // 60
                         rounded_hour = (ts.hour // hour_size) * hour_size
                         bucket_ts = ts.replace(hour=rounded_hour, minute=0, second=0, microsecond=0)
-                    elif bucket_minutes >= 1440:
-                        bucket_ts = ts.replace(hour=0, minute=0, second=0, microsecond=0)
                     else:
                         bucket_ts = ts.replace(
                             minute=(ts.minute // bucket_minutes) * bucket_minutes,
@@ -5550,6 +5550,7 @@ class EvalFeedbackListView(APIView):
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
+            workspace = getattr(request, "workspace", None)
 
             try:
                 if APICallLog is None:

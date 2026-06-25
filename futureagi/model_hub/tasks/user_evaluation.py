@@ -1305,7 +1305,7 @@ def process_single_error_localization(task_id):
                             "input_types": task.input_types,
                             "input_data": task.input_data,
                         }
-                        log.config = json.dumps(config)
+                        log.config = config
                         log.save(update_fields=["config"])
                     except APICallLog.DoesNotExist:
                         logger.info("Log doesn't exist.")
@@ -1349,7 +1349,7 @@ def process_single_error_localization(task_id):
                             "input_types": task.input_types,
                             "input_data": task.input_data,
                         }
-                        log.config = json.dumps(config)
+                        log.config = config
                         log.save(update_fields=["config"])
                     except APICallLog.DoesNotExist:
                         logger.info("Log doesn't exist.")
@@ -1379,7 +1379,7 @@ def process_single_error_localization(task_id):
                     "input_types": task.input_types,
                     "input_data": task.input_data,
                 }
-                eval_logger.config = json.dumps(config)
+                eval_logger.config = config
                 eval_logger.save(update_fields=["config"])
             except Exception as e:
                 logger.exception(f"Error in updating log config: {str(e)}")
