@@ -31,25 +31,34 @@ class TestClickHouseSchema:
         )
 
         ddl = get_all_schema_ddl()
-        # 4 CDC tables + dict + spans + spans_mv + 2 agg tables + 2 MVs = 11
         assert len(ddl) >= 10
         names = [name for name, _ in ddl]
-        assert "tracer_trace" in names
-        assert "trace_session" in names
-        assert "tracer_eval_logger" in names
         assert "trace_dict" in names
         # The legacy CDC chain is gated by CH25_DROP_LEGACY_CDC_CHAIN.
-        # Default (False, prod-safe) keeps it; True (dev) drops it AND
-        # filters the legacy v1 ``spans`` registry entry (v2 spans is
-        # applied via the v2 SQL files, not this registry).
+        # Default (False, prod-safe) keeps it; True (dev) drops the whole
+        # chain AND filters the legacy v1 ``spans`` registry entry (v2 spans
+        # is applied via the v2 SQL files, not this registry).
+        legacy_names = [
+            "tracer_trace",
+            "tracer_enduser",
+            "trace_session",
+            "tracer_eval_logger",
+            "tracer_observation_span",
+            "enduser_dict",
+            "trace_session_dict",
+            "eval_metrics_hourly",
+            "eval_metrics_hourly_mv",
+        ]
         if should_drop_legacy_chain():
-            assert "tracer_observation_span" not in names
+            for legacy in legacy_names:
+                assert legacy not in names, f"{legacy} must be excluded when flag set"
             assert "spans" not in names, (
                 "v1 SPANS_TABLE must be filtered when flag set — otherwise "
                 "the boot DDL apply recreates v1 after the helper drops it."
             )
         else:
-            assert "tracer_observation_span" in names
+            for legacy in legacy_names:
+                assert legacy in names
             assert "spans" in names
 
     def test_get_all_schema_ddl_returns_list_of_tuples(self):
@@ -74,11 +83,11 @@ class TestClickHouseSchema:
         ddl = get_all_schema_ddl()
         names = [name for name, _ in ddl]
 
-        # CDC tables must appear before trace_dict
-        assert names.index("tracer_trace") < names.index("trace_dict")
-        # trace_dict must appear before v1 spans (only meaningful when
-        # the v1 spans registry entry is present — i.e. flag off).
+        # CDC tables must appear before trace_dict, and trace_dict before
+        # v1 spans — only meaningful when the legacy chain is in the
+        # registry (flag off); when dropped, those names aren't present.
         if not should_drop_legacy_chain():
+            assert names.index("tracer_trace") < names.index("trace_dict")
             assert names.index("trace_dict") < names.index("spans")
         # Dataset CDC tables must appear before dataset dictionaries
         assert names.index("model_hub_dataset") < names.index("dataset_dict")
@@ -356,14 +365,17 @@ class TestClickHouseSchema:
         # Idempotency: every drop wraps IF EXISTS so reruns are no-ops.
         for _, sql in drops:
             assert "IF EXISTS" in sql, f"drop must be idempotent: {sql}"
-        # MV drops use DROP VIEW (not DROP TABLE) — CH refuses the wrong kind.
+        # Each kind drops with its matching statement — CH refuses the
+        # wrong kind (a dictionary cannot be dropped with DROP TABLE).
         for name, sql in drops:
             if name.endswith("_mv"):
                 assert sql.startswith("DROP VIEW IF EXISTS")
+            elif name.endswith("_dict"):
+                assert sql.startswith("DROP DICTIONARY IF EXISTS")
             else:
                 assert sql.startswith("DROP TABLE IF EXISTS")
 
-    def test_legacy_chain_drop_covers_exactly_the_four_tables(self):
+    def test_legacy_chain_drop_covers_exactly_the_expected_set(self):
         """The drop list pins the migration scope — no more, no less."""
         from tracer.services.clickhouse.schema import (
             get_legacy_chain_drop_statements,
@@ -371,10 +383,18 @@ class TestClickHouseSchema:
 
         names = {n for n, _ in get_legacy_chain_drop_statements()}
         assert names == {
-            "tracer_observation_span",
+            "span_metrics_hourly_mv",
             "spans_mv",
             "span_metrics_hourly",
-            "span_metrics_hourly_mv",
+            "tracer_observation_span",
+            "eval_metrics_hourly_mv",
+            "eval_metrics_hourly",
+            "enduser_dict",
+            "trace_session_dict",
+            "tracer_trace",
+            "tracer_enduser",
+            "trace_session",
+            "tracer_eval_logger",
         }, (
             "Legacy chain drop set drifted; update "
             "_LEGACY_CDC_CHAIN_NAMES in schema.py and the cutover doc."
