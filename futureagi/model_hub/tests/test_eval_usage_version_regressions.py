@@ -51,6 +51,158 @@ def test_migration_0112_has_reversible_noop():
     assert run_python_ops[0].reverse_code is RunPython.noop
 
 
+def test_migration_0112_is_non_atomic():
+    """Migration must declare atomic=False so each batch commits independently.
+
+    Without this the full-table UPDATE and per-template loop run inside one
+    transaction, holding a write lock on usage_apicalllog for the entire
+    duration — a migration-timeout risk on large tables.
+    """
+    mod = _load_migration()
+    assert mod.Migration.atomic is False
+
+
+@pytest.mark.django_db
+class TestMigrationBackfillLogic:
+    """The actual backfill logic — version stamping and double-encode unwrap.
+
+    These are the tests Nikhil asked for: the OSS-guard and noop tests above
+    verify the migration shell; these verify that it actually touches data
+    correctly.
+    """
+
+    def test_backfill_stamps_version_id_on_logs_without_it(
+        self, organization, workspace
+    ):
+        """Logs without version_id get stamped with the template's default version."""
+        from django.apps import apps as real_apps
+        from ee.usage.models.usage import APICallLog, APICallStatusChoices
+        from model_hub.models.choices import OwnerChoices, SourceChoices
+        from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
+
+        template = EvalTemplate.no_workspace_objects.create(
+            name=f"backfill-test-{uuid.uuid4().hex[:6]}",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={},
+            criteria="test",
+        )
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=template,
+            config={},
+            criteria="test",
+            model="turing_large",
+            created_by=None,
+        )
+        version.is_default = True
+        version.save(update_fields=["is_default"])
+
+        # Log without version_id — exactly what the backfill targets
+        log = APICallLog.objects.create(
+            organization=organization,
+            workspace=workspace,
+            status=APICallStatusChoices.SUCCESS.value,
+            cost=0,
+            source=SourceChoices.EVAL_PLAYGROUND.value,
+            source_id=str(template.id),
+            config={"output": {"output": 1.0}},
+        )
+
+        mod = _load_migration()
+        mod.backfill_apicalllog_version_info(real_apps, schema_editor=None)
+
+        log.refresh_from_db()
+        assert log.config.get("version_id") == str(version.id)
+        assert log.config.get("version_number") == version.version_number
+
+    def test_backfill_skips_logs_that_already_have_version_id(
+        self, organization, workspace
+    ):
+        """Logs that already have version_id must not be overwritten."""
+        from django.apps import apps as real_apps
+        from ee.usage.models.usage import APICallLog, APICallStatusChoices
+        from model_hub.models.choices import OwnerChoices, SourceChoices
+        from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
+
+        template = EvalTemplate.no_workspace_objects.create(
+            name=f"backfill-skip-{uuid.uuid4().hex[:6]}",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={},
+            criteria="test",
+        )
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=template,
+            config={},
+            criteria="test",
+            model="turing_large",
+            created_by=None,
+        )
+        existing_version_id = str(uuid.uuid4())
+        log = APICallLog.objects.create(
+            organization=organization,
+            workspace=workspace,
+            status=APICallStatusChoices.SUCCESS.value,
+            cost=0,
+            source=SourceChoices.EVAL_PLAYGROUND.value,
+            source_id=str(template.id),
+            config={"output": {"output": 1.0}, "version_id": existing_version_id},
+        )
+
+        mod = _load_migration()
+        mod.backfill_apicalllog_version_info(real_apps, schema_editor=None)
+
+        log.refresh_from_db()
+        # Must not overwrite the existing version_id
+        assert log.config["version_id"] == existing_version_id
+
+    def test_backfill_unwraps_double_encoded_config(self, organization, workspace):
+        """Double-encoded JSON strings must be unwrapped to proper JSONB objects.
+
+        Some old logs have config stored as a JSON string inside a JSONField
+        (the result of calling json.dumps() before assigning to a JSONField).
+        The migration must unwrap these so JSONB operators work.
+        """
+        from django.apps import apps as real_apps
+        from ee.usage.models.usage import APICallLog, APICallStatusChoices
+        from model_hub.models.choices import OwnerChoices, SourceChoices
+        from model_hub.models.evals_metric import EvalTemplate
+
+        template = EvalTemplate.no_workspace_objects.create(
+            name=f"backfill-unwrap-{uuid.uuid4().hex[:6]}",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={},
+            criteria="test",
+        )
+        # Simulate double-encoding: assign a JSON string to a JSONField.
+        # Django stores the Python str as a JSONB string, so jsonb_typeof = 'string'.
+        import json
+        log = APICallLog.objects.create(
+            organization=organization,
+            workspace=workspace,
+            status=APICallStatusChoices.SUCCESS.value,
+            cost=0,
+            source=SourceChoices.EVAL_PLAYGROUND.value,
+            source_id=str(template.id),
+            config=json.dumps({"output": {"output": 0.9}}),  # double-encoded
+        )
+
+        # Before backfill: config is a string (double-encoded)
+        log.refresh_from_db()
+        assert isinstance(log.config, str), "Precondition: config should be a string"
+
+        mod = _load_migration()
+        mod.backfill_apicalllog_version_info(real_apps, schema_editor=None)
+
+        log.refresh_from_db()
+        assert isinstance(log.config, dict), "Config must be unwrapped to a dict"
+        assert log.config.get("output", {}).get("output") == 0.9
+
+
 # ── Test 2: Version tracking in source_config ────────────────────────────
 
 

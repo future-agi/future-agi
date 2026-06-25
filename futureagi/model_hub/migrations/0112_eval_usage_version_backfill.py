@@ -109,6 +109,11 @@ def backfill_apicalllog_version_info(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
+    # Run outside a transaction so each bulk_update batch commits independently.
+    # Without this the entire backfill (potentially millions of rows) holds a
+    # write lock on usage_apicalllog for its full duration, which causes
+    # migration timeouts on large tables and blocks all concurrent writes.
+    atomic = False
 
     dependencies = [
         # Chains after #772's pinned_version FK so both PRs produce a single
