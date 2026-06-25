@@ -34,7 +34,7 @@ _UPDATE_SQL = """
         ORDER BY om.created_at DESC, om.id DESC
         LIMIT 1
     )
-    WHERE wm.id IN %s
+    WHERE wm.id = ANY(%s::uuid[])
       AND wm.organization_membership_id IS NULL
 """
 
@@ -51,7 +51,9 @@ def backfill_ws_org_membership_fk(apps, schema_editor):
 
     updated = 0
     for start in range(0, len(null_ids), _BATCH_SIZE):
-        batch = tuple(null_ids[start : start + _BATCH_SIZE])
+        # psycopg3 has no ``IN %s`` tuple-expansion (that was psycopg2); bind the
+        # batch as a Postgres array and match with ``= ANY(...)`` instead.
+        batch = [str(pk) for pk in null_ids[start : start + _BATCH_SIZE]]
         with connection.cursor() as cursor:
             cursor.execute(_UPDATE_SQL, [batch])
             updated += cursor.rowcount

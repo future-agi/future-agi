@@ -8,7 +8,11 @@ from accounts.models.user import User
 from accounts.models.workspace import WorkspaceMembership
 from accounts.services.workspace_members import list_workspace_members
 from tfc.constants.levels import Level
-from tfc.middleware.workspace_context import set_workspace_context
+from tfc.constants.roles import OrganizationRoles
+from tfc.middleware.workspace_context import (
+    clear_workspace_context,
+    set_workspace_context,
+)
 
 WS_MEMBERS_URL = "/accounts/workspace/{workspace_id}/members/"
 WS_MEMBER_ADD_URL = "/accounts/workspaces/{workspace_id}/members/"
@@ -375,3 +379,118 @@ class TestWorkspaceMemberAddEndpointFKRegression:
         # CamelCaseJSONRenderer flips org_role -> orgRole on the wire.
         row = rows["ws-add-role@futureagi.com"]
         assert row.get("orgRole") or row.get("org_role")
+
+
+@pytest.mark.django_db
+class TestGetOrCreateSitesSetOrgFK:
+    """The two ``get_or_create`` root-cause sites (TH-5928) don't route through
+    ``create_workspace_membership`` — they inline ``organization_membership`` in
+    ``defaults``. The factory tests can't cover them, so assert the FK directly
+    on each site. Each fails if its ``defaults`` line drops the FK again.
+    """
+
+    def test_switch_org_default_workspace_bootstrap_sets_fk(self, organization):
+        # organization_selection.py::SwitchOrganizationView._resolve_workspace_for_org
+        # bootstraps a default workspace + membership when the org has none.
+        from accounts.views.organization_selection import SwitchOrganizationView
+
+        member, om = _make_member(organization, "switch-boot@futureagi.com")
+
+        ws = SwitchOrganizationView()._resolve_workspace_for_org(member, organization)
+
+        ws_mem = WorkspaceMembership.no_workspace_objects.get(workspace=ws, user=member)
+        assert ws_mem.organization_membership_id == om.id
+
+    def test_workspace_invite_existing_member_sets_fk(
+        self, auth_client, organization, workspace
+    ):
+        # workspace_management.py::WorkspaceInviteAPIView.post — existing active
+        # org member added to a workspace via the bulk-invite get_or_create path
+        # (no email send), reachable end-to-end at POST /accounts/workspace/invite/.
+        member, om = _make_member(organization, "ws-invite@futureagi.com")
+
+        resp = auth_client.post(
+            "/accounts/workspace/invite/",
+            {
+                "emails": [member.email],
+                "role": OrganizationRoles.WORKSPACE_MEMBER,
+                "workspace_ids": [str(workspace.id)],
+                "select_all": False,
+            },
+            format="json",
+        )
+
+        assert resp.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+        ), resp.data
+        ws_mem = WorkspaceMembership.no_workspace_objects.get(
+            workspace=workspace, user=member
+        )
+        assert ws_mem.organization_membership_id == om.id
+
+
+@pytest.mark.django_db
+class TestBackfillMigration:
+    """Exercises the 0022 data migration that heals already-drifted NULL FKs.
+
+    Verifies the three behaviours the raw SQL encodes: it links NULL rows to the
+    active org membership, never attaches an inactive one, and is idempotent.
+    """
+
+    def _run_backfill(self):
+        import importlib
+
+        from django.apps import apps as global_apps
+        from django.db import connection
+
+        migration = importlib.import_module(
+            "accounts.migrations.0022_backfill_ws_org_membership_fk"
+        )
+
+        class _SchemaEditorShim:
+            pass
+
+        shim = _SchemaEditorShim()
+        shim.connection = connection
+        # Mimic migration-time: no request workspace context, so the NULL-row
+        # scan isn't narrowed by the workspace-scoped default manager.
+        clear_workspace_context()
+        migration.backfill_ws_org_membership_fk(global_apps, shim)
+
+    def test_backfill_links_null_fk_to_active_org_membership(
+        self, organization, workspace
+    ):
+        member, om = _make_member(organization, "heal@futureagi.com")
+        ws_mem = _add_to_workspace(workspace, member, om)
+        _null_the_fk(ws_mem)
+
+        self._run_backfill()
+
+        ws_mem.refresh_from_db()
+        assert ws_mem.organization_membership_id == om.id
+
+    def test_backfill_never_attaches_inactive_org_membership(
+        self, organization, workspace
+    ):
+        member, om = _make_member(organization, "heal-inactive@futureagi.com")
+        ws_mem = _add_to_workspace(workspace, member, om)
+        _null_the_fk(ws_mem)
+        # Only an inactive org membership exists -> attaching it would hide the
+        # member, so the migration must leave the FK NULL.
+        OrganizationMembership.objects.filter(pk=om.pk).update(is_active=False)
+
+        self._run_backfill()
+
+        ws_mem.refresh_from_db()
+        assert ws_mem.organization_membership_id is None
+
+    def test_backfill_is_idempotent_on_correct_rows(self, organization, workspace):
+        member, om = _make_member(organization, "heal-idem@futureagi.com")
+        ws_mem = _add_to_workspace(workspace, member, om)  # FK already correct
+
+        self._run_backfill()
+        self._run_backfill()  # second run must be a no-op
+
+        ws_mem.refresh_from_db()
+        assert ws_mem.organization_membership_id == om.id
