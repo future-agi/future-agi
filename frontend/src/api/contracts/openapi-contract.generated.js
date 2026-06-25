@@ -32980,7 +32980,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             }
           },
           "project_id": {
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string",
               "format": "uuid"

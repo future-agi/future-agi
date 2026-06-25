@@ -25611,7 +25611,7 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-project_id: string;
+project_id?: string;
 user_id?: string;
 /**
  * @minLength 1
