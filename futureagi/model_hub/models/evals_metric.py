@@ -927,7 +927,7 @@ class EvalGroundTruth(ModelBaseModel):
     )
 
     is_active = models.BooleanField(default=False)
-    enabled = models.BooleanField(default=True)
+    enabled = models.BooleanField(default=False)
     max_examples = models.PositiveSmallIntegerField(default=3)
     similarity_threshold = models.FloatField(default=0.7)
 

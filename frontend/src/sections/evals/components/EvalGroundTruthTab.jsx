@@ -1162,13 +1162,11 @@ const GroundTruthSetupForm = ({
     "";
 
   const templateConfig = template?.config || {};
-  const persistedConfig = templateConfig.ground_truth || {};
+  // Runtime knobs live on the GT row itself; the previous template.config
+  // snapshot was removed in favour of per-tenant typed columns.
   const persistedMaxExamples =
-    persistedConfig.maxExamples ?? persistedConfig.max_examples ?? 3;
-  // Default to disabled until the user opts in; only flip on once a valid
-  // setup has been saved at least once. ``enabled === undefined`` (legacy
-  // configs) reads as off.
-  const persistedEnabled = Boolean(persistedConfig.enabled);
+    gt.max_examples ?? gt.maxExamples ?? 3;
+  const persistedEnabled = Boolean(gt.enabled);
 
   const [varMapping, setVarMapping] = useState(persistedVarMapping);
   const [outputColumn, setOutputColumn] = useState(initialOutputColumn);
@@ -1226,7 +1224,9 @@ const GroundTruthSetupForm = ({
     embeddingStatus === "completed" && !embeddingsStale;
 
   const configDirty = mappingDirty || paramsDirty;
-  const needsEmbed = !embeddingsReady && !embedActive;
+  // Embed only matters when GT is enabled; a paused GT should settle to
+  // "Saved" without pushing the user toward embedding.
+  const needsEmbed = enabled && !embeddingsReady && !embedActive;
   const hasWork = configDirty || needsEmbed;
   const ctaPending = save.isPending || embedActive;
   let ctaLabel;
@@ -1293,8 +1293,8 @@ const GroundTruthSetupForm = ({
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-      {/* Header toggle. Drives template.config.ground_truth.enabled,
-          which the runtime checks before injecting GT context. */}
+      {/* Header toggle. Drives gt.enabled, which the runtime checks
+          before injecting GT context. */}
       <Box
         sx={{
           display: "flex",
@@ -1361,6 +1361,14 @@ const GroundTruthSetupForm = ({
         >
           Map each template variable to a ground truth column.
         </Typography>
+        {enabled && !hasMapping && liveVariables.length > 0 ? (
+          <Typography
+            variant="caption"
+            sx={{ color: "error.main", fontSize: "11px", mt: 0.25 }}
+          >
+            Map at least one input variable before saving with ground truth enabled.
+          </Typography>
+        ) : null}
         {liveVariables.length === 0 ? (
           <Typography variant="caption" color="text.secondary">
             This rule prompt has no <code>{"{{variables}}"}</code> to map.
@@ -1552,20 +1560,6 @@ const GroundTruthSetupForm = ({
           >
             <Iconify icon="mdi:alert-circle-outline" width={14} />
             Pick the column that holds the reference output.
-          </Typography>
-        )}
-        {outputColumn && enabled && !hasMapping && (
-          <Typography
-            variant="caption"
-            sx={{
-              color: "error.main",
-              display: "flex",
-              alignItems: "center",
-              gap: 0.5,
-            }}
-          >
-            <Iconify icon="mdi:alert-circle-outline" width={14} />
-            Map at least one eval variable to a ground truth column.
           </Typography>
         )}
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>

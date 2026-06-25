@@ -134,8 +134,8 @@ export function useSaveGroundTruthSetup(templateId) {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["evals", "ground-truth"] });
       if (templateId) {
-        // Setup writes template.config.ground_truth; without this the
-        // dirty check stays true until the next page visit.
+        // Setup writes the runtime knobs onto the gt row; invalidate the
+        // template detail too so any downstream consumer refetches.
         queryClient.invalidateQueries({
           queryKey: ["evals", "detail", templateId],
         });
