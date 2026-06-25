@@ -1575,11 +1575,6 @@ def _execute_evaluation(
     )
 
     org_id = str(observation_span.project.organization.id)
-    ws_id = (
-        str(observation_span.project.workspace.id)
-        if observation_span.project.workspace
-        else None
-    )
 
     # --- Cost tracking (caller-side) ---
     source_config = {
@@ -1612,6 +1607,7 @@ def _execute_evaluation(
             is_default=True,
             is_active=True,
         )
+    ws_id = str(workspace.id) if workspace else None
 
     api_call_log_row = None
     if log_and_deduct_cost_for_api_request is not None:

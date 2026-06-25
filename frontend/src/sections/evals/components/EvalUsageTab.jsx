@@ -265,6 +265,7 @@ const EvalUsageTab = ({
               setDateOption={(opt) => {
                 setDateOption(opt);
                 setPage(0);
+                if (opt !== "Custom") setDateFilter(null);
               }}
               setParentDateFilter={setDateFilter}
               dateFilter={dateFilter}

@@ -59,6 +59,7 @@ def backfill_apicalllog_version_info(apps, schema_editor):
                 is_default=True,
                 deleted=False,
             )
+            .order_by("-version_number")
             .first()
         )
         if not default_version:

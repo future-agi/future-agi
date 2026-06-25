@@ -41,7 +41,7 @@ export const ScoreCell = ({ value }) => {
 export const normalizeRow = (raw) => {
   const out = { id: raw.row_id ?? raw.id };
   Object.entries(raw).forEach(([k, v]) => {
-    if (k === "row_id") return;
+    if (k === "row_id" || k === "id") return;
     out[k] =
       v && typeof v === "object" && !Array.isArray(v) && "cell_value" in v
         ? v.cell_value
@@ -132,7 +132,7 @@ export const DATE_OPTION_TO_PERIOD = {
   "30 mins": "30m",
   "6 hrs": "6h",
   Today: "1d",
-  Yesterday: "1d",
+  Yesterday: "2d",
   "7D": "7d",
   "30D": "30d",
   "3M": "90d",

@@ -25,10 +25,10 @@ function getDateParams(dateOption, dateFilter) {
       end_date: endOfDay(yesterday).toISOString(),
     };
   }
-  if (dateOption === "Custom" && dateFilter?.dateFilter?.[0] && dateFilter?.dateFilter?.[1]) {
+  if (dateOption === "Custom" && dateFilter?.[0] && dateFilter?.[1]) {
     return {
-      start_date: new Date(dateFilter.dateFilter[0]).toISOString(),
-      end_date: new Date(dateFilter.dateFilter[1]).toISOString(),
+      start_date: new Date(dateFilter[0]).toISOString(),
+      end_date: endOfDay(new Date(dateFilter[1])).toISOString(),
     };
   }
   return {};

@@ -223,6 +223,7 @@ def _log_composite_usage(
             APICallType = None
 
         api_call_type_name = _get_api_call_type(model)
+        api_call_type_obj = None
         if APICallType is not None:
             api_call_type_obj = APICallType.objects.get(name=api_call_type_name)
 
@@ -246,7 +247,7 @@ def _log_composite_usage(
                 _parent_version_id = str(_default_ver.id)
                 _parent_version_number = _default_ver.version_number
         except Exception:
-            pass
+            logger.warning("composite_version_resolve_failed", parent_id=str(parent.id), exc_info=True)
 
         config_payload = {
             "composite": True,
@@ -288,7 +289,7 @@ def _log_composite_usage(
 
         # Pass dict directly — config is a JSONField, so Django handles
         # serialization. Using json.dumps() here would double-encode.
-        if APICallLog is None:
+        if APICallLog is None or APICallType is None:
             return None
 
         log_row = APICallLog.objects.create(

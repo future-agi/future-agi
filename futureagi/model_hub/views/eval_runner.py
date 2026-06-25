@@ -1289,16 +1289,23 @@ class EvaluationRunner:
                     column__id=self.replace_column_id, row=row, deleted=False
                 ).first()
 
-                trigger_error_localization_for_column(
-                    eval_template=self.user_eval_metric.template,
-                    config=config_error,
-                    required_field=required_field_error,
-                    mapping=mapping_error,
-                    eval_result=value,
-                    response=response,
-                    cell=cell,
-                    log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
-                )
+                if cell is None:
+                    logger.warning(
+                        "error_localizer_cell_missing",
+                        column_id=str(self.replace_column_id),
+                        row_id=str(row.id) if row else None,
+                    )
+                else:
+                    trigger_error_localization_for_column(
+                        eval_template=self.user_eval_metric.template,
+                        config=config_error,
+                        required_field=required_field_error,
+                        mapping=mapping_error,
+                        eval_result=value,
+                        response=response,
+                        cell=cell,
+                        log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
+                    )
 
         except Exception as e:
             # Expected, handled validation failures (a required input was not

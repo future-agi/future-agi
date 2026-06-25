@@ -1241,6 +1241,7 @@ def process_single_error_localization(task_id):
                 error_agent = getattr(localizer, "error_agent", None)
                 error_llm = getattr(error_agent, "llm", None)
                 actual_cost = getattr(error_llm, "cost", {}).get("total_cost", 0)
+            credits = 0
             if BillingConfig is not None:
                 credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
@@ -1273,7 +1274,7 @@ def process_single_error_localization(task_id):
             try:
                 cell = Cell.objects.get(id=task.source_id)
 
-                value_infos = json.loads(cell.value_infos)
+                value_infos = cell.value_infos or {}
                 value_infos.update(
                     {
                         "error_analysis": error_analysis,
@@ -1283,7 +1284,7 @@ def process_single_error_localization(task_id):
                     }
                 )
 
-                cell.value_infos = json.dumps(value_infos)
+                cell.value_infos = value_infos
                 cell.save(update_fields=["value_infos"])
 
                 metadata = task.metadata

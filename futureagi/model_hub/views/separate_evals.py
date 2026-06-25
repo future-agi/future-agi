@@ -5128,7 +5128,7 @@ class EvalUsageStatsView(APIView):
             total_runs = base_qs.count()
 
             # Period-filtered queryset
-            period_qs = base_qs.filter(created_at__gte=start_date)
+            period_qs = base_qs.filter(created_at__gte=start_date, created_at__lte=end_date)
             runs_period = period_qs.count()
 
             success_count = period_qs.filter(
@@ -5577,12 +5577,15 @@ class EvalFeedbackListView(APIView):
             from django.db.models.functions import Cast
             from django.db.models import TextField
 
+            log_id_qs = APICallLog.objects.filter(
+                source_id=str(template_id),
+                organization=organization,
+                deleted=False,
+            )
+            if workspace:
+                log_id_qs = log_id_qs.filter(workspace=workspace)
             log_id_qs = (
-                APICallLog.objects.filter(
-                    source_id=str(template_id),
-                    organization=organization,
-                    deleted=False,
-                )
+                log_id_qs
                 .annotate(log_id_str=Cast("log_id", TextField()))
                 .values("log_id_str")
             )
