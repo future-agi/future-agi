@@ -1,4 +1,3 @@
-import base64
 import uuid
 
 from django.core.exceptions import ValidationError
@@ -6,9 +5,34 @@ from django.db import models
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
+from integrations.services.credentials import CredentialManager
 from model_hub.models.choices import LiteLlmModelProvider
-from tfc.settings import settings
 from tfc.utils.base_model import BaseModel
+
+
+class EncryptedSecretMixin:
+    """Encrypt-on-save for models holding a single secret in ``key``.
+
+    One construction site for the key crypto — ApiKey and SecretModel both reuse
+    it instead of re-implementing the encrypt / legacy-upgrade block. All crypto
+    lives in ``CredentialManager`` (the single secret interface); these methods are
+    thin, typed delegations kept for existing callers/serializers."""
+
+    def encrypt_key(self, key):
+        return CredentialManager.encrypt_secret(key)
+
+    def decrypt_key(self):
+        return CredentialManager.decrypt_secret(self.key)
+
+    def is_encrypted_key(self, key):
+        return CredentialManager.is_encrypted(key)
+
+    def _store_key(self):
+        """Canonicalize ``self.key`` for storage; cache plaintext on ``_actual_key``.
+        Upgrades a legacy row to Fernet in place and never double-encrypts."""
+        self.key, self._actual_key = CredentialManager.prepare_secret_for_storage(
+            self.key
+        )
 
 
 def validate_model_provider_choice(value):
@@ -50,7 +74,7 @@ def mask_key(key):
         return key
 
 
-class ApiKey(BaseModel):
+class ApiKey(EncryptedSecretMixin, BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     organization = models.ForeignKey(
@@ -70,7 +94,7 @@ class ApiKey(BaseModel):
     provider = models.CharField(
         max_length=50, validators=[validate_model_provider_choice]
     )
-    key = models.CharField(max_length=2500, null=True, blank=True)
+    key = models.TextField(null=True, blank=True)
     config_json = models.JSONField(null=True, blank=True)
     user = models.ForeignKey(
         User, on_delete=models.CASCADE, null=True, blank=True, default=None
@@ -84,37 +108,6 @@ class ApiKey(BaseModel):
             self._actual_key = self.decrypt_key()
         if self.config_json:
             self._actual_json = self.decrypt_json(self.config_json)
-
-    def encrypt_key(self, key):
-        if not key:
-            return None
-        # Use a secret salt from settings
-        salt = settings.SECRET_KEY[:16].encode()
-        # Combine salt and key, then encode
-        salted = salt + key.encode()
-        encoded = base64.b64encode(salted).decode()
-        return encoded
-
-    def decrypt_key(self):
-        if not self.key:
-            return None
-        try:
-            # Decode the stored value
-            decoded = base64.b64decode(self.key)
-            # Remove the salt (first 16 bytes)
-            actual_key = decoded[16:].decode()
-            return actual_key
-        except Exception:
-            return None
-
-    def is_encrypted_key(self, key):
-        if not key:
-            return False
-        try:
-            decoded = base64.b64decode(key, validate=True)
-        except Exception:
-            return False
-        return decoded.startswith(settings.SECRET_KEY[:16].encode())
 
     @property
     def actual_key(self):
@@ -138,85 +131,22 @@ class ApiKey(BaseModel):
         validate_model_provider_choice(self.provider)
 
     def save(self, *args, **kwargs):
-        if self.key and not self.is_encrypted_key(self.key):
-            self._actual_key = self.key
-            self.key = self.encrypt_key(self.key)
-        elif self.key:
-            self._actual_key = self.decrypt_key()
-        else:
-            self._actual_key = None
+        self._store_key()
         if self.config_json:
-            self._actual_json = self.decrypt_json(self.config_json)
-            self.config_json = self.encrypt_json(self.config_json)
+            self._actual_json = CredentialManager.decrypt_json(self.config_json)
+            self.config_json = CredentialManager.encrypt_json(self.config_json)
         else:
             self._actual_json = {}
         self.full_clean()
         super().save(*args, **kwargs)
 
     def encrypt_json(self, config_json):
-        encrypted_json = {}
-        for key in config_json.keys():
-            encrypted_json[key] = self._encrypt_value(config_json[key])
-        return encrypted_json
-
-    def _encrypt_value(self, value):
-        """Recursively encrypt values, handling nested structures"""
-        if isinstance(value, dict):
-            # Recursively encrypt nested dictionaries
-            encrypted_dict = {}
-            for k, v in value.items():
-                encrypted_dict[k] = self._encrypt_value(v)
-            return encrypted_dict
-        elif isinstance(value, list):
-            # Recursively encrypt nested lists
-            return [self._encrypt_value(item) for item in value]
-        elif isinstance(value, str):
-            if self.is_encrypted_key(value):
-                return value
-            return self.encrypt_key(value)
-        else:
-            # For other types (int, float, bool, etc.), return as-is
-            return value
-
-    def get_decrypted_json_key(self, json_key):
-        if not json_key:
-            return None
-        try:
-            # Decode the stored value
-            decoded = base64.b64decode(json_key)
-            # Remove the salt (first 16 bytes)
-            actual_key = decoded[16:].decode()
-            return actual_key
-        except Exception:
-            return None
+        return CredentialManager.encrypt_json(config_json)
 
     def decrypt_json(self, json_key=None):
-        actual_key = {}
         if not json_key:
             json_key = self.config_json
-        if json_key is not None:
-            for key in json_key.keys():
-                key_val = self._decrypt_value(json_key[key])
-                actual_key.update({key: key_val})
-        return actual_key
-
-    def _decrypt_value(self, value):
-        """Recursively decrypt values, handling nested structures"""
-        if isinstance(value, dict):
-            # Recursively decrypt nested dictionaries
-            decrypted_dict = {}
-            for k, v in value.items():
-                decrypted_dict[k] = self._decrypt_value(v)
-            return decrypted_dict
-        elif isinstance(value, list):
-            # Recursively decrypt nested lists
-            return [self._decrypt_value(item) for item in value]
-        elif isinstance(value, str):
-            decrypted_value = self.get_decrypted_json_key(value)
-            return decrypted_value if decrypted_value is not None else value
-        else:
-            # For other types (int, float, bool, etc.), return as-is
-            return value
+        return CredentialManager.decrypt_json(json_key) if json_key else {}
 
     def refresh_from_db(self, using=None, fields=None, from_queryset=None):
         super().refresh_from_db(using=using, fields=fields, from_queryset=from_queryset)
@@ -241,7 +171,7 @@ def validate_secret_type(value):
         )
 
 
-class SecretModel(BaseModel):
+class SecretModel(EncryptedSecretMixin, BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     description = models.TextField(null=True, blank=True)
@@ -268,35 +198,13 @@ class SecretModel(BaseModel):
         default=SecretType.OTHER,
     )
 
-    key = models.CharField(max_length=2500, null=True, blank=True)
+    key = models.TextField(null=True, blank=True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._actual_key = None
         if self.key:
             self._actual_key = self.decrypt_key()
-
-    def encrypt_key(self, key):
-        if not key:
-            return None
-        # Use a secret salt from settings
-        salt = settings.SECRET_KEY[:16].encode()
-        # Combine salt and key, then encode
-        salted = salt + key.encode()
-        encoded = base64.b64encode(salted).decode()
-        return encoded
-
-    def decrypt_key(self):
-        if not self.key:
-            return None
-        try:
-            # Decode the stored value
-            decoded = base64.b64decode(self.key)
-            # Remove the salt (first 16 bytes)
-            actual_key = decoded[16:].decode()
-            return actual_key
-        except Exception:
-            return None
 
     @property
     def actual_key(self):
@@ -306,25 +214,12 @@ class SecretModel(BaseModel):
         super().refresh_from_db(using=using, fields=fields, from_queryset=from_queryset)
         self._actual_key = self.decrypt_key() if self.key else None
 
-    def is_encrypted_key(self, key):
-        if not key:
-            return False
-        try:
-            decoded = base64.b64decode(key, validate=True)
-        except Exception:
-            return False
-        return decoded.startswith(settings.SECRET_KEY[:16].encode())
-
     def clean(self):
         super().clean()
         validate_secret_type(self.secret_type)
 
     def save(self, *args, **kwargs):
-        if self.key and not self.is_encrypted_key(self.key):
-            self._actual_key = self.key
-            self.key = self.encrypt_key(self.key)
-        elif self.key:
-            self._actual_key = self.decrypt_key()
+        self._store_key()
         self.full_clean()
         super().save(*args, **kwargs)
 
