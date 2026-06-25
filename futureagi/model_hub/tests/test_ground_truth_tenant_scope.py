@@ -214,6 +214,45 @@ def test_partial_unique_constraint_rejects_two_active_rows_for_same_tenant():
 
 
 @pytest.mark.django_db
+def test_partial_unique_constraint_rejects_two_active_rows_when_workspace_is_null():
+    template = _make_system_template()
+    org, _, _ = _make_org_with_workspace("Tenant NullWS")
+
+    EvalGroundTruth.objects.create(
+        eval_template=template,
+        name=f"gt-{uuid.uuid4().hex[:6]}",
+        file_name="gt.csv",
+        columns=["input", "expected"],
+        data=[{"input": "hello", "expected": "world"}],
+        row_count=1,
+        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
+        organization=org,
+        workspace=None,
+        is_active=True,
+        enabled=True,
+        variable_mapping={"input": "input"},
+        role_mapping={"output": "expected"},
+    )
+    with pytest.raises(IntegrityError):
+        with transaction.atomic():
+            EvalGroundTruth.objects.create(
+                eval_template=template,
+                name=f"gt-{uuid.uuid4().hex[:6]}",
+                file_name="gt.csv",
+                columns=["input", "expected"],
+                data=[{"input": "hello", "expected": "world"}],
+                row_count=1,
+                embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
+                organization=org,
+                workspace=None,
+                is_active=True,
+                enabled=True,
+                variable_mapping={"input": "input"},
+                role_mapping={"output": "expected"},
+            )
+
+
+@pytest.mark.django_db
 def test_partial_unique_constraint_allows_two_inactive_rows_for_same_tenant():
     template = _make_system_template()
     org, workspace, _ = _make_org_with_workspace("Tenant Inactive")
@@ -418,7 +457,7 @@ def test_inject_context_injects_gt_blocks_only_for_owning_tenant(monkeypatch):
     def fake_retrieve(*, gt, inputs, max_results):
         # Only ever called when load_active_gt found a row for the caller.
         assert gt.organization_id == org_a.id
-        return retrieved_for_a
+        return retrieved_for_a, {}
 
     monkeypatch.setattr(
         "model_hub.services.ground_truth_service."

@@ -244,6 +244,95 @@ def test_build_ground_truth_blocks_image_column_emits_image_url_block(monkeypatc
     assert image_blocks[0]["image_url"]["url"] == "https://example.com/a.png"
 
 
+def test_build_ground_truth_blocks_uses_supplied_column_types_skipping_sniff(monkeypatch):
+    sniffed: list = []
+
+    def boom_detect(*_args, **_kwargs):
+        sniffed.append(1)
+        return [], {}
+
+    monkeypatch.setattr(
+        "agentic_eval.core.utils.llm_payloads.detect_and_build_media_blocks",
+        boom_detect,
+    )
+
+    def fake_media(value, media_type, key):
+        return [
+            {"type": "text", "text": f"<{key}>"},
+            {"type": "image_url", "image_url": {"url": value}},
+        ]
+
+    monkeypatch.setattr(
+        "agentic_eval.core.utils.llm_payloads.build_media_content_block",
+        fake_media,
+    )
+
+    blocks = build_ground_truth_blocks(
+        [{"img_col": "https://example.com/a.png", "verdict": "Pass"}],
+        variable_mapping={"screenshot": "img_col"},
+        role_mapping={"output": "verdict"},
+        column_types={"img_col": "image"},
+    )
+
+    assert sniffed == [], "sniff must be skipped when column_types is supplied"
+    image_blocks = [b for b in blocks if b.get("type") == "image_url"]
+    assert len(image_blocks) == 1
+    assert image_blocks[0]["image_url"]["url"] == "https://example.com/a.png"
+
+
+def test_build_ground_truth_blocks_falls_back_to_sniff_when_column_types_missing(monkeypatch):
+    sniffed: list = []
+
+    def fake_detect(inputs, required_keys):
+        sniffed.append(set(required_keys))
+        return [], {"img_col": "image"}
+
+    monkeypatch.setattr(
+        "agentic_eval.core.utils.llm_payloads.detect_and_build_media_blocks",
+        fake_detect,
+    )
+
+    def fake_media(value, media_type, key):
+        return [{"type": "image_url", "image_url": {"url": value}}]
+
+    monkeypatch.setattr(
+        "agentic_eval.core.utils.llm_payloads.build_media_content_block",
+        fake_media,
+    )
+
+    blocks = build_ground_truth_blocks(
+        [{"img_col": "https://example.com/a.png", "verdict": "Pass"}],
+        variable_mapping={"screenshot": "img_col"},
+        role_mapping={"output": "verdict"},
+        column_types=None,
+    )
+
+    assert sniffed == [{"img_col"}]
+    assert any(b.get("type") == "image_url" for b in blocks)
+
+
+def test_build_ground_truth_blocks_falls_back_to_sniff_when_column_types_empty(monkeypatch):
+    sniffed: list = []
+
+    def fake_detect(inputs, required_keys):
+        sniffed.append(1)
+        return [], {}
+
+    monkeypatch.setattr(
+        "agentic_eval.core.utils.llm_payloads.detect_and_build_media_blocks",
+        fake_detect,
+    )
+
+    build_ground_truth_blocks(
+        [{"q": "hi", "verdict": "Pass"}],
+        variable_mapping={"question": "q"},
+        role_mapping={"output": "verdict"},
+        column_types={},
+    )
+
+    assert sniffed == [1], "empty dict must trigger the sniff fallback (legacy vectors)"
+
+
 def test_build_ground_truth_blocks_multiple_examples_keep_per_example_headers():
     blocks = build_ground_truth_blocks(
         [

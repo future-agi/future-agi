@@ -938,10 +938,12 @@ class EvalGroundTruth(ModelBaseModel):
             models.Index(fields=["eval_template", "created_at"]),
         ]
         constraints = [
+            # nulls_distinct=False so NULL workspace rows still collide on (template, org).
             models.UniqueConstraint(
                 fields=["eval_template", "organization", "workspace"],
                 condition=Q(deleted=False, is_active=True),
                 name="uniq_active_gt_per_tenant_template",
+                nulls_distinct=False,
             ),
         ]
 

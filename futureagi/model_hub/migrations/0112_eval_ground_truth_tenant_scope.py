@@ -16,7 +16,16 @@ def backfill_then_strip_template_config(apps, _schema_editor):
     EvalTemplate = apps.get_model("model_hub", "EvalTemplate")
     EvalGroundTruth = apps.get_model("model_hub", "EvalGroundTruth")
 
-    for tmpl in EvalTemplate.objects.exclude(config={}).iterator():
+    batch_size = 200
+    batch: list = []
+
+    qs = (
+        EvalTemplate.objects
+        .filter(config__has_key="ground_truth")
+        .only("id", "config")
+        .iterator(chunk_size=batch_size)
+    )
+    for tmpl in qs:
         cfg = tmpl.config or {}
         gt_cfg = cfg.get("ground_truth")
         if not isinstance(gt_cfg, dict):
@@ -31,7 +40,12 @@ def backfill_then_strip_template_config(apps, _schema_editor):
             )
         cfg.pop("ground_truth", None)
         tmpl.config = cfg
-        tmpl.save(update_fields=["config"])
+        batch.append(tmpl)
+        if len(batch) >= batch_size:
+            EvalTemplate.objects.bulk_update(batch, fields=["config"])
+            batch.clear()
+    if batch:
+        EvalTemplate.objects.bulk_update(batch, fields=["config"])
 
 
 class Migration(migrations.Migration):
@@ -71,6 +85,7 @@ class Migration(migrations.Migration):
                 fields=["eval_template", "organization", "workspace"],
                 condition=Q(deleted=False, is_active=True),
                 name="uniq_active_gt_per_tenant_template",
+                nulls_distinct=False,
             ),
         ),
     ]

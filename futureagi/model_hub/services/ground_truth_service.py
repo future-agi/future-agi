@@ -201,6 +201,8 @@ class GroundTruthService:
         workspace_id: TenantId,
     ) -> EvalGroundTruth | None:
         """Return the active, enabled GT row for ``(template, org, ws)`` or ``None``."""
+        if not organization_id:
+            return None
         return EvalGroundTruth.objects.filter(
             eval_template=eval_template,
             organization_id=organization_id,
@@ -208,7 +210,7 @@ class GroundTruthService:
             deleted=False,
             is_active=True,
             enabled=True,
-        ).first()
+        ).order_by("-created_at").first()
 
     @staticmethod
     def inject_context(
@@ -218,53 +220,66 @@ class GroundTruthService:
         organization_id: TenantId = None,
         workspace_id: TenantId = None,
     ) -> dict:
-        """Attach retrieved GT content blocks to ``mapped['ground_truth_blocks']`` when GT is configured; evaluators read the kwarg and concatenate into their content array without adding their own framing."""
+        """Attach retrieved GT content blocks to ``mapped['ground_truth_blocks']`` when GT is configured; fail-open on any error so the eval-run path is never blocked by GT."""
         from model_hub.utils.ground_truth_retrieval import (
             build_ground_truth_blocks,
             has_usable_inputs_for_gt,
         )
 
-        gt = GroundTruthService.load_active_gt(
-            eval_template=eval_template,
-            organization_id=organization_id,
-            workspace_id=workspace_id,
-        )
-        if gt is None:
-            return mapped
+        try:
+            gt = GroundTruthService.load_active_gt(
+                eval_template=eval_template,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
+            if gt is None:
+                return mapped
 
-        if gt.embedding_status != EvalGroundTruth.EmbeddingStatus.COMPLETED:
-            return mapped
+            if gt.embedding_status != EvalGroundTruth.EmbeddingStatus.COMPLETED:
+                return mapped
 
-        if not has_usable_inputs_for_gt(gt.variable_mapping, mapped):
-            logger.debug(
-                "ground_truth_skipped_no_usable_inputs",
-                gt_id=str(gt.id),
+            if not has_usable_inputs_for_gt(gt.variable_mapping, mapped):
+                logger.debug(
+                    "ground_truth_skipped_no_usable_inputs",
+                    gt_id=str(gt.id),
+                    template_id=str(getattr(eval_template, "id", "") or ""),
+                )
+                return mapped
+
+            examples, column_types = GroundTruthService.retrieve_few_shot(
+                gt=gt,
+                inputs=mapped,
+                max_results=int(gt.max_examples or 3),
+            )
+            if not examples:
+                return mapped
+
+            blocks = build_ground_truth_blocks(
+                examples,
+                variable_mapping=gt.variable_mapping,
+                role_mapping=gt.role_mapping,
+                column_types=column_types,
+            )
+            if blocks:
+                mapped["ground_truth_blocks"] = blocks
+                logger.debug(
+                    "ground_truth_blocks_injected",
+                    gt_id=str(gt.id),
+                    examples_count=len(examples),
+                    block_count=len(blocks),
+                )
+            return mapped
+        except Exception as exc:
+            logger.warning(
+                "ground_truth_inject_failed",
                 template_id=str(getattr(eval_template, "id", "") or ""),
+                organization_id=str(organization_id) if organization_id else None,
+                workspace_id=str(workspace_id) if workspace_id else None,
+                error=str(exc),
+                error_type=type(exc).__name__,
+                exc_info=True,
             )
             return mapped
-
-        examples = GroundTruthService.retrieve_few_shot(
-            gt=gt,
-            inputs=mapped,
-            max_results=int(gt.max_examples or 3),
-        )
-        if not examples:
-            return mapped
-
-        blocks = build_ground_truth_blocks(
-            examples,
-            variable_mapping=gt.variable_mapping,
-            role_mapping=gt.role_mapping,
-        )
-        if blocks:
-            mapped["ground_truth_blocks"] = blocks
-            logger.debug(
-                "ground_truth_blocks_injected",
-                gt_id=str(gt.id),
-                examples_count=len(examples),
-                block_count=len(blocks),
-            )
-        return mapped
 
     @staticmethod
     def resolve_preview_examples(
@@ -290,13 +305,10 @@ class GroundTruthService:
         # store failure should not tank the eval-run response; programmer
         # errors above (malformed config, bad ORM call) still propagate.
         try:
-            rows = (
-                GroundTruthService.retrieve_few_shot(
-                    gt=gt,
-                    inputs=eval_inputs,
-                    max_results=int(gt.max_examples or 3),
-                )
-                or []
+            rows, column_types = GroundTruthService.retrieve_few_shot(
+                gt=gt,
+                inputs=eval_inputs,
+                max_results=int(gt.max_examples or 3),
             )
         except (DatabaseError, ConnectionError) as exc:
             logger.warning(
@@ -308,11 +320,12 @@ class GroundTruthService:
 
         variable_mapping = gt.variable_mapping or {}
         role_mapping = gt.role_mapping or {}
-        from model_hub.utils.ground_truth_retrieval import (
-            detect_input_column_types,
-        )
+        if not column_types and rows:
+            from model_hub.utils.ground_truth_retrieval import (
+                detect_input_column_types,
+            )
 
-        column_types = detect_input_column_types(rows, variable_mapping)
+            column_types = detect_input_column_types(rows, variable_mapping)
         return [
             {
                 "row": row,
@@ -469,19 +482,26 @@ class GroundTruthService:
         gt: EvalGroundTruth,
         inputs: dict[str, Any],
         max_results: int = 3,
-    ) -> list[dict[str, Any]]:
-        """Return GT example rows most similar to ``inputs``."""
+    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        """Return ``(rows, column_types)`` for GT exemplars most similar to ``inputs``.
+
+        ``column_types`` is ``{gt_column: modality}`` reconstructed from the
+        ``input_type`` stamped onto each CH vector at embed time, so the
+        rendering side does not need to re-sniff modalities at eval runtime.
+        Legacy vectors written before ``input_type`` was stored fall through
+        to an empty map; the caller's sniff fallback then takes over.
+        """
         if gt.embedding_status != EvalGroundTruth.EmbeddingStatus.COMPLETED:
             logger.debug(
                 "ground_truth_retrieve_skipped_not_ready",
                 ground_truth_id=str(gt.id),
                 status=gt.embedding_status,
             )
-            return []
+            return [], {}
 
         input_cols = _flatten_variable_mapping(gt.variable_mapping)
         if not input_cols:
-            return []
+            return [], {}
 
         # Pair each runtime input with its GT column. Skip empty values and
         # any variable that isn't mapped; both would poison the CH query.
@@ -497,7 +517,7 @@ class GroundTruthService:
             cols.append(column)
 
         if not values:
-            return []
+            return [], {}
 
         from agentic_eval.core.embeddings.embedding_manager import (
             GROUND_TRUTH_TABLE_NAME,
@@ -517,10 +537,16 @@ class GroundTruthService:
 
         dataset_columns = set(gt.columns or [])
         matches: list[dict[str, Any]] = []
+        column_types: dict[str, str] = {}
         for group in raw or []:
             if not group:
                 continue
-            row = _row_from_ch_metadata(group[0], dataset_columns, manager)
+            first = group[0] or {}
+            col = first.get("column_name")
+            itype = first.get("input_type")
+            if col and itype:
+                column_types[col] = itype
+            row = _row_from_ch_metadata(first, dataset_columns, manager)
             if row:
                 matches.append(row)
 
@@ -531,7 +557,7 @@ class GroundTruthService:
             queried_columns=cols,
             matches_returned=len(matches),
         )
-        return matches
+        return matches, column_types
 
 
 def _first_missing_column(

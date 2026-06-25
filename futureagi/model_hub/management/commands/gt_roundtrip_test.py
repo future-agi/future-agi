@@ -126,7 +126,7 @@ class Command(BaseCommand):
         self, fx: _Fixture, inspect: bool, failures: list[str]
     ):
         self.stdout.write(self.style.NOTICE("→ Case: same-tenant retrieval"))
-        rows = GroundTruthService.retrieve_few_shot(
+        rows, _ = GroundTruthService.retrieve_few_shot(
             gt=fx.gt,
             inputs={
                 "question": "i forgot my password, how do i log in",
@@ -164,7 +164,7 @@ class Command(BaseCommand):
         other = Organization.objects.create(name=f"rt-other-{uuid.uuid4().hex[:6]}")
         fx.gt.organization_id = other.id
         try:
-            rows = GroundTruthService.retrieve_few_shot(
+            rows, _ = GroundTruthService.retrieve_few_shot(
                 gt=fx.gt,
                 inputs={"question": "reset password", "answer": "forgot link"},
                 max_results=3,
@@ -185,7 +185,7 @@ class Command(BaseCommand):
         self, fx: _Fixture, inspect: bool, failures: list[str]
     ):
         self.stdout.write(self.style.NOTICE("→ Case: empty-input skip gate"))
-        rows = GroundTruthService.retrieve_few_shot(
+        rows, _ = GroundTruthService.retrieve_few_shot(
             gt=fx.gt,
             inputs={"question": "", "answer": None},
             max_results=3,

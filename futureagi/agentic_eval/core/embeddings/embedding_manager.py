@@ -1353,19 +1353,25 @@ class EmbeddingManager:
             return
 
         clauses = [
-            f"eval_id = '{eval_id}'",
+            "eval_id = %(eval_id)s",
             "has(metadata.key, 'organization_id')",
-            f"metadata.value[indexOf(metadata.key, 'organization_id')] = '{organization_id}'",
+            "metadata.value[indexOf(metadata.key, 'organization_id')] = %(organization_id)s",
         ]
+        params: dict[str, str] = {
+            "eval_id": str(eval_id),
+            "organization_id": str(organization_id),
+        }
         if workspace_id:
             clauses.append("has(metadata.key, 'workspace_id')")
             clauses.append(
-                f"metadata.value[indexOf(metadata.key, 'workspace_id')] = '{workspace_id}'"
+                "metadata.value[indexOf(metadata.key, 'workspace_id')] = %(workspace_id)s"
             )
+            params["workspace_id"] = str(workspace_id)
         where = " AND ".join(clauses)
         self.db_client.client.execute(
             f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE {where} "
-            "SETTINGS mutations_sync = 2"
+            "SETTINGS mutations_sync = 2",
+            params,
         )
         logger.info(
             "vectors_soft_deleted",

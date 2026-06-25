@@ -6,7 +6,6 @@ import {
   CircularProgress,
   Divider,
   Drawer,
-  FormControlLabel,
   IconButton,
   LinearProgress,
   MenuItem,
@@ -18,7 +17,6 @@ import {
   TextField,
   Tooltip,
   Typography,
-  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useEffect, useMemo, useState } from "react";

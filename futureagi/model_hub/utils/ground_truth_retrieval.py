@@ -112,15 +112,24 @@ def build_ground_truth_blocks(
     *,
     variable_mapping: dict | None,
     role_mapping: dict | None,
+    column_types: dict[str, str] | None = None,
 ) -> list[dict]:
-    """Render retrieved GT rows as labelled per-example content blocks."""
+    """Render retrieved GT rows as labelled per-example content blocks.
+
+    ``column_types`` is the ``{gt_column: modality}`` map captured from CH
+    metadata at retrieval time. When supplied the per-call modality sniff
+    is skipped; when omitted (legacy vectors without ``input_type``
+    stamped) the sniff fallback runs.
+    """
     if not examples:
         return []
 
     from agentic_eval.core.utils.llm_payloads import build_media_content_block
 
     output_col, explanation_col = get_label_columns(role_mapping)
-    key_types = detect_input_column_types(examples, variable_mapping)
+    key_types = column_types or detect_input_column_types(
+        examples, variable_mapping
+    )
 
     # Per-example labelled framing. Header matches GT_CALIBRATION_INSTRUCTION.
     blocks: list[dict] = []

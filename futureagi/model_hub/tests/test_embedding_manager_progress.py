@@ -235,3 +235,41 @@ def test_data_formatter_url_check_still_encodes_http_strings(manager_module):
         assert vectors
         assert metadata
         encode_path.assert_called_once_with("http://example.com/x")
+
+
+def _legacy_standard_b64_encode(text: str) -> str:
+    import base64
+    return base64.b64encode(text.encode()).decode()
+
+
+def test_decode_path_roundtrips_new_urlsafe_encoded_strings(manager_module):
+    manager = manager_module.EmbeddingManager()
+    for original in (
+        "https://example.com/with+plus/and-slash?q=1",
+        "s3://bucket/key with spaces.png",
+        "https://example.com/cat=is?cute",
+    ):
+        assert manager.decode_path(manager.encode_path(original)) == original
+
+
+def test_decode_path_handles_legacy_standard_encoded_strings(manager_module):
+    manager = manager_module.EmbeddingManager()
+    saw_plus = False
+    saw_slash = False
+    for original in (
+        "https://example.com/file?>>>",
+        "https://example.com/key/path???",
+        "https://example.com/?>>>///",
+    ):
+        legacy = _legacy_standard_b64_encode(original)
+        saw_plus = saw_plus or "+" in legacy
+        saw_slash = saw_slash or "/" in legacy
+        assert manager.decode_path(legacy) == original
+    assert saw_plus and saw_slash
+
+
+def test_encode_path_emits_urlsafe_alphabet_only(manager_module):
+    manager = manager_module.EmbeddingManager()
+    encoded = manager.encode_path("https://example.com/cat+dog/?q=1")
+    for forbidden in ("+", "/"):
+        assert forbidden not in encoded

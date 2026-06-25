@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -326,18 +326,20 @@ def test_embed_dataset_progress_callback_persists_row_count_via_update():
 
 def test_retrieve_few_shot_short_circuits_when_not_completed():
     gt = _FakeGT(embedding_status=EvalGroundTruth.EmbeddingStatus.PENDING, variable_mapping={"q": "q"})
-    rows = GroundTruthService.retrieve_few_shot(
+    rows, column_types = GroundTruthService.retrieve_few_shot(
         gt=gt, inputs={"q": "hi"}, max_results=3
     )
     assert rows == []
+    assert column_types == {}
 
 
 def test_retrieve_few_shot_short_circuits_when_mapping_missing():
     gt = _FakeGT(embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED, variable_mapping={})
-    rows = GroundTruthService.retrieve_few_shot(
+    rows, column_types = GroundTruthService.retrieve_few_shot(
         gt=gt, inputs={"q": "hi"}, max_results=3
     )
     assert rows == []
+    assert column_types == {}
 
 
 def test_retrieve_few_shot_builds_rows_from_ch_metadata():
@@ -360,6 +362,7 @@ def test_retrieve_few_shot_builds_rows_from_ch_metadata():
                 "verdict": "Pass",
                 "item_id": "abc",
                 "input_type": "image",
+                "column_name": "image",
                 "index_column": "<binary>",
                 "organization_id": "org",
                 "workspace_id": "ws",
@@ -372,6 +375,7 @@ def test_retrieve_few_shot_builds_rows_from_ch_metadata():
                 "verdict": "Fail",
                 "item_id": "def",
                 "input_type": "text",
+                "column_name": "question",
                 "organization_id": "org",
                 "workspace_id": "ws",
             }
@@ -386,7 +390,7 @@ def test_retrieve_few_shot_builds_rows_from_ch_metadata():
         mock_manager.decode_path.side_effect = lambda v: base64.urlsafe_b64decode(
             v + "=" * (-len(v) % 4)
         ).decode()
-        rows = GroundTruthService.retrieve_few_shot(
+        rows, column_types = GroundTruthService.retrieve_few_shot(
             gt=gt, inputs={"q": "hi"}, max_results=5
         )
 
@@ -402,6 +406,7 @@ def test_retrieve_few_shot_builds_rows_from_ch_metadata():
             "verdict": "Fail",
         },
     ]
+    assert column_types == {"image": "image", "question": "text"}
 
 
 def test_retrieve_few_shot_skips_empty_groups():
@@ -423,7 +428,7 @@ def test_retrieve_few_shot_skips_empty_groups():
         mock_manager = mock_manager_cls.return_value
         mock_manager.retrieve_avg_rag_based_examples.return_value = raw_groups
         mock_manager.decode_path.side_effect = ValueError("not encoded")
-        rows = GroundTruthService.retrieve_few_shot(
+        rows, column_types = GroundTruthService.retrieve_few_shot(
             gt=gt, inputs={"q": "hi"}, max_results=5
         )
 
@@ -431,6 +436,7 @@ def test_retrieve_few_shot_skips_empty_groups():
         {"question": "hi", "verdict": "Pass"},
         {"question": "yo", "verdict": "Fail"},
     ]
+    assert column_types == {}
 
 
 def test_resolve_preview_examples_returns_none_when_no_active_gt():
@@ -468,7 +474,7 @@ def test_resolve_preview_examples_returns_empty_list_when_active_but_no_matches(
         return_value=gt,
     ), patch(
         "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
-        return_value=[],
+        return_value=([], {}),
     ):
         result = GroundTruthService.resolve_preview_examples(
             eval_template=template,
@@ -530,7 +536,7 @@ def test_resolve_preview_examples_enriches_rows_with_mappings():
         return_value=gt,
     ), patch(
         "model_hub.services.ground_truth_service.GroundTruthService.retrieve_few_shot",
-        return_value=retrieved_rows,
+        return_value=(retrieved_rows, {"question": "text"}),
     ):
         result = GroundTruthService.resolve_preview_examples(
             eval_template=template,
@@ -547,6 +553,7 @@ def test_resolve_preview_examples_enriches_rows_with_mappings():
             "output": "answer",
             "explanation": "notes",
         }
+        assert enriched["column_types"] == {"question": "text"}
 
 
 def test_update_setup_writes_runtime_knobs_onto_the_row():
@@ -688,8 +695,13 @@ def test_create_from_upload_succeeds_for_system_template():
 def test_load_active_gt_filters_by_tenant_scope():
     template = _FakeTemplate(owner="system")
     captured = {}
+    order_by_calls: list = []
 
     class _QS:
+        def order_by(self, *args, **_kwargs):
+            order_by_calls.append(args)
+            return self
+
         def first(self):
             return None
 
@@ -712,3 +724,29 @@ def test_load_active_gt_filters_by_tenant_scope():
     assert captured["is_active"] is True
     assert captured["enabled"] is True
     assert captured["deleted"] is False
+    assert order_by_calls == [("-created_at",)]
+
+
+def test_load_active_gt_returns_none_when_organization_id_is_falsy():
+    template = _FakeTemplate(owner="system")
+    calls: list = []
+
+    def fake_filter(**kw):
+        calls.append(kw)
+        return MagicMock()
+
+    with patch(
+        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter",
+        side_effect=fake_filter,
+    ):
+        for falsy in (None, "", 0):
+            assert (
+                GroundTruthService.load_active_gt(
+                    eval_template=template,
+                    organization_id=falsy,
+                    workspace_id="ws-A",
+                )
+                is None
+            )
+
+    assert calls == []
