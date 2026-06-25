@@ -5,16 +5,18 @@ server:
   port: 8080
   host: "0.0.0.0"
   read_timeout: 5s
+  read_header_timeout: 5s # max time to read request headers (slowloris guard); defaults to 5s
   write_timeout: 300s
   idle_timeout: 120s
   shutdown_timeout: 30s
-  max_request_body_size: 10485760  # 10MB
+  max_request_body_size: 10485760 # 10MB
+  max_header_bytes: 1048576 # 1MB cap on request headers; defaults to 1MB
   default_request_timeout: 60s
 
 providers:
   openai:
     base_url: "https://api.openai.com"
-    api_key: "${OPENAI_API_KEY}"  # Set via env var
+    api_key: "${OPENAI_API_KEY}" # Set via env var
     api_format: "openai"
     default_timeout: 60s
     max_concurrent: 100
@@ -299,6 +301,7 @@ providers:
 #     claude-3-opus-20240229: 120s
 #   mirror:                                 # Traffic mirroring for shadow testing
 #     enabled: true
+#     max_concurrent: 64                    # Cap in-flight async mirrors; excess is dropped (default 64)
 #     rules:
 #       - source_model: "gpt-4o"            # Mirror gpt-4o requests
 #         target_provider: "anthropic"       # Send copy to Anthropic
@@ -362,7 +365,6 @@ logging:
   #   include_bodies: false      # Include full request/response bodies (default: false)
   #   buffer_size: 4096          # Async buffer size (default: 4096)
   #   workers: 2                 # Number of log worker goroutines (default: 2)
-
 # guardrails:
 #   enabled: true
 #   fail_open: true                     # If a guardrail times out or errors, allow the request (default: true)
