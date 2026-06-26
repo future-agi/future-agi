@@ -10,16 +10,13 @@ from tfc.temporal.schedules.config import ScheduleConfig
 
 # Tracer schedules (migrated from Celery Beat)
 TRACER_SCHEDULES: List[ScheduleConfig] = [
-    # process-inline-evals DISABLED: the activity queries the dropped PG
-    # `tracer_observation_span` table on CH25 and fails every 10s. Re-enable
-    # once it's migrated to read spans from ClickHouse.
-    # ScheduleConfig(
-    #     schedule_id="process-inline-evals",
-    #     activity_name="process_in_line_evals",
-    #     interval_seconds=10,
-    #     queue="tasks_s",
-    #     description="Process pending inline evaluations",
-    # ),
+    ScheduleConfig(
+        schedule_id="process-inline-evals",
+        activity_name="process_in_line_evals",
+        interval_seconds=10,
+        queue="tasks_s",
+        description="Process pending inline evaluations",
+    ),
     ScheduleConfig(
         schedule_id="eval-task-cron",
         activity_name="eval_task_cron",
