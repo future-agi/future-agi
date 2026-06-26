@@ -149,6 +149,7 @@ describe("SourceBadge", () => {
     ["dataset_row", "Dataset Row"],
     ["trace", "Trace"],
     ["observation_span", "Span"],
+    ["trace_session", "Session"],
     ["prototype_run", "Prototype"],
     ["call_execution", "Simulation"],
   ])("renders %s source as '%s'", (type, label) => {
@@ -258,6 +259,29 @@ describe("QueueItemsTable", () => {
     expect(screen.getByText("Trace")).toBeInTheDocument();
     expect(screen.getByText(/My Dataset - Row 0/)).toBeInTheDocument();
     expect(screen.getByText("Hello trace")).toBeInTheDocument();
+  });
+
+  it("renders the session name for a trace_session item, not the raw type", () => {
+    render(
+      <QueueItemsTable
+        {...tableProps}
+        totalCount={1}
+        data={[
+          {
+            id: "item-session",
+            source_type: "trace_session",
+            source_preview: { type: "trace_session", name: "conv-0029-7357" },
+            status: "pending",
+            assigned_users: [],
+            created_at: "2025-01-03T00:00:00Z",
+          },
+        ]}
+      />
+    );
+    expect(screen.getByText("Session")).toBeInTheDocument(); // source badge
+    expect(screen.getByText("conv-0029-7357")).toBeInTheDocument(); // preview
+    // regression: both columns previously rendered the literal "trace_session"
+    expect(screen.queryByText("trace_session")).not.toBeInTheDocument();
   });
 
   it("renders status badges", () => {

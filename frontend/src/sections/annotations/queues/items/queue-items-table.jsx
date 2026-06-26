@@ -69,6 +69,8 @@ function getPreviewText(preview) {
       return `${preview.name || "Run"} - ${preview.model || ""}`;
     case "call_execution":
       return `${preview.simulation_call_type || "Call"} - ${preview.status || ""}`;
+    case "trace_session":
+      return preview.name || "Session";
     default:
       return preview.type || "—";
   }
