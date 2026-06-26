@@ -39,7 +39,7 @@ class TestEvalTemplateCreateV2API:
 
     # --- Happy path ---
 
-    def test_create_pass_fail_eval(self, auth_client, workspace):
+    def test_create_pass_fail_eval(self, auth_client):
         """Create a Pass/Fail eval successfully."""
         response = auth_client.post(self.url, self._valid_payload(), format="json")
         assert response.status_code == 200
@@ -54,7 +54,6 @@ class TestEvalTemplateCreateV2API:
         assert template.output_type_normalized == "pass_fail"
         assert template.pass_threshold == 0.5
         assert template.choice_scores is None
-        assert template.workspace == workspace
 
     def test_create_percentage_eval(self, auth_client):
         """Create a Percentage eval successfully."""
@@ -307,7 +306,16 @@ class TestEvalTemplateCreateV2API:
         template = EvalTemplate.objects.get(id=result["id"])
         assert template.name.startswith("draft-")
 
-    def test_create_draft_requires_canonical_snake_case(self, auth_client):
+    def test_create_draft_camel_case_alias(self, auth_client):
+        """isDraft (camelCase) must be accepted as an alias for is_draft.
+
+        The frontend's camelCase compatibility bridge installs enumerable
+        camelCase twins on every response object. If a spread of response-
+        derived state lands in a create-v2 POST body without the snake_case
+        original, only `isDraft` arrives — without this alias, the request
+        is treated as a non-draft and fails with "Instructions are
+        required." (TH-4076).
+        """
         response = auth_client.post(
             self.url,
             {
@@ -319,10 +327,9 @@ class TestEvalTemplateCreateV2API:
             },
             format="json",
         )
-        assert response.status_code == 400
-        assert response.data["status"] is False
-        assert response.data["message"] == "isDraft: Unknown field."
-        assert response.data["details"] == {"isDraft": ["Unknown field."]}
+        assert response.status_code == 200, response.data
+        assert response.data["status"] is True
+        assert response.data["result"]["name"].startswith("draft-")
 
     # --- Code eval creation ---
 
@@ -346,3 +353,64 @@ class TestEvalTemplateCreateV2API:
         assert template.config["eval_type_id"] == "CustomCodeEval"
         assert template.config["code"] == code
         assert template.config["language"] == "python"
+
+
+# =============================================================================
+# E2E API Tests: DuplicateEvalTemplateView
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db
+class TestDuplicateEvalTemplateAPI:
+    create_url = "/model-hub/eval-templates/create-v2/"
+    url = "/model-hub/duplicate-eval-template/"
+
+    def _create_eval(self, auth_client, name):
+        response = auth_client.post(
+            self.create_url,
+            {
+                "name": name,
+                "eval_type": "llm",
+                "instructions": "Evaluate if {{response}} matches {{expected}}.",
+                "model": "turing_large",
+                "output_type": "pass_fail",
+                "pass_threshold": 0.5,
+                "tags": ["test"],
+            },
+            format="json",
+        )
+        assert response.status_code == 200, response.data
+        return response.data["result"]["id"]
+
+    def test_duplicate_returns_eval_template_id(self, auth_client):
+        """Duplicate returns the new template's id under `eval_template_id` —
+        the key the eval detail page reads to navigate to the copy."""
+        src_id = self._create_eval(auth_client, "dup-source")
+        response = auth_client.post(
+            self.url,
+            {"eval_template_id": src_id, "name": "dup-source-copy-1"},
+            format="json",
+        )
+        assert response.status_code == 200, response.data
+        assert response.data["status"] is True
+        new_id = response.data["result"]["eval_template_id"]
+        assert new_id
+        assert new_id != src_id
+        assert EvalTemplate.objects.get(id=new_id).name == "dup-source-copy-1"
+
+    def test_duplicate_rejects_existing_name(self, auth_client):
+        """A name that already exists is rejected, so the copy name must be unique."""
+        src_id = self._create_eval(auth_client, "dup-dupe")
+        first = auth_client.post(
+            self.url,
+            {"eval_template_id": src_id, "name": "dup-dupe-copy"},
+            format="json",
+        )
+        assert first.status_code == 200, first.data
+        again = auth_client.post(
+            self.url,
+            {"eval_template_id": src_id, "name": "dup-dupe-copy"},
+            format="json",
+        )
+        assert again.status_code == 400

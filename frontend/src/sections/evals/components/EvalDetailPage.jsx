@@ -32,7 +32,11 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
 
-import { useEvalDetail, useUpdateEval } from "../hooks/useEvalDetail";
+import {
+  useEvalDetail,
+  useUpdateEval,
+  useDuplicateEval,
+} from "../hooks/useEvalDetail";
 import {
   useCreateEvalVersion,
   useEvalVersions,
@@ -130,6 +134,7 @@ const EvalDetailPage = () => {
     error: fetchError,
   } = useEvalDetail(evalId);
   const updateEval = useUpdateEval(evalId);
+  const duplicateEval = useDuplicateEval(evalId);
   const createVersion = useCreateEvalVersion(evalId);
   const { data: versionsData } = useEvalVersions(evalId);
   const testPlaygroundRef = useRef(null);
@@ -269,8 +274,8 @@ const EvalDetailPage = () => {
     if (byFlag) return byFlag;
     return [...list].sort(
       (a, b) =>
-        (a.version_number ?? a.versionNumber ?? Number.MAX_SAFE_INTEGER) -
-        (b.version_number ?? b.versionNumber ?? Number.MAX_SAFE_INTEGER),
+        (a.version_number ?? Number.MAX_SAFE_INTEGER) -
+        (b.version_number ?? Number.MAX_SAFE_INTEGER),
     )[0];
   }, [versionsData]);
 
@@ -390,9 +395,7 @@ const EvalDetailPage = () => {
           const next = new URLSearchParams(prev);
           next.set(
             "v",
-            String(
-              versionToLoad.version_number ?? versionToLoad.versionNumber,
-            ),
+            String(versionToLoad.version_number),
           );
           return next;
         },
@@ -521,14 +524,13 @@ const EvalDetailPage = () => {
   const initialLoadDone = useRef(false);
   useEffect(() => {
     if (evalData && !viewingVersion) {
-
       const isCustom = evalData.owner !== "system";
       const urlVersion = searchParams.get("v");
       if (urlVersion && !initialLoadDone.current) {
         if (!versionsData) return;
         const match = (versionsData?.versions || []).find(
           (ver) =>
-            String(ver.version_number ?? ver.versionNumber) ===
+            String(ver.version_number) ===
             String(urlVersion),
         );
         if (match) {
@@ -841,21 +843,21 @@ const EvalDetailPage = () => {
         model,
       });
       enqueueSnackbar(
-        `Version V${newVersion?.version_number ?? newVersion?.versionNumber ?? ""} saved`,
+        `Version V${newVersion?.version_number ?? ""} saved`,
         {
           variant: "success",
         },
       );
       setIsDirty(false);
       // Switch to viewing the newly created version
-      if (newVersion?.version_number ?? newVersion?.versionNumber) {
+      if (newVersion?.version_number) {
         setViewingVersion({ ...newVersion, config_snapshot: configSnapshot });
         setSearchParams(
           (prev) => {
             const next = new URLSearchParams(prev);
             next.set(
               "v",
-              String(newVersion.version_number ?? newVersion.versionNumber),
+              String(newVersion.version_number),
             );
             return next;
           },
@@ -908,12 +910,9 @@ const EvalDetailPage = () => {
     try {
       // Only send weights for children currently in the list
       const weights = {};
-      const pinnedVersions = {};
       compositeChildren.forEach((c) => {
         const w = compositeChildWeights[c.child_id];
         if (w != null) weights[c.child_id] = w;
-        if (c.pinned_version_id)
-          pinnedVersions[c.child_id] = c.pinned_version_id;
       });
       const payload = {
         name: compositeName?.trim() || undefined,
@@ -924,8 +923,6 @@ const EvalDetailPage = () => {
         child_template_ids: compositeChildren.map((c) => c.child_id),
         child_configs: buildCompositeChildConfigs(compositeChildren),
         child_weights: Object.keys(weights).length > 0 ? weights : null,
-        child_pinned_versions:
-          Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
       };
       const result = await updateComposite.mutateAsync(payload);
       const vNum = result?.version_number;
@@ -999,13 +996,9 @@ const EvalDetailPage = () => {
       // before testing so the execute endpoint picks up the latest state.
       if (isComposite && !isSystemEval) {
         const weights = {};
-        const pinnedVersions = {};
         compositeChildren.forEach((c) => {
           const w = compositeChildWeights[c.child_id];
           if (w != null) weights[c.child_id] = w;
-          if (c.pinned_version_id) {
-            pinnedVersions[c.child_id] = c.pinned_version_id;
-          }
         });
         await updateComposite.mutateAsync({
           name: compositeName?.trim() || undefined,
@@ -1016,8 +1009,6 @@ const EvalDetailPage = () => {
           child_template_ids: compositeChildren.map((c) => c.child_id),
           child_configs: buildCompositeChildConfigs(compositeChildren),
           child_weights: Object.keys(weights).length > 0 ? weights : null,
-          child_pinned_versions:
-            Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
         });
       }
       testPlaygroundRef.current?.runTest?.(evalId);
@@ -1085,22 +1076,6 @@ const EvalDetailPage = () => {
       enqueueSnackbar("Failed to delete evaluation", { variant: "error" });
       setDeleteLoading(false);
     }
-  }, [evalId, enqueueSnackbar, navigate]);
-
-  // Duplicate
-  const handleDuplicate = useCallback(async () => {
-    try {
-      const { data } = await axios.post(
-        endpoints.develop.eval.duplicateEvalsTemplate,
-        { eval_template_id: evalId },
-      );
-      enqueueSnackbar("Evaluation duplicated", { variant: "success" });
-      if (data?.result?.id)
-        navigate(`/dashboard/evaluations/${data.result.id}`);
-    } catch {
-      enqueueSnackbar("Failed to duplicate evaluation", { variant: "error" });
-    }
-    setMenuAnchor(null);
   }, [evalId, enqueueSnackbar, navigate]);
 
   if (isLoading) {
@@ -1177,7 +1152,7 @@ const EvalDetailPage = () => {
           <VersionBadge
             version={
               viewingVersion
-                ? `V${viewingVersion.version_number ?? viewingVersion.versionNumber}`
+                ? `V${viewingVersion.version_number}`
                 : evalData.current_version || "V1"
             }
           />
@@ -1240,41 +1215,79 @@ const EvalDetailPage = () => {
           </Box>
         </Box>
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
-          {isSystemEval && (
+          {isSystemEval ? (
             <Typography variant="caption" color="text.disabled">
               Read-only (system eval)
             </Typography>
-          )}
-          <IconButton
-            size="small"
-            onClick={(e) => setMenuAnchor(e.currentTarget)}
-          >
-            <Iconify icon="solar:menu-dots-bold" width={18} />
-          </IconButton>
-          <Menu
-            anchorEl={menuAnchor}
-            open={Boolean(menuAnchor)}
-            onClose={() => setMenuAnchor(null)}
-          >
-            <MenuItem onClick={handleDuplicate} disabled={!canEditEvals}>
-              <Iconify icon="solar:copy-bold" width={16} sx={{ mr: 1 }} />{" "}
-              Duplicate
-            </MenuItem>
-            {!isSystemEval && (
-              <MenuItem
-                onClick={handleDeleteClick}
-                disabled={!canEditEvals}
-                sx={{ color: "error.main" }}
+          ) : (
+            <>
+              <IconButton
+                size="small"
+                onClick={(e) => setMenuAnchor(e.currentTarget)}
               >
-                <Iconify
-                  icon="solar:trash-bin-trash-bold"
-                  width={16}
-                  sx={{ mr: 1 }}
-                />{" "}
-                Delete
-              </MenuItem>
-            )}
-          </Menu>
+                <Iconify icon="solar:menu-dots-bold" width={18} />
+              </IconButton>
+              <Menu
+                anchorEl={menuAnchor}
+                open={Boolean(menuAnchor)}
+                onClose={() => setMenuAnchor(null)}
+              >
+                <CustomTooltip
+                  show
+                  type="black"
+                  size="small"
+                  title="Create an editable copy of this eval"
+                  placement="left"
+                  arrow
+                >
+                  <MenuItem
+                    disabled={!canEditEvals}
+                    onClick={() => {
+                      setMenuAnchor(null);
+                      duplicateEval.mutate(evalData?.name, {
+                        onSuccess: (result) => {
+                          enqueueSnackbar("Evaluation duplicated", {
+                            variant: "success",
+                          });
+                          if (result?.eval_template_id)
+                            navigate(
+                              `/dashboard/evaluations/${result.eval_template_id}`,
+                            );
+                        },
+                        onError: () =>
+                          enqueueSnackbar("Failed to duplicate evaluation", {
+                            variant: "error",
+                          }),
+                      });
+                    }}
+                  >
+                    <Iconify icon="solar:copy-bold" width={16} sx={{ mr: 1 }} />{" "}
+                    Duplicate
+                  </MenuItem>
+                </CustomTooltip>
+                <CustomTooltip
+                  show
+                  type="black"
+                  size="small"
+                  title="Permanently delete this eval"
+                  placement="left"
+                  arrow
+                >
+                  <MenuItem
+                    onClick={handleDeleteClick}
+                    sx={{ color: "error.main" }}
+                  >
+                    <Iconify
+                      icon="solar:trash-bin-trash-bold"
+                      width={16}
+                      sx={{ mr: 1 }}
+                    />{" "}
+                    Delete
+                  </MenuItem>
+                </CustomTooltip>
+              </Menu>
+            </>
+          )}
         </Box>
       </Box>
 
@@ -1413,8 +1426,7 @@ const EvalDetailPage = () => {
                         Viewing{" "}
                         <strong>
                           V
-                          {viewingVersion.version_number ??
-                            viewingVersion.versionNumber}
+                          {viewingVersion.version_number}
                         </strong>{" "}
                         config. Edit and save to create a new version.
                       </Typography>
@@ -1865,7 +1877,6 @@ const EvalDetailPage = () => {
                     ref={testPlaygroundRef}
                     templateId={evalId}
                     model={model}
-                    evalName={evalData?.name || ""}
                     instructions={
                       evalType === "code"
                         ? ""
@@ -2021,16 +2032,16 @@ const EvalDetailPage = () => {
                           size="small"
                           onClick={handleSaveVersion}
                           disabled={
-                            isSaving ||
-                            !isDirty ||
-                            needsTemplateVariable ||
-                            !canEditEvals
+                            isSaving || !isDirty || needsTemplateVariable || !canEditEvals
                           }
                           startIcon={
                             isSaving ? (
                               <CircularProgress size={14} />
                             ) : (
-                              <Iconify icon="mdi:content-save-outline" width={16} />
+                              <Iconify
+                                icon="mdi:content-save-outline"
+                                width={16}
+                              />
                             )
                           }
                           sx={{ textTransform: "none" }}
@@ -2064,7 +2075,10 @@ const EvalDetailPage = () => {
                             isSaving ? (
                               <CircularProgress size={14} />
                             ) : (
-                              <Iconify icon="mdi:content-save-outline" width={16} />
+                              <Iconify
+                                icon="mdi:content-save-outline"
+                                width={16}
+                              />
                             )
                           }
                           sx={{ textTransform: "none" }}
