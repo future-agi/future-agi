@@ -41,11 +41,11 @@ cd future-agi
 ### 2. Start the stack
 
 ```bash
-cp futureagi/.env.example futureagi/.env
+cp .env.example .env
 docker compose up -d
 ```
 
-The backend will be at `http://localhost:8000`, the frontend at `http://localhost:3031`.
+The backend will be at `http://localhost:8000`, the frontend at `http://localhost:3000`.
 
 ### 3. Install git hooks
 
