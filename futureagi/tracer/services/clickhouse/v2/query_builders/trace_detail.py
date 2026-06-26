@@ -93,8 +93,12 @@ def retrieve_trace_detail_ch(
         raise Trace.DoesNotExist
 
     # Trace metadata: PG row when present (full fidelity), else synthesized
-    # from the root span below (CH-only trace).
-    trace = Trace.objects.filter(id=trace_id, project_id=project_id).first()
+    # from the root span below (CH-only trace, or `tracer_trace` dropped
+    # post-cutover — the query then raises, treated the same as "no PG row").
+    try:
+        trace = Trace.objects.filter(id=trace_id, project_id=project_id).first()
+    except Exception:
+        trace = None
     trace_data = view.get_serializer(trace).data if trace is not None else None
 
     # Fetch all spans for this trace from CH — use the denormalized `spans`
@@ -166,14 +170,16 @@ def retrieve_trace_detail_ch(
                 span_attrs[k] = v
             for k, v in (row.get("attrs_bool") or {}).items():
                 span_attrs[k] = bool(v)
-        # Fallback: if CH has no span_attributes, try PG
+        # Fallback: if CH has no span_attributes, try PG (skipped on a CH-only
+        # deployment where `tracer_observation_span` is dropped — the query
+        # raises and we fall through to the empty attrs).
         if not span_attrs:
             try:
                 pg_span = ObservationSpan.objects.only(
                     "span_attributes", "eval_attributes"
                 ).get(id=span_id)
                 span_attrs = pg_span.span_attributes or pg_span.eval_attributes or {}
-            except ObservationSpan.DoesNotExist:
+            except Exception:
                 pass
 
         # Build metadata from CH JSON column
