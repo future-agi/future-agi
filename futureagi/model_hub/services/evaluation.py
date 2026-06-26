@@ -11,7 +11,7 @@ logger = structlog.get_logger(__name__)
 
 
 def stamp_evaluation_axes(evaluation: Any) -> None:
-    """Populate typed output columns on ``evaluation`` from ``value``; additive only."""
+    """Recompute typed output columns from the current ``value`` on every save."""
     if evaluation.value is None:
         return
 
@@ -36,13 +36,11 @@ def stamp_evaluation_axes(evaluation: Any) -> None:
             config_output=config_output,
             exc_info=True,
         )
-        if evaluation.output_str is None:
-            evaluation.output_str = str(evaluation.value)
+        evaluation.output_str = str(evaluation.value)
         return
 
     for col, projected_value in projected.items():
-        if projected_value is not None and getattr(evaluation, col) is None:
-            setattr(evaluation, col, projected_value)
+        setattr(evaluation, col, projected_value)
 
     if (
         evaluation.output_bool is None

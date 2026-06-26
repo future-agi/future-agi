@@ -644,3 +644,102 @@ class TestCallExecutionDetailView:
         payload = response.json()
         assert payload["provider"] == "livekit"
         assert payload["attributes"]["raw_log"]["room_sid"] == "RM_test"
+
+
+class TestSimulateWriterPattern:
+    @staticmethod
+    def _mk_eval_config(*, output: str, multi_choice: bool = False):
+        from types import SimpleNamespace
+
+        template = SimpleNamespace(
+            config={"output": output},
+            multi_choice=multi_choice,
+        )
+        return SimpleNamespace(
+            id="cfg-1",
+            name="dummy-eval",
+            eval_template=template,
+        )
+
+    @pytest.mark.parametrize(
+        "output,value,populated_axis,expected",
+        [
+            ("score", 0.7, "output_float", 0.7),
+            ("numeric", 0.42, "output_float", 0.42),
+            ("Pass/Fail", "Passed", "output_bool", True),
+            ("Pass/Fail", "Failed", "output_bool", False),
+            ("choices", "always", "output_str_list", ["always"]),
+        ],
+    )
+    def test_value_routes_to_correct_axis(
+        self, output, value, populated_axis, expected
+    ):
+        from evaluations.engine.normalize import eval_config_output
+        from simulate.utils.processing_outcomes import build_simulate_eval_payload
+
+        cfg = self._mk_eval_config(output=output)
+        payload = build_simulate_eval_payload(
+            value=value,
+            config_output=eval_config_output(cfg),
+            name=cfg.name,
+        )
+        assert payload[populated_axis] == expected
+
+    def test_choice_scores_dict_populates_both_axes(self):
+        from evaluations.engine.normalize import eval_config_output
+        from simulate.utils.processing_outcomes import build_simulate_eval_payload
+
+        cfg = self._mk_eval_config(output="score")
+        payload = build_simulate_eval_payload(
+            value={"score": 0.8, "choice": "good"},
+            config_output=eval_config_output(cfg),
+            name=cfg.name,
+        )
+        assert payload["output_float"] == pytest.approx(0.8)
+        assert payload["output_str_list"] == ["good"]
+
+    def test_choice_scores_list_of_dicts_populates_both_axes(self):
+        from evaluations.engine.normalize import eval_config_output
+        from simulate.utils.processing_outcomes import build_simulate_eval_payload
+
+        cfg = self._mk_eval_config(output="choices")
+        payload = build_simulate_eval_payload(
+            value=[{"score": 0.6, "choice": "a"}, {"score": 0.9, "choice": "b"}],
+            config_output=eval_config_output(cfg),
+            name=cfg.name,
+        )
+        assert payload["output_str_list"] == ["a", "b"]
+        assert payload["output_float"] == pytest.approx(0.75)
+
+    def test_none_value_yields_all_none_axes_and_preserves_error_metadata(self):
+        from evaluations.engine.normalize import eval_config_output
+        from simulate.utils.processing_outcomes import build_simulate_eval_payload
+
+        cfg = self._mk_eval_config(output="score")
+        payload = build_simulate_eval_payload(
+            value=None,
+            config_output=eval_config_output(cfg),
+            reason="missing transcript",
+            name=cfg.name,
+            error="error",
+            status="failed",
+        )
+        assert payload["output_bool"] is None
+        assert payload["output_float"] is None
+        assert payload["output_str_list"] is None
+        assert payload["error"] == "error"
+        assert payload["status"] == "failed"
+
+    def test_eval_config_output_defaults_to_score_on_missing_template(self):
+        from types import SimpleNamespace
+
+        from evaluations.engine.normalize import eval_config_output
+        from simulate.utils.processing_outcomes import build_simulate_eval_payload
+
+        cfg = SimpleNamespace(id="cfg-2", name="no-template", eval_template=None)
+        payload = build_simulate_eval_payload(
+            value=0.5,
+            config_output=eval_config_output(cfg),
+            name=cfg.name,
+        )
+        assert payload["output_float"] == 0.5

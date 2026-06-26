@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from typing import Any, NotRequired, TypedDict
 
 AXIS_KEYS: tuple[str, ...] = (
@@ -66,6 +67,22 @@ def resolve_eval_axes(
 def project_storage_axes_to_api(eval_data: dict) -> EvalAxesApi:
     """Read storage-axis keys off ``eval_data``, return API-named dict."""
     return {api: eval_data.get(storage) for storage, api in AXIS_STORAGE_TO_API}  # type: ignore[return-value]
+
+
+def rename_value_infos_axes(raw: Any) -> Any:
+    """Decode JSON-string ``value_infos`` and rename storage axes to API keys."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return raw
+    if not isinstance(raw, dict):
+        return raw
+    out = dict(raw)
+    for storage_key, api_key in AXIS_STORAGE_TO_API:
+        if storage_key in out:
+            out[api_key] = out.pop(storage_key)
+    return out
 
 
 def parse_legacy_value(raw: Any) -> Any:

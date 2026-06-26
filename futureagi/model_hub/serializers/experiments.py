@@ -1,7 +1,9 @@
 # serializers.py
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+from evaluations.engine.normalize import rename_value_infos_axes
 from model_hub.models.choices import ProviderLogoUrls
 from model_hub.models.develop_dataset import Column, Dataset
 from model_hub.models.evals_metric import UserEvalMetric
@@ -258,7 +260,18 @@ class CellValueSerializer(serializers.Serializer):
     cell_value = serializers.CharField()
     status = serializers.CharField()
     metadata = serializers.DictField()
-    value_infos = serializers.DictField(required=False)
+    value_infos = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.JSONField(allow_null=True)
+    )
+    def get_value_infos(self, obj):
+        raw = (
+            obj.get("value_infos")
+            if isinstance(obj, dict)
+            else getattr(obj, "value_infos", None)
+        )
+        return rename_value_infos_axes(raw)
 
 
 class TableRowSerializer(serializers.Serializer):

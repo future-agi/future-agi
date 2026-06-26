@@ -78,7 +78,9 @@ def _eval_column(*, dataset, user_eval_metric) -> Column:
     )
 
 
-def _eval_cell(*, dataset, column, value: str, value_infos: dict | str | None = None) -> Cell:
+def _eval_cell(
+    *, dataset, column, value: str, value_infos: dict | str | None = None
+) -> Cell:
     row = Row.objects.create(dataset=dataset, order=0)
     return Cell.objects.create(
         dataset=dataset,
@@ -117,7 +119,10 @@ class TestAxisRouting:
     ):
         tpl = _template(organization=organization, output=output)
         uem = _user_eval_metric(
-            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=tpl,
         )
         col = _eval_column(dataset=dataset, user_eval_metric=uem)
         cell = _eval_cell(dataset=dataset, column=col, value=value, value_infos={})
@@ -131,7 +136,10 @@ class TestAxisRouting:
     ):
         tpl = _template(organization=organization, output="score")
         uem = _user_eval_metric(
-            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=tpl,
         )
         col = _eval_column(dataset=dataset, user_eval_metric=uem)
         cell = _eval_cell(
@@ -149,12 +157,13 @@ class TestAxisRouting:
 
 
 class TestOperationalSafety:
-    def test_dry_run_does_not_mutate(
-        self, db, dataset, organization, workspace
-    ):
+    def test_dry_run_does_not_mutate(self, db, dataset, organization, workspace):
         tpl = _template(organization=organization, output="score")
         uem = _user_eval_metric(
-            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=tpl,
         )
         col = _eval_column(dataset=dataset, user_eval_metric=uem)
         cell = _eval_cell(dataset=dataset, column=col, value="0.7", value_infos={})
@@ -165,12 +174,13 @@ class TestOperationalSafety:
         assert "output_float" not in infos
         assert "dry_run=True" in out
 
-    def test_rerun_is_idempotent(
-        self, db, dataset, organization, workspace
-    ):
+    def test_rerun_is_idempotent(self, db, dataset, organization, workspace):
         tpl = _template(organization=organization, output="score")
         uem = _user_eval_metric(
-            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=tpl,
         )
         col = _eval_column(dataset=dataset, user_eval_metric=uem)
         cell = _eval_cell(dataset=dataset, column=col, value="0.7", value_infos={})
@@ -188,7 +198,10 @@ class TestOperationalSafety:
     ):
         tpl = _template(organization=organization, output="score")
         uem = _user_eval_metric(
-            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=tpl,
         )
         col = _eval_column(dataset=dataset, user_eval_metric=uem)
         cell = _eval_cell(
@@ -231,7 +244,10 @@ class TestOperationalSafety:
     ):
         tpl = _template(organization=organization, output="score")
         uem = _user_eval_metric(
-            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=tpl,
         )
         col = _eval_column(dataset=dataset, user_eval_metric=uem)
         cell = _eval_cell(
@@ -249,7 +265,10 @@ class TestOperationalSafety:
     ):
         tpl = _template(organization=organization, output="score")
         uem = _user_eval_metric(
-            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=tpl,
         )
         col = _eval_column(dataset=dataset, user_eval_metric=uem)
         cell = _eval_cell(
@@ -295,13 +314,22 @@ class TestMultiSourceCoverage:
         passfail_tpl = _template(organization=organization, output="Pass/Fail")
         choices_tpl = _template(organization=organization, output="choices")
         score_uem = _user_eval_metric(
-            dataset=dataset, organization=organization, workspace=workspace, template=score_tpl
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=score_tpl,
         )
         passfail_uem = _user_eval_metric(
-            dataset=dataset, organization=organization, workspace=workspace, template=passfail_tpl
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=passfail_tpl,
         )
         choices_uem = _user_eval_metric(
-            dataset=dataset, organization=organization, workspace=workspace, template=choices_tpl
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=choices_tpl,
         )
         dataset_col = _eval_column(dataset=dataset, user_eval_metric=score_uem)
         experiment_col = _eval_column_with_source(
@@ -341,7 +369,10 @@ class TestMultiSourceCoverage:
         direct lookup. Mirrors the dataset surface fallback."""
         tpl = _template(organization=organization, output="score")
         uem = _user_eval_metric(
-            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=tpl,
         )
         col = _eval_column_with_source(
             dataset=dataset,
@@ -362,7 +393,10 @@ class TestMultiSourceCoverage:
         the cell is skipped (no template => can't route the value)."""
         tpl = _template(organization=organization, output="score")
         uem = _user_eval_metric(
-            dataset=dataset, organization=organization, workspace=workspace, template=tpl
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=tpl,
         )
         # Real source_id format but tail is a different UUID that won't resolve
         col = _eval_column_with_source(
@@ -378,3 +412,56 @@ class TestMultiSourceCoverage:
         infos = _decode(cell)
         assert "output_float" not in infos
         assert "skipped_no_template=1" in out
+
+    def test_limit_caps_the_processed_cell_count(
+        self, db, dataset, organization, workspace
+    ):
+        tpl = _template(organization=organization, output="score")
+        uem = _user_eval_metric(
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=tpl,
+        )
+        col = _eval_column(dataset=dataset, user_eval_metric=uem)
+        for _ in range(3):
+            _eval_cell(dataset=dataset, column=col, value="0.7", value_infos={})
+        out = _run(limit=2)
+        assert "Pre-flight: 2 cells in scope" in out
+        assert "updated_rows=2" in out
+
+    def test_dispatch_error_skips_one_cell_and_continues(
+        self, db, dataset, organization, workspace, monkeypatch
+    ):
+        tpl = _template(organization=organization, output="score")
+        uem = _user_eval_metric(
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=tpl,
+        )
+        col = _eval_column(dataset=dataset, user_eval_metric=uem)
+        bad_cell = _eval_cell(dataset=dataset, column=col, value="bad", value_infos={})
+        good_cell = _eval_cell(
+            dataset=dataset, column=col, value="0.42", value_infos={}
+        )
+
+        from model_hub.management.commands import backfill_cell_eval_axes
+
+        original = backfill_cell_eval_axes.resolve_eval_axes
+
+        def _raise_on_bad(value, config_output):
+            if value == "bad":
+                raise TypeError("simulated dispatch failure")
+            return original(value, config_output)
+
+        monkeypatch.setattr(backfill_cell_eval_axes, "resolve_eval_axes", _raise_on_bad)
+
+        out = _run()
+
+        bad_infos = _decode(bad_cell)
+        good_infos = _decode(good_cell)
+        assert "output_float" not in bad_infos
+        assert good_infos["output_float"] == pytest.approx(0.42)
+        assert "skipped_dispatch_error=1" in out
+        assert "updated_rows=1" in out

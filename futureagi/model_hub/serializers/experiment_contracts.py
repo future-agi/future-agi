@@ -1,5 +1,7 @@
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
+from evaluations.engine.normalize import rename_value_infos_axes
 from model_hub.serializers.contracts import JsonColumnSchemaEntrySerializer
 from model_hub.serializers.experiments import (
     ExperimentDetailV2Serializer,
@@ -77,7 +79,18 @@ class ExperimentRowDiffCellSerializer(serializers.Serializer):
     cell_value = serializers.JSONField(required=False, allow_null=True)
     cell_diff_value = serializers.JSONField(required=False, allow_null=True)
     status = serializers.CharField(required=False, allow_blank=True)
-    value_infos = serializers.JSONField(required=False, allow_null=True)
+    value_infos = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.JSONField(allow_null=True)
+    )
+    def get_value_infos(self, obj):
+        raw = (
+            obj.get("value_infos")
+            if isinstance(obj, dict)
+            else getattr(obj, "value_infos", None)
+        )
+        return rename_value_infos_axes(raw)
 
 
 class ExperimentRowDiffResponseSerializer(serializers.Serializer):

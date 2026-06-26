@@ -1976,26 +1976,44 @@ class TestStampEvaluationAxesRouting:
         assert e.output_str_list == ["good"]
 
 
-class TestStampEvaluationAxesAdditiveGuard:
+class TestStampEvaluationAxesOverwrite:
     @pytest.mark.parametrize(
-        "value,output_type,kwarg,existing",
+        "value,output_type,kwarg,existing,expected",
         [
-            ("Passed", "Pass/Fail", "output_bool", False),
-            (0.7, "score", "output_float", 0.1),
-            ("ignored", "choices", "output_str_list", ["pinned"]),
+            ("Passed", "Pass/Fail", "output_bool", False, True),
+            (0.7, "score", "output_float", 0.1, 0.7),
+            (
+                ["new_choice"],
+                "choices",
+                "output_str_list",
+                ["pinned"],
+                ["new_choice"],
+            ),
         ],
     )
-    def test_existing_axis_value_is_preserved(
-        self, _stamp, value, output_type, kwarg, existing
+    def test_existing_axis_value_is_overwritten_by_new_value(
+        self, _stamp, value, output_type, kwarg, existing, expected
     ):
         e = _mk_eval(value=value, output_type=output_type, **{kwarg: existing})
         _stamp(e)
-        assert getattr(e, kwarg) == existing
+        assert getattr(e, kwarg) == expected
 
-    def test_empty_list_is_preserved_against_none_guard(self, _stamp):
-        e = _mk_eval(value="x", output_type="choices", output_str_list=[])
+    def test_axis_not_populated_by_new_value_is_cleared(self, _stamp):
+        e = _mk_eval(
+            value="Passed",
+            output_type="Pass/Fail",
+            output_float=0.7,
+        )
         _stamp(e)
-        assert e.output_str_list == []
+        assert e.output_bool is True
+        assert e.output_float is None
+
+    def test_empty_list_existing_is_overwritten_when_value_projects(self, _stamp):
+        e = _mk_eval(
+            value=["fresh"], output_type="choices", output_str_list=[]
+        )
+        _stamp(e)
+        assert e.output_str_list == ["fresh"]
 
 
 class TestStampEvaluationAxesFallback:
@@ -2084,11 +2102,13 @@ class TestStampEvaluationAxesOutputStrMirror:
         _stamp(e)
         assert e.output_str is None
 
-    def test_pre_set_output_str_is_preserved(self, _stamp):
+    def test_pre_set_output_str_is_overwritten_when_value_projects_to_json(
+        self, _stamp
+    ):
         e = _mk_eval(
             value={"score": 1.0, "choice": "Good"},
             output_type="choices",
             output_str="legacy-text",
         )
         _stamp(e)
-        assert e.output_str == "legacy-text"
+        assert e.output_str == '{"score": 1.0, "choice": "Good"}'

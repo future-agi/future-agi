@@ -8425,7 +8425,7 @@ export interface ExperimentRowDiffCellApi {
   cell_value?: ExperimentRowDiffCellApiCellValue;
   cell_diff_value?: ExperimentRowDiffCellApiCellDiffValue;
   status?: string;
-  value_infos?: ExperimentRowDiffCellApiValueInfos;
+  readonly value_infos?: ExperimentRowDiffCellApiValueInfos;
 }
 
 export type ExperimentRowDiffResponseApiResult = {[key: string]: {[key: string]: ExperimentRowDiffCellApi}};

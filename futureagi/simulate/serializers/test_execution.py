@@ -760,7 +760,10 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         for eval_id, eval_data in eval_outputs.items():
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
-                    metrics[eval_id] = {}
+                    metrics[eval_id] = {
+                        **project_storage_axes_to_api(eval_data),
+                        "status": "pending",
+                    }
                     continue
                 raw_error = eval_data.get("error")
                 is_error = bool(raw_error is True or raw_error == "error") or (

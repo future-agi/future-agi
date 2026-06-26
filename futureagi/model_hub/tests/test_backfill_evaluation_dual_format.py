@@ -5,8 +5,8 @@ from io import StringIO
 import pytest
 from django.core.management import call_command
 
-from model_hub.models.evaluation import Evaluation, StatusChoices
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evaluation import Evaluation, StatusChoices
 
 
 def _template(name: str, organization, *, output: str, multi_choice: bool = False):
@@ -113,9 +113,7 @@ class TestOperationalSafety:
         assert ev.output_float is None
         assert "dry_run=True" in out
 
-    def test_rerun_is_idempotent(
-        self, db, user, organization, workspace, tpl_score
-    ):
+    def test_rerun_is_idempotent(self, db, user, organization, workspace, tpl_score):
         ev = _legacy_eval(
             user=user,
             organization=organization,
@@ -149,3 +147,72 @@ class TestOperationalSafety:
         ev.refresh_from_db()
         assert ev.output_float == pytest.approx(0.1)
         assert "skipped_unchanged=1" in out
+
+    def test_limit_caps_the_processed_row_count(
+        self, db, user, organization, workspace, tpl_score
+    ):
+        for _ in range(3):
+            _legacy_eval(
+                user=user,
+                organization=organization,
+                workspace=workspace,
+                template=tpl_score,
+                value="0.7",
+            )
+        out = _run(limit=2)
+        assert "Pre-flight: 2 rows in scope" in out
+        assert "updated_rows=2" in out
+
+    def test_multi_batch_flush_processes_all_rows(
+        self, db, user, organization, workspace, tpl_score
+    ):
+        for _ in range(5):
+            _legacy_eval(
+                user=user,
+                organization=organization,
+                workspace=workspace,
+                template=tpl_score,
+                value="0.7",
+            )
+        out = _run(batch_size=2)
+        assert "updated_rows=5" in out
+
+    def test_dispatch_error_skips_one_row_and_continues(
+        self, db, user, organization, workspace, tpl_score, monkeypatch
+    ):
+        bad = _legacy_eval(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            template=tpl_score,
+            value="bad",
+        )
+        good = _legacy_eval(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            template=tpl_score,
+            value="0.42",
+        )
+
+        from model_hub.management.commands import backfill_evaluation_dual_format
+
+        original = backfill_evaluation_dual_format.resolve_eval_axes
+
+        def _raise_on_bad(value, config_output, *, include_output_str=False):
+            if value == "bad":
+                raise TypeError("simulated dispatch failure")
+            return original(value, config_output, include_output_str=include_output_str)
+
+        monkeypatch.setattr(
+            backfill_evaluation_dual_format, "resolve_eval_axes", _raise_on_bad
+        )
+
+        out = _run()
+
+        bad.refresh_from_db()
+        good.refresh_from_db()
+        assert bad.output_float is None
+        assert good.output_float == pytest.approx(0.42)
+        assert "skipped_dispatch_error=1" in out
+        assert "updated_rows=1" in out

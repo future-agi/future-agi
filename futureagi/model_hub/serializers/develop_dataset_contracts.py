@@ -1,9 +1,7 @@
-import json
-
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
-from evaluations.engine.normalize import AXIS_STORAGE_TO_API
+from evaluations.engine.normalize import rename_value_infos_axes
 from model_hub.serializers.contracts import DerivedVariableDetailSerializer
 from model_hub.serializers.develop_dataset import ColumnSerializer, DatasetSerializer
 
@@ -171,19 +169,12 @@ class DatasetCellValueSerializer(serializers.Serializer):
         serializer_or_field=serializers.JSONField(allow_null=True)
     )
     def get_value_infos(self, obj):
-        raw = obj.get("value_infos") if isinstance(obj, dict) else getattr(obj, "value_infos", None)
-        if isinstance(raw, str):
-            try:
-                raw = json.loads(raw)
-            except (TypeError, ValueError):
-                return raw
-        if not isinstance(raw, dict):
-            return raw
-        out = dict(raw)
-        for storage_key, api_key in AXIS_STORAGE_TO_API:
-            if storage_key in out:
-                out[api_key] = out.pop(storage_key)
-        return out
+        raw = (
+            obj.get("value_infos")
+            if isinstance(obj, dict)
+            else getattr(obj, "value_infos", None)
+        )
+        return rename_value_infos_axes(raw)
 
 
 class DatasetCellDataResponseSerializer(serializers.Serializer):
@@ -280,9 +271,7 @@ class RunPromptColumnPreviewResponseSerializer(serializers.Serializer):
 
 
 class DatasetDerivedVariablesResultSerializer(serializers.Serializer):
-    derived_variables = serializers.DictField(
-        child=DerivedVariableDetailSerializer()
-    )
+    derived_variables = serializers.DictField(child=DerivedVariableDetailSerializer())
 
 
 class DatasetDerivedVariablesResponseSerializer(serializers.Serializer):
@@ -420,7 +409,9 @@ class DatasetCreationProgressResultSerializer(serializers.Serializer):
     estimated_rows = serializers.IntegerField(required=False, allow_null=True)
     estimated_columns = serializers.IntegerField(required=False, allow_null=True)
     queued_at = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    started_at = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    started_at = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
     completed_at = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
@@ -554,9 +545,7 @@ class CompareDatasetMetadataSerializer(serializers.Serializer):
 
 class CompareDatasetResultSerializer(serializers.Serializer):
     metadata = CompareDatasetMetadataSerializer(required=False)
-    column_config = serializers.ListField(
-        child=serializers.JSONField(), required=False
-    )
+    column_config = serializers.ListField(child=serializers.JSONField(), required=False)
     table = serializers.ListField(child=serializers.JSONField(), required=False)
 
 

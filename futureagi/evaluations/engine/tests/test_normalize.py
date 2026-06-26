@@ -10,6 +10,7 @@ from evaluations.engine.normalize import (
     AXIS_KEYS,
     empty_axes,
     eval_config_output,
+    rename_value_infos_axes,
     resolve_eval_axes,
 )
 from simulate.utils.processing_outcomes import build_simulate_eval_payload
@@ -164,3 +165,65 @@ def test_payload_does_not_mutate_input_value():
     snapshot = dict(value)
     build_simulate_eval_payload(value=value, config_output="score")
     assert value == snapshot
+
+
+def test_rename_renames_all_three_storage_axes_to_api_names():
+    raw = {
+        "output_bool": True,
+        "output_float": 0.7,
+        "output_str_list": ["good"],
+        "reason": "looks good",
+        "name": "x",
+    }
+    out = rename_value_infos_axes(raw)
+    assert out == {
+        "output_pass": True,
+        "output_score": 0.7,
+        "output_choices": ["good"],
+        "reason": "looks good",
+        "name": "x",
+    }
+
+
+def test_rename_decodes_json_string_jsonb_before_renaming():
+    import json as _json
+
+    raw = _json.dumps({"output_float": 0.5, "reason": "ok"})
+    out = rename_value_infos_axes(raw)
+    assert out == {"output_score": 0.5, "reason": "ok"}
+
+
+def test_rename_returns_raw_when_json_decode_fails():
+    raw = "not-json"
+    assert rename_value_infos_axes(raw) == "not-json"
+
+
+def test_rename_returns_raw_when_not_dict():
+    assert rename_value_infos_axes(None) is None
+    assert rename_value_infos_axes(42) == 42
+    assert rename_value_infos_axes([1, 2]) == [1, 2]
+
+
+def test_rename_preserves_non_axis_keys_verbatim():
+    raw = {"reason": "r", "name": "n", "tokens": 100, "runtime": 1.5}
+    assert rename_value_infos_axes(raw) == raw
+
+
+def test_rename_does_not_mutate_input_dict():
+    raw = {"output_bool": True, "reason": "ok"}
+    snapshot = dict(raw)
+    rename_value_infos_axes(raw)
+    assert raw == snapshot
+
+
+def test_rename_only_renames_present_storage_keys():
+    raw = {"output_float": 0.3, "name": "x"}
+    out = rename_value_infos_axes(raw)
+    assert out == {"output_score": 0.3, "name": "x"}
+    assert "output_pass" not in out
+    assert "output_choices" not in out
+
+
+def test_rename_handles_pre_renamed_keys_idempotently():
+    raw = {"output_pass": True, "output_score": 0.7, "reason": "r"}
+    assert rename_value_infos_axes(raw) == raw

@@ -110,8 +110,10 @@ except ImportError:
     ConversationMetricsCalculator = None
     PhoneNumberService = None
     decide_processing_skip = None
+from evaluations.engine.normalize import eval_config_output
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import (
+    build_simulate_eval_payload,
     build_skipped_eval_output_payload,
     set_processing_skip_metadata,
 )
@@ -4830,18 +4832,18 @@ class TestExecutor:
                         if not call_execution.eval_outputs:
                             call_execution.eval_outputs = {}
 
-                        error_result = {
-                            "reason": error_message,
-                            "error": "error",
-                            "name": eval_config.name,
-                            "timestamp": timezone.now().isoformat(),
-                            "output": None,
-                            "output_type": derive_kpi_output_type(eval_template),
-                        }
-                        call_execution.eval_outputs[str(eval_config.id)] = error_result
-                        call_execution.eval_outputs[str(eval_config.id)][
-                            "status"
-                        ] = StatusType.FAILED.value
+                        call_execution.eval_outputs[str(eval_config.id)] = (
+                            build_simulate_eval_payload(
+                                value=None,
+                                config_output=eval_config_output(eval_config),
+                                reason=error_message,
+                                name=eval_config.name,
+                                output_type=derive_kpi_output_type(eval_template),
+                                error="error",
+                                status=StatusType.FAILED.value,
+                                timestamp=timezone.now().isoformat(),
+                            )
+                        )
                         call_execution.save(update_fields=["eval_outputs"])
                         raise ValueError(error_message)
 
@@ -4892,13 +4894,16 @@ class TestExecutor:
                 eval_reason = eval_result.get("reason", "")
 
                 # Store the evaluation result with eval_config.id as key
-                call_execution.eval_outputs[str(eval_config.id)] = {
-                    "output": eval_output,
-                    "reason": eval_reason,
-                    "output_type": eval_result.get("output_type"),
-                    "name": eval_config.name,
-                    "status": StatusType.COMPLETED.value,
-                }
+                call_execution.eval_outputs[str(eval_config.id)] = (
+                    build_simulate_eval_payload(
+                        value=eval_output,
+                        config_output=eval_config_output(eval_config),
+                        reason=eval_reason,
+                        name=eval_config.name,
+                        output_type=eval_result.get("output_type"),
+                        status=StatusType.COMPLETED.value,
+                    )
+                )
                 call_execution.save(update_fields=["eval_outputs"])
 
                 from model_hub.services.error_localizer_service import (
@@ -4933,18 +4938,18 @@ class TestExecutor:
             if not call_execution.eval_outputs:
                 call_execution.eval_outputs = {}
 
-            error_result = {
-                "reason": get_specific_error_message(e),
-                "error": "error",
-                "name": eval_config.name,
-                "timestamp": timezone.now().isoformat(),
-                "output": None,
-                "output_type": derive_kpi_output_type(eval_config.eval_template),
-            }
-            call_execution.eval_outputs[str(eval_config.id)] = error_result
-            call_execution.eval_outputs[str(eval_config.id)][
-                "status"
-            ] = StatusType.FAILED.value
+            call_execution.eval_outputs[str(eval_config.id)] = (
+                build_simulate_eval_payload(
+                    value=None,
+                    config_output=eval_config_output(eval_config),
+                    reason=get_specific_error_message(e),
+                    name=eval_config.name,
+                    output_type=derive_kpi_output_type(eval_config.eval_template),
+                    error="error",
+                    status=StatusType.FAILED.value,
+                    timestamp=timezone.now().isoformat(),
+                )
+            )
             call_execution.save(update_fields=["eval_outputs"])
             raise
 

@@ -81073,6 +81073,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "value_infos": {
           "title": "Value infos",
           "type": "object",
+          "readOnly": true,
           "x-nullable": true
         }
       }

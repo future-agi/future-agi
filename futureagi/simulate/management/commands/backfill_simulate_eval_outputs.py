@@ -38,10 +38,18 @@ class Command(BaseCommand):
         parser.add_argument("--dry-run", action="store_true")
         parser.add_argument("--limit", type=int, default=0)
         parser.add_argument("--batch-size", type=int, default=_DEFAULT_BATCH_SIZE)
-        parser.add_argument("--since", type=str, default=None,
-                            help="Only consider rows created on/after YYYY-MM-DD.")
-        parser.add_argument("--test-execution-id", type=str, default=None,
-                            help="Restrict to one test_execution (pre-flight smoke test).")
+        parser.add_argument(
+            "--since",
+            type=str,
+            default=None,
+            help="Only consider rows created on/after YYYY-MM-DD.",
+        )
+        parser.add_argument(
+            "--test-execution-id",
+            type=str,
+            default=None,
+            help="Restrict to one test_execution (pre-flight smoke test).",
+        )
 
     def handle(self, *args, **options):
         dry_run: bool = options["dry_run"]
@@ -75,7 +83,7 @@ class Command(BaseCommand):
         updated_entries = 0
         skipped_already_canonical = 0
         skipped_non_uuid_key = 0
-        skipped_unchanged = 0
+        skipped_dispatch_error = 0
         pending: list[CallExecution] = []
         start = time.monotonic()
         batches_flushed = 0
@@ -95,7 +103,18 @@ class Command(BaseCommand):
                 if config_output is None:
                     skipped_non_uuid_key += 1
                     continue
-                axes = resolve_eval_axes(entry.get("output"), config_output)
+                try:
+                    axes = resolve_eval_axes(entry.get("output"), config_output)
+                except (TypeError, ValueError, KeyError, AttributeError):
+                    logger.warning(
+                        "backfill_simulate_dispatch_failed",
+                        call_execution_id=str(call.id),
+                        eval_config_id=eval_id,
+                        config_output=config_output,
+                        exc_info=True,
+                    )
+                    skipped_dispatch_error += 1
+                    continue
                 if (
                     len(samples) < _SAMPLE_COUNT
                     and entry.get("output") is not None
@@ -111,14 +130,8 @@ class Command(BaseCommand):
                             "after_axes": axes,
                         }
                     )
-                entry_changed = False
                 for key, axis_value in axes.items():
-                    if key not in entry:
-                        entry[key] = axis_value
-                        entry_changed = True
-                if not entry_changed:
-                    skipped_unchanged += 1
-                    continue
+                    entry.setdefault(key, axis_value)
                 blob[eval_id] = entry
                 row_changed = True
                 updated_entries += 1
@@ -130,29 +143,42 @@ class Command(BaseCommand):
             updated_rows += 1
             pending.append(call)
             if len(pending) >= batch_size:
-                self._flush(pending, dry_run=dry_run)
+                self._flush(pending, dry_run=dry_run, batch_size=batch_size)
                 pending.clear()
                 batches_flushed += 1
                 if batches_flushed % _PROGRESS_EVERY_N_BATCHES == 0:
                     _emit_progress(
-                        self, processed, total_in_scope, updated_rows,
-                        skipped_already_canonical + skipped_non_uuid_key + skipped_unchanged,
+                        self,
+                        processed,
+                        total_in_scope,
+                        updated_rows,
+                        skipped_already_canonical
+                        + skipped_non_uuid_key
+                        + skipped_dispatch_error,
                         start,
                     )
 
         if pending:
-            self._flush(pending, dry_run=dry_run)
+            self._flush(pending, dry_run=dry_run, batch_size=batch_size)
             pending.clear()
 
         if samples:
             self.stdout.write(f">>> --- Sample conversions ({len(samples)}) ---")
             for i, s in enumerate(samples, 1):
-                self.stdout.write(f">>> [{i}] call_execution_id={s['call_execution_id']}")
+                self.stdout.write(
+                    f">>> [{i}] call_execution_id={s['call_execution_id']}"
+                )
                 self.stdout.write(f">>>     eval_config_id   ={s['eval_config_id']}")
                 self.stdout.write(f">>>     config_output    ={s['config_output']!r}")
-                self.stdout.write(f">>>     runner_output    ={json.dumps(s['output_value'])}")
-                self.stdout.write(f">>>     before_axes      ={json.dumps(s['before_axes'])}")
-                self.stdout.write(f">>>     after_axes       ={json.dumps(s['after_axes'])}")
+                self.stdout.write(
+                    f">>>     runner_output    ={json.dumps(s['output_value'])}"
+                )
+                self.stdout.write(
+                    f">>>     before_axes      ={json.dumps(s['before_axes'])}"
+                )
+                self.stdout.write(
+                    f">>>     after_axes       ={json.dumps(s['after_axes'])}"
+                )
 
         elapsed = time.monotonic() - start
         self.stdout.write(
@@ -161,7 +187,7 @@ class Command(BaseCommand):
                 f"updated_entries={updated_entries} "
                 f"skipped_already_canonical={skipped_already_canonical} "
                 f"skipped_non_uuid_key={skipped_non_uuid_key} "
-                f"skipped_unchanged={skipped_unchanged} "
+                f"skipped_dispatch_error={skipped_dispatch_error} "
                 f"elapsed={elapsed:.1f}s dry_run={dry_run}"
             )
         )
@@ -172,7 +198,7 @@ class Command(BaseCommand):
             updated_entries=updated_entries,
             skipped_already_canonical=skipped_already_canonical,
             skipped_non_uuid_key=skipped_non_uuid_key,
-            skipped_unchanged=skipped_unchanged,
+            skipped_dispatch_error=skipped_dispatch_error,
             elapsed_s=round(elapsed, 1),
             dry_run=dry_run,
         )
@@ -199,11 +225,13 @@ class Command(BaseCommand):
         return resolved
 
     @staticmethod
-    def _flush(rows: list[CallExecution], *, dry_run: bool) -> None:
+    def _flush(rows: list[CallExecution], *, dry_run: bool, batch_size: int) -> None:
         if dry_run or not rows:
             return
         with transaction.atomic():
-            CallExecution.objects.bulk_update(rows, ["eval_outputs"])
+            CallExecution.objects.bulk_update(
+                rows, ["eval_outputs"], batch_size=batch_size
+            )
 
 
 def _parse_since(raw: str | None) -> datetime | None:

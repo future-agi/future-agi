@@ -56,10 +56,18 @@ class Command(BaseCommand):
         parser.add_argument("--dry-run", action="store_true")
         parser.add_argument("--limit", type=int, default=0)
         parser.add_argument("--batch-size", type=int, default=_DEFAULT_BATCH_SIZE)
-        parser.add_argument("--since", type=str, default=None,
-                            help="Only consider rows created on/after YYYY-MM-DD.")
-        parser.add_argument("--column-id", type=str, default=None,
-                            help="Restrict to one column (pre-flight smoke test).")
+        parser.add_argument(
+            "--since",
+            type=str,
+            default=None,
+            help="Only consider rows created on/after YYYY-MM-DD.",
+        )
+        parser.add_argument(
+            "--column-id",
+            type=str,
+            default=None,
+            help="Restrict to one column (pre-flight smoke test).",
+        )
 
     def handle(self, *args, **options):
         dry_run: bool = options["dry_run"]
@@ -119,6 +127,7 @@ class Command(BaseCommand):
         skipped_malformed = 0
         skipped_already_canonical = 0
         skipped_no_template = 0
+        skipped_dispatch_error = 0
         pending: list[Cell] = []
         start = time.monotonic()
         batches_flushed = 0
@@ -149,8 +158,20 @@ class Command(BaseCommand):
             template_config = tpl.config or {}
             config_output = template_config.get("output") or "score"
 
-            parsed_value = parse_legacy_value(cell.value)
-            axes = resolve_eval_axes(parsed_value, config_output)
+            try:
+                parsed_value = parse_legacy_value(cell.value)
+                axes = resolve_eval_axes(parsed_value, config_output)
+            except (TypeError, ValueError, KeyError, AttributeError):
+                logger.warning(
+                    "backfill_cell_dispatch_failed",
+                    cell_id=str(cell.id),
+                    column_id=str(cell.column_id),
+                    eval_template_id=str(tpl.id),
+                    config_output=config_output,
+                    exc_info=True,
+                )
+                skipped_dispatch_error += 1
+                continue
             before_axes = {k: infos.get(k) for k in AXIS_KEYS}
             for key, axis_value in axes.items():
                 infos.setdefault(key, axis_value)
@@ -174,18 +195,24 @@ class Command(BaseCommand):
             updated_rows += 1
             pending.append(cell)
             if len(pending) >= batch_size:
-                self._flush(pending, dry_run=dry_run)
+                self._flush(pending, dry_run=dry_run, batch_size=batch_size)
                 pending.clear()
                 batches_flushed += 1
                 if batches_flushed % _PROGRESS_EVERY_N_BATCHES == 0:
                     _emit_progress(
-                        self, processed, total_in_scope, updated_rows,
-                        skipped_malformed + skipped_already_canonical + skipped_no_template,
+                        self,
+                        processed,
+                        total_in_scope,
+                        updated_rows,
+                        skipped_malformed
+                        + skipped_already_canonical
+                        + skipped_no_template
+                        + skipped_dispatch_error,
                         start,
                     )
 
         if pending:
-            self._flush(pending, dry_run=dry_run)
+            self._flush(pending, dry_run=dry_run, batch_size=batch_size)
             pending.clear()
 
         if samples:
@@ -196,9 +223,15 @@ class Command(BaseCommand):
                 self.stdout.write(f">>>     column_source   ={s['column_source']}")
                 self.stdout.write(f">>>     eval_template_id={s['eval_template_id']}")
                 self.stdout.write(f">>>     config_output   ={s['config_output']!r}")
-                self.stdout.write(f">>>     value           ={json.dumps(s['value'], default=str)}")
-                self.stdout.write(f">>>     before_axes     ={json.dumps(s['before_axes'])}")
-                self.stdout.write(f">>>     after_axes      ={json.dumps(s['after_axes'])}")
+                self.stdout.write(
+                    f">>>     value           ={json.dumps(s['value'], default=str)}"
+                )
+                self.stdout.write(
+                    f">>>     before_axes     ={json.dumps(s['before_axes'])}"
+                )
+                self.stdout.write(
+                    f">>>     after_axes      ={json.dumps(s['after_axes'])}"
+                )
 
         elapsed = time.monotonic() - start
         self.stdout.write(
@@ -207,6 +240,7 @@ class Command(BaseCommand):
                 f"skipped_malformed={skipped_malformed} "
                 f"skipped_already_canonical={skipped_already_canonical} "
                 f"skipped_no_template={skipped_no_template} "
+                f"skipped_dispatch_error={skipped_dispatch_error} "
                 f"elapsed={elapsed:.1f}s dry_run={dry_run}"
             )
         )
@@ -217,16 +251,17 @@ class Command(BaseCommand):
             skipped_malformed=skipped_malformed,
             skipped_already_canonical=skipped_already_canonical,
             skipped_no_template=skipped_no_template,
+            skipped_dispatch_error=skipped_dispatch_error,
             elapsed_s=round(elapsed, 1),
             dry_run=dry_run,
         )
 
     @staticmethod
-    def _flush(rows: list[Cell], *, dry_run: bool) -> None:
+    def _flush(rows: list[Cell], *, dry_run: bool, batch_size: int) -> None:
         if dry_run or not rows:
             return
         with transaction.atomic():
-            Cell.objects.bulk_update(rows, ["value_infos"])
+            Cell.objects.bulk_update(rows, ["value_infos"], batch_size=batch_size)
 
 
 def _parse_since(raw: str | None) -> datetime | None:

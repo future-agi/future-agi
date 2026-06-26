@@ -82,14 +82,32 @@ def test_execution(db, run_test):
         ("score", False, 0.75, "output_float", 0.75),
         ("Pass/Fail", False, "Passed", "output_bool", True),
         ("choices", False, "always", "output_str_list", ["always"]),
-        ("choices", True, ["polite", "concise"], "output_str_list", ["polite", "concise"]),
+        (
+            "choices",
+            True,
+            ["polite", "concise"],
+            "output_str_list",
+            ["polite", "concise"],
+        ),
     ],
 )
 def test_old_runner_output_routes_to_axis(
-    db, organization, run_test, test_execution,
-    output, multi_choice, raw_output, axis, expected,
+    db,
+    organization,
+    run_test,
+    test_execution,
+    output,
+    multi_choice,
+    raw_output,
+    axis,
+    expected,
 ):
-    tpl = _template(f"tpl-{output}-{multi_choice}", organization, output=output, multi_choice=multi_choice)
+    tpl = _template(
+        f"tpl-{output}-{multi_choice}",
+        organization,
+        output=output,
+        multi_choice=multi_choice,
+    )
     cfg = _eval_config(tpl, run_test, "cfg")
     call = _call(
         test_execution,
@@ -116,14 +134,32 @@ def test_old_runner_output_routes_to_axis(
     [
         ("score", False, {"score": 0.66, "choice": "frequently"}, 0.66, ["frequently"]),
         ("choices", False, {"score": 1.0, "choice": "always"}, 1.0, ["always"]),
-        ("choices", True, {"score": 0.5, "choices": ["polite", "concise"]}, 0.5, ["polite", "concise"]),
+        (
+            "choices",
+            True,
+            {"score": 0.5, "choices": ["polite", "concise"]},
+            0.5,
+            ["polite", "concise"],
+        ),
     ],
 )
 def test_choice_scores_dict_populates_both_axes(
-    db, organization, run_test, test_execution,
-    output, multi_choice, dict_output, expected_float, expected_list,
+    db,
+    organization,
+    run_test,
+    test_execution,
+    output,
+    multi_choice,
+    dict_output,
+    expected_float,
+    expected_list,
 ):
-    tpl = _template(f"tpl-cs-{output}-{multi_choice}", organization, output=output, multi_choice=multi_choice)
+    tpl = _template(
+        f"tpl-cs-{output}-{multi_choice}",
+        organization,
+        output=output,
+        multi_choice=multi_choice,
+    )
     cfg = _eval_config(tpl, run_test, "cfg")
     call = _call(
         test_execution,
@@ -224,3 +260,72 @@ def test_pending_placeholder_gets_all_none_axes(
     assert entry["output_float"] is None
     assert entry["output_str_list"] is None
     assert entry["status"] == "pending"
+
+
+def test_limit_caps_the_processed_call_count(
+    db, organization, run_test, test_execution
+):
+    tpl = _template("limit", organization, output="score")
+    cfg = _eval_config(tpl, run_test, "limit cfg")
+    for _ in range(3):
+        _call(
+            test_execution,
+            {
+                str(cfg.id): {
+                    "output": 0.5,
+                    "reason": "",
+                    "output_type": "score",
+                    "name": "x",
+                }
+            },
+        )
+    out = _run(limit=2)
+    assert "Pre-flight: 2 rows in scope" in out
+    assert "updated_rows=2" in out
+
+
+def test_dispatch_error_skips_one_entry_and_continues(
+    db, organization, run_test, test_execution, monkeypatch
+):
+    tpl = _template("dispatch", organization, output="score")
+    bad_cfg = _eval_config(tpl, run_test, "bad cfg")
+    good_cfg = _eval_config(tpl, run_test, "good cfg")
+    call = _call(
+        test_execution,
+        {
+            str(bad_cfg.id): {
+                "output": "bad",
+                "reason": "",
+                "output_type": "score",
+                "name": "bad",
+            },
+            str(good_cfg.id): {
+                "output": 0.42,
+                "reason": "",
+                "output_type": "score",
+                "name": "good",
+            },
+        },
+    )
+
+    from simulate.management.commands import backfill_simulate_eval_outputs
+
+    original = backfill_simulate_eval_outputs.resolve_eval_axes
+
+    def _raise_on_bad(value, config_output):
+        if value == "bad":
+            raise TypeError("simulated dispatch failure")
+        return original(value, config_output)
+
+    monkeypatch.setattr(
+        backfill_simulate_eval_outputs, "resolve_eval_axes", _raise_on_bad
+    )
+
+    out = _run()
+
+    call.refresh_from_db()
+    bad_entry = call.eval_outputs[str(bad_cfg.id)]
+    good_entry = call.eval_outputs[str(good_cfg.id)]
+    assert "output_float" not in bad_entry
+    assert good_entry["output_float"] == pytest.approx(0.42)
+    assert "skipped_dispatch_error=1" in out
