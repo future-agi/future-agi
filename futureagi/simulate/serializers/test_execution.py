@@ -147,12 +147,23 @@ class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
 
     # Return customer_call_id from parent CallExecution for frontend compatibility
     service_provider_call_id = serializers.SerializerMethodField()
+    eval_outputs = serializers.SerializerMethodField()
 
     def get_service_provider_call_id(self, obj):
         """Get customer_call_id from the parent CallExecution"""
         if obj.call_execution:
             return obj.call_execution.customer_call_id
         return None
+
+    def get_eval_outputs(self, obj):
+        raw = obj.eval_outputs or {}
+        out = {}
+        for eval_id, eval_data in raw.items():
+            if isinstance(eval_data, dict):
+                out[eval_id] = {**eval_data, **project_storage_axes_to_api(eval_data)}
+            else:
+                out[eval_id] = eval_data
+        return out
 
     class Meta:
         model = CallExecutionSnapshot

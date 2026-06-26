@@ -20,6 +20,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
+from evaluations.engine.normalize import project_storage_axes_to_api
 from model_hub.constants import (
     EVAL_PLAYGROUND_CURL_CODE,
     EVAL_PLAYGROUND_JS_CODE,
@@ -6142,7 +6143,14 @@ class EvalPlayGroundAPIView(APIView):
                             "call_metadata": _ce.call_metadata or {},
                             "analysis_data": _ce.analysis_data or {},
                             "evaluation_data": _ce.evaluation_data or {},
-                            "eval_outputs": _ce.eval_outputs or {},
+                            "eval_outputs": {
+                                eid: (
+                                    {**ed, **project_storage_axes_to_api(ed)}
+                                    if isinstance(ed, dict)
+                                    else ed
+                                )
+                                for eid, ed in (_ce.eval_outputs or {}).items()
+                            },
                             "logs_summary": _ce.logs_summary,
                             "scenario": build_eval_playground_scenario_context(_ce),
                             "transcript": [

@@ -9,6 +9,7 @@ try:
 except ImportError:
     SimulationAnalysisAgent = _ee_stub("SimulationAnalysisAgent")
 
+from evaluations.engine.normalize import project_storage_axes_to_api
 from model_hub.models.develop_dataset import Cell, Row
 from simulate.models import (
     AgentDefinition,
@@ -472,7 +473,7 @@ def construct_scenarios_from_calls(
                     # Attach template id to each eval output so analysis can map
                     # results to the deduplicated eval_templates list without per-scenario
                     # metadata duplication.
-                    enriched = dict(v)
+                    enriched = {**v, **project_storage_axes_to_api(v)}
                     if eval_template_id:
                         enriched["eval_template_id"] = eval_template_id
                     enriched["eval_config_id"] = eval_config_id
@@ -481,7 +482,16 @@ def construct_scenarios_from_calls(
                 scenario_data["eval_outputs"] = filtered
             else:
                 scenario_data["eval_outputs"] = (
-                    raw_eval_outputs if isinstance(raw_eval_outputs, dict) else {}
+                    {
+                        eid: (
+                            {**ed, **project_storage_axes_to_api(ed)}
+                            if isinstance(ed, dict)
+                            else ed
+                        )
+                        for eid, ed in raw_eval_outputs.items()
+                    }
+                    if isinstance(raw_eval_outputs, dict)
+                    else {}
                 )
 
             scenarios.append(scenario_data)
@@ -833,7 +843,14 @@ def _build_call_execution_data(
             "user_wpm": call.user_wpm,
             "bot_wpm": call.bot_wpm,
         },
-        "eval_outputs": call.eval_outputs,
+        "eval_outputs": {
+            eid: (
+                {**ed, **project_storage_axes_to_api(ed)}
+                if isinstance(ed, dict)
+                else ed
+            )
+            for eid, ed in (call.eval_outputs or {}).items()
+        },
     }
 
 

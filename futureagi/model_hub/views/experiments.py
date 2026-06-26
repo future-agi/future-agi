@@ -23,6 +23,7 @@ from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
 from agentic_eval.core.utils.functions import normalize_val
+from evaluations.engine.normalize import rename_value_infos_axes
 from model_hub.models.choices import (
     CellStatus,
     ModelChoices,
@@ -260,7 +261,7 @@ def extract_cell_usage(cell):
     response_time or None if parsing fails.
     """
     try:
-        value_infos = json.loads(cell.value_infos) if cell.value_infos else {}
+        value_infos = rename_value_infos_axes(cell.value_infos) or {}
         metadata = (
             value_infos.get("metadata", {})
             if isinstance(value_infos.get("metadata"), dict)
@@ -852,14 +853,8 @@ class DatasetExperimentsView(APIView):
         """Normalize value_infos from Cell (handles dict from JSONField or JSON string)."""
         if raw is None:
             return {}
-        if isinstance(raw, dict):
-            return raw
-        if isinstance(raw, str):
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError:
-                return {}
-            return parsed if isinstance(parsed, dict) else {}
+        result = rename_value_infos_axes(raw)
+        return result if isinstance(result, dict) else {}
         return {}
 
     @swagger_auto_schema(
@@ -1535,12 +1530,8 @@ class GetRowDiffView(APIView):
     def _parse_value_infos(self, raw):
         if not raw:
             return None
-        if isinstance(raw, str):
-            try:
-                return json.loads(raw)
-            except json.JSONDecodeError:
-                return None
-        return raw
+        result = rename_value_infos_axes(raw)
+        return result if isinstance(result, dict) else None
 
     @validated_request(
         request_serializer=DatasetRowDiffRequestSerializer,
@@ -1792,12 +1783,7 @@ class GetRowDiffV2View(APIView):
                             else None
                         ),
                         "status": current_cell.status,
-                        "value_infos": (
-                            json.loads(current_cell.value_infos)
-                            if isinstance(current_cell.value_infos, str)
-                            and current_cell.value_infos
-                            else current_cell.value_infos
-                        ),
+                        "value_infos": rename_value_infos_axes(current_cell.value_infos),
                     }
 
             return self._gm.success_response(diff_data)
@@ -1914,7 +1900,7 @@ class ExperimentStatsView(APIView):
                 for cell in cells:
                     try:
                         value_infos = (
-                            json.loads(cell.value_infos) if cell.value_infos else {}
+                            rename_value_infos_axes(cell.value_infos) or {}
                         )
                         metadata = (
                             value_infos.get("metadata", {})
@@ -2020,7 +2006,7 @@ class ExperimentStatsView(APIView):
                     for cell in cells:
                         try:
                             value_infos = (
-                                json.loads(cell.value_infos) if cell.value_infos else {}
+                                rename_value_infos_axes(cell.value_infos) or {}
                             )
                             metadata = (
                                 value_infos.get("metadata", {})
@@ -2160,7 +2146,7 @@ class ExperimentStatsView(APIView):
                     for cell in cells:
                         try:
                             value_infos = (
-                                json.loads(cell.value_infos) if cell.value_infos else {}
+                                rename_value_infos_axes(cell.value_infos) or {}
                             )
                             metadata = (
                                 value_infos.get("metadata", {})
@@ -2323,7 +2309,7 @@ class ExperimentStatsV2View(APIView):
                 for cell in cells:
                     try:
                         value_infos = (
-                            json.loads(cell.value_infos) if cell.value_infos else {}
+                            rename_value_infos_axes(cell.value_infos) or {}
                         )
                         metadata = (
                             value_infos.get("metadata", {})
@@ -2425,7 +2411,7 @@ class ExperimentStatsV2View(APIView):
                     for cell in cells:
                         try:
                             value_infos = (
-                                json.loads(cell.value_infos) if cell.value_infos else {}
+                                rename_value_infos_axes(cell.value_infos) or {}
                             )
                             metadata = (
                                 value_infos.get("metadata", {})
@@ -2680,7 +2666,7 @@ class ExperimentEvaluationStatsView(APIView):
                 for cell in cells:
                     try:
                         value_infos = (
-                            json.loads(cell.value_infos) if cell.value_infos else {}
+                            rename_value_infos_axes(cell.value_infos) or {}
                         )
                         metadata = value_infos.get("metadata", {})
                         usage = metadata.get("usage", {})
@@ -2767,7 +2753,7 @@ class ExperimentDatasetComparisonView(APIView):
 
         for cell in cells:
             try:
-                value_infos = json.loads(cell.value_infos) if cell.value_infos else {}
+                value_infos = rename_value_infos_axes(cell.value_infos) or {}
                 metadata = (
                     value_infos.get("metadata", {})
                     if isinstance(value_infos.get("metadata"), dict)
@@ -2991,7 +2977,7 @@ class ExperimentDatasetComparisonV2View(APIView):
 
         for cell in cells:
             try:
-                value_infos = json.loads(cell.value_infos) if cell.value_infos else {}
+                value_infos = rename_value_infos_axes(cell.value_infos) or {}
                 metadata = (
                     value_infos.get("metadata", {})
                     if isinstance(value_infos.get("metadata"), dict)
