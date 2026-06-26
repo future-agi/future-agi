@@ -294,7 +294,14 @@ class AgentVersionDetailView(APIView):
             version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
 
             serializer = AgentVersionResponseSerializer(version)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            data = serializer.data
+
+            if request.query_params.get("include_unmasked_key") == "true":
+                snapshot = version.configuration_snapshot or {}
+                if snapshot.get("api_key"):
+                    data["unmasked_api_key"] = snapshot["api_key"]
+
+            return Response(data, status=status.HTTP_200_OK)
 
         except AgentDefinition.DoesNotExist:
             return _error_response(

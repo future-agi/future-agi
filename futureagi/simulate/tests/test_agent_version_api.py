@@ -317,6 +317,85 @@ class TestGetAgentVersion:
         ]
 
 
+@pytest.mark.integration
+@pytest.mark.api
+class TestGetAgentVersionUnmaskedKey:
+    """Tests for GET .../versions/{id}/ with include_unmasked_key."""
+
+    def _setup_agent_with_key(self, db, organization, workspace):
+        """Helper: create an agent with a known ProviderCredentials key
+        and a version that includes that key in its snapshot."""
+        agent = AgentDefinition.objects.create(
+            agent_name="Unmasked Key Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+12345678901",
+            inbound=True,
+            description="Test",
+            provider="vapi",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        ProviderCredentials.objects.create(
+            agent_definition=agent,
+            provider_type=ProviderCredentials.ProviderType.VAPI,
+            api_key="sk-decrypted-unmasked-key",
+            assistant_id="asst_unmasked",
+        )
+        version = agent.create_version(
+            description="Version with key",
+            commit_message="Has credentials",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        return agent, version
+
+    def test_returns_unmasked_key_when_requested(self, auth_client, db, organization, workspace):
+        agent, version = self._setup_agent_with_key(db, organization, workspace)
+        response = auth_client.get(
+            _version_url(agent.id, version.id),
+            {"include_unmasked_key": "true"},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        snapshot_key = data.get("configuration_snapshot", {}).get("api_key", "")
+        unmasked = data.get("unmasked_api_key", "")
+        assert unmasked == "sk-decrypted-unmasked-key", (
+            f"snapshot api_key={snapshot_key!r}, unmasked_api_key={unmasked!r}"
+        )
+
+    def test_omits_unmasked_key_by_default(self, auth_client, db, organization, workspace):
+        agent, version = self._setup_agent_with_key(db, organization, workspace)
+        response = auth_client.get(_version_url(agent.id, version.id))
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "unmasked_api_key" not in data
+
+    def test_omits_unmasked_key_when_snapshot_has_no_key(self, auth_client, db, organization, workspace):
+        agent = AgentDefinition.objects.create(
+            agent_name="No Key Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+12345678901",
+            inbound=True,
+            description="Test",
+            provider="vapi",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        version = agent.create_version(
+            description="No key",
+            commit_message="No credentials",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        response = auth_client.get(
+            _version_url(agent.id, version.id),
+            {"include_unmasked_key": "true"},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "unmasked_api_key" not in data
+
+
 # ============================================================================
 # TestActivateAgentVersion
 # ============================================================================

@@ -5,7 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Box, Typography, Grid, Stack, Button } from "@mui/material";
+import { Box, Typography, Grid, Stack, Button, IconButton, InputAdornment } from "@mui/material";
 import PropTypes from "prop-types";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
@@ -42,6 +42,7 @@ import { formatDistanceToNow } from "date-fns";
 import CustomModelDropdownControl from "src/components/custom-model-dropdown/CustomModelDropdownControl";
 import { MODEL_TYPES } from "../../develop-detail/RunPrompt/common";
 import { useAuthContext } from "src/auth/hooks";
+import { useAgentDetailsStore } from "../store/agentDetailsStore";
 
 const EditAgentDetails = ({
   control,
@@ -52,6 +53,7 @@ const EditAgentDetails = ({
 }) => {
   const { orgLimit } = useAuthContext();
   const { agentDefinitionId } = useParams();
+  const { selectedVersion } = useAgentDetailsStore();
   const [lastFetchedAt, setLastFetchedAt] = useState(null);
   const [showSyncSuccess, setShowSyncSuccess] = useState(false);
   const syncSuccessTimeoutRef = useRef(null);
@@ -206,9 +208,29 @@ const EditAgentDetails = ({
         api_key: apiKey,
         assistant_id: assistantId,
         provider: provider,
+        agent_definition_id: agentDefinitionId,
       });
     }
   };
+
+  const handleCopyApiKey = useCallback(async () => {
+    if (!agentDefinitionId || !selectedVersion) return;
+    try {
+      const res = await axios.get(
+        endpoints.agentDefinitions.versionDetail(agentDefinitionId, selectedVersion),
+        { params: { include_unmasked_key: "true" } },
+      );
+      const unmaskedKey = res.data?.unmasked_api_key;
+      if (unmaskedKey) {
+        copyToClipboard(unmaskedKey);
+        enqueueSnackbar({ message: "API key copied to clipboard", variant: "success" });
+      } else {
+        enqueueSnackbar({ message: "No API key stored for this version", variant: "info" });
+      }
+    } catch {
+      enqueueSnackbar({ message: "Failed to fetch API key", variant: "error" });
+    }
+  }, [agentDefinitionId, selectedVersion]);
 
   const canEnableObservability = Boolean(apiKey && assistantId);
   const keysRequired = inbound === false;
@@ -593,6 +615,15 @@ const EditAgentDetails = ({
                       provider: selectedProvider,
                     });
                   }
+                }}
+                InputProps={{
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton onClick={handleCopyApiKey} size="small" edge="end">
+                        <Iconify icon="mdi:content-copy" />
+                      </IconButton>
+                    </InputAdornment>
+                  ),
                 }}
               />
             </ShowComponent>

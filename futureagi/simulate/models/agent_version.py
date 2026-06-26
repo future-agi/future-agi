@@ -204,7 +204,7 @@ class AgentVersion(BaseModel):
             pass
 
         schema = AgentConfigurationSnapshot(
-            api_key=agent.api_key or "",
+            api_key=api_key or "",
             inbound=agent.inbound,
             language=agent.language,
             languages=agent.languages or [],

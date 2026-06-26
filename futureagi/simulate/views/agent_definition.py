@@ -17,6 +17,7 @@ from retell import Retell
 
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.serializers.agent_definition import AgentDefinitionSerializer
+from simulate.services.agent_definition import MaskedKeyError, resolve_api_key
 from simulate.serializers.requests.agent_definition import (
     AgentDefinitionBulkDeleteRequestSerializer,
     AgentDefinitionCreateRequestSerializer,
@@ -520,6 +521,14 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
             prompt = ""
             name = ""
 
+            # Resolve masked key via service function
+            try:
+                api_key, response_api_key = resolve_api_key(
+                    api_key, validated.get("agent_definition_id")
+                )
+            except MaskedKeyError as e:
+                return self._gm.bad_request(str(e))
+
             if provider == ProviderChoices.VAPI:
                 from tfc.ee_gating import EEFeature, check_ee_feature
 
@@ -561,7 +570,7 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             response_data = {
                 "assistant_id": assistant_id,
-                "api_key": api_key,
+                "api_key": response_api_key,
                 "name": name,
                 "prompt": prompt,
                 "provider": provider,

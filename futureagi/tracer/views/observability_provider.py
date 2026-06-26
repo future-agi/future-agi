@@ -22,6 +22,10 @@ from tfc.utils.general_methods import GeneralMethods
 from tracer.models.observability_provider import ProviderChoices
 from tracer.models.project import ProjectSourceChoices
 from tracer.serializers.observability_provider import ObservabilityProviderSerializer
+from simulate.services.agent_definition import (
+    MaskedKeyError,
+    resolve_api_key,
+)
 from tracer.services.observability_providers import ObservabilityService
 from tracer.utils.observability_provider import normalize_and_store_logs
 from tracer.utils.otel import get_or_create_project
@@ -180,6 +184,11 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
         try:
             provider = request.data.get("provider")
             api_key = request.data.get("api_key")
+            agent_definition_id = request.data.get("agent_definition_id")
+            try:
+                api_key, _ = resolve_api_key(api_key, agent_definition_id)
+            except MaskedKeyError as e:
+                return self._gm.bad_request(str(e))
             if provider in [
                 ProviderChoices.VAPI,
                 ProviderChoices.RETELL,
@@ -210,6 +219,11 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             assistant_id = request.data.get("assistant_id")
             api_key = request.data.get("api_key")
             provider = request.data.get("provider")
+            agent_definition_id = request.data.get("agent_definition_id")
+            try:
+                api_key, _ = resolve_api_key(api_key, agent_definition_id)
+            except MaskedKeyError as e:
+                return self._gm.bad_request(str(e))
             if provider in [
                 ProviderChoices.VAPI,
                 ProviderChoices.RETELL,

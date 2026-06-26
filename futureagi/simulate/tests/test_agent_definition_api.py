@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rest_framework import status
 
+from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import ProviderCredentials
 
@@ -785,6 +786,90 @@ class TestFetchAssistantFromProvider:
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
+
+    def test_masked_key_with_valid_agent_definition_id(self, auth_client, db, organization, workspace):
+        """A masked API key is resolved from ProviderCredentials when
+        agent_definition_id is provided."""
+        agent = AgentDefinition.objects.create(
+            agent_name="Masked Key Sync Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+12345678901",
+            inbound=True,
+            description="Sync test",
+            provider="vapi",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        ProviderCredentials.objects.create(
+            agent_definition=agent,
+            provider_type=ProviderCredentials.ProviderType.VAPI,
+            api_key="sk-real-key-for-sync-123456",
+            assistant_id="asst_sync_test",
+        )
+        masked = mask_key("sk-real-key-for-sync-123456")
+
+        mock_assistant = {
+            "name": "Synced Bot",
+            "model": {
+                "messages": [
+                    {"role": "system", "content": "Synced prompt."}
+                ]
+            },
+        }
+        with (
+            patch("tfc.ee_gating.check_ee_feature", return_value=None),
+            patch("simulate.views.agent_definition.VapiService") as MockVapi,
+        ):
+            mock_instance = MagicMock()
+            mock_instance.get_assistant.return_value = mock_assistant
+            MockVapi.return_value = mock_instance
+
+            response = auth_client.post(
+                self.URL,
+                {
+                    "assistant_id": "asst_sync_test",
+                    "api_key": masked,
+                    "provider": "vapi",
+                    "agent_definition_id": str(agent.id),
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["status"] is True
+        assert data["result"]["name"] == "Synced Bot"
+        assert data["result"]["prompt"] == "Synced prompt."
+        # Response should contain the masked key, not the real one
+        assert data["result"]["api_key"] == masked
+
+    def test_masked_key_missing_agent_definition_id_returns_400(self, auth_client):
+        """When key is masked but no agent_definition_id is sent, return 400."""
+        response = auth_client.post(
+            self.URL,
+            {
+                "assistant_id": "asst_test",
+                "api_key": mask_key("sk-some-long-key"),
+                "provider": "vapi",
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_masked_key_nonexistent_agent_definition_returns_400(self, auth_client):
+        """When key is masked but agent_definition_id does not exist, return 400."""
+        response = auth_client.post(
+            self.URL,
+            {
+                "assistant_id": "asst_test",
+                "api_key": mask_key("sk-some-long-key"),
+                "provider": "vapi",
+                "agent_definition_id": str(uuid.uuid4()),
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
 @pytest.mark.integration

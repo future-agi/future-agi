@@ -9,6 +9,7 @@ These tests ensure the snapshot is correctly populated.
 import pytest
 
 from simulate.models import AgentDefinition, AgentVersion
+from simulate.models.agent_definition import ProviderCredentials
 
 
 @pytest.fixture
@@ -155,3 +156,23 @@ class TestAgentVersionSnapshot:
         # observability_enabled is False by default, may be excluded by exclude_none
         obs_value = snapshot.get("observability_enabled", False)
         assert obs_value is False
+
+    def test_snapshot_uses_provider_credentials_key(self, agent_definition):
+        """Snapshot should use the decrypted key from ProviderCredentials,
+        not the raw AgentDefinition.api_key field."""
+        agent_definition.api_key = "sk-raw-field"
+        agent_definition.save()
+        ProviderCredentials.objects.create(
+            agent_definition=agent_definition,
+            provider_type=ProviderCredentials.ProviderType.VAPI,
+            api_key="sk-decrypted-creds-key",
+            assistant_id="asst_snapshot_test",
+        )
+        version = agent_definition.create_version(
+            description="Test",
+            commit_message="Provider credentials key test",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        snapshot = version.configuration_snapshot
+        assert snapshot["api_key"] == "sk-decrypted-creds-key"
+        assert snapshot["api_key"] != "sk-raw-field"
