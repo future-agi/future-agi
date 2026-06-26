@@ -10,7 +10,7 @@ from model_hub.serializers.optimize_dataset import (
 )
 from model_hub.serializers.performance_report import PerformanceReportSerializer
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
-from tfc.utils.serializer_fields import AnyValueDictField, JsonValueField, StringOrObjectField
+from tfc.utils.serializer_fields import AnyValueDictField
 from tracer.serializers.filters import (
     SortParamField,
     StrictInputSerializer,
@@ -506,8 +506,7 @@ class PromptMetricsMetadataSerializer(serializers.Serializer):
 class PromptMetricsResultSerializer(serializers.Serializer):
     prompt_template_id = serializers.UUIDField(required=False)
     prompt_template_name = serializers.CharField(required=False)
-    # table rows have dynamic column keys — typed as record<string, JSON>
-    table = serializers.ListField(child=AnyValueDictField())
+    table = serializers.ListField(child=serializers.JSONField())
     config = serializers.JSONField()
     metadata = PromptMetricsMetadataSerializer()
 
@@ -1695,6 +1694,20 @@ class EvalUsageChartPointSerializer(serializers.Serializer):
     fail_count = serializers.IntegerField(required=False)
 
 
+class EvalUsageQuerySerializer(serializers.Serializer):
+    page = serializers.IntegerField(required=False, default=0, min_value=0, max_value=10000)
+    page_size = serializers.IntegerField(required=False, default=25, min_value=1, max_value=100)
+    period = serializers.ChoiceField(
+        choices=["30m", "6h", "1d", "7d", "30d", "90d", "180d", "365d"],
+        required=False,
+        default="30d",
+    )
+    # Optional explicit date range — when provided, overrides the period string.
+    # Sent by the frontend for Today, Yesterday, and Custom date picker selections.
+    start_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    end_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
+
+
 class EvalUsageStatsSerializer(serializers.Serializer):
     total_runs = serializers.IntegerField()
     runs_period = serializers.IntegerField()
@@ -1705,11 +1718,38 @@ class EvalUsageStatsSerializer(serializers.Serializer):
 
 class EvalUsageFeedbackSerializer(serializers.Serializer):
     id = serializers.UUIDField()
-    value = serializers.JSONField(required=False, allow_null=True)
+    # Feedback.value is a TextField — always a string (thumbs_up/down or custom)
+    value = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     explanation = serializers.CharField(required=False, allow_blank=True)
     action_type = serializers.CharField(required=False, allow_blank=True)
     created_at = serializers.CharField(required=False, allow_blank=True)
     user = serializers.CharField(required=False, allow_blank=True)
+
+
+class EvalUsageLogItemDetailSerializer(serializers.Serializer):
+    """Typed shape for the detail blob on each log row.
+
+    input_variables and mappings have string values (truncated by the view).
+    output and model are JSON-value fields — output can be float, string, or
+    a choice dict {label, score}; model can be a string or ModelSpec object.
+    Composite logs add children + aggregation fields.
+    """
+    input_variables = serializers.DictField(
+        child=serializers.CharField(allow_blank=True),
+        required=False, allow_null=True, default=dict,
+    )
+    output = serializers.JSONField(required=False, allow_null=True)
+    warnings = serializers.ListField(required=False, default=list)
+    mappings = serializers.JSONField(required=False, allow_null=True)
+    model = serializers.JSONField(required=False, allow_null=True)
+    # composite-only fields
+    children = serializers.ListField(required=False, default=list)
+    aggregation_function = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    total_children = serializers.IntegerField(required=False, allow_null=True)
+    completed_children = serializers.IntegerField(required=False, allow_null=True)
+    failed_children = serializers.IntegerField(required=False, allow_null=True)
 
 
 class EvalUsageLogItemSerializer(serializers.Serializer):
@@ -1721,7 +1761,7 @@ class EvalUsageLogItemSerializer(serializers.Serializer):
     status = serializers.CharField()
     source = serializers.CharField(required=False, allow_blank=True)
     created_at = serializers.CharField()
-    detail = serializers.JSONField()
+    detail = EvalUsageLogItemDetailSerializer()
     feedback = EvalUsageFeedbackSerializer(required=False, allow_null=True)
     composite = serializers.BooleanField(required=False)
     aggregate_pass = serializers.BooleanField(required=False, allow_null=True)
@@ -1738,8 +1778,8 @@ class EvalUsageStatsResponseResultSerializer(serializers.Serializer):
     is_composite = serializers.BooleanField()
     stats = EvalUsageStatsSerializer()
     chart = EvalUsageChartPointSerializer(many=True)
-    # table rows have dynamic input_var_X columns — typed as record<string, JSON>
-    # so Zod gets z.record(z.string(), z.any()) rather than z.any() for the whole item
+    # table rows have dynamic input_var_X columns — AnyValueDictField types each
+    # row as record<string, JSON> so Zod gets z.record(z.string(), z.unknown())
     table = serializers.ListField(child=AnyValueDictField())
     logs = EvalUsagePaginationSerializer()
 
@@ -1803,20 +1843,9 @@ class EvalApiLogTableMetadataSerializer(serializers.Serializer):
     total_pages = serializers.IntegerField()
 
 
-class EvalColumnConfigItemSerializer(serializers.Serializer):
-    """Shape of a single column definition returned by get_column_data()."""
-    id = serializers.CharField()
-    name = serializers.CharField()
-    data_type = serializers.CharField(required=False, allow_blank=True)
-    is_visible = serializers.BooleanField(required=False)
-    origin_type = serializers.CharField(required=False, allow_blank=True)
-    output_type = serializers.CharField(required=False, allow_blank=True)
-
-
 class EvalApiLogTableResponseResultSerializer(serializers.Serializer):
-    # table rows have dynamic column keys — typed as record<string, JSON>
-    table = serializers.ListField(child=AnyValueDictField())
-    column_config = EvalColumnConfigItemSerializer(many=True)
+    table = serializers.ListField(child=serializers.JSONField())
+    column_config = serializers.ListField(child=serializers.JSONField())
     metadata = EvalApiLogTableMetadataSerializer(required=False)
 
 
@@ -2209,7 +2238,6 @@ class CompositeEvalCreateRequestSerializer(serializers.Serializer):
         default=list,
     )
     child_template_ids = serializers.ListField(child=serializers.UUIDField())
-    child_configs = serializers.JSONField(required=False, allow_null=True, default=dict)
     aggregation_enabled = serializers.BooleanField(required=False, default=True)
     aggregation_function = serializers.ChoiceField(
         choices=["weighted_avg", "avg", "min", "max", "pass_rate"],
@@ -2920,7 +2948,6 @@ class UserEvalUpdateRequestSerializer(serializers.Serializer):
         allow_null=True,
         default=None,
     )
-    pinned_version_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class StartEvalsProcessRequestSerializer(serializers.Serializer):
@@ -2965,23 +2992,3 @@ class ExperimentAdditionalEvaluationsRequestSerializer(serializers.Serializer):
         child=serializers.UUIDField(),
         allow_empty=False,
     )
-
-
-
-# ── Eval Usage Stats ────────────────────────────────────────────────
-
-
-class EvalUsageQuerySerializer(serializers.Serializer):
-    page = serializers.IntegerField(required=False, default=0, min_value=0, max_value=10_000)
-    page_size = serializers.IntegerField(
-        required=False, default=25, min_value=1, max_value=100
-    )
-    period = serializers.ChoiceField(
-        choices=["30m", "6h", "1d", "7d", "30d", "90d", "180d", "365d"],
-        required=False,
-        default="30d",
-    )
-    # Optional explicit date range — when provided, overrides the period string.
-    # Sent by the frontend for Today, Yesterday, and Custom date picker selections.
-    start_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
-    end_date = serializers.DateTimeField(required=False, allow_null=True, default=None)

@@ -49,7 +49,6 @@ def user_eval_template(organization, workspace):
 
 # ── Shape tests (empty response) ─────────────────────────────────────────────
 
-@pytest.mark.e2e
 @pytest.mark.django_db
 class TestEvalUsageStatsResponseShape:
     """Verify /model-hub/eval-templates/<id>/usage/ returns the contracted shape."""
@@ -120,7 +119,6 @@ class TestEvalUsageStatsResponseShape:
 
 # ── Populated response contract ───────────────────────────────────────────────
 
-@pytest.mark.e2e
 @pytest.mark.django_db
 class TestPopulatedContractResponse:
     """Contract validation against a real populated response.
@@ -216,7 +214,6 @@ class TestPopulatedContractResponse:
 
 # ── Workspace isolation ───────────────────────────────────────────────────────
 
-@pytest.mark.e2e
 @pytest.mark.django_db
 class TestWorkspaceIsolation:
     """One workspace must not be able to read another workspace's eval logs.
