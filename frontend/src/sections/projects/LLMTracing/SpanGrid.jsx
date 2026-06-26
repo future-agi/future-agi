@@ -186,6 +186,7 @@ const SpanGrid = React.forwardRef(
       cellHeight,
       metricFilters,
       pendingCustomColumnsRef,
+      canonicalOrderRef,
       enabled = true,
     },
     gridRef,
@@ -298,8 +299,11 @@ const SpanGrid = React.forwardRef(
           bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
           return getSpanListColumnDefs(c);
         } else {
+          // marryChildren + groupId keep the group movable across rebuilds.
           return {
             headerName: group,
+            groupId: group,
+            marryChildren: true,
             children: cols.map((c) => {
               bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
               const colDef = getSpanListColumnDefs(c);
@@ -376,6 +380,9 @@ const SpanGrid = React.forwardRef(
               // Use ref to get latest columns for comparison without triggering dataSource recreation
               // Compare only non-custom columns to avoid unnecessary re-renders
               if (newCols) {
+                // Canonical order, to restore default when leaving a saved view.
+                if (canonicalOrderRef)
+                  canonicalOrderRef.current = newCols.map((c) => c.id);
                 const currentNonCustom = (columnsRef.current || []).filter(
                   (c) => c.groupBy !== "Custom Columns",
                 );
@@ -407,7 +414,10 @@ const SpanGrid = React.forwardRef(
                       .filter((cc) => newById.has(cc.id))
                       .map((cc) => {
                         seen.add(cc.id);
-                        return { ...newById.get(cc.id), isVisible: cc.isVisible };
+                        return {
+                          ...newById.get(cc.id),
+                          isVisible: cc.isVisible,
+                        };
                       });
                     const added = newCols.filter((nc) => !seen.has(nc.id));
                     finalNonCustom = [...kept, ...added];

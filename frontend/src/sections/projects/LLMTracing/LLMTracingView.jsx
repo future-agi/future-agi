@@ -158,9 +158,10 @@ import {
   FILTER_FOR_HAS_EVAL,
 } from "./common";
 import {
-  columnStateToHideMap,
-  restampColumns,
+  applySavedColumns,
+  reorderColumns,
   isColumnVisibilityDirty,
+  isColumnOrderDirty,
 } from "./savedViewColumns";
 import TracingControls from "./TracingControls";
 import ObserveToolbar from "./ObserveToolbar";
@@ -942,13 +943,15 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const columnConfigureRef = useRef();
   // Drained by onGridReady on the primary grid.
   const pendingColumnStateRef = useRef(null);
-  // applyColumnState alone can't persist hide across columnDefs rebuilds —
-  // getTraceListColumnDefs sets hide explicitly from col.isVisible, so we
-  // need to update col.isVisible in the columns state for hide to stick.
-  const pendingHideMapRef = useRef(null);
-  // Col ids the user manually showed/hid since the saved view loaded. The
-  // saved-view re-stamp skips these so a manual toggle isn't reverted. Reset
-  // on view change / exit.
+  // Saved columnState baked into `columns` because applyColumnState is clobbered
+  // when columnDefs rebuild from isVisible + array order.
+  const pendingSavedColsRef = useRef(null);
+  // Re-apply only fires on id-set change, so a manual drag/toggle isn't reverted.
+  const appliedIdSetKeyRef = useRef(null);
+  // Canonical order per grid, to restore default when leaving a saved view.
+  const canonicalTraceOrderRef = useRef(null);
+  const canonicalSpanOrderRef = useRef(null);
+  // Cols the user manually toggled; the saved-view re-stamp skips these.
   const userToggledColsRef = useRef(new Set());
 
   const {
@@ -1275,7 +1278,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             }
             return [...config, ...customCols, ...dedupedPending];
           };
-          return {
+          const drained = {
             ...prev,
             "primary-trace": drainPending(
               "primary-trace",
@@ -1286,6 +1289,15 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               compareTracePendingRef,
             ),
           };
+          // The drain resets to default order; re-apply the saved view's order
+          // (the [columns] id-set guard skips this — same id-set).
+          return pendingSavedColsRef.current
+            ? applySavedColumns(
+                drained,
+                pendingSavedColsRef.current,
+                userToggledColsRef.current,
+              )
+            : drained;
         });
       }
     },
@@ -1776,7 +1788,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       setExtraFilters((prev) => (prev.length === 0 ? prev : []));
       setViewMode(DEFAULT_DISPLAY_CONFIG.viewMode);
       pendingColumnStateRef.current = null;
-      pendingHideMapRef.current = null;
+      pendingSavedColsRef.current = null;
+      appliedIdSetKeyRef.current = null;
       userToggledColsRef.current = new Set();
       primaryTracePendingRef.current = [];
       compareTracePendingRef.current = [];
@@ -1788,9 +1801,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       setColumns((prev) => {
         const next = {};
         Object.keys(prev).forEach((ck) => {
-          next[ck] = (prev[ck] || [])
+          const stripped = (prev[ck] || [])
             .filter((c) => c.groupBy !== "Custom Columns")
             .map((c) => (c.isVisible ? c : { ...c, isVisible: true }));
+          // Restore default order (the saved view's order was baked into the slot).
+          const canonical = ck.includes("spans")
+            ? canonicalSpanOrderRef.current
+            : canonicalTraceOrderRef.current;
+          next[ck] = reorderColumns(stripped, canonical);
         });
         return next;
       });
@@ -1935,20 +1953,20 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       compareTracePendingRef.current = [];
     }
 
-    // Hide needs a parallel path: applyColumnState's hide doesn't survive
-    // the next columnDefs rebuild (getTraceListColumnDefs sets hide from
-    // col.isVisible, which wins over applied state). The [columns] drain
-    // effect below updates col.isVisible from this map.
+    // Bake visibility + order into `columns` (applyColumnState alone is clobbered
+    // by the next columnDefs rebuild); the [columns] effect re-applies for cols
+    // that merge in later.
     if (Array.isArray(display.columnState) && display.columnState.length > 0) {
-      const hideMap = columnStateToHideMap(display.columnState);
-      // New view → drop the previous view's manual-toggle exemptions.
       userToggledColsRef.current = new Set();
-      // Apply now (a view→view switch with identical cols has no drain), then
-      // queue the map for cols that merge in later.
       setColumns((prev) =>
-        restampColumns(prev, hideMap, userToggledColsRef.current),
+        applySavedColumns(
+          prev,
+          display.columnState,
+          userToggledColsRef.current,
+        ),
       );
-      pendingHideMapRef.current = hideMap;
+      pendingSavedColsRef.current = display.columnState;
+      appliedIdSetKeyRef.current = null;
 
       const activeApi =
         selectedTab === "trace"
@@ -2052,23 +2070,31 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     };
   }, [activeViewConfig, selectedTab]);
 
-  // Re-apply queued columnState + hideMap once `columns` updates. The
-  // retry effect above only fires on activeViewConfig/selectedTab change;
-  // if it ran before custom cols landed, AG Grid dropped their entries.
-  // The hideMap path is necessary because the next columnDefs rebuild
-  // overrides applyColumnState's hide flag from col.isVisible.
+  // Re-apply the saved view's visibility + order whenever cols merge in later
+  // (the load effect can run before they land, and AG Grid drops their entries).
   useEffect(() => {
-    if (pendingHideMapRef.current) {
-      // Stays armed for the view's lifetime: each columnDefs rebuild resets
-      // hide from col.isVisible, so we re-stamp on every columns change.
-      // User-toggled cols are skipped so a manual deselect isn't reverted.
-      setColumns((prev) =>
-        restampColumns(
-          prev,
-          pendingHideMapRef.current,
+    if (pendingSavedColsRef.current) {
+      // Re-apply only on id-set change, so a manual drag/toggle isn't reverted.
+      const slotKey =
+        selectedTab === "trace" ? "primary-trace" : "primary-spans";
+      const compareSlotKey =
+        selectedTab === "trace" ? "compare-trace" : "compare-spans";
+      const idsOf = (k) => (columns[k] || []).map((c) => c?.id);
+      const idSetKey = [
+        ...idsOf(slotKey),
+        ...(showCompare ? idsOf(compareSlotKey) : []),
+      ]
+        .sort()
+        .join("|");
+      if (idSetKey !== appliedIdSetKeyRef.current) {
+        appliedIdSetKeyRef.current = idSetKey;
+        const next = applySavedColumns(
+          columns,
+          pendingSavedColsRef.current,
           userToggledColsRef.current,
-        ),
-      );
+        );
+        if (next !== columns) setColumns(next);
+      }
     }
     if (!pendingColumnStateRef.current) return;
     const api =
@@ -2254,7 +2280,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       selectedTab === "trace"
         ? primaryTraceGridRef.current?.api
         : primarySpanGridRef.current?.api;
-    const columnState = activeGridApi?.getColumnState?.() ?? undefined;
+    // Voice (CallLogsGrid) has no grid api here — derive columnState from the store.
+    const columnState =
+      projectSource === PROJECT_SOURCE.SIMULATOR
+        ? (columns[columnKey] || []).map((c) => ({
+            colId: c.id,
+            hide: c.isVisible === false,
+          }))
+        : activeGridApi?.getColumnState?.() ?? undefined;
     const currentDisplay = {
       viewMode,
       cellHeight,
@@ -2312,6 +2345,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     compareSpansDateFilter,
     extraFilters,
     compareExtraFilters,
+    projectSource,
+    columns,
+    columnKey,
   ]);
 
   useEffect(() => {
@@ -2541,6 +2577,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     if (
       isColumnVisibilityDirty(columns[columnKey], baselineDisplay.columnState)
     ) {
+      return true;
+    }
+    // Did the user reorder columns (or move the custom-columns group)?
+    if (isColumnOrderDirty(columns[columnKey], baselineDisplay.columnState)) {
       return true;
     }
     // Custom columns: did the user add/remove a custom column since the
@@ -4385,6 +4425,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
                     pendingCustomColumnsRef={primaryTracePendingRef}
+                    canonicalOrderRef={canonicalTraceOrderRef}
                     showErrors={showErrors}
                     enabled={
                       [
@@ -4423,6 +4464,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
                     pendingCustomColumnsRef={compareTracePendingRef}
+                    canonicalOrderRef={canonicalTraceOrderRef}
                     projectId={observeId}
                     showErrors={showErrors}
                     enabled={
@@ -4482,6 +4524,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
                     pendingCustomColumnsRef={primarySpansPendingRef}
+                    canonicalOrderRef={canonicalSpanOrderRef}
                     setFilters={setPrimarySpanFilters}
                     setExtraFilters={setExtraFilters}
                     setFilterOpen={setIsPrimaryFilterOpen}
@@ -4516,6 +4559,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
                     pendingCustomColumnsRef={compareSpansPendingRef}
+                    canonicalOrderRef={canonicalSpanOrderRef}
                     filters={compareSpansValidatedFilters}
                     extraFilters={extraFilters}
                     ref={compareSpanGridRef}

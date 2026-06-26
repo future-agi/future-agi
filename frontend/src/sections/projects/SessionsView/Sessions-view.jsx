@@ -70,6 +70,11 @@ import axios, { endpoints } from "src/utils/axios";
 import ColumnConfigureDropDown from "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
 import CustomColumnDialog from "../LLMTracing/CustomColumnDialog";
+import {
+  reorderColumns,
+  columnStateToOrder,
+  isColumnOrderDirty,
+} from "../LLMTracing/savedViewColumns";
 import { filtersContentEqual } from "../saved-view-utils";
 
 // ---------------------------------------------------------------------------
@@ -339,8 +344,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
 
     const baselineExtraFilters = activeViewConfig.extraFilters || [];
     const baselineDisplay = activeViewConfig.display || {};
-    const baselineDateOption =
-      baselineDisplay.dateFilter?.dateOption ?? null;
+    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
     if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
@@ -387,6 +391,10 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     if (currentCustomIds.length !== baselineCustomIds.length) return true;
     for (let i = 0; i < currentCustomIds.length; i += 1) {
       if (currentCustomIds[i] !== baselineCustomIds[i]) return true;
+    }
+    // Did the user reorder columns (or move the custom-columns group)?
+    if (isColumnOrderDirty(sessionColumns, baselineDisplay.columnState)) {
+      return true;
     }
     return false;
   }, [
@@ -551,6 +559,12 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
 
   // Drained in the api-ready effect below once sessionGridApiRef populates.
   const pendingColumnStateRef = useRef(null);
+  // Canonical order, to restore default when leaving a saved view.
+  const canonicalOrderRef = useRef(null);
+  // Saved order; the [sessionColumns] effect re-applies it on each id-set change
+  // (cols land/leave), so it survives the grid-fetch race a one-shot apply lost.
+  const pendingSessionOrderRef = useRef(null);
+  const appliedSessionIdSetRef = useRef(null);
   // Set when the apply effect fires before the grid mounts (hard refresh
   // into a saved view). Drained in onGridReady, otherwise the pending
   // custom-col ref is stranded.
@@ -577,9 +591,14 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       }
       if (api?.resetColumnState) api.resetColumnState();
       pendingColumnStateRef.current = null;
+      pendingSessionOrderRef.current = null;
+      appliedSessionIdSetRef.current = null;
       pendingCustomColumnsRef.current = [];
       setSessionColumns((prev) =>
-        (prev || []).filter((c) => c.groupBy !== "Custom Columns"),
+        reorderColumns(
+          (prev || []).filter((c) => c.groupBy !== "Custom Columns"),
+          canonicalOrderRef.current,
+        ),
       );
       // Re-hydrate from localStorage — the mount hydrate is keyed on
       // displayStorageKey and won't re-fire on a same-project saved-view →
@@ -627,10 +646,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     // Push visibility into AG Grid directly when the api is available so
     // the display matches without waiting for re-render. Done before the
     // snapshot below so canSaveView's baseline matches the just-applied state.
-    if (
-      display.visibleColumns &&
-      typeof display.visibleColumns === "object"
-    ) {
+    if (display.visibleColumns && typeof display.visibleColumns === "object") {
       const next = { ...display.visibleColumns };
       setUpdateObj(next);
       const api = sessionGridApiRef.current?.api;
@@ -672,9 +688,11 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       }
     }
     if (Array.isArray(display.columnState) && display.columnState.length > 0) {
-      // Queue columnState when customs are pending — AG Grid silently drops
-      // applyColumnState entries for unknown colIds, so widths/order for
-      // custom cols would be lost otherwise. Drained when the customs land.
+      // Arm the saved order; the [sessionColumns] effect bakes it in once cols
+      // land (applyColumnState alone is clobbered by the next columnDefs rebuild).
+      pendingSessionOrderRef.current = columnStateToOrder(display.columnState);
+      appliedSessionIdSetRef.current = null;
+      // Queue widths/sort when customs pending — AG Grid drops unknown colIds.
       if (savedCustomCols.length > 0) {
         pendingColumnStateRef.current = display.columnState;
       } else {
@@ -893,6 +911,22 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       applyOrder: true,
     });
     pendingColumnStateRef.current = null;
+  }, [sessionColumns]);
+
+  // Bake the saved order into sessionColumns, re-applying only on id-set change
+  // (so a manual drag isn't reverted); applyColumnState alone is clobbered on rebuild.
+  useEffect(() => {
+    if (!pendingSessionOrderRef.current) return;
+    const idSetKey = (sessionColumns || [])
+      .map((c) => c?.id)
+      .sort()
+      .join("|");
+    if (idSetKey !== appliedSessionIdSetRef.current) {
+      appliedSessionIdSetRef.current = idSetKey;
+      setSessionColumns((prev) =>
+        reorderColumns(prev, pendingSessionOrderRef.current),
+      );
+    }
   }, [sessionColumns]);
 
   // --- Column config for display panel ---
@@ -1134,6 +1168,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           className={shouldDisable ? "ag-grid-disabled" : ""}
           onGridReady={onGridReady}
           pendingCustomColumnsRef={pendingCustomColumnsRef}
+          canonicalOrderRef={canonicalOrderRef}
           isOnSavedView={Boolean(activeViewConfig)}
         />
       </Box>

@@ -18,8 +18,15 @@ const renderWithCtx = ({
   getViewConfig = () => ({}),
   getTabType = () => "traces",
   activeTab = "traces",
-} = {}) =>
-  render(
+  selectedTab,
+} = {}) => {
+  // resolveTabType reads selectedTab from the URL (not getTabType).
+  window.history.pushState(
+    {},
+    "Test page",
+    selectedTab ? `/?selectedTab=${selectedTab}` : "/",
+  );
+  return render(
     <ObserveHeaderContext.Provider
       value={{
         headerConfig: {},
@@ -39,6 +46,7 @@ const renderWithCtx = ({
       />
     </ObserveHeaderContext.Provider>,
   );
+};
 
 const clickCreateViewButton = () => {
   const btn = document.querySelector("[data-create-view-btn]");
@@ -94,16 +102,16 @@ describe("ObserveTabBar — resolveTabType", () => {
     mockSavedViewsList = [];
   });
 
-  it("uses getTabType() when activeTab is 'traces' (returns 'traces' for trace sub-tab)", async () => {
-    renderWithCtx({ getTabType: () => "traces", activeTab: "traces" });
+  it("saves tab_type 'traces' when selectedTab is not 'spans'", async () => {
+    renderWithCtx({ activeTab: "traces" });
     clickCreateViewButton();
     await typeAndSubmit("t");
     await waitFor(() => expect(mockCreateSavedView).toHaveBeenCalled());
     expect(mockCreateSavedView.mock.calls[0][0].tab_type).toBe("traces");
   });
 
-  it("uses getTabType() when activeTab is 'traces' (returns 'spans' for span sub-tab)", async () => {
-    renderWithCtx({ getTabType: () => "spans", activeTab: "traces" });
+  it("saves tab_type 'spans' when selectedTab is 'spans' in the URL", async () => {
+    renderWithCtx({ activeTab: "spans", selectedTab: "spans" });
     clickCreateViewButton();
     await typeAndSubmit("s");
     await waitFor(() => expect(mockCreateSavedView).toHaveBeenCalled());

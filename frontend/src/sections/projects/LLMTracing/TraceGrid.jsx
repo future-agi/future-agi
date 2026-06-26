@@ -64,6 +64,7 @@ const TraceGrid = React.forwardRef(
       hasEvalFilter,
       metricFilters,
       pendingCustomColumnsRef,
+      canonicalOrderRef,
       enabled = true,
       showErrors = false,
     },
@@ -220,6 +221,9 @@ const TraceGrid = React.forwardRef(
               // Use ref to get latest columns for comparison without triggering dataSource recreation
               // Compare only non-custom columns to avoid unnecessary re-renders
               if (newCols) {
+                // Canonical order, to restore default when leaving a saved view.
+                if (canonicalOrderRef)
+                  canonicalOrderRef.current = newCols.map((c) => c.id);
                 const currentNonCustom = (columnsRef.current || []).filter(
                   (c) => c.groupBy !== "Custom Columns",
                 );
@@ -251,7 +255,10 @@ const TraceGrid = React.forwardRef(
                       .filter((cc) => newById.has(cc.id))
                       .map((cc) => {
                         seen.add(cc.id);
-                        return { ...newById.get(cc.id), isVisible: cc.isVisible };
+                        return {
+                          ...newById.get(cc.id),
+                          isVisible: cc.isVisible,
+                        };
                       });
                     const added = newCols.filter((nc) => !seen.has(nc.id));
                     finalNonCustom = [...kept, ...added];
@@ -347,32 +354,30 @@ const TraceGrid = React.forwardRef(
         (c) => c?.groupBy === "Annotation Metrics",
       );
       const customCols = columns.filter((c) => c?.groupBy === "Custom Columns");
-      const otherCols = columns.filter(
-        (c) =>
-          c?.groupBy !== "Annotation Metrics" &&
-          c?.groupBy !== "Custom Columns",
-      );
 
-      // Build flat column defs for non-annotation, non-custom columns
-      const columnDefsResult = otherCols.map((c) => {
+      // Custom columns as one movable group at the first custom's position
+      // (marryChildren + groupId keep it draggable across rebuilds).
+      const columnDefsResult = [];
+      let customGroupEmitted = false;
+      for (const c of columns) {
+        if (c?.groupBy === "Annotation Metrics") continue;
+        if (c?.groupBy === "Custom Columns") {
+          if (customGroupEmitted) continue;
+          customGroupEmitted = true;
+          columnDefsResult.push({
+            headerName: "Custom Columns",
+            groupId: "custom-columns",
+            marryChildren: true,
+            children: customCols.map((cc) => {
+              bottomRowObj[cc?.id] = cc?.average ? `${cc?.average}` : null;
+              const colDef = getTraceListColumnDefs(cc);
+              return { ...colDef, minWidth: 200, flex: 1 };
+            }),
+          });
+          continue;
+        }
         bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-        return getTraceListColumnDefs(c);
-      });
-
-      // Group custom columns under a "Custom Columns" header (TH-4151)
-      if (customCols.length > 0) {
-        columnDefsResult.push({
-          headerName: "Custom Columns",
-          children: customCols.map((c) => {
-            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-            const colDef = getTraceListColumnDefs(c);
-            return {
-              ...colDef,
-              minWidth: 200,
-              flex: 1,
-            };
-          }),
-        });
+        columnDefsResult.push(getTraceListColumnDefs(c));
       }
 
       // Add annotation columns as flat columns (not grouped)

@@ -67,6 +67,7 @@ const SessionGrid = React.forwardRef(
       className,
       onGridReady,
       pendingCustomColumnsRef,
+      canonicalOrderRef,
       isOnSavedView = false,
     },
     gridApiRef,
@@ -171,8 +172,11 @@ const SessionGrid = React.forwardRef(
           bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
           return getSessionListColumnDef(c);
         } else {
+          // marryChildren + groupId keep the group movable across rebuilds.
           return {
             headerName: group,
+            groupId: group,
+            marryChildren: true,
             children: cols.map((c) => {
               bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
               return getSessionListColumnDef(c);
@@ -244,6 +248,9 @@ const SessionGrid = React.forwardRef(
 
               // Merge: preserve custom columns that the backend doesn't know about
               if (newCols) {
+                // Canonical order, to restore default when leaving a saved view.
+                if (canonicalOrderRef)
+                  canonicalOrderRef.current = newCols.map((c) => c.id);
                 const currentNonCustom = (columnsRef.current || []).filter(
                   (c) => c.groupBy !== "Custom Columns",
                 );
@@ -517,6 +524,7 @@ SessionGrid.propTypes = {
   onSelectionChanged: PropTypes.func,
   className: PropTypes.string,
   pendingCustomColumnsRef: PropTypes.object,
+  canonicalOrderRef: PropTypes.object,
   isOnSavedView: PropTypes.bool,
 };
 

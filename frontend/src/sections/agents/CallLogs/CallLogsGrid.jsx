@@ -278,19 +278,22 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     const visMap = {};
     const orderIndex = new Map();
     const customCols = [];
+    let firstCustomIdx = -1;
     (columnVisibility || []).forEach((c, i) => {
       if (c.field) {
         visMap[c.field] = c.isVisible !== false;
         orderIndex.set(c.field, i);
       }
-      if (c.groupBy === "Custom Columns") customCols.push(c);
+      if (c.groupBy === "Custom Columns") {
+        customCols.push(c);
+        if (firstCustomIdx === -1) firstCustomIdx = i;
+      }
     });
 
     const updated = callLogsColumnDefs
       .map((col) => ({
         ...col,
-        ...(col.field &&
-          col.field in visMap && { hide: !visMap[col.field] }),
+        ...(col.field && col.field in visMap && { hide: !visMap[col.field] }),
       }))
       .sort((a, b) => {
         const ai = orderIndex.get(a?.field) ?? Infinity;
@@ -311,7 +314,9 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         flex: 0,
         minWidth: 120,
         hide: c.isVisible === false,
-        cellRenderer: isLoading ? CustomColLoadingSkeleton : CustomColCellRenderer,
+        cellRenderer: isLoading
+          ? CustomColLoadingSkeleton
+          : CustomColCellRenderer,
         valueGetter: (params) => {
           if (!params.data) return null;
           let value = params.data[c.id];
@@ -341,12 +346,20 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         },
       }));
 
-    // Group under a "Custom Columns" header for parity with the other grids.
+    // Movable group at the first custom's store position (marryChildren +
+    // groupId keep it draggable as a unit across rebuilds).
     if (newCustomDefs.length > 0) {
-      return [
-        ...updated,
-        { headerName: "Custom Columns", children: newCustomDefs },
-      ];
+      const group = {
+        headerName: "Custom Columns",
+        groupId: "custom-columns",
+        marryChildren: true,
+        children: newCustomDefs,
+      };
+      let insertAt = updated.findIndex(
+        (col) => (orderIndex.get(col?.field) ?? Infinity) > firstCustomIdx,
+      );
+      if (insertAt === -1) insertAt = updated.length;
+      return [...updated.slice(0, insertAt), group, ...updated.slice(insertAt)];
     }
     return updated;
   }, [callLogsColumnDefs, columnVisibility, isLoading]);
@@ -359,7 +372,15 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   // Propagate reorder to parent so the View columns dropdown stays in sync.
   const onColumnMoved = useCallback(
     (params) => {
-      if (!params?.finished || !params?.api || typeof onColumnsChange !== "function") return;
+      if (
+        !params?.finished ||
+        !params?.api ||
+        typeof onColumnsChange !== "function"
+      )
+        return;
+      // User drags only — a programmatic move would rebuild the shared trace
+      // `columns` from this grid's voice-only state and corrupt it.
+      if (params.source !== "uiColumnMoved") return;
       const newOrder = (params?.api?.getColumnState() ?? [])
         .map((s) => s.colId)
         .filter((id) => id !== APP_CONSTANTS.AG_GRID_SELECTION_COLUMN);
@@ -374,8 +395,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       const sameOrder =
         next.length === cols.length &&
         next.every(
-          (c, i) =>
-            (c?.field || c?.id) === (cols[i]?.field || cols[i]?.id),
+          (c, i) => (c?.field || c?.id) === (cols[i]?.field || cols[i]?.id),
         );
       if (!sameOrder) onColumnsChange(next);
     },
