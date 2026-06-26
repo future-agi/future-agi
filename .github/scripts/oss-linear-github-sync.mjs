@@ -199,42 +199,54 @@ async function main() {
   let linearUpdates = 0
   let githubUpdates = 0
 
-  for (const ticket of tickets) {
-    for (const pr of ticket.prLinks) {
-      const ghPr = await getPr(pr.owner, pr.repo, pr.number)
-      if (!ghPr) {
-        log(`  ⚠  ${ticket.identifier}: PR #${pr.number} not found in ${pr.repo}`)
-        continue
-      }
+  // Process all ticket×PR pairs concurrently (capped at 10 in-flight)
+  const pairs = tickets.flatMap(t => t.prLinks.map(pr => ({ ticket: t, pr })))
+  const CONCURRENCY = 10
 
-      const merged = !!ghPr.merged_at
-      const closed = ghPr.state === 'closed'
+  async function processPair({ ticket, pr }) {
+    const ghPr = await getPr(pr.owner, pr.repo, pr.number)
+    if (!ghPr) {
+      log(`  ⚠  ${ticket.identifier}: PR #${pr.number} not found in ${pr.repo}`)
+      return { linear: 0, github: 0 }
+    }
 
-      // ── Status sync ────────────────────────────────────────────────────────
-      if (merged && ticket.statusType !== 'completed') {
-        log(`  ✅ ${ticket.identifier}: merged → Done`)
-        if (await updateLinearStatus(ticket.id, 'Done')) linearUpdates++
+    const merged = !!ghPr.merged_at
+    const closed = ghPr.state === 'closed'
 
-      } else if (closed && !merged && ticket.statusType !== 'canceled') {
-        log(`  🚫 ${ticket.identifier}: closed (no merge) → Cancelled`)
-        if (await updateLinearStatus(ticket.id, 'Cancelled')) linearUpdates++
+    // ── Status sync ──────────────────────────────────────────────────────────
+    if (merged && ticket.statusType !== 'completed') {
+      log(`  ✅ ${ticket.identifier}: merged → Done`)
+      return { linear: (await updateLinearStatus(ticket.id, 'Done')) ? 1 : 0, github: 0 }
 
-      } else if (!closed) {
-        // ── Reviewer sync (open PRs only) ───────────────────────────────────
-        if (!ticket.assigneeEmail) continue
-        const expectedHandle = EMAIL_TO_GITHUB[ticket.assigneeEmail]
-        if (!expectedHandle) continue
+    } else if (closed && !merged && ticket.statusType !== 'canceled') {
+      log(`  🚫 ${ticket.identifier}: closed (no merge) → Canceled`)
+      return { linear: (await updateLinearStatus(ticket.id, 'Canceled')) ? 1 : 0, github: 0 }
 
-        const currentReviewers = await getReviewers(pr.owner, pr.repo, pr.number)
-        if (currentReviewers.includes(expectedHandle)) continue
+    } else if (!closed) {
+      // ── Reviewer sync (open PRs only) ──────────────────────────────────────
+      if (!ticket.assigneeEmail) return { linear: 0, github: 0 }
+      const expectedHandle = EMAIL_TO_GITHUB[ticket.assigneeEmail]
+      if (!expectedHandle) return { linear: 0, github: 0 }
 
-        // Remove team members that are wrong reviewers, add the correct one
-        const toRemove = currentReviewers.filter(r => GITHUB_TO_EMAIL[r] && r !== expectedHandle)
-        log(`  👤 ${ticket.identifier}: PR #${pr.number} reviewer → ${expectedHandle}${toRemove.length ? ` (removing ${toRemove.join(', ')})` : ''}`)
-        await removeReviewers(pr.owner, pr.repo, pr.number, toRemove)
-        await addReviewer(pr.owner, pr.repo, pr.number, expectedHandle)
-        githubUpdates++
-      }
+      const currentReviewers = await getReviewers(pr.owner, pr.repo, pr.number)
+      if (currentReviewers.includes(expectedHandle)) return { linear: 0, github: 0 }
+
+      const toRemove = currentReviewers.filter(r => GITHUB_TO_EMAIL[r] && r !== expectedHandle)
+      log(`  👤 ${ticket.identifier}: PR #${pr.number} reviewer → ${expectedHandle}${toRemove.length ? ` (removing ${toRemove.join(', ')})` : ''}`)
+      await removeReviewers(pr.owner, pr.repo, pr.number, toRemove)
+      await addReviewer(pr.owner, pr.repo, pr.number, expectedHandle)
+      return { linear: 0, github: 1 }
+    }
+    return { linear: 0, github: 0 }
+  }
+
+  // Process in chunks of CONCURRENCY
+  for (let i = 0; i < pairs.length; i += CONCURRENCY) {
+    const chunk = pairs.slice(i, i + CONCURRENCY)
+    const results = await Promise.all(chunk.map(processPair))
+    for (const r of results) {
+      linearUpdates += r.linear
+      githubUpdates += r.github
     }
   }
 
