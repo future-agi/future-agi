@@ -1,4 +1,5 @@
 import json
+import os
 import uuid
 from datetime import datetime
 
@@ -7,8 +8,6 @@ from django.db import transaction
 from requests.exceptions import HTTPError
 
 from accounts.models.organization import Organization
-
-logger = structlog.get_logger(__name__)
 from simulate.models import AgentDefinition
 from tfc.temporal import temporal_activity
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
@@ -24,11 +23,15 @@ from tracer.tasks.recordings_rehost import (
     RECORDING_KEYS_BY_PROVIDER,
     rehost_external_recordings,
 )
+from tracer.utils.bland import normalize_bland_data
 from tracer.utils.eleven_labs import normalize_eleven_labs_data
 from tracer.utils.otel import ResourceLimitError, get_or_create_project
 from tracer.utils.retell import normalize_retell_data
+from tracer.utils.twilio_calls import normalize_twilio_data
 from tracer.utils.usage_emit import emit_span_ingestion_usage
 from tracer.utils.vapi import normalize_vapi_data
+
+logger = structlog.get_logger(__name__)
 
 
 @temporal_activity(
@@ -244,6 +247,124 @@ def _create_observation_span(project, provider, normalized_data, metadata):
     )
 
 
+_PROVIDER_SPAN_NS = uuid.UUID("4d61d4e2-7b3c-4a1e-9f02-2c6a5b8e1d70")
+
+
+def _legacy_cdc_dropped() -> bool:
+    """Own the CH ``spans`` write only once legacy PeerDB CDC is dropped; while CDC is live it mirrors the PG span, so emitting would double-write."""
+    return str(os.getenv("CH25_DROP_LEGACY_CDC_CHAIN", "")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _provider_collector_span_id(provider: str, provider_log_id: str) -> str:
+    """Deterministic id stable across re-polls so CH ``spans`` (ReplacingMergeTree) upserts in place.
+    Caveat: re-emits reuse the same ``_version`` (start_time), so late data may lose the merge."""
+    return uuid.uuid5(_PROVIDER_SPAN_NS, f"{provider}:{provider_log_id}").hex[:16]
+
+
+def _to_epoch_ns(value) -> int | None:
+    """Coerce a datetime / epoch-seconds / epoch-ns value to epoch nanoseconds."""
+    if value is None:
+        return None
+    if hasattr(value, "timestamp"):
+        return int(value.timestamp() * 1e9)
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    # Heuristic: < 1e12 seconds, < 1e15 ms, else ns — normalize to ns.
+    if v < 1e12:
+        return int(v * 1e9)
+    if v < 1e15:  # milliseconds
+        return int(v * 1e6)
+    return int(v)
+
+
+def _export_provider_call_to_collector(span, provider: str, provider_log_id: str):
+    """Dual-write a pulled call's CONVERSATION span to the fi-collector (CDC replacement); PG stays source of truth, never raises."""
+    if not _legacy_cdc_dropped():
+        return
+    try:
+        project = span.project
+        organization_id = str(getattr(project, "organization_id", "") or "")
+        if not organization_id:
+            return
+        # Drop nested raw_log (OTLP can't carry it); read path's empty-raw_log branch derives status/duration/recording from call.* scalars.
+        attrs = {
+            k: v for k, v in (span.span_attributes or {}).items() if k != "raw_log"
+        }
+        attrs["gen_ai.span.kind"] = "CONVERSATION"
+        attrs["gen_ai.system"] = provider
+        if span.input not in (None, "", [], {}):
+            attrs["input.value"] = span.input
+        if span.output not in (None, "", [], {}):
+            attrs["output.value"] = span.output
+        # raw_log dropped, so compute transcript now (trace.py reads fi.conversation.transcript).
+        raw_log = (span.span_attributes or {}).get("raw_log") or {}
+        try:
+            processed = ObservabilityService.process_raw_logs(
+                raw_log, provider, span_attributes=span.span_attributes or {}
+            )
+            if processed.get("transcript"):
+                attrs["fi.conversation.transcript"] = processed["transcript"]
+        except Exception:
+            logger.warning(
+                "provider_transcript_compute_failed", provider=provider, exc_info=True
+            )
+        start_ns = _to_epoch_ns(span.start_time)
+        span_dict = {
+            "trace_id": span.trace.id.hex,
+            "span_id": _provider_collector_span_id(provider, provider_log_id),
+            "parent_span_id": None,
+            "parent_id": None,
+            "name": span.name,
+            "attributes": attrs,
+        }
+        if start_ns is not None:
+            span_dict["start_time"] = start_ns
+        end_ns = _to_epoch_ns(span.end_time)
+        if end_ns is not None:
+            span_dict["end_time"] = end_ns
+        # Stamp OTLP status from call outcome so a failed call isn't recorded as completed (collector copies it into CH `spans.status`).
+        _call_status = (
+            str(attrs.get("call.status") or getattr(span, "status", "") or "")
+            .strip()
+            .lower()
+        )
+        if _call_status in (
+            "error",
+            "failed",
+            "failure",
+            "busy",
+            "no-answer",
+            "no_answer",
+            "canceled",
+            "cancelled",
+        ):
+            span_dict["status_code"] = "ERROR"
+        from tracer.services.collector_ingest import emit_spans_to_collector
+
+        emit_spans_to_collector(
+            [span_dict],
+            project_name=project.name,
+            project_type=project.trace_type,
+            organization_id=organization_id,
+            workspace_id=str(project.workspace_id) if project.workspace_id else None,
+            service_name="fi-provider",
+        )
+        # collectTrace is sole `traces` writer (derives it from this root span); no app-side mirror, a second row would never merge.
+    except Exception:
+        logger.exception(
+            "provider_collector_export_failed",
+            provider=provider,
+            provider_log_id=provider_log_id,
+        )
+
+
 def _update_observation_span(existing_span, normalized_data):
     """Updates an existing ObservationSpan and its associated Trace.
 
@@ -303,6 +424,8 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
         "vapi": normalize_vapi_data,
         "retell": normalize_retell_data,
         "eleven_labs": normalize_eleven_labs_data,
+        "bland": normalize_bland_data,
+        "twilio": normalize_twilio_data,
     }
 
     if provider.provider not in normalization_functions:
@@ -319,9 +442,7 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
             normalized_data = normalize_fn(log)
             provider_log_id = normalized_data.get("id")
         except Exception:
-            logger.exception(
-                f"Failed to normalize log for {provider.provider}"
-            )
+            logger.exception(f"Failed to normalize log for {provider.provider}")
 
         if not provider_log_id:
             logger.error(f"No provider log id found for {provider.provider}")
@@ -393,6 +514,9 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
                 f"Error updating or creating observation span for {provider.provider}: {e}"
             )
             continue
+
+        # Dual-write to collector after PG commit so the call reaches CH `spans` without the dropped PeerDB CDC.
+        _export_provider_call_to_collector(span, provider.provider, provider_log_id)
 
         if was_created:
             created_count += 1
@@ -509,7 +633,7 @@ def normalize_and_store_logs(body, agent_definition_id) -> None:
         logger.info(f"normalize_and_store_logs started {agent_definition.assistant_id}")
         provider = agent_definition.observability_provider
         if not provider:
-            logger.warning(f"normalize_and_store_logs: No provider")
+            logger.warning("normalize_and_store_logs: No provider")
             return
 
         call_log = body.get("call")

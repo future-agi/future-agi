@@ -1277,14 +1277,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 )
             except (ValueError, TypeError):
                 span_attrs = {}
-            if not span_attrs:
+            if not isinstance(span_attrs, dict):
                 span_attrs = {}
-                for k, v in (row.get("attrs_string") or {}).items():
-                    span_attrs[k] = v
-                for k, v in (row.get("attrs_number") or {}).items():
-                    span_attrs[k] = v
-                for k, v in (row.get("attrs_bool") or {}).items():
-                    span_attrs[k] = bool(v)
+            # Union typed Maps over attributes_extra: collector splits call.* scalars
+            # into the Maps and overflow keys into attributes_extra, so never skip the Maps.
+            for k, v in (row.get("attrs_string") or {}).items():
+                span_attrs.setdefault(k, v)
+            for k, v in (row.get("attrs_number") or {}).items():
+                span_attrs.setdefault(k, v)
+            for k, v in (row.get("attrs_bool") or {}).items():
+                span_attrs.setdefault(k, bool(v))
             # Fallback: if CH has no span_attributes, try PG
             if not span_attrs:
                 try:
@@ -3061,6 +3063,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             -- fallback, and that fallback resolves to {} on this path.
             attrs_string,
             attrs_number,
+            attrs_bool,
             toJSONString(metadata) AS metadata_json
         FROM spans
         WHERE project_id = toUUID(%(project_id)s)
@@ -3091,6 +3094,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
         except (json.JSONDecodeError, TypeError):
             span_attrs = {}
+        if not isinstance(span_attrs, dict):
+            span_attrs = {}
+        # Union typed Maps: voice spans keep call.* scalars in attrs_string/number while
+        # input/output.value overflow into attributes_extra; reading it alone drops call.* metrics.
+        for k, v in (row.get("attrs_string") or {}).items():
+            span_attrs.setdefault(k, v)
+        for k, v in (row.get("attrs_number") or {}).items():
+            span_attrs.setdefault(k, v)
+        for k, v in (row.get("attrs_bool") or {}).items():
+            span_attrs.setdefault(k, bool(v))
         # eval_attributes is not a top-level column on the CH `spans` table,
         # but the adapter merges it into `attributes_extra` under the key
         # "eval_attributes". Extract it so simulation_context can resolve
@@ -3111,6 +3124,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         processed_log = ObservabilityService.process_raw_logs(
             raw_log, provider, span_attributes=span_attrs
         )
+        # Collector-routed pulls carry no raw_log (OTLP); span start_time is the call start.
+        if not raw_log and not processed_log.get("started_at"):
+            _st = row.get("start_time")
+            if _st:
+                processed_log["started_at"] = (
+                    _st.isoformat() if hasattr(_st, "isoformat") else str(_st)
+                )
         simulation_context = _simulation_context_for_voice_call(
             organization_id=request.user.organization_id,
             span_attributes=span_attrs,
@@ -3245,6 +3265,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "tags": child.get("tags") or [],
                 }
             )
+
+        # Collector-routed pulls drop raw_log (OTLP); recover the transcript from
+        # attrs_string (stored as a JSON string, not in attributes_extra).
+        if not processed_log.get("transcript"):
+            stored = attr_str.get("fi.conversation.transcript") or span_attrs.get(
+                "fi.conversation.transcript"
+            )
+            if isinstance(stored, str):
+                try:
+                    stored = json.loads(stored)
+                except (json.JSONDecodeError, TypeError):
+                    stored = None
+            if isinstance(stored, list) and stored:
+                processed_log["transcript"] = stored
+                processed_log["transcript_available"] = True
+                if not processed_log.get("message_count"):
+                    processed_log["message_count"] = len(stored)
 
         # Fetch ALL non-deleted eval configs for the project so the drawer
         # renders the same set of evals as the list columns. Missing scores
@@ -4232,17 +4269,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
                 except (json.JSONDecodeError, TypeError):
                     parsed = {}
-                # Fall back to the typed Maps when attributes_extra is empty
-                # (the common case for LLM spans, where everything is in
-                # attrs_string / attrs_number / attrs_bool).
-                if not parsed:
+                if not isinstance(parsed, dict):
                     parsed = {}
-                    for k, v in (arow.get("attrs_string") or {}).items():
-                        parsed[k] = v
-                    for k, v in (arow.get("attrs_number") or {}).items():
-                        parsed[k] = v
-                    for k, v in (arow.get("attrs_bool") or {}).items():
-                        parsed[k] = bool(v)
+                # Union typed Maps over attributes_extra: voice spans split call.* scalars
+                # into the Maps and overflow keys into attributes_extra, so never skip the Maps.
+                for k, v in (arow.get("attrs_string") or {}).items():
+                    parsed.setdefault(k, v)
+                for k, v in (arow.get("attrs_number") or {}).items():
+                    parsed.setdefault(k, v)
+                for k, v in (arow.get("attrs_bool") or {}).items():
+                    parsed.setdefault(k, bool(v))
                 attrs_map[sid] = {
                     "span_attributes": parsed,
                     "provider": arow.get("provider"),
@@ -4312,6 +4348,24 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             processed_log = ObservabilityService.process_raw_logs(
                 raw_log, provider, span_attributes=span_attrs
             )
+            # Collector-routed pulls carry no raw_log (OTLP); span start/end times
+            # are the call start/duration.
+            if not raw_log:
+                if not processed_log.get("started_at"):
+                    _st = row.get("start_time")
+                    if _st:
+                        processed_log["started_at"] = (
+                            _st.isoformat() if hasattr(_st, "isoformat") else str(_st)
+                        )
+                if processed_log.get("duration_seconds") is None:
+                    _st, _et = row.get("start_time"), row.get("end_time")
+                    if _st and _et and hasattr(_st, "timestamp"):
+                        processed_log["duration_seconds"] = max(
+                            0, int(_et.timestamp() - _st.timestamp())
+                        )
+                # The list's date column binds created_at.
+                if not processed_log.get("created_at"):
+                    processed_log["created_at"] = processed_log.get("started_at")
 
             entry = {
                 **processed_log,
@@ -4342,7 +4396,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # the voice_call_detail endpoint.
             for key in self._VOICE_CALL_HEAVY_KEYS:
                 entry.pop(key, None)
-            entry.setdefault("observation_span", [])
+            # Heavy-key strip drops observation_span, which the drawer needs to route to
+            # voice; collector rows lack raw_log to fall back. Seed a stub (detail fetch replaces it).
+            entry["observation_span"] = (
+                [
+                    {
+                        "id": span_id,
+                        "observation_type": "conversation",
+                        "parent_span_id": None,
+                    }
+                ]
+                if span_id
+                else []
+            )
 
             # Include span attributes for custom columns (skip heavy/nested values)
             for key, value in span_attrs.items():

@@ -110,6 +110,11 @@ class CHSpan:
     semconv_source: str = ""
     is_deleted: int = 0
 
+    @property
+    def pk(self):
+        """Django-model parity so callers reading ``.pk`` work on a CHSpan."""
+        return self.id
+
 
 # Stable column ordering for the CH query. JSON columns wrapped in toJSONString
 # so clickhouse-connect can decode them (it cannot yet handle the typed JSON
