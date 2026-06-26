@@ -7,6 +7,7 @@ import librosa
 import numpy as np
 import requests
 import structlog
+import torch
 from app.servable_models import ModelServing
 from app.utils.utils import download_audio_from_url
 from PIL import Image
@@ -152,12 +153,13 @@ class AudioEmbeddingModel(ModelServing):
     def forward(self, data):
         """Generate embeddings for preprocessed audio data."""
         try:
-            inp = self.processor(
-                data, sampling_rate=16000, return_tensors="pt", padding=True
-            )
-            outputs = self.model(**inp)
-            # Use the last hidden state mean as embedding
-            embeddings = outputs.last_hidden_state.mean(dim=1)
+            with torch.inference_mode():
+                inp = self.processor(
+                    data, sampling_rate=16000, return_tensors="pt", padding=True
+                )
+                outputs = self.model(**inp)
+                # Use the last hidden state mean as embedding
+                embeddings = outputs.last_hidden_state.mean(dim=1)
             embeddings = embeddings.detach().numpy()
             return embeddings[0].tolist()
         except Exception as e:

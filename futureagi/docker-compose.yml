@@ -91,11 +91,14 @@ services:
       - "${SERVING_PORT:-8080}:8080"
     env_file:
       - .env
+    environment:
+      HF_HOME: /root/.cache/huggingface
     depends_on:
       - backend
     restart: unless-stopped
     volumes:
       - ./model_serving:/app/embedding
+      - serving-hf-cache:/root/.cache/huggingface
 
   # ===========================================
   # agentcc Gateway (LLM Proxy)
@@ -873,6 +876,8 @@ volumes:
   database-data:
     driver: local
   rabbitmq_data:
+    driver: local
+  serving-hf-cache:
     driver: local
   clickhouse_data:
     driver: local

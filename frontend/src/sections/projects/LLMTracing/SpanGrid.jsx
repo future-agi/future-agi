@@ -23,6 +23,7 @@ import {
   SPAN_DEFAULT_COLUMNS,
   mergeCellStyle,
   generateAnnotationColumnsForTracing,
+  normalizeConfigKeys,
 } from "./common";
 import CustomTraceRenderer from "./Renderers/CustomTraceRenderer";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
@@ -40,16 +41,6 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
 
 const ROWS_LIMIT = 100;
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
 
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;
@@ -427,7 +418,10 @@ const SpanGrid = React.forwardRef(
                       .filter((cc) => newById.has(cc.id))
                       .map((cc) => {
                         seen.add(cc.id);
-                        return { ...newById.get(cc.id), isVisible: cc.isVisible };
+                        return {
+                          ...newById.get(cc.id),
+                          isVisible: cc.isVisible,
+                        };
                       });
                     const added = newCols.filter((nc) => !seen.has(nc.id));
                     finalNonCustom = [...kept, ...added];

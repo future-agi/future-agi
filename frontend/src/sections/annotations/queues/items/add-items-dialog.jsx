@@ -49,6 +49,7 @@ import { useTestRunsList } from "src/api/tests/testRuns";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
 import {
   getTraceListColumnDefs,
+  normalizeConfigKeys,
   TRACE_DEFAULT_COLUMNS,
   generateObserveTraceFilterDefinition,
   generateSpanObserveFilterDefinition,
@@ -1966,10 +1967,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           const res = results?.data?.result;
 
           // Update columns from response config (same as TraceGrid)
-          const newCols = res?.config?.map((o) => ({
-            ...o,
-            id: o.id,
-          }));
+          const newCols = normalizeConfigKeys(res?.config);
           if (newCols) {
             setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
           }
@@ -2622,10 +2620,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           const res = results?.data?.result;
 
           // Update columns from response config
-          const newCols = res?.config?.map((o) => ({
-            ...o,
-            id: o.id,
-          }));
+          const newCols = normalizeConfigKeys(res?.config);
           if (newCols) {
             setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
           }
@@ -3188,10 +3183,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
           const res = results?.data?.result;
 
           // Update columns from response config
-          const newCols = res?.config?.map((o) => ({
-            ...o,
-            id: o.id,
-          }));
+          const newCols = normalizeConfigKeys(res?.config);
           if (newCols) {
             setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
           }

@@ -520,18 +520,12 @@ import type {
   GraphExecutionListResponseApi,
   GraphListApi,
   GraphUpdateApi,
-  GroundTruthConfigRequestApi,
-  GroundTruthConfigResponseApi,
   GroundTruthDataResponseApi,
   GroundTruthDeleteResponseApi,
   GroundTruthEmbedResponseApi,
   GroundTruthListResponseApi,
-  GroundTruthMappingRequestApi,
-  GroundTruthMappingResponseApi,
-  GroundTruthRoleMappingRequestApi,
-  GroundTruthRoleMappingResponseApi,
-  GroundTruthSearchRequestApi,
-  GroundTruthSearchResponseApi,
+  GroundTruthSetupRequestApi,
+  GroundTruthSetupResponseApi,
   GroundTruthStatusResponseApi,
   GroundTruthUploadRequestApi,
   GroundTruthUploadResponseApi,
@@ -35511,146 +35505,6 @@ export const modelHubEvalTemplatesFeedbackListList = async (templateId: string, 
 
 
 
-export type modelHubEvalTemplatesGroundTruthConfigListResponse200 = {
-  data: GroundTruthConfigResponseApi
-  status: 200
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigListResponse400 = {
-  data: ModelHubErrorResponseApi
-  status: 400
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigListResponse403 = {
-  data: ModelHubErrorResponseApi
-  status: 403
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigListResponse404 = {
-  data: ModelHubErrorResponseApi
-  status: 404
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigListResponse409 = {
-  data: ModelHubErrorResponseApi
-  status: 409
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigListResponse500 = {
-  data: ModelHubErrorResponseApi
-  status: 500
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigListResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigListResponseSuccess = (modelHubEvalTemplatesGroundTruthConfigListResponse200) & {
-  headers: Headers;
-};
-export type modelHubEvalTemplatesGroundTruthConfigListResponseError = (modelHubEvalTemplatesGroundTruthConfigListResponse400 | modelHubEvalTemplatesGroundTruthConfigListResponse403 | modelHubEvalTemplatesGroundTruthConfigListResponse404 | modelHubEvalTemplatesGroundTruthConfigListResponse409 | modelHubEvalTemplatesGroundTruthConfigListResponse500 | modelHubEvalTemplatesGroundTruthConfigListResponseDefault) & {
-  headers: Headers;
-};
-
-export type modelHubEvalTemplatesGroundTruthConfigListResponse = (modelHubEvalTemplatesGroundTruthConfigListResponseSuccess | modelHubEvalTemplatesGroundTruthConfigListResponseError)
-
-export const getModelHubEvalTemplatesGroundTruthConfigListUrl = (templateId: string,) => {
-
-
-
-
-  return `/model-hub/eval-templates/${templateId}/ground-truth-config/`
-}
-
-/**
- * Manages ground truth configuration on the eval template's config JSONField.
- * @summary GET/PUT /model-hub/eval-templates/<id>/ground-truth-config/
- */
-export const modelHubEvalTemplatesGroundTruthConfigList = async (templateId: string, options?: RequestInit): Promise<modelHubEvalTemplatesGroundTruthConfigListResponse> => {
-
-  return apiMutator<modelHubEvalTemplatesGroundTruthConfigListResponse>(getModelHubEvalTemplatesGroundTruthConfigListUrl(templateId),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-export type modelHubEvalTemplatesGroundTruthConfigUpdateResponse200 = {
-  data: GroundTruthConfigResponseApi
-  status: 200
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigUpdateResponse400 = {
-  data: ModelHubErrorResponseApi
-  status: 400
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigUpdateResponse403 = {
-  data: ModelHubErrorResponseApi
-  status: 403
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigUpdateResponse404 = {
-  data: ModelHubErrorResponseApi
-  status: 404
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigUpdateResponse409 = {
-  data: ModelHubErrorResponseApi
-  status: 409
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigUpdateResponse500 = {
-  data: ModelHubErrorResponseApi
-  status: 500
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigUpdateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
-}
-
-export type modelHubEvalTemplatesGroundTruthConfigUpdateResponseSuccess = (modelHubEvalTemplatesGroundTruthConfigUpdateResponse200) & {
-  headers: Headers;
-};
-export type modelHubEvalTemplatesGroundTruthConfigUpdateResponseError = (modelHubEvalTemplatesGroundTruthConfigUpdateResponse400 | modelHubEvalTemplatesGroundTruthConfigUpdateResponse403 | modelHubEvalTemplatesGroundTruthConfigUpdateResponse404 | modelHubEvalTemplatesGroundTruthConfigUpdateResponse409 | modelHubEvalTemplatesGroundTruthConfigUpdateResponse500 | modelHubEvalTemplatesGroundTruthConfigUpdateResponseDefault) & {
-  headers: Headers;
-};
-
-export type modelHubEvalTemplatesGroundTruthConfigUpdateResponse = (modelHubEvalTemplatesGroundTruthConfigUpdateResponseSuccess | modelHubEvalTemplatesGroundTruthConfigUpdateResponseError)
-
-export const getModelHubEvalTemplatesGroundTruthConfigUpdateUrl = (templateId: string,) => {
-
-
-
-
-  return `/model-hub/eval-templates/${templateId}/ground-truth-config/`
-}
-
-/**
- * Manages ground truth configuration on the eval template's config JSONField.
- * @summary GET/PUT /model-hub/eval-templates/<id>/ground-truth-config/
- */
-export const modelHubEvalTemplatesGroundTruthConfigUpdate = async (templateId: string,
-    groundTruthConfigRequestApi: GroundTruthConfigRequestApi, options?: RequestInit): Promise<modelHubEvalTemplatesGroundTruthConfigUpdateResponse> => {
-
-  return apiMutator<modelHubEvalTemplatesGroundTruthConfigUpdateResponse>(getModelHubEvalTemplatesGroundTruthConfigUpdateUrl(templateId),
-  {
-    ...options,
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      groundTruthConfigRequestApi,)
-  }
-);}
-
-
-
 export type modelHubEvalTemplatesGroundTruthListResponse200 = {
   data: GroundTruthListResponseApi
   status: 200
@@ -40231,211 +40085,71 @@ export const modelHubGroundTruthEmbedCreate = async (groundTruthId: string,
 
 
 
-export type modelHubGroundTruthMappingUpdateResponse200 = {
-  data: GroundTruthMappingResponseApi
+export type modelHubGroundTruthSetupUpdateResponse200 = {
+  data: GroundTruthSetupResponseApi
   status: 200
 }
 
-export type modelHubGroundTruthMappingUpdateResponse400 = {
+export type modelHubGroundTruthSetupUpdateResponse400 = {
   data: ModelHubErrorResponseApi
   status: 400
 }
 
-export type modelHubGroundTruthMappingUpdateResponse403 = {
+export type modelHubGroundTruthSetupUpdateResponse403 = {
   data: ModelHubErrorResponseApi
   status: 403
 }
 
-export type modelHubGroundTruthMappingUpdateResponse404 = {
+export type modelHubGroundTruthSetupUpdateResponse404 = {
   data: ModelHubErrorResponseApi
   status: 404
 }
 
-export type modelHubGroundTruthMappingUpdateResponse409 = {
+export type modelHubGroundTruthSetupUpdateResponse409 = {
   data: ModelHubErrorResponseApi
   status: 409
 }
 
-export type modelHubGroundTruthMappingUpdateResponse500 = {
+export type modelHubGroundTruthSetupUpdateResponse500 = {
   data: ModelHubErrorResponseApi
   status: 500
 }
 
-export type modelHubGroundTruthMappingUpdateResponseDefault = {
+export type modelHubGroundTruthSetupUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi
   status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
-export type modelHubGroundTruthMappingUpdateResponseSuccess = (modelHubGroundTruthMappingUpdateResponse200) & {
+export type modelHubGroundTruthSetupUpdateResponseSuccess = (modelHubGroundTruthSetupUpdateResponse200) & {
   headers: Headers;
 };
-export type modelHubGroundTruthMappingUpdateResponseError = (modelHubGroundTruthMappingUpdateResponse400 | modelHubGroundTruthMappingUpdateResponse403 | modelHubGroundTruthMappingUpdateResponse404 | modelHubGroundTruthMappingUpdateResponse409 | modelHubGroundTruthMappingUpdateResponse500 | modelHubGroundTruthMappingUpdateResponseDefault) & {
+export type modelHubGroundTruthSetupUpdateResponseError = (modelHubGroundTruthSetupUpdateResponse400 | modelHubGroundTruthSetupUpdateResponse403 | modelHubGroundTruthSetupUpdateResponse404 | modelHubGroundTruthSetupUpdateResponse409 | modelHubGroundTruthSetupUpdateResponse500 | modelHubGroundTruthSetupUpdateResponseDefault) & {
   headers: Headers;
 };
 
-export type modelHubGroundTruthMappingUpdateResponse = (modelHubGroundTruthMappingUpdateResponseSuccess | modelHubGroundTruthMappingUpdateResponseError)
+export type modelHubGroundTruthSetupUpdateResponse = (modelHubGroundTruthSetupUpdateResponseSuccess | modelHubGroundTruthSetupUpdateResponseError)
 
-export const getModelHubGroundTruthMappingUpdateUrl = (groundTruthId: string,) => {
-
-
+export const getModelHubGroundTruthSetupUpdateUrl = (groundTruthId: string,) => {
 
 
-  return `/model-hub/ground-truth/${groundTruthId}/mapping/`
+
+
+  return `/model-hub/ground-truth/${groundTruthId}/setup/`
 }
 
 /**
- * PUT /model-hub/ground-truth/<id>/mapping/
+ * PUT /model-hub/ground-truth/<id>/setup/
  */
-export const modelHubGroundTruthMappingUpdate = async (groundTruthId: string,
-    groundTruthMappingRequestApi: GroundTruthMappingRequestApi, options?: RequestInit): Promise<modelHubGroundTruthMappingUpdateResponse> => {
+export const modelHubGroundTruthSetupUpdate = async (groundTruthId: string,
+    groundTruthSetupRequestApi: GroundTruthSetupRequestApi, options?: RequestInit): Promise<modelHubGroundTruthSetupUpdateResponse> => {
 
-  return apiMutator<modelHubGroundTruthMappingUpdateResponse>(getModelHubGroundTruthMappingUpdateUrl(groundTruthId),
+  return apiMutator<modelHubGroundTruthSetupUpdateResponse>(getModelHubGroundTruthSetupUpdateUrl(groundTruthId),
   {
     ...options,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      groundTruthMappingRequestApi,)
-  }
-);}
-
-
-
-export type modelHubGroundTruthRoleMappingUpdateResponse200 = {
-  data: GroundTruthRoleMappingResponseApi
-  status: 200
-}
-
-export type modelHubGroundTruthRoleMappingUpdateResponse400 = {
-  data: ModelHubErrorResponseApi
-  status: 400
-}
-
-export type modelHubGroundTruthRoleMappingUpdateResponse403 = {
-  data: ModelHubErrorResponseApi
-  status: 403
-}
-
-export type modelHubGroundTruthRoleMappingUpdateResponse404 = {
-  data: ModelHubErrorResponseApi
-  status: 404
-}
-
-export type modelHubGroundTruthRoleMappingUpdateResponse409 = {
-  data: ModelHubErrorResponseApi
-  status: 409
-}
-
-export type modelHubGroundTruthRoleMappingUpdateResponse500 = {
-  data: ModelHubErrorResponseApi
-  status: 500
-}
-
-export type modelHubGroundTruthRoleMappingUpdateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
-}
-
-export type modelHubGroundTruthRoleMappingUpdateResponseSuccess = (modelHubGroundTruthRoleMappingUpdateResponse200) & {
-  headers: Headers;
-};
-export type modelHubGroundTruthRoleMappingUpdateResponseError = (modelHubGroundTruthRoleMappingUpdateResponse400 | modelHubGroundTruthRoleMappingUpdateResponse403 | modelHubGroundTruthRoleMappingUpdateResponse404 | modelHubGroundTruthRoleMappingUpdateResponse409 | modelHubGroundTruthRoleMappingUpdateResponse500 | modelHubGroundTruthRoleMappingUpdateResponseDefault) & {
-  headers: Headers;
-};
-
-export type modelHubGroundTruthRoleMappingUpdateResponse = (modelHubGroundTruthRoleMappingUpdateResponseSuccess | modelHubGroundTruthRoleMappingUpdateResponseError)
-
-export const getModelHubGroundTruthRoleMappingUpdateUrl = (groundTruthId: string,) => {
-
-
-
-
-  return `/model-hub/ground-truth/${groundTruthId}/role-mapping/`
-}
-
-/**
- * PUT /model-hub/ground-truth/<id>/role-mapping/
- */
-export const modelHubGroundTruthRoleMappingUpdate = async (groundTruthId: string,
-    groundTruthRoleMappingRequestApi: GroundTruthRoleMappingRequestApi, options?: RequestInit): Promise<modelHubGroundTruthRoleMappingUpdateResponse> => {
-
-  return apiMutator<modelHubGroundTruthRoleMappingUpdateResponse>(getModelHubGroundTruthRoleMappingUpdateUrl(groundTruthId),
-  {
-    ...options,
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      groundTruthRoleMappingRequestApi,)
-  }
-);}
-
-
-
-export type modelHubGroundTruthSearchCreateResponse200 = {
-  data: GroundTruthSearchResponseApi
-  status: 200
-}
-
-export type modelHubGroundTruthSearchCreateResponse400 = {
-  data: ModelHubErrorResponseApi
-  status: 400
-}
-
-export type modelHubGroundTruthSearchCreateResponse403 = {
-  data: ModelHubErrorResponseApi
-  status: 403
-}
-
-export type modelHubGroundTruthSearchCreateResponse404 = {
-  data: ModelHubErrorResponseApi
-  status: 404
-}
-
-export type modelHubGroundTruthSearchCreateResponse409 = {
-  data: ModelHubErrorResponseApi
-  status: 409
-}
-
-export type modelHubGroundTruthSearchCreateResponse500 = {
-  data: ModelHubErrorResponseApi
-  status: 500
-}
-
-export type modelHubGroundTruthSearchCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
-}
-
-export type modelHubGroundTruthSearchCreateResponseSuccess = (modelHubGroundTruthSearchCreateResponse200) & {
-  headers: Headers;
-};
-export type modelHubGroundTruthSearchCreateResponseError = (modelHubGroundTruthSearchCreateResponse400 | modelHubGroundTruthSearchCreateResponse403 | modelHubGroundTruthSearchCreateResponse404 | modelHubGroundTruthSearchCreateResponse409 | modelHubGroundTruthSearchCreateResponse500 | modelHubGroundTruthSearchCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type modelHubGroundTruthSearchCreateResponse = (modelHubGroundTruthSearchCreateResponseSuccess | modelHubGroundTruthSearchCreateResponseError)
-
-export const getModelHubGroundTruthSearchCreateUrl = (groundTruthId: string,) => {
-
-
-
-
-  return `/model-hub/ground-truth/${groundTruthId}/search/`
-}
-
-/**
- * POST /model-hub/ground-truth/<id>/search/ — test retrieval with a query.
- */
-export const modelHubGroundTruthSearchCreate = async (groundTruthId: string,
-    groundTruthSearchRequestApi: GroundTruthSearchRequestApi, options?: RequestInit): Promise<modelHubGroundTruthSearchCreateResponse> => {
-
-  return apiMutator<modelHubGroundTruthSearchCreateResponse>(getModelHubGroundTruthSearchCreateUrl(groundTruthId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      groundTruthSearchRequestApi,)
+      groundTruthSetupRequestApi,)
   }
 );}
 

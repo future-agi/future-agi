@@ -46,7 +46,7 @@ export const useEvalsList = (id, payload, module = "dataset", experimentId) => {
       const result = res?.data?.result;
       if (module === "workbench") {
         return {
-          evals: result.evaluationConfigs,
+          evals: result.evaluation_configs,
         };
       }
       if (payload?.search_text) {

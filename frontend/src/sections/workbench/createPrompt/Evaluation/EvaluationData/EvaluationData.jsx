@@ -181,6 +181,10 @@ const EvaluationData = () => {
     mutationFn: (payload) => {
       const { _runRowId, ...wirePayload } = payload;
       return new Promise((resolve, reject) => {
+        if (!promptStreamUrl) {
+          reject(new Error("Stream URL not ready. Please try again."));
+          return;
+        }
         // @ts-ignore
         const socket = runPromptOverSocket({
           url: promptStreamUrl,
@@ -195,6 +199,13 @@ const EvaluationData = () => {
             activeSocketsRef.current[_runRowId]?.close();
             delete activeSocketsRef.current[_runRowId];
             reject(err);
+          },
+          onClose: (event) => {
+            if (event?.code === 4003 || event?.code === 4004) {
+              reject(new Error(event?.reason || "Permission denied"));
+            } else {
+              reject(new Error("Stream connection closed unexpectedly"));
+            }
           },
         });
         if (_runRowId != null) activeSocketsRef.current[_runRowId] = socket;
@@ -240,6 +251,12 @@ const EvaluationData = () => {
     (event) => {
       try {
         const wsData = event;
+        if (wsData?.type === "error") {
+          enqueueSnackbar(wsData?.message || "Something went wrong", {
+            variant: "error",
+          });
+          return;
+        }
         if (wsData?.type !== "run_prompt") {
           return;
         }
