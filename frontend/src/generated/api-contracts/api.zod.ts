@@ -17931,8 +17931,7 @@ export const ModelHubDevelopsEditAndRunUserEvalCreateBody = zod.object({
   "experiment_id": zod.string().uuid().optional(),
   "composite_weight_overrides": zod.object({
 
-}).passthrough().optional(),
-  "pinned_version_id": zod.string().uuid().optional()
+}).passthrough().optional()
 })
 
 
@@ -21842,6 +21841,11 @@ export const ModelHubGetEvalLogsDetailsListQueryParams = zod.object({
 
 
 
+
+
+
+
+
 export const ModelHubGetEvalLogsDetailsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -21849,10 +21853,13 @@ export const ModelHubGetEvalLogsDetailsListResponse = zod.object({
   "column_config": zod.array(zod.object({
   "id": zod.string().min(1),
   "name": zod.string().min(1),
-  "data_type": zod.string().optional(),
-  "is_visible": zod.boolean().optional(),
-  "origin_type": zod.string().optional(),
-  "output_type": zod.string().optional()
+  "is_visible": zod.boolean(),
+  "status": zod.string().min(1),
+  "source_type": zod.string().min(1),
+  "is_frozen": zod.boolean().optional(),
+  "data_type": zod.string().min(1).optional(),
+  "origin_type": zod.string().min(1).optional(),
+  "output_type": zod.string().min(1).optional()
 })),
   "metadata": zod.object({
   "total_rows": zod.number(),

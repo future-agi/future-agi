@@ -231,8 +231,18 @@ def process_single_evaluation(user_eval_metric):
         if _ver:
             _source_configs["version_id"] = str(_ver.id)
             _source_configs["version_number"] = _ver.version_number
-    except Exception:
-        logger.warning("version_tracking_failed", eval_id=str(eval_id), exc_info=True)
+    except Exception as _ver_err:
+        logger.warning(
+            "version_tracking_failed",
+            path="dataset_eval",
+            error=str(_ver_err),
+            eval_id=str(eval_id),
+            metric_id=str(getattr(user_eval_metric, "id", None)),
+            template_id=str(getattr(user_eval_metric.template, "id", None))
+            if getattr(user_eval_metric, "template_id", None)
+            else None,
+            exc_info=True,
+        )
 
     runner = EvaluationRunner(
         user_eval_metric_id=user_eval_metric.id,

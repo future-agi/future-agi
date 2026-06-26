@@ -73477,12 +73477,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Composite weight overrides",
           "type": "object",
           "x-nullable": true
-        },
-        "pinned_version_id": {
-          "title": "Pinned version id",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
         }
       }
     },
@@ -92466,7 +92460,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "EvalColumnConfigItem": {
       "required": [
         "id",
-        "name"
+        "name",
+        "is_visible",
+        "status",
+        "source_type"
       ],
       "type": "object",
       "properties": {
@@ -92480,21 +92477,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "minLength": 1
         },
-        "data_type": {
-          "title": "Data type",
-          "type": "string"
-        },
         "is_visible": {
           "title": "Is visible",
           "type": "boolean"
         },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "minLength": 1
+        },
+        "source_type": {
+          "title": "Source type",
+          "type": "string",
+          "minLength": 1
+        },
+        "is_frozen": {
+          "title": "Is frozen",
+          "type": "boolean",
+          "x-nullable": true
+        },
+        "data_type": {
+          "title": "Data type",
+          "type": "string",
+          "minLength": 1
+        },
         "origin_type": {
           "title": "Origin type",
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "output_type": {
           "title": "Output type",
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       }
     },

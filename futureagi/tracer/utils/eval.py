@@ -1597,7 +1597,15 @@ def _execute_evaluation(
             source_config["version_id"] = str(_ver.id)
             source_config["version_number"] = _ver.version_number
     except Exception as _ver_err:
-        logger.warning("version_tracking_failed", error=str(_ver_err), exc_info=True)
+        logger.warning(
+            "version_tracking_failed",
+            path="span_eval",
+            error=str(_ver_err),
+            custom_eval_config_id=str(getattr(custom_eval_config, "id", None)),
+            template_id=str(getattr(eval_model, "id", None)),
+            span_id=str(getattr(observation_span, "id", None)),
+            exc_info=True,
+        )
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
     workspace = observation_span.project.workspace
@@ -2954,7 +2962,15 @@ def _execute_evaluation_for_trace(
             source_config["version_id"] = str(_ver.id)
             source_config["version_number"] = _ver.version_number
     except Exception as _ver_err:
-        logger.warning("version_tracking_failed", error=str(_ver_err), exc_info=True)
+        logger.warning(
+            "version_tracking_failed",
+            path="trace_eval",
+            error=str(_ver_err),
+            custom_eval_config_id=str(getattr(custom_eval_config, "id", None)),
+            template_id=str(getattr(eval_template, "id", None)),
+            trace_id=str(getattr(trace, "id", None)),
+            exc_info=True,
+        )
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
     api_call_log_row = None
@@ -3225,7 +3241,15 @@ def _execute_evaluation_for_session(
             source_config["version_id"] = str(_ver.id)
             source_config["version_number"] = _ver.version_number
     except Exception as _ver_err:
-        logger.warning("version_tracking_failed", error=str(_ver_err), exc_info=True)
+        logger.warning(
+            "version_tracking_failed",
+            path="session_eval",
+            error=str(_ver_err),
+            custom_eval_config_id=str(getattr(custom_eval_config, "id", None)),
+            template_id=str(getattr(eval_template, "id", None)),
+            trace_session_id=str(getattr(trace_session, "id", None)),
+            exc_info=True,
+        )
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
     api_call_log_row = None

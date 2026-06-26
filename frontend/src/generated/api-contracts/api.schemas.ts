@@ -8739,7 +8739,6 @@ export interface UserEvalUpdateRequestApi {
   save_as_template?: boolean;
   experiment_id?: string;
   composite_weight_overrides?: UserEvalUpdateRequestApiCompositeWeightOverrides;
-  pinned_version_id?: string;
 }
 
 export type DatasetBehaviorRequestApiColumnConfig = { [key: string]: unknown };
@@ -11167,9 +11166,17 @@ export interface EvalColumnConfigItemApi {
   id: string;
   /** @minLength 1 */
   name: string;
+  is_visible: boolean;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  source_type: string;
+  is_frozen?: boolean;
+  /** @minLength 1 */
   data_type?: string;
-  is_visible?: boolean;
+  /** @minLength 1 */
   origin_type?: string;
+  /** @minLength 1 */
   output_type?: string;
 }
 

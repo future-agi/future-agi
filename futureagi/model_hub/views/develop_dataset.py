@@ -11820,8 +11820,18 @@ def run_evaluation_task(evaluation_data):
                         if _ver:
                             runner_source_configs.setdefault("version_id", str(_ver.id))
                             runner_source_configs.setdefault("version_number", _ver.version_number)
-                    except Exception:
-                        logger.warning("version_tracking_failed", metric_id=str(metric_id), exc_info=True)
+                    except Exception as _ver_err:
+                        logger.warning(
+                            "version_tracking_failed",
+                            path="dataset_batch_eval",
+                            error=str(_ver_err),
+                            metric_id=str(metric_id),
+                            template_id=str(getattr(metric.template, "id", None))
+                            if getattr(metric, "template_id", None)
+                            else None,
+                            dataset_id=str(getattr(metric, "dataset_id", None)),
+                            exc_info=True,
+                        )
                     runner_args["source_configs"] = runner_source_configs
 
                     evaluation_runner = EvaluationRunner(

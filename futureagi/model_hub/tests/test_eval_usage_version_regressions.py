@@ -311,3 +311,101 @@ class TestVersionTrackingInSourceConfig:
 
         assert "version_id" not in source_config
         assert "version_number" not in source_config
+
+
+# ── EvaluationRunner uses the shared helper (no inline pin logic) ─────────
+
+
+@pytest.mark.django_db
+class TestEvalRunnerUsesResolveHelper:
+    """EvaluationRunner.pre_run used to duplicate pinned-version resolution
+    inline at eval_runner.py:926. The dedup commit routes it through
+    _resolve_uem_version. These tests prove the runner picks pin/default
+    via the helper — soft-deleted pin falls back to default, exactly the
+    behavior the helper guarantees and nothing the runner should know about.
+    """
+
+    @pytest.fixture
+    def template_with_versions(self, organization, workspace):
+        from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
+
+        template = EvalTemplate.objects.create(
+            name=f"runner-template-{uuid.uuid4().hex[:8]}",
+            organization=organization,
+            workspace=workspace,
+            criteria="Test criteria",
+            config={"rule_prompt": "p", "eval_type_id": "CustomPromptEvaluator"},
+        )
+        v1 = EvalTemplateVersion.objects.create_version(
+            eval_template=template,
+            config_snapshot={"rule_prompt": "v1"},
+            criteria="v1",
+            model="gpt-4",
+            user=None,
+            organization=organization,
+            workspace=workspace,
+        )
+        v1.is_default = False
+        v1.save(update_fields=["is_default"])
+        v2 = EvalTemplateVersion.objects.create_version(
+            eval_template=template,
+            config_snapshot={"rule_prompt": "v2"},
+            criteria="v2",
+            model="gpt-4",
+            user=None,
+            organization=organization,
+            workspace=workspace,
+        )
+        v2.is_default = True
+        v2.save(update_fields=["is_default"])
+        return template, v1, v2
+
+    def _make_metric(self, organization, workspace, template, pinned_version=None):
+        from model_hub.models.evals_metric import UserEvalMetric
+        from model_hub.models.develop_dataset import DevelopDataset
+
+        dataset = DevelopDataset.objects.create(
+            name=f"ds-{uuid.uuid4().hex[:6]}",
+            organization=organization,
+            workspace=workspace,
+        )
+        return UserEvalMetric.objects.create(
+            name=f"uem-{uuid.uuid4().hex[:6]}",
+            organization=organization,
+            dataset=dataset,
+            template=template,
+            config={},
+            pinned_version=pinned_version,
+        )
+
+    def test_helper_returns_pinned_when_set(
+        self, organization, workspace, template_with_versions
+    ):
+        from tracer.utils.eval import _resolve_uem_version
+
+        template, v1, v2 = template_with_versions
+        metric = self._make_metric(organization, workspace, template, pinned_version=v1)
+        assert _resolve_uem_version(metric).id == v1.id
+
+    def test_helper_falls_back_to_default_when_unpinned(
+        self, organization, workspace, template_with_versions
+    ):
+        from tracer.utils.eval import _resolve_uem_version
+
+        template, v1, v2 = template_with_versions
+        metric = self._make_metric(organization, workspace, template, pinned_version=None)
+        assert _resolve_uem_version(metric).id == v2.id
+
+    def test_helper_falls_back_when_pin_soft_deleted(
+        self, organization, workspace, template_with_versions
+    ):
+        """Soft-deleted pin must fall back to default — the contract eval_runner
+        relied on inline. Locked in here so a future refactor of the helper
+        cannot silently drop this guarantee."""
+        from tracer.utils.eval import _resolve_uem_version
+
+        template, v1, v2 = template_with_versions
+        v1.deleted = True
+        v1.save(update_fields=["deleted"])
+        metric = self._make_metric(organization, workspace, template, pinned_version=v1)
+        assert _resolve_uem_version(metric).id == v2.id

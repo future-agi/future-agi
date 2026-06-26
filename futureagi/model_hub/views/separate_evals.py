@@ -50,9 +50,11 @@ from model_hub.serializers.contracts import (
     DuplicateEvalTemplateResponseSerializer,
     EvalApiLogRowResponseSerializer,
     EvalApiLogTableQuerySerializer,
+    EvalApiLogTableResponseResultSerializer,
     EvalApiLogTableResponseSerializer,
     EvalCodeSnippetResponseSerializer,
     EvalExecutionResponseSerializer,
+    EvalFeedbackListResponseResultSerializer,
     EvalFeedbackListResponseSerializer,
     EvalMetricQuerySerializer,
     EvalMetricRequestSerializer,
@@ -75,6 +77,7 @@ from model_hub.serializers.contracts import (
     EvalTemplateVersionResponseSerializer,
     EvalTemplateVersionRestoreResponseSerializer,
     EvalUsageQuerySerializer,
+    EvalUsageStatsResponseResultSerializer,
     EvalUsageStatsResponseSerializer,
     GroundTruthConfigRequestSerializer,
     GroundTruthConfigResponseSerializer,
@@ -109,6 +112,7 @@ from model_hub.serializers.eval_runner import (
     UpdateColumnConfigSerializer,
     UpdateEvalTemplateSerializer,
 )
+from model_hub.utils.contract_boundary import validate_response_contract
 from model_hub.utils.eval_playground_call_context import (
     build_eval_playground_scenario_context,
 )
@@ -430,7 +434,16 @@ class GetAPICallLogDetailsView(APIView):
     def get(self, request, *args, **kwargs):
         try:
             if APICallLog is None:
-                return self._gm.success_response([])
+                # OSS empty shape MUST match EvalApiLogTableResponseResultSerializer
+                # (table=[], column_config=[]) — returning `[]` here broke the
+                # contract and the FE consumer narrowed to `result.table || []`.
+                return self._gm.success_response(
+                    validate_response_contract(
+                        EvalApiLogTableResponseResultSerializer,
+                        {"table": [], "column_config": []},
+                        view_name="GetAPICallLogDetailsView",
+                    )
+                )
             query = request.validated_query_data
             eval_template_id = str(query["eval_template_id"])
             page_size = query["page_size"]
@@ -474,7 +487,11 @@ class GetAPICallLogDetailsView(APIView):
 
             if not logs.exists():
                 return self._gm.success_response(
-                    {"table": [], "column_config": column_data}
+                    validate_response_contract(
+                        EvalApiLogTableResponseResultSerializer,
+                        {"table": [], "column_config": column_data},
+                        view_name="GetAPICallLogDetailsView",
+                    )
                 )
 
             key_map = {col.get("id"): col.get("name") for col in column_data}
@@ -545,7 +562,13 @@ class GetAPICallLogDetailsView(APIView):
             metadata["total_pages"] = (total_rows + page_size - 1) // page_size
             table_data["metadata"] = metadata
 
-            return self._gm.success_response(table_data)
+            return self._gm.success_response(
+                validate_response_contract(
+                    EvalApiLogTableResponseResultSerializer,
+                    table_data,
+                    view_name="GetAPICallLogDetailsView",
+                )
+            )
 
         except Exception as e:
             logger.exception(f"Error in GetAPICallLogs: {str(e)}")
@@ -5075,14 +5098,26 @@ class EvalUsageStatsView(APIView):
         try:
             if APICallLog is None:
                 # OSS: return correct empty shape so frontend doesn't crash
-                return self._gm.success_response({
-                    "template_id": str(template_id),
-                    "is_composite": False,
-                    "stats": {"total_runs": 0, "runs_period": 0, "success_count": 0, "error_count": 0, "pass_rate": 0.0},
-                    "chart": [],
-                    "table": [],
-                    "logs": {"total": 0, "page": 0, "page_size": 25},
-                })
+                return self._gm.success_response(
+                    validate_response_contract(
+                        EvalUsageStatsResponseResultSerializer,
+                        {
+                            "template_id": str(template_id),
+                            "is_composite": False,
+                            "stats": {
+                                "total_runs": 0,
+                                "runs_period": 0,
+                                "success_count": 0,
+                                "error_count": 0,
+                                "pass_rate": 0.0,
+                            },
+                            "chart": [],
+                            "table": [],
+                            "logs": {"total": 0, "page": 0, "page_size": 25},
+                        },
+                        view_name="EvalUsageStatsView",
+                    )
+                )
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
@@ -5523,7 +5558,13 @@ class EvalUsageStatsView(APIView):
                     "page_size": page_size,
                 },
             }
-            return self._gm.success_response(response)
+            return self._gm.success_response(
+                validate_response_contract(
+                    EvalUsageStatsResponseResultSerializer,
+                    response,
+                    view_name="EvalUsageStatsView",
+                )
+            )
 
         except Exception as e:
             logger.error(
@@ -5559,13 +5600,19 @@ class EvalFeedbackListView(APIView):
             try:
                 if APICallLog is None:
                     # OSS: return correct empty shape so frontend doesn't crash
-                    return self._gm.success_response({
-                        "template_id": str(template_id),
-                        "items": [],
-                        "total": 0,
-                        "page": 0,
-                        "page_size": 25,
-                    })
+                    return self._gm.success_response(
+                        validate_response_contract(
+                            EvalFeedbackListResponseResultSerializer,
+                            {
+                                "template_id": str(template_id),
+                                "items": [],
+                                "total": 0,
+                                "page": 0,
+                                "page_size": 25,
+                            },
+                            view_name="EvalFeedbackListView",
+                        )
+                    )
                 _get_accessible_eval_template(template_id, organization)
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Eval template not found.")
@@ -5633,13 +5680,17 @@ class EvalFeedbackListView(APIView):
                 )
 
             return self._gm.success_response(
-                {
-                    "template_id": str(template_id),
-                    "items": items,
-                    "total": total,
-                    "page": page,
-                    "page_size": page_size,
-                }
+                validate_response_contract(
+                    EvalFeedbackListResponseResultSerializer,
+                    {
+                        "template_id": str(template_id),
+                        "items": items,
+                        "total": total,
+                        "page": page,
+                        "page_size": page_size,
+                    },
+                    view_name="EvalFeedbackListView",
+                )
             )
 
         except Exception as e:

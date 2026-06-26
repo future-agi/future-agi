@@ -268,3 +268,185 @@ class TestWorkspaceIsolation:
             {"page": 0, "page_size": 25, "period": "30d"},
         )
         assert resp.json()["result"]["logs"]["total"] == 1
+
+
+# ── Boundary validation helper ────────────────────────────────────────────────
+
+class TestValidateResponseContract:
+    """validate_response_contract must raise on drift in test mode so CI
+    catches contract regressions instead of letting them ship silently."""
+
+    def test_drift_raises_in_test_mode(self):
+        from model_hub.utils.contract_boundary import validate_response_contract
+        from model_hub.serializers.contracts import EvalUsageStatsResponseResultSerializer
+
+        # `stats` is a required nested serializer — a missing key must surface
+        # as an AssertionError under TESTING/DEBUG.
+        broken = {
+            "template_id": str(uuid.uuid4()),
+            "is_composite": False,
+            # stats: MISSING
+            "chart": [],
+            "table": [],
+            "logs": {"total": 0, "page": 0, "page_size": 25},
+        }
+        with pytest.raises(AssertionError, match="contract drift"):
+            validate_response_contract(
+                EvalUsageStatsResponseResultSerializer,
+                broken,
+                view_name="EvalUsageStatsView",
+            )
+
+    def test_well_shaped_dict_passes(self):
+        from model_hub.utils.contract_boundary import validate_response_contract
+        from model_hub.serializers.contracts import EvalUsageStatsResponseResultSerializer
+
+        good = {
+            "template_id": str(uuid.uuid4()),
+            "is_composite": False,
+            "stats": {
+                "total_runs": 0, "runs_period": 0, "success_count": 0,
+                "error_count": 0, "pass_rate": 0.0,
+            },
+            "chart": [],
+            "table": [],
+            "logs": {"total": 0, "page": 0, "page_size": 25},
+        }
+        # Returns the dict unchanged, no exception.
+        result = validate_response_contract(
+            EvalUsageStatsResponseResultSerializer,
+            good,
+            view_name="EvalUsageStatsView",
+        )
+        assert result is good
+
+    def test_drift_logs_in_prod(self, settings, caplog):
+        """In prod (DEBUG=False, TESTING=False) drift must log, not raise.
+        Fail-open: users still see their data even if the contract drifts."""
+        from model_hub.utils.contract_boundary import validate_response_contract
+        from model_hub.serializers.contracts import EvalUsageStatsResponseResultSerializer
+
+        settings.DEBUG = False
+        settings.TESTING = False
+        broken = {"template_id": str(uuid.uuid4())}  # missing everything else
+
+        # Must not raise.
+        result = validate_response_contract(
+            EvalUsageStatsResponseResultSerializer,
+            broken,
+            view_name="EvalUsageStatsView",
+        )
+        assert result is broken  # fail-open returns unchanged
+
+
+# ── EvalApiLogTable + column_config contract ─────────────────────────────────
+
+@pytest.mark.django_db
+class TestEvalApiLogTableContract:
+    """The EvalApiLogTable response must conform to its serializer including
+    the typed column_config shape (id/name/is_visible/status/source_type)."""
+
+    def test_empty_response_validates(self, auth_client, user_eval_template):
+        from model_hub.serializers.contracts import EvalApiLogTableResponseSerializer
+
+        resp = auth_client.get(
+            "/model-hub/get_eval_api_call_logs/",
+            {
+                "eval_template_id": str(user_eval_template.id),
+                "page_size": 25,
+                "current_page_index": 0,
+                "source": "feedback",
+                "search": "",
+                "filters": "[]",
+                "sort": "[]",
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        s = EvalApiLogTableResponseSerializer(data=body)
+        assert s.is_valid(), f"Empty-shape response failed contract: {s.errors}"
+
+    def test_column_config_items_have_typed_shape(
+        self, auth_client, user_eval_template
+    ):
+        """Each column_config entry must declare the stable id/name/is_visible
+        /status/source_type fields — Nikhil specifically asked for these to be
+        typed (not bare JSONField) so consumers get a real contract."""
+        resp = auth_client.get(
+            "/model-hub/get_eval_api_call_logs/",
+            {
+                "eval_template_id": str(user_eval_template.id),
+                "page_size": 25,
+                "current_page_index": 0,
+                "source": "feedback",
+                "search": "",
+                "filters": "[]",
+                "sort": "[]",
+            },
+        )
+        result = resp.json()["result"]
+        assert isinstance(result["column_config"], list)
+        for col in result["column_config"]:
+            assert "id" in col and isinstance(col["id"], str)
+            assert "name" in col and isinstance(col["name"], str)
+            assert "is_visible" in col and isinstance(col["is_visible"], bool)
+            assert "status" in col and isinstance(col["status"], str)
+            assert "source_type" in col and isinstance(col["source_type"], str)
+
+
+# ── Date-range symmetry validation ───────────────────────────────────────────
+
+@pytest.mark.django_db
+class TestDateRangeSymmetry:
+    """start_date and end_date must be sent together — half a range silently
+    falling through to `period` is exactly the kind of bug Nikhil flags."""
+
+    def test_only_start_date_rejected(self, auth_client, user_eval_template):
+        resp = auth_client.get(
+            f"/model-hub/eval-templates/{user_eval_template.id}/usage/",
+            {
+                "page": 0,
+                "page_size": 25,
+                "period": "30d",
+                "start_date": "2026-01-01T00:00:00Z",
+            },
+        )
+        assert resp.status_code == 400
+        assert "together" in resp.json().get("detail", str(resp.json())).lower() or \
+               resp.status_code == 400
+
+    def test_only_end_date_rejected(self, auth_client, user_eval_template):
+        resp = auth_client.get(
+            f"/model-hub/eval-templates/{user_eval_template.id}/usage/",
+            {
+                "page": 0,
+                "page_size": 25,
+                "period": "30d",
+                "end_date": "2026-01-01T00:00:00Z",
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_start_after_end_rejected(self, auth_client, user_eval_template):
+        resp = auth_client.get(
+            f"/model-hub/eval-templates/{user_eval_template.id}/usage/",
+            {
+                "page": 0,
+                "page_size": 25,
+                "start_date": "2026-12-31T00:00:00Z",
+                "end_date": "2026-01-01T00:00:00Z",
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_both_dates_accepted(self, auth_client, user_eval_template):
+        resp = auth_client.get(
+            f"/model-hub/eval-templates/{user_eval_template.id}/usage/",
+            {
+                "page": 0,
+                "page_size": 25,
+                "start_date": "2026-01-01T00:00:00Z",
+                "end_date": "2026-12-31T00:00:00Z",
+            },
+        )
+        assert resp.status_code == 200

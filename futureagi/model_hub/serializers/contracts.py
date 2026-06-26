@@ -506,7 +506,10 @@ class PromptMetricsMetadataSerializer(serializers.Serializer):
 class PromptMetricsResultSerializer(serializers.Serializer):
     prompt_template_id = serializers.UUIDField(required=False)
     prompt_template_name = serializers.CharField(required=False)
-    table = serializers.ListField(child=serializers.JSONField())
+    # Dynamic per-prompt columns — AnyValueDictField types each row as
+    # record<string, JSON> so orval emits Record<string, unknown> instead
+    # of narrowing scalar cells (row_id string, composite bool) to object.
+    table = serializers.ListField(child=AnyValueDictField())
     config = serializers.JSONField()
     metadata = PromptMetricsMetadataSerializer()
 
@@ -1707,6 +1710,22 @@ class EvalUsageQuerySerializer(serializers.Serializer):
     start_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
     end_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
 
+    def validate(self, attrs):
+        # Reject asymmetric date ranges. If the caller sends start without end
+        # (or vice versa) the view used to silently fall back to `period`,
+        # which is the difference between "user picked Yesterday" and "user got
+        # 30d of data." Force the contract — both or neither.
+        start, end = attrs.get("start_date"), attrs.get("end_date")
+        if (start is None) != (end is None):
+            raise serializers.ValidationError(
+                "start_date and end_date must be provided together."
+            )
+        if start and end and start > end:
+            raise serializers.ValidationError(
+                "start_date must be on or before end_date."
+            )
+        return attrs
+
 
 class EvalUsageStatsSerializer(serializers.Serializer):
     total_runs = serializers.IntegerField()
@@ -1843,9 +1862,31 @@ class EvalApiLogTableMetadataSerializer(serializers.Serializer):
     total_pages = serializers.IntegerField()
 
 
+class EvalColumnConfigItemSerializer(serializers.Serializer):
+    """Stable shape for column_config entries returned by eval log table endpoints.
+
+    Built by ``create_column_config_playground`` in views/separate_evals.py.
+    Required fields are always present in the builder; optional fields appear
+    only on certain column types (data/eval/datetime), so they declare
+    ``required=False``. Keep the builder and this serializer in sync.
+    """
+    id = serializers.CharField()
+    name = serializers.CharField()
+    is_visible = serializers.BooleanField()
+    status = serializers.CharField()
+    source_type = serializers.CharField()
+    is_frozen = serializers.BooleanField(required=False, allow_null=True)
+    data_type = serializers.CharField(required=False)
+    origin_type = serializers.CharField(required=False)
+    output_type = serializers.CharField(required=False)
+
+
 class EvalApiLogTableResponseResultSerializer(serializers.Serializer):
-    table = serializers.ListField(child=serializers.JSONField())
-    column_config = serializers.ListField(child=serializers.JSONField())
+    # Same dynamic-columns shape as EvalUsageStatsResponseResultSerializer.table —
+    # cells include strings (log_id), booleans (composite), numbers, and nested
+    # objects per input_var_X column. AnyValueDictField emits Record<string,JSON>.
+    table = serializers.ListField(child=AnyValueDictField())
+    column_config = EvalColumnConfigItemSerializer(many=True)
     metadata = EvalApiLogTableMetadataSerializer(required=False)
 
 

@@ -923,11 +923,15 @@ class EvaluationRunner:
                 self.dataset.workspace.id if self.dataset.workspace else None
             )
 
-        if self.version_number is None and self.user_eval_metric.pinned_version_id:
-            pv = self.user_eval_metric.pinned_version
-            # Guard against soft-deleted pins — fall back to default (same as _resolve_uem_version)
-            if pv and not getattr(pv, "deleted", False):
-                self.version_number = pv.version_number
+        if self.version_number is None:
+            # Single source of truth — same helper user_evaluation.py,
+            # develop_dataset.py and the tracer paths use. Soft-deleted-pin
+            # fallback to default lives there; nothing here needs to know.
+            from tracer.utils.eval import _resolve_uem_version
+
+            resolved = _resolve_uem_version(self.user_eval_metric)
+            if resolved is not None:
+                self.version_number = resolved.version_number
 
         self.user_eval_metric.status = StatusType.RUNNING.value
         self.user_eval_metric.save(update_fields=["status"])
