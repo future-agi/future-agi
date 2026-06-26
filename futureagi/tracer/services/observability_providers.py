@@ -15,6 +15,7 @@ logger = structlog.get_logger(__name__)
 
 VAPI_PAGE_LIMIT = 100
 VAPI_MAX_PAGES = 10
+OBSERVABILITY_VERIFY_TIMEOUT_SECONDS = 30
 
 
 class ObservabilityService:
@@ -36,7 +37,11 @@ class ObservabilityService:
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
         headers = {"Authorization": f"Bearer {api_key}"}
-        response = requests.get(api_endpoint, headers=headers)
+        response = requests.get(
+            api_endpoint,
+            headers=headers,
+            timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+        )
         return response.status_code
 
     @staticmethod
@@ -59,7 +64,7 @@ class ObservabilityService:
         response = requests.get(
             endpoint,
             headers=headers,
-            timeout=30,
+            timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
         )
         return response.status_code
 
@@ -573,15 +578,19 @@ class ObservabilityService:
                 }
             )
             if transcript.get("role") in ["user", "agent"]:
+                if started_at and seconds_from_start is not None:
+                    abs_time = (
+                        datetime.fromisoformat(started_at)
+                        + timedelta(seconds=seconds_from_start)
+                    ).isoformat()
+                else:
+                    abs_time = None
                 processed_transcripts.append(
                     {
                         "id": str(uuid.uuid4()),
                         "role": role,
                         "content": transcript.get("content"),
-                        "time": (
-                            datetime.fromisoformat(started_at)
-                            + timedelta(seconds=seconds_from_start)
-                        ).isoformat(),
+                        "time": abs_time,
                         "duration": duration,
                     }
                 )

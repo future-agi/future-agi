@@ -15,10 +15,6 @@ from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import OrgApiKey, User
 from accounts.serializers.user import UserSignupSerializer
-from accounts.user_onboard import (
-    create_demo_traces_and_spans,
-    upload_demo_dataset,
-)
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
     MixpanelEvents,
@@ -474,12 +470,6 @@ def _run_post_registration(user_id, generated_password):
         if os.getenv("ENV_TYPE") not in ["local"]:
             updated, err = send_hubspot_notification(user)
             send_slack_notification(user, updated=updated, err=err)
-
-        org = get_user_organization(user)
-        if org:
-            upload_demo_dataset(org.id, str(user.id))
-            # create_demo_prompt_template(str(org.id), str(user.id))
-            create_demo_traces_and_spans(str(org.id))
 
 
 def existing_member_access_will_change(existing_user, organization, org_level, workspace_access):

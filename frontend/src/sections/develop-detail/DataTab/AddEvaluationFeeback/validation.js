@@ -18,10 +18,11 @@ export const AddFeedbackValidationSchema = z.object({
 });
 
 export const feedbackSubmittedValidationSchema = z.object({
-  value: z.string({
-    required_error: "Value is required",
-  })
-  .min(1, {
-    message: "Value is required",
-  }),
+  value: z
+    .string({
+      required_error: "Value is required",
+    })
+    .min(1, {
+      message: "Value is required",
+    }),
 });

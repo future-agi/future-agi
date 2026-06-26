@@ -38,14 +38,12 @@ export default function WorkspaceGeneral() {
 
   useEffect(() => {
     if (workspace) {
-      setDisplayName(
-        workspace.display_name || workspace.displayName || workspace.name || "",
-      );
+      setDisplayName(workspace.display_name || workspace.name || "");
     }
   }, [workspace]);
 
   // Check if user is WS Admin for this workspace
-  const wsLevel = workspace?.user_ws_level ?? workspace?.userWsLevel ?? 0;
+  const wsLevel = workspace?.user_ws_level ?? 0;
   const isWsAdmin = isOrgAdminPlus || wsLevel >= 8;
   const canEdit = isWsAdmin;
 
@@ -86,8 +84,7 @@ export default function WorkspaceGeneral() {
 
   const hasChanges =
     workspace &&
-    displayName !==
-      (workspace.display_name || workspace.displayName || workspace.name || "");
+    displayName !== (workspace.display_name || workspace.name || "");
 
   if (isLoading) {
     return (

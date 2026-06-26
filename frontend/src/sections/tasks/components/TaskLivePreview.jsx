@@ -44,100 +44,63 @@ import {
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
 import { ID_ONLY_FIELDS } from "src/sections/projects/LLMTracing/idFields";
-import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
 import {
   ANNOTATION_COLUMN_IDS,
   FIELD_CATEGORY_TO_COL_TYPE,
+  RANGE_OPS,
+  LIST_OPS,
+  NO_VALUE_OPS,
 } from "src/sections/common/EvalsTasks/common";
 
-// ───────────────────────────────────────────────────────────────
-// Helpers (ported from TracingTestMode)
-// ───────────────────────────────────────────────────────────────
-const RANGE_OPS = new Set(["between", "not_between"]);
-const LIST_OPS = new Set(["in", "not_in"]);
-const NO_VALUE_OPS = new Set(NULL_OPERATORS);
-
-// Merge multiple scalar rows for the same (field, op) into one wire entry
-// so the BE `in` validator receives a single array clause.
-function mergeRowsByFieldAndOp(rows) {
-  const merged = new Map();
-  rows.forEach((f) => {
-    const isAttribute = f.property === "attributes";
-    const columnId = isAttribute ? f.propertyId : f.property;
-    if (!columnId) return;
-    const op = f?.filterConfig?.filterOp || "equals";
-    const filterType = f?.filterConfig?.filterType || "text";
-    const key = `${columnId}|${op}|${f.fieldCategory || "system"}|${filterType}`;
-    if (!merged.has(key)) {
-      merged.set(key, {
-        columnId,
-        fieldCategory: f.fieldCategory,
-        apiColType: f.apiColType,
-        op,
-        filterType,
-        isAttribute,
-        value: undefined,
-        values: [],
-      });
-    }
-    const entry = merged.get(key);
-    const v = f?.filterConfig?.filterValue;
-    if (RANGE_OPS.has(op)) {
-      // Range rows already carry the [low, high] array.
-      entry.value = Array.isArray(v) ? v : entry.value;
-    } else if (LIST_OPS.has(op)) {
-      const arr = Array.isArray(v) ? v : v != null && v !== "" ? [v] : [];
-      entry.values.push(...arr);
-    } else if (v !== undefined && v !== null && v !== "") {
-      entry.values.push(v);
-    }
-  });
-  return Array.from(merged.values());
-}
-
+// One form row → one wire entry. No cross-row merging: it would collapse
+// "not_contains A AND not_contains B" into "in [A, B]" (inverting intent) and
+// is unsupported for numbers (the BE has no number `in`). OR is expressed
+// within a single multi-value `in`/`not_in` row.
 // eslint-disable-next-line react-refresh/only-export-components
 export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
-  const userFilters = mergeRowsByFieldAndOp(oldFormatFilters || []).map(
-    (entry) => {
-      const isIdColumn = ID_ONLY_FIELDS.has(entry.columnId);
+  const userFilters = (oldFormatFilters || [])
+    .map((f) => {
+      const isAttribute = f.property === "attributes";
+      const columnId = isAttribute ? f.propertyId : f.property;
+      if (!columnId) return null;
+      const op = f?.filterConfig?.filterOp || "equals";
+      const filterType = f?.filterConfig?.filterType || "text";
+      const v = f?.filterConfig?.filterValue;
+      const isIdColumn = ID_ONLY_FIELDS.has(columnId);
       // apiColType is source of truth; fieldCategory/isAttribute are UI hints.
-      const colType = ANNOTATION_COLUMN_IDS.has(entry.columnId)
+      const colType = ANNOTATION_COLUMN_IDS.has(columnId)
         ? "ANNOTATION"
-        : entry.apiColType ||
-          FIELD_CATEGORY_TO_COL_TYPE[entry.fieldCategory] ||
-          (entry.isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
+        : f.apiColType ||
+          FIELD_CATEGORY_TO_COL_TYPE[f.fieldCategory] ||
+          (isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
       let filterValue;
-      if (NO_VALUE_OPS.has(entry.op)) {
+      if (NO_VALUE_OPS.has(op)) {
         filterValue = "";
-      } else if (RANGE_OPS.has(entry.op)) {
-        filterValue = entry.value;
-      } else if (LIST_OPS.has(entry.op)) {
-        filterValue = entry.values;
-      } else if (entry.values.length > 1) {
-        // Multiple scalar rows under a single-value op — collapse to `in`.
-        filterValue = entry.values;
-      } else if (entry.values.length === 1) {
-        filterValue = entry.values[0];
-      } else {
-        filterValue = undefined;
+      } else if (RANGE_OPS.has(op)) {
+        if (Array.isArray(v) && v.length > 0) filterValue = v;
+      } else if (LIST_OPS.has(op)) {
+        const arr = Array.isArray(v) ? v : v != null && v !== "" ? [v] : [];
+        if (arr.length > 0) filterValue = arr;
+      } else if (v !== undefined && v !== null && v !== "") {
+        filterValue = v;
       }
-      const filterOp =
-        !RANGE_OPS.has(entry.op) &&
-        !LIST_OPS.has(entry.op) &&
-        Array.isArray(filterValue)
-          ? "in"
-          : entry.op;
       return {
-        column_id: entry.columnId,
+        column_id: columnId,
         filter_config: {
-          filter_type: entry.filterType,
-          filter_op: filterOp,
+          filter_type: filterType,
+          filter_op: op,
           ...(filterValue !== undefined && { filter_value: filterValue }),
           ...(!isIdColumn && { col_type: colType }),
         },
       };
-    },
-  );
+    })
+    // Drop value-less in/not_in (legacy/hand-edited)
+    .filter(
+      (entry) =>
+        entry &&
+        (!LIST_OPS.has(entry.filter_config.filter_op) ||
+          entry.filter_config.filter_value !== undefined),
+    );
 
   if (startDate && endDate) {
     userFilters.push({
@@ -522,7 +485,68 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     // so the local walk is skipped. Other row types walk once and reuse
     // the same lookup across every eval on this row.
     const isSession = rowType === "sessions";
-    const flatValueMap = isSession ? {} : buildFlatValueMap(spanDetail);
+
+    // Build a flat fieldName→value lookup by walking spanDetail,
+    // soft-flattening span_attributes keys (same logic as the
+    // fieldNames dropdown in TracingTestMode). This ensures mapped
+    // fields like "input.value" (stripped from "span_attributes.input.value")
+    // resolve correctly even when a top-level "input" shadows the path.
+    // Limits match the dropdown walker in TracingTestMode so every path
+    // offered to the user during mapping also resolves at test time.
+    const ARRAY_PEEK = 500;
+    const DICT_LIMIT = 5000;
+    const valueMap = {};
+    const walkValues = (node, prefix) => {
+      if (Array.isArray(node)) {
+        node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
+          const path = prefix ? `${prefix}.${idx}` : String(idx);
+          valueMap[path] = item;
+          if (item && typeof item === "object") {
+            walkValues(item, path);
+          }
+        });
+        return;
+      }
+      // canonicalEntries drops legacy camelCase aliases that may exist on cached or pre-normalized objects — otherwise `span_attributes.*` and `spanAttributes.*`
+      // both end up in valueMap and only the snake side gets stripped.
+      for (const [k, v] of canonicalEntries(node)) {
+        if (k.startsWith("_")) continue;
+        const path = prefix ? `${prefix}.${k}` : k;
+        valueMap[path] = v;
+        if (v && typeof v === "object") {
+          if (Array.isArray(v) || Object.keys(v).length < DICT_LIMIT) {
+            walkValues(v, path);
+          }
+        }
+      }
+    };
+    if (!isSession) walkValues(spanDetail, "");
+
+    // Soft-flatten: route through `stripAttributePathPrefix` so any
+    // `span_attributes.` segment — anchored *or* nested inside `spans.<n>.`
+    // or `traces.<i>.spans.<j>.` — collapses to the same form the BE
+    // dropdown emits and that saved mappings store. Top-level keys (i.e.
+    // paths that did NOT need stripping) win the dedupe.
+    const flatValueMap = {};
+    for (const [path, val] of Object.entries(valueMap)) {
+      const short = stripAttributePathPrefix(path);
+      if (!(short in flatValueMap) || short === path) {
+        flatValueMap[short] = val;
+      }
+    }
+
+    const resolveMapping = (mapping) => {
+      const resolved = {};
+      for (const [variable, field] of Object.entries(mapping || {})) {
+        if (!field) continue;
+        const val = flatValueMap[field];
+        if (val !== undefined && val !== null) {
+          resolved[variable] =
+            typeof val === "object" ? JSON.stringify(val) : String(val);
+        }
+      }
+      return resolved;
+    };
 
     setIsTesting(true);
     setTestResults(
@@ -660,7 +684,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                   bgcolor: "background.neutral",
                   color: "text.secondary",
                   "& .MuiChip-label": { px: 0.75 },
-                    "&:hover": { bgcolor: "background.neutral" },
+                  "&:hover": { bgcolor: "background.neutral" },
                 }}
               />
             )}
@@ -822,9 +846,7 @@ const RowDetailTable = ({
   // `gen_ai.span.kind` row would also have a duplicate `genAi.span.kind`
   // sibling rendered next to it.
   const entries = useMemo(() => {
-    const raw = canonicalEntries(spanDetail).filter(
-      ([key]) => key !== "spans",
-    );
+    const raw = canonicalEntries(spanDetail).filter(([key]) => key !== "spans");
     const spanAttrs = spanDetail?.span_attributes;
     if (
       !spanAttrs ||

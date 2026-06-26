@@ -1,8 +1,9 @@
 import json
 
+from django.db.models import Q
 from django.utils import timezone
 
-from model_hub.models.choices import StatusType
+from model_hub.models.choices import OwnerChoices, StatusType
 from model_hub.models.develop_dataset import Dataset
 from model_hub.models.eval_groups import EvalGroup, History
 from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
@@ -39,7 +40,11 @@ def _get_eval_templates_for_group(eval_group, deselected_evals=None):
             evalgroup_id=eval_group.id
         ).values_list("evaltemplate_id", flat=True)
     )
-    templates = EvalTemplate.no_workspace_objects.filter(id__in=template_ids)
+    templates = filter_eval_templates_for_group_scope(
+        EvalTemplate.no_workspace_objects.filter(id__in=template_ids),
+        eval_group.organization,
+        eval_group.workspace,
+    )
     if deselected_evals:
         templates = templates.exclude(id__in=deselected_evals)
     return templates
@@ -64,6 +69,32 @@ def _filter_global_params_for_template(eval_template, global_params):
     return {key: value for key, value in global_params.items() if key in schema}
 
 
+def _accessible_eval_template_filter(organization, workspace):
+    user_filter = Q(owner=OwnerChoices.USER.value, organization=organization)
+    if workspace:
+        user_filter &= Q(workspace=workspace) | Q(workspace__isnull=True)
+    return Q(owner=OwnerChoices.SYSTEM.value) | user_filter
+
+
+def filter_eval_templates_for_group_scope(queryset, organization, workspace):
+    return queryset.filter(_accessible_eval_template_filter(organization, workspace))
+
+
+def get_accessible_eval_templates_by_ids(eval_template_ids, organization, workspace):
+    requested_ids = {str(template_id) for template_id in eval_template_ids or []}
+    templates = filter_eval_templates_for_group_scope(
+        EvalTemplate.no_workspace_objects.filter(id__in=list(requested_ids)),
+        organization,
+        workspace,
+    )
+    found_ids = {str(template.id) for template in templates}
+    if found_ids != requested_ids:
+        raise ValueError(
+            "One or more eval templates are unavailable for this workspace."
+        )
+    return templates
+
+
 # =============================================================================
 # Core Functions
 # =============================================================================
@@ -74,6 +105,11 @@ def create_eval_group(name, description, eval_template_ids, user, workspace):
         raise ValueError("eval_template_ids cannot be None")
 
     _org = get_current_organization() or user.organization
+    eval_templates = get_accessible_eval_templates_by_ids(
+        eval_template_ids,
+        _org,
+        workspace,
+    )
 
     eval_group = EvalGroup.objects.create(
         name=name,
@@ -85,7 +121,6 @@ def create_eval_group(name, description, eval_template_ids, user, workspace):
 
     serialized_group_data = EvalGroupSerializer(eval_group).data
 
-    eval_templates = EvalTemplate.no_workspace_objects.filter(id__in=eval_template_ids)
     history_records = []
 
     # Add templates to the many-to-many relationship
@@ -121,13 +156,16 @@ def create_eval_group(name, description, eval_template_ids, user, workspace):
 
 
 def edit_eval_list_manager(
-    eval_group_id, added_template_ids, deleted_template_ids, user
+    eval_group_id, added_template_ids, deleted_template_ids, user, workspace=None
 ):
     _org = get_current_organization() or user.organization
 
     # Get the eval group
     try:
-        eval_group = EvalGroup.objects.get(id=eval_group_id, organization=_org)
+        eval_group_query = EvalGroup.objects.filter(id=eval_group_id, organization=_org)
+        if workspace:
+            eval_group_query = eval_group_query.filter(workspace=workspace)
+        eval_group = eval_group_query.get()
     except EvalGroup.DoesNotExist as e:
         raise Exception("Eval group does not exist") from e
 
@@ -171,8 +209,10 @@ def edit_eval_list_manager(
 
         if added_templates:
             # Get the template objects and add them to the many-to-many relationship
-            templates_to_add = EvalTemplate.no_workspace_objects.filter(
-                id__in=added_templates
+            templates_to_add = get_accessible_eval_templates_by_ids(
+                added_templates,
+                _org,
+                eval_group.workspace,
             )
             eval_group.eval_templates.add(*templates_to_add)
 
@@ -267,14 +307,16 @@ def apply_eval_group(
 def apply_eval_group_to_observation_span(
     eval_group, filters, mapping, user, deselected_evals, workspace, params
 ):
+    _org = get_current_organization() or user.organization
+
     project_id = filters.get("project_id", None)
     if not project_id:
-        raise Exception("Project id is required")
+        raise ValueError("Project id is required")
 
     try:
-        project = Project.objects.get(id=project_id)
+        project = Project.objects.get(id=project_id, organization=_org)
     except Project.DoesNotExist as e:
-        raise Exception("Project not found") from e
+        raise ValueError("Project not found") from e
 
     eval_templates = _get_eval_templates_for_group(eval_group, deselected_evals)
 
@@ -566,7 +608,7 @@ def apply_eval_group_to_simulate(
     kb_id = filters.get("kb_id", None)
     model = filters.get("model", None)
     error_localizer = filters.get("error_localizer", False)
-    simulate_config_filters = filters.get("filters", {})
+    simulate_config_filters = filters.get("filters", [])
 
     simulate_eval_metrics = []
     for eval_template in eval_templates:
@@ -611,22 +653,32 @@ def apply_eval_group_to_simulate(
 def apply_eval_group_to_experiment(
     eval_group, filters, mapping, user, deselected_evals, workspace, params
 ):
+    _org = get_current_organization() or user.organization
     experiment_id = filters.get("experiment_id", None)
     if not experiment_id:
-        raise Exception("Experiment id is required")
+        raise ValueError("Experiment id is required")
 
     try:
         experiment = ExperimentsTable.objects.select_related("dataset").get(
             id=experiment_id
         )
     except ExperimentsTable.DoesNotExist as e:
-        raise Exception("Experiment not found") from e
+        raise ValueError("Experiment not found") from e
+
+    try:
+        dataset = Dataset.objects.get(id=experiment.dataset_id, organization=_org)
+    except Dataset.DoesNotExist as e:
+        raise ValueError("Experiment not found") from e
+    experiment.dataset = dataset
 
     eval_templates = _get_eval_templates_for_group(eval_group, deselected_evals)
 
     # Count existing configs per template for versioning
     current_metrics = UserEvalMetric.objects.filter(
-        dataset=experiment.dataset, eval_group=eval_group, deleted=False
+        dataset=experiment.dataset,
+        eval_group=eval_group,
+        source_id=experiment.id,
+        deleted=False,
     )
     template_names_count = {}
     for metric in current_metrics:

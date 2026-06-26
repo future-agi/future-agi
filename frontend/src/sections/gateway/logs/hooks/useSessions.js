@@ -26,6 +26,9 @@ export default function useSessions({
         page,
         limit: pageSize,
       };
+      delete params.view;
+      delete params.pageSize;
+      delete params.search;
 
       const res = await axiosInstance.get(
         endpoints.gateway.requestLogSessions,

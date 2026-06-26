@@ -173,8 +173,11 @@ def span_id_by_provider_log_id(
         return None
 
     # The previous PG query also matched ``metadata.provider_log_id`` (note:
-    # ``metadata`` lives in ``metadata_map`` in CH). We OR all three sources,
-    # consistent with the old behaviour.
+    # ``metadata`` lives in ``metadata_map`` in CH) and ``eval_attributes``.
+    # The denormalized ``spans`` table has no ``eval_attributes`` column
+    # (only the CDC landing table ``tracer_observation_span`` does), so that
+    # branch is dropped here: ``metadata_map['provider_log_id']`` reliably
+    # carries the provider_log_id written at span creation.
     query = """
         SELECT toString(id)
         FROM spans
@@ -183,7 +186,6 @@ def span_id_by_provider_log_id(
           AND (
                 metadata_map['provider_log_id']                                = %(pid)s
              OR JSONExtractString(span_attributes_raw, 'raw_log', 'id')       = %(pid)s
-             OR JSONExtractString(eval_attributes,     'raw_log', 'id')       = %(pid)s
           )
         ORDER BY updated_at DESC
         LIMIT 1

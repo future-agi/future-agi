@@ -22,12 +22,11 @@ import {
   getTraceListColumnDefs,
   FILTER_FOR_HAS_EVAL,
   generateAnnotationColumnsForTracing,
+  normalizeConfigKeys,
 } from "./common";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
 import { statusBar } from "src/components/run-insights/traces-tab/common";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import LLMTracingTraceDetailDrawer from "./LLMTracingTraceDetailDrawer";
 import { useLLMTracingStoreShallow, useTraceGridStore } from "./states";
 import { APP_CONSTANTS } from "src/utils/constants";
@@ -37,16 +36,6 @@ import { useShallowToggleAnnotationsStore } from "../../agents/store";
 
 const ROWS_LIMIT = 100;
 const EMPTY_EXTRA_FILTERS = [];
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
 
 const TraceGrid = React.forwardRef(
   (
@@ -108,6 +97,35 @@ const TraceGrid = React.forwardRef(
     const refreshGrid = useCallback(() => {
       gridRef?.current?.api?.refreshServerSide({ purge: true });
     }, [gridRef]);
+    const filterRequestKey = useMemo(
+      () =>
+        JSON.stringify({
+          filters,
+          extraFilters: extraFilters || EMPTY_EXTRA_FILTERS,
+          metricFilters: metricFilters || [],
+          hasEvalFilter,
+          dateInterval,
+          projectId,
+          enabled,
+        }),
+      [
+        filters,
+        extraFilters,
+        metricFilters,
+        hasEvalFilter,
+        dateInterval,
+        projectId,
+        enabled,
+      ],
+    );
+    const previousFilterRequestKeyRef = useRef(filterRequestKey);
+
+    useEffect(() => {
+      if (previousFilterRequestKeyRef.current === filterRequestKey) return;
+      previousFilterRequestKeyRef.current = filterRequestKey;
+      prefetchCache.current.clear();
+      refreshGrid();
+    }, [filterRequestKey, refreshGrid]);
 
     // Listen for refresh events from the header reload button
     useEffect(() => {
@@ -191,16 +209,12 @@ const TraceGrid = React.forwardRef(
                 ...(projectId ? { project_id: projectId } : {}),
                 page_number: page,
                 page_size: ROWS_LIMIT,
-                filters: JSON.stringify(
-                  canonicalizeApiFilterColumnIds([
-                    ...objectCamelToSnake([
-                      ...filters,
-                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                    ]),
-                    ...(extraFilters || EMPTY_EXTRA_FILTERS),
-                    ...(metricFilters || []),
-                  ]),
-                ),
+                filters: JSON.stringify([
+                  ...filters,
+                  ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                  ...(extraFilters || EMPTY_EXTRA_FILTERS),
+                  ...(metricFilters || []),
+                ]),
                 ...(dateInterval && { interval: dateInterval }),
               });
 
@@ -251,7 +265,10 @@ const TraceGrid = React.forwardRef(
                       .filter((cc) => newById.has(cc.id))
                       .map((cc) => {
                         seen.add(cc.id);
-                        return { ...newById.get(cc.id), isVisible: cc.isVisible };
+                        return {
+                          ...newById.get(cc.id),
+                          isVisible: cc.isVisible,
+                        };
                       });
                     const added = newCols.filter((nc) => !seen.has(nc.id));
                     finalNonCustom = [...kept, ...added];
@@ -532,14 +549,12 @@ const TraceGrid = React.forwardRef(
           tooltipShowDelay={0}
           tooltipHideDelay={2000}
           tooltipInteraction={true}
-          rowSelection={{ mode: "multiRow" }}
+          rowSelection={{ mode: "multiRow", enableClickSelection: false }}
           pagination={false}
           cacheBlockSize={ROWS_LIMIT}
           maxBlocksInCache={undefined}
           rowBuffer={10}
           suppressServerSideFullWidthLoadingRow={true}
-          serverSideInitialRowCount={ROWS_LIMIT}
-          suppressRowClickSelection={true}
           rowModelType="serverSide"
           serverSideDatasource={dataSource}
           noRowsOverlayComponent={() =>
@@ -606,7 +621,7 @@ TraceGrid.propTypes = {
   columns: PropTypes.array,
   setColumns: PropTypes.func,
   setFilters: PropTypes.func,
-  setFilterOpen: PropTypes.bool,
+  setFilterOpen: PropTypes.func,
   setLoading: PropTypes.func,
   compareType: PropTypes.string,
   projectId: PropTypes.string,

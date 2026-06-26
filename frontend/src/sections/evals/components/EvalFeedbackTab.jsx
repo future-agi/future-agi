@@ -216,7 +216,7 @@ const EvalFeedbackTab = ({ templateId }) => {
     page,
     pageSize,
   });
-  const items = data?.items || [];
+  const items = useMemo(() => data?.items || [], [data?.items]);
   const total = data?.total || 0;
 
   const filteredItems = useMemo(() => {

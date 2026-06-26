@@ -1,6 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
+export const normalizeDatasetRow = (dataset) => ({
+  ...dataset,
+  numberOfDatapoints:
+    dataset?.number_of_datapoints ?? dataset?.numberOfDatapoints ?? 0,
+  numberOfExperiments:
+    dataset?.number_of_experiments ?? dataset?.numberOfExperiments ?? 0,
+  numberOfOptimisations:
+    dataset?.number_of_optimisations ?? dataset?.numberOfOptimisations ?? 0,
+  derivedDatasets: dataset?.derived_datasets ?? dataset?.derivedDatasets ?? 0,
+  createdAt: dataset?.created_at ?? dataset?.createdAt,
+  datasetType: dataset?.dataset_type ?? dataset?.datasetType,
+});
+
 /**
  * Hook to fetch paginated dataset list with search and sorting.
  */
@@ -31,7 +44,7 @@ export function useDatasetsList({
         },
       });
       return {
-        items: data?.result?.datasets ?? [],
+        items: (data?.result?.datasets ?? []).map(normalizeDatasetRow),
         total: data?.result?.total_count ?? 0,
       };
     },

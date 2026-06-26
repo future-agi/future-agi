@@ -173,42 +173,16 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
         eval_template, dict(inputs) if inputs else {}, mapped_keys=(inputs or {}).keys()
     )
 
-    # --- Ground Truth Injection (caller-side, before engine call) ---
     gt_inputs = dict(inputs) if inputs else {}
-    try:
-        from model_hub.utils.ground_truth_retrieval import (
-            format_few_shot_examples,
-            get_ground_truth_few_shot_examples,
-            load_ground_truth_config,
-        )
+    from model_hub.services.ground_truth_service import GroundTruthService
 
-        gt_config = load_ground_truth_config(eval_template)
-        if gt_config:
-            from model_hub.models.evals_metric import EvalGroundTruth
-
-            gt_id = gt_config.get("ground_truth_id")
-            gt_obj = EvalGroundTruth.objects.filter(id=gt_id, deleted=False).first()
-
-            if eval_type_id == "CustomPromptEvaluator" and gt_obj:
-                gt_examples = get_ground_truth_few_shot_examples(
-                    gt_config, inputs or {}
-                )
-                if gt_examples:
-                    injection_format = gt_config.get("injection_format", "structured")
-                    formatted = format_few_shot_examples(
-                        gt_examples, gt_obj.role_mapping, injection_format
-                    )
-                    gt_inputs["ground_truth_few_shot"] = formatted
-
-            elif eval_type_id == "AgentEvaluator" and gt_obj:
-                gt_inputs["ground_truth_config"] = {
-                    "ground_truth_id": str(gt_id),
-                    "embedding_status": gt_obj.embedding_status,
-                }
-    except Exception as e:
-        logger.warning(
-            f"Standalone Eval | Ground truth injection failed (non-fatal): {e}"
-        )
+    user_org = getattr(user, "organization", None)
+    GroundTruthService.inject_context(
+        gt_inputs,
+        eval_template,
+        organization_id=user_org.id if user_org else None,
+        workspace_id=workspace.id if workspace else None,
+    )
 
     # --- Cost tracking (caller-side, before engine call) ---
     api_call_log_row = _log_and_deduct_cost_for_standalone_eval(

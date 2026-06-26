@@ -1298,7 +1298,7 @@ def get_or_create_project_version(
 
         if project_version_id:
             existing_version = ProjectVersion.objects.filter(
-                id=project_version_id
+                id=project_version_id, project_id=project_id
             ).first()
             if existing_version:
                 return existing_version
@@ -1315,7 +1315,7 @@ def get_or_create_project_version(
 
             if project_version_id:
                 existing_version = ProjectVersion.objects.filter(
-                    id=project_version_id
+                    id=project_version_id, project_id=project_id
                 ).first()
                 if existing_version:
                     return existing_version
@@ -1456,7 +1456,9 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         version_key = (project.id, project_version_name, project_version_id)
         project_version = project_versions.get(version_key)
     else:
-        raise Exception(f"Project not found for version data: {version_key}")
+        raise Exception(
+            f"Project not found for version data: project_name={project_name}, project_type={project_type}"
+        )
 
     # Process Input/Output
     input_val = attributes.get("fi.llm.input") or attributes.get(

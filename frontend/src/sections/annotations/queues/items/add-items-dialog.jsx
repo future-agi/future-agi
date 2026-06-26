@@ -42,14 +42,14 @@ import { isEqual } from "lodash";
 import "src/sections/develop-detail/DataTab/developDataGrid.css";
 import SvgColor from "src/components/svg-color";
 import axios, { endpoints } from "src/utils/axios";
+import { stripUiFilterKeys } from "src/components/ComplexFilter/common";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useTestRunsList } from "src/api/tests/testRuns";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import {
   getTraceListColumnDefs,
+  normalizeConfigKeys,
   TRACE_DEFAULT_COLUMNS,
   generateObserveTraceFilterDefinition,
   generateSpanObserveFilterDefinition,
@@ -60,6 +60,7 @@ import DateRangePill, {
 } from "src/sections/projects/LLMTracing/DateRangePill";
 import FilterChips from "src/sections/projects/LLMTracing/FilterChips";
 import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
+import { apiPath } from "src/api/contracts/api-surface";
 import { useDashboardFilterValues } from "src/hooks/useDashboards";
 import {
   getPickerOptionLabel,
@@ -69,21 +70,20 @@ import {
 import CallLogsGrid from "src/sections/agents/CallLogs/CallLogsGrid";
 import SelectAllBanner from "src/sections/projects/LLMTracing/SelectAllBanner";
 import { useGetProjectDetails } from "src/api/project/project-detail";
+import { useDebounce } from "src/hooks/use-debounce";
 import { PROJECT_SOURCE } from "src/utils/constants";
+import { apiFilterHasValue } from "src/sections/annotations/queues/utils/filter-operators";
 import {
-  apiFilterHasValue,
-  apiOpToPanel,
-  isNumberFilterOp,
-  isRangeFilterOp,
-  normalizeApiFilterOp,
-  panelOperatorAndValueToApi,
-} from "src/sections/annotations/queues/utils/filter-operators";
+  apiFilterToPanel as apiFilterToPanelBase,
+  panelFilterToApi as panelFilterToApiBase,
+} from "src/sections/annotations/queues/utils/api-filter-converters";
 import { SIMULATION_PERSONA_FILTER_FIELDS } from "src/sections/annotations/queues/utils/simulation-persona-filter-fields";
 import {
   getSessionListColumnDef,
   defaultFilter as sessionDefaultFilterBase,
 } from "src/sections/projects/SessionsView/common";
 import {
+  buildSessionSelectAllMeta,
   buildSessionSelectionFilters,
   buildSessionSelectorFilterFields,
   SESSION_DATE_FILTER_COLUMN,
@@ -91,119 +91,48 @@ import {
 import "src/styles/clean-data-table.css";
 import { fetchRootSpans } from "src/api/project/llm-tracing";
 
-// ---------------------------------------------------------------------------
-// TraceFilterPanel ↔ API filter converters (mirror ObserveToolbar's inline
-// logic). Moved here so the dialog's Trace and Span selectors can mount the
-// same popover the main tracing page uses.
-// ---------------------------------------------------------------------------
-const PANEL_TYPE_TO_API = {
-  string: "text",
-  number: "number",
-  boolean: "boolean",
-  categorical: "categorical",
-  text: "text",
-  date: "datetime",
-  datetime: "datetime",
-  timestamp: "datetime",
-};
-const PANEL_CAT_TO_COL_TYPE = {
-  attribute: "SPAN_ATTRIBUTE",
-  system: "SYSTEM_METRIC",
-  eval: "EVAL_METRIC",
-  annotation: "ANNOTATION",
-};
-const COL_TYPE_TO_PANEL_CAT = {
-  SPAN_ATTRIBUTE: "attribute",
-  SYSTEM_METRIC: "system",
-  EVAL_METRIC: "eval",
-  ANNOTATION: "annotation",
-};
+const panelFilterToApi = (panel) =>
+  panelFilterToApiBase(panel, { includeMeta: true });
 
-function panelFilterToApi(panel) {
-  const { filterOp, filterValue } = panelOperatorAndValueToApi(
-    panel.operator,
-    panel.value,
-  );
-  const filterType = PANEL_TYPE_TO_API[panel.fieldType] || "text";
-  const colType = PANEL_CAT_TO_COL_TYPE[panel.fieldCategory];
-  return {
-    columnId: panel.field,
-    ...(panel.fieldName && { displayName: panel.fieldName }),
-    filterConfig: {
-      filterType,
-      filterOp,
-      filterValue,
-      // `col_type` (snake_case) matches the Zod schema in
-      // ComplexFilter/common.js — a `colType` key would be stripped by
-      // safeParse, which is how `ended_reason` ended up falling through
-      // the SYSTEM_METRIC → VOICE_SYSTEM_METRIC_STR_MAP path and
-      // generating an "Unknown identifier" ClickHouse error.
-      ...(colType && { col_type: colType }),
-    },
-    _meta: { parentProperty: "" },
-  };
-}
-
-function apiFilterToPanel(api, propertiesById = {}) {
-  const property = propertiesById[api?.columnId];
-  const rawOp = api?.filterConfig?.filterOp || "equals";
-  const canonicalOp = normalizeApiFilterOp(rawOp);
-  const isNumberOp = isNumberFilterOp(canonicalOp);
-  const isRange = isRangeFilterOp(canonicalOp);
-  const rawVal = api?.filterConfig?.filterValue;
-  let value;
-  if (isRange && rawVal) {
-    value = Array.isArray(rawVal)
-      ? rawVal.map((v) => String(v))
-      : String(rawVal)
-          .split(",")
-          .map((v) => v.trim());
-  } else if (isNumberOp) {
-    value = rawVal != null ? String(rawVal) : "";
-  } else if (Array.isArray(rawVal)) {
-    value = rawVal.map((v) => String(v));
-  } else {
-    value = rawVal
-      ? String(rawVal)
-          .split(",")
-          .map((v) => v.trim())
-      : [];
-  }
-  const rawColType =
-    api?.filterConfig?.col_type ||
-    api?.filterConfig?.colType ||
-    api?.col_type ||
-    api?.colType;
-  const filterType = api?.filterConfig?.filterType;
-  const fieldType = isNumberOp
-    ? "number"
-    : filterType === "number"
-      ? "number"
-      : filterType === "date" ||
-          filterType === "datetime" ||
-          filterType === "timestamp"
-        ? "datetime"
-        : filterType === "categorical"
-          ? "categorical"
-          : filterType === "text" && rawColType === "ANNOTATION"
-            ? "text"
-            : property?.type || "string";
-  return {
-    field: api.columnId,
-    fieldName: api.displayName || property?.name,
-    fieldCategory:
-      COL_TYPE_TO_PANEL_CAT[rawColType] || property?.category || "system",
-    fieldType,
-    operator: apiOpToPanel(canonicalOp, fieldType),
-    value,
-  };
-}
+const apiFilterToPanel = (api, propertiesById = {}) =>
+  apiFilterToPanelBase(api, {
+    propertiesById,
+    dateFieldType: "datetime",
+    formatDateValues: false,
+  });
 
 function hasAppliedAnnotatorFilter(filters) {
   return filters.some(
-    (filter) => filter?.columnId === "annotator" && apiFilterHasValue(filter),
+    (filter) => filter?.column_id === "annotator" && apiFilterHasValue(filter),
   );
 }
+
+export function SelectionCheckboxNudge({ selectionCount }) {
+  if (selectionCount > 0) return null;
+
+  return (
+    <Alert
+      severity="info"
+      variant="outlined"
+      icon={<Iconify icon="mdi:checkbox-marked-outline" width={18} />}
+      sx={{
+        mt: 2,
+        borderRadius: 0.75,
+        "& .MuiAlert-message": {
+          width: "100%",
+        },
+      }}
+    >
+      <Typography variant="body2" fontWeight={600}>
+        Use the checkbox column to select rows before adding them to this queue.
+      </Typography>
+    </Alert>
+  );
+}
+
+SelectionCheckboxNudge.propTypes = {
+  selectionCount: PropTypes.number.isRequired,
+};
 
 export function buildAnnotatorFilterChipLabelMap(annotatorOptions = []) {
   const entries = annotatorOptions
@@ -494,9 +423,7 @@ async function fetchAllTraceIds(
   filters,
   projectVersionId,
 ) {
-  const serializedFilters = JSON.stringify(
-    canonicalizeApiFilterColumnIds(objectCamelToSnake(filters || [])),
-  );
+  const serializedFilters = JSON.stringify(filters || []);
   const allIds = [];
   const excluded = excludedIds || new Set();
   let page = 0;
@@ -534,9 +461,7 @@ async function fetchAllSpanIds(
   filters,
   projectVersionId,
 ) {
-  const serializedFilters = JSON.stringify(
-    canonicalizeApiFilterColumnIds(objectCamelToSnake(filters || [])),
-  );
+  const serializedFilters = JSON.stringify(filters || []);
   const allIds = [];
   const excluded = excludedIds || new Set();
   let page = 0;
@@ -635,9 +560,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               mode: "filter",
               source_type: sourceType,
               project_id: selectAllInfo.projectId,
-              filter: canonicalizeApiFilterColumnIds(
-                objectCamelToSnake(selectAllInfo.filters || []),
-              ),
+              filter: selectAllInfo.filters || [],
               exclude_ids: Array.from(selectAllInfo.excludedIds || []),
               ...(sourceType === "trace" && isVoiceTraceSelection
                 ? { is_voice_call: true }
@@ -911,6 +834,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
                 automatically, and you can add items from any selected source.
               </Alert>
             )}
+            <SelectionCheckboxNudge selectionCount={selectionCount} />
             {sourceType === "dataset_row" && (
               <DatasetRowSelector
                 onSetSelection={handleSetSelection}
@@ -931,7 +855,10 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               />
             )}
             {sourceType === "trace_session" && (
-              <SessionSelector onSetSelection={handleSetSelection} />
+              <SessionSelector
+                onSetSelection={handleSetSelection}
+                onSelectAll={handleSelectAll}
+              />
             )}
             {sourceType === "call_execution" && (
               <SimulationSelector onSetSelection={handleSetSelection} />
@@ -958,7 +885,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               sx={{ flex: "1 1 220px", minWidth: 0 }}
             >
               {selectionCount === 0
-                ? "Select rows with the checkbox column to add them."
+                ? "No rows selected"
                 : `${selectionCount} selected`}
             </Typography>
             <Button
@@ -1162,37 +1089,50 @@ SourceTypeSelection.propTypes = {
 // ---------------------------------------------------------------------------
 // Build read-only column defs that match the dataset view exactly
 // ---------------------------------------------------------------------------
-function buildReadOnlyColumnDefs(columnConfig) {
+export function buildReadOnlyColumnDefs(columnConfig) {
   return columnConfig
-    .filter((col) => col.isVisible !== false)
-    .map((col) => ({
-      field: col.id,
-      headerName: col.name,
-      minWidth: DEFAULT_MIN_WIDTH,
-      resizable: true,
-      sortable: true,
-      editable: false,
-      cellDataType: AGGridCellDataType[col.dataType],
-      dataType: col.dataType,
-      pinned: col.isFrozen,
-      hide: !col.isVisible,
-      headerComponent: CustomDevelopDetailColumn,
-      headerComponentParams: { col, readOnly: true },
-      cellRenderer: CustomCellRender,
-      cellRendererParams: { editable: false },
-      cellStyle: {
-        padding: 0,
-        height: "100%",
-        display: "flex",
-        flex: 1,
-        flexDirection: "column",
-      },
-      col: { ...col, isHoverButtonVisible: false },
-      valueGetter: (params) => {
-        const cellValue = params.data?.[col.id]?.cellValue;
-        return parseCellValue(cellValue, AGGridCellDataType[col.dataType]);
-      },
-    }));
+    .filter((col) => col.is_visible !== false)
+    .map((col) => {
+      const colDataType = col.data_type
+      const colIsFrozen = col.is_frozen
+      const colOriginType = col.origin_type
+      const enrichedCol = {
+        ...col,
+        dataType: colDataType,
+        originType: colOriginType,
+        isFrozen: colIsFrozen,
+        isHoverButtonVisible: false,
+      };
+      return {
+        field: col.id,
+        headerName: col.name,
+        minWidth: DEFAULT_MIN_WIDTH,
+        resizable: true,
+        sortable: true,
+        editable: false,
+        cellDataType: AGGridCellDataType[colDataType],
+        dataType: colDataType,
+        pinned: colIsFrozen,
+        originType: colOriginType,
+        hide: false,
+        headerComponent: CustomDevelopDetailColumn,
+        headerComponentParams: { col: enrichedCol, readOnly: true },
+        cellRenderer: CustomCellRender,
+        cellRendererParams: { editable: false },
+        cellStyle: {
+          padding: 0,
+          height: "100%",
+          display: "flex",
+          flex: 1,
+          flexDirection: "column",
+        },
+        col: enrichedCol,
+        valueGetter: (params) => {
+          const cellValue = params.data?.[col.id]?.cell_value;
+          return parseCellValue(cellValue, AGGridCellDataType[colDataType]);
+        },
+      };
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1401,9 +1341,10 @@ GridLoadingOverlay.propTypes = {
 // ---------------------------------------------------------------------------
 // Dataset Row Selector – Same AG Grid as dataset view
 // ---------------------------------------------------------------------------
-function DatasetRowSelector({ onSetSelection, onSelectAll }) {
+export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   const [datasetId, setDatasetId] = useState("");
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search.trim(), 300);
   const [gridApi, setGridApi] = useState(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFiltersState] = useState([
@@ -1422,7 +1363,8 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
     isFetching: isDatasetsFetching,
   } = useQuery({
     queryKey: ["datasets-list-simple"],
-    queryFn: () => axios.get("/model-hub/develops/get-datasets-names/"),
+    queryFn: () =>
+      axios.get(apiPath("/model-hub/develops/get-datasets-names/")),
     select: (d) => d.data?.result?.datasets || [],
     staleTime: 1000 * 60 * 5,
   });
@@ -1440,7 +1382,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   );
 
   const columnConfig = useMemo(
-    () => tableData?.data?.result?.columnConfig ?? [],
+    () => tableData?.data?.result?.column_config ?? [],
     [tableData],
   );
 
@@ -1501,22 +1443,33 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
     }
   }, [datasetId, gridApi, queryClient]);
 
-  // Handle search
+  const applyDatasetSearch = useCallback(
+    (nextSearch) => {
+      searchRef.current = nextSearch.trim();
+      if (!gridApi || !datasetId) return;
+      const ds = createDataSource(
+        queryClient,
+        datasetId,
+        filtersRef,
+        searchRef,
+        setIsGridLoading,
+      );
+      gridApi.setGridOption("serverSideDatasource", ds);
+    },
+    [gridApi, datasetId, queryClient],
+  );
+
+  useEffect(() => {
+    applyDatasetSearch(debouncedSearch);
+  }, [applyDatasetSearch, debouncedSearch]);
+
   const handleSearchKeyDown = useCallback(
     (e) => {
-      if (e.key === "Enter" && gridApi) {
-        searchRef.current = search;
-        const ds = createDataSource(
-          queryClient,
-          datasetId,
-          filtersRef,
-          searchRef,
-          setIsGridLoading,
-        );
-        gridApi.setGridOption("serverSideDatasource", ds);
-      }
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      applyDatasetSearch(search);
     },
-    [gridApi, search, datasetId, queryClient],
+    [applyDatasetSearch, search],
   );
 
   // Handle row selection — detect select-all via getServerSideSelectionState
@@ -1541,7 +1494,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         // Individual selection — collect from loaded nodes
         const ids = [];
         api.forEachNode((node) => {
-          if (node.isSelected() && node.data?.rowId) {
+          if (node.isSelected() && node.data?.row_id) {
             ids.push(node.data.row_id);
           }
         });
@@ -1588,11 +1541,9 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
       columnDefs.map((cd) => ({
         field: cd.field,
         headerName: cd.headerName,
-        col: columnConfig.find((c) => c.id === cd.field) || {
-          dataType: "text",
-        },
+        col: cd.col || { dataType: "text" },
       })),
-    [columnDefs, columnConfig],
+    [columnDefs],
   );
 
   const isFilterApplied = useMemo(
@@ -1674,7 +1625,7 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
             </MenuItem>
           )}
           {(datasets || []).map((ds) => (
-            <MenuItem key={ds.datasetId || ds.id} value={ds.datasetId || ds.id}>
+            <MenuItem key={ds.dataset_id} value={ds.dataset_id}>
               {ds.name}
             </MenuItem>
           ))}
@@ -1851,11 +1802,11 @@ DatasetRowSelector.propTypes = {
 // ---------------------------------------------------------------------------
 
 const traceDefaultFilterBase = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 
@@ -1937,16 +1888,14 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     staleTime: 1000 * 60 * 2,
   });
 
-  // Validate & transform filters using the same Zod pipeline as the tracer view.
-  // This converts columnId to snake_case, validates filterType/filterOp, and strips invalid filters.
+  // TraceFilterPanel output is already the canonical API filter shape. Keep
+  // selection fetches and bulk-select payloads on that same shape.
   const validatedMainFilters = useMemo(() => {
-    // TraceFilterPanel's output (via panelFilterToApi) is already correct
-    // shape — columnId + filterConfig with col_type preserved. Don't run
-    // it through the legacy Zod validator in ComplexFilter/common.js:
+    // Don't run it through the legacy Zod validator in ComplexFilter/common.js:
     // its AllowedOperators enum omits `in` / `not_in` (which we promote
     // to for multi-value equals) so the whole filter gets dropped on
     // second apply. We only need to drop the empty-default row.
-    return filters.filter((f) => f?.columnId);
+    return filters.filter((f) => f?.column_id);
   }, [filters]);
 
   const hasAnnotatorChip = useMemo(
@@ -1974,11 +1923,11 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     return [
       ...validatedMainFilters,
       {
-        columnId: "created_at",
-        filterConfig: {
-          filterType: "datetime",
-          filterOp: "between",
-          filterValue: [
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: [
             new Date(range[0]).toISOString(),
             new Date(range[1]).toISOString(),
           ],
@@ -2005,11 +1954,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: TRACE_ROWS_LIMIT,
-            filters: JSON.stringify(
-              canonicalizeApiFilterColumnIds(
-                objectCamelToSnake(filtersRef.current),
-              ),
-            ),
+            filters: JSON.stringify(filtersRef.current || []),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -2022,10 +1967,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           const res = results?.data?.result;
 
           // Update columns from response config (same as TraceGrid)
-          const newCols = res?.config?.map((o) => ({
-            ...o,
-            id: o.id,
-          }));
+          const newCols = normalizeConfigKeys(res?.config);
           if (newCols) {
             setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
           }
@@ -2164,7 +2106,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   }, [pageSelectAllMeta, onSelectAll, projectId, versionId]);
 
   const isFilterApplied = useMemo(
-    () => filters.some((f) => f.columnId),
+    () => filters.some((f) => f.column_id),
     [filters],
   );
 
@@ -2344,7 +2286,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           projectId={projectId}
           isSimulator={isVoiceProject}
           currentFilters={validatedMainFilters
-            .filter((f) => f?.columnId)
+            .filter((f) => f?.column_id)
             .map(apiFilterToPanel)}
           onApply={(newPanelFilters) => {
             const apiNext = (newPanelFilters || [])
@@ -2363,7 +2305,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           — that's surfaced by the Date pill, not the chip bar) */}
       {canShowGrid && (
         <FilterChips
-          extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
+          extraFilters={(validatedMainFilters || []).filter(
             (f) => f?.column_id && f.column_id !== "created_at",
           )}
           fieldLabelMap={filterChipLabelMap}
@@ -2377,19 +2319,18 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           }}
           onRemoveFilter={(idx) => {
             setFilterAnchorEl(null);
-            // FilterChips indexes into the *snake-case validated* list which
-            // already stripped empty rows. Map back to the original filters
-            // state by matching on columnId + filterConfig.
-            const snakeChips = (
-              objectCamelToSnake(validatedMainFilters) || []
-            ).filter((f) => f?.column_id && f.column_id !== "created_at");
+            // FilterChips indexes into the validated list which already
+            // stripped empty rows. Map back by column_id + filter_op.
+            const snakeChips = (validatedMainFilters || []).filter(
+              (f) => f?.column_id && f.column_id !== "created_at",
+            );
             const target = snakeChips[idx];
             if (!target) return;
             setFilters((prev) =>
               prev.filter((f) => {
-                const colMatches = f?.columnId === target.column_id;
+                const colMatches = f?.column_id === target.column_id;
                 const opMatches =
-                  f?.filterConfig?.filterOp ===
+                  f?.filter_config?.filter_op ===
                   target?.filter_config?.filter_op;
                 return !(colMatches && opMatches);
               }),
@@ -2471,11 +2412,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             cellHeight="Short"
             params={{
               project_id: projectId,
-              filters: JSON.stringify(
-                canonicalizeApiFilterColumnIds(
-                  objectCamelToSnake(validatedFilters || []),
-                ),
-              ),
+              filters: JSON.stringify(validatedFilters || []),
             }}
             onSelectionChanged={(traceIds) => {
               onSetSelection(traceIds);
@@ -2613,7 +2550,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   // panels wired after the schema was last updated, causing repeated
   // applies to silently drop filters).
   const validatedMainFilters = useMemo(() => {
-    return filters.filter((f) => f?.columnId);
+    return filters.filter((f) => f?.column_id);
   }, [filters]);
 
   const hasAnnotatorChip = useMemo(
@@ -2638,11 +2575,11 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     return [
       ...validatedMainFilters,
       {
-        columnId: "created_at",
-        filterConfig: {
-          filterType: "datetime",
-          filterOp: "between",
-          filterValue: [
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: [
             new Date(range[0]).toISOString(),
             new Date(range[1]).toISOString(),
           ],
@@ -2669,11 +2606,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: SPAN_ROWS_LIMIT,
-            filters: JSON.stringify(
-              canonicalizeApiFilterColumnIds(
-                objectCamelToSnake(filtersRef.current),
-              ),
-            ),
+            filters: JSON.stringify(filtersRef.current || []),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -2687,10 +2620,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           const res = results?.data?.result;
 
           // Update columns from response config
-          const newCols = res?.config?.map((o) => ({
-            ...o,
-            id: o.id,
-          }));
+          const newCols = normalizeConfigKeys(res?.config);
           if (newCols) {
             setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
           }
@@ -2818,7 +2748,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   }, [pageSelectAllMeta, onSelectAll, projectId, versionId]);
 
   const isFilterApplied = useMemo(
-    () => filters.some((f) => f.columnId),
+    () => filters.some((f) => f.column_id),
     [filters],
   );
 
@@ -2991,8 +2921,10 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           onClose={() => setFilterOpen(false)}
           projectId={projectId}
           source="traces"
+          tab="spans"
+          isSpansView
           currentFilters={validatedMainFilters
-            .filter((f) => f?.columnId)
+            .filter((f) => f?.column_id)
             .map(apiFilterToPanel)}
           onApply={(newPanelFilters) => {
             const apiNext = (newPanelFilters || [])
@@ -3009,7 +2941,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
 
       {canShowGrid && (
         <FilterChips
-          extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
+          extraFilters={(validatedMainFilters || []).filter(
             (f) => f?.column_id && f.column_id !== "created_at",
           )}
           fieldLabelMap={filterChipLabelMap}
@@ -3023,16 +2955,16 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           }}
           onRemoveFilter={(idx) => {
             setFilterAnchorEl(null);
-            const snakeChips = (
-              objectCamelToSnake(validatedMainFilters) || []
-            ).filter((f) => f?.column_id && f.column_id !== "created_at");
+            const snakeChips = (validatedMainFilters || []).filter(
+              (f) => f?.column_id && f.column_id !== "created_at",
+            );
             const target = snakeChips[idx];
             if (!target) return;
             setFilters((prev) =>
               prev.filter((f) => {
-                const colMatches = f?.columnId === target.column_id;
+                const colMatches = f?.column_id === target.column_id;
                 const opMatches =
-                  f?.filterConfig?.filterOp ===
+                  f?.filter_config?.filter_op ===
                   target?.filter_config?.filter_op;
                 return !(colMatches && opMatches);
               }),
@@ -3132,7 +3064,7 @@ SpanSelector.propTypes = {
 // ---------------------------------------------------------------------------
 const SESSION_ROWS_LIMIT = 30;
 
-function SessionSelector({ onSetSelection }) {
+function SessionSelector({ onSetSelection, onSelectAll }) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [columns, setColumns] = useState([]);
@@ -3244,21 +3176,14 @@ function SessionSelector({ onSetSelection }) {
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(
-                  canonicalizeApiFilterColumnIds(
-                    objectCamelToSnake(filtersRef.current),
-                  ),
-                ),
+                filters: JSON.stringify(filtersRef.current || []),
               },
             },
           );
           const res = results?.data?.result;
 
           // Update columns from response config
-          const newCols = res?.config?.map((o) => ({
-            ...o,
-            id: o.id,
-          }));
+          const newCols = normalizeConfigKeys(res?.config);
           if (newCols) {
             setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
           }
@@ -3350,22 +3275,42 @@ function SessionSelector({ onSetSelection }) {
     }
   }, [dataSource, gridApi, projectId]);
 
-  // Handle row selection
+  const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+
+  // Handle row selection. Session rows use the backend `session_id` field as
+  // the row id; filter-mode select-all sends the same canonical ids to the API.
   const onSelectionChanged = useCallback(
     (event) => {
-      const ids = [];
-      event.api.forEachNode((node) => {
-        if (node.isSelected() && node.data?.session_id) {
-          ids.push(node.data.session_id);
-        }
-      });
+      const selectionState = event.api.getServerSideSelectionState?.() || {};
+
+      if (selectionState.selectAll) {
+        const selectAllMeta = buildSessionSelectAllMeta(event.api);
+        onSetSelection(selectAllMeta?.visibleRowIds || []);
+        setPageSelectAllMeta(selectAllMeta);
+        return;
+      }
+
+      const ids = selectionState.toggledNodes || [];
       onSetSelection(ids);
+      setPageSelectAllMeta(null);
     },
     [onSetSelection],
   );
 
+  const commitFilterModeSelectAll = useCallback(() => {
+    if (!pageSelectAllMeta) return;
+    onSelectAll({
+      totalCount: pageSelectAllMeta.totalCount,
+      excludedIds: pageSelectAllMeta.excludedIds,
+      projectId,
+      projectVersionId: versionId || undefined,
+      filters: filtersRef.current,
+    });
+    setPageSelectAllMeta(null);
+  }, [pageSelectAllMeta, onSelectAll, projectId, versionId]);
+
   const isFilterApplied = useMemo(
-    () => filters.some((f) => f.columnId),
+    () => filters.some((f) => f.column_id),
     [filters],
   );
 
@@ -3376,6 +3321,7 @@ function SessionSelector({ onSetSelection }) {
     setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
     setFilterAnchorEl(null);
     setFilterOpen(false);
+    setPageSelectAllMeta(null);
     onSetSelection([]);
   };
 
@@ -3385,6 +3331,7 @@ function SessionSelector({ onSetSelection }) {
     setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
     setFilterAnchorEl(null);
     setFilterOpen(false);
+    setPageSelectAllMeta(null);
     onSetSelection([]);
   };
 
@@ -3554,7 +3501,7 @@ function SessionSelector({ onSetSelection }) {
           properties={sessionFilterFields}
           categories={[]}
           currentFilters={validatedMainFilters
-            .filter((f) => f?.columnId)
+            .filter((f) => f?.column_id)
             .map(apiFilterToPanel)}
           onApply={(newPanelFilters) => {
             const apiNext = (newPanelFilters || [])
@@ -3571,7 +3518,7 @@ function SessionSelector({ onSetSelection }) {
 
       {canShowGrid && (
         <FilterChips
-          extraFilters={(objectCamelToSnake(validatedMainFilters) || []).filter(
+          extraFilters={(validatedMainFilters || []).filter(
             (f) => f?.column_id && f.column_id !== SESSION_DATE_FILTER_COLUMN,
           )}
           fieldLabelMap={filterChipLabelMap}
@@ -3585,18 +3532,16 @@ function SessionSelector({ onSetSelection }) {
           }}
           onRemoveFilter={(idx) => {
             setFilterAnchorEl(null);
-            const snakeChips = (
-              objectCamelToSnake(validatedMainFilters) || []
-            ).filter(
+            const snakeChips = (validatedMainFilters || []).filter(
               (f) => f?.column_id && f.column_id !== SESSION_DATE_FILTER_COLUMN,
             );
             const target = snakeChips[idx];
             if (!target) return;
             setFilters((prev) =>
               prev.filter((f) => {
-                const colMatches = f?.columnId === target.column_id;
+                const colMatches = f?.column_id === target.column_id;
                 const opMatches =
-                  f?.filterConfig?.filterOp ===
+                  f?.filter_config?.filter_op ===
                   target?.filter_config?.filter_op;
                 return !(colMatches && opMatches);
               }),
@@ -3637,6 +3582,24 @@ function SessionSelector({ onSetSelection }) {
             flexDirection: "column",
           }}
         >
+          <SelectAllBanner
+            visible={
+              !!pageSelectAllMeta &&
+              pageSelectAllMeta.totalCount > pageSelectAllMeta.visibleCount
+            }
+            visibleCount={pageSelectAllMeta?.visibleCount || 0}
+            totalMatching={
+              pageSelectAllMeta
+                ? Math.max(
+                    pageSelectAllMeta.totalCount -
+                      pageSelectAllMeta.excludedIds.size,
+                    0,
+                  )
+                : 0
+            }
+            noun="session"
+            onSelectAll={commitFilterModeSelectAll}
+          />
           <Box sx={{ flex: 1, position: "relative" }}>
             <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
@@ -3670,6 +3633,7 @@ function SessionSelector({ onSetSelection }) {
 
 SessionSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
+  onSelectAll: PropTypes.func.isRequired,
 };
 
 // ---------------------------------------------------------------------------
@@ -4224,11 +4188,11 @@ export function buildSimulationSelectorColumnDefs(columnOrder = []) {
 }
 
 const simulationDefaultFilterBase = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 
@@ -4292,12 +4256,7 @@ function SimulationSelector({ onSetSelection }) {
   );
 
   const serializedFilters = useMemo(
-    () =>
-      JSON.stringify(
-        canonicalizeApiFilterColumnIds(
-          objectCamelToSnake(validatedFilters || []),
-        ),
-      ),
+    () => JSON.stringify(stripUiFilterKeys(validatedFilters)),
     [validatedFilters],
   );
 
@@ -4505,7 +4464,7 @@ function SimulationSelector({ onSetSelection }) {
             </MenuItem>
           )}
           {tests.map((t) => (
-            <MenuItem key={t.id} value={t.id} sx={{ maxWidth: 300 }}>
+            <MenuItem key={t.id} value={t.id} sx={{ width: "100%" }}>
               <CustomTooltip
                 size="small"
                 arrow
@@ -4581,7 +4540,7 @@ function SimulationSelector({ onSetSelection }) {
             {(executionRuns || []).map((run) => {
               const label = formatExecutionRunLabel(run);
               return (
-                <MenuItem key={run.id} value={run.id} sx={{ maxWidth: 340 }}>
+                <MenuItem key={run.id} value={run.id} sx={{ width: "100%" }}>
                   <CustomTooltip
                     size="small"
                     arrow
@@ -4676,7 +4635,7 @@ function SimulationSelector({ onSetSelection }) {
 
       {executionRunId && (
         <FilterChips
-          extraFilters={objectCamelToSnake(validatedFilters) || []}
+          extraFilters={validatedFilters || []}
           onAddFilter={(anchorEl) => {
             setFilterAnchorEl(anchorEl || filterButtonRef.current);
             setFilterOpen(true);
@@ -4687,14 +4646,14 @@ function SimulationSelector({ onSetSelection }) {
           }}
           onRemoveFilter={(index) => {
             setFilterAnchorEl(null);
-            const snakeFilters = objectCamelToSnake(validatedFilters) || [];
+            const snakeFilters = validatedFilters || [];
             const target = snakeFilters[index];
             if (!target) return;
             setFilters((prev) => {
               const nextFilters = prev.filter((filter) => {
-                const colMatches = filter?.columnId === target.column_id;
+                const colMatches = filter?.column_id === target.column_id;
                 const opMatches =
-                  filter?.filterConfig?.filterOp ===
+                  filter?.filter_config?.filter_op ===
                   target?.filter_config?.filter_op;
                 return !(colMatches && opMatches);
               });

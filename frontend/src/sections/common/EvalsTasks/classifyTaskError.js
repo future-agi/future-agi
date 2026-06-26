@@ -329,7 +329,9 @@ const CATEGORIES = [
     // Strip the per-row "(model=..., iterations=N)" detail so all
     // variants group into a single row in the error log.
     normalize: (stripped) =>
-      stripped.replace(/\s*\(model=[^,)]+,\s*iterations=\d+\)/, "").slice(0, 200),
+      stripped
+        .replace(/\s*\(model=[^,)]+,\s*iterations=\d+\)/, "")
+        .slice(0, 200),
   },
   {
     id: "non_numeric_value",

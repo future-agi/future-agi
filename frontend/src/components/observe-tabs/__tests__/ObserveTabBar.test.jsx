@@ -7,7 +7,7 @@ import { ObserveHeaderContext } from "src/sections/project/context/ObserveHeader
 const mockCreateSavedView = vi.fn();
 let mockSavedViewsList = [];
 vi.mock("src/api/project/saved-views", () => ({
-  useGetSavedViews: () => ({ data: { customViews: mockSavedViewsList } }),
+  useGetSavedViews: () => ({ data: { custom_views: mockSavedViewsList } }),
   useCreateSavedView: () => ({ mutate: mockCreateSavedView }),
   useUpdateSavedView: () => ({ mutate: vi.fn() }),
   useDeleteSavedView: () => ({ mutate: vi.fn() }),
@@ -61,7 +61,16 @@ describe("ObserveTabBar — Save View snapshots current filters", () => {
 
   it("passes ctx.getViewConfig() output as config in createSavedView", async () => {
     const snapshot = {
-      filters: [{ columnId: "status" }],
+      filters: [
+        {
+          column_id: "status",
+          filter_config: {
+            filter_type: "text",
+            filter_op: "equals",
+            filter_value: "ERROR",
+          },
+        },
+      ],
       display: { viewMode: "grid" },
     };
     renderWithCtx({ getViewConfig: () => snapshot });

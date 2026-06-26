@@ -41,6 +41,7 @@ import {
   getPickerOptionSearchText,
   getPickerOptionSecondaryLabel,
   getPickerOptionValue,
+  usesFreeTextValue,
 } from "./filterValuePickerUtils";
 import { ID_ONLY_FIELDS } from "./idFields";
 
@@ -147,11 +148,16 @@ const NUMBER_OPS = [
 ];
 
 const DATE_OPS = [
-  { value: "before", label: "before" },
-  { value: "after", label: "after" },
-  { value: "on", label: "on" },
+  { value: "less_than", label: "before" },
+  { value: "greater_than", label: "after" },
+  { value: "equals", label: "on" },
+  { value: "not_equals", label: "not on" },
+  { value: "greater_than_or_equal", label: "on or after" },
+  { value: "less_than_or_equal", label: "on or before" },
   { value: "between", label: "between", range: true },
   { value: "not_between", label: "not between", range: true },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
 ];
 
 const BOOLEAN_OPS = [
@@ -165,15 +171,21 @@ const BOOLEAN_OPS = [
 // Distinct from CATEGORICAL_OPS — we don't expose contains/not_contains for a
 // 2-value enum.
 const THUMBS_OPS = [
-  { value: "is", label: "is" },
-  { value: "is_not", label: "is not" },
+  { value: "equals", label: "is" },
+  { value: "not_equals", label: "is not" },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
 ];
 
-const ANNOTATOR_OPS = [{ value: "is", label: "is" }];
+const ANNOTATOR_OPS = [
+  { value: "equals", label: "is" },
+  { value: "not_equals", label: "is not" },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
+];
 
-// Direct ID columns on `spans`. UUIDs don't need substring/null ops —
-// restrict to equality (canonical IN / NOT IN, multi-select on the value
-// picker).
+// Direct UUID identifiers support exact multi-select through the canonical
+// list operators. Avoid substring/null operators for these fields.
 const ID_ONLY_OPS = [
   { value: "in", label: "equals" },
   { value: "not_in", label: "not equals" },
@@ -182,15 +194,17 @@ const ID_ONLY_OPS = [
 const ARRAY_OPS = [
   { value: "contains", label: "contains" },
   { value: "not_contains", label: "not contains" },
-  { value: "is_empty", label: "is empty" },
-  { value: "is_not_empty", label: "is not empty" },
+  { value: "is_null", label: "is empty" },
+  { value: "is_not_null", label: "is not empty" },
 ];
 
 const CATEGORICAL_OPS = [
-  { value: "is", label: "is" },
-  { value: "is_not", label: "is not" },
+  { value: "equals", label: "is" },
+  { value: "not_equals", label: "is not" },
   { value: "contains", label: "contains" },
   { value: "not_contains", label: "not contains" },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
 ];
 
 const TEXT_OPS = [
@@ -267,26 +281,15 @@ const getDefaultOperatorForFilter = (filter, ops) => {
   const defaultOp =
     DEFAULT_OP_FOR_TYPE[filter?.fieldType] ||
     DEFAULT_OP_FOR_TYPE[normalizeFieldType(filter?.fieldType)] ||
-    "is";
+    "equals";
   return ops.some((op) => op.value === defaultOp)
     ? defaultOp
-    : ops[0]?.value || "is";
+    : ops[0]?.value || "equals";
 };
 
-const getPanelOperatorAlias = (operator, filter) => {
-  const normalizedType = normalizeFieldType(filter?.fieldType);
-  if (operator === "equal_to") return "equals";
-  if (operator === "not_equal_to") return "not_equals";
-  if (operator === "in" || operator === "equals") {
-    if (normalizedType === "date") return "on";
-    return "is";
-  }
-  if (operator === "not_in" || operator === "not_equals") {
-    return "is_not";
-  }
-  if (operator === "not_in_between") return "not_between";
-  if (operator === "less_than" && normalizedType === "date") return "before";
-  if (operator === "greater_than" && normalizedType === "date") return "after";
+const getEquivalentPanelOperator = (operator) => {
+  if (operator === "in") return "equals";
+  if (operator === "not_in") return "not_equals";
   return operator;
 };
 
@@ -294,37 +297,33 @@ export const normalizeFilterRowOperator = (filter) => {
   const ops = getOperatorsForFilter(filter);
   if (ops.some((op) => op.value === filter?.operator)) return filter;
 
-  const alias = getPanelOperatorAlias(filter?.operator, filter);
-  const operator = ops.some((op) => op.value === alias)
-    ? alias
+  const equivalentOperator = getEquivalentPanelOperator(filter?.operator);
+  const operator = ops.some((op) => op.value === equivalentOperator)
+    ? equivalentOperator
     : getDefaultOperatorForFilter(filter, ops);
   return { ...filter, operator };
 };
 
 const DEFAULT_OP_FOR_TYPE = {
   number: "equals",
-  date: "on",
+  date: "equals",
   boolean: "equals",
   array: "contains",
   string: "in",
-  categorical: "is",
-  thumbs: "is",
+  categorical: "equals",
+  thumbs: "equals",
   text: "in",
-  annotator: "is",
+  annotator: "equals",
 };
 
-// Legacy string-field ops in saved views — rewrite on hydration so the menu renders.
+// String equality uses the list picker so single and multi-value filters share
+// the same canonical `in` / `not_in` API shape.
 const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 
 // Categorical / thumbs ops in saved views — reverse the save-side LEGACY_OP_ALIAS so the menu renders.
 const HYDRATE_CATEGORICAL_OP = { equals: "is", not_equals: "is_not" };
 
-const NO_VALUE_OPS = new Set([
-  "is_empty",
-  "is_not_empty",
-  "is_null",
-  "is_not_null",
-]);
+const NO_VALUE_OPS = new Set(["is_null", "is_not_null"]);
 
 // Scalar ops — value picker forces single-select. Multi-value goes via in/not_in.
 const SINGLE_VALUE_OPS = new Set([
@@ -337,7 +336,7 @@ const SINGLE_VALUE_OPS = new Set([
 ]);
 
 // List ops — multi-select picker.
-const LIST_VALUE_OPS = new Set(["in", "not_in", "is", "is_not"]);
+const LIST_VALUE_OPS = new Set(["in", "not_in"]);
 
 // ---------------------------------------------------------------------------
 // Hook: fetch properties from dashboard metrics
@@ -360,6 +359,38 @@ const EXCLUDED_METRICS = new Set([
   "span_kind",
 ]);
 const PROPERTY_PICKER_RENDER_LIMIT = 250;
+
+const normalizePropertySearchText = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[_\-.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+export function filterPropertiesForPicker({
+  properties,
+  category = "all",
+  search = "",
+  hasCategorySidebar = true,
+}) {
+  const query = normalizePropertySearchText(search);
+  let list = properties || [];
+  if (hasCategorySidebar && category !== "all") {
+    list = list.filter((property) => property.category === category);
+  }
+  if (!query) return list;
+  return list.filter((property) => {
+    const name = normalizePropertySearchText(property.name);
+    const id = normalizePropertySearchText(property.id);
+    return name.includes(query) || id.includes(query);
+  });
+}
+
+const resolveFieldCategory = (explicitCategory, prop, fallback = "system") => {
+  if (explicitCategory !== undefined) return explicitCategory;
+  if (prop) return prop.category;
+  return fallback;
+};
 
 const ANNOTATOR_FILTER_PROPERTY = {
   id: "annotator",
@@ -419,19 +450,35 @@ function metricToTraceFilterProperty(m) {
 
 export function buildTraceFilterProperties(
   metrics,
-  { isSimulator = false } = {},
+  { isSimulator = false, sourceScope = null } = {},
 ) {
   const properties = metrics
     .filter((m) => {
       const name = m.name;
       const cat = m.category;
       const src = m.source;
+      const sources = Array.isArray(m.sources) ? m.sources : [];
+      const isSpanOnly =
+        (src === "spans" || sources.includes("spans")) &&
+        src !== "all" &&
+        src !== "both" &&
+        !sources.includes("all") &&
+        !sources.includes("both") &&
+        !sources.includes("traces");
+      const isSimulationMetric =
+        src === "simulation" || sources.includes("simulation");
 
       // Always exclude blacklisted metrics
       if (EXCLUDED_METRICS.has(name)) return false;
 
       // Exclude dataset-only metrics
       if (src === "datasets") return false;
+
+      if (sourceScope === "simulation" && !isSimulationMetric) return false;
+
+      // Span-only metrics are only available when the panel is bound to span
+      // rows. Trace/session/user panels should not render span row columns.
+      if (isSpanOnly && sourceScope !== "spans") return false;
 
       // Exclude simulation metrics for non-simulator projects
       if (src === "simulation" && !isSimulator) return false;
@@ -471,10 +518,15 @@ export function buildTraceFilterProperties(
 
 export function useTraceFilterProperties(
   projectId,
-  { enabled = true, isSimulator = false } = {},
+  { enabled = true, isSimulator = false, sourceScope = null } = {},
 ) {
   return useQuery({
-    queryKey: ["trace-filter-properties-v2", projectId, isSimulator],
+    queryKey: [
+      "trace-filter-properties-v2",
+      projectId,
+      isSimulator,
+      sourceScope,
+    ],
     enabled: enabled && Boolean(projectId),
     queryFn: async () => {
       const params = {};
@@ -487,7 +539,8 @@ export function useTraceFilterProperties(
       const { data } = await axios.get(endpoints.dashboard.metrics, { params });
       return data?.result?.metrics || [];
     },
-    select: (metrics) => buildTraceFilterProperties(metrics, { isSimulator }),
+    select: (metrics) =>
+      buildTraceFilterProperties(metrics, { isSimulator, sourceScope }),
     staleTime: 5 * 60_000,
     gcTime: 15 * 60_000,
   });
@@ -508,19 +561,16 @@ function PropertyPicker({
   const [category, setCategory] = useState("all");
   const hasCategorySidebar = categories && categories.length > 0;
 
-  const filtered = useMemo(() => {
-    let list = properties;
-    if (hasCategorySidebar && category !== "all")
-      list = list.filter((p) => p.category === category);
-    if (search) {
-      const q = search.toLowerCase();
-      list = list.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q),
-      );
-    }
-    return list;
-  }, [properties, category, search, hasCategorySidebar]);
+  const filtered = useMemo(
+    () =>
+      filterPropertiesForPicker({
+        properties,
+        category,
+        search,
+        hasCategorySidebar,
+      }),
+    [properties, category, search, hasCategorySidebar],
+  );
 
   const counts = useMemo(() => {
     const c = { all: properties.length };
@@ -672,6 +722,8 @@ function PropertyPicker({
               {visibleProperties.map((prop, idx) => (
                 <Box
                   key={`${prop.category}:${prop.id}:${idx}`}
+                  data-filter-property-option={prop.id}
+                  data-filter-property-label={prop.name}
                   onClick={() => {
                     onSelect(prop);
                     onClose();
@@ -898,6 +950,7 @@ function ValuePicker({
   return (
     <>
       <Box
+        data-filter-value-trigger={property?.id || ""}
         onClick={(e) => setAnchorEl(e.currentTarget)}
         sx={{
           display: "flex",
@@ -960,9 +1013,6 @@ function ValuePicker({
           })()
         ) : (
           selectedValues.slice(0, 3).map((v) => {
-            // Resolve the display label from static choices or rendered
-            // options. Falls back to the raw value (e.g. plain strings
-            // without a label).
             const match = options.find((o) => {
               const ov = typeof o === "string" ? o : o.value;
               return ov === v;
@@ -1082,6 +1132,7 @@ function ValuePicker({
             return (
               <Box
                 key={strVal}
+                data-filter-value-option={strVal}
                 onClick={() => toggleValue(opt)}
                 sx={{
                   display: "flex",
@@ -1139,6 +1190,7 @@ function ValuePicker({
             <>
               {filtered.length > 0 && <Divider />}
               <Box
+                data-filter-value-option={customSearchValue}
                 onClick={() => {
                   // singleSelect: replace the selection. Otherwise: append
                   // (but skip if the value is already selected).
@@ -1294,7 +1346,11 @@ function FilterRow({
       }
       if (NO_VALUE_OPS.has(newOp)) newVal = "";
       // Multi → single: drop stale extra picks.
-      if (SINGLE_VALUE_OPS.has(newOp) && Array.isArray(newVal) && newVal.length > 1) {
+      if (
+        SINGLE_VALUE_OPS.has(newOp) &&
+        Array.isArray(newVal) &&
+        newVal.length > 1
+      ) {
         newVal = [newVal[0]];
       }
       // Single → list: picker expects an array.
@@ -1492,7 +1548,7 @@ function FilterRow({
       );
     }
 
-    if (filter.fieldType === "text") {
+    if (usesFreeTextValue(filter.fieldType, source)) {
       return (
         <TextField
           size="small"
@@ -1635,6 +1691,7 @@ const TraceFilterPanel = ({
   showAi = true,
   showQueryTab = true,
   categories: categoriesOverride,
+  propertyFilter,
   panelWidth,
   defaultRow: defaultRowOverride,
   isSimulator = false,
@@ -1644,14 +1701,20 @@ const TraceFilterPanel = ({
   const { observeId: routeObserveId } = useParams();
   const observeId = projectIdProp || routeObserveId;
   const skipDynamicProperties = Boolean(propertiesOverride);
+  const dynamicPropertySource = isSpansView ? "spans" : "traces";
   const { data: dynamicProperties = [], isLoading: dynamicPropsLoading } =
     useTraceFilterProperties(observeId, {
       enabled: !skipDynamicProperties,
       isSimulator,
+      sourceScope: dynamicPropertySource,
     });
   // Merge: static trace fields + dynamic dashboard properties + any extra static fields
   const properties = useMemo(() => {
-    if (propertiesOverride) return propertiesOverride;
+    if (propertiesOverride) {
+      return propertyFilter
+        ? propertiesOverride.filter(propertyFilter)
+        : propertiesOverride;
+    }
     // Start with static trace fields (trace_name, status, model, etc.) —
     // prepend trace_id / span_id when rendered inside the LLM Tracing
     // trace or span tab. In spans view, relabel "Trace Name" to "Span Name".
@@ -1691,8 +1754,16 @@ const TraceFilterPanel = ({
         category: "system",
         type: f.type || "string",
       }));
-    return [...staticProps, ...dynamicExtras, ...fieldExtras];
-  }, [dynamicProperties, filterFields, propertiesOverride, tab, isSpansView]);
+    const merged = [...staticProps, ...dynamicExtras, ...fieldExtras];
+    return propertyFilter ? merged.filter(propertyFilter) : merged;
+  }, [
+    dynamicProperties,
+    filterFields,
+    propertiesOverride,
+    propertyFilter,
+    tab,
+    isSpansView,
+  ]);
   const propertyById = useMemo(
     () => Object.fromEntries(properties.map((p) => [p.id, p])),
     [properties],
@@ -1770,17 +1841,16 @@ const TraceFilterPanel = ({
         const enriched = currentFilters.map((f) => {
           const prop = propertyById[f.field];
           const fieldType = f.fieldType || prop?.type || "string";
-          // Translate wire ops to the picker's MenuItem values, per fieldType.
+          // ID-only fields (trace_id / span_id) bypass the string-op
+          // rewrite — ID_ONLY_OPS = [{ value: "is" }] so anything other
+          // than "is" renders blank in the operator Select.
           const hydratedOp = ID_ONLY_FIELDS.has(f.field)
             ? "is"
-            : (fieldType === "categorical" || fieldType === "thumbs") &&
-                HYDRATE_CATEGORICAL_OP[f.operator]
-              ? HYDRATE_CATEGORICAL_OP[f.operator]
-              : (fieldType === "string" || fieldType === "text") &&
-                  HYDRATE_STRING_OP[f.operator]
-                ? HYDRATE_STRING_OP[f.operator]
-                : f.operator;
-          // Scalar value → array when rewritten op uses a multi-select picker.
+            : (fieldType === "string" || fieldType === "text") &&
+                HYDRATE_STRING_OP[f.operator]
+              ? HYDRATE_STRING_OP[f.operator]
+              : f.operator;
+          // Scalar legacy `equals` value → array for the multi-select picker.
           let value = f.value;
           if (
             hydratedOp !== f.operator &&
@@ -1794,7 +1864,7 @@ const TraceFilterPanel = ({
           }
           return normalizeFilterRowOperator({
             ...f,
-            fieldCategory: f.fieldCategory || prop?.category || "system",
+            fieldCategory: resolveFieldCategory(f.fieldCategory, prop),
             fieldName: f.fieldName || prop?.name,
             fieldType,
             apiColType: f.apiColType || prop?.apiColType,
@@ -1817,7 +1887,7 @@ const TraceFilterPanel = ({
         return {
           field: t.field,
           fieldName: prop?.name || queryFieldDef?.label,
-          fieldCategory: prop?.category || queryFieldDef?.category || "system",
+          fieldCategory: resolveFieldCategory(undefined, prop || queryFieldDef),
           fieldType:
             prop?.type ||
             queryFieldDef?.panelType ||
@@ -1880,7 +1950,7 @@ const TraceFilterPanel = ({
         const fieldType = prop?.type || "string";
         return {
           field: f.field,
-          fieldCategory: prop?.category || "system",
+          fieldCategory: resolveFieldCategory(undefined, prop),
           fieldType,
           apiColType: prop?.apiColType,
           operator: f.operator || DEFAULT_OP_FOR_TYPE[fieldType] || "equals",
@@ -1893,6 +1963,14 @@ const TraceFilterPanel = ({
       onClose();
     }
   }, [aiQuery, aiParseQuery, observeId, source, properties, onApply, onClose]);
+
+  const handlePrimaryApply = useCallback(() => {
+    if (showAi && aiQuery.trim()) {
+      handleAiFilter();
+      return;
+    }
+    handleApply();
+  }, [showAi, aiQuery, handleAiFilter, handleApply]);
 
   return (
     <Popover
@@ -2053,6 +2131,7 @@ const TraceFilterPanel = ({
               <Stack direction="row" spacing={1} sx={{ ml: "auto" }}>
                 <Button
                   size="small"
+                  data-filter-panel-action="clear"
                   onClick={handleClear}
                   sx={{ textTransform: "none", fontSize: 12 }}
                 >
@@ -2061,7 +2140,9 @@ const TraceFilterPanel = ({
                 <Button
                   size="small"
                   variant="contained"
-                  onClick={handleApply}
+                  data-filter-panel-action="apply"
+                  onClick={handlePrimaryApply}
+                  disabled={aiLoading}
                   sx={{
                     textTransform: "none",
                     fontSize: 12,
@@ -2113,6 +2194,7 @@ const TraceFilterPanel = ({
             >
               <Button
                 size="small"
+                data-filter-panel-action="clear"
                 onClick={handleClear}
                 sx={{ textTransform: "none", fontSize: 12 }}
               >
@@ -2121,6 +2203,7 @@ const TraceFilterPanel = ({
               <Button
                 size="small"
                 variant="contained"
+                data-filter-panel-action="apply"
                 onClick={handleApply}
                 sx={{ textTransform: "none", fontSize: 12, px: 2 }}
               >
@@ -2155,6 +2238,7 @@ TraceFilterPanel.propTypes = {
   showAi: PropTypes.bool,
   showQueryTab: PropTypes.bool,
   categories: PropTypes.array,
+  propertyFilter: PropTypes.func,
   panelWidth: PropTypes.number,
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,

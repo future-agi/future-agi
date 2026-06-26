@@ -1,8 +1,11 @@
 from django.conf import settings
 from rest_framework import serializers
 
+from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import AgentTypeChoices
+
+MASKED_CREDENTIAL_VALUE = "********"
 
 
 class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
@@ -17,6 +20,7 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
     livekit_agent_name = serializers.SerializerMethodField()
     livekit_config_json = serializers.SerializerMethodField()
     livekit_max_concurrency = serializers.SerializerMethodField()
+    api_key = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentDefinition
@@ -67,7 +71,7 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
 
     def get_livekit_api_key(self, obj):
         creds = self._get_livekit_creds(obj)
-        return creds.get_masked_api_key() if creds else ""
+        return self._get_masked_api_key(creds)
 
     def get_livekit_agent_name(self, obj):
         creds = self._get_livekit_creds(obj)
@@ -82,6 +86,24 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
         return (
             creds.max_concurrency if creds else settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
         )
+
+    def get_api_key(self, obj):
+        try:
+            creds = obj.credentials
+        except AgentDefinition.credentials.RelatedObjectDoesNotExist:
+            creds = None
+        if creds and creds.provider_type != "livekit":
+            return self._get_masked_api_key(creds)
+        return mask_key(obj.api_key or "")
+
+    @staticmethod
+    def _get_masked_api_key(creds):
+        if not creds or not creds.api_key:
+            return ""
+        try:
+            return creds.get_masked_api_key()
+        except ValueError:
+            return MASKED_CREDENTIAL_VALUE
 
 
 class AgentDefinitionCreateResponseSerializer(serializers.Serializer):

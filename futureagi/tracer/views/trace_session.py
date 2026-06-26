@@ -3,7 +3,6 @@ import json
 import traceback
 from collections import defaultdict
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional
 
 try:
     import orjson
@@ -14,9 +13,7 @@ except ImportError:
 
 import pandas as pd
 import structlog
-
-logger = structlog.get_logger(__name__)
-from django.db import OperationalError, connection, models, transaction
+from django.db import OperationalError, models, transaction
 from django.db.models import (
     Avg,
     Case,
@@ -40,6 +37,7 @@ from django.db.models.functions import (
     Round,
 )
 from django.http import FileResponse
+from django.utils import timezone
 from rest_framework import status as drf_status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -49,6 +47,7 @@ from rest_framework.viewsets import ModelViewSet
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig
@@ -58,18 +57,23 @@ from tracer.models.observation_span import (
     EvalTargetType,
     ObservationSpan,
 )
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.trace import Trace
-from tracer.services.clickhouse.query_builders.base import NIL_UUID
-
-session_logger = structlog.get_logger(__name__)
-from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.trace_session import TraceSession
 from tracer.serializers.eval_task import PaginationQuerySerializer
 from tracer.serializers.trace_session import (
-    TraceSessionExportSerializer,
+    TraceSessionExportQuerySerializer,
+    TraceSessionFilterValuesQuerySerializer,
+    TraceSessionGraphDataRequestSerializer,
+    TraceSessionListQuerySerializer,
+    TraceSessionRetrieveQuerySerializer,
     TraceSessionSerializer,
 )
+from tracer.services.clickhouse.graph_dispatch import (
+    fetch_annotation_graph_ch,
+    fetch_eval_graph_ch,
+)
+from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.utils.filters import FilterEngine, apply_created_at_filters
 from tracer.utils.helper import (
     FieldConfig,
@@ -79,16 +83,169 @@ from tracer.utils.helper import (
 )
 from tracer.utils.session import get_session_navigation
 
+# Module loggers — declared AFTER all imports (E402). Both are the same
+# structlog logger bound to this module; the two names are kept for the
+# call-sites that historically used each.
+logger = structlog.get_logger(__name__)
+session_logger = structlog.get_logger(__name__)
+
+
+def _resolve_session_ids_to_canonical(analytics, session_ids):
+    """Map ``{input trace_session_id -> survivor (canonical old) id}``.
+
+    Resolve each caller id to its consolidation group's survivor via the SAME
+    survivor map the span side uses (``survivor_map_subquery``), so the input side
+    can't disagree: a new id, a non-survivor old, and the survivor all map to the
+    survivor; an unmapped id (1:1 / net-new) maps to itself. Pre-flip a no-op
+    (gate B). See id_remap_sql.
+    """
+    from tracer.services.clickhouse.v2.id_remap_sql import survivor_map_subquery
+
+    ids = {str(s) for s in (session_ids or []) if s}
+    if not ids:
+        return {}
+    q = (
+        "SELECT toString(any_id) AS any_id, toString(survivor_id) AS survivor_id "
+        f"FROM ({survivor_map_subquery('trace_session_id_remap')}) "
+        "WHERE any_id IN %(ids)s"
+    )
+    res = analytics.execute_ch_query(q, {"ids": tuple(ids)}, timeout_ms=5000)
+    id_to_survivor = {}
+    for row in res.data or []:
+        if isinstance(row, dict):
+            id_to_survivor[str(row.get("any_id"))] = str(row.get("survivor_id"))
+        else:
+            id_to_survivor[str(row[0])] = str(row[1])
+    return {i: id_to_survivor.get(i, i) for i in ids}
+
+
+def _get_request_organization(request):
+    return getattr(request, "organization", None) or getattr(
+        request.user, "organization", None
+    )
+
+
+def _project_workspace_scope_q(request, project_prefix="project__"):
+    organization = _get_request_organization(request)
+    scope = Q(**{f"{project_prefix}organization": organization})
+    workspace = getattr(request, "workspace", None)
+    if workspace:
+        if getattr(workspace, "is_default", False):
+            scope &= (
+                Q(**{f"{project_prefix}workspace": workspace})
+                | Q(
+                    **{
+                        f"{project_prefix}workspace__is_default": True,
+                        f"{project_prefix}workspace__organization": organization,
+                    }
+                )
+                | Q(**{f"{project_prefix}workspace__isnull": True})
+            )
+        else:
+            scope &= Q(**{f"{project_prefix}workspace": workspace})
+    return scope
+
+
+def _project_queryset_for_request(request):
+    manager = getattr(Project, "no_workspace_objects", Project.objects)
+    return manager.filter(
+        _project_workspace_scope_q(request, project_prefix=""),
+        deleted=False,
+    )
+
+
+def _trace_session_queryset_for_request(request):
+    manager = getattr(TraceSession, "no_workspace_objects", TraceSession.objects)
+    return manager.filter(
+        _project_workspace_scope_q(request),
+        project__deleted=False,
+        deleted=False,
+    )
+
+
+def _soft_delete_trace_session_tree(trace_sessions):
+    now = timezone.now()
+    sessions = list(trace_sessions)
+    if not sessions:
+        return
+
+    session_ids = [session.id for session in sessions]
+    trace_ids = list(
+        Trace.no_workspace_objects.filter(
+            session_id__in=session_ids,
+            deleted=False,
+        ).values_list("id", flat=True)
+    )
+
+    if trace_ids:
+        ObservationSpan.no_workspace_objects.filter(
+            trace_id__in=trace_ids,
+            deleted=False,
+        ).update(deleted=True, deleted_at=now)
+        EvalLogger.no_workspace_objects.filter(
+            trace_id__in=trace_ids,
+            deleted=False,
+        ).update(deleted=True, deleted_at=now)
+        Trace.no_workspace_objects.filter(
+            id__in=trace_ids,
+            deleted=False,
+        ).update(deleted=True, deleted_at=now)
+
+    EvalLogger.no_workspace_objects.filter(
+        trace_session_id__in=session_ids,
+        deleted=False,
+    ).update(deleted=True, deleted_at=now)
+    TraceSession.no_workspace_objects.filter(
+        id__in=session_ids,
+        deleted=False,
+    ).update(deleted=True, deleted_at=now)
+
 
 class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
     serializer_class = TraceSessionSerializer
 
+    def _empty_session_list_response(self, project=None, *, export=False):
+        if export:
+            return self._gm.success_response(
+                {
+                    "table": {
+                        "total_cost",
+                        "duration",
+                        "total_traces_count",
+                        "start_time",
+                        "end_time",
+                        "first_message",
+                        "last_message",
+                        "session_id",
+                        "created_at",
+                    }
+                }
+            )
+
+        return self._gm.success_response(
+            {
+                "metadata": {"total_rows": 0},
+                "table": [],
+                "config": (
+                    (project.session_config if project else None)
+                    or get_default_project_session_config()
+                ),
+            }
+        )
+
     def get_queryset(self):
         trace_session_id = self.kwargs.get("pk")
         # Get base queryset with automatic filtering from mixin
-        queryset = super().get_queryset()
+        queryset = (
+            super()
+            .get_queryset()
+            .filter(
+                _project_workspace_scope_q(self.request),
+                project__deleted=False,
+            )
+        )
 
         if trace_session_id:
             queryset = queryset.filter(id=trace_session_id)
@@ -99,33 +256,88 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         return queryset
 
+    def perform_update(self, serializer):
+        """Persist a TraceSession update AND mirror the UI overlay (slice 2b).
+
+        ``bookmarked`` and ``name`` are the user-writable fields on
+        ``TraceSessionSerializer`` (the bookmark / rename UI write path). The
+        legacy ``TraceSession.bookmarked``/``name`` write is kept UNCHANGED here
+        (the PG-fallback read and legacy callers still read it during the
+        dual-source window; it retires at contract / P4). On top of that we now
+        ALSO upsert the PG ``TraceSessionOverlay`` so slice 2a's overlay-backed
+        reads — ``_build_bookmark_filter`` (bookmarked → ids) and
+        ``_fetch_session_names`` (``COALESCE(overlay.display_name, …)``) — stay
+        fresh (DESIGN §5 / §5.1, the user overlay + the rename-bug separation).
+
+        ATOMICITY: the overlay lives in the SAME PG database as ``TraceSession``,
+        so the ``save()`` and the overlay ``update_or_create`` are wrapped in ONE
+        ``transaction.atomic()`` and commit both-or-neither. This is a PG↔PG
+        write that MUST stay consistent — deliberately NOT the best-effort CH
+        dual-write pattern (which tolerates a failed mirror).
+
+        The overlay fields are read from the POST-SAVE instance, never from
+        ``validated_data``: a partial PATCH (e.g. only ``{"bookmarked": true}``)
+        carries no ``name``, so sourcing ``display_name`` from ``validated_data``
+        would clobber an existing rename (and a name-only PATCH would clobber
+        ``bookmarked``). ``instance`` always reflects the full current state.
+
+        ``display_name`` mirrors the current ``name``: for a never-renamed
+        session it equals the external session id (harmless — slice 2a's COALESCE
+        would surface the same value), and for a rename it is the new label,
+        which is exactly the overlay's purpose.
+        """
+        from tracer.models.trace_session import TraceSessionOverlay
+
+        with transaction.atomic():
+            instance = serializer.save()
+            TraceSessionOverlay.objects.update_or_create(
+                trace_session_id=instance.id,
+                defaults={
+                    "project_id": instance.project_id,
+                    "bookmarked": instance.bookmarked,
+                    "display_name": instance.name,
+                },
+            )
+
+    def perform_destroy(self, instance):
+        _soft_delete_trace_session_tree([instance])
+
     def retrieve(self, request, *args, **kwargs):
         try:
-            trace_session_id = self.kwargs.get("pk")
-            trace_session = TraceSession.objects.get(
-                id=trace_session_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+            query_serializer = TraceSessionRetrieveQuerySerializer(
+                data=request.query_params
             )
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query_data = query_serializer.validated_data
+
+            trace_session_id = self.kwargs.get("pk")
+            trace_session = self.get_queryset().get(id=trace_session_id)
             project_id = trace_session.project.id
 
             # ClickHouse dispatch for session detail
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
-                QueryType,
             )
 
+            # CH-only path post-migration. PG fallback removed; a CH error
+            # propagates so operators see real data-pipeline issues instead
+            # of silently degrading to incomplete legacy session data.
             analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.TRACE_DETAIL):
-                return self._retrieve_clickhouse(
-                    request, trace_session_id, trace_session, project_id, analytics
-                )
+            return self._retrieve_clickhouse(
+                request,
+                trace_session_id,
+                trace_session,
+                project_id,
+                analytics,
+                query_data,
+            )
 
             serializer = self.get_serializer(trace_session)
             trace_session = serializer.data
 
-            page_number = int(self.request.query_params.get("page_number", 0))
-            page_size = int(self.request.query_params.get("page_size", 30))
+            page_number = query_data["page_number"]
+            page_size = query_data["page_size"]
             page_start = page_number * page_size
             page_end = page_start + page_size + 1
 
@@ -181,7 +393,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
             if not traces:
                 next_session_id, previous_session_id = get_session_navigation(
-                    request, project_id, trace_session_id
+                    request, project_id, trace_session_id, query_data
                 )
                 session_metadata["next_session_id"] = next_session_id
                 session_metadata["previous_session_id"] = previous_session_id
@@ -235,7 +447,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             explanation_map = {}  # config_id_str -> explanation
 
             if eval_config_ids:
-
                 eval_aggs = (
                     EvalLogger.objects.filter(
                         trace_id__in=paginated_trace_ids,
@@ -407,7 +618,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 response.append(result)
 
             next_session_id, previous_session_id = get_session_navigation(
-                request, project_id, trace_session_id
+                request, project_id, trace_session_id, query_data
             )
             session_metadata["next_session_id"] = next_session_id
             session_metadata["previous_session_id"] = previous_session_id
@@ -444,18 +655,47 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request("Error retrieving trace session.")
 
     def _retrieve_clickhouse(
-        self, request, trace_session_id, trace_session_obj, project_id, analytics
+        self,
+        request,
+        trace_session_id,
+        trace_session_obj,
+        project_id,
+        analytics,
+        query_data,
     ):
         """Retrieve session detail from ClickHouse."""
-        serializer = self.get_serializer(trace_session_obj)
-        trace_session = serializer.data
-
-        page_number = int(self.request.query_params.get("page_number", 0))
-        page_size = int(self.request.query_params.get("page_size", 30))
+        page_number = query_data["page_number"]
+        page_size = query_data["page_size"]
         page_start = page_number * page_size
 
+        # P3b step1.5 (DESIGN §3 / id_remap_sql): the session detail is keyed by the
+        # OLD curated `TraceSession.id` (the URL pk). A cross-cutover straddler's
+        # NEW (deterministic-id) spans carry `trace_session_id = new_id`, so resolve
+        # each span's `trace_session_id` new→old through `trace_session_id_remap`
+        # and match the OLD id on the RESOLVED value — the detail aggregates AND the
+        # paginated trace list then see old + new spans as ONE session. The remap
+        # table only carries `old_id`/`new_id`, so the unqualified span columns stay
+        # unambiguous under the join. `resolved_id_expr` is the zero-uuid-guarded map
+        # (NOT a COALESCE). Pre-flip NO span matches a `new_id` → resolved id == own
+        # id → byte-identical no-op (gate B).
+        from tracer.services.clickhouse.v2.id_remap_sql import (
+            remap_left_join,
+            resolved_id_expr,
+        )
+
+        ts_remap_join = remap_left_join(
+            "spans.trace_session_id", "trace_session_id_remap", "ts_remap"
+        )
+        ts_resolved = resolved_id_expr("spans.trace_session_id", "ts_remap")
+        # A caller can arrive with either member of a remap pair; bind the same
+        # survivor id that the span side resolves to before comparing.
+        requested_session_id = str(trace_session_id)
+        canonical_session_id = _resolve_session_ids_to_canonical(
+            analytics, [requested_session_id]
+        ).get(requested_session_id, requested_session_id)
+
         # Get session-level aggregates from CH
-        agg_query = """
+        agg_query = f"""
             SELECT
                 min(start_time) AS start_time,
                 max(end_time) AS end_time,
@@ -463,13 +703,14 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 sum(total_tokens) AS total_tokens,
                 count(DISTINCT trace_id) AS total_traces
             FROM spans
+            {ts_remap_join}
             WHERE project_id = %(project_id)s
-              AND trace_session_id = %(session_id)s
-              AND _peerdb_is_deleted = 0
+              AND {ts_resolved} = %(session_id)s
+              AND is_deleted = 0
         """
         agg_result = analytics.execute_ch_query(
             agg_query,
-            {"project_id": str(project_id), "session_id": str(trace_session_id)},
+            {"project_id": str(project_id), "session_id": canonical_session_id},
             timeout_ms=5000,
         )
 
@@ -493,8 +734,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             "total_tokens": agg.get("total_tokens", 0),
         }
 
-        # Get paginated trace data from CH
-        trace_query = """
+        # Get paginated trace data from CH (same id-remap resolution as the agg so
+        # a straddler's new-id traces appear in the unified session's trace list).
+        trace_query = f"""
             SELECT
                 toString(trace_id) AS trace_id,
                 any(input) AS input,
@@ -506,9 +748,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 sum(prompt_tokens) AS input_tokens,
                 sum(completion_tokens) AS output_tokens
             FROM spans
+            {ts_remap_join}
             WHERE project_id = %(project_id)s
-              AND trace_session_id = %(session_id)s
-              AND _peerdb_is_deleted = 0
+              AND {ts_resolved} = %(session_id)s
+              AND is_deleted = 0
             GROUP BY trace_id
             ORDER BY trace_min_start_time ASC
             LIMIT %(limit)s
@@ -518,7 +761,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             trace_query,
             {
                 "project_id": str(project_id),
-                "session_id": str(trace_session_id),
+                "session_id": canonical_session_id,
                 "limit": page_size + 1,
                 "offset": page_start,
             },
@@ -530,7 +773,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         if not traces_data:
             next_session_id, previous_session_id = get_session_navigation(
-                request, project_id, trace_session_id
+                request, project_id, trace_session_id, query_data
             )
             session_metadata["next_session_id"] = next_session_id
             session_metadata["previous_session_id"] = previous_session_id
@@ -548,31 +791,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         trace_ids = [r["trace_id"] for r in traces_data]
         eval_configs: list = []
         if trace_ids:
-            try:
-                config_id_result = analytics.execute_ch_query(
-                    """
-                    SELECT DISTINCT toString(custom_eval_config_id) AS config_id
-                    FROM tracer_eval_logger FINAL
-                    WHERE trace_id IN %(trace_ids)s
-                      AND _peerdb_is_deleted = 0
-                      AND (deleted = 0 OR deleted IS NULL)
-                    """,
-                    {"trace_ids": trace_ids},
-                    timeout_ms=3000,
-                )
-                pre_config_ids = [
-                    row["config_id"]
-                    for row in config_id_result.data
-                    if row.get("config_id")
-                ]
-            except Exception as e:
-                logger.warning(
-                    "ch_eval_config_id_lookup_failed",
-                    session_id=str(trace_session_id),
-                    error=str(e),
-                )
-                pre_config_ids = []
-
+            # A CH read failure must surface (via retrieve()'s outer error
+            # handler), not fail open to "this session has no eval scores".
+            pre_config_ids = analytics.get_eval_config_ids_for_traces_ch(trace_ids)
             if pre_config_ids:
                 eval_configs = list(
                     CustomEvalConfig.objects.filter(
@@ -584,31 +805,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         eval_map = {}
         if eval_configs and trace_ids:
             config_ids = [str(c.id) for c in eval_configs]
-            eval_query = """
-                SELECT
-                    toString(trace_id) AS trace_id,
-                    toString(custom_eval_config_id) AS config_id,
-                    round(avg(output_float) * 100, 2) AS float_score,
-                    round(avg(CASE WHEN output_bool = 1 THEN 100.0
-                                   WHEN output_bool = 0 THEN 0.0
-                                   ELSE NULL END), 2) AS bool_score,
-                    count(output_float) AS float_count,
-                    count(output_bool) AS bool_count
-                FROM tracer_eval_logger FINAL
-                WHERE trace_id IN %(trace_ids)s
-                  AND custom_eval_config_id IN %(config_ids)s
-                  AND _peerdb_is_deleted = 0
-                  AND (deleted = 0 OR deleted IS NULL)
-                  AND output_str != 'ERROR'
-                  AND (error = 0 OR error IS NULL)
-                GROUP BY trace_id, custom_eval_config_id
-            """
-            eval_result = analytics.execute_ch_query(
-                eval_query,
-                {"trace_ids": trace_ids, "config_ids": config_ids},
-                timeout_ms=5000,
-            )
-            for row in eval_result.data:
+            eval_rows = analytics.get_trace_eval_scores_ch(trace_ids, config_ids)
+            for row in eval_rows:
                 key = (row["trace_id"], row["config_id"])
                 if row.get("float_count", 0) > 0:
                     eval_map[key] = {"score": row["float_score"], "type": "float"}
@@ -650,7 +848,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             response.append(result)
 
         next_session_id, previous_session_id = get_session_navigation(
-            request, project_id, trace_session_id
+            request, project_id, trace_session_id, query_data
         )
         session_metadata["next_session_id"] = next_session_id
         session_metadata["previous_session_id"] = previous_session_id
@@ -672,20 +870,30 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         Query params:
             project_id: required
-            column: the session column name (camelCase, e.g. "sessionId")
+            column: canonical session column name, e.g. "session_id"
             search: optional search substring
             page: page number (0-based), default 0
             page_size: default 50
         """
         try:
-            project_id = request.query_params.get("project_id")
-            column = request.query_params.get("column", "")
-            search = request.query_params.get("search", "")
-            page = int(request.query_params.get("page", 0))
-            page_size = int(request.query_params.get("page_size", 50))
+            query_serializer = TraceSessionFilterValuesQuerySerializer(
+                data=request.query_params
+            )
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
 
-            if not project_id or not column:
-                return self._gm.bad_request("project_id and column are required")
+            query_params = query_serializer.validated_data
+            project_id = str(query_params["project_id"])
+            if (
+                not _project_queryset_for_request(request)
+                .filter(id=project_id)
+                .exists()
+            ):
+                return self._gm.bad_request("Project not found")
+            column = query_params["column"]
+            search = query_params.get("search", "")
+            page = query_params.get("page", 0)
+            page_size = query_params.get("page_size", 50)
 
             # Map frontend column names to ClickHouse expressions
             COLUMN_MAP = {
@@ -693,25 +901,30 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 "user_id": "end_user_id",
                 "first_message": "first_message",
                 "last_message": "last_message",
-                # Legacy camelCase support
-                "sessionId": "trace_session_id",
-                "userId": "end_user_id",
-                "firstMessage": "first_message",
-                "lastMessage": "last_message",
             }
 
             ch_column = COLUMN_MAP.get(column)
             if not ch_column:
-                return self._gm.success_response({"values": []})
+                return self._gm.bad_request("Unsupported session filter column.")
 
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
-                QueryType,
             )
 
             analytics = AnalyticsQueryService()
-            if not analytics.should_use_clickhouse(QueryType.SESSION_LIST):
-                return self._gm.success_response({"values": []})
+
+            # P3b step1.5 (DESIGN §3 / id_remap_sql): the value-picker dropdown
+            # reads the soft id straight off raw spans; a cross-cutover straddler
+            # carries BOTH an old random-uuid4 and a new deterministic-UUIDv5 id,
+            # so without resolution the same session/user appears TWICE in the
+            # picker (and first/last message is computed per-split-half). Resolve
+            # `trace_session_id` / `end_user_id` new→old through the remap so the
+            # straddler collapses to its OLD curated id. Pre-flip the remap is a
+            # no-op → byte-identical dropdown (gate B).
+            from tracer.services.clickhouse.v2.id_remap_sql import (
+                remap_left_join,
+                resolved_id_expr,
+            )
 
             # For firstMessage/lastMessage we need argMin/argMax from root spans
             if ch_column in ("first_message", "last_message"):
@@ -720,16 +933,30 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     if ch_column == "first_message"
                     else "argMax(input, start_time)"
                 )
-                search_clause = f"AND val ILIKE %(search)s" if search else ""
+                search_clause = "AND val ILIKE %(search)s" if search else ""
+                ts_join = remap_left_join(
+                    "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
+                )
+                resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
                 query = f"""
                 SELECT DISTINCT val FROM (
                     SELECT {agg_expr} AS val
-                    FROM spans
-                    WHERE project_id = %(project_id)s
-                      AND _peerdb_is_deleted = 0
-                      AND trace_session_id IS NOT NULL
-                      AND trace_session_id != toUUID('{NIL_UUID}')
-                      AND (parent_span_id IS NULL OR parent_span_id = '')
+                    FROM (
+                        SELECT
+                            {resolved_ts} AS trace_session_id,
+                            rs.input AS input,
+                            rs.start_time AS start_time
+                        FROM (
+                            SELECT trace_session_id, input, start_time
+                            FROM spans
+                            WHERE project_id = %(project_id)s
+                              AND is_deleted = 0
+                              AND trace_session_id IS NOT NULL
+                              AND trace_session_id != toUUID('{NIL_UUID}')
+                              AND (parent_span_id IS NULL OR parent_span_id = '')
+                        ) AS rs
+                        {ts_join}
+                    )
                     GROUP BY trace_session_id
                 )
                 WHERE val != '' AND val IS NOT NULL
@@ -738,23 +965,38 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 LIMIT %(limit)s OFFSET %(offset)s
                 """
             else:
-                # Simple distinct on the column (session_id, user_id)
+                # Simple distinct on the column (session_id, user_id) — resolved
+                # new→old so a straddler is listed ONCE under its OLD curated id.
                 is_uuid = ch_column in ("trace_session_id", "end_user_id")
-                select_expr = f"toString({ch_column})" if is_uuid else ch_column
+                remap_table = (
+                    "trace_session_id_remap"
+                    if ch_column == "trace_session_id"
+                    else "end_user_id_remap"
+                )
+                resolved_col = resolved_id_expr(f"rs.{ch_column}", "rmp")
+                col_join = remap_left_join(f"rs.{ch_column}", remap_table, "rmp")
+                select_expr = "toString(val_id)" if is_uuid else "val_id"
                 search_clause = (
-                    f"AND toString({ch_column}) ILIKE %(search)s" if search else ""
+                    "AND toString(val_id) ILIKE %(search)s" if search else ""
                 )
                 nil_uuid_clause = (
-                    f"AND {ch_column} != toUUID('{NIL_UUID}')" if is_uuid else ""
+                    f"AND val_id != toUUID('{NIL_UUID}')" if is_uuid else ""
                 )
                 query = f"""
-                SELECT DISTINCT {select_expr} AS val
-                FROM spans
-                WHERE project_id = %(project_id)s
-                  AND _peerdb_is_deleted = 0
-                  AND {ch_column} IS NOT NULL
+                SELECT DISTINCT {select_expr} AS val FROM (
+                    SELECT {resolved_col} AS val_id
+                    FROM (
+                        SELECT {ch_column}
+                        FROM spans
+                        WHERE project_id = %(project_id)s
+                          AND is_deleted = 0
+                          AND {ch_column} IS NOT NULL
+                          AND (parent_span_id IS NULL OR parent_span_id = '')
+                    ) AS rs
+                    {col_join}
+                )
+                WHERE val_id IS NOT NULL
                   {nil_uuid_clause}
-                  AND (parent_span_id IS NULL OR parent_span_id = '')
                   {search_clause}
                 ORDER BY val
                 LIMIT %(limit)s OFFSET %(offset)s
@@ -784,6 +1026,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             session_logger.exception(f"Error in get_session_filter_values: {e}")
             return self._gm.bad_request(str(e))
 
+    @validated_request(request_serializer=TraceSessionGraphDataRequestSerializer)
     @action(detail=False, methods=["post"])
     def get_session_graph_data(self, request, *args, **kwargs):
         """
@@ -798,82 +1041,120 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         Response shape matches trace graph: {metric_name, data: [{timestamp, value, primary_traffic}]}
         """
         try:
-            project_id = request.data.get("project_id")
-            project = Project.objects.get(
-                id=project_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            body = request.validated_data
+            project_id = str(body["project_id"])
+            project = _project_queryset_for_request(request).get(id=project_id)
 
             if not project_id or not project:
                 return self._gm.bad_request("project_id is required")
 
-            filters = request.data.get("filters", [])
-            interval = request.data.get("interval", "day")
-            req_data_config = request.data.get("req_data_config", {})
+            filters = body["filters"]
+            interval = body["interval"]
+            req_data_config = body["req_data_config"]
             metric_type = req_data_config.get("type", "SYSTEM_METRIC")
             metric_id = req_data_config.get("id", "session_count")
 
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
-                QueryType,
             )
 
             analytics = AnalyticsQueryService()
 
             # --- SYSTEM_METRIC: session-level aggregation via ClickHouse ---
             if metric_type == "SYSTEM_METRIC":
-                if analytics.should_use_clickhouse(QueryType.TIME_SERIES):
-                    try:
-                        from tracer.services.clickhouse.query_builders.session_time_series import (
-                            SessionTimeSeriesQueryBuilder,
-                        )
+                try:
+                    from tracer.services.clickhouse.query_builders.session_time_series import (
+                        SessionTimeSeriesQueryBuilder,
+                    )
 
-                        builder = SessionTimeSeriesQueryBuilder(
-                            project_id=str(project_id),
-                            filters=filters,
-                            interval=interval,
-                        )
-                        query, params = builder.build()
-                        result = analytics.execute_ch_query(
-                            query, params, timeout_ms=10000
-                        )
-                        ch_data = builder.format_result(
-                            result.data, result.columns or []
-                        )
+                    builder = SessionTimeSeriesQueryBuilder(
+                        project_id=str(project_id),
+                        filters=filters,
+                        interval=interval,
+                    )
+                    query, params = builder.build()
+                    result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+                    ch_data = builder.format_result(result.data, result.columns or [])
 
-                        metric_key = (
-                            metric_id if metric_id in ch_data else "session_count"
-                        )
-                        metric_points = ch_data.get(metric_key, [])
-                        traffic_points = ch_data.get("traffic", [])
-                        traffic_by_ts = {
-                            t.get("timestamp"): t.get("traffic", 0)
-                            for t in traffic_points
-                        }
-                        graph_data = {
-                            "metric_name": metric_id,
-                            "data": [
-                                {
-                                    "timestamp": p.get("timestamp"),
-                                    "value": p.get("value", 0),
-                                    "primary_traffic": traffic_by_ts.get(
-                                        p.get("timestamp"), 0
-                                    ),
-                                }
-                                for p in metric_points
-                            ],
-                        }
-                        return self._gm.success_response(graph_data)
-                    except Exception as e:
-                        session_logger.warning(
-                            "CH session time-series failed",
-                            error=str(e),
-                        )
+                    metric_key = metric_id if metric_id in ch_data else "session_count"
+                    metric_points = ch_data.get(metric_key, [])
+                    traffic_points = ch_data.get("traffic", [])
+                    traffic_by_ts = {
+                        t.get("timestamp"): t.get("traffic", 0) for t in traffic_points
+                    }
+                    graph_data = {
+                        "metric_name": metric_id,
+                        "data": [
+                            {
+                                "timestamp": p.get("timestamp"),
+                                "value": p.get("value", 0),
+                                "primary_traffic": traffic_by_ts.get(
+                                    p.get("timestamp"), 0
+                                ),
+                            }
+                            for p in metric_points
+                        ],
+                    }
+                    return self._gm.success_response(graph_data)
+                except Exception as e:
+                    session_logger.warning(
+                        "CH session time-series failed",
+                        error=str(e),
+                    )
+                    session_logger.warning("Falling back to Postgres session graph")
 
             # --- EVAL / ANNOTATION: delegate to shared helpers ---
             # Filter traces to only those belonging to sessions
             elif metric_type in ("EVAL", "ANNOTATION"):
+                session_filters = [
+                    *filters,
+                    {
+                        "column_id": "trace_session_id",
+                        "filter_config": {
+                            "col_type": "SYSTEM_METRIC",
+                            "filter_type": "text",
+                            "filter_op": "is_not_null",
+                            "filter_value": None,
+                        },
+                    },
+                ]
+                if metric_type == "EVAL":
+                    try:
+                        return self._gm.success_response(
+                            fetch_eval_graph_ch(
+                                analytics=analytics,
+                                project_id=project_id,
+                                filters=session_filters,
+                                interval=interval,
+                                req_data_config=req_data_config,
+                            )
+                        )
+                    except Exception as e:
+                        session_logger.exception(
+                            "ClickHouse session eval graph failed",
+                            error=str(e),
+                        )
+                        session_logger.warning("Falling back to Postgres session graph")
+
+                if metric_type == "ANNOTATION":
+                    try:
+                        return self._gm.success_response(
+                            fetch_annotation_graph_ch(
+                                analytics=analytics,
+                                project_id=project_id,
+                                filters=session_filters,
+                                interval=interval,
+                                req_data_config=req_data_config,
+                                observe_type="trace",
+                            )
+                        )
+                    except Exception as e:
+                        session_logger.exception(
+                            "ClickHouse session annotation graph failed",
+                            error=str(e),
+                        )
+                        session_logger.warning("Falling back to Postgres session graph")
+
                 from tracer.utils.graphs_optimized import (
                     get_annotation_graph_data,
                     get_eval_graph_data,
@@ -888,7 +1169,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     graph_data = get_eval_graph_data(
                         interval=interval,
                         filters=filters,
-                        property=request.data.get("property", "average"),
+                        property=body["property"],
                         observe_type="trace",
                         req_data_config=req_data_config,
                         eval_logger_filters={"trace_ids_queryset": session_trace_qs},
@@ -897,7 +1178,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     graph_data = get_annotation_graph_data(
                         interval=interval,
                         filters=filters,
-                        property=request.data.get("property", "average"),
+                        property=body["property"],
                         observe_type="trace",
                         req_data_config=req_data_config,
                         annotation_logger_filters={
@@ -917,30 +1198,20 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             session_logger.exception(f"Error in get_session_graph_data: {str(e)}")
             return self._gm.bad_request(f"Error fetching session graph data: {str(e)}")
 
+    @validated_request(query_serializer=TraceSessionListQuerySerializer)
     @action(detail=False, methods=["get"])
     def list_sessions(self, request, *args, **kwargs):
         """
         List traces filtered by project ID and project version ID with optimized queries.
         """
         try:
-            query_data = {
-                "filters": request.query_params.get("filters", "[]"),
-                "sort_params": request.query_params.get("sort_params", "[]")
-                or request.query_params.get("sortParams", "[]"),
-            }
-            if query_data["filters"]:
-                query_data["filters"] = json.loads(query_data["filters"])
-            if query_data["sort_params"]:
-                query_data["sort_params"] = json.loads(query_data["sort_params"])
-            serializer = TraceSessionExportSerializer(data=query_data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_query_data
             export = kwargs.get("export", False) if kwargs else False
-            project_id = self.request.query_params.get(
-                "project_id"
-            ) or self.request.query_params.get("projectId")
+            project_id = (
+                str(validated_data["project_id"])
+                if validated_data.get("project_id")
+                else None
+            )
 
             org = (
                 getattr(self.request, "organization", None)
@@ -953,39 +1224,60 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             org_scope = not project_id
             if org_scope:
                 org_project_ids = list(
-                    Project.objects.filter(
-                        organization=org,
+                    _project_queryset_for_request(request)
+                    .filter(
                         deleted=False,
                         trace_type__in=("observe", "experiment"),
-                    ).values_list("id", flat=True)
+                    )
+                    .exclude(source=ProjectSourceChoices.SIMULATOR.value)
+                    .values_list("id", flat=True)
                 )
                 project = None
             else:
-                project = Project.objects.get(id=project_id, organization=org)
+                project = _project_queryset_for_request(request).get(id=project_id)
+                if project.source == ProjectSourceChoices.SIMULATOR.value:
+                    return self._empty_session_list_response(project, export=export)
                 org_project_ids = None
 
             # ClickHouse dispatch
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
-                QueryType,
             )
 
             analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.SESSION_LIST):
-                try:
-                    return self._list_sessions_clickhouse(
-                        request,
-                        project_id,
-                        project,
-                        analytics,
-                        validated_data,
-                        org_project_ids=org_project_ids,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "ClickHouse session-list failed, falling back to PG",
-                        error=str(e),
-                    )
+            bookmarked = validated_data.get("bookmarked")
+
+            # CH-derived-dimensions cutover (DESIGN §5.2): the ``bookmarked``
+            # filter no longer forces the whole read onto PG. ``bookmarked`` is a
+            # THREE-state flag (None = no filter, True = bookmarked only, False =
+            # NON-bookmarked only). For True/False we resolve the bookmarked
+            # ``trace_session_id``s from the small PG ``TraceSessionOverlay``
+            # (the UI-sourced overlay) and pass them to the CH path as a synthetic
+            # ``trace_session_id IN (…)`` / ``NOT IN (…)`` filter — the same
+            # synthetic-id trick the user_id scoping already uses. The whole list
+            # then runs through the existing CH builder for all three states; the
+            # PG aggregate branch below is the CH-failure fallback only.
+            bookmark_filter = self._build_bookmark_filter(
+                bookmarked,
+                org_project_ids if org_scope else [project_id],
+                analytics=analytics,
+            )
+            try:
+                return self._list_sessions_clickhouse(
+                    request,
+                    project_id,
+                    project,
+                    analytics,
+                    validated_data,
+                    org_project_ids=org_project_ids,
+                    bookmark_filter=bookmark_filter,
+                )
+            except Exception as e:
+                logger.exception(
+                    "ClickHouse session-list failed",
+                    error=str(e),
+                )
+                logger.warning("Falling back to Postgres session list")
 
             filters = validated_data.get("filters", [])
             sort_params = validated_data.get("sort_params", [])
@@ -995,43 +1287,18 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 if org_scope
                 else TraceSession.objects.filter(project_id=project_id)
             )
+            if bookmarked is not None:
+                trace_sessions_qs = trace_sessions_qs.filter(bookmarked=bookmarked)
             trace_sessions_qs, remaining_filters = apply_created_at_filters(
                 trace_sessions_qs, filters
             )
 
             if not trace_sessions_qs.exists():
-                if export:
-                    return self._gm.success_response(
-                        {
-                            "table": {
-                                "total_cost",
-                                "duration",
-                                "total_traces_count",
-                                "start_time",
-                                "end_time",
-                                "first_message",
-                                "last_message",
-                                "session_id",
-                                "created_at",
-                            }
-                        }
-                    )
-                return self._gm.success_response(
-                    {
-                        "metadata": {"total_rows": 0},
-                        "table": [],
-                        "config": (
-                            (project.session_config if project else None)
-                            or get_default_project_session_config()
-                        ),
-                    }
-                )
+                return self._empty_session_list_response(project, export=export)
 
             session_ids = trace_sessions_qs.values("id")
 
-            user_id = self.request.query_params.get(
-                "user_id"
-            ) or self.request.query_params.get("userId")
+            user_id = validated_data.get("user_id") or None
 
             end_user_filter = {}
             if user_id:
@@ -1164,12 +1431,12 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
             # Separate score filters from system metric filters
             score_label_ids = (
-                set(
-                    str(l.id)
-                    for l in AnnotationsLabels.objects.filter(
+                {
+                    str(label.id)
+                    for label in AnnotationsLabels.objects.filter(
                         project_id=project_id, deleted=False
                     )
-                )
+                }
                 if remaining_filters
                 else set()
             )
@@ -1214,13 +1481,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                                 v.strip() for v in filter_val.split(",") if v.strip()
                             ]
 
-                        if filter_op in ("equals", "is"):
+                        if filter_op == "equals":
                             if isinstance(filter_val, list):
                                 score_q = base_score_q.filter(value__in=filter_val)
                             else:
                                 score_q = base_score_q.filter(value=filter_val)
                             base_query = base_query.filter(Exists(score_q))
-                        elif filter_op in ("not_equals", "is_not"):
+                        elif filter_op == "not_equals":
                             if isinstance(filter_val, list):
                                 score_q = base_score_q.filter(value__in=filter_val)
                             else:
@@ -1233,8 +1500,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                             # Unknown op — fall back to existence check
                             base_query = base_query.filter(Exists(base_score_q))
 
-            page_number = int(request.query_params.get("page_number", 0))
-            page_size = int(request.query_params.get("page_size", 30))
+            page_number = validated_data["page_number"]
+            page_size = validated_data["page_size"]
             start = page_number * page_size
             end_idx = start + page_size
 
@@ -1269,13 +1536,19 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             paginated_session_ids = [
                 str(span["trace__session_id"]) for span in paginated_spans
             ]
-            end_user_map = self._fetch_end_user_info(
-                paginated_session_ids,
-                end_user_filter,
-                getattr(request, "organization", None) or request.user.organization,
+            # PG-FALLBACK branch (reached only when the primary CH path raised):
+            # its curated reads stay FULLY ON PG so it degrades gracefully on a
+            # CH outage. The CH dict/overlay cutover (DESIGN §4.3 / §5.2) lives
+            # ONLY on the primary ``_list_sessions_clickhouse`` path; the CH dict
+            # readers re-raise on error, so routing this fallback through them
+            # would make a CH outage fail the whole request instead of degrading.
+            # PG sources (tracer_enduser FK, TraceSession.name) still exist until
+            # the contract step (P4), so this read remains valid in the interim.
+            end_user_map = self._fetch_end_user_info_pg(
+                paginated_session_ids, end_user_filter
             )
 
-            # Map UUID -> user-defined session name (TraceSession.name)
+            # session name = PG TraceSession.name (the legacy back-fill, PG-only).
             session_name_map = {
                 str(sid): name
                 for sid, name in TraceSession.objects.filter(
@@ -1410,8 +1683,19 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         return result
 
     @staticmethod
-    def _fetch_end_user_info(session_ids, end_user_filter, organization):
-        """Fetch end user info for a small set of session IDs using DISTINCT ON."""
+    def _fetch_end_user_info_pg(session_ids, end_user_filter):
+        """PG-only end-user read for the CH-failure FALLBACK branch.
+
+        This is the ORIGINAL pre-cutover read, kept intact so the PG-fallback
+        path stays fully on PG and degrades gracefully when ClickHouse is down
+        (the CH dict reader in ``_fetch_end_user_info`` re-raises on error, which
+        would defeat the fallback). It traverses the PG ``ObservationSpan.end_user``
+        FK into ``tracer_enduser`` via ``DISTINCT ON (trace__session_id)`` ordered
+        by ``-start_time`` — i.e. the LATEST span that has an end user, per
+        session. (The primary path's ``_fetch_end_user_info`` reproduces this same
+        latest-span semantic with ``argMaxIf(end_user_id, start_time, …)``.) These
+        PG sources remain valid until the contract step (P4) drops the FK/table.
+        """
         if not session_ids:
             return {}
 
@@ -1440,6 +1724,279 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             for row in rows
         }
 
+    @staticmethod
+    def _fetch_end_user_info(session_ids, analytics, project_ids=None):
+        """Fetch curated end-user fields for a session page from CH — PRIMARY
+        ``_list_sessions_clickhouse`` path ONLY (the PG-fallback branch uses
+        ``_fetch_end_user_info_pg`` so it degrades gracefully on a CH outage).
+
+        CH-derived-dimensions cutover (DESIGN §4.3 / §5.2). The old read
+        traversed the PG ``ObservationSpan.end_user`` FK into ``tracer_enduser``
+        (``end_user__user_id``/``__user_id_type``/``__user_id_hash``). That FK
+        and table retire at P4, so the read now restructures:
+
+          1. Resolve the per-session ``end_user_id`` from the CH ``spans`` table
+             — ``argMaxIf(end_user_id, start_time, <has-user>)`` over the
+             session's spans that carry an end user (``end_user_id``
+             non-null/non-NIL). The ordering key is ``start_time``, which MATCHES
+             the old PG read exactly: ``_fetch_end_user_info_pg`` does
+             ``end_user__isnull=False`` then ``DISTINCT ON(trace__session_id)
+             ORDER BY trace__session_id, -start_time`` — i.e. the LATEST span
+             with a user, the same max-``start_time`` pick.
+             NOTE — the only residual delta is the tie-break among spans sharing
+             the EXACT same max ``start_time`` but DIFFERENT end users: PG
+             ``DISTINCT ON`` (single ``-start_time`` order) and CH ``argMaxIf``
+             both pick an arbitrary one, not guaranteed to be the same row. This
+             bites only multi-user sessions with start_time ties; sessions are
+             single-user in practice. If it ever matters, make the order total
+             on both sides (e.g. argMax over a ``(start_time, id)`` tuple).
+          2. Batch-resolve ``{end_user_id -> {user_id, user_id_type,
+             user_id_hash}}`` from ``end_users_dict`` (the curated labels), with
+             the FK-faithful NULL/'' normalization the reader documents.
+
+        Returns ``{session_id -> {user_id, user_id_type, user_id_hash}}``; a
+        session with no end-user span is simply absent (caller defaults to a
+        ``{}`` record → all-None fields), matching the old left-join miss.
+        """
+        from tracer.services.clickhouse.v2.end_user_dict_reader import (
+            resolve_end_user_fields,
+        )
+
+        ids = [str(s) for s in (session_ids or []) if s]
+        if not ids:
+            return {}
+
+        # P3b step1.5 — SESSION-id re-key (DESIGN §3 / id_remap_sql). This label
+        # (latest end_user per session) is fed the session-list page's session ids,
+        # which post-cutover can carry BOTH a straddler's old id AND its (phantom)
+        # new id (the no-filter browse list stays bare — gate B). Resolve each
+        # span's `trace_session_id` new→old through `trace_session_id_remap` and
+        # GROUP on the RESOLVED id, so `argMaxIf` picks the latest user across the
+        # UNIFIED old+new span set; then — mirroring `end_user_dict_reader` (commit
+        # 9e4ba4f7e: "result key stays the caller's input id") — re-key the output
+        # so EVERY caller input id (old or new) maps to its canonical session's
+        # label. The query filters the resolved id against the CANONICAL ids of the
+        # inputs. Pre-flip NO span matches a `new_id` (resolved == own) AND no input
+        # is a new_id, so this is a byte-identical no-op (gate B). NB the
+        # `end_user_id` label is itself remap-resolved downstream in
+        # `resolve_end_user_fields` (prior slice), so a straddler whose user label
+        # also straddles still resolves to one user.
+        from tracer.services.clickhouse.v2.id_remap_sql import (
+            remap_left_join,
+            resolved_id_expr,
+        )
+
+        ts_remap_join = remap_left_join(
+            "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
+        )
+        ts_resolved = resolved_id_expr("rs.trace_session_id", "ts_remap")
+
+        # input id -> canonical (old) id; an OLD id maps to itself, a NEW id to its
+        # old_id. Used to (a) scope the resolved GROUP BY and (b) re-key the result.
+        input_to_canon = _resolve_session_ids_to_canonical(analytics, ids)
+        canonical_ids = {input_to_canon.get(i, i) for i in ids}
+
+        proj_list = [str(p) for p in (project_ids or []) if p]
+        proj_clause = ""
+        params = {
+            "session_ids": tuple(canonical_ids),
+            "nil": NIL_UUID,
+        }
+        if proj_list:
+            proj_clause = "AND rs.project_id IN %(project_ids)s"
+            params["project_ids"] = tuple(proj_list)
+
+        # ``argMaxIf`` carries the "span has an end_user" predicate INSIDE the
+        # aggregate (the latest span whose end_user_id is non-null/non-NIL),
+        # rather than in WHERE. Filtering on ``end_user_id`` in WHERE while it is
+        # also the argMax target trips the CH 25.3 analyzer ("aggregate function
+        # found in WHERE", Code 184). Sessions with no qualifying span yield the
+        # 0-UUID (NIL) default and are dropped in the Python pass below. The
+        # resolved `trace_session_id` is the GROUP key (so old+new straddler spans
+        # land in ONE group keyed by the OLD/canonical id).
+        eu_by_session_q = f"""
+            SELECT
+                toString(session_id) AS session_id,
+                toString(
+                    argMaxIf(
+                        end_user_id,
+                        start_time,
+                        end_user_id IS NOT NULL AND end_user_id != toUUID(%(nil)s)
+                    )
+                ) AS end_user_id
+            FROM (
+                SELECT
+                    {ts_resolved} AS session_id,
+                    rs.end_user_id AS end_user_id,
+                    rs.start_time AS start_time
+                FROM spans AS rs
+                {ts_remap_join}
+                WHERE rs.is_deleted = 0
+                  {proj_clause}
+            )
+            WHERE session_id IN %(session_ids)s
+            GROUP BY session_id
+        """
+        result = analytics.execute_ch_query(eu_by_session_q, params, timeout_ms=10000)
+
+        eu_by_canonical: dict[str, str] = {}
+        for row in result.data:
+            sid = str(row.get("session_id", "") if isinstance(row, dict) else row[0])
+            euid = str(row.get("end_user_id", "") if isinstance(row, dict) else row[1])
+            if sid and euid and euid != NIL_UUID:
+                eu_by_canonical[sid] = euid
+
+        # Re-key by every caller input id → its canonical session's end_user (so a
+        # bare-browse straddler row keyed by either the old OR the new id resolves).
+        session_to_eu: dict[str, str] = {}
+        for i in ids:
+            euid = eu_by_canonical.get(input_to_canon.get(i, i))
+            if euid:
+                session_to_eu[i] = euid
+
+        if not session_to_eu:
+            return {}
+
+        # Step 2 — end_user_id → curated fields from the CH dict (batch).
+        fields_by_eu = resolve_end_user_fields(set(session_to_eu.values()))
+
+        out: dict[str, dict] = {}
+        for sid, euid in session_to_eu.items():
+            rec = fields_by_eu.get(euid)
+            if rec is None:
+                # Present end_user_id with no curated row (orphan) → all-None,
+                # faithful to the old FK miss.
+                out[sid] = {
+                    "user_id": None,
+                    "user_id_type": None,
+                    "user_id_hash": None,
+                }
+            else:
+                out[sid] = rec
+        return out
+
+    @staticmethod
+    def _fetch_session_names(session_ids, project_ids=None):
+        """Resolve ``{session_id -> display name}`` for a page of session ids.
+
+        CH-derived-dimensions cutover (DESIGN §5.2). The display name is
+        ``COALESCE(overlay.display_name, trace_sessions_dict.external_session_id)``:
+        the immutable external session id comes from the CH ``trace_sessions``
+        dict (replacing the old back-fill from PG ``TraceSession.name``), and the
+        optional user rename override comes from the PG ``TraceSessionOverlay``
+        (the UI-sourced overlay, soft-id linked by ``trace_session_id``).
+
+        ``project_ids`` scopes the overlay read defensively (the overlay is
+        unique on ``trace_session_id`` so a page's ids can't collide across
+        tenants, but scoping keeps the query tenant-bounded). A session absent
+        from both the dict and the overlay → ``None`` (faithful to the old miss).
+        """
+        from tracer.models.trace_session import TraceSessionOverlay
+        from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+            resolve_external_session_ids,
+        )
+
+        ids = [str(s) for s in (session_ids or []) if s]
+        if not ids:
+            return {}
+
+        # External session id from the CH dict (immutable identity).
+        external_map = resolve_external_session_ids(ids)
+
+        # display_name override from the PG overlay (UI rename). Soft-id by
+        # trace_session_id; scope by project set when known.
+        display_map = {}
+        try:
+            overlay_qs = TraceSessionOverlay.objects.filter(
+                trace_session_id__in=ids,
+                deleted=False,
+            )
+            proj_list = [str(p) for p in (project_ids or []) if p]
+            if proj_list:
+                overlay_qs = overlay_qs.filter(project_id__in=proj_list)
+            display_map = {
+                str(tsid): name
+                for tsid, name in overlay_qs.values_list(
+                    "trace_session_id", "display_name"
+                )
+            }
+        except Exception as e:
+            logger.warning(
+                "session_name_overlay_lookup_failed",
+                error=str(e)[:200],
+            )
+
+        out: dict[str, str | None] = {}
+        for sid in ids:
+            override = display_map.get(sid)
+            out[sid] = override if override else external_map.get(sid)
+        return out
+
+    @staticmethod
+    def _build_bookmark_filter(bookmarked, project_ids, analytics=None):
+        """Build the synthetic ``trace_session_id`` IN/NOT-IN filter for the
+        three-state ``bookmarked`` flag (DESIGN §5.2), or ``None`` for no filter.
+
+        The bookmark state is now a PG ``TraceSessionOverlay`` row
+        (``bookmarked=True``), not a column on the (CH-bound) session. So:
+
+          • ``None``  → ``None`` (no filter; the CH builder lists everything).
+          • ``True``  → ``trace_session_id IN  (overlay bookmarked ids)``. When
+            no session is bookmarked the id set is empty; we emit ``[NIL_UUID]``
+            so the ``in`` filter matches NOTHING (never silently lists all).
+          • ``False`` → ``trace_session_id NOT IN (overlay bookmarked ids)``.
+            An empty id set makes ``not_in`` a no-op (``1 = 1``) → all sessions,
+            which is correct (nothing is bookmarked ⇒ everything is non-bookmarked).
+
+        The id set is scoped to the request's project(s) so one tenant's read can
+        never select another tenant's bookmarked sessions.
+        """
+        if bookmarked is None:
+            return None
+
+        from tracer.models.trace_session import TraceSessionOverlay
+
+        proj_list = [str(p) for p in (project_ids or []) if p]
+        overlay_qs = TraceSessionOverlay.objects.filter(
+            bookmarked=True,
+            deleted=False,
+        )
+        if proj_list:
+            overlay_qs = overlay_qs.filter(project_id__in=proj_list)
+        ids = [str(t) for t in overlay_qs.values_list("trace_session_id", flat=True)]
+        if ids and analytics is not None:
+            try:
+                canonical_ids = _resolve_session_ids_to_canonical(analytics, ids)
+                ids = sorted({canonical_ids.get(sid, sid) for sid in ids})
+            except Exception as e:
+                logger.warning(
+                    "bookmark_filter_session_canonicalization_failed",
+                    error=str(e)[:200],
+                )
+
+        if bookmarked:
+            # IN over an empty set must match nothing — use the NIL sentinel
+            # (the filter builder turns `in []` into 0=1, but going through the
+            # sentinel keeps a uniform non-empty value list either way).
+            return {
+                "column_id": "trace_session_id",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": ids or [NIL_UUID],
+                },
+            }
+        # bookmarked is False → NON-bookmarked only. NOT IN over an empty set is
+        # a no-op (all sessions), which is the correct semantics.
+        return {
+            "column_id": "trace_session_id",
+            "filter_config": {
+                "filter_type": "text",
+                "filter_op": "not_in",
+                "filter_value": ids,
+            },
+        }
+
     def _list_sessions_clickhouse(
         self,
         request,
@@ -1448,14 +2005,23 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         analytics,
         validated_data,
         org_project_ids=None,
+        bookmark_filter=None,
     ):
         """List sessions using ClickHouse backend.
 
         When ``org_project_ids`` is provided the builder is constructed
         with `project_ids=...` and the session list spans all projects in
         the org.
+
+        ``bookmark_filter`` is the optional synthetic ``trace_session_id``
+        IN/NOT-IN filter (built by ``_build_bookmark_filter`` from the PG
+        ``TraceSessionOverlay``) that implements the three-state ``bookmarked``
+        flag against the CH path (DESIGN §5.2). ``None`` ⇒ no bookmark filtering.
         """
-        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+        # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=SESSION_LIST
+        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+        BuilderCls = get_query_builder_class("SESSION_LIST")  # noqa: N806
 
         # Resolve `org` once at the top — it's referenced both when injecting
         # the synthetic end_user_id filter (below) and when decorating the
@@ -1465,13 +2031,17 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         org = getattr(request, "organization", None) or request.user.organization
 
         org_scope = bool(org_project_ids)
+        # Organization in scope — the canonical resolver used across this view
+        # (request is a param here; the helper is pure getattr, no query). Needed
+        # by the user_id → end_user_id resolution below.
+        org = _get_request_organization(request)
         filters = list(validated_data.get("filters", []) or [])
         sort_params = validated_data.get("sort_params", [])
-        page_number = int(request.query_params.get("page_number", 0))
-        page_size = int(request.query_params.get("page_size", 30))
-        user_id_qp = request.query_params.get("user_id") or request.query_params.get(
-            "userId"
-        )
+        page_number = validated_data.get("page_number", 0)
+        page_size = validated_data.get("page_size", 30)
+        user_id_qp = validated_data.get("user_id") or getattr(
+            request, "query_params", {}
+        ).get("user_id")
 
         # Support user_id injected as a structural filter (the cross-project
         # user detail page prepends one). Extract the raw user_id string from
@@ -1479,8 +2049,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         # resolve it to a set of EndUser UUIDs and pass an end_user_id IN(...)
         # synthetic filter instead (the CH `spans` table keys users via the
         # UUID column `end_user_id`, not the string `user_id`).
-        user_id_raw: Optional[str] = user_id_qp or None
-        _remaining: List[Dict] = []
+        user_id_raw = user_id_qp or None
+        _remaining = []
         for _f in filters:
             _col, _cfg = FilterEngine._normalize_filter_params(_f)
             _col_type = _cfg.get("col_type", "NORMAL")
@@ -1494,31 +2064,78 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             _remaining.append(_f)
         filters = _remaining
 
-        # Resolve the raw user_id to end_user rows in one query. We need
-        # both the UUIDs (to inject as a synthetic end_user_id IN(...)
-        # filter) and the display fields (to stitch onto the formatted
-        # output later) — fetch them together to save a round-trip.
-        end_user_display: Optional[Dict[str, Any]] = None
+        # Resolve the raw user_id to a list of end_user UUIDs and inject as
+        # a synthetic end_user_id IN(...) filter. Scope by org (and project
+        # if we're in project mode).
+        #
+        # P3b step2 precondition — the reverse-resolve is now CH `end_users`, not
+        # PG `EndUser.objects` (PG_ORM_READ_MIGRATION, Slice B). The old PG lookup
+        # FREEZES post-step2: a NET-NEW user (first seen after the ingest
+        # get_or_create is dropped) has NO `tracer_enduser` row, so PG returned []
+        # → `_ids = [NIL_UUID]` → a SILENTLY EMPTY session list for it. The curated
+        # CH `end_users` dimension instead yields the state-robust id-SET:
+        # historical OLD-id row + net-new DETERMINISTIC-id row + a straddler's
+        # BOTH. This is the `_ids` that gets the NET-NEW user its sessions.
+        #
+        # P3b step1.5 (DESIGN §3 / id_remap_sql) — still the downstream mechanism:
+        # `_ids` are the CURATED keys (OLD pre-sweep). The SessionListQueryBuilder
+        # extracts this synthetic `end_user_id` filter (`_ENDUSER_ID_FILTER_COLS`)
+        # and binds it to the id-remap-RESOLVED `end_user_id` column
+        # (`_build_resolved_user_clause`), so a STRADDLER's NEW (deterministic-id)
+        # spans resolve new→old and select under the same OLD id. The earlier
+        # "do NOT expand `_ids` with deterministic ids here" caveat was
+        # STRADDLER-scoped (a straddler already had an old id, so adding its new id
+        # was redundant with the join-resolve). NET-NEW is different: it has ONLY
+        # the deterministic id and NO old id, so that curated deterministic id MUST
+        # be in `_ids` or the list is silently empty — and `end_users` supplies it
+        # directly (no deterministic_id compute here), no double-count because a
+        # net-new id has no remap entry (resolves to itself).
+        end_user_display = None
         if user_id_raw:
-            _eu_qs = EndUser.objects.filter(
-                user_id=user_id_raw,
-                organization=org,
-                deleted=False,
+            from tracer.services.clickhouse.v2.end_user_dict_reader import (
+                resolve_end_user_ids_by_user_id,
             )
-            if not org_scope and project_id:
-                _eu_qs = _eu_qs.filter(project_id=project_id)
-            _eu_rows = list(
-                _eu_qs.values("id", "user_id", "user_id_type", "user_id_hash")
-            )
-            _ids = [str(r["id"]) for r in _eu_rows]
+
+            try:
+                _ids = resolve_end_user_ids_by_user_id(
+                    user_id_raw,
+                    organization_id=org.id if org else None,
+                    project_id=(project_id if (not org_scope and project_id) else None),
+                )
+            except Exception as e:
+                logger.warning(
+                    "session_list_user_id_ch_resolve_failed",
+                    error=str(e)[:200],
+                )
+                _ids = []
+            if not _ids:
+                try:
+                    end_user_qs = EndUser.objects.filter(user_id=user_id_raw)
+                    if org:
+                        end_user_qs = end_user_qs.filter(organization=org)
+                    if not org_scope and project_id:
+                        end_user_qs = end_user_qs.filter(project_id=project_id)
+                    end_user_rows = list(
+                        end_user_qs.values(
+                            "id",
+                            "user_id",
+                            "user_id_type",
+                            "user_id_hash",
+                        )
+                    )
+                    _ids = [
+                        str(row.get("id")) for row in end_user_rows if row.get("id")
+                    ]
+                    if end_user_rows:
+                        end_user_display = end_user_rows[0]
+                except Exception as e:
+                    logger.warning(
+                        "session_list_user_id_pg_fallback_failed",
+                        error=str(e)[:200],
+                    )
+                    _ids = []
             if not _ids:
                 _ids = [NIL_UUID]
-            else:
-                end_user_display = {
-                    "user_id": _eu_rows[0]["user_id"],
-                    "user_id_type": _eu_rows[0]["user_id_type"],
-                    "user_id_hash": _eu_rows[0]["user_id_hash"],
-                }
             filters.append(
                 {
                     "column_id": "end_user_id",
@@ -1531,14 +2148,20 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        builder = SessionListQueryBuilder(
+        # Three-state bookmark filter (DESIGN §5.2): a synthetic
+        # ``trace_session_id`` IN/NOT-IN over the PG overlay's bookmarked ids,
+        # resolved by ``_build_bookmark_filter``. None ⇒ no bookmark filtering.
+        if bookmark_filter is not None:
+            filters.append(bookmark_filter)
+
+        builder = BuilderCls(
             project_id=None if org_scope else str(project_id),
             project_ids=[str(p) for p in org_project_ids] if org_scope else None,
             filters=filters,
             page_number=page_number,
             page_size=page_size,
             sort_params=sort_params,
-            user_id=None,  # user_id handled via end_user_id IN(...) synthetic filter
+            user_id=None,
         )
 
         # Phase 1: Light aggregation (no input column)
@@ -1583,25 +2206,33 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             list(actual_data[0].keys()) if actual_data else [],
         )
 
-        # Inject user-defined session_name (from TraceSession.name) — spans'
-        # trace_session_id is the UUID, but users identify sessions by the
-        # string they passed in the OTel ``session.id`` attribute, which
-        # ingestion stores on TraceSession.name.
+        # CH-derived-dimensions cutover (DESIGN §5.2): the curated session
+        # fields — display name, end-user labels, created_at — are no longer
+        # back-filled from PG ``TraceSession``/``tracer_enduser``. They now come
+        # from the CH dicts + the PG overlay, keyed by the span's own
+        # ``trace_session_id`` / ``end_user_id`` soft ids.
+        _curated_project_ids = org_project_ids or ([project_id] if project_id else None)
         if session_ids_page:
-            _name_map = dict(
-                TraceSession.objects.filter(
-                    id__in=session_ids_page,
-                    project_id__in=(org_project_ids or [project_id]),
-                ).values_list("id", "name")
+            # session_name = COALESCE(overlay.display_name, external_session_id).
+            # Replaces the old back-fill that read TraceSession.name straight off
+            # PG (which conflated the immutable external id and the UI rename).
+            name_map = self._fetch_session_names(session_ids_page, _curated_project_ids)
+            # end-user curated fields from the CH dict (was the PG FK join).
+            end_user_map = self._fetch_end_user_info(
+                session_ids_page, analytics, _curated_project_ids
             )
             for entry in formatted:
-                sid = entry.get("session_id", "")
-                try:
-                    from uuid import UUID as _UUID
-
-                    entry["session_name"] = _name_map.get(_UUID(sid))
-                except (ValueError, TypeError):
-                    entry["session_name"] = None
+                sid = str(entry.get("session_id", ""))
+                entry["session_name"] = name_map.get(sid)
+                # created_at: the CH list builder emits no created_at; per
+                # DESIGN §5.2 the session's creation is its first observed
+                # activity = min(start_time), which the builder already computed
+                # as `start_time`. (Documented divergence from PG `created_at`.)
+                entry["created_at"] = entry.get("start_time")
+                eu = end_user_map.get(sid, {})
+                entry["user_id"] = eu.get("user_id")
+                entry["user_id_type"] = eu.get("user_id_type")
+                entry["user_id_hash"] = eu.get("user_id_hash")
 
         # Inject user info when a user_id filter is active. The EndUser
         # row was already resolved above when we built the synthetic
@@ -1634,7 +2265,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         attr_query, attr_params, timeout_ms=5000
                     )
                     # Aggregate per session: session_id -> {attr_key -> set(values)}
-                    aggregated_attrs: Dict[str, Dict] = {}
+                    aggregated_attrs: dict[str, dict] = {}
                     for attr_row in attr_result.data:
                         sid = str(attr_row.get("session_id", ""))
                         # Skip if this session already has max keys
@@ -1655,8 +2286,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                             attrs = {}
                         # Fallback: merge from typed Map columns when raw is empty
                         if not attrs:
-                            str_map = attr_row.get("span_attr_str") or {}
-                            num_map = attr_row.get("span_attr_num") or {}
+                            str_map = attr_row.get("attrs_string") or {}
+                            num_map = attr_row.get("attrs_number") or {}
                             if isinstance(str_map, dict):
                                 attrs.update(str_map)
                             if isinstance(num_map, dict):
@@ -1698,14 +2329,44 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             except Exception as e:
                 logger.warning(f"Session span attribute aggregation failed: {e}")
 
+        # Build config with annotation metric columns (mirrors the PG path)
+        config = (
+            project.session_config if project else None
+        ) or get_default_project_session_config()
+        _pid = project_id or (project.id if project else None)
+        annotation_labels = (
+            list(AnnotationsLabels.objects.filter(project_id=_pid, deleted=False))
+            if _pid
+            else []
+        )
+        if annotation_labels:
+            score_configs = self._build_score_column_config(
+                annotation_labels, project_id=_pid
+            )
+            for sc in score_configs:
+                if not any(c["id"] == sc["id"] for c in config):
+                    config.append(sc)
+
+            # Attach score data to each session row
+            if session_ids_page:
+                try:
+                    scores_map = self._fetch_session_scores(
+                        session_ids_page, annotation_labels
+                    )
+                    for entry in formatted:
+                        sid = entry.get("session_id", "")
+                        session_scores = scores_map.get(sid, {})
+                        for label in annotation_labels:
+                            lid = str(label.id)
+                            entry[lid] = session_scores.get(lid)
+                except Exception:
+                    logger.exception("Failed to fetch session scores (CH path)")
+
         return self._gm.success_response(
             {
                 "metadata": {"total_rows": total_count},
                 "table": formatted,
-                "config": (
-                    (project.session_config if project else None)
-                    or get_default_project_session_config()
-                ),
+                "config": config,
             }
         )
 
@@ -1794,15 +2455,38 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
     @staticmethod
     def _build_score_column_config(annotation_labels, project_id=None):
         """Build column config entries for score labels."""
-        # Batch-fetch distinct annotators for all labels from Score
+        # Batch-fetch distinct annotators for all labels from Score.
+        #
+        # P3b step2 precondition (PG_ORM_READ_MIGRATION, Slice F): the read is
+        # ALREADY project-scoped by ``label_id__in`` — an ``AnnotationsLabels`` id
+        # belongs to exactly one project, so a Score on one of THIS project's
+        # labels is, by construction, a Score in THIS project. The former
+        # ``trace_session_id__in=TraceSession.objects.filter(project_id=…)``
+        # subquery was therefore REDUNDANT for project scoping AND actively
+        # harmful: post-flip the ingest ``get_or_create`` is dropped, so a NET-NEW
+        # session (first seen after the flip) has NO PG ``trace_session`` row →
+        # its ``trace_session_id`` is absent from that subquery → every annotator
+        # who scored a net-new session was SILENTLY DROPPED from the label's
+        # annotator set. Dropping the subquery surfaces those net-new-session
+        # scores while keeping the historical row-set unchanged (parity-verified
+        # on pg-test: HEAD subquery scope == this label-only scope on real data).
+        #
+        # NB the literal ``Score.project_id = project_id`` alternative is WRONG
+        # here: ``Score.project`` is a nullable FK to ``model_hub.DevelopAI`` (NOT
+        # ``tracer.Project``) and the tracer-side annotation write path leaves it
+        # NULL on purpose (see ``tracer/views/annotation.py``
+        # ``_process_single_annotation`` and ``backfill_scores``) — so a
+        # ``project_id`` filter would drop EVERY
+        # NULL-project session score (historical parity failure). ``label_id__in``
+        # is the same scope the sibling live read ``_fetch_session_scores`` uses.
+        # ``project_id`` is retained in the signature (both call sites pass it) but
+        # is no longer needed to scope this read.
         label_ids = [label.id for label in annotation_labels]
         score_filter = {
             "label_id__in": label_ids,
-            "trace_session__isnull": False,
+            "trace_session_id__isnull": False,
             "deleted": False,
         }
-        if project_id:
-            score_filter["trace_session__project_id"] = project_id
         annotator_rows = (
             Score.objects.filter(**score_filter)
             .values(
@@ -1868,19 +2552,18 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         Export traces filtered by project ID and project version ID with optimized queries.
         """
         try:
+            serializer = TraceSessionExportQuerySerializer(data=request.query_params)
+            if not serializer.is_valid():
+                return self._gm.bad_request(serializer.errors)
+            validated_data = serializer.validated_data
+
             response = self.list_sessions(request, export=True)
 
             if response.status_code != 200:
                 return response
 
-            project_id = self.request.query_params.get(
-                "project_id"
-            ) or self.request.query_params.get("projectId")
-            project = Project.objects.get(
-                id=project_id,
-                organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
-            )
+            project_id = str(validated_data["project_id"])
+            project = _project_queryset_for_request(request).get(id=project_id)
 
             result = response.data.get("result").get("table")
             df = pd.DataFrame(result) if result else pd.DataFrame(columns=result)
@@ -1911,13 +2594,12 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         they appear.
 
         Query params:
-            page (int, 1-indexed, default 1)
+            page (int, 0-indexed, default 0)
             page_size (int, default 25, max 100)
 
         Returns:
-            Paginated DRF response: {count, next, previous, results,
-            total_pages, current_page}. Each ``results`` item carries the
-            same fields ``EvalTaskView.get_usage`` exposes, minus
+            Paginated response: {total, page, page_size, items}. Each item
+            carries the same fields ``EvalTaskView.get_usage`` exposes, minus
             span/trace-only fields (NULL on session rows per the
             ``eval_logger_target_type_fks`` check constraint).
         """
@@ -1928,12 +2610,14 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
             qp = PaginationQuerySerializer(data=request.query_params)
             qp.is_valid(raise_exception=True)
+            page = qp.validated_data["page"]
             page_size = qp.validated_data["page_size"]
 
             logs_qs = (
                 EvalLogger.objects.filter(
                     trace_session_id=session.id,
                     target_type=EvalTargetType.SESSION,
+                    deleted=False,
                 )
                 .select_related(
                     "custom_eval_config",
@@ -1942,9 +2626,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 .order_by("-created_at")
             )
 
-            paginator = ExtendedPageNumberPagination()
-            paginator.page_size = page_size
-            logs_page = paginator.paginate_queryset(logs_qs, request, view=self)
+            total = logs_qs.count()
+            start = page * page_size
+            logs_page = logs_qs[start : start + page_size]
 
             items = []
             for log in logs_page:
@@ -2014,10 +2698,14 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     }
                 )
 
-            # ExtendedPageNumberPagination response shape:
-            # {count, next, previous, results, total_pages, current_page}
-            paginated = paginator.get_paginated_response(items)
-            return self._gm.success_response(paginated.data)
+            return self._gm.success_response(
+                {
+                    "total": total,
+                    "page": page,
+                    "page_size": page_size,
+                    "items": items,
+                }
+            )
         except Exception as e:
             logger.exception(f"Error in fetching session eval logs: {str(e)}")
             return self._gm.bad_request(f"Error fetching session eval logs: {str(e)}")

@@ -87,7 +87,7 @@ const generateValidationSchema = (
   let isRulePrompt = false;
 
   // Add validation for config fields. canonicalEntries drops the
-  // camelCase aliases the axios interceptor adds alongside snake_case
+  // camelCase aliases that may exist in legacy objects alongside snake_case
   // keys so each parameter is only validated once.
   for (const [key, field] of canonicalEntries(evalConfig?.config || {})) {
     switch (field.type) {

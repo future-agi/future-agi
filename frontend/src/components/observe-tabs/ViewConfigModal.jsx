@@ -68,16 +68,15 @@ const ViewConfigModal = ({
         ? snapshot ?? initialValues?.config ?? {}
         : snapshot ?? {};
 
-    const payload = {
+    const basePayload = {
       name: name.trim(),
-      tab_type: tabType,
       visibility,
       config,
     };
 
     if (mode === "edit" && initialValues?.id) {
       updateView(
-        { id: initialValues.id, ...payload },
+        { id: initialValues.id, ...basePayload },
         {
           onSuccess: (res) => {
             onClose();
@@ -87,7 +86,7 @@ const ViewConfigModal = ({
       );
     } else {
       createView(
-        { project_id: projectId, ...payload },
+        { project_id: projectId, tab_type: tabType, ...basePayload },
         {
           onSuccess: (res) => {
             onClose();

@@ -23,6 +23,9 @@ const SearchField = forwardRef(
       logoUrl,
       multiple,
       onClick,
+      // Used by the dropdown menu, not the TextField input.
+      // eslint-disable-next-line no-unused-vars
+      hideCreateLabel: _hideCreateLabel,
       // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
       // eslint-disable-next-line no-unused-vars
       shrink: _shrink,
@@ -227,11 +230,12 @@ SearchField.propTypes = {
   setIsFocus: PropTypes.func,
   sx: PropTypes.object,
   setOpenDropdown: PropTypes.func,
-  modelRef: PropTypes.object,
+  modelRef: PropTypes.oneOfType([PropTypes.object, PropTypes.func]),
   showIcon: PropTypes.bool,
   logoUrl: PropTypes.string,
   multiple: PropTypes.bool,
   openDropdown: PropTypes.bool,
   onClick: PropTypes.func,
+  hideCreateLabel: PropTypes.bool,
   shrink: PropTypes.bool,
 };

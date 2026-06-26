@@ -365,10 +365,7 @@ export const getDropdownOptionsFromCols = (
 
     // If this is a json/text column with top-level array data, add indexed options
     const colSchema = jsonSchemas?.[col?.field];
-    if (
-      col?.dataType !== "images" &&
-      colSchema?.maxArrayCount
-    ) {
+    if (col?.dataType !== "images" && colSchema?.maxArrayCount) {
       const count = Math.min(colSchema.maxArrayCount, 2);
       for (let idx = 0; idx < count; idx++) {
         options.push({
@@ -472,7 +469,11 @@ export function findInvalidVariables(
         (col) => normalize(col?.headerName) === normalize(baseColumn),
       );
 
-      if (column && (column.dataType === "json" || jsonSchemas?.[column.field]?.keys?.length)) {
+      if (
+        column &&
+        (column.dataType === "json" ||
+          jsonSchemas?.[column.field]?.keys?.length)
+      ) {
         // Column has nested paths (json type or text with JSON values) — allow any path
         return;
       }
@@ -573,6 +574,16 @@ export const getOutputFormatForModelType = (modelType) => {
   return "string";
 };
 
+export const modelTypeByValueType = {
+  chat: MODEL_TYPES.LLM,
+  tts: MODEL_TYPES.TTS,
+  stt: MODEL_TYPES.STT,
+  image_generation: MODEL_TYPES.IMAGE,
+};
+
+export const getOutputFormatFromCatalogType = (catalogType) =>
+  getOutputFormatForModelType(modelTypeByValueType[catalogType] ?? MODEL_TYPES.LLM);
+
 export const DUMMY_MODEL_PARAMS = [
   {
     id: "temperature",
@@ -641,7 +652,12 @@ export const DUMMY_MODEL_PARAMS = [
  * @param {Array} allColumns - All columns in the dataset
  * @returns {Object} { text: string, invalidVariables: string[] }
  */
-export const replaceVariablesWithFields = (text, matches, allColumns, jsonSchemas = {}) => {
+export const replaceVariablesWithFields = (
+  text,
+  matches,
+  allColumns,
+  jsonSchemas = {},
+) => {
   let updatedText = text;
   const invalidVariables = [];
 
@@ -672,7 +688,11 @@ export const replaceVariablesWithFields = (text, matches, allColumns, jsonSchema
           normalizeForComparison(baseColumn).toLowerCase(),
       );
 
-      if (jsonColumn && (jsonColumn.dataType === "json" || jsonSchemas?.[jsonColumn.field]?.keys?.length)) {
+      if (
+        jsonColumn &&
+        (jsonColumn.dataType === "json" ||
+          jsonSchemas?.[jsonColumn.field]?.keys?.length)
+      ) {
         const replacePattern = new RegExp(
           `{{\\s*${rawVar.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*}}`,
           "g",

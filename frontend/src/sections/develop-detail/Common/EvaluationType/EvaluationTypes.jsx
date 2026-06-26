@@ -31,6 +31,11 @@ const categories = [
   { label: "Audio", value: "AUDIO" },
 ];
 
+const evalTemplateTags = (evalItem) =>
+  Array.isArray(evalItem?.eval_template_tags)
+    ? evalItem.eval_template_tags
+    : [];
+
 const EvaluationTypes = ({
   onClose,
   onOptionClick,
@@ -54,16 +59,19 @@ const EvaluationTypes = ({
       }),
     select: (d) => d?.data?.result?.evals,
   });
+  const evals = useMemo(
+    () => (Array.isArray(evalList) ? evalList : []),
+    [evalList],
+  );
 
   const filteredEvalList = useMemo(() => {
-    if (!evalList) return [];
     const lowerCaseSearchText = (searchDebounce || "").toLowerCase();
 
-    return evalList.filter((each) => {
+    return evals.filter((each) => {
       let matchesCategory = true;
 
       if (selectedCategory !== "all") {
-        matchesCategory = each.evalTemplateTags.includes(selectedCategory);
+        matchesCategory = evalTemplateTags(each).includes(selectedCategory);
       }
 
       const matchesSearch =
@@ -72,11 +80,10 @@ const EvaluationTypes = ({
 
       return matchesCategory && matchesSearch;
     });
-  }, [selectedCategory, evalList, searchDebounce]);
+  }, [selectedCategory, evals, searchDebounce]);
 
   const categoryCount = useMemo(() => {
-    if (!evalList) return {};
-    return evalList
+    return evals
       .filter(
         (each) =>
           !searchDebounce ||
@@ -85,14 +92,14 @@ const EvaluationTypes = ({
       .reduce(
         (acc, each) => {
           acc["all"] = (acc["all"] || 0) + 1;
-          each.evalTemplateTags.forEach(
-            (tag) => (acc[tag] = (acc[tag] || 0) + 1),
-          );
+          evalTemplateTags(each).forEach((tag) => {
+            acc[tag] = (acc[tag] || 0) + 1;
+          });
           return acc;
         },
         { all: 0 },
       );
-  }, [evalList, searchDebounce]);
+  }, [evals, searchDebounce]);
 
   const handleSearchChange = (event) => {
     const value = event.target.value;
@@ -226,14 +233,14 @@ const EvaluationTypes = ({
       >
         {loadingEvalList && <EvalTypesSkeleton />}
         {filteredEvalList.map((eachEval) => {
-          const { name, id, description, evalTemplateTags } = eachEval;
+          const { name, id, description } = eachEval;
 
           return (
             <EvaluationTypeCard
               key={id}
               title={name}
               subTitle={description}
-              tags={evalTemplateTags}
+              tags={evalTemplateTags(eachEval)}
               onClick={() => onOptionClick(eachEval)}
             />
           );

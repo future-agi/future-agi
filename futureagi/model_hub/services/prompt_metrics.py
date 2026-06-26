@@ -1,7 +1,6 @@
 import structlog
 from django.shortcuts import get_object_or_404
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.run_prompt import PromptTemplate
 from model_hub.queries.prompt.prompt_metrics import (
     fetch_prompt_metrics_query_sql_cte,
@@ -12,9 +11,22 @@ from model_hub.utils.helpers import (
     get_default_prompt_metrics_config,
     get_default_span_prompt_metrics_config,
 )
+from model_hub.utils.workspace_scope import request_workspace_filter
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger
 from tracer.utils.helper import update_column_config_based_on_eval_config
+
+logger = structlog.get_logger(__name__)
+
+
+def _get_prompt_template_for_metrics(prompt_template_id, organization_id):
+    queryset = PromptTemplate.no_workspace_objects.filter(
+        request_workspace_filter(),
+        id=prompt_template_id,
+        organization=organization_id,
+        deleted=False,
+    )
+    return get_object_or_404(queryset)
 
 
 def _get_eval_configs_for_prompt(prompt_template):
@@ -50,11 +62,9 @@ def fetch_prompt_metrics(request: FetchPromptMetricsRequest):
         page_number = request.page_number if request.page_number else 0
         page_size = request.page_size if request.page_size else 10
 
-        prompt_template = get_object_or_404(
-            PromptTemplate,
-            id=prompt_template_id,
-            organization=organization_id,
-            deleted=False,
+        prompt_template = _get_prompt_template_for_metrics(
+            prompt_template_id,
+            organization_id,
         )
 
         eval_configs = _get_eval_configs_for_prompt(prompt_template)
@@ -147,11 +157,9 @@ def fetch_prompt_metrics_span_view(request: FetchPromptMetricsRequest):
     page_number = request.page_number if request.page_number else 0
     page_size = request.page_size if request.page_size else 10
 
-    prompt_template = get_object_or_404(
-        PromptTemplate,
-        id=prompt_template_id,
-        organization=organization_id,
-        deleted=False,
+    prompt_template = _get_prompt_template_for_metrics(
+        prompt_template_id,
+        organization_id,
     )
 
     eval_configs = _get_eval_configs_for_prompt(prompt_template)

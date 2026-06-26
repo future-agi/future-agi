@@ -51,11 +51,9 @@ import { JsonValueTree } from "./DatasetTestMode";
 import EvalResultDisplay from "./EvalResultDisplay";
 import SpanRowList from "./SpanRowList";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
-import {
-  buildFlatValueMap,
-  executeEvalForRow,
-} from "../utils/evalExecution";
-
+import { buildFlatValueMap, executeEvalForRow } from "../utils/evalExecution";
+import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
+import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 
 const ROW_TYPE_OPTIONS = [
   { value: "Span", label: "Spans", icon: "solar:layers-outline" },
@@ -209,6 +207,16 @@ const normalizeRowType = (value) => {
   return "Span";
 };
 
+export const buildTracingPreviewListParams = ({
+  selectedProjectId,
+  effectiveFilters,
+}) => ({
+  project_id: selectedProjectId,
+  page_number: 0,
+  page_size: 50,
+  filters: JSON.stringify(effectiveFilters || []),
+});
+
 const TracingTestMode = React.forwardRef(
   (
     {
@@ -262,6 +270,7 @@ const TracingTestMode = React.forwardRef(
   ) => {
     const projectLocked = !!initialProjectId;
     const rowTypeLocked = !!initialRowType;
+    const executeCompositeAdhoc = useExecuteCompositeEvalAdhoc();
 
     // Project
     const [projects, setProjects] = useState([]);
@@ -477,13 +486,10 @@ const TracingTestMode = React.forwardRef(
           }
 
           let endpoint;
-          const params = {
-            project_id: selectedProjectId,
-            page_number: 0,
-            page_size: 50,
-            filters: JSON.stringify(effectiveFilters || []),
-            interval: "year",
-          };
+          const params = buildTracingPreviewListParams({
+            selectedProjectId,
+            effectiveFilters,
+          });
 
           if (rowType === "Span") {
             endpoint = endpoints.project.getSpansForObserveProject();
@@ -713,7 +719,7 @@ const TracingTestMode = React.forwardRef(
       if (!currentRow) return [];
       if (!columns.length) {
         // No column config — use all row keys directly. canonicalEntries
-        // drops the camelCase aliases the axios interceptor attaches so
+        // drops legacy camelCase aliases attaches so
         // each backend field only appears once.
         return canonicalEntries(currentRow).map(([key, val]) => ({
           key,
@@ -950,45 +956,189 @@ const TracingTestMode = React.forwardRef(
         return;
       }
 
-      const flatValueMap = buildFlatValueMap(spanDetail);
-      const evalItem = {
-        template_id: tid,
-        template_type: isComposite ? "composite" : undefined,
-        model,
-      };
-      const result = await executeEvalForRow({
-        evalItem,
-        rowType,
-        currentRow,
-        spanDetail,
-        mapping,
-        flatValueMap,
-        rowFields,
-        codeParams,
-        errorLocalizerEnabled,
-        compositeAdhocConfig,
-      });
-
-      if (result.ok) {
-        // EvalResultDisplay reads `compositeResult` for composite, or the
-        // legacy `output`/`reason`/`score` keys for single.
-        const nextResult = result.isComposite
-          ? {
-              output: result.output,
-              reason: result.reason,
-              compositeResult: result.compositeResult,
+      try {
+        // Build a flat fieldName→value lookup by walking spanDetail with
+        // the same logic used to populate the fieldNames dropdown. This
+        // ensures that a field name selected from the dropdown (e.g.
+        // "input.value" — which may have been soft-flattened from
+        // "span_attributes.input.value") always resolves to the correct
+        // value, even when the top-level key shadows a deeper path.
+        // Limits match the dropdown walker so every path offered in the UI
+        // also resolves — otherwise deep paths (e.g. gen_ai.* under a big
+        // span_attributes dict) would be selectable but unresolvable.
+        const ARRAY_PEEK = 500;
+        const DICT_LIMIT = 5000;
+        const valueMap = {};
+        const walkValues = (node, prefix) => {
+          if (Array.isArray(node)) {
+            node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
+              const path = prefix ? `${prefix}.${idx}` : String(idx);
+              valueMap[path] = item;
+              if (item && typeof item === "object") {
+                walkValues(item, path);
+              }
+            });
+            return;
+          }
+          // canonicalEntries drops the camelCase aliases the axios
+          // interceptor layers on — otherwise valueMap gets both
+          // `span_attributes.*` and `spanAttributes.*` branches of the
+          // same data, and only the snake side is stripped by the
+          // soft-flatten below.
+          for (const [k, v] of canonicalEntries(node)) {
+            if (k.startsWith("_")) continue;
+            const path = prefix ? `${prefix}.${k}` : k;
+            valueMap[path] = v;
+            if (v && typeof v === "object") {
+              if (Array.isArray(v) || Object.keys(v).length < DICT_LIMIT) {
+                walkValues(v, path);
+              }
             }
-          : result.raw;
-        setResult(nextResult);
-        onTestResult?.(true, nextResult);
-        if (!result.isComposite && errorLocalizerEnabled && result.logId) {
-          startErrorLocalizerPoll(result.logId);
+          }
+        };
+        walkValues(spanDetail, "");
+
+        // Build the soft-flattened lookup via `stripAttributePathPrefix`
+        // — the same util the `fieldNames` walker uses, so the dropdown
+        // and resolution keys stay in lockstep. The util strips any
+        // `span_attributes.` segment (anchored or nested under
+        // `spans.<n>.` / `traces.<i>.spans.<j>.`), which the previous
+        // anchored-only strip got wrong for trace/session row types
+        // (their detail nests `span_attributes.` mid-path).
+        const flatValueMap = {};
+        for (const [path, val] of Object.entries(valueMap)) {
+          const short = stripAttributePathPrefix(path);
+          // Top-level (unstripped) paths win — only fall back to a
+          // stripped path when no top-level entry exists for that short
+          // form.
+          if (!(short in flatValueMap) || short === path) {
+            flatValueMap[short] = val;
+          }
         }
-      } else {
-        setError(result.errorMessage);
-        onTestResult?.(false, result.errorMessage);
+
+        const evalMapping = {};
+        for (const variable of variables) {
+          const mappedField = mapping[variable];
+          if (!mappedField) continue;
+
+          // 1. Try the flat value map (same resolution as the dropdown)
+          let val = flatValueMap[mappedField];
+
+          // 2. Fallback: rowFields by key or colId
+          if (val === undefined) {
+            const rf = rowFields.find(
+              (f) => f.key === mappedField || f.colId === mappedField,
+            );
+            if (rf?.raw !== undefined && rf.raw !== null) {
+              val = rf.raw;
+            }
+          }
+
+          if (val !== undefined) {
+            evalMapping[variable] =
+              typeof val === "object" ? JSON.stringify(val) : String(val ?? "");
+          }
+        }
+
+        // Single-eval playground resolves {{span}} / {{trace}} /
+        // {{session}} server-side from IDs. Composite execution expects
+        // the concrete context objects directly.
+        const autoCtx = {};
+        const _spanId = currentRow?.span_id || currentRow?.spanId;
+        const _traceId = currentRow?.trace_id || currentRow?.traceId;
+        const _sessionId = currentRow?.session_id || currentRow?.sessionId;
+        if (rowType === "Span" && _spanId) autoCtx.span_id = _spanId;
+        if ((rowType === "Span" || rowType === "Trace") && _traceId)
+          autoCtx.trace_id = _traceId;
+        if (rowType === "Session" && _sessionId)
+          autoCtx.session_id = _sessionId;
+        if (rowType === "VoiceCall" && _traceId) autoCtx.trace_id = _traceId;
+
+        const compositeCtx = {};
+        if (rowType === "Span" && spanDetail)
+          compositeCtx.span_context = spanDetail;
+        if (rowType === "Trace" && currentRow)
+          compositeCtx.trace_context = currentRow;
+        if (rowType === "Session" && currentRow)
+          compositeCtx.session_context = currentRow;
+        if (rowType === "VoiceCall" && currentRow)
+          compositeCtx.trace_context = currentRow;
+
+        const compositeConfig = buildCompositeRuntimeConfig({
+          codeParams,
+        });
+
+        const { data } = isComposite
+          ? compositeAdhocConfig
+            ? {
+                data: {
+                  status: true,
+                  result: await executeCompositeAdhoc.mutateAsync({
+                    ...compositeAdhocConfig,
+                    mapping: evalMapping,
+                    model,
+                    error_localizer: errorLocalizerEnabled,
+                    config: compositeConfig,
+                    ...compositeCtx,
+                  }),
+                },
+              }
+            : await axios.post(
+                endpoints.develop.eval.executeCompositeEval(tid),
+                {
+                  mapping: evalMapping,
+                  model,
+                  error_localizer: errorLocalizerEnabled,
+                  config: compositeConfig,
+                  ...compositeCtx,
+                },
+              )
+          : await axios.post(endpoints.develop.eval.evalPlayground, {
+              template_id: tid,
+              model,
+              error_localizer: errorLocalizerEnabled,
+              config: {
+                mapping: evalMapping,
+                ...(Object.keys(codeParams || {}).length > 0
+                  ? { params: codeParams }
+                  : {}),
+              },
+              ...autoCtx,
+            });
+
+        if (data?.status) {
+          const nextResult = isComposite
+            ? {
+                output:
+                  data.result?.aggregation_enabled &&
+                  data.result?.aggregate_score != null
+                    ? data.result.aggregate_score
+                    : null,
+                reason: data.result?.summary || "",
+                compositeResult: data.result,
+              }
+            : data.result;
+          setResult(nextResult);
+          onTestResult?.(true, nextResult);
+          if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
+            startErrorLocalizerPoll(data.result.log_id);
+          }
+        } else {
+          const errMsg = data?.result || "Evaluation failed";
+          setError(errMsg);
+          onTestResult?.(false, errMsg);
+        }
+      } catch (err) {
+        const errMsg =
+          err?.result ||
+          err?.detail ||
+          err?.message ||
+          "Failed to run evaluation";
+        setError(errMsg);
+        onTestResult?.(false, errMsg);
+      } finally {
+        setIsRunning(false);
       }
-      setIsRunning(false);
     }, [
       templateId,
       variables,
@@ -1358,8 +1508,7 @@ const TracingTestMode = React.forwardRef(
             {/* Rows — iterate span detail keys, flatten span_attributes */}
             <Box sx={{ maxHeight: 400, overflowY: "auto" }}>
               {(() => {
-                // canonicalEntries skips the camelCase aliases the axios
-                // interceptor adds — otherwise every field shows up twice
+                // canonicalEntries skips the camelCase aliases that may exist in legacy objects — otherwise every field shows up twice
                 // in the span detail table.
                 const raw = canonicalEntries(spanDetail).filter(
                   ([key]) => key !== "spans",
@@ -1550,31 +1699,36 @@ const TracingTestMode = React.forwardRef(
           !loading &&
           !isPendingNewFetch &&
           totalRows === 0 && (
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 0.75,
-              py: 3,
-              border: "1px dashed",
-              borderColor: "divider",
-              borderRadius: "8px",
-            }}
-          >
-            <Iconify
-              icon="mdi:table-off"
-              width={28}
-              sx={{ color: "text.disabled" }}
-            />
-            <Typography variant="body2" fontWeight={600} color="text.secondary">
-              No {rowType.toLowerCase()} data found
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Add {rowType.toLowerCase()} to this project before running a test
-            </Typography>
-          </Box>
-        )}
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 0.75,
+                py: 3,
+                border: "1px dashed",
+                borderColor: "divider",
+                borderRadius: "8px",
+              }}
+            >
+              <Iconify
+                icon="mdi:table-off"
+                width={28}
+                sx={{ color: "text.disabled" }}
+              />
+              <Typography
+                variant="body2"
+                fontWeight={600}
+                color="text.secondary"
+              >
+                No {rowType.toLowerCase()} data found
+              </Typography>
+              <Typography variant="caption" color="text.disabled">
+                Add {rowType.toLowerCase()} to this project before running a
+                test
+              </Typography>
+            </Box>
+          )}
 
         {/* Variable mapping */}
         {variables.length > 0 &&
@@ -1758,6 +1912,9 @@ const TracingTestMode = React.forwardRef(
               ...result,
               ...(errorLocalizerState.status
                 ? { error_localizer_status: errorLocalizerState.status }
+                : {}),
+              ...(errorLocalizerState.message
+                ? { error_localizer_message: errorLocalizerState.message }
                 : {}),
               ...(errorLocalizerState.details
                 ? {

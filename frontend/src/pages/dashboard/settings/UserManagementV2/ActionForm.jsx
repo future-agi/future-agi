@@ -135,15 +135,13 @@ const ActionForm = ({
                     Org Role:
                   </Typography>
                   <Typography variant="body1" sx={{ color: "text.primary" }}>
-                    {(userData?.org_role ?? userData?.orgRole) ||
-                      orgLevelToString[
-                        userData?.org_level ?? userData?.orgLevel
-                      ] ||
+                    {userData?.org_role ||
+                      orgLevelToString[userData?.org_level] ||
                       userData?.role ||
                       "N/A"}
                   </Typography>
                 </Box>
-                {(userData?.ws_role ?? userData?.wsRole) && (
+                {userData?.ws_role && (
                   <Box sx={{ display: "flex" }}>
                     <Typography
                       variant="body1"
@@ -156,10 +154,8 @@ const ActionForm = ({
                       WS Role:
                     </Typography>
                     <Typography variant="body1" sx={{ color: "text.primary" }}>
-                      {(userData?.ws_role ?? userData?.wsRole) ||
-                        wsLevelToString[
-                          userData?.ws_level ?? userData?.wsLevel
-                        ] ||
+                      {userData?.ws_role ||
+                        wsLevelToString[userData?.ws_level] ||
                         "N/A"}
                     </Typography>
                   </Box>

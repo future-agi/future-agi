@@ -40,12 +40,6 @@ const BaseColumnDrawer = ({
 
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (selectedDatasets && selectedDatasets.length > 0) {
-      getBaseColumn();
-    }
-  }, [selectedDatasets]);
-
   const { mutate: getBaseColumn } = useMutation({
     mutationFn: () => {
       setLoading(true);
@@ -75,6 +69,13 @@ const BaseColumnDrawer = ({
       setLoading(false);
     },
   });
+
+  const selectedDatasetIdsKey = selectedDatasets?.join(",") || "";
+
+  useEffect(() => {
+    if (!baseColumnDrawerVisible || !selectedDatasetIdsKey) return;
+    getBaseColumn();
+  }, [baseColumnDrawerVisible, selectedDatasetIdsKey, getBaseColumn]);
 
   // Filter base columns based on search query
   const filteredBaseColumns = baseColumnsData.filter((column) =>
@@ -124,10 +125,10 @@ const BaseColumnDrawer = ({
           <IconButton
             onClick={() => {
               onBaseColumnDrawerClose();
-              onCompareDatasetDrawerClose();
+              onCompareDatasetDrawerClose?.();
               compareFromOutside
                 ? setSelectedValueBase(null)
-                : setSelectedValue(null);
+                : setSelectedValue?.(null);
             }}
           >
             <Iconify icon="mingcute:close-line" />
@@ -314,7 +315,7 @@ const BaseColumnDrawer = ({
                 onBaseColumnDrawerClose();
                 compareFromOutside
                   ? setSelectedValueBase(null)
-                  : setSelectedValue(null);
+                  : setSelectedValue?.(null);
               }}
             >
               Back

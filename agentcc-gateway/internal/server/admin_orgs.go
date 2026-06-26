@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	gatewayadmin "github.com/futureagi/agentcc-gateway/internal/contracts/generated"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
@@ -46,6 +47,30 @@ func redactOrgConfig(cfg *tenant.OrgConfig) *tenant.OrgConfig {
 		redacted.Providers = rp
 	}
 	return &redacted
+}
+
+func gatewayContractOrgConfigToTenant(cfg *gatewayadmin.OrgConfig) (*tenant.OrgConfig, error) {
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	var out tenant.OrgConfig
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func gatewayContractOrgConfigMapToTenant(configs map[string]*gatewayadmin.OrgConfig) (map[string]*tenant.OrgConfig, error) {
+	body, err := json.Marshal(configs)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]*tenant.OrgConfig
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // OrgConfigHandlers provides admin CRUD for per-org gateway configurations.
@@ -99,13 +124,20 @@ func (h *OrgConfigHandlers) SetOrgConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var cfg tenant.OrgConfig
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+	var contractCfg gatewayadmin.OrgConfig
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&contractCfg); err != nil {
 		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
 		return
 	}
+	cfg, err := gatewayContractOrgConfigToTenant(&contractCfg)
+	if err != nil {
+		models.WriteError(w, models.ErrBadRequest("invalid_contract", "Invalid gateway org config: "+err.Error()))
+		return
+	}
 
-	h.store.Set(orgID, &cfg)
+	h.store.Set(orgID, cfg)
 
 	// Evict cached provider instances so they pick up new API keys.
 	if h.orgProviderCache != nil {
@@ -210,9 +242,16 @@ func (h *OrgConfigHandlers) BulkLoadOrgConfigs(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var configs map[string]*tenant.OrgConfig
-	if err := json.NewDecoder(r.Body).Decode(&configs); err != nil {
+	var contractConfigs map[string]*gatewayadmin.OrgConfig
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&contractConfigs); err != nil {
 		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
+		return
+	}
+	configs, err := gatewayContractOrgConfigMapToTenant(contractConfigs)
+	if err != nil {
+		models.WriteError(w, models.ErrBadRequest("invalid_contract", "Invalid gateway org config map: "+err.Error()))
 		return
 	}
 

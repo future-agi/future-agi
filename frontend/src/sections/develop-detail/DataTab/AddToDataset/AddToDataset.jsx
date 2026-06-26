@@ -9,29 +9,27 @@ import {
   IconButton,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { styled } from '@mui/system';
+import { styled } from "@mui/system";
 
 const StyledIconButton = styled(IconButton)({
-  position: 'absolute',
-  top: '12px',
-  right: '12px',
+  position: "absolute",
+  top: "12px",
+  right: "12px",
 });
 
 const AddToDataset = ({ title, content, actionButton, open, onClose }) => {
   return (
     <Dialog open={open} onClose={onClose} fullWidth>
       <DialogTitle>{title}</DialogTitle>
-      <StyledIconButton
-        onClick={onClose}
-      >
+      <StyledIconButton onClick={onClose}>
         <Iconify icon="mingcute:close-line" />
       </StyledIconButton>
       <DialogContent>{content}</DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
         <Button variant="contained" color="primary">
-        {actionButton}
-      </Button>
+          {actionButton}
+        </Button>
       </DialogActions>
     </Dialog>
   );

@@ -16,6 +16,8 @@ import {
 } from "src/hooks/use-local-storage";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 import {
   useBulkDeleteEvals,
@@ -250,6 +252,44 @@ const OUTPUT_TYPE_LABELS = {
 const COLUMN_VISIBILITY_STORAGE_KEY = "evals-list-column-visibility";
 const COLUMN_ORDER_STORAGE_KEY = "evals-list-column-order";
 
+const normalizeEvalListItem = (item) => {
+  const templateType = item.template_type ?? item.templateType;
+  const evalType = item.eval_type ?? item.evalType;
+  const outputType = item.output_type ?? item.outputType;
+  const createdByName = item.created_by_name ?? item.createdByName;
+  const versionCount = item.version_count ?? item.versionCount;
+  const currentVersion = item.current_version ?? item.currentVersion;
+  const lastUpdated = item.last_updated ?? item.lastUpdated;
+  const thirtyDayChart = item.thirty_day_chart ?? item.thirtyDayChart;
+  const thirtyDayErrorRate =
+    item.thirty_day_error_rate ?? item.thirtyDayErrorRate;
+  const thirtyDayRunCount = item.thirty_day_run_count ?? item.thirtyDayRunCount;
+
+  return {
+    ...item,
+    template_type: templateType,
+    templateType,
+    eval_type: evalType,
+    evalType,
+    output_type: outputType,
+    outputType,
+    created_by_name: createdByName,
+    createdByName,
+    version_count: versionCount,
+    versionCount,
+    current_version: currentVersion,
+    currentVersion,
+    last_updated: lastUpdated,
+    lastUpdated,
+    thirty_day_chart: thirtyDayChart,
+    thirtyDayChart,
+    thirty_day_error_rate: thirtyDayErrorRate,
+    thirtyDayErrorRate,
+    thirty_day_run_count: thirtyDayRunCount,
+    thirtyDayRunCount,
+  };
+};
+
 // Merge stored order with the canonical default — drop unknown ids, append
 // any new fields that were added after the user persisted their order.
 const mergeColumnOrder = (stored) => {
@@ -272,6 +312,9 @@ const SORT_FIELD_MAP = {
 
 const EvalsListView = () => {
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditEvals =
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
 
   // State
   const [searchQuery, setSearchQuery] = useState("");
@@ -294,8 +337,10 @@ const EvalsListView = () => {
 
   // Derive API params
   const ownerFilter = filters?.owner_not
-    ? (filters.owner_not === "system" ? "user" : "all")
-    : (filters?.owner || "all");
+    ? filters.owner_not === "system"
+      ? "user"
+      : "all"
+    : filters?.owner || "all";
   // `filters.name` from the dropdown is an exact-match list; a single typed
   // value falls back to `search` (fuzzy name__icontains). Multi-select is
   // sent as `filters.names` (name__in).
@@ -313,7 +358,8 @@ const EvalsListView = () => {
     if (filters.output_type) f.output_type = filters.output_type;
     if (filters.output_type_not) f.output_type_not = filters.output_type_not;
     if (filters.template_type) f.template_type = filters.template_type;
-    if (filters.template_type_not) f.template_type_not = filters.template_type_not;
+    if (filters.template_type_not)
+      f.template_type_not = filters.template_type_not;
     if (filters.tags) f.tags = filters.tags;
     if (filters.tags_not) f.tags_not = filters.tags_not;
     if (filters.created_by) f.created_by = filters.created_by;
@@ -336,7 +382,10 @@ const EvalsListView = () => {
     if (!filters) return null;
     const f = { ...filters };
     // Reconstruct negated owner display
-    if (Array.isArray(filters.created_by_not) && filters.created_by_not.length > 0) {
+    if (
+      Array.isArray(filters.created_by_not) &&
+      filters.created_by_not.length > 0
+    ) {
       const negated = [...filters.created_by_not];
       if (filters.owner_not === "system") negated.push("System");
       f.owner_not = negated;
@@ -375,7 +424,10 @@ const EvalsListView = () => {
 
   const bulkDelete = useBulkDeleteEvals();
 
-  const items = data?.items || [];
+  const items = useMemo(
+    () => (data?.items || []).map(normalizeEvalListItem),
+    [data?.items],
+  );
   const total = data?.total || 0;
 
   // Fetch all eval names for filter dropdowns
@@ -453,7 +505,7 @@ const EvalsListView = () => {
                 variant="s1"
 
                 noWrap
-               
+
               >
                 {name}
               </Typography>
@@ -808,6 +860,7 @@ const EvalsListView = () => {
               selectedCount={selectedItems.length}
               onDelete={() => setDeleteDialogOpen(true)}
               onCancel={handleCancelSelection}
+              canEditEvals={canEditEvals}
             />
           ) : (
             <Button
@@ -815,6 +868,7 @@ const EvalsListView = () => {
               color="primary"
               startIcon={<Iconify icon="mingcute:add-line" width={18} />}
               onClick={() => navigate("/dashboard/evaluations/create")}
+              disabled={!canEditEvals}
               sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
             >
               Create evals
@@ -866,7 +920,7 @@ const EvalsListView = () => {
                       ...safe,
                       tags: [
                         .../** @type {string[]} */ (safe.tags || []),
-                        ...tagValues,
+                        tag.value,
                       ],
                     };
                   });
@@ -962,7 +1016,8 @@ const EvalsListView = () => {
                   ? [t.value]
                   : [];
               if (!val.length) continue;
-              const isNeg = t.operator === "is_not" || t.operator === "not_equals";
+              const isNeg =
+                t.operator === "is_not" || t.operator === "not_equals";
               if (t.field === "owner") {
                 normalizeOwner(val, isNeg, flat);
               } else if (t.field === "name") {

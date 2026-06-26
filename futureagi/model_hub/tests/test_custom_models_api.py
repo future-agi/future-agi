@@ -14,10 +14,9 @@ Endpoints covered:
 """
 
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
@@ -25,7 +24,9 @@ from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from model_hub.models.ai_model import AIModel
 from model_hub.models.custom_models import CustomAIModel
+from model_hub.models.metric import Metric
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
@@ -69,17 +70,25 @@ class CustomModelsAPITestCase(APITestCase):
             is_default=True,
             created_by=cls.user,
         )
+        cls.same_org_other_workspace = Workspace.objects.create(
+            name="Secondary Workspace",
+            organization=cls.organization,
+            is_default=False,
+            created_by=cls.user,
+        )
         cls.other_workspace = Workspace.objects.create(
             name="Default Workspace",
             organization=cls.other_organization,
             is_default=True,
             created_by=cls.other_user,
         )
-        cls.organization_membership = OrganizationMembership.no_workspace_objects.create(
-            user=cls.user,
-            organization=cls.organization,
-            role=OrganizationRoles.OWNER,
-            is_active=True,
+        cls.organization_membership = (
+            OrganizationMembership.no_workspace_objects.create(
+                user=cls.user,
+                organization=cls.organization,
+                role=OrganizationRoles.OWNER,
+                is_active=True,
+            )
         )
         cls.other_organization_membership = (
             OrganizationMembership.no_workspace_objects.create(
@@ -91,6 +100,13 @@ class CustomModelsAPITestCase(APITestCase):
         )
         WorkspaceMembership.no_workspace_objects.create(
             workspace=cls.workspace,
+            user=cls.user,
+            role=OrganizationRoles.WORKSPACE_ADMIN,
+            organization_membership=cls.organization_membership,
+            is_active=True,
+        )
+        WorkspaceMembership.no_workspace_objects.create(
+            workspace=cls.same_org_other_workspace,
             user=cls.user,
             role=OrganizationRoles.WORKSPACE_ADMIN,
             organization_membership=cls.organization_membership,
@@ -132,6 +148,7 @@ class CustomModelsAPITestCase(APITestCase):
         user=None,
         workspace=None,
         deleted=False,
+        key_config=None,
     ):
         """Helper method to create a custom model."""
         org = organization or self.organization
@@ -146,9 +163,30 @@ class CustomModelsAPITestCase(APITestCase):
             organization=org,
             workspace=ws,
             user=user or self.user,
-            key_config={"key": "test-api-key"},
+            key_config=key_config or {"key": "test-api-key"},
             deleted=deleted,
         )
+
+    def create_metric_for_custom_model(self, custom_model, metric_name="test-metric"):
+        ai_model = AIModel.objects.create(
+            id=custom_model.id,
+            user_model_id=f"ai-{custom_model.user_model_id}",
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            organization=custom_model.organization,
+            workspace=custom_model.workspace,
+        )
+        return Metric.objects.create(
+            name=metric_name,
+            text_prompt="Score the output.",
+            model=ai_model,
+            metric_type=Metric.MetricTypes.WHOLE_USER_OUTPUT,
+            used_in=Metric.UsedIn.MODEL,
+            datasets=[],
+        )
+
+    def assert_unknown_field(self, response, field_name):
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn(field_name, response.data["details"])
 
 
 # =============================================================================
@@ -185,6 +223,35 @@ class TestCustomModelsListView(CustomModelsAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["id"], str(model1.id))
+
+    def test_list_custom_models_excludes_same_org_other_workspace(self, mock_volume):
+        """Test that same-organization models in another workspace are hidden."""
+        visible_model = self.create_custom_model(user_model_id="visible-model")
+        hidden_model = self.create_custom_model(
+            user_model_id="hidden-model",
+            workspace=self.same_org_other_workspace,
+        )
+
+        response = self.client.get(f"{BASE_URL}/custom-models/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result_ids = {row["id"] for row in response.data["results"]}
+        self.assertIn(str(visible_model.id), result_ids)
+        self.assertNotIn(str(hidden_model.id), result_ids)
+
+    def test_list_custom_models_defaults_volume_when_clickhouse_unavailable(
+        self, mock_volume
+    ):
+        """Test model listing still succeeds if volume lookup is unavailable."""
+        self.create_custom_model(user_model_id="my-model")
+        mock_volume.side_effect = RuntimeError("clickhouse unavailable")
+
+        response = self.client.get(f"{BASE_URL}/custom-models/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["volume"], 0)
+        self.assertEqual(response.data["results"][0]["total_count"], 0)
 
     def test_list_custom_models_excludes_deleted(self, mock_volume):
         """Test that deleted models are not returned."""
@@ -306,6 +373,21 @@ class TestCustomModelsSimplifiedListView(CustomModelsAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
 
+    def test_simplified_list_excludes_same_org_other_workspace(self):
+        """Test simplified list uses the active workspace scope."""
+        visible_model = self.create_custom_model(user_model_id="visible-model")
+        hidden_model = self.create_custom_model(
+            user_model_id="hidden-model",
+            workspace=self.same_org_other_workspace,
+        )
+
+        response = self.client.get(f"{BASE_URL}/custom-models/list/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result_ids = {row["id"] for row in response.data["results"]}
+        self.assertIn(str(visible_model.id), result_ids)
+        self.assertNotIn(str(hidden_model.id), result_ids)
+
 
 # =============================================================================
 # Create Endpoint Tests
@@ -314,6 +396,22 @@ class TestCustomModelsSimplifiedListView(CustomModelsAPITestCase):
 
 class TestCustomModelsCreateView(CustomModelsAPITestCase):
     """Tests for POST custom_models/create/ endpoint."""
+
+    def test_create_rejects_unknown_request_fields(self):
+        data = {
+            "model_provider": "openai",
+            "model_name": "gpt-4-turbo",
+            "input_token_cost": 0.01,
+            "output_token_cost": 0.03,
+            "config_json": {"key": "sk-test-key"},
+            "modelProvider": "legacy camel alias",
+        }
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/create/", data, format="json"
+        )
+
+        self.assert_unknown_field(response, "modelProvider")
 
     @patch("model_hub.views.custom_model.validate_model_working")
     def test_create_openai_model_success(self, mock_validate):
@@ -652,6 +750,17 @@ class TestCustomModelsDetailsView(CustomModelsAPITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_get_model_details_same_org_other_workspace(self):
+        """Test cannot get a same-organization model from another workspace."""
+        model = self.create_custom_model(
+            user_model_id="other-workspace-model",
+            workspace=self.same_org_other_workspace,
+        )
+
+        response = self.client.get(f"{BASE_URL}/custom-models/{model.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
     def test_update_model_details_success(self):
         """Test updating model details via POST."""
         model = self.create_custom_model(
@@ -677,6 +786,17 @@ class TestCustomModelsDetailsView(CustomModelsAPITestCase):
         self.assertEqual(model.user_model_id, "new-name")
         self.assertEqual(model.input_token_cost, 0.02)
         self.assertEqual(model.output_token_cost, 0.04)
+
+    def test_update_model_details_rejects_unknown_request_fields(self):
+        model = self.create_custom_model()
+
+        response = self.client.post(
+            f"{BASE_URL}/custom-models/{model.id}/",
+            {"model_name": "new-name", "modelName": "legacy camel alias"},
+            format="json",
+        )
+
+        self.assert_unknown_field(response, "modelName")
 
     def test_update_model_details_not_found(self):
         """Test updating non-existent model returns 404."""
@@ -718,6 +838,23 @@ class TestCustomModelsDetailsView(CustomModelsAPITestCase):
         other_model.refresh_from_db()
         self.assertEqual(other_model.user_model_id, "other-model")
 
+    def test_update_model_details_same_org_other_workspace(self):
+        """Test cannot update a same-organization model from another workspace."""
+        hidden_model = self.create_custom_model(
+            user_model_id="other-workspace-model",
+            workspace=self.same_org_other_workspace,
+        )
+
+        response = self.client.post(
+            f"{BASE_URL}/custom-models/{hidden_model.id}/",
+            {"model_name": "hacked-name"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        hidden_model = CustomAIModel.no_workspace_objects.get(id=hidden_model.id)
+        self.assertEqual(hidden_model.user_model_id, "other-workspace-model")
+
     def test_update_model_details_partial_update(self):
         """Test partial update only changes specified fields."""
         model = self.create_custom_model(
@@ -742,6 +879,31 @@ class TestCustomModelsDetailsView(CustomModelsAPITestCase):
         self.assertEqual(model.input_token_cost, 0.05)
         self.assertEqual(model.user_model_id, "original-name")  # unchanged
         self.assertEqual(model.output_token_cost, 0.02)  # unchanged
+
+    def test_update_model_details_with_null_key_config(self):
+        """Test updating a model whose optional key config is unset."""
+        model = CustomAIModel.objects.create(
+            user_model_id="null-key-config-model",
+            provider="openai",
+            input_token_cost=0.01,
+            output_token_cost=0.02,
+            organization=self.organization,
+            workspace=self.workspace,
+            user=self.user,
+            key_config=None,
+            deleted=False,
+        )
+
+        response = self.client.post(
+            f"{BASE_URL}/custom-models/{model.id}/",
+            {"model_name": "null-key-config-model-updated"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        model.refresh_from_db()
+        self.assertEqual(model.user_model_id, "null-key-config-model-updated")
+        self.assertIsNone(model.key_config)
 
     def test_update_model_details_duplicate_name(self):
         """Test cannot update to a name that already exists."""
@@ -782,6 +944,24 @@ class TestUpdateBaselineView(CustomModelsAPITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["status"], "success")
+        saved_model = CustomAIModel.objects.get(id=model.id)
+        self.assertEqual(saved_model.baseline_model_environment, "Production")
+        self.assertEqual(saved_model.baseline_model_version, "v2.0")
+
+    def test_update_baseline_rejects_unknown_request_fields(self):
+        model = self.create_custom_model()
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/update-baseline/{model.id}/",
+            {
+                "environment": "production",
+                "model_version": "v2.0",
+                "modelVersion": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        self.assert_unknown_field(response, "modelVersion")
 
     def test_update_baseline_not_found(self):
         """Test updating baseline for non-existent model."""
@@ -818,6 +998,87 @@ class TestUpdateBaselineView(CustomModelsAPITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_update_baseline_same_org_other_workspace(self):
+        """Test cannot update baseline for a same-organization hidden workspace."""
+        hidden_model = self.create_custom_model(
+            user_model_id="hidden-baseline-model",
+            workspace=self.same_org_other_workspace,
+        )
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/update-baseline/{hidden_model.id}/",
+            {"environment": "Production", "model_version": "v-hidden"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        hidden_model = CustomAIModel.no_workspace_objects.get(id=hidden_model.id)
+        self.assertIsNone(hidden_model.baseline_model_environment)
+        self.assertIsNone(hidden_model.baseline_model_version)
+
+
+class TestUpdateDefaultMetricView(CustomModelsAPITestCase):
+    """Tests for POST custom_models/update-metric/<uuid:id>/ endpoint."""
+
+    def test_update_metric_success_persists_default_metric(self):
+        """Test default metric update persists on the custom model."""
+        model = self.create_custom_model()
+        metric = self.create_metric_for_custom_model(model)
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/update-metric/{model.id}/",
+            {"metric_id": str(metric.id)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        saved_model = CustomAIModel.objects.get(id=model.id)
+        self.assertEqual(saved_model.default_metric_id, metric.id)
+
+    def test_update_metric_missing_metric_returns_not_found(self):
+        """Test missing metrics return a contract 404 instead of a server error."""
+        model = self.create_custom_model()
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/update-metric/{model.id}/",
+            {"metric_id": str(uuid.uuid4())},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        saved_model = CustomAIModel.objects.get(id=model.id)
+        self.assertIsNone(saved_model.default_metric_id)
+
+    def test_update_metric_same_org_other_workspace_model_returns_not_found(self):
+        """Test hidden workspace custom models cannot be assigned a metric."""
+        hidden_model = self.create_custom_model(
+            user_model_id="hidden-metric-model",
+            workspace=self.same_org_other_workspace,
+        )
+        metric = self.create_metric_for_custom_model(hidden_model)
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/update-metric/{hidden_model.id}/",
+            {"metric_id": str(metric.id)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        hidden_model = CustomAIModel.no_workspace_objects.get(id=hidden_model.id)
+        self.assertIsNone(hidden_model.default_metric_id)
+
+    def test_update_metric_rejects_unknown_request_fields(self):
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/update-metric/{uuid.uuid4()}/",
+            {
+                "metric_id": str(uuid.uuid4()),
+                "metricId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        self.assert_unknown_field(response, "metricId")
 
 
 # =============================================================================
@@ -872,6 +1133,19 @@ class TestEditCustomModelView(CustomModelsAPITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_get_edit_model_same_org_other_workspace(self):
+        """Test cannot get edit data for a same-organization hidden workspace."""
+        hidden_model = self.create_custom_model(
+            user_model_id="hidden-edit-model",
+            workspace=self.same_org_other_workspace,
+        )
+
+        response = self.client.get(
+            f"{BASE_URL}/custom_models/edit/?id={hidden_model.id}"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     @patch("model_hub.views.custom_model.validate_model_working")
     def test_patch_edit_model_success(self, mock_validate):
         """Test patching model successfully."""
@@ -901,6 +1175,89 @@ class TestEditCustomModelView(CustomModelsAPITestCase):
         model.refresh_from_db()
         self.assertEqual(model.user_model_id, "new-name")
         self.assertEqual(model.input_token_cost, 0.02)
+
+    @patch("model_hub.views.custom_model.validate_model_working")
+    def test_patch_edit_model_partial_cost_update_preserves_existing_fields(
+        self, mock_validate
+    ):
+        """Test patching one cost does not clear the other cost or key config."""
+        model = self.create_custom_model(
+            user_model_id="cost-only",
+            input_token_cost=0.01,
+            output_token_cost=0.02,
+        )
+        original_key_config = model.key_config.copy()
+
+        response = self.client.patch(
+            f"{BASE_URL}/custom_models/edit/",
+            {
+                "id": str(model.id),
+                "input_token_cost": 0.05,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_validate.assert_not_called()
+        model.refresh_from_db()
+        self.assertEqual(model.input_token_cost, 0.05)
+        self.assertEqual(model.output_token_cost, 0.02)
+        saved_model = CustomAIModel.objects.get(id=model.id)
+        self.assertEqual(saved_model.key_config, original_key_config)
+
+    @patch("model_hub.views.custom_model.validate_model_working")
+    def test_patch_edit_model_preserves_custom_config_after_validation(
+        self, mock_validate
+    ):
+        """Test custom provider validation cannot mutate the config that is saved."""
+
+        def mutate_validation_config(model_name, api_key, provider):
+            del model_name, provider
+            api_key["config_json"].pop("api_base")
+            api_key["config_json"].pop("headers")
+            return "ok"
+
+        mock_validate.side_effect = mutate_validation_config
+        model = self.create_custom_model(
+            user_model_id="custom-model",
+            provider="custom",
+            key_config={
+                "api_base": "https://old.example.test/chat",
+                "headers": {"x_api_key": "old-key"},
+                "custom_provider": True,
+            },
+        )
+        config_json = {
+            "api_base": "https://new.example.test/chat",
+            "headers": {"x_api_key": "new-key"},
+            "custom_provider": True,
+        }
+
+        response = self.client.patch(
+            f"{BASE_URL}/custom_models/edit/",
+            {
+                "id": str(model.id),
+                "config_json": config_json,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        saved_model = CustomAIModel.objects.get(id=model.id)
+        self.assertEqual(saved_model.actual_json, config_json)
+
+    def test_patch_edit_model_rejects_unknown_request_fields(self):
+        response = self.client.patch(
+            f"{BASE_URL}/custom_models/edit/",
+            {
+                "id": str(uuid.uuid4()),
+                "model_name": "new-name",
+                "modelName": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        self.assert_unknown_field(response, "modelName")
 
     def test_patch_edit_model_missing_id(self):
         """Test patching model without ID returns error."""
@@ -974,6 +1331,25 @@ class TestEditCustomModelView(CustomModelsAPITestCase):
         other_model.refresh_from_db()
         self.assertEqual(other_model.user_model_id, "other-model")
 
+    @patch("model_hub.views.custom_model.validate_model_working")
+    def test_patch_edit_model_same_org_other_workspace(self, mock_validate):
+        """Test cannot patch a same-organization hidden workspace model."""
+        mock_validate.return_value = True
+        hidden_model = self.create_custom_model(
+            user_model_id="hidden-edit-model",
+            workspace=self.same_org_other_workspace,
+        )
+
+        response = self.client.patch(
+            f"{BASE_URL}/custom_models/edit/",
+            {"id": str(hidden_model.id), "model_name": "hacked-name"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        hidden_model = CustomAIModel.no_workspace_objects.get(id=hidden_model.id)
+        self.assertEqual(hidden_model.user_model_id, "hidden-edit-model")
+
 
 # =============================================================================
 # Delete Endpoint Tests
@@ -982,6 +1358,15 @@ class TestEditCustomModelView(CustomModelsAPITestCase):
 
 class TestDeleteCustomModelView(CustomModelsAPITestCase):
     """Tests for DELETE custom_models/delete/ endpoint."""
+
+    def test_delete_rejects_unknown_request_fields(self):
+        response = self.client.delete(
+            f"{BASE_URL}/custom_models/delete/",
+            {"ids": [], "modelIds": ["legacy camel alias"]},
+            format="json",
+        )
+
+        self.assert_unknown_field(response, "modelIds")
 
     def test_delete_single_model_success(self):
         """Test deleting a single model."""
@@ -1196,6 +1581,7 @@ class TestCustomModelsOrganizationIsolation(CustomModelsAPITestCase):
             f"{BASE_URL}/custom_models/delete/", data, format="json"
         )
 
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Model should still exist and not be deleted
         other_model.refresh_from_db()
         self.assertFalse(other_model.deleted)

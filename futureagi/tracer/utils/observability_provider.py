@@ -207,7 +207,13 @@ def _update_last_fetched_at(provider: ObservabilityProvider, now: datetime):
 
 
 def _create_observation_span(project, provider, normalized_data, metadata):
-    """Creates a new Trace and ObservationSpan."""
+    """Creates a new Trace and ObservationSpan.
+
+    CH25-TODO: KEEP-PG. This is a write path — ObservationSpan.objects
+    .create() is the dual-write source of truth (D-027). CH receives
+    the row via PeerDB CDC; there is no direct CH write API in the
+    reader by design.
+    """
     trace = Trace.objects.create(
         id=uuid.uuid4(),
         project=project,
@@ -239,8 +245,15 @@ def _create_observation_span(project, provider, normalized_data, metadata):
 
 
 def _update_observation_span(existing_span, normalized_data):
-    """Updates an existing ObservationSpan and its associated Trace."""
-    attributes = dict(normalized_data.get("span_attributes", {}))
+    """Updates an existing ObservationSpan and its associated Trace.
+
+    CH25-TODO: KEEP-PG. This is a write path — ``existing_span.save()``
+    below is the dual-write source-of-truth update (D-027). CH receives
+    the updated row via PeerDB CDC. Same rationale as
+    ``_create_observation_span`` above; the two helpers form the
+    upsert pair driven by ``process_and_store_logs``.
+    """
+    attributes = normalized_data.get("span_attributes", {})
 
     # Preserve recording URLs we've already rehosted to S3 — the provider
     # response only contains its own (expiring) URLs, so a wholesale
@@ -301,8 +314,14 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
     created_payload_bytes = 0
 
     for log in logs:
-        normalized_data = normalize_fn(log)
-        provider_log_id = normalized_data.get("id")
+        provider_log_id = None
+        try:
+            normalized_data = normalize_fn(log)
+            provider_log_id = normalized_data.get("id")
+        except Exception:
+            logger.exception(
+                f"Failed to normalize log for {provider.provider}"
+            )
 
         if not provider_log_id:
             logger.error(f"No provider log id found for {provider.provider}")
@@ -328,6 +347,11 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
                 )
                 existing_span = None
                 if existing_span_id:
+                    # CH25-TODO: KEEP-PG. Read-by-PK after CH found the
+                    # span_id — we need the live PG row to drive the
+                    # subsequent dual-write update inside this atomic
+                    # block (see _update_observation_span below). The
+                    # CH row alone can't be mutated by the writer.
                     existing_span = ObservationSpan.objects.filter(
                         id=existing_span_id,
                         project=project,
@@ -337,6 +361,13 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
                 # Fallback to the small/cheap PG-side metadata GIN lookup if
                 # CH is unavailable or hasn't indexed this span yet.
                 if existing_span is None:
+                    # CH25-TODO: KEEP-PG. Documented fallback for when CH
+                    # is unavailable or hasn't ingested the row yet. The
+                    # PG ``metadata`` GIN index makes this cheap; the
+                    # equivalent CH path would lose the freshness
+                    # guarantee that the PG primary store provides for
+                    # the upsert decision below. Pairs with the
+                    # span_id_by_provider_log_id CH lookup above.
                     existing_span = (
                         ObservationSpan.objects.filter(
                             metadata__provider_log_id=provider_log_id,
@@ -381,7 +412,7 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
     if created_count:
         emit_span_ingestion_usage(
             organization_id=project.organization_id,
-            num_traces=created_count,
+            num_traces=0,
             num_spans=created_count,
             payload_bytes=created_payload_bytes,
             source="voice_observability",
@@ -405,9 +436,7 @@ def _maybe_enqueue_recording_rehost(
         return
 
     span_id = str(span.id)
-    transaction.on_commit(
-        lambda: rehost_external_recordings.delay(span_id=span_id)
-    )
+    transaction.on_commit(lambda: rehost_external_recordings.delay(span_id=span_id))
 
 
 def create_observability_provider(

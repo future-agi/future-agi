@@ -11,6 +11,17 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
+def get_clickhouse_client_kwargs() -> dict[str, str | int]:
+    port = os.getenv("CH_PORT") or "9000"
+    return {
+        "host": os.getenv("CH_HOST") or "clickhouse",
+        "port": int(port),
+        "user": os.getenv("CH_USERNAME") or os.getenv("CH_USER") or "default",
+        "password": os.getenv("CH_PASSWORD") or "",
+        "database": os.getenv("CH_DATABASE") or "default",
+    }
+
+
 def sanitize_sql_value(value: str) -> str:
     """
     Sanitize and escape a string value to make it safe for SQL queries.
@@ -89,14 +100,7 @@ class ClickHouseVectorDB:
     def __init__(
         self,
     ):
-        self.client = clickhouse_driver.Client(
-            host=os.getenv("CH_HOST"),
-            port=os.getenv("CH_PORT"),
-            user=os.getenv("CH_USERNAME"),
-            password=os.getenv("CH_PASSWORD"),
-            database=os.getenv("CH_DATABASE"),
-            # settings={'max_threads': 16}
-        )
+        self.client = clickhouse_driver.Client(**get_clickhouse_client_kwargs())
 
     def drop_table(self,table_name: str) -> None:
         """

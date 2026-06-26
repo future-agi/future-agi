@@ -18,6 +18,7 @@ from model_hub.models.annotation_queues import (
     AnnotationQueueAnnotator,
     AnnotationQueueLabel,
     AutomationRule,
+    FULL_ACCESS_QUEUE_ROLES,
     QueueItem,
 )
 from model_hub.models.choices import (
@@ -380,10 +381,14 @@ def annotation_render_seed(db, organization, workspace, user):
     )
     label = _create_label(organization=organization, workspace=workspace)
     AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
-    AnnotationQueueAnnotator.objects.create(
+    AnnotationQueueAnnotator.objects.update_or_create(
         queue=queue,
         user=user,
-        role=AnnotatorRole.MANAGER.value,
+        deleted=False,
+        defaults={
+            "role": AnnotatorRole.MANAGER.value,
+            "roles": FULL_ACCESS_QUEUE_ROLES,
+        },
     )
     return {
         "queue": queue,

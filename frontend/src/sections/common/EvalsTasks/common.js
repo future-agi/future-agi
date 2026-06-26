@@ -8,6 +8,13 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { formatDate } from "src/utils/report-utils";
 import { canonicalEntries } from "src/utils/utils";
+import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
+
+// Operator categories shared by the task filter wire builders (validation.js,
+// TaskLivePreview) and TaskFilterBar.
+export const RANGE_OPS = new Set(["between", "not_between"]);
+export const LIST_OPS = new Set(["in", "not_in"]);
+export const NO_VALUE_OPS = new Set(NULL_OPERATORS);
 
 export const getEvalsTaskColumnConfig = (observeId) => {
   const columns = [
@@ -49,7 +56,7 @@ export const getEvalsTaskColumnConfig = (observeId) => {
 
         if (spanAttributes.length > 0) {
           const customAttributeString = `Custom attribute is ${spanAttributes
-            .map((f) => `(${f.columnId})`)
+            .map((f) => `(${f.column_id})`)
             .join(",")}`;
 
           filters.push(customAttributeString);
@@ -219,7 +226,9 @@ export const formatTaskFilters = (filters_applied) => {
   // canonical `filters` key; fall back to legacy `span_attributes_filters`.
   // `colType` round-trips as `apiColType` so the panel picks the right chip.
   const span_attributes_filters = (
-    filters_applied.filters || filters_applied.span_attributes_filters || []
+    filters_applied.filters ||
+    filters_applied.span_attributes_filters ||
+    []
   ).map((i) => ({
     property: "attributes",
     propertyId: i?.columnId,
@@ -318,5 +327,10 @@ export const useGetTaskData = (taskId, options) => {
     queryKey: ["taskDetails", taskId],
     queryFn: () => axios.get(endpoints.project.getEvalTaskDetails(taskId)),
     select: (d) => d?.data?.result,
+    retry: (failureCount, error) => {
+      const status = error?.statusCode || error?.response?.status;
+      if (status === 400 || status === 404) return false;
+      return failureCount < 1;
+    },
   });
 };

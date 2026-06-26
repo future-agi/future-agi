@@ -6,6 +6,18 @@ import axiosInstance, { endpoints } from "src/utils/axios";
 
 export const GatewayContext = createContext(null);
 
+export function normalizeGateway(gateway) {
+  if (!gateway) return null;
+  return {
+    ...gateway,
+    baseUrl: gateway.baseUrl ?? gateway.base_url ?? "",
+    providerCount: gateway.providerCount ?? gateway.provider_count ?? 0,
+    modelCount: gateway.modelCount ?? gateway.model_count ?? 0,
+    lastHealthCheck:
+      gateway.lastHealthCheck ?? gateway.last_health_check ?? null,
+  };
+}
+
 export const GatewayProvider = ({ children }) => {
   const queryClient = useQueryClient();
 
@@ -21,7 +33,9 @@ export const GatewayProvider = ({ children }) => {
     },
   });
 
-  const gateways = gatewaysResponse?.result || [];
+  const gateways = Array.isArray(gatewaysResponse?.result)
+    ? gatewaysResponse.result.map(normalizeGateway)
+    : [];
 
   // Single gateway — always use the first (and only) one
   const gateway = gateways[0] || null;

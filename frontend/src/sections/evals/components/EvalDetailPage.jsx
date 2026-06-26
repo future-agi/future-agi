@@ -59,6 +59,8 @@ import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const extract_selected_tools = (tools) => {
   if (Array.isArray(tools)) return tools;
@@ -115,6 +117,9 @@ const getEvalPromptText = (evalData, config = {}) =>
 const EvalDetailPage = () => {
   const { evalId } = useParams();
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditEvals =
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const [searchParams, setSearchParams] = useSearchParams();
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
@@ -252,9 +257,7 @@ const EvalDetailPage = () => {
       viewingVersion.is_default ?? viewingVersion.isDefault ?? false;
     if (freshFlag !== localFlag) {
       setViewingVersion((prev) =>
-        prev
-          ? { ...prev, is_default: freshFlag, isDefault: freshFlag }
-          : prev,
+        prev ? { ...prev, is_default: freshFlag, isDefault: freshFlag } : prev,
       );
     }
   }, [versionsData, viewingVersion]);
@@ -905,9 +908,12 @@ const EvalDetailPage = () => {
     try {
       // Only send weights for children currently in the list
       const weights = {};
+      const pinnedVersions = {};
       compositeChildren.forEach((c) => {
         const w = compositeChildWeights[c.child_id];
         if (w != null) weights[c.child_id] = w;
+        if (c.pinned_version_id)
+          pinnedVersions[c.child_id] = c.pinned_version_id;
       });
       const payload = {
         name: compositeName?.trim() || undefined,
@@ -918,6 +924,8 @@ const EvalDetailPage = () => {
         child_template_ids: compositeChildren.map((c) => c.child_id),
         child_configs: buildCompositeChildConfigs(compositeChildren),
         child_weights: Object.keys(weights).length > 0 ? weights : null,
+        child_pinned_versions:
+          Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
       };
       const result = await updateComposite.mutateAsync(payload);
       const vNum = result?.version_number;
@@ -991,9 +999,13 @@ const EvalDetailPage = () => {
       // before testing so the execute endpoint picks up the latest state.
       if (isComposite && !isSystemEval) {
         const weights = {};
+        const pinnedVersions = {};
         compositeChildren.forEach((c) => {
           const w = compositeChildWeights[c.child_id];
           if (w != null) weights[c.child_id] = w;
+          if (c.pinned_version_id) {
+            pinnedVersions[c.child_id] = c.pinned_version_id;
+          }
         });
         await updateComposite.mutateAsync({
           name: compositeName?.trim() || undefined,
@@ -1004,6 +1016,8 @@ const EvalDetailPage = () => {
           child_template_ids: compositeChildren.map((c) => c.child_id),
           child_configs: buildCompositeChildConfigs(compositeChildren),
           child_weights: Object.keys(weights).length > 0 ? weights : null,
+          child_pinned_versions:
+            Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
         });
       }
       testPlaygroundRef.current?.runTest?.(evalId);
@@ -1242,13 +1256,14 @@ const EvalDetailPage = () => {
             open={Boolean(menuAnchor)}
             onClose={() => setMenuAnchor(null)}
           >
-            <MenuItem onClick={handleDuplicate}>
+            <MenuItem onClick={handleDuplicate} disabled={!canEditEvals}>
               <Iconify icon="solar:copy-bold" width={16} sx={{ mr: 1 }} />{" "}
               Duplicate
             </MenuItem>
             {!isSystemEval && (
               <MenuItem
                 onClick={handleDeleteClick}
+                disabled={!canEditEvals}
                 sx={{ color: "error.main" }}
               >
                 <Iconify
@@ -1661,7 +1676,7 @@ const EvalDetailPage = () => {
                   ))}
 
                 {/* Error Localization */}
-                {!isComposite && evalType !== "code"  && (
+                {!isComposite && evalType !== "code" && (
                   <Box>
                     <FormControlLabel
                       control={
@@ -1850,6 +1865,7 @@ const EvalDetailPage = () => {
                     ref={testPlaygroundRef}
                     templateId={evalId}
                     model={model}
+                    evalName={evalData?.name || ""}
                     instructions={
                       evalType === "code"
                         ? ""
@@ -1964,7 +1980,12 @@ const EvalDetailPage = () => {
                         variant={isComposite ? "contained" : "outlined"}
                         size="small"
                         onClick={handleTestEvaluation}
-                        disabled={isTesting || !isPlaygroundReady || needsTemplateVariable}
+                        disabled={
+                          isTesting ||
+                          !isPlaygroundReady ||
+                          needsTemplateVariable ||
+                          !canEditEvals
+                        }
                         startIcon={
                           isTesting ? (
                             <CircularProgress size={14} />
@@ -1999,7 +2020,12 @@ const EvalDetailPage = () => {
                           variant="contained"
                           size="small"
                           onClick={handleSaveVersion}
-                          disabled={isSaving || !isDirty || needsTemplateVariable}
+                          disabled={
+                            isSaving ||
+                            !isDirty ||
+                            needsTemplateVariable ||
+                            !canEditEvals
+                          }
                           startIcon={
                             isSaving ? (
                               <CircularProgress size={14} />
@@ -2031,7 +2057,8 @@ const EvalDetailPage = () => {
                           disabled={
                             isSaving ||
                             !isDirty ||
-                            compositeChildren.length === 0
+                            compositeChildren.length === 0 ||
+                            !canEditEvals
                           }
                           startIcon={
                             isSaving ? (
@@ -2075,7 +2102,10 @@ const EvalDetailPage = () => {
       {/* ═══ Ground Truth Tab ═══ */}
       {activeTab === "ground_truth" && (
         <Box sx={{ flex: 1, minHeight: 0 }}>
-          <EvalGroundTruthTab templateId={evalId} />
+          <EvalGroundTruthTab
+            templateId={evalId}
+            onSwitchToDetails={() => setActiveTab("details")}
+          />
         </Box>
       )}
     </Box>

@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import uuid
 from datetime import timedelta
@@ -13,6 +15,7 @@ from model_hub.models.annotation_queues import (
     AnnotationQueueAnnotator,
     AnnotationQueueLabel,
     QueueItem,
+    QueueItemNote,
 )
 from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
@@ -31,6 +34,7 @@ from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.score import Score
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.run_test import RunTest
+from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.scenarios import Scenarios
 from simulate.models.test_execution import (
     CallExecution,
@@ -217,8 +221,227 @@ def _complete_url(queue, item):
     return f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/complete/"
 
 
+def _add_items_url(queue):
+    return f"/model-hub/annotation-queues/{queue.id}/items/add-items/"
+
+
 @pytest.mark.django_db
 class TestVoiceAnnotationRegressionE2E:
+    def test_th4825_direct_voice_call_add_items_keeps_trace_source(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+    ):
+        queue = _queue(
+            "TH-4825 direct call trace queue",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+
+        resp = auth_client.post(
+            _add_items_url(queue),
+            {
+                "items": [
+                    {
+                        "source_type": QueueItemSourceType.TRACE.value,
+                        "source_id": str(observe_trace.id),
+                    }
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert resp.data["result"]["added"] == 1
+        item = QueueItem.objects.get(queue=queue, trace=observe_trace, deleted=False)
+        assert item.source_type == QueueItemSourceType.TRACE.value
+        assert item.trace_id == observe_trace.id
+        assert item.observation_span_id is None
+        assert item.observation_span_id != root_conversation_span.id
+
+    def test_th5175_enumerated_add_rejects_in_progress_trace(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+    ):
+        queue = _queue(
+            "TH-5175 in-progress trace queue",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        in_progress_trace = Trace.objects.create(
+            project=observe_project,
+            name="In-progress voice call trace",
+        )
+        ObservationSpan.objects.create(
+            id=f"voice_in_progress_{uuid.uuid4().hex[:16]}",
+            project=observe_project,
+            trace=in_progress_trace,
+            name="In-progress voice root",
+            observation_type="conversation",
+            start_time=timezone.now(),
+            parent_span_id=None,
+            status="UNSET",
+        )
+
+        resp = auth_client.post(
+            _add_items_url(queue),
+            {
+                "items": [
+                    {
+                        "source_type": QueueItemSourceType.TRACE.value,
+                        "source_id": str(in_progress_trace.id),
+                    }
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert result["added"] == 0
+        assert result["duplicates"] == 0
+        assert "still in progress" in result["errors"][0]
+        assert not QueueItem.objects.filter(
+            queue=queue,
+            trace=in_progress_trace,
+            deleted=False,
+        ).exists()
+
+    def test_th5175_filter_add_skips_in_progress_traces(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+    ):
+        queue = _queue(
+            "TH-5175 filter skips in-progress traces",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        in_progress_trace = Trace.objects.create(
+            project=observe_project,
+            name="In-progress voice call trace",
+        )
+        ObservationSpan.objects.create(
+            id=f"voice_filter_in_progress_{uuid.uuid4().hex[:16]}",
+            project=observe_project,
+            trace=in_progress_trace,
+            name="In-progress voice root",
+            observation_type="conversation",
+            start_time=timezone.now(),
+            parent_span_id=None,
+            status="UNSET",
+        )
+
+        resp = auth_client.post(
+            _add_items_url(queue),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": QueueItemSourceType.TRACE.value,
+                    "project_id": str(observe_project.id),
+                }
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert result["added"] == 1
+        assert result["duplicates"] == 0
+        assert result["total_matching"] == 2
+        assert result["errors"] == [
+            "1 trace is still in progress and was not added to the annotation queue."
+        ]
+        assert QueueItem.objects.filter(
+            queue=queue,
+            trace=observe_trace,
+            deleted=False,
+        ).exists()
+        assert not QueueItem.objects.filter(
+            queue=queue,
+            trace=in_progress_trace,
+            deleted=False,
+        ).exists()
+
+    def test_filter_add_default_workspace_accepts_null_workspace_trace(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+    ):
+        legacy_project = Project.objects.create(
+            name=f"Legacy null workspace observe {uuid.uuid4().hex[:8]}",
+            organization=organization,
+            workspace=None,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        legacy_trace = Trace.objects.create(
+            project=legacy_project,
+            name="Legacy null workspace trace",
+        )
+        ObservationSpan.objects.create(
+            id=f"legacy_null_ws_root_{uuid.uuid4().hex[:16]}",
+            project=legacy_project,
+            trace=legacy_trace,
+            name="Legacy null workspace root",
+            observation_type="conversation",
+            start_time=timezone.now(),
+            parent_span_id=None,
+            status="ok",
+        )
+        queue = _queue(
+            "Default workspace null-workspace trace",
+            organization,
+            workspace,
+            user,
+            project=legacy_project,
+        )
+
+        resp = auth_client.post(
+            _add_items_url(queue),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": QueueItemSourceType.TRACE.value,
+                    "project_id": str(legacy_project.id),
+                }
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert result["added"] == 1
+        assert result["total_matching"] == 1
+        assert result["errors"] == []
+        assert QueueItem.objects.filter(
+            queue=queue,
+            trace=legacy_trace,
+            deleted=False,
+        ).exists()
+
     def test_th4782_simulation_queue_submit_uses_call_execution_source(
         self,
         auth_client,
@@ -302,6 +525,11 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         thumbs_label,
     ):
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # _span_notes_target_for_queue_item reads root span from CH
+        seed_ch_span(root_conversation_span)
+
         queue = _queue(
             "TH-4055 trace call queue",
             organization,
@@ -319,11 +547,17 @@ class TestVoiceAnnotationRegressionE2E:
             status=QueueItemStatus.PENDING.value,
         )
 
+        # Score writes are now per-queue. Pass queue_item_id explicitly so
+        # the bulk score lands in this test queue's review context. Without
+        # it, the score would resolve to the project's default queue and
+        # this queue's annotate-detail would stay empty (correct under the
+        # new policy but not what this regression is exercising).
         bulk_resp = auth_client.post(
             "/model-hub/scores/bulk/",
             {
                 "source_type": QueueItemSourceType.TRACE.value,
                 "source_id": str(observe_trace.id),
+                "queue_item_id": str(item.id),
                 "scores": [
                     {
                         "label_id": str(thumbs_label.id),
@@ -343,6 +577,7 @@ class TestVoiceAnnotationRegressionE2E:
             trace=observe_trace,
             label=thumbs_label,
             annotator=user,
+            queue_item=item,
             deleted=False,
         ).exists()
         assert not Score.objects.filter(
@@ -352,10 +587,13 @@ class TestVoiceAnnotationRegressionE2E:
             annotator=user,
             deleted=False,
         ).exists()
-        assert SpanNotes.objects.get(
-            span=root_conversation_span,
-            created_by_user=user,
-        ).notes == "whole call note"
+        assert (
+            SpanNotes.objects.get(
+                span=root_conversation_span,
+                created_by_user=user,
+            ).notes
+            == "whole call note"
+        )
 
         detail_resp = auth_client.get(_annotate_detail_url(queue, item))
         assert detail_resp.status_code == status.HTTP_200_OK, detail_resp.data
@@ -396,6 +634,11 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         thumbs_label,
     ):
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # _span_notes_target_for_queue_item reads root span from CH
+        seed_ch_span(root_conversation_span)
+
         queue = _queue(
             "TH-4861 trace note separation queue",
             organization,
@@ -436,10 +679,13 @@ class TestVoiceAnnotationRegressionE2E:
             deleted=False,
         )
         assert score.notes in ("", None)
-        assert SpanNotes.objects.get(
-            span=root_conversation_span,
-            created_by_user=user,
-        ).notes == "trace-level-only note"
+        assert (
+            SpanNotes.objects.get(
+                span=root_conversation_span,
+                created_by_user=user,
+            ).notes
+            == "trace-level-only note"
+        )
 
         detail_resp = auth_client.get(_annotate_detail_url(queue, item))
         assert detail_resp.status_code == status.HTTP_200_OK, detail_resp.data
@@ -477,6 +723,11 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         star_label,
     ):
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # for-source span_notes reads span from CH to resolve org ownership
+        seed_ch_span(root_conversation_span)
+
         queue = _queue(
             "TH-4055 default observe queue",
             organization,
@@ -516,10 +767,16 @@ class TestVoiceAnnotationRegressionE2E:
         assert score.source_type == QueueItemSourceType.OBSERVATION_SPAN.value
         assert score.queue_item == item
         assert score.value == {"rating": 4.0}
-        assert SpanNotes.objects.get(
-            span=root_conversation_span,
-            created_by_user=user,
-        ).notes == "old observe toolbar note"
+        assert (
+            SpanNotes.objects.get(
+                span=root_conversation_span,
+                created_by_user=user,
+            ).notes
+            == "old observe toolbar note"
+        )
+        assert QueueItemNote.objects.get(queue_item=item, annotator=user).notes == (
+            "old observe toolbar note"
+        )
 
         score_resp = auth_client.get(
             "/model-hub/scores/for-source/",
@@ -531,23 +788,119 @@ class TestVoiceAnnotationRegressionE2E:
         assert score_resp.status_code == status.HTTP_200_OK, score_resp.data
         assert score_resp.data["span_notes"][0]["notes"] == "old observe toolbar note"
 
+        queue_resp = auth_client.get(
+            "/model-hub/annotation-queues/for-source/",
+            {
+                "source_type": QueueItemSourceType.OBSERVATION_SPAN.value,
+                "source_id": root_conversation_span.id,
+            },
+        )
+        assert queue_resp.status_code == status.HTTP_200_OK, queue_resp.data
+        queue_entry = queue_resp.data["result"][0]
+        assert queue_entry["existing_notes"] == "old observe toolbar note"
+        assert queue_entry["existing_label_notes"][str(star_label.id)] == (
+            "old observe toolbar note"
+        )
+
     def test_th4759_simulation_call_detail_returns_scenario_columns(
         self,
         auth_client,
+        organization,
         simulation_call_execution,
         simulation_dataset_row,
     ):
+        ScenarioGraph.objects.create(
+            name="Drive-thru flow",
+            scenario=simulation_call_execution.scenario,
+            organization=organization,
+            graph_config={
+                "graph_data": {
+                    "nodes": [
+                        {
+                            "name": "Greeting",
+                            "type": "conversation",
+                            "messagePlan": {"firstMessage": "Hello"},
+                        }
+                    ],
+                    "edges": [],
+                }
+            },
+        )
         resp = auth_client.get(
             f"/simulate/call-executions/{simulation_call_execution.id}/"
         )
 
         assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert resp.data["test_execution_id"] == str(
+            simulation_call_execution.test_execution_id
+        )
+        assert resp.data["scenario_graph"]["nodes"][0]["name"] == "Greeting"
         scenario_columns = resp.data["scenario_columns"]
         assert scenario_columns
         column_payload = next(iter(scenario_columns.values()))
         assert column_payload["column_name"] == "customer_goal"
         assert column_payload["value"] == "Order one cheeseburger"
         assert column_payload["dataset_id"] == str(simulation_dataset_row.dataset_id)
+
+    def test_th5123_voice_call_detail_returns_simulation_path_context(
+        self,
+        auth_client,
+        monkeypatch,
+        organization,
+        observe_trace,
+        root_conversation_span,
+        simulation_call_execution,
+    ):
+        from tracer.tests._ch_seed import seed_ch_span
+
+        ScenarioGraph.objects.create(
+            name="Order flow",
+            scenario=simulation_call_execution.scenario,
+            organization=organization,
+            graph_config={
+                "graph_data": {
+                    "nodes": [
+                        {
+                            "name": "Take order",
+                            "type": "conversation",
+                            "messagePlan": {
+                                "firstMessage": "What would you like to order?"
+                            },
+                        }
+                    ],
+                    "edges": [],
+                }
+            },
+        )
+        root_conversation_span.span_attributes = {
+            "raw_log": {
+                "id": "provider-call-123",
+                "transcript": "Customer ordered food.",
+            }
+        }
+        root_conversation_span.eval_attributes = {
+            "fi.simulator.call_execution_id": str(simulation_call_execution.id)
+        }
+        root_conversation_span.save(
+            update_fields=["span_attributes", "eval_attributes"]
+        )
+
+        # Seed AFTER .save() so CH has the updated span_attributes/eval_attributes
+        seed_ch_span(root_conversation_span)
+
+        resp = auth_client.get(
+            "/tracer/trace/voice_call_detail/",
+            {"trace_id": str(observe_trace.id)},
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert result["call_execution_id"] == str(simulation_call_execution.id)
+        assert result["test_execution_id"] == str(
+            simulation_call_execution.test_execution_id
+        )
+        assert result["scenario_id"] == str(simulation_call_execution.scenario_id)
+        assert result["scenario_graph"]["nodes"][0]["name"] == "Take order"
 
     def test_th3884_th3886_th3889_navigation_keeps_skipped_items_in_work(
         self,
@@ -577,11 +930,6 @@ class TestVoiceAnnotationRegressionE2E:
             workspace,
             user,
             project=observe_project,
-        )
-        AnnotationQueueAnnotator.objects.create(
-            queue=queue,
-            user=user,
-            role="annotator",
         )
         AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
         first_item = QueueItem.objects.create(
@@ -627,9 +975,7 @@ class TestVoiceAnnotationRegressionE2E:
             format="json",
         )
         assert complete_first.status_code == status.HTTP_200_OK, complete_first.data
-        assert complete_first.data["result"]["next_item"]["id"] == str(
-            skipped_item.id
-        )
+        assert complete_first.data["result"]["next_item"]["id"] == str(skipped_item.id)
         queue.refresh_from_db()
         assert queue.status == AnnotationQueueStatusChoices.ACTIVE.value
 
@@ -701,11 +1047,6 @@ class TestVoiceAnnotationRegressionE2E:
             user,
             project=observe_project,
             status=AnnotationQueueStatusChoices.COMPLETED.value,
-        )
-        AnnotationQueueAnnotator.objects.create(
-            queue=queue,
-            user=user,
-            role="annotator",
         )
         AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
         QueueItem.objects.create(
@@ -820,9 +1161,7 @@ class TestVoiceAnnotationRegressionE2E:
             "score": 7,
         }
         root_conversation_span.response_time = 321.0
-        root_conversation_span.save(
-            update_fields=["span_attributes", "response_time"]
-        )
+        root_conversation_span.save(update_fields=["span_attributes", "response_time"])
         queue = _queue(
             "TH-4735 export queue",
             organization,
@@ -925,9 +1264,7 @@ class TestVoiceAnnotationRegressionE2E:
 
         label_slot_1_value_field = f"label:{thumbs_label.id}:slot:1:value"
         label_slot_1_notes_field = f"label:{thumbs_label.id}:slot:1:notes"
-        label_slot_1_annotator_field = (
-            f"label:{thumbs_label.id}:slot:1:annotator_email"
-        )
+        label_slot_1_annotator_field = f"label:{thumbs_label.id}:slot:1:annotator_email"
         label_slot_1_record_field = f"label:{thumbs_label.id}:slot:1:annotation"
         label_slot_2_value_field = f"label:{thumbs_label.id}:slot:2:value"
         label_slot_2_notes_field = f"label:{thumbs_label.id}:slot:2:notes"
@@ -1050,7 +1387,14 @@ class TestVoiceAnnotationRegressionE2E:
         assert cells["source_identifier"] == root_conversation_span.id
         assert cells["latency_ms"] == "1000"
         assert cells["response_time_ms"] == "321.0"
-        assert cells["item_notes"] == "whole item export note"
+        # Per-queue scoping: SpanNote ("whole item export note") was never
+        # written through this queue's annotation flow, so item_notes is
+        # empty for this queue's export. Pre-revamp the span-level note
+        # leaked into every queue's export — that's the leak this work
+        # removes. To carry whole-item notes into a queue's export, the
+        # user must save them via the queue's own submit/bulk flow which
+        # writes a ``QueueItemNote``.
+        assert cells["item_notes"] == ""
         assert cells["review_status"] == "approved"
         assert cells["reviewer_email"] == reviewer.email
         assert cells["review_notes"] == "review export note"
@@ -1062,12 +1406,16 @@ class TestVoiceAnnotationRegressionE2E:
         )
         assert cells["thumbs_annotation_2_score"] == json.dumps({"value": "down"})
         assert cells["thumbs_annotation_2_notes"] == "second annotator note"
-        assert json.loads(cells["annotation_metrics"])[thumbs_label.name][0][
-            "notes"
-        ] == "label export note"
-        assert json.loads(cells["annotation_metrics"])[thumbs_label.name][1][
-            "annotator_email"
-        ] == second_annotator.email
+        assert (
+            json.loads(cells["annotation_metrics"])[thumbs_label.name][0]["notes"]
+            == "label export note"
+        )
+        assert (
+            json.loads(cells["annotation_metrics"])[thumbs_label.name][1][
+                "annotator_email"
+            ]
+            == second_annotator.email
+        )
         assert (
             Column.objects.get(dataset=dataset, name="customer_score").data_type
             == DataTypeChoices.INTEGER.value
@@ -1094,7 +1442,26 @@ class TestVoiceAnnotationRegressionE2E:
         )
         assert exported_item["evals"]["Export Quality"]["score"] == 0.82
         assert exported_item["review"]["notes"] == "review export note"
-        assert exported_item["item_notes"] == "whole item export note"
+        # Same per-queue scoping for the JSON download — see cell assertion above.
+        assert exported_item["item_notes"] == ""
+
+        csv_resp = auth_client.get(
+            f"/model-hub/annotation-queues/{queue.id}/export/",
+            {"export_format": "csv"},
+        )
+        assert csv_resp.status_code == status.HTTP_200_OK
+        csv_rows = list(csv.DictReader(io.StringIO(csv_resp.content.decode())))
+        assert len(csv_rows) == 2
+        assert csv_rows[0]["requires_review"] == "True"
+        assert csv_rows[0]["review_status"] == "approved"
+        assert csv_rows[0]["reviewer_email"] == reviewer.email
+        assert csv_rows[0]["reviewer_name"] == reviewer.name
+        assert csv_rows[0]["reviewer_id"] == str(reviewer.id)
+        assert csv_rows[0]["reviewed_at"]
+        assert csv_rows[0]["review_notes"] == "review export note"
+        assert json.loads(csv_rows[0]["value"]) == {"value": "up"}
+        assert csv_rows[1]["review_status"] == "approved"
+        assert json.loads(csv_rows[1]["value"]) == {"value": "down"}
 
         duplicate_resp = auth_client.post(
             f"/model-hub/annotation-queues/{queue.id}/export-to-dataset/",
@@ -1234,20 +1601,27 @@ class TestVoiceAnnotationRegressionE2E:
         assert export_resp.status_code == status.HTTP_200_OK, export_resp.data
         assert export_resp.data["result"]["dataset_id"] == str(dataset.id)
         assert export_resp.data["result"]["rows_created"] == 1
-        assert Column.objects.filter(
-            dataset=dataset, name="source_identifier", deleted=False
-        ).count() == 1
+        assert (
+            Column.objects.filter(
+                dataset=dataset, name="source_identifier", deleted=False
+            ).count()
+            == 1
+        )
         assert (
             Column.objects.get(dataset=dataset, name="customer_score").data_type
             == DataTypeChoices.INTEGER.value
         )
         dataset.refresh_from_db()
-        assert str(
-            Column.objects.get(dataset=dataset, name="thumbs_annotation_1_score").id
-        ) in dataset.column_order
-        assert str(
-            Column.objects.get(dataset=dataset, name="customer_score").id
-        ) in dataset.column_order
+        assert (
+            str(
+                Column.objects.get(dataset=dataset, name="thumbs_annotation_1_score").id
+            )
+            in dataset.column_order
+        )
+        assert (
+            str(Column.objects.get(dataset=dataset, name="customer_score").id)
+            in dataset.column_order
+        )
 
         exported_row = Row.objects.get(dataset=dataset, order=2, deleted=False)
         exported_cells = {
@@ -1266,9 +1640,7 @@ class TestVoiceAnnotationRegressionE2E:
             cell.column.name: cell.value
             for cell in Cell.objects.filter(row=existing_row).select_related("column")
         }
-        assert backfilled_existing_cells["source_identifier"] == (
-            "pre-existing-source"
-        )
+        assert backfilled_existing_cells["source_identifier"] == ("pre-existing-source")
         assert backfilled_existing_cells["existing_only"] == "keep me"
         assert backfilled_existing_cells["thumbs_annotation_1_score"] == ""
         assert backfilled_existing_cells["customer_score"] == ""
@@ -1443,8 +1815,13 @@ class TestVoiceAnnotationRegressionE2E:
             annotation["notes"]
             for annotation in download_resp.data["result"][0]["annotations"]
         }
+        # Strict per-queue scoping: this queue's export shows only the
+        # score attributed to this queue's item. The orphan ("inline"
+        # source-level score) and the other queue's score must both be
+        # excluded. Pre-revamp the orphan was leaked in, which is the
+        # behavior the queue-scoped uniqueness explicitly removes.
         assert "current queue score" in notes
-        assert "inline source score" in notes
+        assert "inline source score" not in notes
         assert "other queue score" not in notes
 
         dataset_resp = auth_client.post(
@@ -1470,8 +1847,11 @@ class TestVoiceAnnotationRegressionE2E:
             for entries in row.metadata["annotations"].values()
             for entry in entries
         }
+        # Same scoping rule applies to dataset export — only this queue's
+        # own scores. Orphans surface separately once the on_commit hook
+        # attaches them to a default queue's item.
         assert "current queue score" in exported_notes
-        assert "inline source score" in exported_notes
+        assert "inline source score" not in exported_notes
         assert "other queue score" not in exported_notes
 
         annotations_resp = auth_client.get(
@@ -1482,7 +1862,7 @@ class TestVoiceAnnotationRegressionE2E:
             annotation["notes"] for annotation in annotations_resp.data["result"]
         }
         assert "current queue score" in annotation_notes
-        assert "inline source score" in annotation_notes
+        assert "inline source score" not in annotation_notes
         assert "other queue score" not in annotation_notes
 
         complete_resp = auth_client.post(_complete_url(queue, item), {}, format="json")
@@ -1554,9 +1934,7 @@ class TestVoiceAnnotationRegressionE2E:
 
         label_slot_1_value_field = f"label:{thumbs_label.id}:slot:1:value"
         label_slot_1_notes_field = f"label:{thumbs_label.id}:slot:1:notes"
-        label_slot_1_annotator_field = (
-            f"label:{thumbs_label.id}:slot:1:annotator_email"
-        )
+        label_slot_1_annotator_field = f"label:{thumbs_label.id}:slot:1:annotator_email"
         label_slot_2_value_field = f"label:{thumbs_label.id}:slot:2:value"
         label_slot_2_notes_field = f"label:{thumbs_label.id}:slot:2:notes"
 
@@ -1607,16 +1985,26 @@ class TestVoiceAnnotationRegressionE2E:
             cell.column.name: cell.value
             for cell in Cell.objects.filter(row=row).select_related("column")
         }
+        # Per-queue strict scoping: only the queue-attributed score lands
+        # in the export. The older inline (orphan) score belongs to no
+        # queue and is excluded — pre-revamp it would have filled slot 2,
+        # which is what this regression test originally guarded against.
         assert cells["slot_1_value"] == json.dumps({"value": "up"})
         assert cells["slot_1_notes"] == "queue label note"
         assert cells["slot_1_annotator"] == user.email
-        assert cells["slot_2_value"] == json.dumps({"value": "down"})
-        assert cells["slot_2_notes"] == "older inline source note"
+        # Slot 2 is empty because nothing else was scored *in this queue*.
+        assert cells.get("slot_2_value") in (None, "")
+        assert cells.get("slot_2_notes") in (None, "")
         metrics = json.loads(cells["annotation_metrics"])[thumbs_label.name]
-        assert [entry["notes"] for entry in metrics] == [
-            "queue label note",
-            "older inline source note",
-        ]
+        # ``metrics`` may serialize as either a list of entries or a single
+        # entry depending on count. Either way, the queue label note must
+        # appear and the inline note must not.
+        if isinstance(metrics, list):
+            notes = [entry.get("notes") for entry in metrics]
+        else:
+            notes = [metrics.get("notes")]
+        assert "queue label note" in notes
+        assert "older inline source note" not in notes
         assert row.metadata["annotations"][str(thumbs_label.id)][0]["notes"] == (
             "queue label note"
         )

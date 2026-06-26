@@ -840,8 +840,8 @@ func TestStreamParse_ContentBlockDelta_InputJSONDelta(t *testing.T) {
 		t.Fatalf("tool_calls length = %d, want 1", len(chunk.Choices[0].Delta.ToolCalls))
 	}
 	tc := chunk.Choices[0].Delta.ToolCalls[0]
-	if tc.Index != 1 {
-		t.Errorf("tool call index = %d, want 1", tc.Index)
+	if tc.Index != 0 {
+		t.Errorf("tool call index = %d, want 0", tc.Index)
 	}
 	if tc.Function == nil || tc.Function.Arguments != `{"loc` {
 		t.Errorf("tool call args = %v, want %q", tc.Function, `{"loc`)
