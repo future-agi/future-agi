@@ -699,6 +699,13 @@ class ClickHouseFilterBuilder:
         "user_id_type": "user_id_type",
     }
 
+    # End-user dimension source for the user/user_id filter subquery. v1 reads
+    # the legacy peerdb CDC `tracer_enduser` (id + _peerdb_is_deleted/deleted);
+    # ClickHouseFilterBuilderV2 overrides these for the v2 `end_users` RMT.
+    _ENDUSER_DIM_TABLE = "tracer_enduser"
+    _ENDUSER_DIM_ID_COL = "id"
+    _ENDUSER_DIM_NOT_DELETED = "_peerdb_is_deleted = 0 AND deleted = 0"
+
     def _build_enduser_string_subquery(
         self,
         enduser_column: str,
@@ -745,9 +752,9 @@ class ClickHouseFilterBuilder:
             f"trace_id {outer_op} ("
             f"SELECT trace_id FROM {self.table} "
             f"WHERE end_user_id IN ("
-            f"SELECT id FROM tracer_enduser FINAL "
+            f"SELECT {self._ENDUSER_DIM_ID_COL} FROM {self._ENDUSER_DIM_TABLE} FINAL "
             f"WHERE {inner} "
-            f"AND _peerdb_is_deleted = 0 AND deleted = 0"
+            f"AND {self._ENDUSER_DIM_NOT_DELETED}"
             f") AND _peerdb_is_deleted = 0)"
         )
 

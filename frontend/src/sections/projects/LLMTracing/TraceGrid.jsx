@@ -22,6 +22,7 @@ import {
   getTraceListColumnDefs,
   FILTER_FOR_HAS_EVAL,
   generateAnnotationColumnsForTracing,
+  normalizeConfigKeys,
 } from "./common";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
@@ -35,16 +36,6 @@ import { useShallowToggleAnnotationsStore } from "../../agents/store";
 
 const ROWS_LIMIT = 100;
 const EMPTY_EXTRA_FILTERS = [];
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
 
 const TraceGrid = React.forwardRef(
   (
@@ -274,7 +265,10 @@ const TraceGrid = React.forwardRef(
                       .filter((cc) => newById.has(cc.id))
                       .map((cc) => {
                         seen.add(cc.id);
-                        return { ...newById.get(cc.id), isVisible: cc.isVisible };
+                        return {
+                          ...newById.get(cc.id),
+                          isVisible: cc.isVisible,
+                        };
                       });
                     const added = newCols.filter((nc) => !seen.has(nc.id));
                     finalNonCustom = [...kept, ...added];

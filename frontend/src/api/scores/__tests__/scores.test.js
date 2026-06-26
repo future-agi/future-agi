@@ -69,9 +69,14 @@ describe("Scores API", () => {
           {
             source_type: "trace",
             source_id: "trace-1",
-            scores: [{ label_id: "label-1", value: { value: "up" } }],
+            scores: [
+              {
+                label_id: "label-1",
+                value: { value: "up" },
+                score_source: "human",
+              },
+            ],
             notes: "",
-            score_source: "human",
             span_notes: "whole item note",
             span_notes_source_id: "span-1",
           },

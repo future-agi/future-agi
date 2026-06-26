@@ -20,9 +20,13 @@ Mix it in FIRST so the wrapper resolves ahead of the v1 base in the MRO:
     class TraceListQueryBuilderV2(V2RewriteMixin, TraceListQueryBuilder): ...
 
 The two halves of the rewrite are applied with different scope. The v1→v2 token
-rewrite (`rewrite_v1_sql_to_v2`) always runs — it's a word-boundary substitution,
-idempotent on already-v2 SQL and a no-op on a string with no v1 tokens, so it's
-safe on a SQL fragment or a non-SQL value alike. The SETTINGS append
+rewrite (`rewrite_v1_sql_to_v2`) always runs — mostly word-boundary substitutions
+that are a no-op on a string with no v1 tokens. It is NOT idempotent in general:
+the bare SELECT-list rewrite (`SELECT legacy_col` → `toJSONString(v2_col) AS
+legacy_col`) re-wraps its own alias on a second pass. So it is safe to run once per
+emitted statement, and safe to double-run only on fragments that carry no bare
+SELECT-list ref (WHERE/ORDER fragments — see ClickHouseFilterBuilderV2.translate).
+The SETTINGS append
 (`_append_v2_settings`) runs ONLY when the emitted SQL is a complete `SELECT`/`WITH`
 statement (`_is_statement`): a fragment or a non-SQL `(cache_key, meta)` return
 must not get a trailing SETTINGS clause. So wrapping a method that already emits

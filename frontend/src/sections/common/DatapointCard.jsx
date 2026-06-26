@@ -197,6 +197,25 @@ const DatapointCard = ({
     return value?.cellDiffValue;
   }, [value?.cellDiffValue, dataType]);
 
+  const copyIcon = allowCopy ? (
+    <SvgColor
+      src="/assets/icons/ic_copy.svg"
+      alt="Copy"
+      sx={{
+        width: 20,
+        height: 20,
+        color: "text.disabled",
+        cursor: "pointer",
+      }}
+      onClick={() => {
+        copyToClipboard(cellValue);
+        enqueueSnackbar("Copied to clipboard", {
+          variant: "success",
+        });
+      }}
+    />
+  ) : null;
+
   return (
     <Accordion
       sx={{
@@ -372,24 +391,7 @@ const DatapointCard = ({
                     <Tab value="raw" label="Raw" />
                     {showDiff && <Tab value="difference" label="Difference" />}
                   </Tabs>
-                  {allowCopy && (
-                    <SvgColor
-                      src="/assets/icons/ic_copy.svg"
-                      alt="Copy"
-                      sx={{
-                        width: 20,
-                        height: 20,
-                        color: "text.disabled",
-                        cursor: "pointer",
-                      }}
-                      onClick={() => {
-                        copyToClipboard(cellValue);
-                        enqueueSnackbar("Copied to clipboard", {
-                          variant: "success",
-                        });
-                      }}
-                    />
-                  )}
+                  {copyIcon}
                 </Box>
               ) : null}
               {showTabs ? (
@@ -508,6 +510,17 @@ const DatapointCard = ({
                     ...sx,
                   }}
                 >
+                  {copyIcon && (
+                    <Box
+                      sx={{
+                        display: "flex",
+                        justifyContent: "flex-end",
+                        mb: 1,
+                      }}
+                    >
+                      {copyIcon}
+                    </Box>
+                  )}
                   <Typography
                     variant="body2"
                     sx={{

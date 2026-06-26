@@ -13577,7 +13577,7 @@ export const ModelHubAnnotationQueuesItemsAnnotationsListParams = zod.object({
 
 export const modelHubAnnotationQueuesItemsAnnotationsListResponseStatusDefault = true;
 
-
+export const modelHubAnnotationQueuesItemsAnnotationsListResponseResultItemScoreSourceDefault = `human`;
 
 
 
@@ -13600,7 +13600,7 @@ export const ModelHubAnnotationQueuesItemsAnnotationsListResponse = zod.object({
   "value_history": zod.object({
 
 }).passthrough().optional(),
-  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
+  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).default(modelHubAnnotationQueuesItemsAnnotationsListResponseResultItemScoreSourceDefault),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
   "annotator_name": zod.string().min(1).optional(),
@@ -25588,7 +25588,7 @@ export const ModelHubScoresListQueryParams = zod.object({
 
 
 
-
+export const modelHubScoresListResponseResultsItemScoreSourceDefault = `human`;
 
 
 
@@ -25613,7 +25613,7 @@ export const ModelHubScoresListResponse = zod.object({
   "value_history": zod.object({
 
 }).passthrough().optional(),
-  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
+  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).default(modelHubScoresListResponseResultsItemScoreSourceDefault),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
   "annotator_name": zod.string().min(1).optional(),
@@ -25647,7 +25647,7 @@ export const ModelHubScoresCreateBody = zod.object({
 
 export const modelHubScoresCreateResponseStatusDefault = true;
 
-
+export const modelHubScoresCreateResponseResultScoreSourceDefault = `human`;
 
 
 
@@ -25670,7 +25670,7 @@ export const ModelHubScoresCreateResponse = zod.object({
   "value_history": zod.object({
 
 }).passthrough().optional(),
-  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
+  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).default(modelHubScoresCreateResponseResultScoreSourceDefault),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
   "annotator_name": zod.string().min(1).optional(),
@@ -25710,7 +25710,7 @@ export const ModelHubScoresBulkCreateBody = zod.object({
 
 export const modelHubScoresBulkCreateResponseStatusDefault = true;
 
-
+export const modelHubScoresBulkCreateResponseResultScoresItemScoreSourceDefault = `human`;
 
 
 
@@ -25735,7 +25735,7 @@ export const ModelHubScoresBulkCreateResponse = zod.object({
   "value_history": zod.object({
 
 }).passthrough().optional(),
-  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
+  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).default(modelHubScoresBulkCreateResponseResultScoresItemScoreSourceDefault),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
   "annotator_name": zod.string().min(1).optional(),
@@ -25766,7 +25766,7 @@ export const ModelHubScoresForSourceQueryParams = zod.object({
 
 export const modelHubScoresForSourceResponseStatusDefault = true;
 
-
+export const modelHubScoresForSourceResponseResultItemScoreSourceDefault = `human`;
 
 
 
@@ -25789,7 +25789,7 @@ export const ModelHubScoresForSourceResponse = zod.object({
   "value_history": zod.object({
 
 }).passthrough().optional(),
-  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
+  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).default(modelHubScoresForSourceResponseResultItemScoreSourceDefault),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
   "annotator_name": zod.string().min(1).optional(),
@@ -25818,7 +25818,7 @@ export const ModelHubScoresReadParams = zod.object({
 
 
 
-
+export const modelHubScoresReadResponseScoreSourceDefault = `human`;
 
 
 
@@ -25839,7 +25839,7 @@ export const ModelHubScoresReadResponse = zod.object({
   "value_history": zod.object({
 
 }).passthrough().optional(),
-  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
+  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).default(modelHubScoresReadResponseScoreSourceDefault),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
   "annotator_name": zod.string().min(1).optional(),
@@ -25872,7 +25872,7 @@ export const ModelHubScoresUpdateBody = zod.object({
 
 
 
-
+export const modelHubScoresUpdateResponseScoreSourceDefault = `human`;
 
 
 
@@ -25893,7 +25893,7 @@ export const ModelHubScoresUpdateResponse = zod.object({
   "value_history": zod.object({
 
 }).passthrough().optional(),
-  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
+  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).default(modelHubScoresUpdateResponseScoreSourceDefault),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
   "annotator_name": zod.string().min(1).optional(),
@@ -25926,7 +25926,7 @@ export const ModelHubScoresPartialUpdateBody = zod.object({
 
 
 
-
+export const modelHubScoresPartialUpdateResponseScoreSourceDefault = `human`;
 
 
 
@@ -25947,7 +25947,7 @@ export const ModelHubScoresPartialUpdateResponse = zod.object({
   "value_history": zod.object({
 
 }).passthrough().optional(),
-  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
+  "score_source": zod.enum(['human', 'api', 'auto', 'imported']).default(modelHubScoresPartialUpdateResponseScoreSourceDefault),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
   "annotator_name": zod.string().min(1).optional(),
