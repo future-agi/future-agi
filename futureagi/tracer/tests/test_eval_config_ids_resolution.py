@@ -242,6 +242,23 @@ class TestEvalReadSelectors:
         assert "custom_eval_config_id IN %(config_ids)s" in query
         assert captured["params"] == {"trace_ids": ["t1"], "config_ids": ["c1"]}
 
+    @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
+    def test_trace_eval_scores_error_filter_is_null_safe(self):
+        """``output_str`` is Nullable and successful evals leave it NULL.
+
+        A bare ``output_str != 'ERROR'`` evaluates to NULL (falsy) for those
+        rows under ClickHouse three-valued logic, silently dropping every
+        successful eval from the aggregate (issue #987). The guard must be
+        null-safe, matching the already-fixed trace_list/span_list builders.
+        """
+        svc, captured = _capturing_service([{"trace_id": "t", "config_id": "c"}])
+        svc.get_trace_eval_scores_ch(["t1"], ["c1"])
+        query = captured["query"]
+
+        assert "ifNull(output_str, '') != 'ERROR'" in query
+        # The bare, null-unsafe form must not survive.
+        assert "output_str != 'ERROR'" not in query
+
     def test_trace_eval_scores_empty_short_circuits(self):
         svc, captured = _capturing_service([{"trace_id": "t"}])
         assert svc.get_trace_eval_scores_ch([], ["c1"]) == []

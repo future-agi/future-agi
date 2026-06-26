@@ -308,7 +308,7 @@ class AnalyticsQueryService:
             WHERE trace_id IN %(trace_ids)s
               AND custom_eval_config_id IN %(config_ids)s
               AND {eval_nd}
-              AND output_str != 'ERROR'
+              AND ifNull(output_str, '') != 'ERROR'
               AND (error = 0 OR error IS NULL)
             GROUP BY trace_id, custom_eval_config_id
         """
