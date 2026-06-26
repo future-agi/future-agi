@@ -254,6 +254,7 @@ export function useDashboardFilterValues({
   source = "traces",
   workflow,
   enabled = true,
+  search = "",
 }) {
   return useQuery({
     queryKey: [
@@ -264,6 +265,7 @@ export function useDashboardFilterValues({
       projectIds,
       source,
       workflow,
+      search,
     ],
     queryFn: async () => {
       try {
@@ -274,6 +276,7 @@ export function useDashboardFilterValues({
             project_ids: (projectIds || []).join(","),
             source,
             ...(workflow ? { workflow } : {}),
+            ...(search ? { search } : {}),
           },
         });
         return res;
