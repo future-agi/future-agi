@@ -1,4 +1,3 @@
-
 from agentic_eval.core_evals.fi_evals import FunctionEvaluator
 from agentic_eval.core_evals.fi_evals.eval_type import FunctionEvalTypeId
 
@@ -114,6 +113,7 @@ class ContainsAll(FunctionEvaluator):
             display_name=display_name,
         )
 
+
 class BleuScore(FunctionEvaluator):
     def __init__(
         self,
@@ -131,6 +131,7 @@ class BleuScore(FunctionEvaluator):
             function_arguments={},
             display_name=display_name,
         )
+
 
 class RougeScore(FunctionEvaluator):
     def __init__(
@@ -199,6 +200,7 @@ class RecallScore(FunctionEvaluator):
             display_name=display_name,
         )
 
+
 class RecallAtK(FunctionEvaluator):
     def __init__(self, k: int | None = None, display_name: str | None = None):
         """Initialize the RecallAtK function evaluator."""
@@ -207,6 +209,7 @@ class RecallAtK(FunctionEvaluator):
             function_arguments={"k": k},
             display_name=display_name,
         )
+
 
 class PrecisionAtK(FunctionEvaluator):
     def __init__(self, k: int | None = None, display_name: str | None = None):
@@ -217,6 +220,7 @@ class PrecisionAtK(FunctionEvaluator):
             display_name=display_name,
         )
 
+
 class NdcgAtK(FunctionEvaluator):
     def __init__(self, k: int | None = None, display_name: str | None = None):
         """Initialize the NdcgAtK function evaluator."""
@@ -225,6 +229,7 @@ class NdcgAtK(FunctionEvaluator):
             function_arguments={"k": k},
             display_name=display_name,
         )
+
 
 class Mrr(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
@@ -235,6 +240,7 @@ class Mrr(FunctionEvaluator):
             display_name=display_name,
         )
 
+
 class HitRate(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
         """Initialize the HitRate function evaluator."""
@@ -243,6 +249,7 @@ class HitRate(FunctionEvaluator):
             function_arguments={},
             display_name=display_name,
         )
+
 
 class LevenshteinSimilarity(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
@@ -504,8 +511,11 @@ class ApiCall(FunctionEvaluator):
             display_name=display_name,
         )
 
+
 class LengthBetween(FunctionEvaluator):
-    def __init__(self, min_length: int, max_length: int, display_name: str | None = None):
+    def __init__(
+        self, min_length: int, max_length: int, display_name: str | None = None
+    ):
         """
         Initialize the LengthBetween function evaluator.
 
@@ -522,6 +532,7 @@ class LengthBetween(FunctionEvaluator):
             display_name=display_name,
         )
 
+
 class OneLine(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
         """
@@ -532,6 +543,7 @@ class OneLine(FunctionEvaluator):
             function_arguments={},
             display_name=display_name,
         )
+
 
 class CustomCodeEval(FunctionEvaluator):
     def __init__(self, code: str, display_name: str | None = None):
@@ -549,6 +561,7 @@ class CustomCodeEval(FunctionEvaluator):
             display_name=display_name,
         )
 
+
 class JsonSchema(FunctionEvaluator):
     def __init__(self, schema: str, display_name: str | None = None):
         """
@@ -556,22 +569,19 @@ class JsonSchema(FunctionEvaluator):
         """
         super().__init__(
             function_name=FunctionEvalTypeId.JSON_SCHEMA.value,
-            function_arguments={
-                "schema": schema
-            },
+            function_arguments={"schema": schema},
             display_name=display_name,
         )
 
+
 class JsonValidation(FunctionEvaluator):
-    def __init__(self, validations = None, display_name: str | None = None):
+    def __init__(self, validations=None, display_name: str | None = None):
         """
         Initialize the JsonValidation function evaluator.
         """
         super().__init__(
             function_name=FunctionEvalTypeId.JSON_VALIDATION.value,
-            function_arguments={
-                "validations": validations
-            },
+            function_arguments={"validations": validations},
             display_name=display_name,
         )
 
@@ -627,11 +637,19 @@ class JaccardSimilarity(FunctionEvaluator):
 
 
 class JaroWinklerSimilarity(FunctionEvaluator):
-    def __init__(self, case_insensitive: bool = True, prefix_weight: float = 0.1, display_name: str | None = None):
+    def __init__(
+        self,
+        case_insensitive: bool = True,
+        prefix_weight: float = 0.1,
+        display_name: str | None = None,
+    ):
         """Initialize the JaroWinklerSimilarity evaluator. Effective for short strings."""
         super().__init__(
             function_name=FunctionEvalTypeId.JARO_WINKLER_SIMILARITY.value,
-            function_arguments={"case_insensitive": case_insensitive, "prefix_weight": prefix_weight},
+            function_arguments={
+                "case_insensitive": case_insensitive,
+                "prefix_weight": prefix_weight,
+            },
             display_name=display_name,
         )
 
@@ -687,7 +705,12 @@ class IsUrl(FunctionEvaluator):
 
 
 class WordCountInRange(FunctionEvaluator):
-    def __init__(self, min_words: int | None = None, max_words: int | None = None, display_name: str | None = None):
+    def __init__(
+        self,
+        min_words: int | None = None,
+        max_words: int | None = None,
+        display_name: str | None = None,
+    ):
         """Initialize the WordCountInRange evaluator. Checks word count within range."""
         super().__init__(
             function_name=FunctionEvalTypeId.WORD_COUNT_IN_RANGE.value,
@@ -707,11 +730,19 @@ class ReadabilityScore(FunctionEvaluator):
 
 
 class SentenceCount(FunctionEvaluator):
-    def __init__(self, min_sentences: int | None = None, max_sentences: int | None = None, display_name: str | None = None):
+    def __init__(
+        self,
+        min_sentences: int | None = None,
+        max_sentences: int | None = None,
+        display_name: str | None = None,
+    ):
         """Initialize the SentenceCount evaluator. Counts and validates sentence count."""
         super().__init__(
             function_name=FunctionEvalTypeId.SENTENCE_COUNT.value,
-            function_arguments={"min_sentences": min_sentences, "max_sentences": max_sentences},
+            function_arguments={
+                "min_sentences": min_sentences,
+                "max_sentences": max_sentences,
+            },
             display_name=display_name,
         )
 
@@ -747,17 +778,26 @@ class Psnr(FunctionEvaluator):
 
 
 class ImageProperties(FunctionEvaluator):
-    def __init__(self, expected_width: int | None = None, expected_height: int | None = None,
-                 min_width: int | None = None, min_height: int | None = None,
-                 max_file_size_kb: int | None = None, expected_format: str | None = None,
-                 display_name: str | None = None):
+    def __init__(
+        self,
+        expected_width: int | None = None,
+        expected_height: int | None = None,
+        min_width: int | None = None,
+        min_height: int | None = None,
+        max_file_size_kb: int | None = None,
+        expected_format: str | None = None,
+        display_name: str | None = None,
+    ):
         """Initialize the ImageProperties evaluator. Validates image dimensions, format, size."""
         super().__init__(
             function_name=FunctionEvalTypeId.IMAGE_PROPERTIES.value,
             function_arguments={
-                "expected_width": expected_width, "expected_height": expected_height,
-                "min_width": min_width, "min_height": min_height,
-                "max_file_size_kb": max_file_size_kb, "expected_format": expected_format,
+                "expected_width": expected_width,
+                "expected_height": expected_height,
+                "min_width": min_width,
+                "min_height": min_height,
+                "max_file_size_kb": max_file_size_kb,
+                "expected_format": expected_format,
             },
             display_name=display_name,
         )
@@ -824,7 +864,9 @@ class Accuracy(FunctionEvaluator):
 
 
 class PrecisionScore(FunctionEvaluator):
-    def __init__(self, positive_label: str | None = None, display_name: str | None = None):
+    def __init__(
+        self, positive_label: str | None = None, display_name: str | None = None
+    ):
         """Initialize the PrecisionScore evaluator. Classification precision."""
         super().__init__(
             function_name=FunctionEvalTypeId.PRECISION_SCORE.value,
@@ -894,18 +936,29 @@ class TrajectoryMatch(FunctionEvaluator):
 
 
 class StepCount(FunctionEvaluator):
-    def __init__(self, min_steps: int | None = None, max_steps: int | None = None,
-                 expected_steps: int | None = None, display_name: str | None = None):
+    def __init__(
+        self,
+        min_steps: int | None = None,
+        max_steps: int | None = None,
+        expected_steps: int | None = None,
+        display_name: str | None = None,
+    ):
         """Initialize the StepCount evaluator. Agent step count validation."""
         super().__init__(
             function_name=FunctionEvalTypeId.STEP_COUNT.value,
-            function_arguments={"min_steps": min_steps, "max_steps": max_steps, "expected_steps": expected_steps},
+            function_arguments={
+                "min_steps": min_steps,
+                "max_steps": max_steps,
+                "expected_steps": expected_steps,
+            },
             display_name=display_name,
         )
 
 
 class RegexPiiDetection(FunctionEvaluator):
-    def __init__(self, detect_types: list[str] | None = None, display_name: str | None = None):
+    def __init__(
+        self, detect_types: list[str] | None = None, display_name: str | None = None
+    ):
         """Initialize the RegexPiiDetection evaluator. Regex-based PII detection."""
         super().__init__(
             function_name=FunctionEvalTypeId.REGEX_PII_DETECTION.value,
@@ -914,101 +967,200 @@ class RegexPiiDetection(FunctionEvaluator):
         )
 
 
+class PromptInjectionDetection(FunctionEvaluator):
+    def __init__(
+        self, detect_types: list[str] | None = None, display_name: str | None = None
+    ):
+        """Initialize the PromptInjectionDetection evaluator. Regex-based prompt-injection / jailbreak detection."""
+        super().__init__(
+            function_name=FunctionEvalTypeId.PROMPT_INJECTION_DETECTION.value,
+            function_arguments={"detect_types": detect_types},
+            display_name=display_name,
+        )
+
+
 class PearsonCorrelation(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.PEARSON_CORRELATION.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.PEARSON_CORRELATION.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class SpearmanCorrelation(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.SPEARMAN_CORRELATION.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.SPEARMAN_CORRELATION.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class R2Score(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.R2_SCORE.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.R2_SCORE.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class Rmse(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.RMSE.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.RMSE.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class BalancedAccuracy(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.BALANCED_ACCURACY.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.BALANCED_ACCURACY.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class FBetaScore(FunctionEvaluator):
-    def __init__(self, beta: float = 1.0, positive_label: str | None = None, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.F_BETA_SCORE.value, function_arguments={"beta": beta, "positive_label": positive_label}, display_name=display_name)
+    def __init__(
+        self,
+        beta: float = 1.0,
+        positive_label: str | None = None,
+        display_name: str | None = None,
+    ):
+        super().__init__(
+            function_name=FunctionEvalTypeId.F_BETA_SCORE.value,
+            function_arguments={"beta": beta, "positive_label": positive_label},
+            display_name=display_name,
+        )
 
 
 class LogLoss(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.LOG_LOSS.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.LOG_LOSS.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class MeanAveragePrecision(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.MEAN_AVERAGE_PRECISION.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.MEAN_AVERAGE_PRECISION.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class SquadScore(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.SQUAD_SCORE.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.SQUAD_SCORE.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class MatchErrorRate(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.MATCH_ERROR_RATE.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.MATCH_ERROR_RATE.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class WordInfoLost(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.WORD_INFO_LOST.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.WORD_INFO_LOST.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class WordInfoPreserved(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.WORD_INFO_PRESERVED.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.WORD_INFO_PRESERVED.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class NonLlmContextPrecision(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.NON_LLM_CONTEXT_PRECISION.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.NON_LLM_CONTEXT_PRECISION.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class NonLlmContextRecall(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.NON_LLM_CONTEXT_RECALL.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.NON_LLM_CONTEXT_RECALL.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class DistinctN(FunctionEvaluator):
     def __init__(self, n: int = 1, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.DISTINCT_N.value, function_arguments={"n": n}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.DISTINCT_N.value,
+            function_arguments={"n": n},
+            display_name=display_name,
+        )
 
 
 class TypeTokenRatio(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.TYPE_TOKEN_RATIO.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.TYPE_TOKEN_RATIO.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class RepetitionRate(FunctionEvaluator):
     def __init__(self, n: int = 3, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.REPETITION_RATE.value, function_arguments={"n": n}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.REPETITION_RATE.value,
+            function_arguments={"n": n},
+            display_name=display_name,
+        )
 
 
 class IsRefusal(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.IS_REFUSAL.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.IS_REFUSAL.value,
+            function_arguments={},
+            display_name=display_name,
+        )
 
 
 class LatencyCheck(FunctionEvaluator):
-    def __init__(self, max_latency_ms: float | None = None, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.LATENCY_CHECK.value, function_arguments={"max_latency_ms": max_latency_ms}, display_name=display_name)
+    def __init__(
+        self, max_latency_ms: float | None = None, display_name: str | None = None
+    ):
+        super().__init__(
+            function_name=FunctionEvalTypeId.LATENCY_CHECK.value,
+            function_arguments={"max_latency_ms": max_latency_ms},
+            display_name=display_name,
+        )
 
 
 class FleissKappa(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.FLEISS_KAPPA.value, function_arguments={}, display_name=display_name)
+        super().__init__(
+            function_name=FunctionEvalTypeId.FLEISS_KAPPA.value,
+            function_arguments={},
+            display_name=display_name,
+        )
