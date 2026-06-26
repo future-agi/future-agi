@@ -1,6 +1,6 @@
 {
   "_comment": "Config for .github/workflows/reviewer-assigner.yml. Path globs use ** and * (labeler-style). Overlaps are resolved by longest-literal-prefix-wins.",
-  "fallback_lead": "atharva-bhange",
+  "fallback_lead": "abhijaisrivastava15",
   "teams": {
     "morpheus": {
       "display_name": "Morpheus",
@@ -128,6 +128,7 @@
     }
   },
   "users": {
+    "abhijaisrivastava15": { "slack_id": "U0B100TRNAK", "display_name": "Abhijai" },
     "khushalsonawat":      { "slack_id": "U087FCUQ77E", "display_name": "Khushal" },
     "atharva-bhange":      { "slack_id": "U071K8LUQE5", "display_name": "Atharva" },
     "definitelynotchirag": { "slack_id": "U0ACG3CS7EY", "display_name": "Chirag" },
