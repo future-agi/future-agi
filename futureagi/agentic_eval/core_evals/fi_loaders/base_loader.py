@@ -12,6 +12,7 @@ class LoadFormat(Enum):
     """Supported load formats."""
 
     JSON = "json"
+    JSONL = "jsonl"
     DICT = "dict"
     FI = "fi"
 
@@ -44,6 +45,8 @@ class BaseLoader(ABC):
         """
         if format == LoadFormat.JSON.value:
             return self.load_json(**kwargs)
+        elif format == LoadFormat.JSONL.value:
+            return self.load_jsonl(**kwargs)
         elif format == LoadFormat.DICT.value:
             return self.load_dict(**kwargs)
         elif format == LoadFormat.FI.value:
@@ -66,6 +69,37 @@ class BaseLoader(ABC):
                 return self._processed_dataset  # type: ignore[attr-defined,no-any-return]
         except (FileNotFoundError, json.JSONDecodeError) as e:
             logger.error(f"Error loading JSON: {e}")
+            raise
+
+    def load_jsonl(self, filename: str) -> list[DataPoint]:
+        """
+        Loads and processes data from a JSON Lines (.jsonl) file, where each
+        non-empty line is a single JSON object. Blank lines are skipped.
+
+        Raises:
+            FileNotFoundError: If the specified file is not found.
+            json.JSONDecodeError: If a line cannot be decoded as JSON.
+        """
+        line_number = 0
+        try:
+            records = []
+            with open(filename) as f:
+                for _n, line in enumerate(f, start=1):
+                    line_number = _n
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    records.append(json.loads(stripped))
+            self._raw_dataset = records
+            self.process()
+            return self._processed_dataset  # type: ignore[attr-defined,no-any-return]
+        except FileNotFoundError as e:
+            logger.error(f"Error loading JSONL file '{filename}': {e}")
+            raise
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"Error decoding JSONL file '{filename}' at line {line_number}: {e}"
+            )
             raise
 
     def load_dict(self, data: list) -> list[DataPoint]:
