@@ -256,6 +256,7 @@ export default function UserListView() {
                         // onSelectRow={() => table.onSelectRow(row.id)}
                         onDeleteRow={() => handleDeleteRow(row.id)}
                         onEditRow={() => handleEditRow(row.id)}
+                        onClickRow={() => router.push(`/users/${row.id}`)}
                       />
                     ))}
 

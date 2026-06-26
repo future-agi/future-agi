@@ -46,6 +46,7 @@ from tracer.views.saved_view import SavedViewViewSet
 from tracer.views.shared_link import SharedLinkViewSet, resolve_shared_link
 from tracer.views.trace import GetUserCodeExampleView, TraceView, UsersView
 from tracer.views.trace_session import TraceSessionView
+from tracer.views.user_metrics import UserMetricsView
 
 router = DefaultRouter()
 
@@ -97,6 +98,7 @@ urlpatterns = [
     path("shared/<str:token>/", resolve_shared_link, name="resolve-shared-link"),
     path("users/", UsersView.as_view(), name="users"),
     path("users/get_code_example/", GetUserCodeExampleView.as_view(), name="users"),
+    path("api/v1/users/<str:user_id>/metrics", UserMetricsView.as_view(), name="user-metrics"),
     # Deprecated — replaced by /feed/ endpoints (TH-3816 Phase 5)
     # path(
     #     "trace-error-analysis/clusters/feed/",
