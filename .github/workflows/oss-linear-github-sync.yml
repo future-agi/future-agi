@@ -1,0 +1,54 @@
+name: OSS — Linear ↔ GitHub Sync
+
+# Instant bidirectional sync for OSS Issues tickets ↔ GitHub PRs.
+#
+# Triggers:
+#   pull_request       — fires the moment a PR is opened/closed/merged/reviewer changed
+#   repository_dispatch (linear-oss-sync) — fired by the Cloudflare Worker when a Linear ticket changes
+#   schedule           — hourly safety net to catch anything missed
+#   workflow_dispatch  — manual run with optional dry-run flag
+#
+# Required repo secrets:
+#   LINEAR_API_KEY  — Personal API key from Linear → Settings → API
+#   GITHUB_TOKEN is provided automatically by Actions.
+
+on:
+  pull_request:
+    types: [opened, closed, reopened, review_requested, review_request_removed]
+
+  repository_dispatch:
+    types: [linear-oss-sync]
+
+  schedule:
+    - cron: '0 * * * *'   # hourly safety net
+
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (no writes)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+jobs:
+  sync:
+    name: Sync OSS Linear ↔ GitHub
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write   # needed to add/remove reviewers
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run OSS sync
+        env:
+          LINEAR_API_KEY:    ${{ secrets.LINEAR_API_KEY }}
+          GITHUB_TOKEN:      ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DRY_RUN:           ${{ inputs.dry_run || 'false' }}
+        run: node .github/scripts/oss-linear-github-sync.mjs
