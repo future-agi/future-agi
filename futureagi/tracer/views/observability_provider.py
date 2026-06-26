@@ -201,7 +201,8 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     except AgentDefinition.DoesNotExist:
                         pass
                 if is_masked(api_key):
-                    return self._gm.success_response("API key verified successfully.")
+                    msg = "Cannot verify with a masked API key. Please paste the actual key."
+                    return self._gm.bad_request(msg)
 
             if provider in [
                 ProviderChoices.VAPI,
@@ -239,7 +240,8 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 # picking up a version with an empty key.
                 agent = AgentDefinition.objects.filter(
                     assistant_id=assistant_id,
-                    organization=getattr(request, "organization", None) or request.user.organization,
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
                 ).first()
                 target_version = None
                 if agent:
@@ -253,10 +255,15 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     except AgentVersion.credentials.RelatedObjectDoesNotExist:
                         creds = None
                 if not creds:
-                    creds = ProviderCredentials.objects.filter(
-                        assistant_id=assistant_id,
-                        provider_type=provider,
-                    ).exclude(api_key="").exclude(api_key__isnull=True).first()
+                    creds = (
+                        ProviderCredentials.objects.filter(
+                            assistant_id=assistant_id,
+                            provider_type=provider,
+                        )
+                        .exclude(api_key="")
+                        .exclude(api_key__isnull=True)
+                        .first()
+                    )
                 if creds and creds.get_api_key():
                     api_key = creds.get_api_key()
 

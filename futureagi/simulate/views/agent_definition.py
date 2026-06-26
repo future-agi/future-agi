@@ -529,28 +529,51 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
             if is_masked(api_key):
                 # Frontend may send a masked key from the form field.
                 # Try to resolve the real key from stored credentials.
-                # Prefer the active/latest version's credentials over random ones
-                # to avoid picking up a version with an empty key.
-                try:
-                    agent = AgentDefinition.objects.get(
-                        assistant_id=assistant_id,
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
-                        deleted=False,
-                    )
-                except AgentDefinition.DoesNotExist:
-                    agent = None
-                target_version = (
-                    (agent.active_version or agent.latest_version) if agent else None
-                )
+                agent_id = validated.get("agent_id")
                 creds = None
-                if target_version:
+
+                if agent_id:
                     try:
-                        creds = target_version.credentials
-                        if creds and not creds.get_api_key():
+                        agent = AgentDefinition.objects.get(
+                            id=agent_id,
+                            organization=getattr(request, "organization", None)
+                            or request.user.organization,
+                            deleted=False,
+                        )
+                        version = agent.active_version or agent.latest_version
+                        if version:
+                            try:
+                                creds = version.credentials
+                                if creds and not creds.get_api_key():
+                                    creds = None
+                            except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                                creds = None
+                    except AgentDefinition.DoesNotExist:
+                        pass
+
+                if not creds:
+                    try:
+                        agent = AgentDefinition.objects.get(
+                            assistant_id=assistant_id,
+                            organization=getattr(request, "organization", None)
+                            or request.user.organization,
+                            deleted=False,
+                        )
+                    except AgentDefinition.DoesNotExist:
+                        agent = None
+                    target_version = (
+                        (agent.active_version or agent.latest_version)
+                        if agent
+                        else None
+                    )
+                    if target_version:
+                        try:
+                            creds = target_version.credentials
+                            if creds and not creds.get_api_key():
+                                creds = None
+                        except AgentVersion.credentials.RelatedObjectDoesNotExist:
                             creds = None
-                    except AgentVersion.credentials.RelatedObjectDoesNotExist:
-                        creds = None
+
                 if not creds:
                     creds = (
                         ProviderCredentials.objects.filter(

@@ -205,6 +205,7 @@ const EditAgentDetails = ({
         api_key: apiKey,
         assistant_id: assistantId,
         provider: provider,
+        agent_id: agentDefinitionId,
       });
     }
   };
@@ -468,6 +469,7 @@ const EditAgentDetails = ({
                           api_key: apiKey,
                           assistant_id: value,
                           provider: selectedProvider,
+                          agent_id: agentDefinitionId,
                         });
                       }
                     }}
@@ -590,6 +592,7 @@ const EditAgentDetails = ({
                       api_key: value,
                       assistant_id: assistantId,
                       provider: selectedProvider,
+                      agent_id: agentDefinitionId,
                     });
                   }
                 }}
