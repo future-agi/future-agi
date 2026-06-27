@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Dict, List, Optional, Tuple
 
 # Resolve the configured CH database name for use in DDL templates.
 # Falls back to "futureagi" which is the production default.
@@ -44,6 +43,39 @@ _USE_REPLICATED_ENGINES = os.getenv("CH_USE_REPLICATED_ENGINES", "true").lower()
     "yes",
     "on",
 }
+
+# Gate the legacy CDC chain (tracer_observation_span + spans_mv +
+# span_metrics_hourly* MVs) for the spans cutover. Default False keeps
+# the legacy chain alive in prod so PeerDB CDC and `spans_mv` continue
+# to write into `spans` alongside fi-collector. Dev/local docker compose
+# sets this to True to drop the chain entirely — fi-collector becomes
+# the sole writer for `spans`. See docs/CH25_MIGRATION.md for the
+# cutover playbook.
+_DROP_LEGACY_CDC_CHAIN = os.getenv("CH25_DROP_LEGACY_CDC_CHAIN", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+# Names of the 4 legacy DDL entries that the CH25 cutover retires.
+# Order matters for DROP — MVs first, then their source tables, so we
+# can issue them as DROP IF EXISTS without dependency errors.
+_LEGACY_CDC_CHAIN_NAMES = (
+    "span_metrics_hourly_mv",
+    "spans_mv",
+    "span_metrics_hourly",
+    "tracer_observation_span",
+)
+
+# The legacy v1 ``spans`` DDL in this module conflicts with the v2 spans
+# schema applied by ``tracer/services/clickhouse/v2/schema/002_spans_v2.sql``.
+# Both use the same table name but different column shapes. When the
+# CH25 flag is set, the v1 registry entry is filtered out so v2 is the
+# only definition that ever lands; ``_migrate_v1_spans_if_needed`` in
+# the boot hook handles the drop + v2 reapply when an older volume
+# carries the v1 table.
+_V1_TO_V2_TABLES = ("spans",)
 
 
 def _to_single_node_engine(ddl: str) -> str:
@@ -1781,7 +1813,7 @@ ORDER BY (organization_id, project_id, trace_id, started_at);
 """
 
 
-SCHEMA_DDL_STATEMENTS: List[Tuple[str, str]] = [
+SCHEMA_DDL_STATEMENTS: list[tuple[str, str]] = [
     # Layer 1 — CDC landing tables
     ("tracer_observation_span", CDC_OBSERVATION_SPAN),
     ("tracer_trace", CDC_TRACE),
@@ -1843,7 +1875,7 @@ SCHEMA_DDL_STATEMENTS: List[Tuple[str, str]] = [
 
 # Post-DDL ALTER statements to ensure materialized columns exist on CDC tables
 # that PeerDB may recreate without them during RESYNC operations.
-POST_DDL_ALTERS: List[str] = [
+POST_DDL_ALTERS: list[str] = [
     "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
     "eval_score Float64 MATERIALIZED "
     "JSONExtractFloat(JSONExtractString(config), 'output', 'output')",
@@ -1911,7 +1943,7 @@ POST_DDL_ALTERS: List[str] = [
 #
 # The command verifies the deployed MV's SHOW CREATE matches the canonical
 # DDL after recreation, so a misconfigured manifest fails loudly.
-MV_RECREATE_MANIFEST: Dict[str, Dict[str, Optional[str]]] = {
+MV_RECREATE_MANIFEST: dict[str, dict[str, str | None]] = {
     "eval_metrics_hourly_mv": {
         "ddl_constant_name": "EVAL_METRICS_HOURLY_MV",
         "source_table": "tracer_eval_logger",
@@ -1952,7 +1984,7 @@ MV_RECREATE_MANIFEST: Dict[str, Dict[str, Optional[str]]] = {
 }
 
 
-def get_all_schema_ddl() -> List[Tuple[str, str]]:
+def get_all_schema_ddl() -> list[tuple[str, str]]:
     """Return all schema DDL statements in correct creation order.
 
     The order ensures that dependencies are satisfied:
@@ -1961,20 +1993,113 @@ def get_all_schema_ddl() -> List[Tuple[str, str]]:
       3. spans + spans_mv (depends on tracer_observation_span + trace_dict)
       4. span_metrics_hourly + MV (depends on spans)
       5. eval_metrics_hourly + MV (depends on tracer_eval_logger + trace_dict)
+
+    When ``CH25_DROP_LEGACY_CDC_CHAIN`` is set, the four legacy entries
+    in ``_LEGACY_CDC_CHAIN_NAMES`` are filtered out — fi-collector is
+    expected to be the sole writer for ``spans`` and the legacy aggregate
+    table is unread.
     """
+    statements = SCHEMA_DDL_STATEMENTS
+    if _DROP_LEGACY_CDC_CHAIN:
+        excluded = set(_LEGACY_CDC_CHAIN_NAMES) | set(_V1_TO_V2_TABLES)
+        statements = [(name, ddl) for name, ddl in statements if name not in excluded]
+
     if _USE_REPLICATED_ENGINES:
-        return list(SCHEMA_DDL_STATEMENTS)
+        return list(statements)
 
-    return [(name, _to_single_node_engine(ddl)) for name, ddl in SCHEMA_DDL_STATEMENTS]
+    return [(name, _to_single_node_engine(ddl)) for name, ddl in statements]
 
 
-def get_drop_statements() -> List[str]:
+def get_legacy_chain_drop_statements() -> list[tuple[str, str]]:
+    """Return DROP statements for the legacy CDC chain.
+
+    Used at boot when ``CH25_DROP_LEGACY_CDC_CHAIN`` is set, to clean up
+    existing instances that were created by an earlier deploy (since
+    ``CREATE IF NOT EXISTS`` cannot drop). Order is MV → source so that
+    drops never trip dependency errors. Each statement is wrapped in
+    ``IF EXISTS`` so reruns are no-ops.
+
+    Returns a list of ``(name, statement)`` tuples so callers can log
+    per-target failures without inspecting SQL.
+    """
+    statements: list[tuple[str, str]] = []
+    for name in _LEGACY_CDC_CHAIN_NAMES:
+        if name.endswith("_mv"):
+            statements.append((name, f"DROP VIEW IF EXISTS {name}"))
+        else:
+            statements.append((name, f"DROP TABLE IF EXISTS {name}"))
+    return statements
+
+
+def should_drop_legacy_chain() -> bool:
+    """Whether ``CH25_DROP_LEGACY_CDC_CHAIN`` is enabled.
+
+    Module-level constant captures the env var at import time. Callers
+    (the boot hook, the warm-cache routine, tests) use this helper so
+    the env semantics live in one place.
+    """
+    return _DROP_LEGACY_CDC_CHAIN
+
+
+def detect_spans_table_shape(execute_fn) -> str:
+    """Classify the existing ``spans`` table as v1, v2, absent, or unknown.
+
+    The two schemas use different typed-attribute Map column names:
+
+    - v1 (legacy ``SPANS_TABLE`` in this module): ``span_attr_str``,
+      ``span_attr_num``, ``span_attr_bool``.
+    - v2 (``v2/schema/002_spans_v2.sql``): ``attrs_string``,
+      ``attrs_number``, ``attrs_bool``, plus ``attributes_extra JSON``.
+
+    ``CREATE TABLE IF NOT EXISTS`` silently no-ops on shape drift, so a
+    dev box upgrading from an old CH 24.x volume keeps the v1 table and
+    every v2 read fails with "column doesn't exist". This detector lets
+    the boot hook notice and migrate.
+
+    Args:
+        execute_fn: Callable that takes a SQL string and returns rows
+            (list of tuples). Threads through ``ClickHouseClient.execute``
+            without coupling this module to the client class — also makes
+            the detector unit-testable with a stub.
+
+    Returns:
+        ``"v2"`` — the v2 column ``attrs_string`` is present.
+        ``"v1"`` — only the v1 column ``span_attr_str`` is present.
+        ``"absent"`` — the table doesn't exist (fresh CH).
+        ``"unknown"`` — the table exists but matches neither shape;
+            don't auto-migrate, let the operator decide.
+    """
+    rows = execute_fn(
+        """
+        SELECT name FROM system.columns
+        WHERE database = currentDatabase()
+          AND table = 'spans'
+          AND name IN ('attrs_string', 'span_attr_str')
+        """
+    )
+    names = {r[0] for r in rows}
+    if "attrs_string" in names:
+        return "v2"
+    if "span_attr_str" in names:
+        return "v1"
+    exists_rows = execute_fn(
+        """
+        SELECT count() FROM system.tables
+        WHERE database = currentDatabase() AND name = 'spans'
+        """
+    )
+    if exists_rows and exists_rows[0][0] > 0:
+        return "unknown"
+    return "absent"
+
+
+def get_drop_statements() -> list[str]:
     """Return DROP statements in reverse dependency order for clean teardown.
 
     Materialized views are dropped first so that the underlying target
     tables and dictionaries can be removed safely.
     """
-    drops: List[str] = []
+    drops: list[str] = []
     for name, _ in reversed(SCHEMA_DDL_STATEMENTS):
         if name.endswith("_mv"):
             drops.append(f"DROP VIEW IF EXISTS {name};")
@@ -1987,7 +2112,7 @@ def get_drop_statements() -> List[str]:
     return drops
 
 
-def get_backfill_statements() -> List[str]:
+def get_backfill_statements() -> list[str]:
     """Return INSERT … SELECT statements for initial backfill of derived tables.
 
     After the CDC landing tables have been populated by PeerDB, run these

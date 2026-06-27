@@ -39,19 +39,18 @@ import {
   storeFilterToPanel as datasetStoreFilterToPanel,
 } from "src/sections/develop-detail/DataTab/DevelopFilters/DevelopFilterBox";
 import FilterChips from "src/sections/projects/LLMTracing/FilterChips";
-import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
+import TraceFilterPanel, {
+  buildTraceFilterProperties,
+} from "src/sections/projects/LLMTracing/TraceFilterPanel";
 import { useGetProjectDetails } from "src/api/project/project-detail";
+import { apiPath } from "src/api/contracts/api-surface";
 import { PROJECT_SOURCE } from "src/utils/constants";
-import { getRandomId, objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
+import { getRandomId } from "src/utils/utils";
+import { apiFilterHasValue } from "src/sections/annotations/queues/utils/filter-operators";
 import {
-  apiFilterHasValue,
-  apiOpToPanel,
-  isNumberFilterOp,
-  isRangeFilterOp,
-  normalizeApiFilterOp,
-  panelOperatorAndValueToApi,
-} from "src/sections/annotations/queues/utils/filter-operators";
+  apiFilterToPanel,
+  panelFilterToApi,
+} from "src/sections/annotations/queues/utils/api-filter-converters";
 import { SIMULATION_PERSONA_FILTER_FIELDS } from "src/sections/annotations/queues/utils/simulation-persona-filter-fields";
 
 export const SOURCE_OPTIONS = [
@@ -73,11 +72,11 @@ export const TRIGGER_FREQUENCY_OPTIONS = [
 const activeFilterButtonBg = (theme) => alpha(theme.palette.primary.main, 0.12);
 
 export const DEFAULT_FILTER = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 
@@ -162,46 +161,7 @@ const SESSION_RULE_FILTER_FIELDS = [
   { id: "end_time", name: "End Time", category: "system", type: "date" },
 ];
 
-const PANEL_TYPE_TO_API = {
-  string: "text",
-  number: "number",
-  boolean: "boolean",
-  categorical: "categorical",
-  text: "text",
-  date: "datetime",
-  array: "array",
-};
-
-const PANEL_CAT_TO_COL_TYPE = {
-  attribute: "SPAN_ATTRIBUTE",
-  system: "SYSTEM_METRIC",
-  eval: "EVAL_METRIC",
-  annotation: "ANNOTATION",
-};
-
-const COL_TYPE_TO_PANEL_CAT = {
-  SPAN_ATTRIBUTE: "attribute",
-  SYSTEM_METRIC: "system",
-  EVAL_METRIC: "eval",
-  ANNOTATION: "annotation",
-};
-
-const MULTI_VALUE_OPS = new Set(["is", "is_not", "in", "not_in"]);
-
-function formatDateInputValue(value) {
-  if (!value) return "";
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 16);
-  }
-  const stringValue = String(value);
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(stringValue)) {
-    return stringValue.slice(0, 16);
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(stringValue)) {
-    return `${stringValue}T00:00`;
-  }
-  return stringValue;
-}
+const MULTI_VALUE_OPS = new Set(["in", "not_in"]);
 
 function getQueueScopeId(queue, key) {
   const value = queue?.[key];
@@ -231,94 +191,13 @@ export function defaultFiltersForSource(sourceType) {
   return [{ ...DEFAULT_FILTER, id: getRandomId() }];
 }
 
-function panelFilterToApi(panel) {
-  const { filterOp, filterValue } = panelOperatorAndValueToApi(
-    panel.operator,
-    panel.value,
-  );
-  const filterType = PANEL_TYPE_TO_API[panel.fieldType] || "text";
-  const colType = PANEL_CAT_TO_COL_TYPE[panel.fieldCategory];
-  return {
-    columnId: panel.field,
-    ...(panel.fieldName && { displayName: panel.fieldName }),
-    filterConfig: {
-      filterType,
-      filterOp,
-      filterValue,
-      ...(colType && { col_type: colType }),
-    },
-  };
-}
-
-function apiFilterToPanel(api) {
-  const rawOp = api?.filterConfig?.filterOp || "equals";
-  const canonicalOp = normalizeApiFilterOp(rawOp);
-  const rawVal = api?.filterConfig?.filterValue;
-  const filterType = api?.filterConfig?.filterType;
-  const isNumberOp = isNumberFilterOp(canonicalOp);
-  const isRange = isRangeFilterOp(canonicalOp);
-  const isDateType = filterType === "datetime" || filterType === "date";
-  let value;
-  if (isRange && rawVal) {
-    value = Array.isArray(rawVal)
-      ? rawVal.map((v) => (isDateType ? formatDateInputValue(v) : String(v)))
-      : String(rawVal)
-          .split(",")
-          .map((v) => (isDateType ? formatDateInputValue(v.trim()) : v.trim()));
-  } else if (isDateType) {
-    value = rawVal ? formatDateInputValue(rawVal) : "";
-  } else if (isNumberOp) {
-    value = rawVal != null ? String(rawVal) : "";
-  } else if (Array.isArray(rawVal)) {
-    value = rawVal.map((v) => String(v));
-  } else {
-    value = rawVal
-      ? String(rawVal)
-          .split(",")
-          .map((v) => v.trim())
-      : [];
-  }
-  const rawColType =
-    api?.filterConfig?.col_type ||
-    api?.filterConfig?.colType ||
-    api?.col_type ||
-    api?.colType ||
-    "SYSTEM_METRIC";
-  const fieldType = (() => {
-    if (isNumberOp || filterType === "number") return "number";
-    if (isDateType) return "date";
-    if (filterType === "boolean") return "boolean";
-    if (filterType === "array") return "array";
-    if (filterType === "categorical") return "categorical";
-    if (filterType === "text" && rawColType === "ANNOTATION") return "text";
-    return "string";
-  })();
-  return {
-    field: api.columnId,
-    fieldName: api.displayName,
-    fieldCategory: COL_TYPE_TO_PANEL_CAT[rawColType] || "system",
-    fieldType,
-    operator: apiOpToPanel(canonicalOp, fieldType),
-    value,
-  };
-}
-
 function filterWithValue(filter) {
   return apiFilterHasValue(filter);
 }
 
-function toRuleRows(filters) {
-  return (filters || []).filter(filterWithValue).map((filter) => ({
-    field: filter.columnId,
-    op: filter.filterConfig.filterOp,
-    value: filter.filterConfig.filterValue,
-    filterType: filter.filterConfig.filterType,
-  }));
-}
-
-function toApiFilters(filters) {
-  // Drop rows that don't carry a value (or aren't a unary op like
-  // is_null / is_empty). Without this, a half-filled row with just a
+function getSubmittableFilters(filters) {
+  // Drop rows that don't carry a value (or aren't a unary op like is_null).
+  // Without this, a half-filled row with just a
   // columnId selected serialises into the API payload's `filter:` array
   // and the backend's evaluator silently match-everythings.
   return (filters || [])
@@ -327,10 +206,9 @@ function toApiFilters(filters) {
 }
 
 function snakeFilterToUi(filter) {
-  const config = filter?.filter_config || filter?.filterConfig || {};
-  const filterType = config.filter_type || config.filterType || "";
-  let filterValue =
-    "filter_value" in config ? config.filter_value : config.filterValue ?? "";
+  const config = filter?.filter_config || {};
+  const filterType = config.filter_type || "";
+  let filterValue = "filter_value" in config ? config.filter_value : "";
   if (filterType === "datetime") {
     filterValue = Array.isArray(filterValue)
       ? filterValue.map((value) => (value ? new Date(value) : value))
@@ -340,22 +218,20 @@ function snakeFilterToUi(filter) {
   }
   return {
     id: getRandomId(),
-    columnId: filter?.column_id || filter?.columnId || "",
-    displayName: filter?.display_name || filter?.displayName,
-    filterConfig: {
-      filterType,
-      filterOp: config.filter_op || config.filterOp || "",
-      filterValue,
-      ...(config.col_type || config.colType
-        ? { col_type: config.col_type || config.colType }
-        : {}),
+    column_id: filter?.column_id || "",
+    display_name: filter?.display_name,
+    filter_config: {
+      filter_type: filterType,
+      filter_op: config.filter_op || "",
+      filter_value: filterValue,
+      ...(config.col_type ? { col_type: config.col_type } : {}),
     },
   };
 }
 
 export function ruleConditionsToFilters(rule) {
   const sourceType = rule?.source_type || "trace";
-  const filterPayload = rule?.conditions?.filter || rule?.conditions?.filters;
+  const filterPayload = rule?.conditions?.filter;
   if (Array.isArray(filterPayload) && filterPayload.length > 0) {
     return filterPayload.map(snakeFilterToUi);
   }
@@ -363,11 +239,11 @@ export function ruleConditionsToFilters(rule) {
   if (rules.length === 0) return defaultFiltersForSource(sourceType);
   return rules.map((row) => ({
     id: getRandomId(),
-    columnId: row.field || "",
-    filterConfig: {
-      filterType: row.filterType || "text",
-      filterOp: row.op || "",
-      filterValue: row.value ?? "",
+    column_id: row.field || "",
+    filter_config: {
+      filter_type: "text",
+      filter_op: row.op || "",
+      filter_value: row.value ?? "",
     },
   }));
 }
@@ -391,7 +267,6 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
     if (datasetId) nextScope.dataset_id = datasetId;
     return {
       operator: "and",
-      rules: toRuleRows(filters),
       filter: filters.filter(validateFilter).map(transformFilter),
       scope: nextScope,
     };
@@ -408,11 +283,10 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
       nextScope.is_voice_call = !!scope.is_voice_call;
       nextScope.remove_simulation_calls = !!scope.remove_simulation_calls;
     }
-    const apiFilters = canonicalizeApiFilterColumnIds(toApiFilters(filters));
+    const apiFilters = getSubmittableFilters(filters);
     return {
       operator: "and",
-      rules: toRuleRows(apiFilters),
-      filter: objectCamelToSnake(apiFilters),
+      filter: apiFilters,
       scope: nextScope,
     };
   }
@@ -424,11 +298,10 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
       scope.project_id,
     );
     if (projectId) nextScope.project_id = projectId;
-    const apiFilters = canonicalizeApiFilterColumnIds(toApiFilters(filters));
+    const apiFilters = getSubmittableFilters(filters);
     return {
       operator: "and",
-      rules: toRuleRows(apiFilters),
-      filter: objectCamelToSnake(apiFilters),
+      filter: apiFilters,
       scope: nextScope,
     };
   }
@@ -436,18 +309,17 @@ export function buildConditionsForRule(sourceType, filters, scope, queue) {
   if (sourceType === "call_execution") {
     const agentId = resolveRuleScopeId(queue, queueAgentId, scope.project_id);
     if (agentId) nextScope.project_id = agentId;
-    const apiFilters = canonicalizeApiFilterColumnIds(toApiFilters(filters));
+    const apiFilters = getSubmittableFilters(filters);
     return {
       operator: "and",
-      rules: toRuleRows(apiFilters),
-      filter: objectCamelToSnake(apiFilters),
+      filter: apiFilters,
       ...(Object.keys(nextScope).length ? { scope: nextScope } : {}),
     };
   }
 
   return {
     operator: "and",
-    rules: toRuleRows(filters),
+    filter: getSubmittableFilters(filters),
     ...(Object.keys(nextScope).length ? { scope: nextScope } : {}),
   };
 }
@@ -473,7 +345,8 @@ export function RuleScopePicker({
 
   const { data: datasets = [], isLoading: datasetsLoading } = useQuery({
     queryKey: ["datasets-list-simple"],
-    queryFn: () => axios.get("/model-hub/develops/get-datasets-names/"),
+    queryFn: () =>
+      axios.get(apiPath("/model-hub/develops/get-datasets-names/")),
     select: (d) => d.data?.result?.datasets || [],
     enabled: needsDataset,
     staleTime: 1000 * 60 * 5,
@@ -860,13 +733,11 @@ function TraceRuleFilters({
   );
   const isVoiceProject = projectDetails?.source === PROJECT_SOURCE.SIMULATOR;
   const panelSource = sourceType === "trace_session" ? "sessions" : "traces";
+  const isSpanSource = sourceType === "observation_span";
   const filterFields =
     sourceType === "trace_session" ? SESSION_RULE_FILTER_FIELDS : undefined;
 
-  const snakeFilters = useMemo(
-    () => objectCamelToSnake(toApiFilters(filters)),
-    [filters],
-  );
+  const snakeFilters = useMemo(() => getSubmittableFilters(filters), [filters]);
 
   useEffect(() => {
     if (sourceType !== "trace" || !projectId) return;
@@ -909,14 +780,14 @@ function TraceRuleFilters({
         }}
         sx={{
           border: "1px solid",
-          borderColor: filters.some((filter) => filter.columnId)
+          borderColor: filters.some((filter) => filter.column_id)
             ? "primary.main"
             : "divider",
           borderRadius: 0.5,
           p: 0.75,
           mb: 1,
           bgcolor: (theme) =>
-            filters.some((filter) => filter.columnId)
+            filters.some((filter) => filter.column_id)
               ? activeFilterButtonBg(theme)
               : "transparent",
         }}
@@ -933,10 +804,12 @@ function TraceRuleFilters({
         onClose={() => setFilterOpen(false)}
         projectId={projectId}
         source={panelSource}
+        tab={isSpanSource ? "spans" : undefined}
+        isSpansView={isSpanSource}
         filterFields={filterFields}
         isSimulator={isVoiceProject}
         key={`${projectId}-${panelSource}-${isVoiceProject ? "voice" : "trace"}`}
-        currentFilters={toApiFilters(filters).map(apiFilterToPanel)}
+        currentFilters={getSubmittableFilters(filters).map(apiFilterToPanel)}
         onApply={(newPanelFilters) => {
           onInteraction?.();
           const nextFilters = (newPanelFilters || [])
@@ -970,9 +843,9 @@ function TraceRuleFilters({
           if (!target) return;
           setFilters((prev) =>
             prev.filter((filter) => {
-              const colMatches = filter.columnId === target.column_id;
+              const colMatches = filter.column_id === target.column_id;
               const opMatches =
-                filter.filterConfig?.filterOp ===
+                filter.filter_config?.filter_op ===
                 target.filter_config?.filter_op;
               return !(colMatches && opMatches);
             }),
@@ -989,20 +862,50 @@ function TraceRuleFilters({
   );
 }
 
-function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
+function SimulationRuleFilters({
+  filters,
+  setFilters,
+  scope,
+  queue,
+  onInteraction,
+}) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const buttonRef = useRef(null);
+  const queueAgentId = getQueueScopeId(queue, "agent_definition");
+  const agentDefinitionId = resolveRuleScopeId(
+    queue,
+    queueAgentId,
+    scope.project_id,
+  );
 
   const panelCurrentFilters = useMemo(
-    () => toApiFilters(filters).map(apiFilterToPanel),
+    () => getSubmittableFilters(filters).map(apiFilterToPanel),
     [filters],
   );
 
-  const snakeFilters = useMemo(
-    () => objectCamelToSnake(toApiFilters(filters)),
-    [filters],
-  );
+  const snakeFilters = useMemo(() => getSubmittableFilters(filters), [filters]);
+  const { data: simulationEvalFields = [] } = useQuery({
+    queryKey: ["automation-rule-simulation-eval-fields", agentDefinitionId],
+    queryFn: () =>
+      axios.get(endpoints.dashboard.metrics, {
+        params: { agent_definition_id: agentDefinitionId },
+      }),
+    enabled: Boolean(agentDefinitionId),
+    select: (response) =>
+      buildTraceFilterProperties(response.data?.result?.metrics || [], {
+        isSimulator: true,
+        sourceScope: "simulation",
+      }).filter((property) => property.category === "eval"),
+    staleTime: 5 * 60_000,
+  });
+  const properties = useMemo(() => {
+    const fieldsById = new Map(
+      SIMULATION_RULE_FILTER_FIELDS.map((field) => [field.id, field]),
+    );
+    simulationEvalFields.forEach((field) => fieldsById.set(field.id, field));
+    return Array.from(fieldsById.values());
+  }, [simulationEvalFields]);
 
   return (
     <Box sx={{ maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
@@ -1018,14 +921,14 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
         }}
         sx={{
           border: "1px solid",
-          borderColor: filters.some((filter) => filter.columnId)
+          borderColor: filters.some((filter) => filter.column_id)
             ? "primary.main"
             : "divider",
           borderRadius: 0.5,
           p: 0.75,
           mb: 1,
           bgcolor: (theme) =>
-            filters.some((filter) => filter.columnId)
+            filters.some((filter) => filter.column_id)
               ? activeFilterButtonBg(theme)
               : "transparent",
         }}
@@ -1052,7 +955,7 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
               : [{ ...DEFAULT_FILTER, id: getRandomId() }],
           );
         }}
-        properties={SIMULATION_RULE_FILTER_FIELDS}
+        properties={properties}
         source="simulation"
         showAi={false}
         showQueryTab={false}
@@ -1079,9 +982,9 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
           if (!target) return;
           setFilters((prev) =>
             prev.filter((filter) => {
-              const colMatches = filter.columnId === target.column_id;
+              const colMatches = filter.column_id === target.column_id;
               const opMatches =
-                filter.filterConfig?.filterOp ===
+                filter.filter_config?.filter_op ===
                 target.filter_config?.filter_op;
               return !(colMatches && opMatches);
             }),
@@ -1135,6 +1038,8 @@ export function RuleFilterSection({
     <SimulationRuleFilters
       filters={filters}
       setFilters={setFilters}
+      scope={scope}
+      queue={queue}
       onInteraction={onInteraction}
     />
   );

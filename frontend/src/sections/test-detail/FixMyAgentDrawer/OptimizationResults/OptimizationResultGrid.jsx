@@ -20,7 +20,6 @@ const defaultColDef = {
   filter: false,
   resizable: true,
   suppressMenu: true,
-  suppressMultiSort: true,
 };
 
 const OptimizationResultGrid = ({ optimizationId, isDrawer = true }) => {

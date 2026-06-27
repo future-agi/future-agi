@@ -1,7 +1,7 @@
-import structlog
 from datetime import datetime, timedelta
 
-from django.db.models import DateTimeField, F, FloatField, Q
+import structlog
+from django.db.models import DateTimeField, Exists, F, FloatField, OuterRef, Q
 from django.db.models.functions import Cast
 
 from model_hub.models.choices import (
@@ -41,6 +41,22 @@ FILTER_MODE_SOURCE_TYPES = {
     QueueItemSourceType.TRACE_SESSION.value,
     QueueItemSourceType.CALL_EXECUTION.value,
 }
+
+AUTOMATION_RULE_FILTER_ERROR_MESSAGE = (
+    "Rule evaluation failed while applying filters. Check the selected fields "
+    "and values, then try again."
+)
+TRACE_IN_PROGRESS_ADD_ERROR = (
+    "Trace is still in progress and can't be added to an annotation queue yet."
+)
+
+
+def _automation_rule_filter_error_message(exc):
+    """Return a short public error while full exception details stay in logs."""
+    message = str(exc).strip()
+    if isinstance(exc, ValueError) and message and "\n" not in message:
+        return message[:240]
+    return AUTOMATION_RULE_FILTER_ERROR_MESSAGE
 
 
 def _trace_primary_span(trace):
@@ -115,6 +131,337 @@ def get_fk_field_name(source_type):
     return fk_field
 
 
+def _root_span_filter():
+    return Q(parent_span_id__isnull=True) | Q(parent_span_id="")
+
+
+def _terminal_trace_span_status_filter():
+    return Q(status__iexact="OK") | Q(status__iexact="ERROR")
+
+
+def _trace_project_workspace_filter(workspace):
+    if getattr(workspace, "is_default", False):
+        return Q(project__workspace=workspace) | Q(project__workspace__isnull=True)
+    return Q(project__workspace=workspace)
+
+
+def is_source_available_for_annotation(source_type, source_obj):
+    """Return ``(is_available, reason)`` for queue add-items.
+
+    A visible in-progress trace has a root span whose status is still UNSET
+    or null. Bare legacy Trace fixtures with no root span are left untouched;
+    they are not the voice-call "in progress" state surfaced in Observe.
+    """
+    if source_type != QueueItemSourceType.TRACE.value:
+        return True, None
+
+    root_spans = source_obj.observation_spans.filter(_root_span_filter())
+    if not root_spans.exists():
+        return True, None
+    if root_spans.filter(_terminal_trace_span_status_filter()).exists():
+        return True, None
+    return False, TRACE_IN_PROGRESS_ADD_ERROR
+
+
+def filter_available_source_ids_for_annotation(
+    source_type, source_ids, *, organization=None, workspace=None
+):
+    """Split resolved filter-mode IDs into available/unavailable IDs.
+
+    Returns ``(available_ids, unavailable_count, unavailable_message)`` while
+    preserving the input ordering of available IDs.
+    """
+    ordered_ids = [str(source_id) for source_id in source_ids]
+    if source_type != QueueItemSourceType.TRACE.value or not ordered_ids:
+        return ordered_ids, 0, None
+
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.models.trace import Trace
+
+    root_spans = ObservationSpan.objects.filter(
+        trace_id=OuterRef("id"),
+    ).filter(_root_span_filter())
+    available_qs = Trace.objects.filter(id__in=ordered_ids).annotate(
+        _has_root_span=Exists(root_spans),
+        _has_terminal_root_span=Exists(
+            root_spans.filter(_terminal_trace_span_status_filter())
+        ),
+    )
+    if organization is not None:
+        available_qs = available_qs.filter(project__organization=organization)
+    if workspace is not None:
+        available_qs = available_qs.filter(_trace_project_workspace_filter(workspace))
+
+    available_set = {
+        str(trace_id)
+        for trace_id in available_qs.filter(
+            Q(_has_root_span=False) | Q(_has_terminal_root_span=True)
+        ).values_list("id", flat=True)
+    }
+    available_ids = [
+        source_id for source_id in ordered_ids if source_id in available_set
+    ]
+    unavailable_count = len(ordered_ids) - len(available_ids)
+    if unavailable_count <= 0:
+        return available_ids, 0, None
+
+    noun = "trace" if unavailable_count == 1 else "traces"
+    verb = "is" if unavailable_count == 1 else "are"
+    message = (
+        f"{unavailable_count} {noun} {verb} still in progress and "
+        "were not added to the annotation queue."
+    )
+    if unavailable_count == 1:
+        message = (
+            "1 trace is still in progress and was not added to the annotation queue."
+        )
+    return available_ids, unavailable_count, message
+
+
+def _resolve_default_queue_scope(source_type, source_obj, organization=None):
+    """Return ``(lookup_kwargs, scope_name)`` identifying the default-queue
+    scope for *source_obj*, or ``(None, None)`` if the source has no
+    resolvable scope (e.g. a prototype_run without a develop project).
+
+    Default queues are scoped per project / dataset / agent definition —
+    they're not per-row. This helper centralises the mapping so the scores
+    endpoints and the explicit ``get-or-create-default`` endpoint agree on
+    what counts as "the default queue" for a given source.
+
+    CH 25.3 duck-typing: *source_obj* may be either a Django model instance
+    (with a ``project`` FK / related-object) or a CH-loaded dataclass like
+    :class:`CHSpan` (only carries ``project_id``). For the CH path we look
+    the Project row up directly in PG since the default-queue scope row
+    lives in PG and FK joins across stores aren't possible.
+    """
+    if source_type in (
+        QueueItemSourceType.TRACE.value,
+        QueueItemSourceType.OBSERVATION_SPAN.value,
+        QueueItemSourceType.TRACE_SESSION.value,
+    ):
+        project = None
+        if source_type == QueueItemSourceType.TRACE.value:
+            project = getattr(source_obj, "project", None)
+        elif source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
+            # Django ObservationSpan: walk .project (or .trace.project).
+            project = getattr(source_obj, "project", None) or getattr(
+                getattr(source_obj, "trace", None), "project", None
+            )
+            if project is None:
+                # CHSpan path: no FK traversals available, but the row
+                # carries project_id. Resolve the PG Project explicitly.
+                # Codex wave-2 P2: scope the PG lookup by organization when
+                # one is provided. Defense-in-depth — current CHSpan callers
+                # gate on org upstream, but a future caller could forget;
+                # fail closed here.
+                pid = getattr(source_obj, "project_id", None)
+                if pid:
+                    from tracer.models.project import Project
+
+                    qs = Project.objects.filter(id=pid)
+                    if organization is not None:
+                        qs = qs.filter(organization=organization)
+                    project = qs.first()
+        else:  # trace_session
+            project = getattr(source_obj, "project", None)
+        if not project:
+            return None, None
+        scope_name = (
+            getattr(project, "name", None)
+            or getattr(project, "agent_name", None)
+            or str(project)
+        )
+        return {"project": project}, scope_name
+    if source_type == QueueItemSourceType.DATASET_ROW.value:
+        dataset = getattr(source_obj, "dataset", None)
+        if not dataset:
+            return None, None
+        return {"dataset": dataset}, getattr(dataset, "name", None) or str(dataset)
+    if source_type == QueueItemSourceType.CALL_EXECUTION.value:
+        agent_def = getattr(
+            getattr(source_obj, "test_execution", None), "agent_definition", None
+        )
+        if not agent_def:
+            return None, None
+        scope_name = (
+            getattr(agent_def, "name", None)
+            or getattr(agent_def, "agent_name", None)
+            or str(agent_def)
+        )
+        return {"agent_definition": agent_def}, scope_name
+    return None, None
+
+
+def resolve_default_queue_for_source(source_type, source_obj, organization, user):
+    """Return the active default ``AnnotationQueue`` for *source_obj*, creating
+    one if neither an active nor an archived default exists for the scope.
+
+    Returns ``None`` when the source has no resolvable scope (e.g. an
+    orphaned ``prototype_run`` not linked to a project) so callers can
+    decide whether to attribute the score elsewhere or skip queue scoping.
+
+    NOTE: this is the single source of truth for "what queue does an
+    inline/auto-created score belong to". Score writes from
+    ``/scores/`` and ``/scores/bulk/`` route through here so every Score
+    row has a non-null queue_item — matching the new per-queue uniqueness.
+    """
+    from model_hub.models.annotation_queues import (
+        AnnotationQueue,
+        AnnotationQueueStatusChoices,
+    )
+
+    lookup, scope_name = _resolve_default_queue_scope(
+        source_type, source_obj, organization=organization
+    )
+    if not lookup:
+        return None
+
+    queue = AnnotationQueue.objects.filter(
+        **lookup,
+        is_default=True,
+        deleted=False,
+        organization=organization,
+    ).first()
+    if queue:
+        _ensure_default_queue_member_can_manage(queue, user)
+        return queue
+
+    archived = (
+        AnnotationQueue.all_objects.filter(
+            **lookup,
+            is_default=True,
+            deleted=True,
+            organization=organization,
+        )
+        .order_by("-deleted_at")
+        .first()
+    )
+    if archived:
+        from model_hub.views.annotation_queues import _restore_archived_default_queue
+
+        _restore_archived_default_queue(archived)
+        _ensure_default_queue_member_can_manage(archived, user)
+        return archived
+
+    workspace = None
+    scope_obj = next(iter(lookup.values()))
+    workspace = getattr(scope_obj, "workspace", None)
+
+    queue = AnnotationQueue.objects.create(
+        is_default=True,
+        name=f"Default - {scope_name}",
+        description=f"Default annotation queue for {scope_name}",
+        status=AnnotationQueueStatusChoices.ACTIVE.value,
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+        **lookup,
+    )
+    _ensure_default_queue_member_can_manage(queue, user)
+    return queue
+
+
+def _ensure_default_queue_member_can_manage(queue, user):
+    """Give active default-queue users full queue roles.
+
+    Default queues are created/reused from inline annotation surfaces, not
+    only from the queue settings page. Without this membership, a user can
+    create annotations but cannot manage the resulting default queue.
+    """
+    if not queue or not user or not getattr(queue, "is_default", False):
+        return None
+
+    from model_hub.models.annotation_queues import (
+        FULL_ACCESS_QUEUE_ROLES,
+        AnnotationQueueAnnotator,
+    )
+    from model_hub.models.choices import AnnotatorRole
+
+    active = AnnotationQueueAnnotator.objects.filter(
+        queue=queue,
+        user=user,
+        deleted=False,
+    ).first()
+    if active:
+        if (
+            active.role == AnnotatorRole.MANAGER.value
+            and active.normalized_roles == FULL_ACCESS_QUEUE_ROLES
+        ):
+            return active
+        active.role = AnnotatorRole.MANAGER.value
+        active.roles = FULL_ACCESS_QUEUE_ROLES
+        active.save(update_fields=["role", "roles", "updated_at"])
+        return active
+
+    soft_deleted = (
+        AnnotationQueueAnnotator.all_objects.filter(queue=queue, user=user)
+        .order_by("-updated_at")
+        .first()
+    )
+    if soft_deleted:
+        soft_deleted.deleted = False
+        soft_deleted.deleted_at = None
+        soft_deleted.role = AnnotatorRole.MANAGER.value
+        soft_deleted.roles = FULL_ACCESS_QUEUE_ROLES
+        soft_deleted.save(
+            update_fields=["deleted", "deleted_at", "role", "roles", "updated_at"]
+        )
+        return soft_deleted
+
+    return AnnotationQueueAnnotator.objects.create(
+        queue=queue,
+        user=user,
+        role=AnnotatorRole.MANAGER.value,
+        roles=FULL_ACCESS_QUEUE_ROLES,
+    )
+
+
+def resolve_default_queue_item_for_source(source_type, source_obj, organization, user):
+    """Return a ``QueueItem`` on the source's default queue, creating both
+    the queue and the item if they don't exist yet.
+
+    Used by score writes to guarantee every Score has a ``queue_item``.
+    Returns ``None`` when the source has no resolvable default-queue scope.
+
+    *source_obj* may be either a Django model instance (uses ``.pk``) or
+    a CH-loaded dataclass like :class:`CHSpan` (uses ``.id``); the FK
+    column on ``QueueItem`` is a ``CharField``-like that accepts the str
+    UUID identically either way.
+    """
+    from model_hub.models.annotation_queues import QueueItem
+    from model_hub.models.choices import QueueItemStatus
+
+    queue = resolve_default_queue_for_source(
+        source_type, source_obj, organization, user
+    )
+    if not queue:
+        return None
+
+    fk_field = get_fk_field_name(source_type)
+    if not fk_field:
+        return None
+
+    # CHSpan dataclasses don't expose a Django ``pk`` descriptor; fall back
+    # to ``.id`` for parity. Django models also expose ``.id`` for the PK on
+    # every model in this codebase, so this works uniformly.
+    source_pk = getattr(source_obj, "pk", None) or getattr(source_obj, "id", None)
+    if source_pk is None:
+        return None
+
+    item, _ = QueueItem.objects.get_or_create(
+        queue=queue,
+        source_type=source_type,
+        **{f"{fk_field}_id": source_pk},
+        deleted=False,
+        defaults={
+            "organization": queue.organization,
+            "workspace": queue.workspace,
+            "status": QueueItemStatus.PENDING.value,
+        },
+    )
+    return item
+
+
 def resolve_source_object(source_type, source_id, organization=None, workspace=None):
     """Look up a source model instance by type and ID.
 
@@ -151,9 +498,8 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
 
     if workspace is not None:
         obj_ws = _get_source_workspace(obj)
-        ws_match = (
-            obj_ws == workspace
-            or (obj_ws is None and getattr(workspace, "is_default", False))
+        ws_match = obj_ws == workspace or (
+            obj_ws is None and getattr(workspace, "is_default", False)
         )
         if not ws_match:
             logger.warning(
@@ -201,9 +547,7 @@ def _get_source_organization(obj):
         ):
             related = getattr(test_execution, relation_name, None)
             org = (
-                getattr(related, "organization", None)
-                if related is not None
-                else None
+                getattr(related, "organization", None) if related is not None else None
             )
             if org is not None:
                 return org
@@ -248,11 +592,7 @@ def _get_source_workspace(obj):
             "simulator_agent",
         ):
             related = getattr(test_execution, relation_name, None)
-            ws = (
-                getattr(related, "workspace", None)
-                if related is not None
-                else None
-            )
+            ws = getattr(related, "workspace", None) if related is not None else None
             if ws is not None:
                 return ws
 
@@ -503,7 +843,9 @@ def resolve_source_content(item):
                 "simulation_call_type": getattr(call, "simulation_call_type", ""),
                 "call_type": getattr(call, "call_type", None),
                 "phone_number": getattr(call, "phone_number", None),
-                "service_provider_call_id": getattr(call, "service_provider_call_id", None),
+                "service_provider_call_id": getattr(
+                    call, "service_provider_call_id", None
+                ),
                 "customer_call_id": getattr(call, "customer_call_id", None),
                 "customer_number": getattr(call, "customer_number", None),
                 "assistant_id": getattr(call, "assistant_id", None),
@@ -521,7 +863,9 @@ def resolve_source_content(item):
                 "user_wpm": getattr(call, "user_wpm", None),
                 "agent_wpm": getattr(call, "bot_wpm", None),
                 "talk_ratio": getattr(call, "talk_ratio", None),
-                "user_interruption_count": getattr(call, "user_interruption_count", None),
+                "user_interruption_count": getattr(
+                    call, "user_interruption_count", None
+                ),
                 "ai_interruption_count": getattr(call, "ai_interruption_count", None),
                 "input": getattr(call, "input", None),
                 "output": getattr(call, "output", None),
@@ -556,6 +900,35 @@ def resolve_source_content(item):
     return {"type": item.source_type, "error": "Could not resolve content"}
 
 
+def assign_items_to_all_annotators(queue, items):
+    """Assign every item to every queue member with the annotator role."""
+    from model_hub.models.annotation_queues import (
+        QueueItemAssignment,
+        annotation_queue_role_q,
+    )
+
+    item_list = list(items or [])
+    if not item_list:
+        return 0
+
+    annotator_ids = list(
+        queue.queue_annotators.filter(deleted=False)
+        .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
+        .values_list("user_id", flat=True)
+        .distinct()
+    )
+    if not annotator_ids:
+        return 0
+
+    assignments = [
+        QueueItemAssignment(queue_item=item, user_id=user_id)
+        for item in item_list
+        for user_id in annotator_ids
+    ]
+    QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
+    return len(assignments)
+
+
 def auto_assign_items(queue, items):
     """Assign items to annotators based on queue strategy. Mutates items in-place."""
     from model_hub.models.annotation_queues import QueueItem, annotation_queue_role_q
@@ -583,7 +956,6 @@ def auto_assign_items(queue, items):
     elif queue.assignment_strategy == "load_balanced":
         # Assign to annotator with fewest pending + in_progress items
         from django.db.models import Count
-        from django.db.models import Q as DQ
 
         counts = dict.fromkeys(annotator_ids, 0)
         qs = (
@@ -649,9 +1021,15 @@ def calculate_agreement(queue):
                 disagreement_items.append(str(qi_id))
 
         agreement_pct = agree_count / total_count if total_count > 0 else None
+        comparable_for_kappa = info["type"] in {
+            "categorical",
+            "numeric",
+            "star",
+            "thumbs_up_down",
+        }
         kappa = (
             _cohens_kappa(item_label_map, label_id)
-            if info["type"] == "categorical"
+            if comparable_for_kappa and total_count > 0
             else None
         )
 
@@ -669,7 +1047,7 @@ def calculate_agreement(queue):
     # Overall agreement
     total_pairs = 0
     agree_pairs = 0
-    for (qi_id, lid), entries in item_label_map.items():
+    for (_qi_id, _lid), entries in item_label_map.items():
         if len(entries) < 2:
             continue
         total_pairs += 1
@@ -712,12 +1090,11 @@ def _cohens_kappa(item_label_map, label_id):
     When there are 3+ annotators on an item, every pair is compared using
     ``itertools.combinations`` rather than only the first two entries.
     """
-    from collections import Counter
     from itertools import combinations
 
     all_values = []
     pairs = []
-    for (qi_id, lid), entries in item_label_map.items():
+    for (_qi_id, lid), entries in item_label_map.items():
         if lid != label_id or len(entries) < 2:
             continue
         # Compare ALL annotator pairs, not just the first two
@@ -755,7 +1132,7 @@ def _annotator_pair_agreement(item_label_map):
 
     pair_data = defaultdict(lambda: {"agree": 0, "total": 0})
 
-    for (qi_id, lid), entries in item_label_map.items():
+    for (_qi_id, _lid), entries in item_label_map.items():
         if len(entries) < 2:
             continue
         for (a1_id, v1), (a2_id, v2) in combinations(entries, 2):
@@ -780,10 +1157,8 @@ def _annotator_pair_agreement(item_label_map):
 
 
 # ---------------------------------------------------------------------------
-# Field mapping: view-level camelCase field IDs → Django ORM field names.
-# The frontend sends camelCase propertyIds (matching the tracing / session /
-# simulation filter UIs).  This mapping converts them to ORM lookups.
-# It also serves as an allowlist – unmapped fields are rejected.
+# Field mapping: canonical snake_case field IDs → Django ORM field names.
+# This serves as an allowlist; unmapped fields are rejected.
 # ---------------------------------------------------------------------------
 FIELD_MAPPING = {
     QueueItemSourceType.TRACE.value: {
@@ -801,19 +1176,17 @@ FIELD_MAPPING = {
         "status": "status",  # annotated from root span
         "created_at": "created_at",
         "project__name": "project__name",
-        # Legacy camelCase
-        "traceId": "id",
-        "traceName": "name",
-        "nodeType": "node_type",
-        "userId": "user_id",
-        "projectName": "project__name",
     },
     QueueItemSourceType.OBSERVATION_SPAN.value: {
         # Snake_case (primary)
         "trace_id": "trace_id",
         "trace_name": "trace__name",  # trace's name via FK
         "node_type": "observation_type",
-        "user_id": "end_user__user_id",
+        # CH-derived-dimensions cutover (DESIGN §4.3): EndUser moved to CH, so
+        # the old ``end_user__user_id`` FK join into ``tracer_enduser`` is gone.
+        # ``user_id`` is now an annotation (see ``_annotate_span_for_rules``) that
+        # resolves the span's OWN ``end_user_id`` soft-id through the CH dict.
+        "user_id": "user_id",  # annotated from the span's own end_user_id
         "project_name": "project__name",
         "name": "name",
         "observation_type": "observation_type",
@@ -824,12 +1197,6 @@ FIELD_MAPPING = {
         "status": "status",  # direct field on span
         "created_at": "created_at",
         "project__name": "project__name",
-        # Legacy camelCase
-        "traceId": "trace_id",
-        "traceName": "trace__name",
-        "nodeType": "observation_type",
-        "userId": "end_user__user_id",
-        "projectName": "project__name",
     },
     QueueItemSourceType.TRACE_SESSION.value: {
         # Snake_case (primary)
@@ -842,12 +1209,6 @@ FIELD_MAPPING = {
         "name": "name",
         "created_at": "created_at",
         "project__name": "project__name",
-        # Legacy camelCase
-        "totalCost": "total_cost",
-        "startTime": "start_time",
-        "endTime": "end_time",
-        "userId": "user_id",
-        "projectName": "project__name",
     },
     QueueItemSourceType.CALL_EXECUTION.value: {
         # Snake_case (primary)
@@ -859,9 +1220,6 @@ FIELD_MAPPING = {
         "duration_seconds": "duration_seconds",
         "overall_score": "overall_score",
         "created_at": "created_at",
-        # Legacy camelCase
-        "agentDefinition": "test_execution__agent_definition__name",
-        "callType": "simulation_call_type",
     },
     QueueItemSourceType.DATASET_ROW.value: {
         # Snake_case (primary)
@@ -869,23 +1227,22 @@ FIELD_MAPPING = {
         "order": "order",
         "created_at": "created_at",
         "dataset__name": "dataset__name",
-        # Legacy camelCase
-        "datasetName": "dataset__name",
-        "createdAt": "created_at",
     },
     QueueItemSourceType.PROTOTYPE_RUN.value: {
         "name": "name",
         "model": "model",
         "status": "status",
         "created_at": "created_at",
-        # Legacy camelCase
-        "createdAt": "created_at",
     },
 }
 
 # ORM field names that require queryset annotation (not stored on model).
 _NEEDS_ANNOTATION = {
     QueueItemSourceType.TRACE.value: {"node_type", "status", "user_id"},
+    # ``user_id`` is annotated post EndUser→CH cutover (DESIGN §4.3): it used to
+    # be a direct ``end_user__user_id`` FK-join filter, now it is resolved from
+    # the span's own ``end_user_id`` via the CH dict.
+    QueueItemSourceType.OBSERVATION_SPAN.value: {"user_id"},
     QueueItemSourceType.TRACE_SESSION.value: {
         "duration_seconds",
         "total_cost",
@@ -905,13 +1262,27 @@ def _annotate_for_rules(qs, source_type, needed_orm_fields):
 
     if source_type == QueueItemSourceType.TRACE.value:
         return _annotate_trace_for_rules(qs, to_annotate)
+    if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
+        return _annotate_span_for_rules(qs, to_annotate)
     if source_type == QueueItemSourceType.TRACE_SESSION.value:
         return _annotate_session_for_rules(qs, to_annotate)
     return qs
 
 
 def _annotate_trace_for_rules(qs, fields):
-    """Annotate Trace queryset with computed fields derived from root spans."""
+    """Annotate Trace queryset with computed fields derived from root spans.
+
+    ``user_id`` is the CH-derived-dimensions cutover (DESIGN §4.3). The old
+    annotation traversed the PG ``end_user`` FK
+    (``Subquery(root_span_qs.values("end_user__user_id"))``); EndUser now lives
+    in CH, so the FK target ``tracer_enduser`` is gone. We keep the EXACT same
+    correlated ``Subquery(root_span_qs...)`` shape — so the annotation stays lazy
+    and the downstream ``qs.filter(user_id__…)`` / ``exclude`` rule loop, the
+    ``qs[:cap+1]`` capped scan, and ``rules_applied`` accounting are untouched —
+    but swap the FK column for the span's OWN ``end_user_id`` soft-id mapped
+    through a CASE that carries the CH ``end_users_dict`` label (built once,
+    bounded by enduser count, NOT by trace count). See ``_user_id_label_case``.
+    """
     from django.db.models import (
         Case,
         CharField,
@@ -957,9 +1328,59 @@ def _annotate_trace_for_rules(qs, fields):
         )
 
     if "user_id" in fields:
-        qs = qs.annotate(user_id=Subquery(root_span_qs.values("end_user__user_id")[:1]))
+        # Distinct end_user_ids reachable from these traces' root spans (bounded
+        # by enduser count). dictGet their labels and fold into a CASE the
+        # correlated subquery evaluates per root span — matching the OLD
+        # ``root_span_qs.values("end_user__user_id")[:1]`` exactly: no added
+        # order_by / null-exclusion, so it picks the SAME arbitrary root span and
+        # yields NULL on a null/orphan end_user_id, just as the FK join did.
+        end_user_ids = (
+            ObservationSpan.objects.filter(
+                trace_id__in=qs.values("id"), parent_span_id__isnull=True
+            )
+            .exclude(end_user_id__isnull=True)
+            .values_list("end_user_id", flat=True)
+            .distinct()
+        )
+        label_case = _user_id_label_case(end_user_ids)
+        qs = qs.annotate(
+            user_id=Subquery(
+                root_span_qs.annotate(_uid_label=label_case).values("_uid_label")[:1]
+            )
+        )
 
     return qs
+
+
+def _annotate_span_for_rules(qs, fields):
+    """Annotate an ObservationSpan queryset with ``user_id`` (CH cutover).
+
+    OLD: the span rule used ``user_id`` as a DIRECT FK-join filter
+    (``end_user__user_id`` → ``tracer_enduser.user_id``). After EndUser→CH that
+    table is gone (DESIGN §4.3). The entity here IS the span, so unlike the
+    trace/session paths there is no correlation: we annotate ``user_id`` directly
+    from the span's OWN ``end_user_id`` column via a CASE that carries the CH
+    ``end_users_dict`` label (bounded by enduser count). The annotated
+    ``user_id`` is a normal CharField, so the downstream filter loop, cap scan,
+    and accounting are unchanged.
+
+    NULL fidelity: a span with NULL ``end_user_id`` → no CASE arm → NULL (old
+    inner FK join produced no/NULL match → the row was filtered/NULL the same
+    way); an orphan ``end_user_id`` (missing dict key) → NULL via the CASE
+    default (old FK miss → NULL too).
+    """
+    if "user_id" not in fields:
+        return qs
+
+    from tracer.models.observation_span import ObservationSpan  # noqa: F401
+
+    end_user_ids = (
+        qs.exclude(end_user_id__isnull=True)
+        .values_list("end_user_id", flat=True)
+        .distinct()
+    )
+    label_case = _user_id_label_case(end_user_ids)
+    return qs.annotate(user_id=label_case)
 
 
 def _annotate_session_for_rules(qs, fields):
@@ -1016,15 +1437,79 @@ def _annotate_session_for_rules(qs, fields):
         )
 
     if "user_id" in fields:
+        # CH-derived-dimensions cutover (DESIGN §4.3). OLD:
+        # ``spans_qs.exclude(end_user__isnull=True).order_by("start_time")
+        #   .values("end_user__user_id")[:1]`` — first non-null-enduser span by
+        # start_time, then the FK label. We keep that EXACT correlated shape
+        # (exclude + order_by + ``[:1]``) so the picked span is identical, and
+        # the annotation stays a lazy Subquery (cap/accounting untouched); only
+        # the FK-label column is swapped for the span's OWN ``end_user_id`` mapped
+        # through a CASE carrying the CH ``end_users_dict`` label (bounded by
+        # enduser count). ``end_user__isnull`` → ``end_user_id__isnull`` is a
+        # column NULL check, NOT an FK join.
+        end_user_ids = (
+            ObservationSpan.objects.filter(trace__session_id__in=qs.values("id"))
+            .exclude(end_user_id__isnull=True)
+            .values_list("end_user_id", flat=True)
+            .distinct()
+        )
+        label_case = _user_id_label_case(end_user_ids)
         qs = qs.annotate(
             user_id=Subquery(
-                spans_qs.exclude(end_user__isnull=True)
+                spans_qs.exclude(end_user_id__isnull=True)
                 .order_by("start_time")
-                .values("end_user__user_id")[:1]
+                .annotate(_uid_label=label_case)
+                .values("_uid_label")[:1]
             )
         )
 
     return qs
+
+
+def _user_id_label_case(end_user_ids):
+    """Build a Django ``Case`` mapping a span's ``end_user_id`` → its CH
+    ``user_id`` label, for the EndUser reads cutover (DESIGN §4.3).
+
+    ``end_user_ids`` is an iterable (typically a lazy ``ValuesList`` queryset) of
+    the DISTINCT non-null ``end_user_id``s reachable from the queryset's spans —
+    bounded by enduser count, NOT by trace/session count, so the resulting CASE
+    stays small even on a million-row span scan. The labels are fetched from CH
+    ``end_users_dict`` in ONE batched ``dictGet`` and folded into
+    ``When(end_user_id=eu, then=Value(label))`` arms.
+
+    Used INSIDE a correlated ``Subquery`` over the spans (``.annotate(...)
+    .values(...)[:1]``), so the host annotation stays lazy — the cap-and-scan
+    machinery in ``_evaluate_rule_inner`` is preserved.
+
+    NULL fidelity vs the old ``end_user__user_id`` FK join:
+      • a span whose ``end_user_id`` is NULL → no ``When`` matches → CASE
+        ``default=None`` → NULL (old FK was NULL too).
+      • a span whose ``end_user_id`` is an ORPHAN (no dict row — possible under
+        ``db_constraint=False``) → ``dictGetOrNull`` returned ``None`` →
+        we emit NO arm for it → CASE default → NULL (old FK miss → NULL too).
+    Both reproduce the old subquery's NULL exactly.
+    """
+    from django.db.models import Case, CharField, Value, When
+
+    from tracer.services.clickhouse.v2.end_user_dict_reader import resolve_user_ids
+
+    ids = list(end_user_ids)
+    label_by_end_user = resolve_user_ids(ids)
+
+    whens = []
+    for end_user_id in ids:
+        label = label_by_end_user.get(str(end_user_id))
+        if label is None:
+            # Orphan / missing dict key → leave to default=None (FK-miss → NULL).
+            continue
+        whens.append(When(end_user_id=end_user_id, then=Value(label)))
+
+    if not whens:
+        # No resolvable labels → a constant-NULL CharField, so the subquery still
+        # yields NULL for every span (identical to an all-NULL FK join).
+        return Value(None, output_field=CharField())
+
+    return Case(*whens, default=Value(None), output_field=CharField())
 
 
 RULE_TRIGGER_INTERVALS = {
@@ -1036,6 +1521,13 @@ RULE_TRIGGER_INTERVALS = {
     # new date arithmetic dependency.
     AutomationRuleTriggerFrequency.MONTHLY.value: timedelta(days=30),
 }
+
+# Cutoff between "process inline in the HTTP request" and "hand to Temporal".
+# A capped dry-run with this cap is the cheap peek used to decide; with the
+# ``[:cap+1]`` count fix in place the peek is sub-100ms even on million-row
+# tables. Tuned for "user clicks Run, gets answer in <2s" while still keeping
+# auto-assign + finalize work bounded enough to fit inside an HTTP timeout.
+RULE_RUN_SYNC_THRESHOLD = 500
 
 
 def is_automation_rule_due(rule, now=None):
@@ -1111,9 +1603,7 @@ def _finalize_automation_items(rule, created_items):
         QueueItem.objects.bulk_update(created_items, ["assigned_to"])
     elif queue.auto_assign:
         member_ids = list(
-            AnnotationQueueAnnotator.objects.filter(
-                queue=queue, deleted=False
-            )
+            AnnotationQueueAnnotator.objects.filter(queue=queue, deleted=False)
             .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
             .values_list("user_id", flat=True)
             .distinct()
@@ -1134,21 +1624,19 @@ def _finalize_automation_items(rule, created_items):
 
 
 def _normalize_filter_payload(filters):
-    """Normalize camelCase/snake_case UI filter entries to backend shape."""
+    """Keep queue rule filters in the canonical snake_case API shape."""
     normalized = []
     for item in filters or []:
-        column_id = item.get("column_id") or item.get("columnId")
+        column_id = item.get("column_id")
         if not column_id:
             continue
-        config = item.get("filter_config") or item.get("filterConfig") or {}
+        config = item.get("filter_config") or {}
         filter_config = {
-            "filter_type": config.get("filter_type") or config.get("filterType"),
-            "filter_op": config.get("filter_op") or config.get("filterOp"),
-            "filter_value": config.get("filter_value")
-            if "filter_value" in config
-            else config.get("filterValue"),
+            "filter_type": config.get("filter_type"),
+            "filter_op": config.get("filter_op"),
+            "filter_value": config.get("filter_value"),
         }
-        col_type = config.get("col_type") or config.get("colType")
+        col_type = config.get("col_type")
         if col_type:
             filter_config["col_type"] = col_type
         normalized.append(
@@ -1156,11 +1644,8 @@ def _normalize_filter_payload(filters):
                 "column_id": column_id,
                 "filter_config": filter_config,
                 **(
-                    {
-                        "display_name": item.get("display_name")
-                        or item.get("displayName")
-                    }
-                    if item.get("display_name") or item.get("displayName")
+                    {"display_name": item.get("display_name")}
+                    if item.get("display_name")
                     else {}
                 ),
             }
@@ -1192,10 +1677,10 @@ def _parse_datetime_value(value):
 
 def _apply_scalar_filter(qs, field_name, op, value):
     """Apply rule operators to a regular Django field."""
-    if op in ("between", "not_between", "not_in_between"):
+    if op in ("between", "not_between"):
         start, end = _coerce_range_value(value)
         lookup = {f"{field_name}__range": (start, end)}
-        if op in ("not_between", "not_in_between"):
+        if op == "not_between":
             return qs.exclude(**lookup)
         return qs.filter(**lookup)
     if op == "not_in":
@@ -1214,7 +1699,7 @@ def _apply_scalar_filter(qs, field_name, op, value):
 def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_type):
     """Apply one DevelopFilterRow-style filter to a Cell queryset."""
     if filter_type == "number":
-        if filter_op in ("between", "not_between", "not_in_between"):
+        if filter_op in ("between", "not_between"):
             min_val, max_val = _coerce_range_value(filter_value)
             min_val, max_val = float(min_val), float(max_val)
             if column_type == "audio":
@@ -1229,7 +1714,7 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
                     numeric_value=Cast("value", FloatField())
                 )
             condition = Q(numeric_value__gte=min_val) & Q(numeric_value__lte=max_val)
-            if filter_op in ("not_between", "not_in_between"):
+            if filter_op == "not_between":
                 return cells.filter(~condition)
             return cells.filter(condition)
 
@@ -1292,7 +1777,7 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
         return cells.none()
 
     if filter_type == "datetime":
-        if filter_op in ("between", "not_between", "not_in_between"):
+        if filter_op in ("between", "not_between"):
             start_raw, end_raw = _coerce_range_value(filter_value)
             start = _parse_datetime_value(start_raw)
             end = _parse_datetime_value(end_raw)
@@ -1302,7 +1787,7 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
                 condition &= Q(datetime_value__gte=start)
             if end:
                 condition &= Q(datetime_value__lte=end)
-            if filter_op in ("not_between", "not_in_between"):
+            if filter_op == "not_between":
                 return cells.filter(~condition)
             return cells.filter(condition)
 
@@ -1397,7 +1882,14 @@ def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
         return {"matched": 0, "added": 0, "duplicates": 0, "error": "Invalid FK field"}
 
     if dry_run:
-        return {"matched": total_matching, "added": 0, "duplicates": 0}
+        result = {"matched": total_matching, "added": 0, "duplicates": 0}
+        # Propagate truncation from the resolver so the manual-run endpoint's
+        # peek can branch sync vs async. Without this, filter-mode dry-runs
+        # always reported ``truncated`` absent and every run took the sync
+        # path (regression from before the sync/async split).
+        if total_matching > len(source_ids):
+            result["truncated"] = True
+        return result
 
     candidate_ids = list(dict.fromkeys(source_ids))
     existing_source_ids = {
@@ -1426,6 +1918,7 @@ def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
                 queue=rule.queue,
                 source_type=rule.source_type,
                 organization=rule.organization,
+                workspace=rule.queue.workspace,
                 order=max_order,
                 **{f"{fk_field}_id": source_id},
             )
@@ -1472,7 +1965,9 @@ def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
     return result
 
 
-def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, cap=1000):
+def _evaluate_filter_mode_rule(
+    rule, filters, scope, dry_run=False, user=None, cap=1000
+):
     filters = _normalize_filter_payload(filters)
     source_type = rule.source_type
     queue = rule.queue
@@ -1517,12 +2012,13 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
                 rule_id=str(rule.pk),
                 dataset_id=str(dataset_id),
                 error=str(exc),
+                error_type=exc.__class__.__name__,
             )
             return {
                 "matched": 0,
                 "added": 0,
                 "duplicates": 0,
-                "error": str(exc),
+                "error": _automation_rule_filter_error_message(exc),
             }
         return _add_source_ids_to_queue(rule, ids, total_matching, dry_run=dry_run)
 
@@ -1582,7 +2078,9 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
 
         resolver = resolve_filtered_session_ids
     elif source_type == QueueItemSourceType.CALL_EXECUTION.value:
-        from model_hub.services.bulk_selection import resolve_filtered_call_execution_ids
+        from model_hub.services.bulk_selection import (
+            resolve_filtered_call_execution_ids,
+        )
 
         resolver = resolve_filtered_call_execution_ids
 
@@ -1619,12 +2117,13 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
             rule_id=str(rule.pk),
             source_type=source_type,
             error=str(exc),
+            error_type=exc.__class__.__name__,
         )
         return {
             "matched": 0,
             "added": 0,
             "duplicates": 0,
-            "error": str(exc),
+            "error": _automation_rule_filter_error_message(exc),
         }
 
     return _add_source_ids_to_queue(
@@ -1640,7 +2139,8 @@ def evaluate_rule(rule, dry_run=False, user=None, cap=1000):
     Returns dict with 'matched', 'added', 'duplicates' counts.
     """
     from django.db import transaction
-    from model_hub.models.annotation_queues import AutomationRule, QueueItem
+
+    from model_hub.models.annotation_queues import AutomationRule
 
     if dry_run:
         return _evaluate_rule_inner(rule, dry_run, user, cap)
@@ -1700,6 +2200,22 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                 test_execution__agent_definition_id=queue.agent_definition_id
             )
 
+    # High-water mark for scheduled rules: each tick rescans only rows newer
+    # than the last run, with one interval of overlap to absorb clock skew +
+    # late CDC replication. Manual runs intentionally skip this cutoff: the
+    # manual endpoint uses ``last_triggered_at`` as a short duplicate-click
+    # reservation before async work starts, and treating that reservation as
+    # a data watermark would skip the existing backlog.
+    frequency = getattr(rule, "trigger_frequency", None)
+    if (
+        rule.last_triggered_at
+        and not dry_run
+        and frequency != AutomationRuleTriggerFrequency.MANUAL.value
+        and hasattr(model, "created_at")
+    ):
+        overlap = RULE_TRIGGER_INTERVALS.get(frequency or "", timedelta(minutes=5))
+        qs = qs.filter(created_at__gte=rule.last_triggered_at - overlap)
+
     conditions = rule.conditions or {}
     has_filter_payload = "filter" in conditions or "filters" in conditions
     filter_payload = (
@@ -1758,10 +2274,8 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
         if django_field == "duration_seconds":
             django_field = "_session_duration"
             if op not in ("is_null", "is_not_null"):
-                from datetime import timedelta
-
                 try:
-                    if op in ("between", "not_between", "not_in_between"):
+                    if op in ("between", "not_between"):
                         start, end = _coerce_range_value(value)
                         value = (
                             timedelta(seconds=float(start)),
@@ -1777,7 +2291,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                     )
                     continue
 
-        if op in ("between", "not_between", "not_in_between"):
+        if op in ("between", "not_between"):
             start, end = _coerce_range_value(value)
             if start is None or end is None:
                 logger.warning(
@@ -1789,7 +2303,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                 continue
             lookup = f"{django_field}__range"
             try:
-                if op in ("not_between", "not_in_between"):
+                if op == "not_between":
                     qs = qs.exclude(**{lookup: (start, end)})
                 else:
                     qs = qs.filter(**{lookup: (start, end)})
@@ -1842,9 +2356,20 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
             ),
         }
 
-    matched = qs.count()
+    # Capped match check — avoid an unbounded COUNT(*) on 10M+ row span tables.
+    # We only need to know "≥ cap" to set the truncated flag; the exact count
+    # for huge matches is not actionable here and was the primary timeout
+    # source on /preview (held under select_for_update for non-dry runs).
+    capped_candidates = list(qs[: cap + 1])
+    truncated = len(capped_candidates) > cap
+    candidates = capped_candidates[:cap]
+    matched = len(candidates) + (1 if truncated else 0)
+
     if dry_run:
-        return {"matched": matched, "added": 0, "duplicates": 0}
+        result = {"matched": matched, "added": 0, "duplicates": 0}
+        if truncated:
+            result["truncated"] = True
+        return result
 
     added = 0
     duplicates = 0
@@ -1854,8 +2379,6 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
         .values_list("order", flat=True)
         .first()
     ) or 0
-
-    candidates = list(qs[:cap])  # Limit per evaluation
     if candidates:
         # Batch-check existing items with a single query
         existing_source_ids = set(
@@ -1877,6 +2400,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                     queue=rule.queue,
                     source_type=rule.source_type,
                     organization=rule.organization,
+                    workspace=rule.queue.workspace,
                     order=max_order,
                     **{fk_field: obj},
                 )
@@ -1912,7 +2436,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
     _update_rule_stats(rule)
 
     result = {"matched": matched, "added": added, "duplicates": duplicates}
-    if matched > len(candidates):
+    if truncated:
         result["truncated"] = True
     return result
 
@@ -1958,3 +2482,134 @@ def _truncate(text, max_len):
     if len(text) <= max_len:
         return text
     return text[:max_len] + "..."
+
+
+# ---------------------------------------------------------------------------
+# Rule-completion email
+# ---------------------------------------------------------------------------
+
+
+def _rule_completion_recipients(rule, triggered_by_user_id=None):
+    """Return list of email addresses to notify when a rule run completes.
+
+    Recipients: rule.created_by + queue managers (AnnotatorRole.MANAGER on the
+    queue). Triggering user is added so a manager who ran someone else's rule
+    still gets the result. Dedup by user_id; skip users without an email.
+    """
+    from model_hub.models.annotation_queues import (
+        AnnotationQueueAnnotator,
+        annotation_queue_role_q,
+    )
+
+    seen_ids = set()
+    emails = []
+
+    def _add(user):
+        if not user or not getattr(user, "email", None):
+            return
+        if user.id in seen_ids:
+            return
+        seen_ids.add(user.id)
+        emails.append(user.email)
+
+    _add(getattr(rule, "created_by", None))
+
+    if triggered_by_user_id and triggered_by_user_id != getattr(
+        rule.created_by, "id", None
+    ):
+        from django.contrib.auth import get_user_model
+
+        try:
+            _add(get_user_model().objects.get(pk=triggered_by_user_id))
+        except Exception:
+            pass
+
+    manager_users = (
+        AnnotationQueueAnnotator.objects.filter(queue=rule.queue, deleted=False)
+        .filter(annotation_queue_role_q(AnnotatorRole.MANAGER.value))
+        .select_related("user")
+    )
+    for ann in manager_users:
+        _add(ann.user)
+
+    return emails
+
+
+def send_rule_completion_email(
+    rule,
+    result,
+    *,
+    triggered_by_user_id=None,
+    error_message=None,
+):
+    """Send the rule-run completion email to creator + queue managers.
+
+    ``result`` is the dict returned by ``evaluate_rule`` (or partial when the
+    run failed). ``error_message`` overrides the success template with a
+    failure variant. Failures here must not crash the activity — log and
+    continue so the underlying queue writes (which succeeded) aren't rolled
+    back.
+    """
+    import os
+
+    from tfc.utils.email import email_helper
+
+    recipients = _rule_completion_recipients(
+        rule, triggered_by_user_id=triggered_by_user_id
+    )
+    if not recipients:
+        logger.info(
+            "automation_rule_completion_email_no_recipients",
+            rule_id=str(rule.pk),
+        )
+        return
+
+    queue = rule.queue
+    queue_id = str(queue.id)
+    frontend_url = os.environ.get("FRONTEND_URL", "https://app.futureagi.com").rstrip(
+        "/"
+    )
+    queue_url = f"{frontend_url}/annotation-queues/{queue_id}"
+
+    triggered_by_name = "the rule schedule"
+    if triggered_by_user_id:
+        from django.contrib.auth import get_user_model
+
+        try:
+            user = get_user_model().objects.get(pk=triggered_by_user_id)
+            triggered_by_name = user.get_full_name() or user.email or triggered_by_name
+        except Exception:
+            pass
+
+    status = "error" if error_message else "ok"
+    subject_prefix = "[failed] " if status == "error" else ""
+    subject = (
+        f"{subject_prefix}Rule run: {rule.name} added "
+        f"{result.get('added', 0)} item(s) to {queue.name}"
+    )
+
+    try:
+        email_helper(
+            mail_subject=subject,
+            template_name="automation_rule_completion.html",
+            template_data={
+                "rule_name": rule.name,
+                "queue_name": queue.name,
+                "source_type": rule.source_type,
+                "matched": result.get("matched", 0),
+                "added": result.get("added", 0),
+                "duplicates": result.get("duplicates", 0),
+                "queue_url": queue_url,
+                "triggered_by_name": triggered_by_name,
+                "status": status,
+                "error_message": error_message or "",
+            },
+            to_email_list=recipients,
+        )
+    except Exception as exc:
+        logger.warning(
+            "automation_rule_completion_email_send_failed",
+            rule_id=str(rule.pk),
+            recipients=len(recipients),
+            error=str(exc),
+        )

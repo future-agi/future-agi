@@ -522,7 +522,68 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     // so the local walk is skipped. Other row types walk once and reuse
     // the same lookup across every eval on this row.
     const isSession = rowType === "sessions";
-    const flatValueMap = isSession ? {} : buildFlatValueMap(spanDetail);
+
+    // Build a flat fieldName→value lookup by walking spanDetail,
+    // soft-flattening span_attributes keys (same logic as the
+    // fieldNames dropdown in TracingTestMode). This ensures mapped
+    // fields like "input.value" (stripped from "span_attributes.input.value")
+    // resolve correctly even when a top-level "input" shadows the path.
+    // Limits match the dropdown walker in TracingTestMode so every path
+    // offered to the user during mapping also resolves at test time.
+    const ARRAY_PEEK = 500;
+    const DICT_LIMIT = 5000;
+    const valueMap = {};
+    const walkValues = (node, prefix) => {
+      if (Array.isArray(node)) {
+        node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
+          const path = prefix ? `${prefix}.${idx}` : String(idx);
+          valueMap[path] = item;
+          if (item && typeof item === "object") {
+            walkValues(item, path);
+          }
+        });
+        return;
+      }
+      // canonicalEntries drops legacy camelCase aliases that may exist on cached or pre-normalized objects — otherwise `span_attributes.*` and `spanAttributes.*`
+      // both end up in valueMap and only the snake side gets stripped.
+      for (const [k, v] of canonicalEntries(node)) {
+        if (k.startsWith("_")) continue;
+        const path = prefix ? `${prefix}.${k}` : k;
+        valueMap[path] = v;
+        if (v && typeof v === "object") {
+          if (Array.isArray(v) || Object.keys(v).length < DICT_LIMIT) {
+            walkValues(v, path);
+          }
+        }
+      }
+    };
+    if (!isSession) walkValues(spanDetail, "");
+
+    // Soft-flatten: route through `stripAttributePathPrefix` so any
+    // `span_attributes.` segment — anchored *or* nested inside `spans.<n>.`
+    // or `traces.<i>.spans.<j>.` — collapses to the same form the BE
+    // dropdown emits and that saved mappings store. Top-level keys (i.e.
+    // paths that did NOT need stripping) win the dedupe.
+    const flatValueMap = {};
+    for (const [path, val] of Object.entries(valueMap)) {
+      const short = stripAttributePathPrefix(path);
+      if (!(short in flatValueMap) || short === path) {
+        flatValueMap[short] = val;
+      }
+    }
+
+    const resolveMapping = (mapping) => {
+      const resolved = {};
+      for (const [variable, field] of Object.entries(mapping || {})) {
+        if (!field) continue;
+        const val = flatValueMap[field];
+        if (val !== undefined && val !== null) {
+          resolved[variable] =
+            typeof val === "object" ? JSON.stringify(val) : String(val);
+        }
+      }
+      return resolved;
+    };
 
     setIsTesting(true);
     setTestResults(
@@ -660,7 +721,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                   bgcolor: "background.neutral",
                   color: "text.secondary",
                   "& .MuiChip-label": { px: 0.75 },
-                    "&:hover": { bgcolor: "background.neutral" },
+                  "&:hover": { bgcolor: "background.neutral" },
                 }}
               />
             )}
@@ -822,9 +883,7 @@ const RowDetailTable = ({
   // `gen_ai.span.kind` row would also have a duplicate `genAi.span.kind`
   // sibling rendered next to it.
   const entries = useMemo(() => {
-    const raw = canonicalEntries(spanDetail).filter(
-      ([key]) => key !== "spans",
-    );
+    const raw = canonicalEntries(spanDetail).filter(([key]) => key !== "spans");
     const spanAttrs = spanDetail?.span_attributes;
     if (
       !spanAttrs ||

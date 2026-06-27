@@ -58,7 +58,7 @@ const ScenarioDetailSelectionView = ({ dataset }) => {
   const { mutate: onDeleteDatasetRow, isPending: isDeleting } = useMutation({
     mutationFn: () => {
       const selectedIds = toggledNodes;
-      
+
       return axios.delete(endpoints.develop.deleteDatasetRow(dataset), {
         data: { row_ids: selectedIds, selected_all_rows: selectAll },
       });

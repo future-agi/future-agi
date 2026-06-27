@@ -589,4 +589,50 @@ describe("useSaveDraft – ensureDraft", () => {
     expect(edges[0].source).toBe(remappedSource);
     expect(edges[0].target).toBe(remappedTarget);
   });
+
+  it("syncs backend-assigned edge IDs from snake_case POST response", async () => {
+    setStoreState({
+      currentAgent: { id: "g1", version_id: "v1", is_draft: false },
+      nodes: [{ id: "n1" }, { id: "n2" }],
+      edges: [{ id: "frontend-edge-1", source: "n1", target: "n2" }],
+    });
+    const { result } = renderHook(() => useSaveDraft());
+
+    let draftPromise;
+    await act(async () => {
+      draftPromise = result.current.ensureDraft();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+    });
+
+    const storeEdges = useAgentPlaygroundStore.getState().edges;
+    const remappedSource = storeEdges[0].source;
+    const remappedTarget = storeEdges[0].target;
+
+    await act(async () => {
+      const mutationCall = mockCreateVersionMutation.mock.calls[0];
+      mutationCall[1].onSuccess({
+        data: {
+          result: {
+            version_id: "v-new",
+            node_connections: [
+              {
+                id: "backend-edge-snake",
+                source_node_id: remappedSource,
+                target_node_id: remappedTarget,
+              },
+            ],
+          },
+        },
+      });
+      await draftPromise;
+    });
+
+    const { edges } = useAgentPlaygroundStore.getState();
+    expect(edges[0].id).toBe("backend-edge-snake");
+    expect(edges[0].source).toBe(remappedSource);
+    expect(edges[0].target).toBe(remappedTarget);
+  });
 });

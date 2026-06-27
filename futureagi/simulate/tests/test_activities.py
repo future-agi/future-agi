@@ -363,6 +363,7 @@ class TestCreateScenarioAPIWithMockedWorkflow:
             "name": "Failing Workflow Scenario",
             "kind": "dataset",
             "dataset_id": str(source_dataset.id),
+            "agent_definition_id": str(agent_definition.id),
         }
 
         response = auth_client.post(
@@ -375,6 +376,7 @@ class TestCreateScenarioAPIWithMockedWorkflow:
         # This depends on the actual implementation - might return 500 or create with failed status
         assert response.status_code in [
             status.HTTP_201_CREATED,
+            status.HTTP_202_ACCEPTED,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         ]
 

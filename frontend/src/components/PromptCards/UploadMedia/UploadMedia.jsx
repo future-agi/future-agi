@@ -23,6 +23,7 @@ import { LoadingButton } from "@mui/lab";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useParams } from "react-router";
+import { getUploadSourceItems, mapUploadedMedia } from "./uploadMediaMapping";
 
 const tabItems = [
   { label: "Upload", value: "upload" },
@@ -141,7 +142,7 @@ const UploadMediaChild = ({ control, type, onClose, onSubmit, isPending }) => {
 
 UploadMediaChild.propTypes = {
   control: PropTypes.object.isRequired,
-  type: PropTypes.oneOf(["image", "audio"]),
+  type: PropTypes.oneOf(["image", "audio", "pdf"]),
   onClose: PropTypes.func.isRequired,
   onSubmit: PropTypes.func.isRequired,
   isPending: PropTypes.bool,
@@ -191,33 +192,12 @@ const UploadMedia = ({ open, onClose, type, handleEmbedMedia }) => {
     },
     onSuccess: (data, variables) => {
       const uploadedUrl = data?.data?.result || [];
-      const filesOrLinks = variables?.files || variables?.links || [];
-      const mappedMediaData = uploadedUrl.reduce((acc, data, index) => {
-        if (!data.url) return acc;
-        if (type === "image") {
-          acc.push({
-            url: data.url,
-            img_name: data?.fileName ?? filesOrLinks[index]?.name,
-            img_size: filesOrLinks[index]?.size,
-          });
-        }
-        if (type === "audio") {
-          acc.push({
-            url: data.url,
-            audio_name: data?.fileName ?? filesOrLinks[index]?.name,
-            audio_size: filesOrLinks[index]?.size,
-            audio_type: filesOrLinks[index]?.type,
-          });
-        }
-        if (type === "pdf") {
-          acc.push({
-            url: data.url,
-            pdf_name: data?.fileName ?? filesOrLinks[index]?.name,
-            pdf_size: filesOrLinks[index]?.size,
-          });
-        }
-        return acc;
-      }, []);
+      const filesOrLinks = getUploadSourceItems(variables);
+      const mappedMediaData = mapUploadedMedia({
+        uploadedUrl,
+        sourceItems: filesOrLinks,
+        type,
+      });
       const isError = uploadedUrl.some((url) => url.error);
       trackEvent(Events.promptSavemediaClicked, {
         [PropertyName.promptId]: id,
@@ -291,7 +271,7 @@ const UploadMedia = ({ open, onClose, type, handleEmbedMedia }) => {
 UploadMedia.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
-  type: PropTypes.oneOf(["image", "audio"]),
+  type: PropTypes.oneOf(["image", "audio", "pdf"]),
   handleEmbedMedia: PropTypes.func,
 };
 

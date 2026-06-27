@@ -7,6 +7,13 @@ import {
 
 const RANGE_OPS = new Set(["between", "not_between"]);
 const LIST_OPS = new Set(["in", "not_in"]);
+const TASK_FILTER_PROPERTY_TO_API = {
+  span_kind: "observation_type",
+  observation_type: "observation_type",
+};
+
+export const getTaskFilterApiKey = (property) =>
+  TASK_FILTER_PROPERTY_TO_API[property] || property;
 
 // Form-row `property` → outer-filters sibling key the BE honors. `node_type`
 // is a FE alias for `observation_type` (the eval-task handler can't resolve
@@ -14,11 +21,13 @@ const LIST_OPS = new Set(["in", "not_in"]);
 const TOP_LEVEL_SIBLING_KEY_BY_PROPERTY = {
   observation_type: "observation_type",
   node_type: "observation_type",
+  span_kind: "observation_type",
   session_id: "session_id",
+  trace_id: "trace_id",
 };
 
-// Merge form rows for the same (columnId, op) into one wire entry. Scalar
-// rows for list ops fold into array `filterValue`; multiple scalars under a
+// Merge form rows for the same (column_id, op) into one wire entry. Scalar
+// rows for list ops fold into array `filter_value`; multiple scalars under a
 // single-value op are promoted to `in`. Matches list_spans_observe's flat
 // shape — every chip carries its own `col_type` and the BE dispatches.
 export const extractAttributeFilters = (filters) => {
@@ -92,12 +101,12 @@ export const extractAttributeFilters = (filters) => {
       filterValue = entry.values[0];
     }
     return {
-      columnId: entry.columnId,
-      filterConfig: {
-        filterType: entry.filterType,
-        filterOp,
-        colType: entry.apiColType,
-        ...(filterValue !== undefined && { filterValue }),
+      column_id: entry.columnId,
+      filter_config: {
+        filter_type: entry.filterType,
+        filter_op: filterOp,
+        col_type: entry.apiColType,
+        ...(filterValue !== undefined && { filter_value: filterValue }),
       },
     };
   });
@@ -169,7 +178,10 @@ export const NewTaskValidationSchema = () =>
       runType: z.enum(["historical", "continuous"], {
         message: "Run Type is required",
       }),
-      // Declared so zod's strip doesn't drop the tab-selected value pre-transform.
+      // Without listing rowType here, zod's .object() strips it before
+      // the transform runs and the form-state value (set by the
+      // Spans/Traces/Sessions tabs in TaskConfigPanel) is silently
+      // dropped — every payload then defaults to "spans".
       rowType: z.enum(["spans", "traces", "sessions", "voiceCalls"]).optional(),
       filters: z
         .array(

@@ -21,10 +21,11 @@ from model_hub.views.eval_runner import (
     process_mapping,
 )
 from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_specific_error_message
-from tfc.constants.api_calls import APICallStatusChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -45,6 +46,7 @@ def run_eval_func(
         # Block agent-type evals in OSS mode — AgentEvaluator requires ee/
         if getattr(template, "eval_type", "") == "agent":
             from tfc.ee_loader import _is_oss_mode
+
             if _is_oss_mode():
                 raise ValueError(
                     "Agent evaluations are not available on OSS. "
@@ -255,7 +257,9 @@ def run_eval_func(
             )
 
             if not api_call_log_row:
-                raise ValueError("API call not allowed : Error validating the api call.")
+                raise ValueError(
+                    "API call not allowed : Error validating the api call."
+                )
 
             if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                 raise ValueError("API call not allowed : ", api_call_log_row.status)
@@ -345,9 +349,7 @@ def run_eval_func(
         # the caller omits unmapped variables.
         from model_hub.utils.eval_input_validation import validate_eval_inputs
 
-        partial_input_warning, _run_kwargs = validate_eval_inputs(
-            template, _run_kwargs
-        )
+        partial_input_warning, _run_kwargs = validate_eval_inputs(template, _run_kwargs)
 
         eval_result = eval_instance.run(**_run_kwargs)
         end_time = time.time()
@@ -485,25 +487,32 @@ def run_eval_func(
                 token_usage=getattr(eval_instance, "token_usage", {}),
             )
 
-            credits = billing_config.calculate_ai_credits(actual_cost) if billing_config else 0
+            credits = (
+                billing_config.calculate_ai_credits(actual_cost)
+                if billing_config
+                else 0
+            )
 
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
 
                 emit(
-                UsageEvent(
-                    org_id=str(org.id),
-                    event_type=api_call_type,
-                    amount=credits,
-                    properties={
-                        "source": source,
-                        "source_id": str(template.id),
-                        "raw_cost_usd": str(actual_cost),
-                        **cost_properties,
-                        **token_usage_properties(_token_usage),
-                    },
+                    UsageEvent(
+                        org_id=str(org.id),
+                        event_type=api_call_type,
+                        amount=credits,
+                        properties={
+                            "source": source,
+                            "source_id": str(template.id),
+                            "raw_cost_usd": str(actual_cost),
+                            **cost_properties,
+                            **token_usage_properties(_token_usage),
+                        },
+                    )
                 )
-            )
         except Exception:
             pass  # Metering failure must not break the action
 
@@ -574,12 +583,16 @@ def process_eval_for_single_row(
     source,
     dataset_id,
     model=ModelChoices.TURING_LARGE.value,
+    runtime_config=None,
 ):
     try:
         close_old_connections()
         runner.eval_template = eval_template
         eval_instance = runner._create_eval_instance(
-            config=data_config, eval_class=eval_class, model=model
+            config=data_config,
+            eval_class=eval_class,
+            model=model,
+            runtime_config=runtime_config,
         )
 
         # Extract base column IDs from mappings (handle JSON paths like uuid.field)
@@ -598,24 +611,41 @@ def process_eval_for_single_row(
             mappings, row, run_prompt_column=run_prompt_column, runner=runner
         )
 
+        api_call_config = {
+            "preview": True,
+            "dataset_id": str(dataset_id),
+            "row_id": str(row.id),
+            "required_keys": required_field,
+        }
+        if isinstance(runtime_config, dict) and runtime_config.get("params"):
+            api_call_config["params"] = runtime_config.get("params")
+
         api_call_log_row = runner._handle_api_call(
             row,
             mappings,
-            config={
-                "preview": True,
-                "dataset_id": str(dataset_id),
-                "row_id": str(row.id),
-                "required_keys": required_field,
-            },
+            config=api_call_config,
             eval_template=eval_template,
             org=get_current_organization() or user.organization,
             preview=True,
             req_map={"required_field": required_field, "mapping": mapping},
         )
 
-        eval_result = eval_instance.run(
-            **runner.map_fields(required_field, mapping, eval_template)
+        eval_inputs = runner.map_fields(
+            required_field,
+            mapping,
+            eval_template,
+            config=(
+                runtime_config if isinstance(runtime_config, dict) else data_config
+            ),
         )
+        if (
+            getattr(eval_template, "eval_type", "") == "code"
+            and isinstance(runtime_config, dict)
+            and isinstance(runtime_config.get("params"), dict)
+        ):
+            eval_inputs.update(runtime_config["params"])
+
+        eval_result = eval_instance.run(**eval_inputs)
 
         response = {
             "data": eval_result.eval_results[0].get("data"),

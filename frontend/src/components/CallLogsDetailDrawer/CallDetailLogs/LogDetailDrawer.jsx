@@ -89,7 +89,6 @@ const LogDetailDrawerContent = ({
       resizable: true,
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
-      suppressMultiSort: true,
       cellStyle: {
         lineHeight: 1,
         padding: "8px",

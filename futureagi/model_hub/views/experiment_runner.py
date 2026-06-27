@@ -1327,7 +1327,13 @@ class ExperimentRunner:
             value_info["reason"] = value_info.get("data", {}).get("response")
 
         except Exception as e:
-            logger.exception(f"Error in processing the row: {str(e)}")
+            # Expected, handled validation failure (empty messages) is user
+            # misconfiguration; the row is persisted as a failed cell below.
+            # Downgrade only that case to warning so real failures stay errors.
+            if "Messages are required" in str(e):
+                logger.warning(f"Error in processing the row: {str(e)}")
+            else:
+                logger.exception(f"Error in processing the row: {str(e)}")
             # if unsupported_exception:
             response = str(e)
             value_info = {"reason": str(e)}
@@ -1599,7 +1605,13 @@ def _process_row_impl(
         value_info["reason"] = value_info.get("data", {}).get("response")
 
     except Exception as e:
-        logger.exception(f"Error in processing the row: {str(e)}")
+        # Expected, handled validation failure (empty messages) is user
+        # misconfiguration; the row is persisted as a failed cell below.
+        # Downgrade only that case to warning so real failures stay errors.
+        if "Messages are required" in str(e):
+            logger.warning(f"Error in processing the row: {str(e)}")
+        else:
+            logger.exception(f"Error in processing the row: {str(e)}")
         # if unsupported_exception:
         response = str(e)
         value_info = {"reason": str(e)}

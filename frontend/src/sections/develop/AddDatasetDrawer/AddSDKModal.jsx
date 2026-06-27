@@ -85,9 +85,9 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
     mutationFn: (data) => axios.post(endpoints.row.addRowSdk, data, {}),
     onSuccess: (data) => {
       const result = data?.data?.result;
-      setValue("Pcode", result?.code?.pythonAddCol || "");
-      setValue("Tcode", result?.code?.typescriptAddCol || "");
-      setValue("CUcode", result?.code?.curlAddCol || "");
+      setValue("Pcode", result?.code?.python_add_col || "");
+      setValue("Tcode", result?.code?.typescript_add_col || "");
+      setValue("CUcode", result?.code?.curl_add_col || "");
     },
     onError: (error) => {
       setIsNext(false);

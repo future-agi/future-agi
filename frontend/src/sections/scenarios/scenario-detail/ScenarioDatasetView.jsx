@@ -1,9 +1,12 @@
 import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Box, Typography, Button, CircularProgress } from "@mui/material";
+import { formatDistanceToNow } from "date-fns";
+import PropTypes from "prop-types";
 import { useGetScenarioDetail } from "src/api/scenarios/scenarios";
 import { LoadingScreen } from "src/components/loading-screen";
 import SvgColor from "src/components/svg-color";
+import { getChipConfig } from "src/components/scenarios/CustomCellRenderers/ChipCellRenderer";
 import GraphPreview from "./GraphPreview";
 import PromptPreview from "./PromptPreview";
 import { ShowComponent } from "src/components/show";
@@ -12,6 +15,54 @@ import DevelopDetailProvider from "src/sections/develop-detail/DevelopDetailProv
 import AddRowScenario from "./AddRowScenario";
 import ScenarioDetailRightSection from "./ScenarioDetailRightSection";
 import AddColumnScenario from "./AddColumnScenario";
+
+const MetaChip = ({ label, value, icon }) => (
+  <Box
+    sx={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 0.75,
+      border: "1px solid",
+      borderColor: "divider",
+      borderRadius: 0.5,
+      px: 1.25,
+      py: 0.5,
+      backgroundColor: "background.default",
+    }}
+  >
+    {icon && (
+      <SvgColor
+        src={icon}
+        sx={{ width: 14, height: 14, color: "text.secondary" }}
+      />
+    )}
+    <Typography
+      variant="caption"
+      sx={{ color: "text.secondary", fontWeight: 500 }}
+    >
+      {label}
+    </Typography>
+    <Typography
+      variant="caption"
+      sx={{ color: "text.primary", fontWeight: 600 }}
+    >
+      {value}
+    </Typography>
+  </Box>
+);
+
+MetaChip.propTypes = {
+  label: PropTypes.string.isRequired,
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  icon: PropTypes.string,
+};
+
+const formatCreatedAt = (value) => {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return formatDistanceToNow(date, { addSuffix: true });
+};
 
 const ScenarioDatasetView = () => {
   const { scenarioId } = useParams();
@@ -49,10 +100,20 @@ const ScenarioDatasetView = () => {
     );
   }
 
+  const scenarioType = scenario?.scenarioType || scenario?.scenario_type;
+  const agentType = scenario?.agentType || scenario?.agent_type;
+  const datasetId = scenario?.dataset || scenario?.dataset_id;
+  const datasetRows = scenario?.datasetRows ?? scenario?.dataset_rows ?? 0;
+  const createdAt = scenario?.createdAt || scenario?.created_at;
+  const agentChipConfig = getChipConfig(agentType);
+  const scenarioTypeChipConfig = getChipConfig(scenarioType);
+  const hasGraph = Boolean(
+    scenario?.graph && Object.keys(scenario.graph).length > 0,
+  );
+
   return (
     <DevelopDetailProvider>
       <Box
-        s
         sx={{
           display: "flex",
           flexDirection: "column",
@@ -64,24 +125,41 @@ const ScenarioDatasetView = () => {
           sx={{
             padding: 2,
             display: "flex",
-            gap: "12px",
+            flexDirection: "column",
+            gap: 1,
             borderBottom: "1px solid",
             borderColor: "divider",
           }}
         >
-          <Typography
-            typography="m3"
-            fontWeight="fontWeightMedium"
-            color="text.disabled"
-            onClick={() => navigate("/dashboard/simulate/scenarios")}
-            sx={{ cursor: "pointer" }}
-          >
-            All Scenarios
-          </Typography>
-          <SvgColor src="/assets/icons/custom/lucide--chevron-right.svg" />
-          <Typography typography="m3" fontWeight="fontWeightMedium">
-            {scenario?.name}
-          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <Typography
+              typography="m3"
+              fontWeight="fontWeightMedium"
+              color="text.disabled"
+              onClick={() => navigate("/dashboard/simulate/scenarios")}
+              sx={{ cursor: "pointer" }}
+            >
+              All Scenarios
+            </Typography>
+            <SvgColor src="/assets/icons/custom/lucide--chevron-right.svg" />
+            <Typography typography="m3" fontWeight="fontWeightMedium">
+              {scenario?.name}
+            </Typography>
+          </Box>
+          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            <MetaChip
+              label="Agent Type"
+              value={agentChipConfig.label}
+              icon={agentChipConfig.icon}
+            />
+            <MetaChip
+              label="Scenario Type"
+              value={scenarioTypeChipConfig.label}
+              icon={scenarioTypeChipConfig.icon}
+            />
+            <MetaChip label="No of Datapoints" value={datasetRows} />
+            <MetaChip label="Created" value={formatCreatedAt(createdAt)} />
+          </Box>
         </Box>
         <Box
           sx={{
@@ -92,10 +170,8 @@ const ScenarioDatasetView = () => {
             height: "50%",
           }}
         >
-          <ShowComponent
-            condition={scenario?.scenarioType !== "dataset" || scenario?.graph}
-          >
-            <GraphPreview agentType={scenario?.agentType} scenario={scenario} />
+          <ShowComponent condition={scenarioType !== "dataset" || hasGraph}>
+            <GraphPreview agentType={agentType} scenario={scenario} />
           </ShowComponent>
           <PromptPreview scenario={scenario} />
         </Box>
@@ -117,7 +193,7 @@ const ScenarioDatasetView = () => {
           />
         </Box>
 
-        <ShowComponent condition={!scenario?.dataset}>
+        <ShowComponent condition={!datasetId}>
           <ShowComponent condition={scenario?.status === "Processing"}>
             <Box
               sx={{
@@ -152,12 +228,12 @@ const ScenarioDatasetView = () => {
             </Box>
           </ShowComponent>
         </ShowComponent>
-        <ShowComponent condition={scenario?.dataset}>
+        <ShowComponent condition={datasetId}>
           <Box
             sx={{ height: "100vh", display: "flex", flexDirection: "column" }}
           >
             <DevelopDataV2
-              datasetId={scenario?.dataset}
+              datasetId={datasetId}
               viewOptions={{
                 showDrawer: false,
                 bottomRow: false,
@@ -166,15 +242,15 @@ const ScenarioDatasetView = () => {
             <AddRowScenario
               open={addRowScenarioOpen}
               onClose={() => setAddRowScenarioOpen(false)}
-              datasetId={scenario?.dataset}
-              scenarioType={scenario?.scenarioType}
+              datasetId={datasetId}
+              scenarioType={scenarioType}
               scenarioId={scenarioId}
             />
             <AddColumnScenario
               open={addColumnScenarioOpen}
               onClose={() => setColumnScenarioOpen(false)}
-              datasetId={scenario?.dataset}
-              scenarioType={scenario?.scenarioType}
+              datasetId={datasetId}
+              scenarioType={scenarioType}
               scenarioId={scenarioId}
             />
           </Box>

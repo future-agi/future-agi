@@ -1,9 +1,10 @@
 from rest_framework import serializers
 
 from simulate.models import CallExecution
+from tracer.serializers.filters import StrictInputSerializer
 
 
-class CallExecutionFilterSerializer(serializers.Serializer):
+class CallExecutionFilterSerializer(StrictInputSerializer):
     """Query-parameter serializer for GET /call-executions/"""
 
     search = serializers.CharField(required=False, allow_blank=True, default="")
@@ -13,7 +14,7 @@ class CallExecutionFilterSerializer(serializers.Serializer):
     limit = serializers.IntegerField(required=False, min_value=1)
 
 
-class CallExecutionStatusUpdateSerializer(serializers.Serializer):
+class CallExecutionStatusUpdateSerializer(StrictInputSerializer):
     """Request body serializer for PATCH /call-executions/{id}/"""
 
     status = serializers.ChoiceField(choices=CallExecution.CallStatus.choices)

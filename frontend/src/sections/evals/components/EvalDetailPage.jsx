@@ -252,9 +252,7 @@ const EvalDetailPage = () => {
       viewingVersion.is_default ?? viewingVersion.isDefault ?? false;
     if (freshFlag !== localFlag) {
       setViewingVersion((prev) =>
-        prev
-          ? { ...prev, is_default: freshFlag, isDefault: freshFlag }
-          : prev,
+        prev ? { ...prev, is_default: freshFlag, isDefault: freshFlag } : prev,
       );
     }
   }, [versionsData, viewingVersion]);
@@ -905,9 +903,12 @@ const EvalDetailPage = () => {
     try {
       // Only send weights for children currently in the list
       const weights = {};
+      const pinnedVersions = {};
       compositeChildren.forEach((c) => {
         const w = compositeChildWeights[c.child_id];
         if (w != null) weights[c.child_id] = w;
+        if (c.pinned_version_id)
+          pinnedVersions[c.child_id] = c.pinned_version_id;
       });
       const payload = {
         name: compositeName?.trim() || undefined,
@@ -918,6 +919,8 @@ const EvalDetailPage = () => {
         child_template_ids: compositeChildren.map((c) => c.child_id),
         child_configs: buildCompositeChildConfigs(compositeChildren),
         child_weights: Object.keys(weights).length > 0 ? weights : null,
+        child_pinned_versions:
+          Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
       };
       const result = await updateComposite.mutateAsync(payload);
       const vNum = result?.version_number;
@@ -991,9 +994,13 @@ const EvalDetailPage = () => {
       // before testing so the execute endpoint picks up the latest state.
       if (isComposite && !isSystemEval) {
         const weights = {};
+        const pinnedVersions = {};
         compositeChildren.forEach((c) => {
           const w = compositeChildWeights[c.child_id];
           if (w != null) weights[c.child_id] = w;
+          if (c.pinned_version_id) {
+            pinnedVersions[c.child_id] = c.pinned_version_id;
+          }
         });
         await updateComposite.mutateAsync({
           name: compositeName?.trim() || undefined,
@@ -1004,6 +1011,8 @@ const EvalDetailPage = () => {
           child_template_ids: compositeChildren.map((c) => c.child_id),
           child_configs: buildCompositeChildConfigs(compositeChildren),
           child_weights: Object.keys(weights).length > 0 ? weights : null,
+          child_pinned_versions:
+            Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
         });
       }
       testPlaygroundRef.current?.runTest?.(evalId);
@@ -1661,7 +1670,7 @@ const EvalDetailPage = () => {
                   ))}
 
                 {/* Error Localization */}
-                {!isComposite && evalType !== "code"  && (
+                {!isComposite && evalType !== "code" && (
                   <Box>
                     <FormControlLabel
                       control={

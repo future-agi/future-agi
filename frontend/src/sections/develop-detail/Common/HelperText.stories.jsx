@@ -1,5 +1,5 @@
-import React from'react';
-import HelperText from './HelperText';
+import React from "react";
+import HelperText from "./HelperText";
 
 const meta = {
   component: HelperText,
@@ -9,14 +9,11 @@ const meta = {
 export default meta;
 
 const Template = (args) => {
-  return (
-    <HelperText {...args} />
-  );
+  return <HelperText {...args} />;
 };
 
 export const Default = Template.bind({});
 
 Default.args = {
-  text: 'This is a helper text',
+  text: "This is a helper text",
 };
-

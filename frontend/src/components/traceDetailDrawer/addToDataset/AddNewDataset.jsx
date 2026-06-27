@@ -351,7 +351,7 @@ const AddNewDataset = ({
 
 AddNewDataset.propTypes = {
   handleclose: PropTypes.func,
-  selectedNode: PropTypes.object,
+  selectedNode: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   observationFields: PropTypes.array,
   selectedTraces: PropTypes.array,
   selectedSpans: PropTypes.array,

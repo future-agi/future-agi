@@ -125,3 +125,8 @@ class TestExecuteRequestSerializer:
         serializer = ExecuteRequestSerializer(data={"row_ids": ["not-a-uuid"]})
         assert not serializer.is_valid()
         assert "row_ids" in serializer.errors
+
+    def test_invalid_empty_row_ids(self):
+        serializer = ExecuteRequestSerializer(data={"row_ids": []})
+        assert not serializer.is_valid()
+        assert "row_ids" in serializer.errors

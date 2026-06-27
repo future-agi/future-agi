@@ -119,7 +119,9 @@ export default function PromptNodeForm({ nodeId }) {
         onToolsApply={handleToolsApply}
         disabled={isUnsupportedOutputFormat}
         templateFormat={templateFormat}
-        onTemplateFormatChange={(v) => setValue("templateFormat", v, { shouldDirty: true })}
+        onTemplateFormatChange={(v) =>
+          setValue("templateFormat", v, { shouldDirty: true })
+        }
       />
 
       {/* Model Parameters Popover */}
@@ -173,9 +175,8 @@ export default function PromptNodeForm({ nodeId }) {
           disabled={isUnsupportedOutputFormat}
           onClick={handleSubmit(async (data) => {
             // Check name uniqueness against other nodes
-            const otherNodes = useAgentPlaygroundStore
-              .getState()
-              .nodes.filter((n) => n.id !== nodeId);
+            const storeState = useAgentPlaygroundStore.getState();
+            const otherNodes = storeState.nodes.filter((n) => n.id !== nodeId);
             const nameExists = otherNodes.some(
               (n) => n.data?.label === data.name,
             );
@@ -187,17 +188,21 @@ export default function PromptNodeForm({ nodeId }) {
             }
 
             // Capture old label before updating for variable propagation
-            const currentNode = useAgentPlaygroundStore
-              .getState()
-              .nodes.find((n) => n.id === nodeId);
+            const currentNode = storeState.nodes.find((n) => n.id === nodeId);
             const oldLabel = currentNode?.data?.label || nodeId;
             const outputLabel = currentNode?.data?.ports?.find(
               (p) => p.direction === PORT_DIRECTION.OUTPUT,
             )?.display_name;
+            const newLabel = data.name || nodeId;
+            const shouldPropagateRename = oldLabel !== newLabel;
+            const shouldPropagateBeforeDraftCreate =
+              shouldPropagateRename &&
+              (storeState.currentAgent?.is_draft === false ||
+                storeState._isDraftCreating);
 
             const payload = buildPayload(data);
             const nodeUpdate = {
-              label: data.name || nodeId,
+              label: newLabel,
               config: {
                 version: data.version,
                 prompt_version_id: data.prompt_version_id,
@@ -211,14 +216,32 @@ export default function PromptNodeForm({ nodeId }) {
 
             clearValidationErrorNode(nodeId);
             const prevData = currentNode?.data;
+            const graphSnapshot = {
+              nodes: [...storeState.nodes],
+              edges: [...storeState.edges],
+              selectedNode: storeState.selectedNode,
+            };
 
             // Always apply optimistic update first
             updateNodeData(nodeId, nodeUpdate);
+            if (shouldPropagateBeforeDraftCreate) {
+              useAgentPlaygroundStore
+                .getState()
+                .propagateVariableRename(
+                  nodeId,
+                  oldLabel,
+                  newLabel,
+                  outputLabel,
+                  outputLabel,
+                );
+            }
 
             const draftResult = await ensureDraft({ skipDirtyCheck: true });
 
             if (draftResult === false) {
-              if (prevData) updateNodeData(nodeId, prevData);
+              useAgentPlaygroundStore
+                .getState()
+                .restoreGraphSnapshot(graphSnapshot);
               return;
             }
 
@@ -228,7 +251,17 @@ export default function PromptNodeForm({ nodeId }) {
               try {
                 apiResponse = await partialUpdate(nodeId, nodeUpdate);
               } catch {
-                if (prevData) updateNodeData(nodeId, prevData);
+                if (shouldPropagateBeforeDraftCreate) {
+                  const currentStore = useAgentPlaygroundStore.getState();
+                  const originalNodeStillPresent = currentStore.nodes.some(
+                    (node) => node.id === nodeId,
+                  );
+                  if (originalNodeStillPresent) {
+                    currentStore.restoreGraphSnapshot(graphSnapshot);
+                  }
+                } else if (prevData) {
+                  updateNodeData(nodeId, prevData);
+                }
                 enqueueSnackbar("Failed to save prompt", { variant: "error" });
                 return;
               }
@@ -240,8 +273,7 @@ export default function PromptNodeForm({ nodeId }) {
             }
 
             // BOTH paths: propagate label rename
-            const newLabel = data.name || nodeId;
-            if (oldLabel !== newLabel) {
+            if (shouldPropagateRename && !shouldPropagateBeforeDraftCreate) {
               startTransition(() => {
                 useAgentPlaygroundStore
                   .getState()

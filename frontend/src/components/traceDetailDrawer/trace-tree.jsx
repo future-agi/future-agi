@@ -190,13 +190,15 @@ const TreeNode = ({
                     },
                   },
                   popper: {
-                    modifiers: {
-                      name: "preventOverflow",
-                      options: {
-                        boundary: "viewport",
-                        padding: 12,
+                    modifiers: [
+                      {
+                        name: "preventOverflow",
+                        options: {
+                          boundary: "viewport",
+                          padding: 12,
+                        },
                       },
-                    },
+                    ],
                   },
                 }}
               >

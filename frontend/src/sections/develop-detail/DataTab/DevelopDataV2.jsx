@@ -93,6 +93,22 @@ const RefreshStatus = [
   "ExperimentEvaluation",
   "PartialRun",
 ];
+
+const getResultColumnConfig = (result) => result?.column_config ?? [];
+const getResultIsProcessingData = (result) =>
+  Boolean(result?.is_processing_data);
+const getResultIsSyntheticDataset = (result) =>
+  Boolean(result?.synthetic_dataset);
+const getResultSyntheticPercentage = (result) =>
+  result?.synthetic_dataset_percentage ?? 100;
+const getResultIsSyntheticRegenerate = (result) =>
+  Boolean(result?.synthetic_regenerate);
+const getRowId = (row) => row?.row_id ?? row?.rowId;
+const getColumnSourceId = (column) => column?.source_id ?? column?.sourceId;
+const getColumnOriginType = (column) =>
+  column?.origin_type ?? column?.originType;
+const getColumnIsFrozen = (column) => column?.is_frozen ?? column?.isFrozen;
+const getColumnIsVisible = (column) => column?.is_visible ?? column?.isVisible;
 const SkeletonHeader = () => {
   return <Skeleton width="60%" />;
 };
@@ -142,9 +158,9 @@ const CustomRowOverlay = ({
   );
 
   const getStatus = () => {
+    const result = tableData?.data?.result;
     if (failedToGenerateData) return "failed-to-generate-synthetic";
-    if (tableData?.data?.result?.syntheticRegenerate)
-      return "regenerating-synthetic";
+    if (getResultIsSyntheticRegenerate(result)) return "regenerating-synthetic";
     return "default-synthetic";
   };
 
@@ -169,7 +185,9 @@ const CustomRowOverlay = ({
         status: getStatus(),
         onAction: () => setOpenSummaryDrawer(true),
         gridApiRef,
-        isSyntheticDataset: Boolean(tableData?.data?.result?.syntheticDataset),
+        isSyntheticDataset: getResultIsSyntheticDataset(
+          tableData?.data?.result,
+        ),
         updateProcessingSyntheticData,
       })}
     </Box>
@@ -196,7 +214,7 @@ const getDataSource = (
       const { request } = params;
       const pageNumber = Math.floor(request.startRow / DATASET_ROWS_LIMIT);
       const sort = request?.sortModel?.map(({ colId, sort }) => ({
-        columnId: colId,
+        column_id: colId,
         type: sort === "asc" ? "ascending" : "descending",
       }));
       const filters = useDevelopFilterStore.getState().filters;
@@ -218,39 +236,32 @@ const getDataSource = (
           search,
           { enabled: true, staleTime: 5 * 1000, pageSize: DATASET_ROWS_LIMIT },
         );
-      
-        // If this page is already in the cache and has not been marked
-        // changed, reuse it instantly; otherwise fetch it from the server.
         const cachedState = queryClient.getQueryState(queryOptions.queryKey);
         const servedFromCache =
           cachedState?.data !== undefined && !cachedState.isInvalidated;
         const data = servedFromCache
           ? cachedState.data
           : await queryClient.fetchQuery({ ...queryOptions });
-      
-        const processingData = data?.data?.result?.isProcessingData;
+        const result = data?.data?.result;
+        const processingData = getResultIsProcessingData(result);
 
         useProcessingStore.getState().setIsProcessingData(processingData);
 
-        const rows = processingData
-          ? DUMMY_ROWS
-          : data?.data?.result?.table ?? [];
+        const rows = processingData ? DUMMY_ROWS : result?.table ?? [];
 
         const totalRows = processingData
           ? DUMMY_ROWS.length
-          : data?.data?.result?.metadata?.total_rows ?? 0;
+          : result?.metadata?.total_rows ?? 0;
 
-        tempOrigin = data?.data?.result?.syntheticDataset
+        tempOrigin = getResultIsSyntheticDataset(result)
           ? DATASET_TYPES["SYNTHETIC_DATASET"]
           : null;
-        const columnConfig = data?.data?.result?.columnConfig;
+        const columnConfig = getResultColumnConfig(result);
 
-        if (data?.data?.result?.syntheticDataset) {
-          params.api.syntheticDatasetPercentage =
-            data?.data?.result?.syntheticDatasetPercentage;
-          updateProcessingSyntheticData(
-            data?.data?.result?.syntheticDatasetPercentage !== 100,
-          );
+        if (getResultIsSyntheticDataset(result)) {
+          const syntheticPercentage = getResultSyntheticPercentage(result);
+          params.api.syntheticDatasetPercentage = syntheticPercentage;
+          updateProcessingSyntheticData(syntheticPercentage !== 100);
         }
         updateRefreshing(
           columnConfig?.some((v) => RefreshStatus.includes(v?.status)) ||
@@ -262,8 +273,8 @@ const getDataSource = (
         });
 
         if (
-          data?.data?.result?.syntheticDataset &&
-          data?.data?.result?.syntheticDatasetPercentage !== 100
+          getResultIsSyntheticDataset(result) &&
+          getResultSyntheticPercentage(result) !== 100
         ) {
           if (overlayTimeoutRef.current) {
             clearTimeout(overlayTimeoutRef.current);
@@ -274,7 +285,7 @@ const getDataSource = (
             params.api.showLoadingOverlay();
           }, 100);
         } else {
-          if (data?.data?.result?.syntheticDataset) {
+          if (getResultIsSyntheticDataset(result)) {
             updateProcessingSyntheticData(false);
           }
           // Infinite-scroll: don't expose total upfront
@@ -438,15 +449,16 @@ const getAverageColumnConfig = (columns, tableRows) => {
   const firstRow = tableRows?.[0];
 
   for (const eachCol of columns) {
+    const sourceId = getColumnSourceId(eachCol);
+    const originType = getColumnOriginType(eachCol);
     if (
-      eachCol?.sourceId &&
-      (eachCol?.originType === "evaluation" ||
-        eachCol?.originType === "evaluation_reason")
+      sourceId &&
+      (originType === "evaluation" || originType === "evaluation_reason")
     ) {
-      if (!grouping[eachCol?.sourceId]) {
-        grouping[eachCol?.sourceId] = [eachCol];
+      if (!grouping[sourceId]) {
+        grouping[sourceId] = [eachCol];
       } else {
-        grouping[eachCol?.sourceId].push(eachCol);
+        grouping[sourceId].push(eachCol);
       }
     } else {
       grouping[eachCol?.id] = [eachCol];
@@ -692,7 +704,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
     queryFn: () =>
       axios.get(endpoints.develop.getDatasetDetail(dataset), {
         params: {
-          columnConfigOnly: true,
+          column_config_only: true,
         },
       }),
     select: (d) => ({
@@ -722,7 +734,9 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
 
   const currentDataset = datasetList?.find((v) => v.datasetId === dataset);
 
-  const isSyntheticDataset = Boolean(tableData?.data?.result?.syntheticDataset);
+  const isSyntheticDataset = getResultIsSyntheticDataset(
+    tableData?.data?.result,
+  );
 
   const statusBar = useMemo(() => {
     return isSyntheticDataset && !processingComplete
@@ -742,10 +756,10 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
     if (averageMetaData?.isProcessingData) {
       return averageMetaData?.columnConfig ?? [];
     }
-    const tc = tableData?.data?.result?.columnConfig;
+    const tc = getResultColumnConfig(tableData?.data?.result);
     return tc?.length ? tc : averageMetaData?.columnConfig ?? [];
   }, [
-    tableData?.data?.result?.columnConfig,
+    tableData?.data?.result?.column_config,
     averageMetaData?.columnConfig,
     averageMetaData?.isProcessingData,
   ]);
@@ -773,15 +787,16 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
     }
     const grouping = {};
     for (const eachCol of columnConfig) {
+      const sourceId = getColumnSourceId(eachCol);
+      const originType = getColumnOriginType(eachCol);
       if (
-        eachCol?.sourceId &&
-        (eachCol?.originType === "evaluation" ||
-          eachCol?.originType === "evaluation_reason")
+        sourceId &&
+        (originType === "evaluation" || originType === "evaluation_reason")
       ) {
-        if (!grouping[eachCol?.sourceId]) {
-          grouping[eachCol?.sourceId] = [eachCol];
+        if (!grouping[sourceId]) {
+          grouping[sourceId] = [eachCol];
         } else {
-          grouping[eachCol?.sourceId].push(eachCol);
+          grouping[sourceId].push(eachCol);
         }
       } else {
         grouping[eachCol?.id] = [eachCol];
@@ -827,10 +842,10 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
         // not by the ag-grid column id — the column id would otherwise flip
         // between the evaluation / evaluation_reason child column ids once
         // the grouping is applied.
-        const groupKey = eachCol?.sourceId || eachCol.id;
+        const groupKey = getColumnSourceId(eachCol) || eachCol.id;
         if (showSummary.includes(groupKey)) {
           eachCol = enhanceCol(
-            cols.find((v) => v?.originType === "evaluation"),
+            cols.find((v) => getColumnOriginType(v) === "evaluation"),
             averageMetaData?.columnConfig,
           );
           children = cols.map((v) =>
@@ -884,6 +899,10 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
   }, [tableData]);
 
   const refreshRowsManual = useCallback(async () => {
+    // The 5s polling interval can fire after the grid has been unmounted
+    // (navigation / tab switch), leaving gridApiRef.current null. Bail out
+    // instead of dereferencing .api -> 'Cannot read properties of null'.
+    if (!gridApiRef.current?.api) return;
     const cacheBlockState = gridApiRef?.current?.api?.getCacheBlockState();
 
     // Get only loaded/active blocks
@@ -914,7 +933,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
     const sort = columnState.reduce((acc, { colId, sort }) => {
       if (sort) {
         acc.push({
-          columnId: colId,
+          column_id: colId,
           type: sort === "asc" ? "ascending" : "descending",
         });
       }
@@ -970,21 +989,21 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
             queryKey: queryOptions.queryKey,
           });
           const data = await queryOptions.queryFn();
-          const rows = data?.data?.result?.isProcessingData
-            ? DUMMY_ROWS
-            : data?.data?.result?.table;
+          const result = data?.data?.result;
+          const processingData = getResultIsProcessingData(result);
+          const rows = processingData ? DUMMY_ROWS : result?.table;
 
-          const columnConfig = data?.data?.result?.isProcessingData
+          const columnConfig = processingData
             ? getDefaultColDefs()
-            : data?.data?.result?.columnConfig;
+            : getResultColumnConfig(result);
 
-          if (data?.data?.result?.syntheticDataset) {
+          if (getResultIsSyntheticDataset(result)) {
             const initialState = isProcessingSyntheticData.current;
             isProcessingSyntheticData.current =
-              data?.data?.result?.syntheticDatasetPercentage !== 100;
+              getResultSyntheticPercentage(result) !== 100;
 
             gridApiRef.current.api.syntheticDatasetPercentage =
-              data?.data?.result?.syntheticDatasetPercentage;
+              getResultSyntheticPercentage(result);
             // Need to one complete refresh coz there are no total rows set need to be set
             if (initialState !== isProcessingSyntheticData.current) {
               gridApiRef.current.api.refreshServerSide();
@@ -1012,7 +1031,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
 
           // if we are getting processing percentage for synthetic data we don't to put data in the grid hence returning early
           if (
-            data?.data?.result?.syntheticDataset &&
+            getResultIsSyntheticDataset(result) &&
             isProcessingSyntheticData.current === true
           ) {
             return;
@@ -1071,7 +1090,9 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
       queryClient.setQueryData(
         getDatasetQueryKey(dataset, 0, [], [], ""),
         (oldData) => {
-          const existingColumnOrder = oldData?.data?.result?.columnConfig;
+          const existingColumnOrder = getResultColumnConfig(
+            oldData?.data?.result,
+          );
           const colDefMap = existingColumnOrder.reduce((acc, col) => {
             acc[col.id] = col;
             return acc;
@@ -1081,18 +1102,18 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
               params.type === "columnPinned" &&
               params.column?.colId === state.colId
                 ? params?.pinned
-                : colDefMap[state.colId]?.isFrozen;
+                : getColumnIsFrozen(colDefMap[state.colId]);
 
             const visible =
               params.type === "columnVisible" &&
               params.column?.colId === state.colId
                 ? params.visible
-                : colDefMap[state.colId]?.isVisible;
+                : getColumnIsVisible(colDefMap[state.colId]);
 
             return {
               ...colDefMap[state.colId],
-              isFrozen: pinned,
-              isVisible: visible,
+              is_frozen: pinned,
+              is_visible: visible,
             };
           });
 
@@ -1100,7 +1121,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
             ...oldData,
             data: {
               ...oldData.data,
-              result: { ...oldData.data.result, columnConfig: newState },
+              result: { ...oldData.data.result, column_config: newState },
             },
           };
         },
@@ -1257,7 +1278,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                   stopEditingWhenCellsLoseFocus
                   onCellDoubleClicked={doubleClickCellEdit}
                   getRowId={({ data }) => {
-                    return data.rowId;
+                    return getRowId(data);
                   }}
                   onCellClicked={(params) => {
                     if (!_viewOptions.showDrawer) {
@@ -1307,6 +1328,8 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                           index: params.rowIndex,
                           rowData: params.data,
                           valueInfos:
+                            params?.data[params?.colDef?.col?.id]
+                              ?.value_infos ??
                             params?.data[params?.colDef?.col?.id]?.valueInfos,
                         };
                         useDatapointDrawerStore

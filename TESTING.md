@@ -30,9 +30,15 @@ yarn test:changed        # Only tests related to changed files
 yarn test:coverage       # Full run with coverage report
 yarn test:unit           # Unit tests only
 yarn test:integration    # Integration tests only
+yarn test:api-journeys   # Browserless API journeys against a running backend
 ```
 
 Coverage thresholds (global): **70%** for branches, functions, lines, and statements.
+
+API journeys require `API_BASE` plus either `FUTURE_AGI_ACCESS_TOKEN` or
+`FUTURE_AGI_EMAIL`/`FUTURE_AGI_PASSWORD`. Mutating annotation coverage is opt-in
+with `API_JOURNEY_MUTATIONS=1`. The full guide lives in
+`../internal-docs/api-ui-e2e-coverage/API_JOURNEY_GUIDE.md`.
 
 ### Backend (Django + pytest, Docker-based)
 

@@ -1,5 +1,3 @@
-import json
-
 import structlog
 
 from tracer.utils.filters import FilterEngine
@@ -7,8 +5,21 @@ from tracer.utils.filters import FilterEngine
 logger = structlog.get_logger(__name__)
 
 
-def _try_session_navigation_ch(request, project_id, current_session_id):
-    """Compute session navigation via ClickHouse.
+def _get_navigation_query_data(request, query_data=None):
+    if query_data is not None:
+        return query_data
+
+    from tracer.serializers.trace_session import TraceSessionRetrieveQuerySerializer
+
+    serializer = TraceSessionRetrieveQuerySerializer(data=request.query_params)
+    serializer.is_valid(raise_exception=True)
+    return serializer.validated_data
+
+
+def _try_session_navigation_ch(
+    request, project_id, current_session_id, query_data=None
+):
+    """Attempt to compute session navigation using ClickHouse.
 
     Returns ``(next_session_id, previous_session_id)`` on success, or
     ``None`` if ClickHouse is disabled or the query failed.
@@ -18,24 +29,11 @@ def _try_session_navigation_ch(request, project_id, current_session_id):
     )
     from tracer.services.clickhouse.query_service import (
         AnalyticsQueryService,
-        QueryType,
     )
 
     try:
         service = AnalyticsQueryService()
-        if not service.should_use_clickhouse(QueryType.SESSION_ANALYTICS):
-            return None
-
-        query_data = {
-            "filters": request.query_params.get("filters", "[]"),
-            "sort_params": request.query_params.get("sort_params", "[]")
-            or request.query_params.get("sortParams", "[]"),
-        }
-        if query_data["filters"]:
-            query_data["filters"] = json.loads(query_data["filters"])
-        if query_data["sort_params"]:
-            query_data["sort_params"] = json.loads(query_data["sort_params"])
-
+        query_data = _get_navigation_query_data(request, query_data)
         filters = query_data.get("filters", [])
         sort_params = query_data.get("sort_params", [])
 
@@ -44,9 +42,7 @@ def _try_session_navigation_ch(request, project_id, current_session_id):
         # Get session navigation data
         nav_query, nav_params = builder.build_session_navigation_query()
 
-        user_id = request.query_params.get("user_id") or request.query_params.get(
-            "userId"
-        )
+        user_id = query_data.get("user_id")
         if user_id:
             # Add user filter to the navigation query. Anchor must match the
             # exact line emitted by ``build_session_navigation_query``; keep
@@ -60,7 +56,7 @@ def _try_session_navigation_ch(request, project_id, current_session_id):
         nav_result = service.execute_ch_query(nav_query, nav_params)
 
         if not nav_result.data:
-            return None, None
+            return None
 
         session_ids = [str(row["trace_session_id"]) for row in nav_result.data]
 
@@ -148,8 +144,14 @@ def _try_session_navigation_ch(request, project_id, current_session_id):
         return None
 
 
-def get_session_navigation(request, project_id, current_session_id):
-    """Return ``(next_session_id, previous_session_id)`` for the detail UI.
+def get_session_navigation(request, project_id, current_session_id, query_data=None):
+    """
+    Get previous and next session IDs based on the same ordering as list_sessions.
+
+    Args:
+        request: The request object
+        project_id: The project ID
+        current_session_id: The current session ID
 
     Returns ``(None, None)`` when ClickHouse is unavailable; callers
     render the page without prev/next arrows in that case.

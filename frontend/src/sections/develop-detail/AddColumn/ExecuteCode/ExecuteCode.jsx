@@ -71,18 +71,6 @@ def main(**kwargs):
     }
   }, [initialData, reset, editId]);
 
-  const { mutate: addColumn, isPending: isSubmitting } = useMutation({
-    mutationFn: (data) =>
-      axios.post(endpoints.develop.addColumns.executeCode(dataset), data),
-    onSuccess: () => {
-      enqueueSnackbar("Custom code column created successfully", {
-        variant: "success",
-      });
-      refreshGrid(null, true);
-      onClose();
-    },
-  });
-
   const {
     data: previewData,
     isSuccess,
@@ -101,7 +89,7 @@ def main(**kwargs):
     },
   });
 
-  const { mutate: updateColumn } = useMutation({
+  const { mutate: updateColumn, isPending: isUpdatingColumn } = useMutation({
     mutationFn: (data) =>
       axios.post(
         endpoints.develop.addColumns.updateDynamicColumn(editId),
@@ -134,9 +122,13 @@ def main(**kwargs):
     }
     if (onFormSubmit) {
       onFormSubmit({ ...formValues, type: "extract_code" });
-    } else {
-      addColumn(transformFormToApi(formValues));
+      return;
     }
+
+    enqueueSnackbar(
+      "Custom code column creation is unavailable. Existing custom code columns can still be edited.",
+      { variant: "warning" },
+    );
   };
 
   const handlePreview = handleSubmit((formValues) => {
@@ -245,7 +237,7 @@ def main(**kwargs):
             fullWidth
             size="small"
             type="submit"
-            loading={isSubmitting}
+            loading={isUpdatingColumn}
           >
             {editId
               ? "Update Column"

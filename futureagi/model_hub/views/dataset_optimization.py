@@ -6,7 +6,9 @@ Following the same patterns as simulate.views.agent_prompt_optimiser.
 
 import structlog
 from django.db import transaction
-from django.db.models import Avg, Count
+from django.http import Http404
+from django.db.models import Avg, Count, Q
+from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -16,7 +18,9 @@ from rest_framework.viewsets import ModelViewSet
 from model_hub.models.dataset_optimization_trial import DatasetOptimizationTrial
 from model_hub.models.dataset_optimization_trial_item import (
     DatasetOptimizationItemEvaluation,
+    DatasetOptimizationTrialItem,
 )
+from model_hub.models.dataset_optimization_step import DatasetOptimizationStep
 from model_hub.models.optimize_dataset import OptimizeDataset
 from model_hub.serializers.dataset_optimization import (
     DatasetOptimizationCreateSerializer,
@@ -44,6 +48,25 @@ from tfc.utils.errors import format_validation_error
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+
+
+def _request_workspace_filter(request, field_name="column__dataset__workspace"):
+    workspace = getattr(request, "workspace", None)
+    if workspace is None:
+        return Q()
+    if getattr(workspace, "is_default", False):
+        organization = getattr(workspace, "organization", None)
+        query = Q(**{field_name: workspace})
+        if organization is not None:
+            query |= Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization": organization,
+                }
+            )
+        query |= Q(**{f"{field_name}__isnull": True})
+        return query
+    return Q(**{field_name: workspace})
 
 
 class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
@@ -80,9 +103,15 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
         # Filter by organization via column -> dataset relationship
         # Note: We don't call super().get_queryset() because BaseModelViewSetMixin
         # adds a deleted=False filter, but OptimizeDataset doesn't have that field
-        queryset = self.queryset.filter(
-            column__dataset__organization=user_organization
-        ).order_by("-created_at")
+        queryset = (
+            self.queryset.filter(
+                column__dataset__organization=user_organization,
+                column__dataset__deleted=False,
+                column__deleted=False,
+            )
+            .filter(_request_workspace_filter(self.request))
+            .order_by("-created_at")
+        )
 
         # Optional dataset filter
         dataset_id = self.request.query_params.get("dataset_id")
@@ -106,6 +135,28 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             queryset = queryset.annotate(trial_count=Count("trials"))
 
         return queryset
+
+    def perform_destroy(self, instance):
+        deleted_at = timezone.now()
+        DatasetOptimizationItemEvaluation.objects.filter(
+            trial_item__trial__optimization_run=instance,
+            deleted=False,
+        ).update(deleted=True, deleted_at=deleted_at)
+        DatasetOptimizationTrialItem.objects.filter(
+            trial__optimization_run=instance,
+            deleted=False,
+        ).update(deleted=True, deleted_at=deleted_at)
+        DatasetOptimizationTrial.objects.filter(
+            optimization_run=instance,
+            deleted=False,
+        ).update(deleted=True, deleted_at=deleted_at)
+        DatasetOptimizationStep.objects.filter(
+            optimization_run=instance,
+            deleted=False,
+        ).update(deleted=True, deleted_at=deleted_at)
+        instance.deleted = True
+        instance.deleted_at = deleted_at
+        instance.save(update_fields=["deleted", "deleted_at"])
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -204,7 +255,7 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             # First try to get model name from optimizer_model FK
             if instance.optimizer_model:
-                model_name = instance.optimizer_model.model_name
+                model_name = instance.optimizer_model.user_model_id
             # Fallback to model_name stored in optimizer_config
             elif instance.optimizer_config and instance.optimizer_config.get(
                 "model_name"
@@ -273,6 +324,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "optimizer_model_id": model_name,
                     "user_eval_templates": user_eval_templates,
                 }
+            )
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
             )
         except Exception as e:
             logger.exception(f"Error retrieving DatasetOptimization: {str(e)}")
@@ -362,6 +418,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             instance = self.get_object()
             steps = get_dataset_optimization_steps(str(instance.id))
             return self._gm.success_response(steps)
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except Exception as e:
             logger.exception(f"Error retrieving dataset optimization steps: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
@@ -375,6 +436,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             instance = self.get_object()
             graph_data = get_optimization_graph_data(instance)
             return self._gm.success_response(graph_data)
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except Exception as e:
             logger.exception(
                 f"Error retrieving dataset optimization graph data: {str(e)}"
@@ -394,7 +460,8 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             with transaction.atomic():
                 instance = self.get_object()
                 instance = OptimizeDataset.objects.select_for_update().get(
-                    pk=instance.pk
+                    pk=instance.pk,
+                    deleted=False,
                 )
 
                 cancellable_statuses = [
@@ -423,6 +490,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except Exception as e:
             logger.exception(f"Error stopping dataset optimization: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
@@ -473,6 +545,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "base_prompt": baseline_trial.prompt if baseline_trial else None,
                 }
             )
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except DatasetOptimizationTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
         except Exception as e:
@@ -502,6 +579,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                     **header,
                     "trial": trial_serializer.data,
                 }
+            )
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
             )
         except DatasetOptimizationTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
@@ -615,6 +697,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "total_items": len(table_data),
                 }
             )
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except DatasetOptimizationTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
         except Exception as e:
@@ -713,6 +800,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "column_config": column_config,
                     "total_items": len(table_data),
                 }
+            )
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
             )
         except DatasetOptimizationTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))

@@ -1,5 +1,12 @@
 import React, { useMemo } from "react";
-import { Box, Skeleton, Stack, Typography, alpha, useTheme } from "@mui/material";
+import {
+  Box,
+  Skeleton,
+  Stack,
+  Typography,
+  alpha,
+  useTheme,
+} from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";

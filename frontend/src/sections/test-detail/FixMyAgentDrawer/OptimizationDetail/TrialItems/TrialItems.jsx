@@ -76,7 +76,6 @@ const TrialItems = ({ optimizationId, trialId }) => {
       filter: false,
       resizable: true,
       suppressMenu: true,
-      suppressMultiSort: true,
       //   cellStyle: {
       //     lineHeight: 1.5,
       //     padding: "8px",

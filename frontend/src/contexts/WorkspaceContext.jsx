@@ -147,15 +147,11 @@ export function WorkspaceProvider({ children }) {
       // Only update role/name/wsLevel from user-info when the workspace IDs match.
       // If they differ (e.g., another tab switched), the user-info response reflects
       // the OTHER workspace's data — we must not overwrite this tab's stored values.
-      const userDefaultWsId =
-        user.default_workspace_id ?? user.defaultWorkspaceId;
-      const userDefaultWsRole =
-        user.default_workspace_role ?? user.defaultWorkspaceRole;
-      const userWsLevel = user.ws_level ?? user.wsLevel;
-      const userDefaultWsName =
-        user.default_workspace_name ?? user.defaultWorkspaceName;
-      const userDefaultWsDisplayName =
-        user.default_workspace_display_name ?? user.defaultWorkspaceDisplayName;
+      const userDefaultWsId = user.default_workspace_id;
+      const userDefaultWsRole = user.default_workspace_role;
+      const userWsLevel = user.ws_level;
+      const userDefaultWsName = user.default_workspace_name;
+      const userDefaultWsDisplayName = user.default_workspace_display_name;
       if (stored.id === userDefaultWsId) {
         updated.role = userDefaultWsRole || stored.role;
         updated.wsLevel = userWsLevel != null ? userWsLevel : stored.wsLevel;
@@ -169,18 +165,14 @@ export function WorkspaceProvider({ children }) {
     }
 
     // No sessionStorage → seed from user-info response (new tab / fresh open)
-    const seedDefaultWsId =
-      user.default_workspace_id ?? user.defaultWorkspaceId;
+    const seedDefaultWsId = user.default_workspace_id;
     if (seedDefaultWsId) {
-      const seedWsLevel = user.ws_level ?? user.wsLevel;
+      const seedWsLevel = user.ws_level;
       const initial = {
         id: seedDefaultWsId,
-        name: user.default_workspace_name ?? user.defaultWorkspaceName ?? null,
-        displayName:
-          user.default_workspace_display_name ??
-          user.defaultWorkspaceDisplayName ??
-          null,
-        role: user.default_workspace_role ?? user.defaultWorkspaceRole ?? null,
+        name: user.default_workspace_name ?? null,
+        displayName: user.default_workspace_display_name ?? null,
+        role: user.default_workspace_role ?? null,
         wsLevel: seedWsLevel != null ? seedWsLevel : null,
       };
       setWorkspace(initial);

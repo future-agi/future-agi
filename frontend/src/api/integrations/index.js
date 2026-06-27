@@ -22,9 +22,7 @@ export const integrationKeys = {
 // the error feed's Linear "Connect/Create issue" button) cache their own
 // derived state. Listing them here so connection mutations can fan out
 // invalidations without taking an import cycle on those packages.
-const CROSS_FEATURE_INTEGRATION_KEYS = [
-  ["errorFeed", "linearTeams"],
-];
+const CROSS_FEATURE_INTEGRATION_KEYS = [["errorFeed", "linearTeams"]];
 
 const invalidateCrossFeatureIntegrationCaches = (queryClient) => {
   for (const queryKey of CROSS_FEATURE_INTEGRATION_KEYS) {
@@ -171,7 +169,7 @@ export const useSyncNow = () => {
 
   return useMutation({
     mutationFn: (id) =>
-      axios.post(endpoints.integrations.connections.syncNow(id)),
+      axios.post(endpoints.integrations.connections.syncNow(id), {}),
     onSuccess: (_data, id) => {
       enqueueSnackbar("Sync triggered", { variant: "success" });
       queryClient.invalidateQueries({
@@ -192,7 +190,7 @@ export const usePauseConnection = () => {
 
   return useMutation({
     mutationFn: (id) =>
-      axios.post(endpoints.integrations.connections.pause(id)),
+      axios.post(endpoints.integrations.connections.pause(id), {}),
     onSuccess: (_data, id) => {
       enqueueSnackbar("Integration paused", { variant: "info" });
       queryClient.invalidateQueries({
@@ -213,7 +211,7 @@ export const useResumeConnection = () => {
 
   return useMutation({
     mutationFn: (id) =>
-      axios.post(endpoints.integrations.connections.resume(id)),
+      axios.post(endpoints.integrations.connections.resume(id), {}),
     onSuccess: (_data, id) => {
       enqueueSnackbar("Integration resumed", { variant: "success" });
       queryClient.invalidateQueries({

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildTraceFilterProperties,
+  filterPropertiesForPicker,
   getTraceFilterFields,
   normalizeFilterRowOperator,
 } from "../TraceFilterPanel";
@@ -45,7 +46,7 @@ describe("getTraceFilterFields (TH-4571)", () => {
 });
 
 describe("normalizeFilterRowOperator", () => {
-  it("maps API multi-value operators back to panel operators before apply", () => {
+  it("maps list operators to canonical equality panel operators before apply", () => {
     expect(
       normalizeFilterRowOperator({
         field: "status",
@@ -53,7 +54,7 @@ describe("normalizeFilterRowOperator", () => {
         operator: "in",
         value: ["OK"],
       }).operator,
-    ).toBe("is");
+    ).toBe("equals");
 
     expect(
       normalizeFilterRowOperator({
@@ -62,10 +63,10 @@ describe("normalizeFilterRowOperator", () => {
         operator: "not_in",
         value: ["ERROR"],
       }).operator,
-    ).toBe("is_not");
+    ).toBe("not_equals");
   });
 
-  it("keeps canonical number ops and maps backend date ops to valid panel operators", () => {
+  it("keeps canonical number and date ops", () => {
     expect(
       normalizeFilterRowOperator({
         field: "latency_ms",
@@ -82,10 +83,10 @@ describe("normalizeFilterRowOperator", () => {
         operator: "less_than",
         value: "2026-05-09T00:00",
       }).operator,
-    ).toBe("before");
+    ).toBe("less_than");
   });
 
-  it("falls back to the first valid operator for restricted id fields", () => {
+  it("falls back to exact multi-select operators for restricted id fields", () => {
     expect(
       normalizeFilterRowOperator({
         field: "trace_id",
@@ -94,9 +95,18 @@ describe("normalizeFilterRowOperator", () => {
         value: "abc",
       }).operator,
     ).toBe("in");
+
+    expect(
+      normalizeFilterRowOperator({
+        field: "span_id",
+        fieldType: "string",
+        operator: "contains",
+        value: "abc",
+      }).operator,
+    ).toBe("in");
   });
 
-  it("maps legacy annotation equality operators to the restricted annotator operator", () => {
+  it("keeps canonical annotation equality operators for the restricted annotator operator", () => {
     expect(
       normalizeFilterRowOperator({
         field: "annotator",
@@ -104,11 +114,92 @@ describe("normalizeFilterRowOperator", () => {
         operator: "equals",
         value: ["user-a", "user-b"],
       }).operator,
-    ).toBe("is");
+    ).toBe("equals");
+  });
+
+  it("preserves no-value operators for eval and annotation filter rows", () => {
+    for (const fieldType of ["categorical", "thumbs", "annotator", "date"]) {
+      expect(
+        normalizeFilterRowOperator({
+          field: `${fieldType}-field`,
+          fieldType,
+          operator: "is_null",
+          value: "",
+        }).operator,
+      ).toBe("is_null");
+    }
   });
 });
 
 describe("annotator annotation filter (TH-4710)", () => {
+  it("does not show ended_reason for unrelated property search text (TH-5149)", () => {
+    const properties = [
+      {
+        id: "ended_reason",
+        name: "Ended Reason",
+        category: "attribute",
+        type: "string",
+      },
+      {
+        id: "status",
+        name: "Status",
+        category: "system",
+        type: "string",
+      },
+    ];
+
+    expect(
+      filterPropertiesForPicker({
+        properties,
+        search: "xqz-not-a-match",
+      }),
+    ).toEqual([]);
+    expect(
+      filterPropertiesForPicker({
+        properties,
+        search: "ended reason",
+      }),
+    ).toEqual([properties[0]]);
+  });
+
+  it("only exposes span-owned metrics when building span filter properties", () => {
+    const metrics = [
+      {
+        name: "latency",
+        display_name: "Latency",
+        category: "system_metric",
+        source: "traces",
+        type: "number",
+      },
+      {
+        name: "latency_ms",
+        display_name: "Duration",
+        category: "system_metric",
+        source: "spans",
+        sources: ["spans"],
+        type: "number",
+      },
+    ];
+
+    expect(
+      buildTraceFilterProperties(metrics, { sourceScope: "traces" }).some(
+        (property) => property.id === "latency_ms",
+      ),
+    ).toBe(false);
+
+    expect(
+      buildTraceFilterProperties(metrics, { sourceScope: "spans" }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "latency_ms",
+          name: "Duration",
+          type: "number",
+        }),
+      ]),
+    );
+  });
+
   it("adds a global Annotator property inside annotation filters", () => {
     const properties = buildTraceFilterProperties([
       {

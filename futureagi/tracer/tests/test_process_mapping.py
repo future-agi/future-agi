@@ -93,11 +93,11 @@ def test_missing_attribute_raises_typed_skip(
     _span_with_attrs, missing_eval_template_id
 ):
     span = _span_with_attrs({"unrelated": "value"})
-    # Subclasses ValueError so legacy `except ValueError` handlers still catch
-    # it, while carrying the structured skip reason the eval logger persists.
-    with pytest.raises(ValueError, match="Required attribute 'input'") as exc:
+    with pytest.raises(ValueError, match="Required attribute 'nonexistent_field'"):
         _process_mapping(
-            {"prompt": "input"}, span, eval_template_id=missing_eval_template_id
+            {"prompt": "nonexistent_field"},
+            span,
+            eval_template_id=missing_eval_template_id,
         )
     assert isinstance(exc.value, EvalSkippedMissingAttribute)
     assert exc.value.skipped_reason == "missing_required_attribute: input"
@@ -242,7 +242,9 @@ def test_voice_fallback_resolves_messages_subfield(
     voice_span, missing_eval_template_id
 ):
     out = _process_mapping(
-        {"v": "messages.1.message"}, voice_span, eval_template_id=missing_eval_template_id
+        {"v": "messages.1.message"},
+        voice_span,
+        eval_template_id=missing_eval_template_id,
     )
     assert out == {"v": "Hello"}
 

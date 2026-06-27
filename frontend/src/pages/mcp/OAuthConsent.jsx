@@ -18,6 +18,17 @@ import { endpoints } from "src/utils/axios";
 
 // ---------------------------------------------------------------------------
 
+const apiErrorMessage = (payload, fallback) => {
+  const nestedError = payload?.error;
+  return (
+    payload?.detail ||
+    payload?.message ||
+    (typeof nestedError === "string" ? nestedError : nestedError?.message) ||
+    payload?.result ||
+    fallback
+  );
+};
+
 export default function OAuthConsent() {
   const theme = useTheme();
   const [searchParams] = useSearchParams();
@@ -57,14 +68,17 @@ export default function OAuthConsent() {
             setSelectedGroups(initial);
           } else {
             setError(
-              response.data?.error || "Failed to load authorization data.",
+              apiErrorMessage(
+                response.data,
+                "Failed to load authorization data.",
+              ),
             );
           }
         } catch (err) {
-          const message =
-            err?.response?.data?.error ||
-            err?.message ||
-            "Failed to load authorization data.";
+          const message = apiErrorMessage(
+            err?.response?.data,
+            err?.message || "Failed to load authorization data.",
+          );
           setError(message);
         } finally {
           setLoading(false);
@@ -111,14 +125,17 @@ export default function OAuthConsent() {
           setSelectedGroups(initial);
         } else {
           setError(
-            response.data?.error || "Failed to load authorization data.",
+            apiErrorMessage(
+              response.data,
+              "Failed to load authorization data.",
+            ),
           );
         }
       } catch (err) {
-        const message =
-          err?.response?.data?.error ||
-          err?.message ||
-          "Failed to load authorization data.";
+        const message = apiErrorMessage(
+          err?.response?.data,
+          err?.message || "Failed to load authorization data.",
+        );
         setError(message);
       } finally {
         setLoading(false);
@@ -171,7 +188,10 @@ export default function OAuthConsent() {
       }
     } catch (err) {
       setError(
-        err?.response?.data?.error || err?.message || "Authorization failed.",
+        apiErrorMessage(
+          err?.response?.data,
+          err?.message || "Authorization failed.",
+        ),
       );
       setSubmitting(false);
     }

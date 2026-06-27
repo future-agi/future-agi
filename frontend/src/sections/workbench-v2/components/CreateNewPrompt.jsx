@@ -94,7 +94,7 @@ export default function CreateNewPrompt({ open, onClose, isLoading }) {
         [PropertyName.click]: true,
       });
       navigate(
-        `/dashboard/workbench/create/${data?.data?.result?.rootTemplate}`,
+        `/dashboard/workbench/create/${data?.data?.result?.root_template}`,
         {
           state: { fromOption: selectedOption },
         },

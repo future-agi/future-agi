@@ -16,6 +16,7 @@ from model_hub.views.custom_model import (
     DeleteCustomAIModelView,
     EditCustomModel,
     UpdateBaselineDatasetCustomAIModelView,
+    UpdateMetricCustomAIModelView,
 )
 from model_hub.views.dataset_optimization import DatasetOptimizationViewSet
 from model_hub.views.datasets.add_rows.existing_dataset import AddRowsFromExistingView
@@ -48,6 +49,7 @@ from model_hub.views.derived_variables import (
 from model_hub.views.develop_annotations import (
     AnnotationsLabelsViewSet,
     AnnotationSummaryView,
+    AnnotationTaskViewSet,
     AnnotationsViewSet,
     UserViewSet,
 )
@@ -119,7 +121,8 @@ from model_hub.views.experiments import (
     ExperimentRerunV2View,
     ExperimentRerunView,
     ExperimentsTableDetailView,
-    ExperimentsTableV2View,
+    ExperimentsTableV2CreateView,
+    ExperimentsTableV2DetailView,
     ExperimentsTableView,
     ExperimentStatsV2View,
     ExperimentStatsView,
@@ -158,7 +161,10 @@ from model_hub.views.performance import (
     PerformanceDetailsView,
     PerformanceView,
 )
-from model_hub.views.performance_report import PerformanceReportApiView
+from model_hub.views.performance_report import (
+    PerformanceReportApiView,
+    PerformanceReportDetailApiView,
+)
 from model_hub.views.prompt_base_template import PromptBaseTemplateViewSet
 from model_hub.views.prompt_folder import PromptFolderViewSet
 from model_hub.views.prompt_labels import PromptLabelViewSet
@@ -253,6 +259,7 @@ router.register(
     basename="prompt-history-executions",
 )
 router.register(r"feedback", FeedbackViewSet, basename="feedback")  # noqa: F405
+router.register(r"annotation-tasks", AnnotationTaskViewSet, basename="annotation-tasks")
 router.register(r"annotations", AnnotationsViewSet, basename="annotations")
 router.register(
     r"annotations-labels", AnnotationsLabelsViewSet, basename="annotations-labels"
@@ -305,6 +312,11 @@ urlpatterns = [
         UpdateBaselineDatasetCustomAIModelView.as_view(),
         name="update-custom-model-baseline",
     ),
+    path(
+        "custom_models/update-metric/<uuid:id>/",
+        UpdateMetricCustomAIModelView.as_view(),
+        name="update-custom-model-metric",
+    ),
     path("custom_models/edit/", EditCustomModel.as_view(), name="edit-cutom-model"),
     path(
         "custom_models/delete/",
@@ -334,7 +346,7 @@ urlpatterns = [
     ),
     path(
         "performance/report/<uuid:model_id>/<uuid:report_id>/",
-        PerformanceReportApiView.as_view(),
+        PerformanceReportDetailApiView.as_view(),
         name="performance-report-detail",
     ),
     path(
@@ -1241,12 +1253,12 @@ urlpatterns = [
     # V2 Experiment APIs
     path(
         "experiments/v2/",
-        ExperimentsTableV2View.as_view(),
+        ExperimentsTableV2CreateView.as_view(),
         name="experiments-v2-create",
     ),
     path(
         "experiments/v2/<uuid:experiment_id>/",
-        ExperimentsTableV2View.as_view(),
+        ExperimentsTableV2DetailView.as_view(),
         name="experiments-v2-detail",
     ),
     path(

@@ -12,8 +12,13 @@ import PropTypes from "prop-types";
 import React from "react";
 import Iconify from "src/components/iconify";
 
-const ConfirmDeleteInvitations = ({ open, onClose, onConfirm, 
-  isLoading, count }) => {
+const ConfirmDeleteInvitations = ({
+  open,
+  onClose,
+  onConfirm,
+  isLoading,
+  count,
+}) => {
   return (
     <Dialog
       open={open}
@@ -63,7 +68,6 @@ const ConfirmDeleteInvitations = ({ open, onClose, onConfirm,
     </Dialog>
   );
 };
-
 
 ConfirmDeleteInvitations.propTypes = {
   open: PropTypes.bool,

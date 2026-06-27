@@ -23,3 +23,22 @@ export const hasQueueRole = (member, role) =>
 
 export const isQueueAnnotatorRole = (annotator) =>
   hasQueueRole(annotator, QUEUE_ROLES.ANNOTATOR);
+
+export const queueViewerMembership = (queue) => {
+  const viewerRoles =
+    Array.isArray(queue?.viewer_roles) && queue.viewer_roles.length > 0
+      ? queue.viewer_roles
+      : queue?.viewer_role
+        ? [queue.viewer_role]
+        : [];
+
+  if (viewerRoles.length === 0) return null;
+
+  return {
+    role: queue?.viewer_role || viewerRoles[0],
+    roles: viewerRoles,
+  };
+};
+
+export const canViewerAddItemsToQueue = (queue) =>
+  hasQueueRole(queueViewerMembership(queue), QUEUE_ROLES.MANAGER);

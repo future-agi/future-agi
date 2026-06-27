@@ -1,8 +1,11 @@
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 from django.db import IntegrityError
+from django.http import Http404
+from django.utils.decorators import method_decorator
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -15,6 +18,16 @@ from integrations.models import (
     ConnectionStatus,
     IntegrationConnection,
 )
+from integrations.serializers.contracts import (
+    INTEGRATION_ERROR_RESPONSES,
+    INTEGRATION_SYNC_ERROR_RESPONSES,
+    IntegrationConnectionDetailResponseSerializer,
+    IntegrationConnectionListQuerySerializer,
+    IntegrationConnectionListResponseSerializer,
+    IntegrationEmptyRequestSerializer,
+    IntegrationMessageResponseSerializer,
+    IntegrationValidationResponseSerializer,
+)
 from integrations.serializers.integration_connection import (
     IntegrationConnectionCreateSerializer,
     IntegrationConnectionDetailSerializer,
@@ -25,12 +38,16 @@ from integrations.serializers.integration_connection import (
 from integrations.services.base import get_integration_service
 from integrations.services.credentials import CredentialManager
 from integrations.services.registry import ensure_services_loaded
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
-from tfc.utils.general_methods import GeneralMethods
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.utils.otel import get_or_create_project
 
 logger = structlog.get_logger(__name__)
+
+
+integration_errors = swagger_auto_schema(responses=INTEGRATION_ERROR_RESPONSES)
 
 
 def _build_credentials(data: dict) -> dict:
@@ -49,12 +66,28 @@ def _build_credentials(data: dict) -> dict:
     return {}
 
 
+def _success_response(result, status_code=status.HTTP_200_OK):
+    return Response({"status": True, "result": result}, status=status_code)
+
+
+def _error_response(message, status_code=status.HTTP_400_BAD_REQUEST):
+    return Response(
+        build_error_envelope(message, status_code=status_code),
+        status=status_code,
+    )
+
+
+def _validation_error_response(errors):
+    return _error_response(errors, status.HTTP_400_BAD_REQUEST)
+
+
+@method_decorator(name="retrieve", decorator=integration_errors)
+@method_decorator(name="destroy", decorator=integration_errors)
 class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     """API endpoints for managing integration connections."""
 
     serializer_class = IntegrationConnectionListSerializer
     permission_classes = [IsAuthenticated]
-    _gm = GeneralMethods()
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -65,14 +98,22 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
 
     # ─── LIST ────────────────────────────────────────────────────
 
+    @validated_request(
+        query_serializer=IntegrationConnectionListQuerySerializer,
+        responses={
+            200: IntegrationConnectionListResponseSerializer,
+            **INTEGRATION_ERROR_RESPONSES,
+        },
+        validation_error_response=_validation_error_response,
+        reject_unknown_fields=True,
+    )
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.get_queryset()
             total_count = queryset.count()
 
-            page_number = max(0, int(request.query_params.get("page_number", 0)))
-            page_size = int(request.query_params.get("page_size", 20))
-            page_size = max(1, min(page_size, 100))
+            page_number = request.validated_query_data.get("page_number", 0)
+            page_size = request.validated_query_data.get("page_size", 20)
 
             start = page_number * page_size
             end = start + page_size
@@ -87,7 +128,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 paginated_queryset, many=True
             )
 
-            return self._gm.success_response(
+            return _success_response(
                 {
                     "metadata": {
                         "total_count": total_count,
@@ -101,8 +142,9 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             )
         except Exception as e:
             logger.exception("Error listing integration connections", error=str(e))
-            return self._gm.internal_server_error_response(
-                "Failed to list integration connections."
+            return _error_response(
+                "Failed to list integration connections.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     # ─── RETRIEVE ────────────────────────────────────────────────
@@ -121,27 +163,37 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 public_key_display=data.get("public_key_display"),
                 project_name=data.get("project_name"),
             )
-            return self._gm.success_response(data)
+            return _success_response(data)
+        except Http404:
+            return _error_response(
+                "Integration connection not found.", status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
             logger.exception("Error retrieving integration connection", error=str(e))
-            return self._gm.internal_server_error_response(
-                "Failed to retrieve connection."
+            return _error_response(
+                "Failed to retrieve connection.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     # ─── CREATE ──────────────────────────────────────────────────
 
+    @validated_request(
+        request_serializer=IntegrationConnectionCreateSerializer,
+        responses={
+            201: IntegrationConnectionDetailResponseSerializer,
+            **INTEGRATION_ERROR_RESPONSES,
+        },
+        validation_error_response=_validation_error_response,
+        reject_unknown_fields=True,
+    )
     def create(self, request, *args, **kwargs):
         try:
-            serializer = IntegrationConnectionCreateSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            data = serializer.validated_data
+            data = request.validated_data
 
             # Ensure workspace is available
             workspace = getattr(request, "workspace", None)
             if not workspace:
-                return self._gm.bad_request(
+                return _error_response(
                     "Workspace context is required to create an integration."
                 )
 
@@ -160,7 +212,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             )
 
             if not validation.get("valid"):
-                return self._gm.bad_request(
+                return _error_response(
                     validation.get("error", "Invalid credentials.")
                 )
 
@@ -185,7 +237,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                         or request.user.organization,
                     )
                 except Project.DoesNotExist:
-                    return self._gm.bad_request("Selected project not found.")
+                    return _error_response("Selected project not found.")
             else:
                 project_name = data.get("new_project_name") or ext_project_name
                 _org = get_request_organization(request)
@@ -230,7 +282,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                         workspace=workspace,
                         platform=data["platform"],
                     )
-                    return self._gm.bad_request(
+                    return _error_response(
                         f"{data['platform'].title()} is already connected for this workspace. "
                         "Edit the existing connection in Settings > Integrations to rotate keys."
                     )
@@ -271,34 +323,55 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     )
 
             result = IntegrationConnectionDetailSerializer(connection).data
-            return self._gm.success_response(result, status=status.HTTP_201_CREATED)
+            return _success_response(result, status.HTTP_201_CREATED)
 
         except IntegrityError:
             platform = (request.data or {}).get("platform")
             if platform in ACTION_ONLY_PLATFORMS:
-                return self._gm.bad_request(
+                return _error_response(
                     f"{platform.title()} is already connected for this workspace. "
                     "Edit the existing connection in Settings > Integrations to rotate keys."
                 )
-            return self._gm.bad_request(
+            return _error_response(
                 "A connection with these settings already exists in this workspace."
             )
         except Exception as e:
             logger.exception("Error creating integration connection", error=str(e))
-            return self._gm.internal_server_error_response(
-                "Failed to create connection."
+            return _error_response(
+                "Failed to create connection.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     # ─── UPDATE (PATCH) ─────────────────────────────────────────
 
+    @validated_request(
+        request_serializer=IntegrationConnectionUpdateSerializer,
+        responses={
+            200: IntegrationConnectionDetailResponseSerializer,
+            **INTEGRATION_ERROR_RESPONSES,
+        },
+        validation_error_response=_validation_error_response,
+        reject_unknown_fields=True,
+    )
+    def update(self, request, *args, **kwargs):
+        return self._update_connection(request)
+
+    @validated_request(
+        request_serializer=IntegrationConnectionUpdateSerializer,
+        responses={
+            200: IntegrationConnectionDetailResponseSerializer,
+            **INTEGRATION_ERROR_RESPONSES,
+        },
+        validation_error_response=_validation_error_response,
+        reject_unknown_fields=True,
+    )
     def partial_update(self, request, *args, **kwargs):
+        return self._update_connection(request)
+
+    def _update_connection(self, request):
         try:
             instance = self.get_object()
-            serializer = IntegrationConnectionUpdateSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            data = serializer.validated_data
+            data = request.validated_data
 
             # Update display_name if provided
             if "display_name" in data:
@@ -328,7 +401,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 )
 
                 if not validation.get("valid"):
-                    return self._gm.bad_request(
+                    return _error_response(
                         validation.get("error", "Invalid credentials.")
                     )
 
@@ -349,12 +422,17 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             instance.save()
 
             result = IntegrationConnectionDetailSerializer(instance).data
-            return self._gm.success_response(result)
+            return _success_response(result)
 
+        except Http404:
+            return _error_response(
+                "Integration connection not found.", status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
             logger.exception("Error updating integration connection", error=str(e))
-            return self._gm.internal_server_error_response(
-                "Failed to update connection."
+            return _error_response(
+                "Failed to update connection.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     # ─── DELETE (soft) ───────────────────────────────────────────
@@ -363,25 +441,34 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
         try:
             instance = self.get_object()
             instance.delete()  # BaseModel soft delete
-            return self._gm.success_response({"deleted": True})
+            return _success_response({"deleted": True})
+        except Http404:
+            return _error_response(
+                "Integration connection not found.", status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
             logger.exception("Error deleting integration connection", error=str(e))
-            return self._gm.internal_server_error_response(
-                "Failed to delete connection."
+            return _error_response(
+                "Failed to delete connection.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     # ─── CUSTOM ACTIONS ──────────────────────────────────────────
 
+    @validated_request(
+        request_serializer=ValidateCredentialsSerializer,
+        responses={
+            200: IntegrationValidationResponseSerializer,
+            **INTEGRATION_ERROR_RESPONSES,
+        },
+        validation_error_response=_validation_error_response,
+        reject_unknown_fields=True,
+    )
     @action(detail=False, methods=["post"], url_path="validate")
     def validate_credentials(self, request):
         """Validate platform credentials without creating a connection."""
         try:
-            serializer = ValidateCredentialsSerializer(data=request.data)
-            if not serializer.is_valid():
-                logger.warning("Validate serializer errors", errors=serializer.errors)
-                return self._gm.bad_request(serializer.errors)
-
-            data = serializer.validated_data
+            data = request.validated_data
             logger.info(
                 "Validate credentials request",
                 platform=data["platform"],
@@ -407,16 +494,25 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             )
 
             if result.get("valid"):
-                return self._gm.success_response(result)
+                return _success_response(result)
             else:
-                return self._gm.bad_request(result.get("error", "Invalid credentials."))
+                return _error_response(result.get("error", "Invalid credentials."))
 
         except Exception as e:
             logger.exception("Error validating credentials", error=str(e))
-            return self._gm.bad_request(
+            return _error_response(
                 "Validation failed. Please check your credentials and try again."
             )
 
+    @validated_request(
+        request_serializer=IntegrationEmptyRequestSerializer,
+        responses={
+            200: IntegrationMessageResponseSerializer,
+            **INTEGRATION_SYNC_ERROR_RESPONSES,
+        },
+        validation_error_response=_validation_error_response,
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="sync_now")
     def sync_now(self, request, pk=None):
         """Trigger an immediate sync for this connection."""
@@ -427,27 +523,22 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 ConnectionStatus.SYNCING,
                 ConnectionStatus.BACKFILLING,
             ):
-                return Response(
-                    {
-                        "status": False,
-                        "result": "Connection is already syncing. Please wait for the current sync to complete.",
-                    },
-                    status=status.HTTP_409_CONFLICT,
+                return _error_response(
+                    "Connection is already syncing. Please wait for the current sync to complete.",
+                    status.HTTP_409_CONFLICT,
                 )
 
             if instance.status == ConnectionStatus.PAUSED:
-                return self._gm.bad_request(
+                return _error_response(
                     "Connection is paused. Resume it before triggering a sync."
                 )
 
             # Cooldown: prevent sync spam (min 60s between manual syncs)
             if instance.last_synced_at:
-                elapsed = (
-                    datetime.now(timezone.utc) - instance.last_synced_at
-                ).total_seconds()
+                elapsed = (datetime.now(UTC) - instance.last_synced_at).total_seconds()
                 if elapsed < 60:
                     remaining = int(60 - elapsed)
-                    return self._gm.bad_request(
+                    return _error_response(
                         f"Please wait {remaining} seconds before triggering another sync."
                     )
 
@@ -462,14 +553,29 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     connection_id=str(instance.id),
                     error=str(e),
                 )
-                return self._gm.bad_request("Failed to trigger sync. Please try again.")
+                return _error_response("Failed to trigger sync. Please try again.")
 
-            return self._gm.success_response({"message": "Sync triggered."})
+            return _success_response({"message": "Sync triggered."})
 
+        except Http404:
+            return _error_response(
+                "Integration connection not found.", status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
             logger.exception("Error triggering sync", error=str(e))
-            return self._gm.internal_server_error_response("Failed to trigger sync.")
+            return _error_response(
+                "Failed to trigger sync.", status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
+    @validated_request(
+        request_serializer=IntegrationEmptyRequestSerializer,
+        responses={
+            200: IntegrationConnectionDetailResponseSerializer,
+            **INTEGRATION_ERROR_RESPONSES,
+        },
+        validation_error_response=_validation_error_response,
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="pause")
     def pause(self, request, pk=None):
         """Pause syncing for this connection."""
@@ -477,20 +583,34 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             instance = self.get_object()
 
             if instance.status == ConnectionStatus.PAUSED:
-                return self._gm.bad_request("Connection is already paused.")
+                return _error_response("Connection is already paused.")
 
             instance.status = ConnectionStatus.PAUSED
             instance.save(update_fields=["status", "updated_at"])
 
             result = IntegrationConnectionDetailSerializer(instance).data
-            return self._gm.success_response(result)
+            return _success_response(result)
 
+        except Http404:
+            return _error_response(
+                "Integration connection not found.", status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
             logger.exception("Error pausing connection", error=str(e))
-            return self._gm.internal_server_error_response(
-                "Failed to pause connection."
+            return _error_response(
+                "Failed to pause connection.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @validated_request(
+        request_serializer=IntegrationEmptyRequestSerializer,
+        responses={
+            200: IntegrationConnectionDetailResponseSerializer,
+            **INTEGRATION_ERROR_RESPONSES,
+        },
+        validation_error_response=_validation_error_response,
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="resume")
     def resume(self, request, pk=None):
         """Resume syncing for a paused connection."""
@@ -498,11 +618,11 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             instance = self.get_object()
 
             if instance.status != ConnectionStatus.PAUSED:
-                return self._gm.bad_request("Only paused connections can be resumed.")
+                return _error_response("Only paused connections can be resumed.")
 
             # Check if the project still exists
             if not instance.project:
-                return self._gm.bad_request(
+                return _error_response(
                     "The linked FutureAGI project has been deleted. "
                     "Please relink to a project before resuming."
                 )
@@ -512,10 +632,15 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             instance.save(update_fields=["status", "status_message", "updated_at"])
 
             result = IntegrationConnectionDetailSerializer(instance).data
-            return self._gm.success_response(result)
+            return _success_response(result)
 
+        except Http404:
+            return _error_response(
+                "Integration connection not found.", status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
             logger.exception("Error resuming connection", error=str(e))
-            return self._gm.internal_server_error_response(
-                "Failed to resume connection."
+            return _error_response(
+                "Failed to resume connection.",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

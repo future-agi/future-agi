@@ -4,8 +4,6 @@ import ChartsGenerator from "../../ChartsView/ChartsGenerator";
 import CustomChartHeader from "./CustomChartHeader";
 import useUsersStore from "../Store/usersStore";
 import axios, { endpoints } from "src/utils/axios";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { useQuery } from "@tanstack/react-query";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import {
@@ -44,9 +42,7 @@ const UserMetricsGraphSection = () => {
         .post(
           endpoints.project.getUserGraphData(),
           {
-            filters: canonicalizeApiFilterColumnIds(
-              objectCamelToSnake(filters),
-            ),
+            filters,
             interval: dateInterval,
           },
           {

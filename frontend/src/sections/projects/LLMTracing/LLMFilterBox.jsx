@@ -19,8 +19,8 @@ const LLMFilterBox = ({
 
   const propertyIdCount = useMemo(() => {
     return filters.reduce((acc, curr) => {
-      if (curr.columnId) {
-        acc[curr.columnId] = (acc[curr.columnId] || 0) + 1;
+      if (curr.column_id) {
+        acc[curr.column_id] = (acc[curr.column_id] || 0) + 1;
       }
       return acc;
     }, {});
@@ -62,7 +62,7 @@ const LLMFilterBox = ({
         if (
           def.maxUsage &&
           propertyIdCount[def.propertyId] >= def.maxUsage &&
-          filter.columnId !== def.propertyId
+          filter.column_id !== def.propertyId
         ) {
           return false;
         }

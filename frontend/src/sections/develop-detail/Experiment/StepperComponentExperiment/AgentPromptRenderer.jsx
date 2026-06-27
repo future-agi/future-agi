@@ -191,13 +191,7 @@ const AgentPromptRenderer = ({
     setValue(`${fieldPrefix}.isDraft`, Boolean(selected?.isDraft), {
       shouldValidate: true,
     });
-  }, [
-    type,
-    watchedPromptVersion,
-    versionsOptions,
-    setValue,
-    fieldPrefix,
-  ]);
+  }, [type, watchedPromptVersion, versionsOptions, setValue, fieldPrefix]);
 
   // Set initial agent version
   useEffect(() => {
@@ -239,13 +233,7 @@ const AgentPromptRenderer = ({
       selected.status === VERSION_STATUS.DRAFT,
       { shouldValidate: true },
     );
-  }, [
-    type,
-    watchedAgentVersion,
-    agentVersionsOptions,
-    setValue,
-    fieldPrefix,
-  ]);
+  }, [type, watchedAgentVersion, agentVersionsOptions, setValue, fieldPrefix]);
 
   const watchModels = useWatch({
     control,
