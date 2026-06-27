@@ -97,7 +97,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
     };
     if (module === "observe") {
       payload["sampling_rate"] =
-        typeof data.samplingRate === "number" ? data.samplingRate / 100 : 1;
+        typeof data.samplingRate === "number" ? data.samplingRate / 100 : 0;
     }
     updateProject(payload);
   };
