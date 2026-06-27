@@ -1120,20 +1120,28 @@ export const RunPromptForm = React.forwardRef(
     };
 
     const handleApplyImportedPrompt = async (data) => {
-      if (!data?.prompt?.name && !data?.promptVersion?.templateVersion) return;
+      // The imported version is the raw (snake_case) API shape — usePromptVersions
+      // returns it unnormalized, and the contract field is `prompt_config_snapshot`
+      // / `template_version` (not camelCase).
+      const snapshot = data?.promptVersion?.prompt_config_snapshot;
+      const templateVersion = data?.promptVersion?.template_version;
+      if (!data?.prompt?.name && !templateVersion) return;
       clearErrors("config");
       setImportedPrompt(data);
 
       setValue("config.prompt", data?.prompt?.name, {
         shouldDirty: true,
       });
-      setValue("config.promptVersion", data?.promptVersion?.templateVersion);
+      setValue("config.promptVersion", templateVersion);
 
       let modelObject = defaultValues.config.run_prompt_config;
       const normalizedSnapshotConfig = normalizeConfigurationForLoad(
-        data?.promptVersion?.promptConfigSnapshot?.configuration,
+        snapshot?.configuration,
       );
-      const modelType = normalizedSnapshotConfig?.modelDetail?.type;
+      // model_detail carries the full model object (model_name, providers,
+      // type); normalizeConfigurationForLoad doesn't remap it, so read it raw.
+      const modelDetail = snapshot?.configuration?.model_detail;
+      const modelType = modelDetail?.type;
       const importedVoiceId = normalizedSnapshotConfig?.voiceId;
 
       let internalModelType = "llm";
@@ -1146,11 +1154,8 @@ export const RunPromptForm = React.forwardRef(
       }
       setValue("config.modelType", internalModelType);
 
-      if (typeof normalizedSnapshotConfig?.model === "string") {
-        modelObject = {
-          ...normalizedSnapshotConfig?.modelDetail,
-          modelName: normalizedSnapshotConfig?.model,
-        };
+      if (modelDetail?.model_name) {
+        modelObject = { ...modelDetail };
       }
       setValue("config.model", modelObject?.model_name);
       const configWithVoice = importedVoiceId
@@ -1160,19 +1165,18 @@ export const RunPromptForm = React.forwardRef(
 
       setValue(
         "config.messages",
-        data?.promptVersion?.promptConfigSnapshot?.messages?.map((msg) => ({
+        (snapshot?.messages || []).map((msg) => ({
           id: getRandomId(),
           role: msg?.role,
           content: msg.content,
         })),
       );
 
-      const importedConfig =
-        data?.promptVersion?.promptConfigSnapshot?.configuration;
+      const importedConfig = snapshot?.configuration;
 
       setValue(
         "config.responseFormat",
-        importedConfig?.responseFormat ?? "text",
+        importedConfig?.response_format ?? "text",
       );
       setValue(
         "config.tools",
@@ -1206,9 +1210,11 @@ export const RunPromptForm = React.forwardRef(
                 const id = item.id ?? _.camelCase(item.label);
                 let defaultValue = item.value ?? item.default ?? 0;
 
-                // Use imported value if available for this param
-                if (importedConfig?.[id] !== undefined) {
-                  defaultValue = importedConfig[id];
+                // Snapshot config keys are snake_case (backend serializer) and
+                // match the param's snake label — read the imported value off it.
+                const configKey = item.id ?? _.snakeCase(item.label);
+                if (importedConfig?.[configKey] !== undefined) {
+                  defaultValue = importedConfig[configKey];
                 }
 
                 return {
