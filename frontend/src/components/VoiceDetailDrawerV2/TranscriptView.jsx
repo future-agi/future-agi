@@ -18,8 +18,10 @@ import {
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import CellMarkdown from "src/sections/common/CellMarkdown";
+import { ShowComponent } from "src/components/show";
 import useVoiceAudioStore from "./voiceAudioStore";
 import { computeTotals, enrichTurns, formatClock } from "./transcriptUtils";
+import { DEFAULT_ROLE_LABELS } from "./constants";
 
 // Highlight query matches in a string — returns React nodes.
 const highlightMatches = (text, query) => {
@@ -85,17 +87,6 @@ const useSpeakerColors = () => {
 // same role in this legend. Any other role still shows up but trails.
 const TALK_ROLE_ORDER = ["user", "assistant", "system", "tool"];
 
-// Display labels for the TALK RATIO legend. Internal role keys (`user`,
-// `assistant`, …) don't always read naturally — the search filter tabs
-// above display `user` as "Customer", so the legend uses the same
-// mapping for visual consistency. Override with the `roleLabels` prop.
-const DEFAULT_ROLE_LABELS = {
-  user: "Customer",
-  assistant: "Assistant",
-  system: "System",
-  tool: "Tool",
-};
-
 const TalkRatioBar = ({
   totals,
   colors,
@@ -125,8 +116,7 @@ const TalkRatioBar = ({
       {!hideLabel && (
         <Typography
           sx={{
-            fontSize: 10,
-            fontWeight: 600,
+            typography: "s3",
             color: "text.secondary",
             textTransform: "uppercase",
             letterSpacing: "0.04em",
@@ -143,32 +133,33 @@ const TalkRatioBar = ({
           ...(legendAlign === "right" ? { ml: "auto" } : {}),
         }}
       >
-        {segments.map(([role, val]) => (
-          <Stack key={role} direction="row" alignItems="center" gap={0.5}>
-            <Box
-              sx={{
-                width: 8,
-                height: 8,
-                borderRadius: "2px",
-                bgcolor: colors[role] || colors.unknown,
-              }}
-            />
-            <Typography
-              sx={{
-                fontSize: 10,
-                color: "text.secondary",
-                textTransform: "capitalize",
-              }}
-            >
-              {(() => {
-                const label = roleLabels?.[role] || role;
-                return hidePercentages
-                  ? label
-                  : `${label} ${Math.round((val / total) * 100)}%`;
-              })()}
-            </Typography>
-          </Stack>
-        ))}
+        {segments.map(([role, val]) => {
+          const label = roleLabels?.[role] || role;
+          const legendText = hidePercentages
+            ? label
+            : `${label} ${Math.round((val / total) * 100)}%`;
+          return (
+            <Stack key={role} direction="row" alignItems="center" gap={0.5}>
+              <Box
+                sx={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "2px",
+                  bgcolor: colors[role] || colors.unknown,
+                }}
+              />
+              <Typography
+                sx={{
+                  fontSize: 10,
+                  color: "text.secondary",
+                  textTransform: "capitalize",
+                }}
+              >
+                {legendText}
+              </Typography>
+            </Stack>
+          );
+        })}
       </Stack>
     </Stack>
   );
@@ -790,7 +781,7 @@ const TranscriptView = ({
           hidePercentages={hideTalkRatioPercentages}
           legendAlign={talkRatioLegendAlign}
         />
-        {!hideTimelineStrip && (
+        <ShowComponent condition={!hideTimelineStrip}>
           <SpeakerTimelineStrip
             turns={turns}
             colors={colors}
@@ -798,7 +789,7 @@ const TranscriptView = ({
             currentTime={currentTime}
             onSeek={handleSeek}
           />
-        )}
+        </ShowComponent>
       </Stack>
 
       {/* Toolbar: search + filter pills */}

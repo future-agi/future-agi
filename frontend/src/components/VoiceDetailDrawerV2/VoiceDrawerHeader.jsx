@@ -93,8 +93,6 @@ const VoiceDrawerHeader = ({
   onOpenNewTab,
   onDownload,
   onShare,
-  // Customizes the ID row label (e.g. "Call ID" for voice, "Chat ID"
-  // for chat). Defaults to "Call ID" so existing callers don't change.
   idLabel = "Call ID",
   copyTooltip = "Copy Call ID",
   copyToastMessage = "Call ID copied",
