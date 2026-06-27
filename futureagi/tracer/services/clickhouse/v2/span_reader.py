@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import clickhouse_connect
@@ -766,6 +766,60 @@ class CHSpanReader:
         for tid, st in rows:
             result[tid] = st
         return result
+
+    # ─── Scan-sweep: completed-trace candidates since a watermark ────────────
+    def ch_now(self) -> datetime:
+        """ClickHouse server clock as tz-aware UTC — the sweep bounds its window
+        off this so the watermark is a real CH timestamp (clock-skew-proof).
+        tz-aware so it compares against Django's tz-aware ``last_swept_at``."""
+        dt = self._client.query("SELECT now64(6, 'UTC')").result_rows[0][0]
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+    # created_at is unindexed, but spans is PARTITION BY toDate(start_time) /
+    # PK toStartOfHour(start_time). A trace's start_time precedes its created_at,
+    # so flooring start_time at (lower - this) prunes old partitions while still
+    # catching exports up to this late. No start_time UPPER bound: created_at is
+    # server-set and skew-proof, start_time is producer-set and may run ahead, so
+    # an upper bound would silently drop valid in-window traces.
+    _CANDIDATE_START_FLOOR = timedelta(days=7)
+
+    def root_trace_candidates(
+        self, project_id: str, lower: datetime, upper: datetime
+    ) -> list[tuple[str, datetime]]:
+        """``(trace_id, created_at)`` for distinct roots (``parent_span_id = ''``)
+        with ``lower <= created_at <= upper`` — the scan sweep's candidates.
+
+        Cursor is ``created_at`` (CH ingest time), not ``start_time``, so long-
+        running / late-exported traces can't slip behind the watermark. The
+        lower bound is INCLUSIVE: the caller parks its watermark on the oldest
+        still-unscanned created_at and must re-see that trace next tick. No
+        ``FINAL``: dedup via ``GROUP BY`` (min created_at per trace), and the
+        caller's anti-join makes a redundant dispatch a no-op.
+        """
+        if lower > upper:
+            return []
+        start_floor = lower - self._CANDIDATE_START_FLOOR
+        rows = self._client.query(
+            "SELECT toString(trace_id) AS tid, min(created_at) AS ca FROM spans "
+            "WHERE project_id = %(p)s AND parent_span_id = '' "
+            "  AND is_deleted = 0 "
+            "  AND start_time >= %(start_floor)s "
+            "  AND created_at >= %(lower)s AND created_at <= %(upper)s "
+            "GROUP BY tid",
+            parameters={
+                "p": str(project_id),
+                "lower": lower,
+                "upper": upper,
+                "start_floor": start_floor,
+            },
+        ).result_rows
+        # CH hands back created_at tz-naive even for a DateTime64(_, 'UTC')
+        # column; force UTC (as ch_now does) so the caller can compare it
+        # against the tz-aware watermark without a naive/aware TypeError.
+        return [
+            (r[0], r[1] if r[1].tzinfo else r[1].replace(tzinfo=timezone.utc))
+            for r in rows
+        ]
 
     # ─── Distinct end_users per trace (feed user-count rollup) ────────────────
     def distinct_end_users_by_trace_ids(

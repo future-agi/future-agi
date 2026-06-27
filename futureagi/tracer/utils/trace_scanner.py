@@ -36,6 +36,7 @@ from tracer.queries.trace_scanner import (
     fetch_trace_data,
     filter_already_scanned,
     get_scan_config,
+    mark_traces_failed,
     write_scan_results,
 )
 from tracer.types.scan_types import ClusteringSummary, SuccessTraceMatch
@@ -47,12 +48,21 @@ logger = structlog.get_logger(__name__)
 _SCAN_WRITE_CHUNK = 5
 
 
-def scan_and_write(trace_ids: List[str], project_id: str) -> List[ScanResult]:
+def scan_and_write(
+    trace_ids: List[str], project_id: str, mark_unresolved: bool = False
+) -> List[ScanResult]:
     """
     Full scan pipeline for a batch of traces.
 
     Returns list of ScanResults (including failed ones).
     Returns empty list if scanning is disabled or all traces filtered out.
+
+    ``mark_unresolved`` writes a terminal FAILED marker for requested traces that
+    resolve no spans. The sweep sets it — its candidates are CH-confirmed roots,
+    so an empty resolve is a real disagreement (deletion race) and the marker
+    stops that trace from pinning the watermark. The inline path leaves it off:
+    an as-yet-unreplicated trace may simply be lagging, and the sweep will pick
+    it up once it lands.
     """
     # Config
     config = get_scan_config(project_id)
@@ -74,6 +84,13 @@ def scan_and_write(trace_ids: List[str], project_id: str) -> List[ScanResult]:
 
     # Fetch
     traces_data = fetch_trace_data(trace_ids)
+
+    if mark_unresolved:
+        resolved = {td.trace_id for td in traces_data}
+        unresolved = [t for t in map(str, trace_ids) if t not in resolved]
+        if unresolved:
+            mark_traces_failed(unresolved, project_id, "scan: no span data resolved")
+
     if not traces_data:
         logger.warning("no_trace_data_found", trace_ids=trace_ids)
         return []

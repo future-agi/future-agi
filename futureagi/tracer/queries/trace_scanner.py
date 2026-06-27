@@ -5,8 +5,8 @@ Handles: config checks, span fetching, result writing.
 All return typed dataclasses — no raw dicts at the boundary.
 """
 
+import hashlib
 import json
-import random
 
 import structlog
 
@@ -47,21 +47,75 @@ def get_scan_config(project_id: str) -> ScanConfig | None:
 # ---------------------------------------------------------------------------
 
 
+def is_trace_sampled(trace_id: str, sampling_rate: float) -> bool:
+    """Stable per-trace sampling decision.
+
+    Hashes the trace_id (not Python's per-process-salted ``hash()``) so the
+    sweep and ``scan_and_write`` reach the SAME verdict for a trace without
+    persisting a marker for every skipped one — the sweep relies on this to lag
+    its watermark behind only sampled-in work. Consistent head sampling: the
+    scanned set is a fixed ~rate fraction, stable across retries.
+    """
+    if sampling_rate >= 1.0:
+        return True
+    if sampling_rate <= 0.0:
+        return False
+    digest = hashlib.md5(str(trace_id).encode()).hexdigest()[:8]
+    return int(digest, 16) / 0xFFFFFFFF < sampling_rate
+
+
 def apply_sampling(trace_ids: list[str], sampling_rate: float) -> list[str]:
-    """Apply sampling rate to filter trace IDs."""
+    """Filter trace IDs by the stable sampling decision."""
     if sampling_rate >= 1.0:
         return trace_ids
-    return [tid for tid in trace_ids if random.random() < sampling_rate]
+    return [tid for tid in trace_ids if is_trace_sampled(tid, sampling_rate)]
 
 
 def filter_already_scanned(trace_ids: list[str]) -> list[str]:
-    """Remove trace IDs that already have a scan result."""
-    already_scanned = set(
-        TraceScanResult.objects.filter(trace_id__in=trace_ids)
+    """Remove trace IDs that already have a scan result.
+
+    ``no_workspace_objects`` so the anti-join is correct in the worker (no
+    ambient workspace) and can't be silently scoped to a leaked one. Both sides
+    are normalised to ``str``: the column is a UUID, so ``values_list`` yields
+    ``uuid.UUID`` while callers pass CH/ingest string ids — comparing the two
+    raw never matches, so the anti-join would silently keep everything.
+    """
+    already_scanned = {
+        str(t)
+        for t in TraceScanResult.no_workspace_objects.filter(trace_id__in=trace_ids)
         .values_list("trace_id", flat=True)
         .iterator()
+    }
+    return [tid for tid in trace_ids if str(tid) not in already_scanned]
+
+
+def mark_traces_failed(trace_ids: list[str], project_id: str, reason: str) -> int:
+    """Write a FAILED marker per trace so the anti-join treats it as terminal.
+
+    The sweep abandons a sampled-in trace here when it stays unscanned past the
+    watermark lag bound (stuck scanner/CH, or a candidate root that resolves no
+    span data) — giving it a durable record instead of silently losing it or
+    letting it pin the cursor. Idempotent: skips ids that already have a result.
+    """
+    from tracer.models.trace_scan import TraceScanStatus
+
+    fresh = filter_already_scanned([str(t) for t in trace_ids])
+    if not fresh:
+        return 0
+    TraceScanResult.objects.bulk_create(
+        [
+            TraceScanResult(
+                trace_id=tid,
+                project_id=project_id,
+                status=TraceScanStatus.FAILED,
+                has_issues=False,
+                error_message=reason,
+            )
+            for tid in fresh
+        ],
+        ignore_conflicts=True,
     )
-    return [tid for tid in trace_ids if tid not in already_scanned]
+    return len(fresh)
 
 
 # ---------------------------------------------------------------------------
