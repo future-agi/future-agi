@@ -43,6 +43,11 @@ type Handlers struct {
 	maxBodySize    int64
 	defaultTimeout time.Duration
 
+	// trustedProxies is the number of reverse-proxy hops in front of the
+	// gateway (ip_acl.trusted_proxies). It gates how X-Forwarded-For /
+	// X-Real-IP are interpreted in extractClientIP. 0 = ignore those headers.
+	trustedProxies int
+
 	// Streaming guardrail support.
 	guardrailEngine    *guardrails.Engine
 	policyStore        *policy.Store
@@ -202,13 +207,14 @@ func (h *Handlers) resolveProviderWithOrgFallback(ctx context.Context, rc *model
 }
 
 // NewHandlers creates a Handlers instance.
-func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodySize int64, defaultTimeout time.Duration, failover *routing.Failover, modelFallbacks *routing.ModelFallbacks, conditionalRouter *routing.ConditionalRouter, healthMonitor *routing.HealthMonitor, modelTimeouts map[string]time.Duration, mirror *routing.Mirror, guardrailEngine *guardrails.Engine, policyStore *policy.Store, streamGuardrailCfg config.StreamingGuardrailConfig, mdbPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, orgProviderCache *providers.OrgProviderCache, keyStore *authpkg.KeyStore) *Handlers {
+func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodySize int64, defaultTimeout time.Duration, failover *routing.Failover, modelFallbacks *routing.ModelFallbacks, conditionalRouter *routing.ConditionalRouter, healthMonitor *routing.HealthMonitor, modelTimeouts map[string]time.Duration, mirror *routing.Mirror, guardrailEngine *guardrails.Engine, policyStore *policy.Store, streamGuardrailCfg config.StreamingGuardrailConfig, mdbPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, orgProviderCache *providers.OrgProviderCache, keyStore *authpkg.KeyStore, trustedProxies int) *Handlers {
 	h := &Handlers{
 		registry:           registry,
 		engine:             engine,
 		healthMonitor:      healthMonitor,
 		maxBodySize:        maxBodySize,
 		defaultTimeout:     defaultTimeout,
+		trustedProxies:     trustedProxies,
 		guardrailEngine:    guardrailEngine,
 		policyStore:        policyStore,
 		streamGuardrailCfg: streamGuardrailCfg,
@@ -858,7 +864,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract client IP for IP ACL and audit.
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.extractClientIP(r)
 
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
@@ -1894,24 +1900,54 @@ func isBlockedMetadataKey(key string) bool {
 	return false
 }
 
-// extractClientIP extracts the client IP address from the request.
-// It checks X-Forwarded-For, X-Real-IP, and falls back to RemoteAddr.
-func extractClientIP(r *http.Request) string {
-	// Check X-Forwarded-For (may contain multiple IPs: client, proxy1, proxy2).
+// extractClientIP returns the client IP used for IP ACL / per-key AllowedIPs
+// and audit logging.
+//
+// X-Forwarded-For and X-Real-IP are set by clients and intermediaries and are
+// trivially spoofable, so they are only honored when the gateway is configured
+// to sit behind a known number of reverse proxies (ip_acl.trusted_proxies).
+// With trustedProxies == 0 the headers are ignored entirely and RemoteAddr is
+// authoritative — this prevents a spoofed header from bypassing AllowedIPs/ACLs.
+func (h *Handlers) extractClientIP(r *http.Request) string {
+	remoteIP := remoteAddrIP(r.RemoteAddr)
+	if h.trustedProxies <= 0 {
+		return remoteIP
+	}
+
+	// X-Forwarded-For is "client, proxy1, proxy2, ..." with each hop appending
+	// on the right. The right-most entries are the closest (trusted) proxies,
+	// so skip trustedProxies hops from the right; the next entry is the real
+	// client. Anything an untrusted client injected sits further left and is
+	// never selected.
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
-		if ip := strings.TrimSpace(parts[0]); ip != "" {
-			return ip
+		ips := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if ip := strings.TrimSpace(p); ip != "" {
+				ips = append(ips, ip)
+			}
+		}
+		if idx := len(ips) - 1 - h.trustedProxies; idx >= 0 && idx < len(ips) {
+			return ips[idx]
+		}
+		// Fewer entries than trusted hops (misconfiguration or direct hit):
+		// fall back to the left-most forwarded value.
+		if len(ips) > 0 {
+			return ips[0]
 		}
 	}
 
-	// Check X-Real-IP.
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+	// X-Real-IP is set by a single trusted proxy.
+	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
 		return xri
 	}
 
-	// Fall back to RemoteAddr (strip port).
-	addr := r.RemoteAddr
+	return remoteIP
+}
+
+// remoteAddrIP strips the port from a net/http RemoteAddr ("ip:port" or
+// "[ipv6]:port"), returning the bare IP.
+func remoteAddrIP(addr string) string {
 	if idx := strings.LastIndex(addr, ":"); idx > 0 {
 		// Handle IPv6 in brackets: [::1]:8080
 		if addr[0] == '[' {

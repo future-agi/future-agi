@@ -54,7 +54,7 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	rc.UserID = req.User
 
 	// Extract client IP.
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.extractClientIP(r)
 
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)

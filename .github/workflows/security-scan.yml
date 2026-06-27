@@ -1,0 +1,79 @@
+name: Security Scan
+
+# Cross-cutting security scanning the repo previously lacked entirely:
+#   - gitleaks   : secret scanning (uses the committed .gitleaks.toml) — BLOCKING
+#   - trivy      : filesystem vuln + misconfig scan — report-mode (SARIF)
+#   - pip-audit  : Python dependency CVEs — report-mode
+#   - govulncheck: Go dependency CVEs — report-mode
+#
+# The dependency scanners start in report-mode so an existing-but-unpatched CVE
+# does not block all PRs on day one. Flip `continue-on-error` to false (or add a
+# severity threshold) once the baselines are triaged.
+
+on:
+  pull_request:
+    branches: [main, dev, develop]
+  push:
+    branches: [main, dev, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  trivy:
+    name: Filesystem scan (trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+
+  pip-audit:
+    name: Python deps (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: pip-audit
+        continue-on-error: true
+        run: |
+          pip install pip-audit
+          pip-audit -r futureagi/requirements.txt --desc || true
+
+  govulncheck:
+    name: Go deps (govulncheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agentcc-gateway/go.mod
+          cache-dependency-path: agentcc-gateway/go.sum
+      - name: govulncheck
+        continue-on-error: true
+        working-directory: agentcc-gateway
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
