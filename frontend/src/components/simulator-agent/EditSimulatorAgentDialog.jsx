@@ -47,16 +47,16 @@ const EditSimulatorAgentDialog = ({ open, onClose, agent, onEditSuccess }) => {
       setFormData({
         name: agent.name || "",
         prompt: agent.prompt || "",
-        voiceProvider: agent.voiceProvider || "",
-        voiceName: agent.voiceName || "",
-        interruptSensitivity: agent.interruptSensitivity || 0.5,
-        conversationSpeed: agent.conversationSpeed || 1.0,
-        finishedSpeakingSensitivity: agent.finishedSpeakingSensitivity || 0.5,
+        voiceProvider: agent.voice_provider || "",
+        voiceName: agent.voice_name || "",
+        interruptSensitivity: agent.interrupt_sensitivity || 0.5,
+        conversationSpeed: agent.conversation_speed || 1.0,
+        finishedSpeakingSensitivity: agent.finished_speaking_sensitivity || 0.5,
         model: agent.model || "",
-        llmTemperature: agent.llmTemperature || 0.7,
-        maxCallDurationInMinutes: agent.maxCallDurationInMinutes || 30,
-        initialMessageDelay: agent.initialMessageDelay || 0,
-        initialMessage: agent.initialMessage || "",
+        llmTemperature: agent.llm_temperature || 0.7,
+        maxCallDurationInMinutes: agent.max_call_duration_in_minutes || 30,
+        initialMessageDelay: agent.initial_message_delay || 0,
+        initialMessage: agent.initial_message || "",
       });
     }
   }, [agent]);
@@ -69,16 +69,16 @@ const EditSimulatorAgentDialog = ({ open, onClose, agent, onEditSuccess }) => {
         setFormData({
           name: agent.name || "",
           prompt: agent.prompt || "",
-          voiceProvider: agent.voiceProvider || "",
-          voiceName: agent.voiceName || "",
-          interruptSensitivity: agent.interruptSensitivity || 0.5,
-          conversationSpeed: agent.conversationSpeed || 1.0,
-          finishedSpeakingSensitivity: agent.finishedSpeakingSensitivity || 0.5,
+          voiceProvider: agent.voice_provider || "",
+          voiceName: agent.voice_name || "",
+          interruptSensitivity: agent.interrupt_sensitivity || 0.5,
+          conversationSpeed: agent.conversation_speed || 1.0,
+          finishedSpeakingSensitivity: agent.finished_speaking_sensitivity || 0.5,
           model: agent.model || "",
-          llmTemperature: agent.llmTemperature || 0.7,
-          maxCallDurationInMinutes: agent.maxCallDurationInMinutes || 30,
-          initialMessageDelay: agent.initialMessageDelay || 0,
-          initialMessage: agent.initialMessage || "",
+          llmTemperature: agent.llm_temperature || 0.7,
+          maxCallDurationInMinutes: agent.max_call_duration_in_minutes || 30,
+          initialMessageDelay: agent.initial_message_delay || 0,
+          initialMessage: agent.initial_message || "",
         });
       }
       onClose();

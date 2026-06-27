@@ -19,6 +19,7 @@ from tracer.services.clickhouse.client import (
     get_clickhouse_client,
     is_clickhouse_enabled,
 )
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 
 logger = structlog.get_logger(__name__)
 
@@ -186,24 +187,137 @@ class AnalyticsQueryService:
         # has fewer than 5 keys, returning whatever we have is correct.
         return [{"key": row["key"], "type": row["type"]} for row in result.data]
 
-    def get_eval_config_ids_with_data_ch(self, project_id: str) -> list[str]:
-        """Get distinct eval config IDs that have data for a project in ClickHouse."""
-        query = """
-            SELECT DISTINCT toString(custom_eval_config_id) AS config_id
-            FROM tracer_eval_logger FINAL
-            WHERE _peerdb_is_deleted = 0
-              AND (deleted = 0 OR deleted IS NULL)
-              AND trace_id IN (
-                  SELECT DISTINCT trace_id
-                  FROM spans
-                  WHERE project_id = %(project_id)s
-                    AND is_deleted = 0
-              )
+    @staticmethod
+    def _eval_config_ids_query(scope_sql: str) -> str:
+        """Build the shared "distinct eval-config IDs that have data" query.
+
+        One body for every eval-config discovery read: the table and its
+        not-deleted predicate come from ``eval_logger_source()`` (so a ``_v2``
+        stack uses ``is_deleted = 0``), and callers supply only the
+        trace-scoping clause.
         """
+        eval_table, eval_nd = eval_logger_source()
+        return (
+            "SELECT DISTINCT toString(custom_eval_config_id) AS config_id "
+            f"FROM {eval_table} FINAL "
+            f"WHERE {eval_nd} "
+            f"AND {scope_sql}"
+        )
+
+    def get_eval_config_ids_with_data_ch(
+        self, project_id: str, timeout_ms: int = 5000
+    ) -> list[str]:
+        """Distinct eval config IDs that have data for a project (scoped via spans)."""
+        query = self._eval_config_ids_query(
+            "trace_id IN ("
+            "SELECT DISTINCT trace_id FROM spans "
+            "WHERE project_id = %(project_id)s AND is_deleted = 0"
+            ")"
+        )
         result = self.execute_ch_query(
-            query, {"project_id": project_id}, timeout_ms=5000
+            query, {"project_id": project_id}, timeout_ms=timeout_ms
         )
         return [row["config_id"] for row in result.data]
+
+    def get_eval_config_ids_for_traces_ch(
+        self, trace_ids: list[str], timeout_ms: int = 3000
+    ) -> list[str]:
+        """Distinct eval config IDs recorded for an explicit set of trace IDs."""
+        if not trace_ids:
+            return []
+        query = self._eval_config_ids_query("trace_id IN %(trace_ids)s")
+        result = self.execute_ch_query(
+            query, {"trace_ids": trace_ids}, timeout_ms=timeout_ms
+        )
+        return [row["config_id"] for row in result.data]
+
+    def get_children_eval_metrics_ch(
+        self, span_ids: list[str], timeout_ms: int = 5000
+    ) -> list[dict]:
+        """Per-span eval rows for a set of child observation spans."""
+        if not span_ids:
+            return []
+        eval_table, eval_nd = eval_logger_source()
+        query = f"""
+            SELECT
+                toString(observation_span_id) AS span_id,
+                toString(custom_eval_config_id) AS config_id,
+                output_float,
+                output_bool,
+                output_str_list,
+                eval_explanation,
+                error,
+                error_message,
+                output_str
+            FROM {eval_table} FINAL
+            WHERE observation_span_id IN %(span_ids)s
+              AND {eval_nd}
+        """
+        result = self.execute_ch_query(
+            query, {"span_ids": span_ids}, timeout_ms=timeout_ms
+        )
+        return result.data
+
+    def get_eval_detail_ch(
+        self, span_id: str, config_id: str, timeout_ms: int = 5000
+    ) -> dict | None:
+        """Single span/trace-target eval detail row, or ``None`` if absent."""
+        eval_table, eval_nd = eval_logger_source()
+        query = f"""
+            SELECT
+                output_float,
+                output_bool,
+                output_str_list,
+                output_str,
+                eval_explanation,
+                error,
+                error_message,
+                output_metadata
+            FROM {eval_table} FINAL
+            WHERE observation_span_id = %(span_id)s
+              AND custom_eval_config_id = %(config_id)s
+              AND target_type IN ('span', 'trace')
+              AND {eval_nd}
+            LIMIT 1
+        """
+        result = self.execute_ch_query(
+            query,
+            {"span_id": str(span_id), "config_id": str(config_id)},
+            timeout_ms=timeout_ms,
+        )
+        return result.data[0] if result.data else None
+
+    def get_trace_eval_scores_ch(
+        self, trace_ids: list[str], config_ids: list[str], timeout_ms: int = 5000
+    ) -> list[dict]:
+        """Per-(trace, config) aggregated eval scores for a session's traces."""
+        if not (trace_ids and config_ids):
+            return []
+        eval_table, eval_nd = eval_logger_source()
+        query = f"""
+            SELECT
+                toString(trace_id) AS trace_id,
+                toString(custom_eval_config_id) AS config_id,
+                round(avg(output_float) * 100, 2) AS float_score,
+                round(avg(CASE WHEN output_bool = 1 THEN 100.0
+                               WHEN output_bool = 0 THEN 0.0
+                               ELSE NULL END), 2) AS bool_score,
+                count(output_float) AS float_count,
+                count(output_bool) AS bool_count
+            FROM {eval_table} FINAL
+            WHERE trace_id IN %(trace_ids)s
+              AND custom_eval_config_id IN %(config_ids)s
+              AND {eval_nd}
+              AND ifNull(output_str, '') != 'ERROR'
+              AND (error = 0 OR error IS NULL)
+            GROUP BY trace_id, custom_eval_config_id
+        """
+        result = self.execute_ch_query(
+            query,
+            {"trace_ids": trace_ids, "config_ids": config_ids},
+            timeout_ms=timeout_ms,
+        )
+        return result.data
 
     def get_backend_status(self) -> dict[str, Any]:
         """Get the ClickHouse connectivity status."""

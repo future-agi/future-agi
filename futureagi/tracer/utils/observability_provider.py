@@ -319,7 +319,13 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
             normalized_data = normalize_fn(log)
             provider_log_id = normalized_data.get("id")
         except Exception:
+
             logger.exception(f"Failed to normalize log for {provider.provider}")
+
+            logger.exception(
+                f"Failed to normalize log for {provider.provider}"
+            )
+
 
         if not provider_log_id:
             logger.error(f"No provider log id found for {provider.provider}")

@@ -699,6 +699,13 @@ class ClickHouseFilterBuilder:
         "user_id_type": "user_id_type",
     }
 
+    # End-user dimension source for the user/user_id filter subquery. v1 reads
+    # the legacy peerdb CDC `tracer_enduser` (id + _peerdb_is_deleted/deleted);
+    # ClickHouseFilterBuilderV2 overrides these for the v2 `end_users` RMT.
+    _ENDUSER_DIM_TABLE = "tracer_enduser"
+    _ENDUSER_DIM_ID_COL = "id"
+    _ENDUSER_DIM_NOT_DELETED = "_peerdb_is_deleted = 0 AND deleted = 0"
+
     def _build_enduser_string_subquery(
         self,
         enduser_column: str,
@@ -706,7 +713,7 @@ class ClickHouseFilterBuilder:
         filter_value: Any,
     ) -> str | None:
         """Resolve an end-user string field (user_id / user_id_type) on
-        tracer_enduser, then map to end_user_id on spans."""
+        end_users, then map to end_user_id on spans."""
 
         if filter_op in NO_VALUE_OPS:
             comparison_op = "=" if filter_op == "is_null" else "!="
@@ -745,9 +752,9 @@ class ClickHouseFilterBuilder:
             f"trace_id {outer_op} ("
             f"SELECT trace_id FROM {self.table} "
             f"WHERE end_user_id IN ("
-            f"SELECT id FROM tracer_enduser FINAL "
+            f"SELECT {self._ENDUSER_DIM_ID_COL} FROM {self._ENDUSER_DIM_TABLE} FINAL "
             f"WHERE {inner} "
-            f"AND _peerdb_is_deleted = 0 AND deleted = 0"
+            f"AND {self._ENDUSER_DIM_NOT_DELETED}"
             f") AND _peerdb_is_deleted = 0)"
         )
 
@@ -815,10 +822,18 @@ class ClickHouseFilterBuilder:
             if is_root_only
             else ""
         )
+        # Mirror the org-scoped vs single-project param binding used
+        # elsewhere (see `_scoped_spans_subquery`): the outer query exposes
+        # either `%(project_id)s` or `%(project_ids)s`, never both.
+        project_pred = (
+            "project_id IN %(project_ids)s"
+            if self._org_scoped
+            else "project_id = %(project_id)s"
+        )
         return (
             f"trace_id IN ("
             f"SELECT trace_id FROM {self.table} "
-            f"WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0 "
+            f"WHERE {project_pred} AND _peerdb_is_deleted = 0 "
             f"{root_clause}"
             f"AND {inner})"
         )
@@ -1039,6 +1054,24 @@ class ClickHouseFilterBuilder:
         }
     )
 
+    # Ops that compare a nullable UUID column against a STRING value. For
+    # these the column is wrapped in toString(...) so substring (LIKE),
+    # equality, and IN work — ClickHouse rejects direct UUID-vs-String
+    # comparisons. Ops absent here (is_null/is_not_null, ranges) operate on
+    # the bare column.
+    _UUID_TEXT_FILTER_OPS = frozenset(
+        {
+            "equals",
+            "not_equals",
+            "contains",
+            "not_contains",
+            "starts_with",
+            "ends_with",
+            "in",
+            "not_in",
+        }
+    )
+
     def _build_column_condition(
         self,
         column: str,
@@ -1059,12 +1092,8 @@ class ClickHouseFilterBuilder:
         if filter_op == "is_null":
             if column in self._NULLABLE_UUID_COLUMNS:
                 return f"{column} IS NULL"
-            if column in self._NULLABLE_UUID_COLUMNS:
-                return f"{column} IS NULL"
             return f"({column} IS NULL OR {column} = '')"
         elif filter_op == "is_not_null":
-            if column in self._NULLABLE_UUID_COLUMNS:
-                return f"{column} IS NOT NULL"
             if column in self._NULLABLE_UUID_COLUMNS:
                 return f"{column} IS NOT NULL"
             return f"({column} IS NOT NULL AND {column} != '')"

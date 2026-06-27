@@ -23,6 +23,12 @@ class ScoreSerializer(serializers.ModelSerializer):
     )
     source_id = serializers.SerializerMethodField()
     queue_id = serializers.SerializerMethodField()
+    # Declared explicitly so the default surfaces in the OpenAPI schema (the
+    # frontend reads it off the contract); keep in sync with Score.score_source.
+    score_source = serializers.ChoiceField(
+        choices=ScoreSource.get_choices(), default=ScoreSource.HUMAN.value
+    )
+
 
     class Meta:
         model = Score

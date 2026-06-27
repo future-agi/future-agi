@@ -511,7 +511,6 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
         "/model-hub/eval-templates/{template_id}/composite/execute/",
         "/model-hub/eval-templates/{template_id}/detail/",
         "/model-hub/eval-templates/{template_id}/ground-truth/",
-        "/model-hub/eval-templates/{template_id}/ground-truth-config/",
         "/model-hub/eval-templates/{template_id}/ground-truth/upload/",
         "/model-hub/eval-templates/{template_id}/update/",
         "/model-hub/eval-templates/{template_id}/versions/",
@@ -536,9 +535,7 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
         "/model-hub/ground-truth/{ground_truth_id}/",
         "/model-hub/ground-truth/{ground_truth_id}/data/",
         "/model-hub/ground-truth/{ground_truth_id}/embed/",
-        "/model-hub/ground-truth/{ground_truth_id}/mapping/",
-        "/model-hub/ground-truth/{ground_truth_id}/role-mapping/",
-        "/model-hub/ground-truth/{ground_truth_id}/search/",
+        "/model-hub/ground-truth/{ground_truth_id}/setup/",
         "/model-hub/ground-truth/{ground_truth_id}/status/",
         "/model-hub/kb/",
         "/model-hub/kb/supported-embedding-models",
@@ -1065,9 +1062,6 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/eval-templates/{template_id}/composite/execute/"): (
             "CompositeEvalExecuteRequest"
         ),
-        ("PUT", "/model-hub/eval-templates/{template_id}/ground-truth-config/"): (
-            "GroundTruthConfigRequest"
-        ),
         ("POST", "/model-hub/eval-templates/{template_id}/ground-truth/upload/"): (
             "GroundTruthUploadRequest"
         ),
@@ -1140,15 +1134,6 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ("POST", "/model-hub/get-eval-templates"): "LegacyEvalTemplatesRequest",
         ("POST", "/model-hub/ground-truth/{ground_truth_id}/embed/"): (
             "ModelHubEmptyRequest"
-        ),
-        ("PUT", "/model-hub/ground-truth/{ground_truth_id}/mapping/"): (
-            "GroundTruthMappingRequest"
-        ),
-        ("PUT", "/model-hub/ground-truth/{ground_truth_id}/role-mapping/"): (
-            "GroundTruthRoleMappingRequest"
-        ),
-        ("POST", "/model-hub/ground-truth/{ground_truth_id}/search/"): (
-            "GroundTruthSearchRequest"
         ),
         (
             "POST",
@@ -1434,12 +1419,6 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("POST", "/model-hub/eval-templates/{template_id}/ground-truth/upload/"): (
             "GroundTruthUploadResponse"
         ),
-        ("GET", "/model-hub/eval-templates/{template_id}/ground-truth-config/"): (
-            "GroundTruthConfigResponse"
-        ),
-        ("PUT", "/model-hub/eval-templates/{template_id}/ground-truth-config/"): (
-            "GroundTruthConfigResponse"
-        ),
         ("PUT", "/model-hub/eval-templates/{template_id}/update/"): (
             "EvalTemplateUpdateResponse"
         ),
@@ -1504,15 +1483,6 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ),
         ("POST", "/model-hub/ground-truth/{ground_truth_id}/embed/"): (
             "GroundTruthEmbedResponse"
-        ),
-        ("PUT", "/model-hub/ground-truth/{ground_truth_id}/mapping/"): (
-            "GroundTruthMappingResponse"
-        ),
-        ("PUT", "/model-hub/ground-truth/{ground_truth_id}/role-mapping/"): (
-            "GroundTruthRoleMappingResponse"
-        ),
-        ("POST", "/model-hub/ground-truth/{ground_truth_id}/search/"): (
-            "GroundTruthSearchResponse"
         ),
         ("GET", "/model-hub/ground-truth/{ground_truth_id}/status/"): (
             "GroundTruthStatusResponse"

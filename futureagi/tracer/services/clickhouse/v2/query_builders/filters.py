@@ -29,27 +29,27 @@ Risk mitigations:
   - Tests in `tracer/tests/test_ch25_filter_compiler.py` cover every
     column-rewrite case + every JSONExtract* pattern v1 currently emits.
 """
+
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     _coerce_strict_bool,
-    _sanitize_key,
 )
 from tracer.services.clickhouse.v2.query_builders import columns as cols
 
-
 # ─── Simple column-name renames ───────────────────────────────────────────────
 # These are tokens; word-boundary regex substitutes them safely.
-_COL_RENAMES: Dict[str, str] = {
+_COL_RENAMES: dict[str, str] = {
     "_peerdb_is_deleted": cols.IS_DELETED,
-    "_peerdb_version":    cols.VERSION,
-    "span_attr_str":      cols.ATTRS_STRING,
-    "span_attr_num":      cols.ATTRS_NUMBER,
-    "span_attr_bool":     cols.ATTRS_BOOL,
+    "_peerdb_version": cols.VERSION,
+    "span_attr_str": cols.ATTRS_STRING,
+    "span_attr_num": cols.ATTRS_NUMBER,
+    "span_attr_bool": cols.ATTRS_BOOL,
 }
 
 # Pre-compile a single regex that matches any legacy column name as a whole word.
@@ -58,23 +58,55 @@ _COL_RENAME_RE = re.compile(
 )
 
 
+# Legacy CDC dict names → v2 CH-native dicts (same key/attrs, so a token rename).
+# Sourced from the now-renamed v2 curated dimension tables (end_users RMT,
+# trace_sessions RMT) instead of the legacy CDC landing tables.
+_DICT_RENAMES: dict[str, str] = {
+    "enduser_dict": "end_users_dict",
+    "trace_session_dict": "trace_sessions_dict",
+}
+_DICT_RENAME_RE = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in _DICT_RENAMES.keys()) + r")\b"
+)
+
+
 # ─── JSON-overflow access rewrites ────────────────────────────────────────────
 # v1 emits `JSONExtractType(span_attributes_raw, 'path.with.dots')`; v2 uses
 # CH 25.x typed JSON path access `attributes_extra.path.with.dots.:Type`.
 # Same translation applies to `metadata_map` (v1 Map) → `metadata` (v2 typed JSON).
 _JSON_EXTRACT_PATTERNS: list[tuple[re.Pattern, str, str]] = [
-    (re.compile(r"JSONExtractString\(\s*span_attributes_raw\s*,\s*'([^']+)'\s*\)"),
-     cols.ATTRIBUTES_EXTRA, "String"),
-    (re.compile(r"JSONExtractFloat\(\s*span_attributes_raw\s*,\s*'([^']+)'\s*\)"),
-     cols.ATTRIBUTES_EXTRA, "Float64"),
-    (re.compile(r"JSONExtractInt\(\s*span_attributes_raw\s*,\s*'([^']+)'\s*\)"),
-     cols.ATTRIBUTES_EXTRA, "Int64"),
-    (re.compile(r"JSONExtractBool\(\s*span_attributes_raw\s*,\s*'([^']+)'\s*\)"),
-     cols.ATTRIBUTES_EXTRA, "Bool"),
-    (re.compile(r"JSONExtractString\(\s*resource_attributes_raw\s*,\s*'([^']+)'\s*\)"),
-     cols.RESOURCE_ATTRS, "String"),
-    (re.compile(r"JSONExtractString\(\s*metadata_map\s*,\s*'([^']+)'\s*\)"),
-     cols.METADATA_JSON, "String"),
+    (
+        re.compile(r"JSONExtractString\(\s*span_attributes_raw\s*,\s*'([^']+)'\s*\)"),
+        cols.ATTRIBUTES_EXTRA,
+        "String",
+    ),
+    (
+        re.compile(r"JSONExtractFloat\(\s*span_attributes_raw\s*,\s*'([^']+)'\s*\)"),
+        cols.ATTRIBUTES_EXTRA,
+        "Float64",
+    ),
+    (
+        re.compile(r"JSONExtractInt\(\s*span_attributes_raw\s*,\s*'([^']+)'\s*\)"),
+        cols.ATTRIBUTES_EXTRA,
+        "Int64",
+    ),
+    (
+        re.compile(r"JSONExtractBool\(\s*span_attributes_raw\s*,\s*'([^']+)'\s*\)"),
+        cols.ATTRIBUTES_EXTRA,
+        "Bool",
+    ),
+    (
+        re.compile(
+            r"JSONExtractString\(\s*resource_attributes_raw\s*,\s*'([^']+)'\s*\)"
+        ),
+        cols.RESOURCE_ATTRS,
+        "String",
+    ),
+    (
+        re.compile(r"JSONExtractString\(\s*metadata_map\s*,\s*'([^']+)'\s*\)"),
+        cols.METADATA_JSON,
+        "String",
+    ),
 ]
 
 # `JSONHas(span_attributes_raw, 'path')` → `(attributes_extra.path.:String IS NOT NULL)`
@@ -82,9 +114,9 @@ _JSON_HAS_PATTERN = re.compile(
     r"JSONHas\(\s*(span_attributes_raw|resource_attributes_raw|metadata_map)\s*,\s*'([^']+)'\s*\)"
 )
 _JSON_HAS_TARGET = {
-    "span_attributes_raw":     (cols.ATTRIBUTES_EXTRA, "String"),
-    "resource_attributes_raw": (cols.RESOURCE_ATTRS,   "String"),
-    "metadata_map":            (cols.METADATA_JSON,    "String"),
+    "span_attributes_raw": (cols.ATTRIBUTES_EXTRA, "String"),
+    "resource_attributes_raw": (cols.RESOURCE_ATTRS, "String"),
+    "metadata_map": (cols.METADATA_JSON, "String"),
 }
 
 # Map from legacy bare JSON column → v2 typed-JSON column. Used by the bare-
@@ -95,8 +127,8 @@ _JSON_HAS_TARGET = {
 #   • In WHERE emptiness checks: rewrite to length-based predicates on the
 #     toJSONString form (semantically equivalent for "has any keys").
 _BARE_JSON_REWRITES = {
-    "span_attributes_raw":     cols.ATTRIBUTES_EXTRA,
-    "metadata_map":            cols.METADATA_JSON,
+    "span_attributes_raw": cols.ATTRIBUTES_EXTRA,
+    "metadata_map": cols.METADATA_JSON,
     "resource_attributes_raw": cols.RESOURCE_ATTRS,
 }
 
@@ -121,10 +153,10 @@ _BARE_REF_PATTERN = re.compile(
 
 
 # ─── v2 attribute-type meta (same shape as v1 module-level constant, retargeted) ─
-_SPAN_ATTR_TYPE_META_V2: Dict[str, Tuple[str, Callable[[Any], Any]]] = {
-    "text":    (cols.ATTRS_STRING, lambda v: v if isinstance(v, str) else str(v)),
-    "number":  (cols.ATTRS_NUMBER, lambda v: float(v)),
-    "boolean": (cols.ATTRS_BOOL,   _coerce_strict_bool),
+_SPAN_ATTR_TYPE_META_V2: dict[str, tuple[str, Callable[[Any], Any]]] = {
+    "text": (cols.ATTRS_STRING, lambda v: v if isinstance(v, str) else str(v)),
+    "number": (cols.ATTRS_NUMBER, lambda v: float(v)),
+    "boolean": (cols.ATTRS_BOOL, _coerce_strict_bool),
 }
 
 
@@ -153,16 +185,17 @@ def _append_v2_settings(sql: str) -> str:
 
     Handles trailing FORMAT clause: SETTINGS must come BEFORE FORMAT.
     """
-    sql_stripped = sql.rstrip().rstrip(';').rstrip()
+    sql_stripped = sql.rstrip().rstrip(";").rstrip()
     # Check for an existing SETTINGS clause (case-insensitive, at end before
     # any FORMAT clause). Use a simple heuristic — the v1 builders rarely
     # emit SETTINGS, so the common case is "no existing clause."
     import re as _re
+
     # Pull out a trailing FORMAT clause so we can re-attach it after SETTINGS.
     fmt_match = _re.search(r"\s+FORMAT\s+\w+\s*$", sql_stripped, _re.IGNORECASE)
     if fmt_match:
         format_clause = fmt_match.group(0)
-        sql_stripped = sql_stripped[:fmt_match.start()].rstrip()
+        sql_stripped = sql_stripped[: fmt_match.start()].rstrip()
     else:
         format_clause = ""
 
@@ -208,15 +241,16 @@ def rewrite_v1_sql_to_v2(sql: str) -> str:
     def _has_repl(m):
         col, ch_type = _JSON_HAS_TARGET[m.group(1)]
         return f"({cols.json_path(col, m.group(2), ch_type)} IS NOT NULL)"
+
     sql = _JSON_HAS_PATTERN.sub(_has_repl, sql)
 
     # 3. WHERE emptiness predicates
     def _empty_repl(m):
         legacy_col = m.group(1)
-        op         = m.group(2)
-        literal    = m.group(3)
-        v2_col     = _BARE_JSON_REWRITES[legacy_col]
-        wrapped    = f"toJSONString({v2_col})"
+        op = m.group(2)
+        literal = m.group(3)
+        v2_col = _BARE_JSON_REWRITES[legacy_col]
+        wrapped = f"toJSONString({v2_col})"
         # `'{}'` or `'{{}}'` mean "empty object literal" → 2 chars (or 4 if
         # the double-brace was a Python format-string escape, which CH never
         # sees — by the time SQL reaches us, the braces are concrete).
@@ -231,6 +265,7 @@ def rewrite_v1_sql_to_v2(sql: str) -> str:
             return f"length({wrapped}) = 0"
         # Fall back — wrap with toJSONString and keep the literal compare
         return f"{wrapped} {op} '{literal}'"
+
     sql = _WHERE_EMPTY_PATTERN.sub(_empty_repl, sql)
 
     # 4. Bare SELECT-list refs — wrap with toJSONString() AS legacy_col so the
@@ -239,11 +274,14 @@ def rewrite_v1_sql_to_v2(sql: str) -> str:
         legacy_col = m.group(1)
         v2_col = _BARE_JSON_REWRITES[legacy_col]
         return f"toJSONString({v2_col}) AS {legacy_col}"
+
     sql = _BARE_REF_PATTERN.sub(_bare_repl, sql)
 
     # 5. Naked simple renames (must come last so we don't accidentally rewrite
     # inside the AS aliases we just produced).
     sql = _COL_RENAME_RE.sub(lambda m: _COL_RENAMES[m.group(1)], sql)
+    # 5b. Legacy CDC dictionary names → v2 CH-native dictionary names.
+    sql = _DICT_RENAME_RE.sub(lambda m: _DICT_RENAMES[m.group(1)], sql)
     # NOTE: this function does NOT append the v2 SETTINGS clause. The settings
     # are appended at the BUILDER boundary (v2 `build()`/`build_count_query()` etc)
     # via `_append_v2_settings()` — see ClickHouseFilterBuilderV2.translate.
@@ -270,6 +308,13 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
     # Expose the v2 attribute-type meta on the instance.
     SPAN_ATTR_TYPE_META = _SPAN_ATTR_TYPE_META_V2
 
+    # End-user filter subquery reads the v2 `end_users` RMT (keyed by
+    # end_user_id, soft-deleted via is_deleted) instead of the dropped legacy
+    # `tracer_enduser` (id + _peerdb_is_deleted/deleted).
+    _ENDUSER_DIM_TABLE = "end_users"
+    _ENDUSER_DIM_ID_COL = "end_user_id"
+    _ENDUSER_DIM_NOT_DELETED = "is_deleted = 0"
+
     def translate(self, filters):  # type: ignore[override]
         # `translate` returns a WHERE fragment that gets stitched into a larger
         # SELECT statement by callers. Do NOT append SETTINGS here — that
@@ -280,8 +325,10 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
         sql, params = super().translate(filters)
         return rewrite_v1_sql_to_v2(sql), params
 
-    def translate_sort(self, sort_params):  # type: ignore[override]
-        result = super().translate_sort(sort_params)
+    def translate_sort(self, sort_params, *args, **kwargs):  # type: ignore[override]
+        # Forward extra args (e.g. field_map) to the v1 implementation — callers
+        # like the list builders pass field_map=SORT_FIELD_MAP.
+        result = super().translate_sort(sort_params, *args, **kwargs)
         if isinstance(result, tuple):
             sql, *rest = result
             return (rewrite_v1_sql_to_v2(sql), *rest)

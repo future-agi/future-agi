@@ -1677,14 +1677,41 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             tenant_project_id = str(eval_task.project_id)
             if has_span_attr_filters:
                 # PG fallback (KEEP-PG until the v2 FilterEngine lands).
-                parsed_filters, parsed_filter_anns = parsing_evaltask_filters(filters)
+                # row_type + build_annotation_subqueries carried over from
+                # origin/main (TH-5645): per-label ANNOTATION filters
+                # reference columns the subqueries add (else FieldError),
+                # and parsing_evaltask_filters now requires row_type.
+                parsed_filters, parsed_filter_anns = parsing_evaltask_filters(
+                    filters, row_type=eval_task.row_type
+                )
                 parsed_filters &= Q(project_id=tenant_project_id)
+
                 total_spans = (
                     ObservationSpan.objects.annotate(**parsed_filter_anns)
+
+                annotation_labels = get_annotation_labels_for_project(
+                    eval_task.project_id
+                )
+                span_qs = build_annotation_subqueries(
+                    ObservationSpan.objects.all(),
+                    annotation_labels,
+                    eval_task.project.organization,
+                    source_q=annotation_source_q_for_row_type(eval_task.row_type),
+                )
+                total_spans = (
+                    span_qs.annotate(**parsed_filter_anns)
+
                     .filter(parsed_filters)
                     .count()
                 )
             else:
+                # TODO(CH25 / TH-5645): the CH count path ignores row_type
+                # and annotation filters — parsing_evaltask_filters_for_ch
+                # only handles project_id/trace_ids/observation_type/
+                # session_id/created_at. origin/main's row_type-scoped
+                # annotation count does NOT apply here. Revisit once the v2
+                # FilterEngine lands CH annotation/row_type support so this
+                # branch matches the PG fallback's semantics.
                 ch_kwargs = CHSpanReader.parsing_evaltask_filters_for_ch(filters or {})
                 # Override any caller-supplied project_id with the
                 # eval_task's project_id — defense-in-depth against an

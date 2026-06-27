@@ -4,7 +4,11 @@ import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import useUsersStore from "./Store/usersStore";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import { getUsersColumnConfig, userTraceRowHeightMapping } from "./common";
+import {
+  getUsersColumnConfig,
+  userTraceRowHeightMapping,
+  buildUsersRequestFilters,
+} from "./common";
 import { mergeCellStyle } from "../LLMTracing/common";
 import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
@@ -12,7 +16,6 @@ import { useDebounce } from "src/hooks/use-debounce";
 import PropTypes from "prop-types";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
 import { APP_CONSTANTS } from "src/utils/constants";
-import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
 
 const getUsersGridThemeParams = (theme) => ({
   columnBorder: false,
@@ -49,43 +52,20 @@ const UsersGrid = React.memo(
       columns,
       setColumns,
       filters,
-      selectedProjectDay,
-      selectedProjectId,
     } = useUsersStore();
 
-    const convertToISO = (dateArray) => {
-      return dateArray.map((date) => new Date(date).toISOString());
-    };
     const userFirstRef = useRef(true);
 
-    const today = new Date();
-    const pastDate = new Date();
-    pastDate.setDate(today.getDate() - selectedProjectDay);
-
     const { observeId } = useParams();
-    const updatedObserveId = selectedProjectId || observeId;
+    const updatedObserveId = observeId;
     const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
 
-    const projectFilter = useMemo(
-      () => ({
-        column_id: "created_at",
-        filter_config: {
-          filter_type: "datetime",
-          filter_op: "between",
-          filter_value: convertToISO([pastDate, today]),
-        },
-      }),
-      [selectedProjectDay],
+    const validatedFilters = useMemo(
+      () => buildUsersRequestFilters(filters),
+      [filters],
     );
 
-    const validatedFilters = useMemo(() => {
-      return serializeFilterListForApi([...(filters || []), projectFilter]);
-    }, [filters, projectFilter]);
-
     const navigate = useNavigate();
-
-    const hasProjectFilter =
-      selectedProjectId || (selectedProjectDay !== 90 && !selectedProjectId);
 
     useEffect(() => {
       const initial = getUsersColumnConfig();
@@ -234,7 +214,7 @@ const UsersGrid = React.memo(
             }
 
             if (debouncedSearchQuery === "") {
-              if (hasActiveFilter || hasProjectFilter) {
+              if (hasActiveFilter) {
                 setSearchState("searching");
               } else {
                 setSearchState(hasResults ? "idle" : "empty");
@@ -287,7 +267,6 @@ const UsersGrid = React.memo(
         setIsLoading,
         setSearchState,
         hasActiveFilter,
-        hasProjectFilter,
       ],
     );
 

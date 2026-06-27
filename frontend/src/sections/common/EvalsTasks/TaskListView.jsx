@@ -18,6 +18,8 @@ import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import DeleteConfirmation from "./DeleteConfirmation";
 
 const POLL_INTERVAL_MS = 5000;
@@ -310,6 +312,7 @@ const TaskListView = ({
   _onEditTask,
   refreshKey,
 }) => {
+  const { role } = useAuthContext();
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -638,6 +641,11 @@ const TaskListView = ({
                   <Iconify icon="solar:trash-bin-trash-linear" width={16} />
                 }
                 onClick={() => setDeleteTarget(selectedItems)}
+                disabled={
+                  !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                    role
+                  ]
+                }
                 sx={{ textTransform: "none", fontSize: "12px", height: 32 }}
               >
                 Delete
@@ -658,6 +666,11 @@ const TaskListView = ({
               color="primary"
               startIcon={<Iconify icon="mingcute:add-line" width={18} />}
               onClick={onCreateTask}
+              disabled={
+                !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                  role
+                ]
+              }
               sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
             >
               Create Task

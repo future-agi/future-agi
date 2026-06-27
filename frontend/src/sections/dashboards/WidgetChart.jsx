@@ -14,6 +14,7 @@ import {
   getSeriesAverage,
   getSuggestedUnitConfig,
 } from "./widgetUtils";
+import { toTimeRangePayload } from "./dashboardDateRange";
 
 const CHART_HEIGHT_FALLBACK = 280;
 const COLORS = [
@@ -49,12 +50,8 @@ export default function WidgetChart({ widget, globalDateRange }) {
   // If globalDateRange is provided, override the widget's time range
   const queryConfig = useMemo(() => {
     if (!rawQueryConfig) return rawQueryConfig;
-    if (!globalDateRange) return rawQueryConfig;
-    // Convert globalDateRange {start, end} to the format the backend expects
-    const timeOverride = {
-      custom_start: globalDateRange.start,
-      custom_end: globalDateRange.end,
-    };
+    const timeOverride = toTimeRangePayload(globalDateRange);
+    if (!timeOverride) return rawQueryConfig;
     return {
       ...rawQueryConfig,
       time_range: timeOverride,

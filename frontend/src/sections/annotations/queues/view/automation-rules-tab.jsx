@@ -24,9 +24,8 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import "src/styles/clean-data-table.css";
-import CreateRuleDialog, {
-  TRIGGER_FREQUENCY_OPTIONS,
-} from "./create-rule-dialog";
+import CreateRuleDialog from "./create-rule-dialog";
+import { TRIGGER_FREQUENCY_OPTIONS } from "../constants";
 import EditRuleDialog from "./edit-rule-dialog";
 
 // ---------------------------------------------------------------------------

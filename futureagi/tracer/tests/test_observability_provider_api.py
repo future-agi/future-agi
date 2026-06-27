@@ -9,6 +9,7 @@ from accounts.models.user import User
 from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from simulate.models import AgentDefinition, AgentVersion
+from simulate.models.agent_definition import ProviderCredentials
 from tfc.constants.roles import OrganizationRoles
 from tracer.models.observability_provider import (
     ObservabilityProvider,
@@ -68,10 +69,15 @@ def create_webhook_agent_fixture(
         description="Webhook fixture version",
         commit_message="webhook fixture",
         configuration_snapshot={
-            "api_key": api_key,
             "assistant_id": assistant_id,
             "provider": ProviderChoices.RETELL,
         },
+    )
+    ProviderCredentials.no_workspace_objects.create(
+        agent_version=agent_definition.latest_version,
+        provider_type=ProviderCredentials.ProviderType.RETELL,
+        api_key=api_key,
+        assistant_id=assistant_id,
     )
     return agent_definition
 

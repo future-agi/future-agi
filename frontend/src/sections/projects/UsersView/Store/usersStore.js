@@ -16,14 +16,6 @@ const useUsersStore = create((set, get) => ({
   globalChartType: "line",
   isGlobalChartType: false,
   filters: [{ ...userDefaultFilter, id: getRandomId() }],
-  selectedProjectDay: 90,
-  selectedProjectId: null,
-
-  setSelectedProjectId: (newProjectID) =>
-    set({ selectedProjectId: newProjectID }),
-
-  setProjectSelectedDay: (selectedDay) =>
-    set({ selectedProjectDay: selectedDay }),
 
   setSearchQuery: (query) => set({ searchQuery: query }),
   setFilters: (newFiltersOrUpdater) => {
@@ -67,9 +59,6 @@ const useUsersStore = create((set, get) => ({
       selectedRowsData: [],
       openUserListFilter: false,
       filters: [{ ...userDefaultFilter, id: getRandomId() }],
-      projectFilter: [],
-      selectedProjectDay: 90,
-      selectedProjectId: null,
     }),
   updateColumnVisibility: (updatedData) => {
     set((state) => ({

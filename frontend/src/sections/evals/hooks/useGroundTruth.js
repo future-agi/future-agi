@@ -1,5 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
+
+// Centralized toast wrapper for the GT mutation hooks. Lives here (not
+// in the component callsites) so success/error feedback fires
+// regardless of the parent's render timing - particularly important on
+// the first save when local state and persisted state were equal a
+// tick earlier and the component is mid-resync.
+const toastFromError = (err, fallback) =>
+  err?.response?.data?.message ||
+  err?.response?.data?.detail ||
+  err?.message ||
+  fallback;
 
 // ── List ground truth datasets for a template ──
 export function useGroundTruthList(templateId) {
@@ -57,92 +69,83 @@ export function useGroundTruthData(gtId, { page = 1, pageSize = 50 } = {}) {
 }
 
 // ── Get embedding status ──
+//
+// Polls every 3s whenever the embed job is still in flight - both the
+// `pending` (queued, workflow not yet picked up) and `processing`
+// (activity running) interim states. When the status flips to a
+// terminal value (`completed` / `failed`), polling stops AND the list
+// query is invalidated so the parent UI re-reads the row count and
+// flips the Embed button + stale-banner off.
 export function useGroundTruthStatus(gtId, { enabled = true } = {}) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: ["evals", "ground-truth-status", gtId],
     queryFn: async () => {
       const { data } = await axios.get(
         endpoints.develop.eval.groundTruthStatus(gtId),
       );
-      return data?.result;
+      const result = data?.result;
+      if (
+        result?.embedding_status === "completed" ||
+        result?.embedding_status === "failed"
+      ) {
+        queryClient.invalidateQueries({
+          queryKey: ["evals", "ground-truth"],
+        });
+      }
+      return result;
     },
     enabled: !!gtId && enabled,
-    refetchInterval: (data) => {
-      // Poll every 3s while processing
-      if (data?.state?.data?.embedding_status === "processing") return 3000;
+    refetchInterval: (query) => {
+      const status = query?.state?.data?.embedding_status;
+      if (status === "pending" || status === "processing") return 3000;
       return false;
     },
   });
 }
 
-// ── Get ground truth config for template ──
-export function useGroundTruthConfig(templateId) {
-  return useQuery({
-    queryKey: ["evals", "ground-truth-config", templateId],
-    queryFn: async () => {
-      const { data } = await axios.get(
-        endpoints.develop.eval.getGroundTruthConfig(templateId),
-      );
-      return data?.result?.ground_truth;
-    },
-    enabled: !!templateId,
-  });
-}
 
-// ── Update ground truth config ──
-export function useUpdateGroundTruthConfig(templateId) {
+// ── Atomic save of the whole GT tab (variable mapping + role mapping +
+// injection config). Backs the single Save button on the FE GT tab.
+// One PUT, one notification. The BE service refuses without a real
+// `output` column in `role_mapping` and rejects unknown columns.
+export function useSaveGroundTruthSetup(templateId) {
   const queryClient = useQueryClient();
+  const { enqueueSnackbar } = useSnackbar();
   return useMutation({
-    mutationFn: async (config) => {
+    mutationFn: async ({
+      gtId,
+      variableMapping,
+      roleMapping,
+      maxExamples,
+      enabled,
+    }) => {
       const { data } = await axios.put(
-        endpoints.develop.eval.updateGroundTruthConfig(templateId),
-        config,
-      );
-      return data?.result;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["evals", "ground-truth-config", templateId],
-      });
-    },
-  });
-}
-
-// ── Update role mapping ──
-export function useUpdateRoleMapping() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ gtId, roleMapping }) => {
-      const { data } = await axios.put(
-        endpoints.develop.eval.groundTruthRoleMapping(gtId),
-        {
-          role_mapping: roleMapping,
-        },
-      );
-      return data?.result;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["evals", "ground-truth"] });
-    },
-  });
-}
-
-// ── Update variable mapping ──
-export function useUpdateVariableMapping() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ gtId, variableMapping }) => {
-      const { data } = await axios.put(
-        endpoints.develop.eval.groundTruthMapping(gtId),
+        endpoints.develop.eval.groundTruthSetup(gtId),
         {
           variable_mapping: variableMapping,
+          role_mapping: roleMapping,
+          max_examples: maxExamples,
+          enabled,
         },
       );
       return data?.result;
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["evals", "ground-truth"] });
+      if (templateId) {
+        // Setup writes the runtime knobs onto the gt row; invalidate the
+        // template detail too so any downstream consumer refetches.
+        queryClient.invalidateQueries({
+          queryKey: ["evals", "detail", templateId],
+        });
+      }
+      enqueueSnackbar("Saved", { variant: "success" });
     },
+    onError: (err) =>
+      enqueueSnackbar(toastFromError(err, "Failed to save"), {
+        variant: "error",
+      }),
   });
 }
 
@@ -169,6 +172,7 @@ export function useTriggerEmbedding() {
     mutationFn: async (gtId) => {
       const { data } = await axios.post(
         endpoints.develop.eval.groundTruthEmbed(gtId),
+        {},
       );
       return data?.result;
     },
@@ -181,18 +185,3 @@ export function useTriggerEmbedding() {
   });
 }
 
-// ── Search ground truth (test retrieval) ──
-export function useSearchGroundTruth() {
-  return useMutation({
-    mutationFn: async ({ gtId, query, maxResults = 3 }) => {
-      const { data } = await axios.post(
-        endpoints.develop.eval.groundTruthSearch(gtId),
-        {
-          query,
-          max_results: maxResults,
-        },
-      );
-      return data?.result;
-    },
-  });
-}

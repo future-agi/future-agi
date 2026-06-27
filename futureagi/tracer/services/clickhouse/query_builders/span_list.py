@@ -42,6 +42,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     TABLE = "spans"
     EVAL_TABLE = "tracer_eval_logger"
     ANNOTATION_TABLE = "model_hub_score"
+    # Filter compiler class; the v2 list builder overrides this to the v2
+    # builder so it reads the v2 dimension tables (end_users, etc.).
+    _FILTER_BUILDER_CLS = ClickHouseFilterBuilder
 
     SORT_FIELD_MAP: dict[str, str] = {
         "created_at": "start_time",
@@ -57,7 +60,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
     def __init__(
         self,
-        project_id: str,
+        project_id: str | None = None,
+        project_ids: list[str] | None = None,
         page_number: int = 0,
         page_size: int = 50,
         filters: list[dict] | None = None,
@@ -68,7 +72,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         project_version_id: str | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(project_id, **kwargs)
+        super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
         self.page_number = page_number
         self.page_size = page_size
         self.filters = filters or []
@@ -88,9 +92,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         self.params["start_date"] = start_date
         self.params["end_date"] = end_date
 
-        fb = ClickHouseFilterBuilder(
+        fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
-            query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
+            query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
             project_ids=self.project_ids,
@@ -242,15 +246,15 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         SELECT id, input, output, attributes_extra
         FROM {self.TABLE}
         PREWHERE id IN %(content_span_ids)s
-        WHERE project_id = %(project_id)s AND is_deleted = 0
+        WHERE {self.project_filter_sql()} AND is_deleted = 0
         """
         return query, params
 
     def build_count_query(self) -> tuple[str, dict[str, Any]]:
         """Build a count query for total matching spans."""
-        fb = ClickHouseFilterBuilder(
+        fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
-            query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
+            query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
             project_ids=self.project_ids,

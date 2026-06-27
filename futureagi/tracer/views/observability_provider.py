@@ -14,6 +14,11 @@ from retell.lib.webhook_auth import verify as verify_retell_webhook
 
 from accounts.utils import get_request_organization
 from simulate.models import AgentDefinition
+from simulate.services.agent_definition import (
+    is_masked,
+    resolve_api_key_for_version,
+    resolve_stored_api_key,
+)
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
@@ -180,6 +185,18 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
         try:
             provider = request.data.get("provider")
             api_key = request.data.get("api_key")
+            agent_id = request.data.get("agent_id")
+
+            if is_masked(api_key):
+                api_key = resolve_stored_api_key(
+                    organization=get_request_organization(request),
+                    workspace=getattr(request, "workspace", None),
+                    agent_id=agent_id,
+                )
+                if not api_key:
+                    msg = "Could not resolve the api key. Please recheck the same"
+                    return self._gm.bad_request(msg)
+
             if provider in [
                 ProviderChoices.VAPI,
                 ProviderChoices.RETELL,
@@ -210,6 +227,17 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             assistant_id = request.data.get("assistant_id")
             api_key = request.data.get("api_key")
             provider = request.data.get("provider")
+
+            if is_masked(api_key):
+                api_key = resolve_stored_api_key(
+                    organization=get_request_organization(request),
+                    workspace=getattr(request, "workspace", None),
+                    assistant_id=assistant_id,
+                )
+                if not api_key:
+                    msg = "Could not resolve the api key. Please recheck the same"
+                    return self._gm.bad_request(msg)
+
             if provider in [
                 ProviderChoices.VAPI,
                 ProviderChoices.RETELL,
@@ -240,20 +268,17 @@ class WebhookHandlerView(APIView):
 
     def get_api_key(self, agent_definition: AgentDefinition):
         try:
-            api_key = None
             if not agent_definition:
                 return None
 
             agent_version = agent_definition.latest_version
-            if agent_version:
-                api_key = agent_version.configuration_snapshot.get("api_key")
-            else:
+            if not agent_version:
                 logger.warning(
                     f"No agent version found for agent {agent_definition.id}"
                 )
                 return None
 
-            return api_key
+            return resolve_api_key_for_version(agent_version)
         except Exception as e:
             logger.exception(f"Error getting webhook secret: {e}")
             return None
