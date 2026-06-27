@@ -39,6 +39,11 @@ def _sanitize_attr_key(key: str) -> str:
     return key
 
 
+def _snap_to_hour(dt: datetime) -> datetime:
+    """Floor a datetime to the top of its hour (ClickHouse ``toStartOfHour``)."""
+    return dt.replace(minute=0, second=0, microsecond=0)
+
+
 # ---------------------------------------------------------------------------
 # Metric resolution tables
 # ---------------------------------------------------------------------------
@@ -372,6 +377,10 @@ class DashboardQueryBuilder:
     project_ids and builds multiple queries (one per metric).
     """
 
+    # dashboard_attr_rollup lives only in the v2 schema; the v2 subclass flips
+    # this True. Base/v1 never routes to the rollup (fail-closed: missing table).
+    _attr_rollup_available: bool = False
+
     def __init__(self, query_config: dict) -> None:
         self.config = query_config
         self.project_ids = query_config.get("project_ids", [])
@@ -517,6 +526,23 @@ class DashboardQueryBuilder:
     # System metric
     # ------------------------------------------------------------------
 
+    def _attr_rollup_window_covered(self, start_date: datetime) -> bool:
+        """True only when the rollup flag is on AND the requested window starts
+        within the backfilled-and-covered range — fail-closed on a fresh deploy
+        (off until ops backfills the rollup and sets the coverage date)."""
+        from django.conf import settings
+
+        if not getattr(settings, "DASHBOARD_ATTR_ROLLUP_ENABLED", False):
+            return False
+        covered_since = getattr(settings, "DASHBOARD_ATTR_ROLLUP_COVERED_SINCE", None)
+        if covered_since is None:
+            return False
+        if covered_since.tzinfo is None:
+            covered_since = covered_since.replace(tzinfo=UTC)
+        if start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=UTC)
+        return start_date >= covered_since
+
     def _build_system_metric_query(
         self,
         metric_name: str,
@@ -529,10 +555,12 @@ class DashboardQueryBuilder:
         metric_name = metric_name.lower() if metric_name else metric_name
 
         # Covered latency-breakdown shape → the pre-aggregated rollup; any other
-        # shape falls through to the spans scan (fail-closed).
+        # shape (or v1 schema / flag off / window outside coverage) falls through
+        # to the spans scan (fail-closed).
         single_bd = self.breakdowns[0] if len(self.breakdowns) == 1 else None
         if (
-            metric_name == "latency"
+            self._attr_rollup_available
+            and metric_name == "latency"
             and aggregation == "avg"
             and self.granularity in _ROLLUP_GRANULARITIES
             and single_bd is not None
@@ -540,9 +568,13 @@ class DashboardQueryBuilder:
             and single_bd.get("name") in _ROLLUP_COVERED_ATTRS
             and not per_metric_filters
             and not self.global_filters
+            and self._attr_rollup_window_covered(params["start_date"])
         ):
             params = dict(params)
             params["attr_key"] = _sanitize_attr_key(single_bd["name"])
+            # Rollup is hourly — snap the window to whole hours so no partial bucket.
+            params["start_date"] = _snap_to_hour(params["start_date"])
+            params["end_date"] = _snap_to_hour(params["end_date"])
             rollup_query = (
                 f"SELECT {bucket_fn}(hour) AS time_bucket,\n"
                 "       attr_value AS breakdown_value,\n"
