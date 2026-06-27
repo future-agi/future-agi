@@ -129,6 +129,7 @@ from simulate.serializers.test_execution import (
 )
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
+from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -331,7 +332,6 @@ class RunTestListView(APIView):
                 )
                 .select_related(
                     "agent_definition",
-                    "agent_definition__credentials",
                     "agent_version",
                     "simulator_agent",
                     "prompt_template",
@@ -1180,7 +1180,6 @@ class RunTestAPIView(APIView):
                 .prefetch_related("scenarios")
                 .select_related(
                     "agent_definition",
-                    "agent_definition__credentials",
                     "simulator_agent",
                 )
             )
@@ -4109,22 +4108,21 @@ class RunTestComponentsUpdateView(APIView):
                             not agent_type
                             or agent_type == AgentDefinition.AgentTypeChoices.VOICE
                         ):
-                            # Check configuration_snapshot for api_key and assistant_id
-                            config_snapshot = (
-                                agent_version_to_check.configuration_snapshot or {}
-                            )
-                            api_key = config_snapshot.get("api_key")
-                            assistant_id = config_snapshot.get("assistant_id")
+                            api_key = resolve_api_key_for_version(agent_version_to_check)
+                            assistant_id = None
+                            try:
+                                creds = agent_version_to_check.credentials
+                                if creds:
+                                    assistant_id = creds.assistant_id
+                            except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                                pass
+                            if not assistant_id:
+                                assistant_id = agent_version_to_check.configuration_snapshot.get("assistant_id") if agent_version_to_check.configuration_snapshot else None
 
                             missing_fields = []
-                            if not api_key or (
-                                isinstance(api_key, str) and not api_key.strip()
-                            ):
+                            if not api_key:
                                 missing_fields.append("api_key")
-                            if not assistant_id or (
-                                isinstance(assistant_id, str)
-                                and not assistant_id.strip()
-                            ):
+                            if not assistant_id:
                                 missing_fields.append("assistant_id")
 
                             if missing_fields:

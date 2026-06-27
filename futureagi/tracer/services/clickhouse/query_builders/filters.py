@@ -741,7 +741,8 @@ class ClickHouseFilterBuilder:
         filter_op: str | None,
         filter_value: Any,
     ) -> str | None:
-        """Resolve an end-user string field on the curated ``end_users`` RMT, then map to end_user_id on spans."""
+        """Resolve an end-user string field (user_id / user_id_type) on the
+        curated ``end_users`` RMT, then map to end_user_id on spans."""
 
         if filter_op in NO_VALUE_OPS:
             comparison_op = "=" if filter_op == "is_null" else "!="
@@ -851,10 +852,18 @@ class ClickHouseFilterBuilder:
             if is_root_only
             else ""
         )
+        # Mirror the org-scoped vs single-project param binding used
+        # elsewhere (see `_scoped_spans_subquery`): the outer query exposes
+        # either `%(project_id)s` or `%(project_ids)s`, never both.
+        project_pred = (
+            "project_id IN %(project_ids)s"
+            if self._org_scoped
+            else "project_id = %(project_id)s"
+        )
         return (
             f"trace_id IN ("
             f"SELECT trace_id FROM {self.table} "
-            f"WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0 "
+            f"WHERE {project_pred} AND _peerdb_is_deleted = 0 "
             f"{root_clause}"
             f"AND {inner})"
         )
@@ -1088,6 +1097,24 @@ class ClickHouseFilterBuilder:
         }
     )
 
+    # Ops that compare a nullable UUID column against a STRING value. For
+    # these the column is wrapped in toString(...) so substring (LIKE),
+    # equality, and IN work — ClickHouse rejects direct UUID-vs-String
+    # comparisons. Ops absent here (is_null/is_not_null, ranges) operate on
+    # the bare column.
+    _UUID_TEXT_FILTER_OPS = frozenset(
+        {
+            "equals",
+            "not_equals",
+            "contains",
+            "not_contains",
+            "starts_with",
+            "ends_with",
+            "in",
+            "not_in",
+        }
+    )
+
     def _build_column_condition(
         self,
         column: str,
@@ -1108,12 +1135,8 @@ class ClickHouseFilterBuilder:
         if filter_op == "is_null":
             if column in self._NULLABLE_UUID_COLUMNS:
                 return f"{column} IS NULL"
-            if column in self._NULLABLE_UUID_COLUMNS:
-                return f"{column} IS NULL"
             return f"({column} IS NULL OR {column} = '')"
         elif filter_op == "is_not_null":
-            if column in self._NULLABLE_UUID_COLUMNS:
-                return f"{column} IS NOT NULL"
             if column in self._NULLABLE_UUID_COLUMNS:
                 return f"{column} IS NOT NULL"
             return f"({column} IS NOT NULL AND {column} != '')"

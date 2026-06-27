@@ -10,6 +10,8 @@ import { z } from "zod";
 import AddEvalsFeedbackForm from "./AddEvalsFeedbackForm";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const createValidationSchema = z.object({
   actionType: z.enum([ACTION_TYPES.RETUNE, ACTION_TYPES.RECALCULATE]),
@@ -72,6 +74,10 @@ const AddEvalsFeedbackDrawerChild = ({
   existingFeedback,
 }) => {
   const isEdit = !!existingFeedback;
+  const { role } = useAuthContext();
+  const canEdit = Boolean(
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
+  );
   const handleClose = () => {
     onClose();
   };
@@ -173,7 +179,7 @@ const AddEvalsFeedbackDrawerChild = ({
       choices={configData?.choices}
       handleSubmitForm={onSubmit}
       handleSubmit={handleSubmit}
-      disabled={!formState.isValid}
+      disabled={!formState.isValid || !canEdit}
       loading={isSubmitting}
       retuneOptions={[
         {

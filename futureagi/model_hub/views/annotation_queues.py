@@ -5842,7 +5842,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 )
             )
             if not updated:
-                return self._gm.bad_request("Item is reserved by another annotator.")
+                return self._gm.custom_error_response(
+                    status.HTTP_409_CONFLICT,
+                    "Item is reserved by another annotator.",
+                    code="item_reserved",
+                )
             item.refresh_from_db()
 
         labels = (

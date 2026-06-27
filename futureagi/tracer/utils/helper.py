@@ -489,31 +489,36 @@ def validate_sort_params_helper(value):
     return value
 
 
-def get_annotation_labels_for_project(project_id, organization=None):
+def get_annotation_labels_for_project(project_id, organization=None, project_ids=None):
     """Find annotation labels that have at least one Score in a project.
 
     Labels may not have a direct ``project`` FK set (e.g. org-wide centralized
     labels), so we also look for labels referenced by Score records in the project.
 
+    Pass ``project_ids`` (a list) instead of ``project_id`` to scope across
+    multiple projects (org-scoped span listing).
+
     The score→project lookup is routed via ``_REGISTRY["ANNOTATION_LABELS"]``:
     V1_ONLY reads PG (Score joins legacy trace/observation_span), V2_ONLY reads
     CH (model_hub_score scoped via spans). See ``annotation_label_source``.
-
-    Pre-deprecation this method also union'd in ``TraceAnnotation``-referenced
-    labels. Score is the unified store now (the dual-write mirrors every
-    TraceAnnotation write to Score, so any label in TraceAnnotation is also
-    reachable via Score). Reading both was redundant; reading Score alone
-    is the path forward toward fully retiring TraceAnnotation.
     """
     from django.db.models import Q
 
     from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
 
     SourceCls = get_query_builder_class("ANNOTATION_LABELS")  # noqa: N806
-    score_label_ids = SourceCls().label_ids_for_project(project_id)
+
+    if project_ids is not None:
+        score_label_ids = set()
+        for pid in project_ids:
+            score_label_ids.update(SourceCls().label_ids_for_project(pid))
+        owner_q = Q(project_id__in=project_ids)
+    else:
+        score_label_ids = SourceCls().label_ids_for_project(project_id)
+        owner_q = Q(project_id=project_id)
 
     return AnnotationsLabels.objects.filter(
-        Q(project_id=project_id) | Q(id__in=score_label_ids),
+        owner_q | Q(id__in=score_label_ids),
         deleted=False,
     ).distinct()
 

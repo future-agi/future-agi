@@ -26,7 +26,6 @@ from tracer.services.clickhouse.query_builders.trace_detail import TraceDetailHa
 from tracer.services.clickhouse.v2.query_builders.trace_detail import (
     retrieve_trace_detail_ch,
 )
-from tracer.views.trace import TraceView
 
 try:
     from model_hub.models.score import Score as ScoreModel
@@ -224,8 +223,6 @@ class TestV1V2EnvelopeParity:
             fake_trace
         )
         view.get_serializer.return_value.data = {"id": "T1", "name": "root"}
-        # use the real summary/graph computation so we test the real shape
-        view._compute_summary_and_graph = TraceView._compute_summary_and_graph
 
         span_tree = [
             {
@@ -263,6 +260,118 @@ class TestV1V2EnvelopeParity:
         v1, v2 = self._v1_result(), self._v2_result()
         assert set(v1["summary"]) == set(v2["summary"])
         assert set(v1["graph"]) == set(v2["graph"]) == {"nodes", "edges"}
+
+    # ----- value parity over a richer trace ----------------------------------
+    # One logical multi-span trace (two roots, a parent->child edge, a span with
+    # cost=None, a root with latency_ms=None, and one ERROR span) fed through BOTH
+    # handlers. Both call the same `compute_trace_summary_and_graph`, so the
+    # summary VALUES — not just the keys — must be identical; this is the drift
+    # the duplicated compute used to risk.
+    def _v1_rich(self):
+        view = MagicMock()
+        fake_trace = SimpleNamespace(id="T1", project_id="P1", project_version_id=None)
+        view.get_queryset.return_value.filter.return_value.first.return_value = (
+            fake_trace
+        )
+        view.get_serializer.return_value.data = {"id": "T1", "name": "root"}
+
+        def _obs(sid, otype, tt, pt, ct, cost, status, latency):
+            return {
+                "id": sid,
+                "name": sid.lower(),
+                "observation_type": otype,
+                "total_tokens": tt,
+                "prompt_tokens": pt,
+                "completion_tokens": ct,
+                "cost": cost,
+                "status": status,
+                "latency_ms": latency,
+            }
+
+        span_tree = [
+            {
+                "observation_span": _obs("R1", "LLM", 10, 6, 4, 0.005, "OK", 1000),
+                "children": [
+                    {
+                        "observation_span": _obs(
+                            "C1", "TOOL", 5, 2, 3, None, "ERROR", 250
+                        ),
+                        "children": [],
+                    }
+                ],
+            },
+            {
+                "observation_span": _obs("R2", "CHAIN", 0, 0, 0, 0, "OK", None),
+                "children": [],
+            },
+        ]
+        with patch(
+            "tracer.views.observation_span.get_observation_spans",
+            return_value=span_tree,
+        ):
+            return TraceDetailHandler(view=view, request=MagicMock(), pk="T1").fetch()
+
+    def _v2_rich(self):
+        rows = [
+            _root_span_row(
+                id="R1",
+                parent_span_id=None,
+                observation_type="LLM",
+                total_tokens=10,
+                prompt_tokens=6,
+                completion_tokens=4,
+                cost=0.005,
+                status="OK",
+                latency_ms=1000,
+            ),
+            _root_span_row(
+                id="C1",
+                parent_span_id="R1",
+                observation_type="TOOL",
+                total_tokens=5,
+                prompt_tokens=2,
+                completion_tokens=3,
+                cost=None,
+                status="ERROR",
+                latency_ms=250,
+            ),
+            _root_span_row(
+                id="R2",
+                parent_span_id=None,
+                observation_type="CHAIN",
+                total_tokens=0,
+                prompt_tokens=0,
+                completion_tokens=0,
+                cost=0,
+                status="OK",
+                latency_ms=None,
+            ),
+        ]
+        analytics = _FakeAnalytics(project_rows=[{"project_id": "P1"}], span_rows=rows)
+        with ExitStack() as stack:
+            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
+            return retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
+
+    def test_summary_values_match_for_rich_trace(self):
+        v1, v2 = self._v1_rich(), self._v2_rich()
+        assert v1["summary"] == v2["summary"]
+        # spot-check the values the FE renders + the edge cases
+        assert v1["summary"]["total_spans"] == 3
+        assert v1["summary"]["total_tokens"] == 15
+        assert v1["summary"]["total_cost"] == 0.005  # cost=None counts as 0
+        assert v1["summary"]["total_duration_ms"] == 1000  # latency=None -> 0
+        assert v1["summary"]["error_count"] == 1
+
+    def test_graph_values_match_for_rich_trace(self):
+        v1, v2 = self._v1_rich(), self._v2_rich()
+        assert (
+            {n["id"] for n in v1["graph"]["nodes"]}
+            == {n["id"] for n in v2["graph"]["nodes"]}
+            == {"R1", "C1", "R2"}
+        )
+        v1_edges = {(e["from"], e["to"]) for e in v1["graph"]["edges"]}
+        v2_edges = {(e["from"], e["to"]) for e in v2["graph"]["edges"]}
+        assert v1_edges == v2_edges == {("R1", "C1")}
 
 
 # --------------------------------------------------------------------------- #

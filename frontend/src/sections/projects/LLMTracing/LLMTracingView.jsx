@@ -701,6 +701,16 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const { setActiveViewConfig: setActiveViewConfigFromCtx } =
     useObserveHeader();
 
+  const switchSelectedTab = useCallback(
+    (tab) => {
+      setAutoSizeAllCols(false);
+      setSelectedTab(tab);
+      resetSpanGridStore();
+      resetTraceGridStore();
+    },
+    [setSelectedTab],
+  );
+
   const handleGroupByChange = useCallback(
     (groupKey) => {
       // Group-by changes off a saved view land on the corresponding default
@@ -717,6 +727,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         case "trace":
           if (onSavedView) {
             setActiveViewConfigFromCtx(null);
+            switchSelectedTab("trace");
             if (isUserMode) {
               navigate("?userTab=traces&selectedTab=trace", { replace: true });
             } else {
@@ -726,12 +737,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               );
             }
           } else {
-            setSelectedTab("trace");
+            switchSelectedTab("trace");
           }
           break;
         case "span":
           if (onSavedView) {
             setActiveViewConfigFromCtx(null);
+            switchSelectedTab("spans");
             if (isUserMode) {
               // User Detail has a single "Trace" fixed tab that hosts the
               // selectedTab toggle, so we land on userTab=traces with
@@ -744,7 +756,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               );
             }
           } else {
-            setSelectedTab("spans");
+            switchSelectedTab("spans");
           }
           break;
         case "users":
@@ -773,7 +785,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     [
       observeId,
       navigate,
-      setSelectedTab,
+      switchSelectedTab,
       setActiveViewConfigFromCtx,
       isUserMode,
       userIdForUserMode,
@@ -1045,10 +1057,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       setAutoSizeAllCols(false);
       gridApi.sizeColumnsToFit();
     }
-  };
-
-  const resetColumns = () => {
-    setAutoSizeAllCols(false);
   };
 
   const defaultFilter = useMemo(() => getDefaultFilter(), []);
@@ -3817,10 +3825,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   value={selectedTab}
                   onChange={(e, value) => {
                     resetFilters();
-                    resetColumns();
-                    setSelectedTab(value);
-                    resetSpanGridStore();
-                    resetTraceGridStore();
+                    switchSelectedTab(value);
                   }}
                   aria-label="change tabs"
                   sx={{

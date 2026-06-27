@@ -55,6 +55,9 @@ class FeedListRow:
     last_seen: datetime | None
     trends: list[TrendPoint] = field(default_factory=list)
     assignees: list[str] = field(default_factory=list)
+    # "voice" | "text" — inherited from the project (voice simulator agent),
+    # decides the per-trace surface (call player vs text evidence) in the FE.
+    modality: str = "text"
     model: str | None = None
     model_version: str | None = None
     project: str | None = None
@@ -108,6 +111,28 @@ class TracePreview:
 
 
 @dataclass
+class RcaSummary:
+    """Cached cluster-RCA result for the headline card (PRD §7.1).
+
+    Populated from the last cluster-rca agent run. ``synthesis`` is None when
+    the cluster has never been analyzed — the card shows its empty state then,
+    not a fabricated summary. ``failures_at_run`` is the cluster's error_count
+    at analysis time; the card compares it against the current count to show a
+    "N new since last analysis" stale nudge.
+    """
+
+    synthesis: str | None = None
+    fix: str | None = None
+    confidence: str | None = None  # H | M | L
+    evidence_trace_ids: list[str] = field(default_factory=list)
+    analyzed_at: datetime | None = None
+    failures_at_run: int | None = None
+    # Investigation trail (reasoning + tool events), not an observability trace.
+    # The Analyze tab replays the full run, not just the synthesis.
+    trace: list[dict] = field(default_factory=list)
+
+
+@dataclass
 class FeedDetailCore:
     """Detail view core payload — extends list row with trace previews."""
 
@@ -115,6 +140,7 @@ class FeedDetailCore:
     description: str | None = None
     success_trace: TracePreview | None = None
     representative_trace: TracePreview | None = None
+    rca: RcaSummary | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -157,14 +183,27 @@ class KeyMoment:
 
 @dataclass
 class PatternInsight:
-    """One cluster-level insight card in the Overview's Pattern Summary grid.
+    """One effect-size insight card in the Overview Pattern Summary grid.
 
-    ``value`` is the punchy metric ("3 / 21", "All", "4.2").
-    ``caption`` is the descriptive text under it.
+    Wire shape matches the final designer UI (``OverviewTab`` → PatternSummary):
+
+    - ``title``   — small uppercase kicker ("Common failure phrase").
+    - ``value``   — the punchy metric ("17 / 38", "82%", "~12.4s").
+    - ``caption`` — one human sentence; the key term wrapped in ``**bold**``
+      markers, which the FE ``renderRichCaption`` renders bold. Never contains
+      z/p/lift/test-name — the stat machinery is the gate, not the message.
+
+    ``effect`` is the normalized effect-size the adaptive picker ranks by (not
+    serialized). ``evidence`` carries the stat rigor (test, z/p, lift, sample
+    sizes) for a future hover tooltip — the current FE card has no tooltip, so
+    it is unused for now but kept so the rigor isn't thrown away.
     """
 
+    title: str
     value: str
     caption: str
+    effect: float = 0.0
+    evidence: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -189,12 +228,15 @@ class TraceSummary:
 
 @dataclass
 class TraceEvidence:
-    """Raw input/output + optional breadcrumb reels (populated later phases)."""
+    """Raw input/output + breadcrumb reels + (eval clusters) the judge's
+    reasoning and score the artifact was scored against."""
 
     input: str | None = None
     output: str | None = None
     fail_reel: list[dict] = field(default_factory=list)
     pass_reel: list[dict] = field(default_factory=list)
+    judge_reason: str | None = None
+    score: float | None = None
 
 
 @dataclass
@@ -229,6 +271,9 @@ class OverviewResponse:
     events_over_time: list[EventsOverTimePoint] = field(default_factory=list)
     pattern_summary: PatternSummary = field(default_factory=PatternSummary)
     representative_traces: list[RepresentativeTrace] = field(default_factory=list)
+    # Total members in the cluster — representative_traces is capped by
+    # rep_limit, so the FE needs this to render "showing N of M".
+    representative_total: int = 0
 
 
 # ---------------------------------------------------------------------------

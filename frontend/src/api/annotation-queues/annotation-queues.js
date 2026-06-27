@@ -512,7 +512,7 @@ export const useQueueProgress = (queueId, options = {}) => {
   });
 };
 
-const getAssignmentUserId = (user) => user?.id ?? user?.user_id;
+const getAssignmentUserId = (user) => user?.user_id ?? user?.id;
 
 const normalizeAssignmentUser = (user, fallbackId) => {
   const id = String(getAssignmentUserId(user) ?? fallbackId ?? "");
@@ -779,6 +779,7 @@ export const useAnnotateDetail = (
     viewMode,
     reviewStatus,
     excludeReviewStatus,
+    reserve,
     ...options
   } = {},
 ) => {
@@ -790,6 +791,7 @@ export const useAnnotateDetail = (
     ...(excludeReviewStatus
       ? { exclude_review_status: excludeReviewStatus }
       : {}),
+    ...(reserve ? { reserve: true } : {}),
   };
   const requestOptions = Object.keys(params).length ? { params } : undefined;
   const detailFilters = {
@@ -799,6 +801,7 @@ export const useAnnotateDetail = (
     ...(excludeReviewStatus
       ? { exclude_review_status: excludeReviewStatus }
       : {}),
+    ...(reserve ? { reserve: true } : {}),
   };
   return useQuery({
     queryKey: annotateKeys.detail(queueId, itemId, annotatorId, detailFilters),

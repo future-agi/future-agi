@@ -1119,6 +1119,7 @@ import type {
   TracerEvalTaskPauseEvalTaskParams,
   TracerEvalTaskUnpauseEvalTaskParams,
   TracerFeedIssuesListParams,
+  TracerFeedIssuesOverviewListParams,
   TracerFeedIssuesReadParams,
   TracerFeedIssuesRootCauseListParams,
   TracerFeedIssuesSidebarListParams,
@@ -1318,6 +1319,7 @@ import type {
   WorkspaceInviteResponseApi,
   WorkspaceListPaginatedResponseApi,
   WorkspaceManagementListResponseApi,
+  WorkspaceMemberListResponseApi,
   WorkspaceMemberRemoveApi,
   WorkspaceMemberRemoveResponseApi,
   WorkspaceMemberRoleUpdateApi,
@@ -7030,7 +7032,7 @@ export const accountsWorkspaceSwitchCreate = async (switchWorkspaceApi: SwitchWo
 
 
 export type accountsWorkspaceMembersListResponse200 = {
-  data: MemberListResponseApi
+  data: WorkspaceMemberListResponseApi
   status: 200
 }
 
@@ -60660,20 +60662,33 @@ export type tracerFeedIssuesOverviewListResponseError = (tracerFeedIssuesOvervie
 
 export type tracerFeedIssuesOverviewListResponse = (tracerFeedIssuesOverviewListResponseSuccess | tracerFeedIssuesOverviewListResponseError)
 
-export const getTracerFeedIssuesOverviewListUrl = (clusterId: string,) => {
+export const getTracerFeedIssuesOverviewListUrl = (clusterId: string,
+    params?: TracerFeedIssuesOverviewListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/tracer/feed/issues/${clusterId}/overview/`
+  return stringifiedParams.length > 0 ? `/tracer/feed/issues/${clusterId}/overview/?${stringifiedParams}` : `/tracer/feed/issues/${clusterId}/overview/`
 }
 
 /**
  * GET /tracer/feed/issues/{cluster_id}/overview/
  */
-export const tracerFeedIssuesOverviewList = async (clusterId: string, options?: RequestInit): Promise<tracerFeedIssuesOverviewListResponse> => {
+export const tracerFeedIssuesOverviewList = async (clusterId: string,
+    params?: TracerFeedIssuesOverviewListParams, options?: RequestInit): Promise<tracerFeedIssuesOverviewListResponse> => {
 
-  return apiMutator<tracerFeedIssuesOverviewListResponse>(getTracerFeedIssuesOverviewListUrl(clusterId),
+  return apiMutator<tracerFeedIssuesOverviewListResponse>(getTracerFeedIssuesOverviewListUrl(clusterId,params),
   {
     ...options,
     method: 'GET'
@@ -62311,7 +62326,7 @@ export type tracerObservationSpanListSpansObserveResponseError = (tracerObservat
 
 export type tracerObservationSpanListSpansObserveResponse = (tracerObservationSpanListSpansObserveResponseSuccess | tracerObservationSpanListSpansObserveResponseError)
 
-export const getTracerObservationSpanListSpansObserveUrl = (params: TracerObservationSpanListSpansObserveParams,) => {
+export const getTracerObservationSpanListSpansObserveUrl = (params?: TracerObservationSpanListSpansObserveParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -62330,7 +62345,7 @@ export const getTracerObservationSpanListSpansObserveUrl = (params: TracerObserv
   return stringifiedParams.length > 0 ? `/tracer/observation-span/list_spans_observe/?${stringifiedParams}` : `/tracer/observation-span/list_spans_observe/`
 }
 
-export const tracerObservationSpanListSpansObserve = async (params: TracerObservationSpanListSpansObserveParams, options?: RequestInit): Promise<tracerObservationSpanListSpansObserveResponse> => {
+export const tracerObservationSpanListSpansObserve = async (params?: TracerObservationSpanListSpansObserveParams, options?: RequestInit): Promise<tracerObservationSpanListSpansObserveResponse> => {
 
   return apiMutator<tracerObservationSpanListSpansObserveResponse>(getTracerObservationSpanListSpansObserveUrl(params),
   {

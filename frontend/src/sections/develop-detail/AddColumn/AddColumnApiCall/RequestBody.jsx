@@ -392,7 +392,7 @@ const RequestBody = ({
             border: `1px solid ${isError ? theme.palette.error.main : theme.palette.divider}`,
             borderRadius: "8px",
             outline: "none",
-            color: "transparent",
+
             caretColor: theme.palette.text.primary,
             backgroundColor: "transparent",
             position: "relative",

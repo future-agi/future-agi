@@ -1474,6 +1474,44 @@ export interface SwitchWorkspaceResponseApi {
   result: SwitchWorkspaceResultApi;
 }
 
+export type WorkspaceMemberRowApiType = typeof WorkspaceMemberRowApiType[keyof typeof WorkspaceMemberRowApiType];
+
+
+export const WorkspaceMemberRowApiType = {
+  member: 'member',
+  invite: 'invite',
+} as const;
+
+export interface WorkspaceMemberRowApi {
+  id: string;
+  name: string;
+  /** @minLength 1 */
+  email: string;
+  ws_level?: number;
+  /** @minLength 1 */
+  ws_role?: string;
+  org_level?: number;
+  /** @minLength 1 */
+  org_role?: string;
+  /** @minLength 1 */
+  status: string;
+  created_at: string;
+  type: WorkspaceMemberRowApiType;
+  auto_access?: boolean;
+}
+
+export interface WorkspaceMemberListResultApi {
+  results: WorkspaceMemberRowApi[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface WorkspaceMemberListResponseApi {
+  status: boolean;
+  result: WorkspaceMemberListResultApi;
+}
+
 export interface WorkspaceMemberRemoveApi {
   user_id: string;
 }
@@ -3909,6 +3947,7 @@ export interface ConversationCreateRequestApi {
   title?: string;
   /** @maxLength 500 */
   context_page?: string;
+  hidden?: boolean;
 }
 
 export type FalconMessageApiRole = typeof FalconMessageApiRole[keyof typeof FalconMessageApiRole];
@@ -8782,7 +8821,37 @@ export interface DatasetTableMetadataApi {
   status?: DatasetTableMetadataApiStatus;
 }
 
-export type DatasetTableResultApiColumnConfigItem = { [key: string]: unknown };
+export type DatasetTableColumnApiEvalTag = { [key: string]: unknown };
+
+export type DatasetTableColumnApiMetadata = { [key: string]: unknown };
+
+export type DatasetTableColumnApiChoicesMap = { [key: string]: unknown };
+
+export interface DatasetTableColumnApi {
+  /** @minLength 1 */
+  id: string;
+  name: string;
+  /** @minLength 1 */
+  data_type: string;
+  is_visible: boolean;
+  is_frozen: boolean;
+  /** @minLength 1 */
+  source_type: string;
+  /** @minLength 1 */
+  origin_type: string;
+  /** @minLength 1 */
+  source_id: string;
+  order_index: number;
+  /** @minLength 1 */
+  status: string;
+  average_score: number;
+  reason_column: boolean;
+  is_numeric_eval: boolean;
+  is_numeric_eval_percentage: boolean;
+  eval_tag: DatasetTableColumnApiEvalTag;
+  metadata: DatasetTableColumnApiMetadata;
+  choices_map: DatasetTableColumnApiChoicesMap;
+}
 
 export type DatasetTableResultApiTableItem = { [key: string]: unknown };
 
@@ -8790,7 +8859,7 @@ export type DatasetTableResultApiDatasetConfig = { [key: string]: unknown };
 
 export interface DatasetTableResultApi {
   metadata?: DatasetTableMetadataApi;
-  column_config: DatasetTableResultApiColumnConfigItem[];
+  column_config: DatasetTableColumnApi[];
   table?: DatasetTableResultApiTableItem[];
   dataset_config?: DatasetTableResultApiDatasetConfig;
   synthetic_dataset?: boolean;
@@ -14615,6 +14684,7 @@ export interface FetchAssistantRequestApi {
   assistant_id: string;
   /** @minLength 1 */
   api_key: string;
+  agent_id?: string;
   /** Voice provider. One of: vapi, retell, eleven_labs, others. */
   provider?: FetchAssistantRequestApiProvider;
 }
@@ -14624,8 +14694,6 @@ export interface FetchAssistantResponseApi {
   readonly name?: string;
   /** @minLength 1 */
   readonly assistant_id?: string;
-  /** @minLength 1 */
-  readonly api_key?: string;
   /** @minLength 1 */
   readonly prompt?: string;
   /** @minLength 1 */
@@ -18822,6 +18890,8 @@ export interface FeedListRowApi {
   cluster_id: string;
   /** @minLength 1 */
   source: string;
+  /** @minLength 1 */
+  modality: string;
   error: ErrorNameApi;
   /** @minLength 1 */
   status: string;
@@ -18891,12 +18961,46 @@ export interface TracePreviewApi {
   output: string;
 }
 
+export type RcaTrailStepApiArgs = { [key: string]: unknown };
+
+export type RcaTrailStepApiResult = { [key: string]: unknown };
+
+export interface RcaTrailStepApi {
+  /** @minLength 1 */
+  type: string;
+  text?: string;
+  /** @minLength 1 */
+  call_id?: string;
+  /** @minLength 1 */
+  tool?: string;
+  args?: RcaTrailStepApiArgs;
+  result?: RcaTrailStepApiResult;
+  synthesis?: string;
+  fix?: string;
+  /** @minLength 1 */
+  confidence?: string;
+}
+
+export interface RcaSummaryApi {
+  /** @minLength 1 */
+  synthesis?: string;
+  /** @minLength 1 */
+  fix?: string;
+  /** @minLength 1 */
+  confidence?: string;
+  evidence_trace_ids?: string[];
+  analyzed_at?: string;
+  failures_at_run?: number;
+  trace?: RcaTrailStepApi[];
+}
+
 export interface FeedDetailCoreApi {
   row: FeedListRowApi;
   /** @minLength 1 */
   description: string;
   success_trace: TracePreviewApi;
   representative_trace: TracePreviewApi;
+  rca?: RcaSummaryApi;
 }
 
 export interface FeedDetailApiResponseApi {
@@ -18982,11 +19086,33 @@ export interface EventsOverTimePointApi {
   users: number;
 }
 
+export interface PatternInsightEvidenceApi {
+  /** @minLength 1 */
+  test?: string;
+  /** @minLength 1 */
+  baseline?: string;
+  /** @minLength 1 */
+  tool?: string;
+  z?: number;
+  p_value?: number;
+  ks_stat?: number;
+  fail_median?: number;
+  baseline_median?: number;
+  fail_pct?: number;
+  baseline_pct?: number;
+  hits?: number;
+  total?: number;
+  missing_in?: number;
+  traces_with_tools?: number;
+}
+
 export interface PatternInsightApi {
   /** @minLength 1 */
-  value: string;
+  title?: string;
   /** @minLength 1 */
+  value: string;
   caption: string;
+  evidence?: PatternInsightEvidenceApi;
 }
 
 export interface KeyMomentApi {
@@ -19021,6 +19147,9 @@ export interface TraceEvidenceApi {
   output: string;
   fail_reel: TraceEvidenceApiFailReelItem[];
   pass_reel: TraceEvidenceApiPassReelItem[];
+  /** @minLength 1 */
+  judge_reason?: string;
+  score?: number;
 }
 
 export type AgentFlowGraphApiNodesItem = {[key: string]: string};
@@ -19056,6 +19185,7 @@ export interface OverviewResponseApi {
   events_over_time: EventsOverTimePointApi[];
   pattern_summary: PatternSummaryApi;
   representative_traces: RepresentativeTraceApi[];
+  representative_total?: number;
 }
 
 export interface OverviewApiResponseApi {
@@ -25351,6 +25481,14 @@ export type TracerFeedIssuesReadParams = {
 project_id?: string;
 };
 
+export type TracerFeedIssuesOverviewListParams = {
+/**
+ * @minimum 1
+ * @maximum 200
+ */
+rep_limit?: number;
+};
+
 export type TracerFeedIssuesRootCauseListParams = {
 /**
  * @minLength 1
@@ -25622,7 +25760,7 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-project_id: string;
+project_id?: string;
 user_id?: string;
 /**
  * @minLength 1

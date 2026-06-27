@@ -660,6 +660,63 @@ class TestClickHouseFilterBuilder:
         assert "project_id = %(project_id)s" in where_pid
         assert "project_id IN %(project_ids)s" not in where_pid
 
+    def test_system_metric_trace_wrap_org_mode_uses_project_ids(self):
+        """Trace-mode SYSTEM_METRIC filters (e.g. ``node_type``) wrap the
+        condition in a ``trace_id IN (SELECT trace_id FROM spans WHERE
+        project_id ...)`` subquery. That wrap used to hardcode
+        ``project_id = %(project_id)s`` regardless of org scope, so
+        org-scoped requests (``project_ids`` set, no ``project_id``) raised
+        ``KeyError: 'project_id'`` at execution time — surfaced by
+        ``list_traces_of_session`` as a generic 400. Regression guard.
+        """
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(
+            project_ids=["11111111-1111-1111-1111-111111111111"],
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE,
+        )
+        where, params = builder.translate(
+            [
+                {
+                    "column_id": "node_type",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": ["chain", "retriever"],
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+
+        assert "trace_id IN" in where
+        assert "project_id IN %(project_ids)s" in where
+        assert "project_id = %(project_id)s" not in where
+        assert "project_id" not in params
+
+        # Single-project mode should still emit the scalar shape.
+        single_pid = ClickHouseFilterBuilder(
+            project_id="11111111-1111-1111-1111-111111111111",
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE,
+        )
+        where_pid, _ = single_pid.translate(
+            [
+                {
+                    "column_id": "node_type",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": ["chain", "retriever"],
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+        assert "project_id = %(project_id)s" in where_pid
+        assert "project_id IN %(project_ids)s" not in where_pid
+
     def test_score_date_scope_can_be_disabled_for_monitor_builders(self):
         """Monitor queries bind start_time/end_time, not start_date/end_date."""
         from tracer.services.clickhouse.query_builders.filters import (
@@ -2647,7 +2704,7 @@ class TestSessionListQueryBuilder:
         assert "duration = %(having_" not in query
 
     def test_build_with_user_id(self):
-        """When user_id is provided, query should filter by end_user_id."""
+        """User membership should select sessions without shrinking aggregates."""
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
 
         builder = SessionListQueryBuilder(
@@ -2658,8 +2715,38 @@ class TestSessionListQueryBuilder:
             user_id="user-123",
         )
         query, params = builder.build()
-        assert "end_user_id" in query
+        assert "trace_session_id IN (" in query
+        assert "SELECT trace_session_id, end_user_id" in query
+        assert "end_user_id = %(user_id)s" in query
+        assert query.index("trace_session_id IN (") < query.index(
+            "GROUP BY trace_session_id"
+        )
         assert params.get("user_id") == "user-123"
+
+    def test_user_null_filter_presence_resolves_session_ids_before_membership(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "end_user_id",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "is_not_null",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+        )
+
+        query, _params = builder.build()
+
+        assert "trace_session_id IN (" in query
+        assert "trace_session_id_remap" in query
+        assert "user_presence_ts_remap.survivor_id" in query
+        assert "GROUP BY trace_session_id" in query
+        assert "end_user_id IS NOT NULL" in query
 
     def test_build_excludes_null_session_ids(self):
         """Query should filter out rows without a session ID."""
@@ -2674,8 +2761,8 @@ class TestSessionListQueryBuilder:
         query, params = builder.build()
         assert "trace_session_id IS NOT NULL" in query
 
-    def test_session_id_filter_casts_uuid_column_to_string(self):
-        """Session picker values are strings; the session_id filter resolves them
+    def test_session_filter_alias_resolves_before_grouping(self):
+        """Session picker values are strings; the frontend session filter resolves them
         new→old through the trace_session_id remap (P3b step1.5) so a cross-cutover
         straddler unifies under the OLD curated id, passing the ids as a bound
         UUID-set param — replacing the legacy ``toString(trace_session_id) IN`` cast.
@@ -2687,7 +2774,8 @@ class TestSessionListQueryBuilder:
             project_id="test-project-id",
             filters=[
                 {
-                    "column_id": "session_id",
+                    "column_id": "session",
+                    "display_name": "Session",
                     "filter_config": {
                         "filter_type": "text",
                         "filter_op": "in",
@@ -2705,12 +2793,100 @@ class TestSessionListQueryBuilder:
         # Resolved-membership form (id_remap_sql survivor-collapse), not the
         # legacy toString cast.
         assert "trace_session_id_remap" in query
-        assert "id_remap.survivor_id" in query
+        assert "ts_remap.survivor_id" in query
         assert "IN %(sess_1)s" in query
         assert "toString(trace_session_id) IN" not in query
+        assert query.index("IN %(sess_1)s") < query.index(
+            "GROUP BY trace_session_id"
+        )
         assert session_id in next(
             value for key, value in params.items() if key.startswith("sess_")
         )
+
+    def test_total_traces_count_frontend_alias_filters_and_sorts(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "total_traces_count",
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "greater_than",
+                        "filter_value": 4,
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+            sort_params=[
+                {"column_id": "total_traces_count", "direction": "desc"}
+            ],
+        )
+
+        query, params = builder.build()
+
+        assert "HAVING traces_count > %(having_" in query
+        assert "ORDER BY traces_count DESC" in query
+        assert 4 in params.values()
+
+    def test_first_message_filter_aggregates_before_having(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "first_message",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "contains",
+                        "filter_value": "recursion",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+        )
+
+        query, params = builder.build()
+        count_query, _ = builder.build_count_query()
+
+        assert "argMin(input, start_time) AS first_message" in query
+        assert "HAVING first_message ILIKE %(having_" in query
+        assert "%recursion%" in params.values()
+        assert "argMin(input, start_time) AS first_message" in count_query
+
+    def test_first_message_sort_projects_message_aggregates(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            sort_params=[{"column_id": "first_message", "direction": "asc"}],
+        )
+
+        query, _params = builder.build()
+
+        assert "argMin(input, start_time) AS first_message" in query
+        assert "argMax(input, start_time) AS last_message" in query
+        assert "SELECT trace_session_id, trace_id, start_time, end_time, cost, total_tokens, input" in query
+        assert "ORDER BY first_message ASC" in query
+
+    def test_v2_span_attributes_query_uses_native_ch25_columns(self):
+        from tracer.services.clickhouse.v2.query_builders.session_list import (
+            SessionListQueryBuilderV2,
+        )
+
+        builder = SessionListQueryBuilderV2(project_id="test-project-id")
+        builder.build()
+        query, _ = builder.build_span_attributes_query(["session-1"])
+
+        assert "attributes_extra AS span_attributes_raw" in query
+        assert "attrs_string" in query
+        assert "attrs_number" in query
+        assert "span_attr_str" not in query
+        assert "span_attr_num" not in query
+        assert "toJSONString(attributes_extra) AS span_attributes_raw" not in query
 
     def test_build_uses_uniq_not_uniqExact(self):
         """build() should use approximate uniq() instead of expensive uniqExact()."""
@@ -5253,6 +5429,63 @@ class TestEvalMetricsQueryBuilderExtended:
 class TestFilterBuilderEdgeCases:
     """Edge case tests for ClickHouseFilterBuilder."""
 
+    def test_nullable_uuid_column_text_ops_cast_to_string(self):
+        """Filtering a nullable-UUID column (session/user) must not crash and
+        must wrap the column in toString() for string-comparison ops.
+
+        Regression: ``_build_column_condition`` referenced an undefined
+        ``_UUID_TEXT_FILTER_OPS``, so any session_id/end_user_id/
+        trace_session_id filter raised AttributeError (e.g. the
+        list_traces_of_session endpoint). ClickHouse also rejects direct
+        UUID-vs-String comparisons, so the cast is required for correctness.
+        """
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        # ``session_id`` is a frontend alias normalized to ``trace_session_id``
+        # before it reaches the column condition, so assert on the canonical
+        # columns that actually surface in the SQL.
+        for column in ("trace_session_id", "end_user_id"):
+            for op in ("contains", "equals", "starts_with", "in", "not_in"):
+                builder = ClickHouseFilterBuilder()
+                value = ["abc", "def"] if op in ("in", "not_in") else "0f57a0c2"
+                filters = [
+                    {
+                        "column_id": column,
+                        "filter_config": {
+                            "filter_type": "categorical",
+                            "filter_op": op,
+                            "filter_value": value,
+                            "col_type": "SYSTEM_METRIC",
+                        },
+                    }
+                ]
+                where, _ = builder.translate(filters)
+                assert f"toString({column})" in where, (column, op, where)
+
+    def test_nullable_uuid_column_is_null_uses_bare_column(self):
+        """is_null/is_not_null on a nullable-UUID column skip the toString cast."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder()
+        filters = [
+            {
+                "column_id": "trace_session_id",
+                "filter_config": {
+                    "filter_type": "categorical",
+                    "filter_op": "is_null",
+                    "filter_value": None,
+                    "col_type": "SYSTEM_METRIC",
+                },
+            }
+        ]
+        where, _ = builder.translate(filters)
+        assert "trace_session_id IS NULL" in where
+        assert "toString(trace_session_id) IS NULL" not in where
+
     def test_not_equals_filter(self):
         """not_equals should produce != operator."""
         from tracer.services.clickhouse.query_builders.filters import (
@@ -5480,7 +5713,7 @@ class TestFilterBuilderEdgeCases:
             }
         ]
         where, params = builder.translate(filters)
-        assert "model = %(col_1)s" in where
+        assert "lower(model) = %(col_1)s" in where
         assert params == {"col_1": "gpt-4"}
 
     def test_eval_metric_filter_subquery_structure(self):
@@ -7809,6 +8042,38 @@ class TestMonitorMetricsQueryBuilder:
 @pytest.mark.unit
 class TestSessionTimeSeriesQueryBuilder:
     """Test session graph query generation."""
+
+    def test_session_filter_alias_resolves_before_grouping(self):
+        from tracer.services.clickhouse.query_builders.session_time_series import (
+            SessionTimeSeriesQueryBuilder,
+        )
+
+        session_id = "003b76f1-2b4a-4af5-b0dc-224d687374d4"
+        builder = SessionTimeSeriesQueryBuilder(
+            project_id="project-1",
+            filters=[
+                {
+                    "column_id": "session",
+                    "display_name": "Session",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": [session_id],
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+        )
+
+        query, params = builder.build()
+
+        assert "trace_session_id_remap" in query
+        assert "ts_remap.survivor_id" in query
+        assert "IN %(session_id_1)s" in query
+        assert query.index("IN %(session_id_1)s") < query.index(
+            "GROUP BY session_id"
+        )
+        assert params["session_id_1"] == (session_id,)
 
     def test_session_aggregate_filter_uses_inner_having(self):
         from tracer.services.clickhouse.query_builders.session_time_series import (

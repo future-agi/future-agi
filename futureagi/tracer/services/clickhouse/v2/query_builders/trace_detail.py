@@ -22,6 +22,7 @@ import structlog
 from tracer.services.clickhouse.query_builders.trace_detail import (
     TraceDetail,
     TraceDetailHandler,
+    compute_trace_summary_and_graph,
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 
@@ -376,60 +377,6 @@ def retrieve_trace_detail_ch(
     except Exception:
         logger.exception("Failed to fetch trace annotations")
 
-    # ----- Phase 8: Compute summary -----
-    total_tokens = 0
-    total_prompt_tokens = 0
-    total_completion_tokens = 0
-    total_cost = 0.0
-    error_count = 0
-    type_counts = {}
-    root_latencies = []
-
-    for entry in span_map.values():
-        sp = entry["observation_span"]
-        total_tokens += sp.get("total_tokens") or 0
-        total_prompt_tokens += sp.get("prompt_tokens") or 0
-        total_completion_tokens += sp.get("completion_tokens") or 0
-        total_cost += sp.get("cost") or 0.0
-        if sp.get("status") == "ERROR":
-            error_count += 1
-        obs_type = sp.get("observation_type", "unknown")
-        type_counts[obs_type] = type_counts.get(obs_type, 0) + 1
-        if entry.get("_parent_id") is None:
-            root_latencies.append(sp.get("latency_ms") or 0)
-
-    summary = {
-        "total_spans": len(span_map),
-        "total_duration_ms": max(root_latencies) if root_latencies else 0,
-        "total_tokens": total_tokens,
-        "total_prompt_tokens": total_prompt_tokens,
-        "total_completion_tokens": total_completion_tokens,
-        "total_cost": round(total_cost, 6),
-        "error_count": error_count,
-        "span_type_counts": type_counts,
-    }
-
-    # ----- Phase 8: Derive agent graph -----
-    graph_nodes = []
-    graph_edges = []
-    for sid, entry in span_map.items():
-        sp = entry["observation_span"]
-        graph_nodes.append(
-            {
-                "id": sid,
-                "name": sp.get("name", ""),
-                "type": sp.get("observation_type", "unknown"),
-                "latency_ms": sp.get("latency_ms", 0),
-                "tokens": sp.get("total_tokens", 0),
-                "status": sp.get("status"),
-            }
-        )
-        parent_id = entry.get("_parent_id")
-        if parent_id and parent_id in span_map:
-            graph_edges.append({"from": parent_id, "to": sid})
-
-    graph = {"nodes": graph_nodes, "edges": graph_edges}
-
     # ----- Fetch fresh span tags from PG (CH has sync delay) -----
     if span_map:
         try:
@@ -474,6 +421,11 @@ def retrieve_trace_detail_ch(
 
     observation_spans_response = root_spans + orphan_spans
 
+    # Summary + agent graph from the shared compute over the assembled span
+    # tree — the same helper the V1 (PG) handler uses, so the two paths cannot
+    # drift in the totals or graph shape.
+    summary, graph = compute_trace_summary_and_graph(observation_spans_response)
+
     # CH-only trace (no PG row): synthesize the trace metadata from the root
     # span so the response shape matches the PG serializer.
     if trace_data is None:
@@ -490,7 +442,7 @@ def retrieve_trace_detail_ch(
             "metadata": root_obs.get("metadata") or {},
             "input": root_obs.get("input"),
             "output": root_obs.get("output"),
-            "error": error_count > 0,
+            "error": summary["error_count"] > 0,
             "session": session_id,
             "external_id": None,
             "tags": root_obs.get("tags") or [],
