@@ -1,5 +1,5 @@
 """The reconciler — one idempotent engine that makes a task's live entries
-match its desired state (§4). Covers create, add/remove eval, config edit, and
+match its desired state. Covers create, add/remove eval, config edit, and
 scope change; running it twice is a no-op.
 """
 

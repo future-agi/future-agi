@@ -1,4 +1,4 @@
-"""Observability e2e (§13): Search Attributes + memo applied (and re-applied
+"""Observability e2e: Search Attributes + memo applied (and re-applied
 across continue-as-new), the ``phase`` query, the ``request_recheck`` nudge
 signal, and idempotent SA registration. Uses an in-memory Temporal server with
 the eval-task SAs registered on its namespace.

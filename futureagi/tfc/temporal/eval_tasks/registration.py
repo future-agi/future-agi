@@ -1,4 +1,4 @@
-"""Search-attribute registration (deploy prerequisite, §13.7).
+"""Search-attribute registration (deploy prerequisite).
 
 Kept separate from ``search_attributes.py`` because it imports the operator-API
 enums, which must not be pulled into the workflow sandbox. Used by the

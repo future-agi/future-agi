@@ -191,7 +191,7 @@ def _get_workflow_labels_sync(task_id: str) -> dict:
     context (names + a config summary) for the workflow to upsert.
 
     The workflow calls this at the start of every run, so the labels are
-    re-applied after each continue-as-new (run-scoped, the §13.5 gotcha).
+    re-applied after each continue-as-new (the values are run-scoped).
     """
     close_old_connections()
     try:
