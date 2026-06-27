@@ -106,9 +106,10 @@ DATASET_AGGREGATIONS: Dict[str, str] = {
 
 # Breakdown dimensions for dataset workflow
 DATASET_BREAKDOWN_COLUMNS: Dict[str, str] = {
-    "dataset": "toString(c.dataset_id)",
+    "dataset": "dictGet('dataset_dict', 'name', c.dataset_id)",
     "eval_template": "dictGet('column_dict', 'name', c.column_id)",
     "column_name": "dictGet('column_dict', 'name', c.column_id)",
+    "column_source": "dictGet('column_dict', 'source', c.column_id)",
     "cell_status": "c.status",
 }
 
@@ -512,7 +513,7 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
     def _dataset_scope_subquery() -> str:
         return (
             "SELECT id FROM model_hub_dataset FINAL "
-            "WHERE _peerdb_is_deleted = 0 AND deleted = 0"
+            "WHERE _peerdb_is_deleted = 0"
         )
 
     def _build_base_where(self, params: dict) -> List[str]:

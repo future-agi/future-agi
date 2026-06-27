@@ -199,7 +199,13 @@ class TestDatasetDimensions:
     """Test breakdown and filter dimension maps."""
 
     def test_breakdown_dimensions(self):
-        expected = {"dataset", "eval_template", "column_name", "cell_status"}
+        expected = {
+            "dataset",
+            "eval_template",
+            "column_name",
+            "column_source",
+            "cell_status",
+        }
         assert set(DATASET_BREAKDOWN_COLUMNS.keys()) == expected
 
     def test_filter_dimensions(self):
@@ -490,7 +496,8 @@ class TestDatasetBreakdowns:
         builder = DatasetQueryBuilder(system_metric_config)
         sql, _ = builder.build_metric_query(system_metric_config["metrics"][0])
         assert "breakdown_value" in sql
-        assert "toString(c.dataset_id)" in sql
+        assert "dataset_dict" in sql
+        assert "name" in sql
         assert "GROUP BY" in sql
 
     def test_eval_template_breakdown(self, system_metric_config):
@@ -546,6 +553,8 @@ class TestDatasetFilters:
         builder = DatasetQueryBuilder(system_metric_config)
         sql, params = builder.build_metric_query(system_metric_config["metrics"][0])
         assert "FROM model_hub_dataset FINAL" in sql
+        assert "WHERE _peerdb_is_deleted = 0" in sql
+        assert "AND deleted = 0" not in sql
         assert "AND name IN %(df_0_val)s" in sql
         assert "IN" in sql
         assert "df_0_val" in params
@@ -554,6 +563,8 @@ class TestDatasetFilters:
         builder = DatasetQueryBuilder(system_metric_config)
         sql, params = builder.build_metric_query(system_metric_config["metrics"][0])
         assert "SELECT id FROM model_hub_dataset FINAL" in sql
+        assert "WHERE _peerdb_is_deleted = 0" in sql
+        assert "AND deleted = 0" not in sql
         assert "workspace_id = toUUID(%(workspace_id)s)" in sql
         assert "workspace_id" in params
 

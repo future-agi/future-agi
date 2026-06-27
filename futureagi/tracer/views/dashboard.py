@@ -601,7 +601,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     valid_count = Dataset.objects.filter(
                         id__in=dataset_ids,
                         workspace=request.workspace,
-                        deleted=False,
                     ).count()
                     if valid_count != len(dataset_ids):
                         return self._gm.bad_request(
@@ -1018,6 +1017,44 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "source": "datasets",
                         "type": "number",
                         "unit": "%",
+                    },
+                ]
+            )
+
+            # 2b. Dataset breakdown/filter dimensions (string)
+            metrics.extend(
+                [
+                    {
+                        "name": "dataset",
+                        "display_name": "Dataset",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
+                        "name": "column_name",
+                        "display_name": "Column Name",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
+                        "name": "column_source",
+                        "display_name": "Column Source",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
+                        "name": "cell_status",
+                        "display_name": "Cell Status",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
                     },
                 ]
             )
@@ -1542,6 +1579,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             metrics.extend(
                 [
                     {
+                        "name": "simulation",
+                        "display_name": "Simulation",
+                        "category": "system_metric",
+                        "source": "simulation",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
                         "name": "scenario",
                         "display_name": "Scenario",
                         "category": "system_metric",
@@ -1699,7 +1744,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             for metric in metrics:
                 if (
-                    metric.get("source") == "simulation"
+                    metric.get("source") in ("simulation", "datasets")
                     and metric.get("type") == "string"
                 ):
                     metric["allowed_aggregations"] = ["count", "count_distinct"]

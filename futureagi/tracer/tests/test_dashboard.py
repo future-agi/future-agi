@@ -2071,6 +2071,27 @@ class TestDashboardQueryExecution:
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.AnalyticsQueryService")
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    def test_filter_values_dataset_picker_keeps_active_dataset_scope(
+        self, _mock_enabled, mock_analytics_cls, auth_client
+    ):
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = []
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/?source=datasets&metric_name=dataset&metric_type=system_metric"
+        )
+
+        assert response.status_code == 200
+        sql = mock_service.execute_ch_query.call_args.args[0]
+        assert "FROM model_hub_dataset FINAL" in sql
+        assert "AND deleted = 0" in sql
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     def test_filter_values_session_uses_remap_survivor_values(
         self, _mock_enabled, mock_analytics_cls, auth_client, observe_project
     ):

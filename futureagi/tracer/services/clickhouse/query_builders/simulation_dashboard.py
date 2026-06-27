@@ -35,6 +35,7 @@ _SAFE_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 _RATE_INDICATOR_METRICS = frozenset({"success_rate", "failure_rate"})
 _STRING_DIMENSION_METRICS = frozenset(
     {
+        "simulation",
         "scenario",
         "agent_definition",
         "agent_version",
@@ -161,6 +162,12 @@ SIMULATION_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
         "avg_stop_time_after_interruption_ms",
     ),
     # --- String dimensions (used as metrics with count_distinct) ---
+    "simulation": (
+        "simulate_call_execution",
+        "dictGetOrDefault('simulate_run_test_dict', 'name', "
+        "dictGetOrDefault('simulate_test_execution_dict', 'run_test_id', "
+        "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
+    ),
     "scenario": (
         "simulate_call_execution",
         "dictGetOrDefault('simulate_scenario_dict', 'name', c.scenario_id, '')",
@@ -239,6 +246,7 @@ SIMULATION_METRIC_UNITS: Dict[str, str] = {
     "talk_ratio": "%",
     "stop_time_after_interruption": "ms",
     # String dimension metrics (used with count/count_distinct)
+    "simulation": "",
     "scenario": "",
     "agent_definition": "",
     "agent_version": "",
@@ -278,6 +286,11 @@ SIMULATION_AGGREGATIONS: Dict[str, str] = {
 
 # Breakdown dimensions for simulation
 SIMULATION_BREAKDOWN_COLUMNS: Dict[str, str] = {
+    "simulation": (
+        "dictGetOrDefault('simulate_run_test_dict', 'name', "
+        "dictGetOrDefault('simulate_test_execution_dict', 'run_test_id', "
+        "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')"
+    ),
     "scenario": "dictGetOrDefault('simulate_scenario_dict', 'name', c.scenario_id, '')",
     "agent_definition": (
         "dictGetOrDefault('simulate_agent_dict', 'agent_name', "
@@ -317,6 +330,11 @@ SIMULATION_BREAKDOWN_COLUMNS: Dict[str, str] = {
 
 # Filter dimensions for simulation
 SIMULATION_FILTER_COLUMNS: Dict[str, str] = {
+    "simulation": (
+        "dictGetOrDefault('simulate_run_test_dict', 'name', "
+        "dictGetOrDefault('simulate_test_execution_dict', 'run_test_id', "
+        "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')"
+    ),
     "scenario": "dictGetOrDefault('simulate_scenario_dict', 'name', c.scenario_id, '')",
     "agent_definition": (
         "dictGetOrDefault('simulate_agent_dict', 'agent_name', "

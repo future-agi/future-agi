@@ -1206,7 +1206,7 @@ CREATE DICTIONARY IF NOT EXISTS dataset_dict (
     workspace_id UUID
 ) PRIMARY KEY id
 SOURCE(CLICKHOUSE(
-    QUERY 'SELECT id, name, organization_id, workspace_id FROM {_CH_DATABASE}.model_hub_dataset WHERE _peerdb_is_deleted = 0 AND deleted = 0'
+    QUERY 'SELECT id, name, organization_id, workspace_id FROM {_CH_DATABASE}.model_hub_dataset WHERE _peerdb_is_deleted = 0'
     DB '{_CH_DATABASE}'
 ))
 LAYOUT(COMPLEX_KEY_HASHED())
