@@ -1317,6 +1317,7 @@ import type {
   WorkspaceInviteResponseApi,
   WorkspaceListPaginatedResponseApi,
   WorkspaceManagementListResponseApi,
+  WorkspaceMemberListResponseApi,
   WorkspaceMemberRemoveApi,
   WorkspaceMemberRemoveResponseApi,
   WorkspaceMemberRoleUpdateApi,
@@ -7029,7 +7030,7 @@ export const accountsWorkspaceSwitchCreate = async (switchWorkspaceApi: SwitchWo
 
 
 export type accountsWorkspaceMembersListResponse200 = {
-  data: MemberListResponseApi
+  data: WorkspaceMemberListResponseApi
   status: 200
 }
 

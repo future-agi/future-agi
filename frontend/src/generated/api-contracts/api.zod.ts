@@ -2178,8 +2178,6 @@ export const AccountsWorkspaceMembersListQueryParams = zod.object({
 
 
 
-
-
 export const AccountsWorkspaceMembersListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -2187,17 +2185,10 @@ export const AccountsWorkspaceMembersListResponse = zod.object({
   "id": zod.string().uuid(),
   "name": zod.string(),
   "email": zod.string().email().min(1),
-  "org_level": zod.number().optional(),
-  "org_role": zod.string().min(1).optional(),
   "ws_level": zod.number().optional(),
   "ws_role": zod.string().min(1).optional(),
-  "workspaces": zod.array(zod.object({
-  "workspace_id": zod.string().uuid(),
-  "workspace_name": zod.string().min(1),
-  "ws_level": zod.number(),
-  "ws_role": zod.string().min(1),
-  "auto_access": zod.boolean().optional()
-})).optional(),
+  "org_level": zod.number().optional(),
+  "org_role": zod.string().min(1).optional(),
   "status": zod.string().min(1),
   "created_at": zod.string(),
   "type": zod.enum(['member', 'invite']),

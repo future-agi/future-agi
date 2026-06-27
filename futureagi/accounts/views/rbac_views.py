@@ -6,7 +6,7 @@ Old endpoints remain untouched until Phase 4 cutover.
 """
 
 import structlog
-from django.db import IntegrityError, models, transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -29,11 +29,13 @@ from accounts.serializers.rbac import (
     MemberUserMutationResponseSerializer,
     RBACMessageResponseSerializer,
     WorkspaceMemberListRequestSerializer,
+    WorkspaceMemberListResponseSerializer,
     WorkspaceMemberRemoveSerializer,
     WorkspaceMemberRoleUpdateResponseSerializer,
     WorkspaceMemberRoleUpdateSerializer,
 )
 from accounts.services import member_role_service
+from accounts.services.workspace_members import list_workspace_members
 from accounts.utils import (
     existing_member_access_will_change,
     generate_password,
@@ -1113,7 +1115,10 @@ class WorkspaceMemberListAPIView(APIView):
 
     @validated_request(
         query_serializer=WorkspaceMemberListRequestSerializer,
-        responses={200: MemberListResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: WorkspaceMemberListResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def get(self, request, workspace_id):
@@ -1122,7 +1127,6 @@ class WorkspaceMemberListAPIView(APIView):
         if not organization:
             return gm.bad_request(get_error_message("USER_NOT_IN_ORG"))
 
-        # Verify workspace exists and belongs to the org
         try:
             workspace = Workspace.objects.get(
                 id=workspace_id, organization=organization, is_active=True
@@ -1130,7 +1134,6 @@ class WorkspaceMemberListAPIView(APIView):
         except Workspace.DoesNotExist:
             return gm.bad_request(get_error_message("WORKSPACE_NOT_FOUND"))
 
-        # Permission: must be WS Admin or Org Admin+
         org_membership = get_org_membership(request.user)
         org_level = org_membership.level_or_legacy if org_membership else 0
         if org_level < Level.ADMIN:
@@ -1139,197 +1142,17 @@ class WorkspaceMemberListAPIView(APIView):
                 return gm.forbidden_response(get_error_message("WS_ADMIN_REQUIRED"))
 
         params = request.validated_query_data
-
-        # 1. Get explicit workspace members
-        # Filter on org membership active status to exclude users who were
-        # deactivated at the org level (covers legacy rows where ws.is_active
-        # was not cascaded during removal).
-        ws_memberships = (
-            WorkspaceMembership.objects.filter(
-                workspace=workspace, is_active=True, user__is_active=True
-            )
-            .exclude(organization_membership__is_active=False)
-            .select_related("user", "organization_membership")
-        )
-
-        explicit_user_ids = set()
-        results = []
-        for ws_mem in ws_memberships:
-            user = ws_mem.user
-            explicit_user_ids.add(user.id)
-            org_mem = ws_mem.organization_membership
-            results.append(
-                {
-                    "id": str(user.id),
-                    "name": user.name or "",
-                    "email": user.email,
-                    "ws_level": ws_mem.level_or_legacy,
-                    "ws_role": Level.to_ws_string(ws_mem.level_or_legacy),
-                    "org_level": org_mem.level_or_legacy if org_mem else None,
-                    "org_role": (
-                        Level.to_org_string(org_mem.level_or_legacy)
-                        if org_mem
-                        else None
-                    ),
-                    "status": "Active",
-                    "created_at": (
-                        ws_mem.created_at.isoformat()
-                        if hasattr(ws_mem, "created_at") and ws_mem.created_at
-                        else ""
-                    ),
-                    "type": "member",
-                }
-            )
-
-        # 2. Add Org Admin+ users who auto-access (no explicit WS membership)
-        org_admins = (
-            OrganizationMembership.objects.filter(
-                organization=organization,
-                is_active=True,
-                user__is_active=True,
-            )
-            .filter(
-                models.Q(level__gte=Level.ADMIN)
-                | models.Q(level__isnull=True, role__in=["Admin", "Owner"])
-            )
-            .select_related("user")
-        )
-
-        for org_mem in org_admins:
-            if org_mem.user_id not in explicit_user_ids:
-                user = org_mem.user
-                results.append(
-                    {
-                        "id": str(user.id),
-                        "name": user.name or "",
-                        "email": user.email,
-                        "ws_level": Level.WORKSPACE_ADMIN,
-                        "ws_role": "Workspace Admin",
-                        "org_level": org_mem.level_or_legacy,
-                        "org_role": Level.to_org_string(org_mem.level_or_legacy),
-                        "status": "Active",
-                        "created_at": (
-                            org_mem.joined_at.isoformat() if org_mem.joined_at else ""
-                        ),
-                        "type": "member",
-                        "auto_access": True,
-                    }
-                )
-
-        # 3. Add pending/expired invites for this workspace
-        invites = self._get_workspace_invites(organization, workspace)
-        invited_emails = {inv["email"] for inv in invites}
-        # Deduplicate: remove active member rows whose email has a pending invite
-        results = [r for r in results if r["email"] not in invited_emails]
-        results.extend(invites)
-
-        # Apply search
-        search = params.get("search", "").lower()
-        if search:
-            results = [
-                r
-                for r in results
-                if search in r.get("name", "").lower()
-                or search in r.get("email", "").lower()
-            ]
-
-        # Apply status filter
-        filter_status = params.get("filter_status", [])
-        if filter_status:
-            results = [r for r in results if r["status"] in filter_status]
-
-        # Apply role filter
-        filter_role = params.get("filter_role", [])
-        if filter_role:
-            ws_levels = set()
-            for val in filter_role:
-                val = str(val)
-                if val.startswith("ws_"):
-                    ws_levels.add(int(val[3:]))
-                else:
-                    try:
-                        ws_levels.add(int(val))
-                    except ValueError:
-                        pass
-            if ws_levels:
-                results = [r for r in results if r.get("ws_level") in ws_levels]
-
-        # Sort
-        ALLOWED_SORT_FIELDS = {
-            "name",
-            "email",
-            "ws_level",
-            "status",
-            "type",
-            "date_joined",
-            "created_at",
-        }
-        sort_field = params.get("sort", "-created_at")
-        reverse = sort_field.startswith("-")
-        sort_key = sort_field.lstrip("-")
-        if sort_key not in ALLOWED_SORT_FIELDS:
-            sort_key = "name"
-        results.sort(
-            key=lambda r: (r.get(sort_key) is None, r.get(sort_key) or ""),
-            reverse=reverse,
-        )
-
-        # Paginate
-        page = params.get("page", 1)
-        limit = params.get("limit", 20)
-        start = (page - 1) * limit
-        end = start + limit
-
-        return gm.success_response(
-            {
-                "results": results[start:end],
-                "total": len(results),
-                "page": page,
-                "limit": limit,
-            }
-        )
-
-    def _get_workspace_invites(self, organization, workspace):
-        """Return pending/expired invites that include this workspace."""
-        invites = OrganizationInvite.objects.filter(
+        page_data = list_workspace_members(
+            workspace=workspace,
             organization=organization,
-            status=InviteStatus.PENDING,
+            search=params.get("search", ""),
+            filter_status=params.get("filter_status", []),
+            filter_role=params.get("filter_role", []),
+            sort=params.get("sort", "-created_at"),
+            page=params.get("page", 1),
+            limit=params.get("limit", 20),
         )
-        results = []
-        for inv in invites:
-            # Check if invite's workspace_access includes this workspace
-            ws_match = None
-            if inv.workspace_access:
-                for ws_entry in inv.workspace_access:
-                    if str(ws_entry.get("workspace_id")) == str(workspace.id):
-                        ws_match = ws_entry
-                        break
-            # Also include Admin+ invites (they auto-access all workspaces)
-            if ws_match is None and inv.level < Level.ADMIN:
-                continue
-
-            ws_level = (
-                ws_match.get("level", Level.WORKSPACE_ADMIN)
-                if ws_match
-                else Level.WORKSPACE_ADMIN
-            )
-            results.append(
-                {
-                    "id": str(inv.id),
-                    "name": inv.target_email.split("@")[0],
-                    "email": inv.target_email,
-                    "ws_level": ws_level,
-                    "ws_role": Level.to_ws_string(ws_level),
-                    "org_level": inv.level,
-                    "org_role": Level.to_org_string(inv.level),
-                    "status": inv.effective_status,  # "Pending" or "Expired"
-                    "created_at": (
-                        inv.created_at.isoformat() if inv.created_at else ""
-                    ),
-                    "type": "invite",
-                }
-            )
-        return results
+        return gm.success_response(page_data)
 
 
 class WorkspaceMemberRoleUpdateAPIView(APIView):

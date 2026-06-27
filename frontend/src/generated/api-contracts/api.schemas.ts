@@ -1474,6 +1474,44 @@ export interface SwitchWorkspaceResponseApi {
   result: SwitchWorkspaceResultApi;
 }
 
+export type WorkspaceMemberRowApiType = typeof WorkspaceMemberRowApiType[keyof typeof WorkspaceMemberRowApiType];
+
+
+export const WorkspaceMemberRowApiType = {
+  member: 'member',
+  invite: 'invite',
+} as const;
+
+export interface WorkspaceMemberRowApi {
+  id: string;
+  name: string;
+  /** @minLength 1 */
+  email: string;
+  ws_level?: number;
+  /** @minLength 1 */
+  ws_role?: string;
+  org_level?: number;
+  /** @minLength 1 */
+  org_role?: string;
+  /** @minLength 1 */
+  status: string;
+  created_at: string;
+  type: WorkspaceMemberRowApiType;
+  auto_access?: boolean;
+}
+
+export interface WorkspaceMemberListResultApi {
+  results: WorkspaceMemberRowApi[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface WorkspaceMemberListResponseApi {
+  status: boolean;
+  result: WorkspaceMemberListResultApi;
+}
+
 export interface WorkspaceMemberRemoveApi {
   user_id: string;
 }
