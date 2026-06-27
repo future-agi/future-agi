@@ -37,8 +37,13 @@ const MoveItem = ({ id, open, onClose, name, folderId }) => {
         variant: "success",
       });
       onClose();
-      queryClient.invalidateQueries({
-        queryKey: ["folder-items", folder],
+      const foldersToRefresh = new Set([folder, selectedFolder, "all"]);
+
+      foldersToRefresh.forEach((folderKey) => {
+        if (!folderKey) return;
+        queryClient.invalidateQueries({
+          queryKey: ["folder-items", folderKey],
+        });
       });
     },
   });
