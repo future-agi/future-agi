@@ -300,6 +300,17 @@ class EvalTargetType(models.TextChoices):
     SESSION = "session", "Session"
 
 
+class EvalEntryStatus(models.TextChoices):
+    """Lifecycle of one (task, row, eval) work-item: pending -> running ->
+    completed | errored | skipped."""
+
+    PENDING = "pending", "Pending"
+    RUNNING = "running", "Running"
+    COMPLETED = "completed", "Completed"
+    ERRORED = "errored", "Errored"
+    SKIPPED = "skipped", "Skipped"
+
+
 class EvalLogger(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     # Nullable for ``target_type='session'`` rows; populated otherwise.
@@ -361,6 +372,14 @@ class EvalLogger(BaseModel):
     # attribute was absent. Distinct from `error` so read paths render
     # "Skipped" and drop these rows from failure-rate metrics.
     skipped_reason = models.TextField(null=True, blank=True)
+    # Defaults to a terminal state; the engine sets it explicitly on each run.
+    status = models.CharField(
+        max_length=16,
+        choices=EvalEntryStatus.choices,
+        default=EvalEntryStatus.COMPLETED,
+    )
+    # sha256 of the resolved eval definition that produced this result.
+    config_hash = models.CharField(max_length=64, null=True, blank=True)
 
     def __str__(self):
         return f"Eval Log {self.id}"
@@ -423,6 +442,10 @@ class EvalLogger(BaseModel):
             models.Index(
                 fields=["eval_task_id", "target_type", "custom_eval_config"],
                 name="eval_logger_task_target_idx",
+            ),
+            models.Index(
+                fields=["eval_task_id", "status"],
+                name="eval_logger_task_status_idx",
             ),
         ]
         constraints = [

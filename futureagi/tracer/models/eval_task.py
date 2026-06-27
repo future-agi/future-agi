@@ -102,6 +102,8 @@ class EvalTaskLogger(BaseModel):
     status = models.CharField(
         max_length=255, choices=EvalTaskStatus.choices, blank=True, null=True
     )
+    # Materialized-up-to mark for continuous tasks; null for historical.
+    continuous_cursor = models.DateTimeField(blank=True, null=True)
 
     def __str__(self):
         return f"Eval Task Logger {self.id}"
