@@ -372,15 +372,49 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 display_name=instance.name,
             )
 
+    @staticmethod
+    def _build_update_response(
+        session_id, *, project_id, bookmarked, name, created_at
+    ):
+        """Shared response builder for PATCH — same shape from PG and CH paths.
+
+        Uses ``TraceSessionSerializer``'s ``DateTimeField`` to format
+        ``created_at`` so both paths produce the same ISO representation.
+        """
+        from rest_framework.fields import DateTimeField
+
+        dt_field = DateTimeField()
+        return Response(
+            {
+                "id": str(session_id),
+                "project": str(project_id),
+                "bookmarked": bookmarked,
+                "name": name,
+                "created_at": dt_field.to_representation(created_at),
+            }
+        )
+
     def update(self, request, *args, **kwargs):
         # Narrow the Http404 catch to the object lookup ONLY. Any 404 from
         # validation, signals, or nested lookups must propagate normally.
         partial = kwargs.get("partial", False)
         try:
-            self.get_object()
+            instance = self.get_object()
         except Http404:
             return self._update_ch_only_session(request, partial=partial)
-        return super().update(request, *args, **kwargs)
+        # PG path — standard DRF validate+save, then the shared response
+        # builder so both paths produce byte-identical JSON shapes.
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        instance = serializer.instance
+        return self._build_update_response(
+            instance.id,
+            project_id=instance.project_id,
+            bookmarked=instance.bookmarked,
+            name=instance.name,
+            created_at=instance.created_at,
+        )
 
     def _update_ch_only_session(self, request, *, partial):
         """Overlay-only write path for a CH-only (collector) session."""
@@ -412,18 +446,12 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 display_name=new_name,
             )
 
-        first_seen = session_fields.get("first_seen")
-        created_at = (
-            first_seen.isoformat() if hasattr(first_seen, "isoformat") else first_seen
-        )
-        return Response(
-            {
-                "id": str(trace_session_id),
-                "project": str(project_id),
-                "bookmarked": new_bookmarked,
-                "name": new_name,
-                "created_at": created_at,
-            }
+        return self._build_update_response(
+            trace_session_id,
+            project_id=project_id,
+            bookmarked=new_bookmarked,
+            name=new_name,
+            created_at=session_fields.get("first_seen"),
         )
 
     def destroy(self, request, *args, **kwargs):
@@ -473,11 +501,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             client.insert(
                 "trace_sessions", [row], column_names=list(_TRACE_SESSION_COLUMNS)
             )
-        except Exception:
+        except Exception as e:
             _reset_client()
-            # Best-effort: the overlay is already removed so the session
-            # won't appear in bookmark lists. A stale CH row is acceptable
-            # (it will be caught by eventual-consistency sweeps).
+            logger.warning(
+                "ch_only_session_delete_marker_failed",
+                trace_session_id=str(trace_session_id),
+                error=str(e)[:200],
+            )
 
         return Response(status=drf_status.HTTP_204_NO_CONTENT)
 
@@ -930,39 +960,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 ORDER BY val
                 LIMIT %(limit)s OFFSET %(offset)s
                 """
-            else:
-                # Session IDs are resolved new→old so a straddler is listed once.
-                is_uuid = ch_column == "trace_session_id"
-                remap_table = "trace_session_id_remap"
-                resolved_col = resolved_id_expr(f"rs.{ch_column}", "rmp")
-                col_join = remap_left_join(f"rs.{ch_column}", remap_table, "rmp")
-                select_expr = "toString(val_id)" if is_uuid else "val_id"
-                search_clause = (
-                    "AND toString(val_id) ILIKE %(search)s" if search else ""
-                )
-                nil_uuid_clause = (
-                    f"AND val_id != toUUID('{NIL_UUID}')" if is_uuid else ""
-                )
-                query = f"""
-                SELECT DISTINCT {select_expr} AS val FROM (
-                    SELECT {resolved_col} AS val_id
-                    FROM (
-                        SELECT {ch_column}
-                        FROM spans
-                        WHERE project_id = %(project_id)s
-                          AND is_deleted = 0
-                          AND {ch_column} IS NOT NULL
-                          AND (parent_span_id IS NULL OR parent_span_id = '')
-                    ) AS rs
-                    {col_join}
-                )
-                WHERE val_id IS NOT NULL
-                  {nil_uuid_clause}
-                  {search_clause}
-                ORDER BY val
-                LIMIT %(limit)s OFFSET %(offset)s
-                """
-
             params = {
                 "project_id": project_id,
                 "limit": page_size,

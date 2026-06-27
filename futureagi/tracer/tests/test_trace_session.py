@@ -1075,7 +1075,7 @@ class TestTraceSessionResponseContract:
         )
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert self.EXPECTED_KEYS <= set(data.keys())
+        assert self.EXPECTED_KEYS == set(data.keys())
 
     def test_ch_only_patch_response_shape(self, auth_client, observe_project):
         session_id = uuid.uuid4()
@@ -1097,19 +1097,27 @@ class TestTraceSessionResponseContract:
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert self.EXPECTED_KEYS <= set(data.keys())
+        assert self.EXPECTED_KEYS == set(data.keys())
         assert data["id"] == str(session_id)
         assert data["project"] == str(observe_project.id)
         assert data["bookmarked"] is True
         assert data["name"] == "ch-session"
         assert data["created_at"] is not None
 
-    def test_ch_only_patch_created_at_is_iso_string(
-        self, auth_client, observe_project
+    def test_pg_and_ch_created_at_use_same_format(
+        self, auth_client, observe_project, trace_session
     ):
-        session_id = uuid.uuid4()
-        first_seen = timezone.now()
+        """Both paths must serialize created_at to the same ISO format (Z suffix)."""
+        first_seen = trace_session.created_at
 
+        pg_response = auth_client.patch(
+            f"/tracer/trace-session/{trace_session.id}/",
+            {"bookmarked": True},
+            format="json",
+        )
+        pg_created_at = pg_response.json()["created_at"]
+
+        ch_session_id = uuid.uuid4()
         with mock.patch(
             "tracer.views.trace_session._resolve_ch_session_fields",
             return_value={
@@ -1119,14 +1127,14 @@ class TestTraceSessionResponseContract:
                 "first_seen": first_seen,
             },
         ):
-            response = auth_client.patch(
-                f"/tracer/trace-session/{session_id}/",
+            ch_response = auth_client.patch(
+                f"/tracer/trace-session/{ch_session_id}/",
                 {"bookmarked": True},
                 format="json",
             )
+        ch_created_at = ch_response.json()["created_at"]
 
-        data = response.json()
-        assert data["created_at"] == first_seen.isoformat()
+        assert pg_created_at == ch_created_at
 
 
 @pytest.mark.integration
