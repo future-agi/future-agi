@@ -525,7 +525,9 @@ class FilterEngine:
         expected_values = (
             filter_value if isinstance(filter_value, list) else [filter_value]
         )
-        expected_values = [value for value in expected_values if value not in (None, "")]
+        expected_values = [
+            value for value in expected_values if value not in (None, "")
+        ]
         if filter_op in ("is_null", "is_not_null"):
             return [
                 obj
@@ -2264,17 +2266,17 @@ class FilterEngine:
             "not_equals": lambda col, val: ~Q(span_attributes__contains={col: val}),
             "in": lambda col, val: Q(
                 **{
-                    f"span_attributes__{col}__in": val
-                    if isinstance(val, list)
-                    else [val]
+                    f"span_attributes__{col}__in": (
+                        val if isinstance(val, list) else [val]
+                    )
                 }
             ),
             "not_in": lambda col, val: (
                 ~Q(
                     **{
-                        f"span_attributes__{col}__in": val
-                        if isinstance(val, list)
-                        else [val]
+                        f"span_attributes__{col}__in": (
+                            val if isinstance(val, list) else [val]
+                        )
                     }
                 )
             ),

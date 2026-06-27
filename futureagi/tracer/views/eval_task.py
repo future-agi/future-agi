@@ -250,16 +250,16 @@ from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, Ru
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.serializers.eval_task import (
+    EditEvalTaskSerializer,
     EvalTaskCreateResponseSerializer,
     EvalTaskDeleteRequestSerializer,
     EvalTaskIdQuerySerializer,
-    EvalTaskMessageResponseSerializer,
-    EvalTaskUpdateRequestSerializer,
-    EvalTaskUpdateResponseSerializer,
-    EditEvalTaskSerializer,
     EvalTaskListQuerySerializer,
     EvalTaskListWithProjectNameQuerySerializer,
+    EvalTaskMessageResponseSerializer,
     EvalTaskSerializer,
+    EvalTaskUpdateRequestSerializer,
+    EvalTaskUpdateResponseSerializer,
     PaginationQuerySerializer,
 )
 from tracer.utils.annotations import build_annotation_subqueries
@@ -1685,6 +1685,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     filters, row_type=eval_task.row_type
                 )
                 parsed_filters &= Q(project_id=tenant_project_id)
+
+                total_spans = (
+                    ObservationSpan.objects.annotate(**parsed_filter_anns)
+
                 annotation_labels = get_annotation_labels_for_project(
                     eval_task.project_id
                 )
@@ -1696,6 +1700,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 )
                 total_spans = (
                     span_qs.annotate(**parsed_filter_anns)
+
                     .filter(parsed_filters)
                     .count()
                 )

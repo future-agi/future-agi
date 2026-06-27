@@ -24,12 +24,12 @@ from tracer.models.eval_task import (
 )
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
+from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.eval import (
     evaluate_observation_span_observe,
     evaluate_trace_observe,
     evaluate_trace_session_observe,
 )
-from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.filters import FilterEngine
 
 logger = structlog.get_logger(__name__)

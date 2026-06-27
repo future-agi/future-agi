@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import Any
 
 import structlog
@@ -165,7 +166,9 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
         except DRFValidationError as e:
             return self._gm.bad_request(e.detail)
         except Exception as e:
-            logger.exception(f"Error in partially updating the knowledge base: {str(e)}")
+            logger.exception(
+                f"Error in partially updating the knowledge base: {str(e)}"
+            )
             return self._gm.internal_server_error_response(
                 f"Failed to update knowledge base: {get_error_message('FAILED_TO_UPDATE_KB')}"
             )
@@ -212,4 +215,47 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
             logger.exception(f"Error in fetching the embeddings model: {str(e)}")
             return self._gm.internal_server_error_response(
                 f"Failed to retrieve supported embedding models: {get_error_message('FAILED_TO_GET_EMBEDDINGS_MODEL')}"
+            )
+
+    @swagger_auto_schema(
+        operation_description="Generate a signed URL to download a KB file.",
+        operation_summary="Download a KB file.",
+        manual_parameters=[
+            openapi.Parameter(
+                "file_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=True
+            ),
+            openapi.Parameter(
+                "file_name", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=True
+            ),
+        ],
+        responses={200: openapi.Response(description="Signed download URL")},
+    )
+    @action(detail=True, methods=["get"], url_path="download-file")
+    def download_file(self, request: Request, pk: str = None) -> Response:
+        """Generate a short-lived signed URL for downloading a KB file."""
+        try:
+            kb = self.get_object()
+            file_id = request.query_params.get("file_id")
+            file_name = request.query_params.get("file_name")
+
+            if not file_id or not file_name:
+                return self._gm.bad_request_response(
+                    "file_id and file_name are required."
+                )
+
+            from model_hub.utils.kb_indexer import KBIndexer
+
+            indexer = KBIndexer()
+            object_key = f"knowledge-base/{kb.id}/{file_id}"
+
+            signed_url = indexer.minio_client.presigned_get_object(
+                indexer.bucket_name,
+                object_key,
+                expires=timedelta(minutes=15),
+            )
+            return self._gm.success_response({"download_url": signed_url})
+        except Exception as e:
+            logger.exception(f"Error generating download URL: {str(e)}")
+            return self._gm.internal_server_error_response(
+                "Failed to generate download URL."
             )

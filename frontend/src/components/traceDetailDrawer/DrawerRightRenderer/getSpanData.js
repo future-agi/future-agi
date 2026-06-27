@@ -111,6 +111,32 @@ function extractMessages(evalAttributes = {}, type = "input") {
         tempMessages[index] = {};
       }
 
+
+      if (isMultipleContent) {
+        // Some SDKs emit BOTH a flat `message.content` summary string and the
+        // structured `message.contents.N.*` parts for the same message — e.g.
+        // when an oversized image is masked to a "[image: …]" placeholder. If a
+        // flat string already occupies this slot, keep it: attaching structured
+        // sub-properties onto a string throws ("Cannot create property 'image.url'
+        // on string") and crashes the whole trace view.
+        const slot = tempMessages[index].content[parsedIndex];
+        if (typeof slot !== "string") {
+          if (!slot) {
+            tempMessages[index].content[parsedIndex] = {};
+          }
+          if (contentProperty.length) {
+            tempMessages[index].content[parsedIndex][contentProperty] = content;
+          }
+        }
+      } else if (
+        typeof tempMessages[index].content[0] !== "object" ||
+        tempMessages[index].content[0] === null
+      ) {
+        // Don't clobber already-built structured content with a flat summary.
+        tempMessages[index].content[0] = content;
+      }
+    }
+  });
       entries.forEach(({ property, value }) => {
         if (property === "message.role" || property === "role") {
           tempMessages[index].role = value;
@@ -171,6 +197,7 @@ function extractMessages(evalAttributes = {}, type = "input") {
       });
     },
   );
+
 
   Object.keys(tempMessages)
     .sort((a, b) => parseInt(a) - parseInt(b))

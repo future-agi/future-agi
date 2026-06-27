@@ -190,6 +190,37 @@ const KnowledgeBaseData = React.forwardRef(
             </Typography>
           ),
         },
+        {
+          id: "actions",
+          header: "",
+          meta: { flex: 0.5 },
+          enableSorting: false,
+          cell: ({ row }) => {
+            const kb = row.original;
+            const handleDownload = async (e) => {
+              e.stopPropagation();
+              try {
+                const res = await axios.get(endpoints.knowledge.downloadFile(kb.id), {
+                  params: { file_id: kb.id, file_name: kb.name },
+                });
+                const url = res.data?.result?.download_url;
+                if (url) window.open(url, "_blank");
+              } catch {
+                console.error("Download failed");
+              }
+            };
+            return (
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={handleDownload}
+                sx={{ fontSize: 12, py: 0.3 }}
+              >
+                Download
+              </Button>
+            );
+          },
+        },
       ],
       [],
     );
