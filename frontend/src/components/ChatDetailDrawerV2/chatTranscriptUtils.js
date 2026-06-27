@@ -1,5 +1,3 @@
-import dayjs from "dayjs";
-
 /**
  * Helpers for shaping chat-simulation transcript turns into the form the
  * shared voice `TranscriptView` expects. Kept out of the component so they
@@ -15,7 +13,7 @@ export const getChatTurnContent = (turn) => turn?.messages?.[0]?.content ?? "";
 export const getChatTurnTimestampMs = (turn) => {
   const createdAt = turn?.created_at;
   if (createdAt == null) return null;
-  const ms = dayjs(createdAt).valueOf();
+  const ms = new Date(createdAt).getTime();
   return Number.isFinite(ms) ? ms : null;
 };
 

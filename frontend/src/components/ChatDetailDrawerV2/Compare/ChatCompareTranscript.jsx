@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import dayjs from "dayjs";
+import { format, isValid } from "date-fns";
 import {
   Box,
   FormControlLabel,
@@ -187,9 +187,9 @@ const TurnCell = ({ turn, colors, content, isPlaceholder }) => {
             {speakerLabel}
           </Typography>
         </Box>
-        {turn.timeStamp && dayjs(turn.timeStamp).isValid() && (
+        {turn.timeStamp && isValid(new Date(turn.timeStamp)) && (
           <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
-            {dayjs(turn.timeStamp).format("HH:mm:ss")}
+            {format(new Date(turn.timeStamp), "HH:mm:ss")}
           </Typography>
         )}
       </Stack>
