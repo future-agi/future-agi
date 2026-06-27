@@ -775,6 +775,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         pass_threshold: passThreshold,
         choice_scores:
           Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
+        multi_choice: multiChoice,
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples:
           evalType === "llm" && fewShotExamples.length > 0
@@ -798,6 +799,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         pass_threshold: passThreshold,
         choice_scores:
           Object.keys(choiceScores || {}).length > 0 ? choiceScores : undefined,
+        multi_choice: multiChoice,
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples:
           evalType === "llm" && fewShotExamples.length > 0
@@ -837,6 +839,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     outputType,
     passThreshold,
     choiceScores,
+    multiChoice,
     messages,
     fewShotExamples,
     fullEval,
@@ -924,6 +927,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       outputType,
       passThreshold,
       choiceScores,
+      multiChoice,
       templateFormat,
     });
 

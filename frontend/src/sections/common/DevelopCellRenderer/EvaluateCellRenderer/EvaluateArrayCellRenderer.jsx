@@ -71,36 +71,29 @@ const EvaluateArrayCellRenderer = ({
           overflow: "auto",
         }}
       >
-        {finalArray?.length ? (
-          finalArray?.map((item) => (
-            <Chip
-              key={item}
-              label={item}
-              size="small"
-              variant="outlined"
-              sx={{
-                borderRadius: theme.spacing(0.5),
-                borderColor:
-                  choicesBorderColourMap?.[choicesMap?.[item] ?? "neutral"],
-                color: choicesFontColourMap?.[choicesMap?.[item] ?? "neutral"],
-                fontWeight: 400,
-                typography: "s3",
-              }}
-            />
-          ))
-        ) : (
-          <Chip
-            label={"None"}
-            size="small"
-            variant="outlined"
-            sx={{
-              borderRadius: theme.spacing(0.5),
-              borderColor: choicesBorderColourMap["fail"],
-              color: choicesBorderColourMap["fail"],
-              fontWeight: 400,
-            }}
-          />
-        )}
+        {/* Render nothing for an empty value — an empty choices result means
+            "no result yet" (e.g. mid-run before the cell flips to the running
+            skeleton), not a real "None" outcome. The old red "None" chip read
+            like a failure result during loading. */}
+        {finalArray?.length
+          ? finalArray?.map((item) => (
+              <Chip
+                key={item}
+                label={item}
+                size="small"
+                variant="outlined"
+                sx={{
+                  borderRadius: theme.spacing(0.5),
+                  borderColor:
+                    choicesBorderColourMap?.[choicesMap?.[item] ?? "neutral"],
+                  color:
+                    choicesFontColourMap?.[choicesMap?.[item] ?? "neutral"],
+                  fontWeight: 400,
+                  typography: "s3",
+                }}
+              />
+            ))
+          : null}
       </Box>
       <RenderMeta
         originType="evaluation"

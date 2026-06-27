@@ -1,6 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Box,
+  Button,
   Checkbox,
   Drawer,
   FormControl,
@@ -8,25 +9,20 @@ import {
   FormHelperText,
   IconButton,
   LinearProgress,
-  MenuItem,
   Radio,
   RadioGroup,
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { Controller, useForm } from "react-hook-form";
 import Iconify from "src/components/iconify";
-import {
-  AddFeedbackValidationSchema,
-  feedbackSubmittedValidationSchema,
-} from "./validation";
+import { feedbackFormSchema } from "./validation";
 import { LoadingButton } from "@mui/lab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 // Assuming you are using axios for API requests
 import { enqueueSnackbar } from "notistack"; // For success/error notifications
 import axios, { endpoints } from "src/utils/axios";
-import { FormCheckboxField } from "src/components/FormCheckboxField";
 import { FormSelectField } from "src/components/FormSelectField";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import CellMarkdown from "src/sections/common/CellMarkdown";
@@ -34,6 +30,11 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useParams } from "react-router";
 import { useAddEvaluationFeebackStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
+import {
+  FEEDBACK_OUTPUT_TYPES as OUTPUT,
+  getReason,
+  toArray,
+} from "./feedback_value";
 
 const AddEvaluationFeeback = ({ module = "dataset", onRefreshGrid }) => {
   const { addEvaluationFeeback: data, setAddEvaluationFeeback } =
@@ -93,7 +94,7 @@ const AddEvaluationFeeback = ({ module = "dataset", onRefreshGrid }) => {
       }}
     >
       {isLoading && (
-        <Box sx={{ minWidth: "550px" }}>
+        <Box sx={{ minWidth: "600px" }}>
           <LinearProgress />
         </Box>
       )}
@@ -112,19 +113,21 @@ const AddEvaluationFeeback = ({ module = "dataset", onRefreshGrid }) => {
 
 export default AddEvaluationFeeback;
 
-const getDefaultValues = (existingFeedback) => {
-  if (existingFeedback) {
-    return {
-      value: existingFeedback?.value || "",
-      explanation: existingFeedback?.comment || "",
-    };
-  }
-
-  return {
-    value: "",
-    explanation: "",
-  };
+const parseFeedbackValue = (existingFeedback, isMulti) => {
+  const raw = existingFeedback?.value ?? "";
+  if (isMulti) return toArray(raw);
+  return raw;
 };
+
+const getDefaultValues = (existingFeedback, isMulti) => ({
+  value: existingFeedback
+    ? parseFeedbackValue(existingFeedback, isMulti)
+    : isMulti
+      ? []
+      : "",
+  explanation: existingFeedback?.comment || "",
+  actionType: existingFeedback?.actionType || "",
+});
 
 const EvaluationFeeback = ({
   onClose,
@@ -133,12 +136,11 @@ const EvaluationFeeback = ({
   existingFeedback,
   isExperimentModule,
 }) => {
-  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   const { control, handleSubmit, reset } = useForm({
-    defaultValues: getDefaultValues(existingFeedback),
-    resolver: zodResolver(AddFeedbackValidationSchema),
+    defaultValues: getDefaultValues(existingFeedback, false),
+    resolver: zodResolver(feedbackFormSchema),
   });
-  const newFeedback = useRef(null);
+  const pendingRef = useRef(null);
   const queryClient = useQueryClient();
   const existingFeedbackId = existingFeedback?.id;
   const { dataset, experimentId } = useParams();
@@ -163,19 +165,6 @@ const EvaluationFeeback = ({
     isExperimentModule ? experimentId : null,
   ];
 
-  const {
-    control: fields,
-    handleSubmit: fieldsSubmit,
-    watch,
-  } = useForm({
-    defaultValues: {
-      value: existingFeedback?.actionType || "",
-    },
-    resolver: zodResolver(feedbackSubmittedValidationSchema),
-  });
-
-  const valueField = watch("value");
-
   const { data: feedbackData } = useQuery({
     queryKey: [
       "fetchFeedbackDetails",
@@ -191,26 +180,43 @@ const EvaluationFeeback = ({
     refetchOnMount: true,
   });
 
-  // Mutation for submitting feedback
-  const {
-    mutate: submitFeedback,
-    isPending: isSubmitting,
-    data: submittedData,
-  } = useMutation({
+  const outputType = feedbackData?.output_type;
+  const isMulti =
+    outputType === OUTPUT.CHOICES && Boolean(feedbackData?.multi_choice);
+
+  // Re-seed defaults once the template (and the multi-choice flag) is known,
+  // so the value field starts as an array for multi-choice evals.
+  useEffect(() => {
+    if (feedbackData) {
+      reset(getDefaultValues(existingFeedback, isMulti));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feedbackData, existingFeedback, isMulti]);
+
+  // Submit the chosen re-tune action (and the value/explanation) against the
+  // created/existing feedback record.
+  const submitAction = (feedbackId) => {
+    submitFeedbackField({
+      action_type: pendingRef.current.actionType,
+      user_eval_metric_id: metricId,
+      feedback_id: feedbackId,
+      row_id: rowId,
+      value: pendingRef.current.value,
+      explanation: pendingRef.current.explanation,
+    });
+  };
+
+  // Step 1 — create the feedback record, then chain into the action submit.
+  const { mutate: createFeedback, isPending: creating } = useMutation({
     mutationFn: (formData) => axios.post(feedbackEndpoints.create, formData),
-    onSuccess: () => {
-      enqueueSnackbar("Feedback submitted successfully!", {
-        variant: "success",
-      });
-      reset();
-      refreshGrid?.();
-      queryClient.invalidateQueries({ queryKey: feedbackQueryKey });
-      setFeedbackSubmitted(true); // Close the modal
+    onSuccess: (resp) => {
+      const newId = resp?.data?.result?.id;
+      submitAction(newId);
     },
   });
 
-  // Mutation for submitting feedback
-  const { mutate: submitFeedbackField, isPending: submittingFields } =
+  // Step 2 — submit the re-tune action; closes the drawer on success.
+  const { mutate: submitFeedbackField, isPending: submittingAction } =
     useMutation({
       mutationFn: (formData) => axios.post(feedbackEndpoints.submit, formData),
       onSuccess: () => {
@@ -224,15 +230,14 @@ const EvaluationFeeback = ({
       },
     });
 
-  // Form submission handler
   const onSubmit = (formData) => {
-    const payload = {
-      value: formData.value,
+    const value = Array.isArray(formData.value)
+      ? JSON.stringify(formData.value)
+      : formData.value;
+    pendingRef.current = {
+      actionType: formData.actionType,
+      value,
       explanation: formData.explanation,
-      user_eval_metric: metricId,
-      source: isExperimentModule ? "experiment" : "dataset",
-      source_id: isExperimentModule ? data.sourceId : data.id,
-      row_id: rowId,
     };
     trackEvent(Events.datasetSubmitFeedbackClicked, {
       [PropertyName.datasetId]: dataset,
@@ -240,36 +245,20 @@ const EvaluationFeeback = ({
       [PropertyName.rowIdentifier]: rowId,
     });
     if (existingFeedbackId) {
-      newFeedback.current = payload;
-      enqueueSnackbar("Feedback submitted successfully!", {
-        variant: "success",
-      });
-      setFeedbackSubmitted(true);
+      submitAction(existingFeedbackId);
       return;
     }
-    submitFeedback(payload);
-  };
-
-  const onFieldSubmit = (formData) => {
-    const feedbackId = submittedData?.data?.result?.id || existingFeedbackId;
-    const payload = {
-      action_type: formData.value,
-      user_eval_metric_id: metricId,
-      feedback_id: feedbackId,
+    createFeedback({
+      value,
+      explanation: formData.explanation,
+      user_eval_metric: metricId,
+      source: isExperimentModule ? "experiment" : "dataset",
+      source_id: isExperimentModule ? data?.sourceId : data?.id,
       row_id: rowId,
-    };
-    if (newFeedback?.current?.value) {
-      payload.value = newFeedback?.current?.value;
-      payload.explanation = newFeedback?.current?.explanation;
-    }
-    submitFeedbackField(payload);
+    });
   };
 
-  useEffect(() => {
-    if (submittedData?.data) {
-      setFeedbackSubmitted(true);
-    }
-  }, [submittedData]);
+  const isSubmitting = creating || submittingAction;
 
   return (
     <Box sx={{ display: "flex", height: "100vh" }}>
@@ -280,14 +269,10 @@ const EvaluationFeeback = ({
           flexDirection: "column",
           gap: 2,
           height: "100%",
-          width: "550px",
+          width: "600px",
         }}
         component="form"
-        onSubmit={
-          feedbackSubmitted
-            ? fieldsSubmit(onFieldSubmit)
-            : handleSubmit(onSubmit)
-        }
+        onSubmit={handleSubmit(onSubmit)}
       >
         <Box
           sx={{
@@ -304,31 +289,32 @@ const EvaluationFeeback = ({
           </IconButton>
         </Box>
         <div style={{ borderBottom: "1px solid var(--border-light)" }} />
-        {feedbackSubmitted ? (
-          <SubmittedFeedback
-            control={fields}
-            data={data}
-            feedbackData={feedbackData}
-          />
-        ) : (
-          <FeedBackForm
-            control={control}
-            data={data}
-            feedbackData={feedbackData}
-          />
-        )}
-        <Box>
+        <FeedBackForm
+          control={control}
+          data={data}
+          feedbackData={feedbackData}
+          outputType={outputType}
+          isMulti={isMulti}
+        />
+        <Box display="flex" gap={1} justifyContent="flex-end">
+          <Button
+            variant="outlined"
+            color="inherit"
+            size="small"
+            onClick={onClose}
+            sx={{ minWidth: 160 }}
+          >
+            Cancel
+          </Button>
           <LoadingButton
-            // onSubmit={handleSubmit(onSubmit)}
             variant="contained"
             color="primary"
             type="submit"
-            fullWidth
             size="small"
-            disabled={feedbackSubmitted && !valueField}
-            loading={isSubmitting || submittingFields}
+            loading={isSubmitting}
+            sx={{ minWidth: 160 }}
           >
-            {feedbackSubmitted ? "Continue" : "Submit feedback"}
+            Submit feedback
           </LoadingButton>
         </Box>
       </Box>
@@ -336,49 +322,26 @@ const EvaluationFeeback = ({
   );
 };
 
-const FeedBackForm = ({ control, data, feedbackData }) => {
-  return (
-    <Box
-      sx={{
-        gap: 2,
-        display: "flex",
-        flexDirection: "column",
-        flex: 1,
-        overflow: "auto",
-        paddingBottom: "10px",
-      }}
-    >
-      <Typography
-        sx={{
-          fontSize: "18px",
-          fontWeight: "600",
-          lineHeight: "26px",
-        }}
-      >
-        {data?.name}
-      </Typography>
-      <Typography
-        sx={{
-          fontSize: "14px",
-          fontWeight: "400",
-          lineHeight: "21px",
-        }}
-      >
-        Help us refine Context Adherence. Share any issues, and we’ll use your
-        feedback to improve it automatically.
-      </Typography>
+export const FeedBackForm = ({
+  control,
+  data,
+  feedbackData,
+  outputType,
+  isMulti,
+}) => {
+  const choices = feedbackData?.choices || [];
 
-      <Box
-        border={"1px solid var(--border-default)"}
-        bgcolor={"rgba(147, 143, 163, 0.08)"}
-        borderRadius={1}
-        padding={1.5}
-      >
-        <CellMarkdown spacing={0} text={data?.valueInfos?.reason} />
-      </Box>
+  const retuneOptions = [
+    { label: <Label1 />, value: "retune" },
+    { label: <Label2 />, value: "recalculate_row" },
+    { label: <Label3 />, value: "recalculate_dataset" },
+  ];
 
-      <div style={{ borderBottom: "1px solid var(--border-light)" }} />
-      {feedbackData?.output_type === "reason" && (
+  const renderValueInput = () => {
+    if (!feedbackData) return null;
+
+    if (outputType === OUTPUT.REASON) {
+      return (
         <AllInputField
           label="Write a right value"
           placeholder="Improve the tone and grammar of the prompt"
@@ -389,8 +352,11 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
           multiline
           rows={3}
         />
-      )}
-      {feedbackData?.output_type === "score" && (
+      );
+    }
+
+    if (outputType === OUTPUT.SCORE) {
+      return (
         <AllInputField
           label="Write a right value"
           placeholder="Add Number"
@@ -399,73 +365,47 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
           fieldName="value"
           variant="filled"
           type="number"
-          inputProps={{
-            min: 0,
-            max: 100,
-          }}
+          inputProps={{ min: 0, max: 100 }}
           helperText="Enter a number between 0 and 100"
         />
-      )}
-      <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
-        {feedbackData?.dataType === "choice" &&
-          [
-            { option: "option1", value: "option1" },
-            { option: "option2", value: "option2" },
-          ].map((item, index) => {
-            return (
-              <FormCheckboxField
-                key={index}
-                label={item.option}
-                control={control}
-                fieldName={item.value}
-                helperText={""}
-              />
-            );
-          })}
-      </Box>
-      {(feedbackData?.output_type === "Pass/Fail" ||
-        feedbackData?.output_type === "choices") && (
+      );
+    }
+
+    if (outputType === OUTPUT.PASS_FAIL || outputType === OUTPUT.CHOICES) {
+      if (isMulti) {
+        return (
+          <ChoiceCheckboxGroup
+            control={control}
+            label="Select the right value(s)"
+            choices={choices}
+          />
+        );
+      }
+      return (
         <RadioField
           label="Select a right value"
           control={control}
           fieldName="value"
-          options={feedbackData.choices.map((value) => ({
-            label: value,
-            value,
-          }))}
+          options={choices.map((value) => ({ label: value, value }))}
         />
-      )}
-      {feedbackData?.output_type === "select" && (
+      );
+    }
+
+    if (outputType === OUTPUT.SELECT) {
+      return (
         <AllSelectField
           label="Select a right value"
           control={control}
           options={[{ value: "user", label: "User" }]}
-          fieldName=""
-          // valueSelector
-          // helperText
+          fieldName="value"
           fullWidth
-          // dropDownMaxHeight
-          // onScrollEnd
-          // loadingMoreOptions
-          // allowClear
         />
-      )}
+      );
+    }
 
-      <AllInputField
-        label="What would you like to improve?"
-        placeholder="Enter what would you like to improve in the prompt"
-        size="small"
-        control={control}
-        fieldName="explanation"
-        variant="filled"
-        multiline
-        rows={6}
-      />
-    </Box>
-  );
-};
+    return null;
+  };
 
-const SubmittedFeedback = ({ control, data }) => {
   return (
     <Box
       sx={{
@@ -484,25 +424,51 @@ const SubmittedFeedback = ({ control, data }) => {
           lineHeight: "26px",
         }}
       >
-        Your feedback is submitted.
+        {feedbackData?.eval_name || data?.name}
       </Typography>
-      <Box
+      <Typography
         sx={{
-          padding: "12px",
-          backgroundColor: "background.neutral",
-          borderRadius: "12px",
+          fontSize: "14px",
+          fontWeight: "400",
+          lineHeight: "21px",
         }}
       >
-        <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
-          {data?.name}
-        </Typography>
-        <Typography sx={{ fontSize: "12px" }}>
-          {data?.valueInfos?.reason}
-        </Typography>
-        <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
-          1 row received your feedback.
-        </Typography>
+        Help us refine this eval. Share any issues, and we’ll use your feedback
+        to improve it automatically.
+      </Typography>
+
+      <Box
+        border={"1px solid var(--border-default)"}
+        bgcolor={"rgba(147, 143, 163, 0.08)"}
+        borderRadius={1}
+        padding={1.5}
+      >
+        {getReason(data) ? (
+          <CellMarkdown spacing={0} text={getReason(data)} />
+        ) : (
+          <Typography color="text.disabled" fontSize={14}>
+            Unable to fetch Explanation
+          </Typography>
+        )}
       </Box>
+
+      <div style={{ borderBottom: "1px solid var(--border-light)" }} />
+
+      {renderValueInput()}
+
+      <AllInputField
+        label="Write the right explanation"
+        placeholder="Write the explanation the eval should have given for this result, and why it's correct"
+        size="small"
+        control={control}
+        fieldName="explanation"
+        variant="filled"
+        multiline
+        rows={4}
+      />
+
+      <div style={{ borderBottom: "1px solid var(--border-light)" }} />
+
       <Typography
         sx={{
           fontSize: "16px",
@@ -514,15 +480,75 @@ const SubmittedFeedback = ({ control, data }) => {
       </Typography>
       <RadioField
         control={control}
-        fieldName={"value"}
+        fieldName={"actionType"}
         label={""}
-        options={[
-          { label: <Label1 />, value: "retune" },
-          { label: <Label2 />, value: "recalculate_row" },
-          { label: <Label3 />, value: "recalculate_dataset" },
-        ]}
+        options={retuneOptions}
+        groupSx={{ border: "none", borderRadius: 0, padding: 0, marginTop: "10px" }}
       />
     </Box>
+  );
+};
+
+// Multi-choice value input — checkboxes.
+const ChoiceCheckboxGroup = ({ control, label, choices }) => {
+  return (
+    <Controller
+      name="value"
+      control={control}
+      render={({ field, fieldState: { error } }) => {
+        const arr = Array.isArray(field.value) ? field.value : [];
+        return (
+          <FormControl
+            component="fieldset"
+            error={!!error}
+            sx={{ width: "100%" }}
+          >
+            {label && (
+              <Typography
+                sx={{
+                  fontSize: "14px",
+                  fontWeight: "700",
+                  lineHeight: "18.2px",
+                  letterSpacing: "0.02em",
+                  color: "text.secondary",
+                  marginBottom: "10px",
+                }}
+              >
+                {label}
+              </Typography>
+            )}
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                borderRadius: "8px",
+                border: "1px solid var(--border-default)",
+                padding: "8px",
+              }}
+            >
+              {choices.map((choice, index) => (
+                <FormControlLabel
+                  key={`${choice}-${index}`}
+                  control={
+                    <Checkbox
+                      size="small"
+                      disableRipple
+                      checked={arr.includes(choice)}
+                      onChange={(e) => {
+                        if (e.target.checked) field.onChange([...arr, choice]);
+                        else field.onChange(arr.filter((c) => c !== choice));
+                      }}
+                    />
+                  }
+                  label={choice}
+                />
+              ))}
+            </Box>
+            {error && <FormHelperText>{error.message}</FormHelperText>}
+          </FormControl>
+        );
+      }}
+    />
   );
 };
 
@@ -595,62 +621,14 @@ const AllSelectField = ({ label, ...rest }) => {
   );
 };
 
-const CheckboxField = ({ fieldName, label, control, options }) => {
-  return (
-    <Controller
-      render={({ field: { onChange, value }, formState: { errors } }) => (
-        <FormControl error={!!errors}>
-          {label && (
-            <Typography
-              sx={{
-                fontSize: "14px",
-                fontWeight: "700",
-                lineHeight: "18.2px",
-                letterSpacing: "0.02em",
-                color: "text.secondary",
-                marginBottom: "10px",
-              }}
-            >
-              {label}
-            </Typography>
-          )}
-          <Box
-            sx={{
-              backgroundColor: "#71707613",
-              borderRadius: "8px",
-              border: "1px solid var(--border-default)",
-            }}
-          >
-            {options.map((option) => {
-              const selected = value.includes(option.value);
-
-              return (
-                <MenuItem key={option.value} value={option.value}>
-                  <Checkbox
-                    size="small"
-                    disableRipple
-                    checked={selected}
-                    onChange={(e) => {
-                      onChange({
-                        ...e,
-                        target: { ...e.target, value: option.value },
-                      });
-                    }}
-                  />
-                  {option.label}
-                </MenuItem>
-              );
-            })}
-          </Box>
-        </FormControl>
-      )}
-      control={control}
-      name={fieldName}
-    />
-  );
-};
-
-const RadioField = ({ control, fieldName, label, options, ...other }) => {
+const RadioField = ({
+  control,
+  fieldName,
+  label,
+  options,
+  groupSx = {},
+  ...other
+}) => {
   return (
     <Controller
       render={({ field, fieldState: { error } }) => (
@@ -672,14 +650,13 @@ const RadioField = ({ control, fieldName, label, options, ...other }) => {
           <RadioGroup
             {...field}
             aria-labelledby={label || "label"}
-            // row={row}
             {...other}
             sx={{
-              // backgroundColor: "#71707613",
               borderRadius: "8px",
               border: "1px solid var(--border-default)",
               padding: "10px",
               gap: "12px",
+              ...groupSx,
             }}
           >
             {options.map((option) => (
@@ -694,17 +671,6 @@ const RadioField = ({ control, fieldName, label, options, ...other }) => {
                     marginTop: "-6px",
                   },
                 }}
-                // sx={{
-                //   "&:not(:last-of-type)": {
-                //     mb: spacing || 0,
-                //   },
-                //   ...(row && {
-                //     mr: 0,
-                //     "&:not(:last-of-type)": {
-                //       mr: spacing || 2,
-                //     },
-                //   }),
-                // }}
               />
             ))}
           </RadioGroup>
@@ -734,12 +700,14 @@ FeedBackForm.propTypes = {
   control: PropTypes.any,
   data: PropTypes.object,
   feedbackData: PropTypes.object,
+  outputType: PropTypes.string,
+  isMulti: PropTypes.bool,
 };
 
-SubmittedFeedback.propTypes = {
+ChoiceCheckboxGroup.propTypes = {
   control: PropTypes.any,
-  data: PropTypes.object,
-  feedbackData: PropTypes.object,
+  label: PropTypes.string,
+  choices: PropTypes.array,
 };
 
 AllInputField.propTypes = {
@@ -750,21 +718,12 @@ AllSelectField.propTypes = {
   label: PropTypes.string,
 };
 
-CheckboxField.propTypes = {
-  control: PropTypes.any,
-  fieldName: PropTypes.string.isRequired,
-  helperText: PropTypes.any,
-  label: PropTypes.string || undefined,
-  options: PropTypes.arrayOf(
-    PropTypes.shape({ label: PropTypes.string, value: PropTypes.string }),
-  ),
-};
-
 RadioField.propTypes = {
   control: PropTypes.any,
   fieldName: PropTypes.string.isRequired,
   helperText: PropTypes.any,
   label: PropTypes.string || undefined,
+  groupSx: PropTypes.object,
   options: PropTypes.arrayOf(
     PropTypes.shape({ label: PropTypes.string, value: PropTypes.string }),
   ),
@@ -788,7 +747,7 @@ const Label2 = () => {
   return (
     <Box>
       <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
-        Re- calculate for this row
+        Re-calculate for this row
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
         We’ll create a new version of this metric and use it in all future
