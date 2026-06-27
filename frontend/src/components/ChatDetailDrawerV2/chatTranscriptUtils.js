@@ -1,0 +1,28 @@
+import dayjs from "dayjs";
+
+/**
+ * Helpers for shaping chat-simulation transcript turns into the form the
+ * shared voice `TranscriptView` expects. Kept out of the component so they
+ * can be unit-tested and reused.
+ */
+
+// The chat serializer puts the turn body in `messages[0].content`.
+export const getChatTurnContent = (turn) => turn?.messages?.[0]?.content ?? "";
+
+// Each turn carries a single `created_at` timestamp; parse it once to epoch
+// milliseconds. `TranscriptView.enrichTurns` rebases the earliest value to 0,
+// so the first turn reads 0:00 and later turns show offsets relative to it.
+export const getChatTurnTimestampMs = (turn) => {
+  const createdAt = turn?.created_at;
+  if (createdAt == null) return null;
+  const ms = dayjs(createdAt).valueOf();
+  return Number.isFinite(ms) ? ms : null;
+};
+
+// Chat turns have no per-turn duration, so seed each turn's `duration` with
+// its word count. This gives `TranscriptView.TalkRatioBar` a non-zero signal
+// to render the inline speaker legend (dot + role + share-of-words %).
+export const countWords = (text) => {
+  if (!text || typeof text !== "string") return 0;
+  return text.trim().split(/\s+/).filter(Boolean).length;
+};

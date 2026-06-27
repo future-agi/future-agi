@@ -63,7 +63,7 @@ const ChatCompareView = ({ data, onBack }) => {
 
       <Stack gap={2} sx={{ p: 1.5 }}>
         <ChatCompareMetrics
-          data={compareData?.comparisonMetrics}
+          data={compareData?.comparison_metrics}
           isLoading={isLoading}
         />
 

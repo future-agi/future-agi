@@ -24,24 +24,7 @@ import VoiceDrawerHeader from "src/components/VoiceDetailDrawerV2/VoiceDrawerHea
 import ChatLeftPanel from "./ChatLeftPanel";
 import ChatRightPanel from "./ChatRightPanel";
 import ChatCompareView from "./Compare/ChatCompareView";
-
-// Chat-tailored Imagine prompts — same shape as `VOICE_IMAGINE_PROMPTS`
-// in `VoiceDetailDrawerV2.jsx`. Surfaced as suggested-prompt chips inside
-// an unsaved Imagine tab.
-const CHAT_IMAGINE_PROMPTS = [
-  { label: "Summarize this chat", icon: "mdi:text-box-outline" },
-  { label: "Show the conversation flow", icon: "mdi:message-text-outline" },
-  {
-    label: "Where did the user get frustrated?",
-    icon: "mdi:emoticon-sad-outline",
-  },
-  { label: "What's the cost breakdown?", icon: "mdi:currency-usd" },
-  { label: "Compare tone across turns", icon: "mdi:chart-line" },
-  {
-    label: "Evaluate chat quality",
-    icon: "mdi:checkbox-marked-circle-outline",
-  },
-];
+import { CHAT_IMAGINE_PROMPTS, CHAT_EXPORT_FIELDS } from "./constants";
 
 /**
  * Chat-specific peer of `VoiceDetailDrawerV2`. Shares the same outer
@@ -103,7 +86,10 @@ const ChatDetailDrawerV2 = ({
   const { data: savedViewsData } = useGetSavedViews(projectId);
   const { mutate: deleteSavedView } = useDeleteSavedView(projectId);
   const { mutate: reorderSavedViews } = useReorderSavedViews(projectId);
-  const customViews = savedViewsData?.custom_views || [];
+  const customViews = useMemo(
+    () => savedViewsData?.custom_views || [],
+    [savedViewsData?.custom_views],
+  );
 
   const [activeDrawerTab, setActiveDrawerTab] = useState("chat");
 
@@ -117,7 +103,7 @@ const ChatDetailDrawerV2 = ({
       },
     ];
     customViews
-      .filter((v) => (v.tab_type || v.tabType) === "imagine")
+      .filter((v) => v.tab_type === "imagine")
       .forEach((v) => {
         tabs.push({
           id: v.id,
@@ -153,24 +139,24 @@ const ChatDetailDrawerV2 = ({
     activeDrawerTab !== "__new_imagine__" &&
     drawerTabs.find((t) => t.id === activeDrawerTab)?.tabType === "imagine";
 
-  const handleCreateImagineTab = useCallback(() => {
+  const handleCreateImagineTab = () => {
     useImagineStore.getState().reset();
     setActiveDrawerTab("__new_imagine__");
-  }, []);
+  };
 
-  const handleCloseTab = useCallback((tabId) => {
+  const handleCloseTab = (tabId) => {
     if (tabId === "chat") return;
     if (tabId === "__new_imagine__") {
       setActiveDrawerTab("chat");
       return;
     }
     setDeleteTabId(tabId);
-  }, []);
+  };
 
-  const handleCreateView = useCallback((e) => {
+  const handleCreateView = (e) => {
     e?.stopPropagation?.();
     enqueueSnackbar("Use Imagine to save a custom view", { variant: "info" });
-  }, []);
+  };
 
   const handleReorderTabs = useCallback(
     (orderedIds) => {
@@ -220,11 +206,17 @@ const ChatDetailDrawerV2 = ({
     [leftPanelWidth],
   );
 
-  // ── Download raw data ────────────────────────────────────────────────
+  // ── Download chat data (curated, user-facing fields only) ────────────
   const handleDownload = useCallback(() => {
     if (!data) return;
     try {
-      const blob = new Blob([JSON.stringify(data, null, 2)], {
+      const exportData = Object.fromEntries(
+        CHAT_EXPORT_FIELDS.filter((k) => data[k] !== undefined).map((k) => [
+          k,
+          data[k],
+        ]),
+      );
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
         type: "application/json",
       });
       const url = URL.createObjectURL(blob);
@@ -422,10 +414,7 @@ const ChatDetailDrawerV2 = ({
             readOnly={imagineReadOnly}
             savedViewId={imagineReadOnly ? activeDrawerTab : null}
             savedWidgets={activeTabConfig?.widgets}
-            savedConversationId={
-              activeTabConfig?.conversation_id ||
-              activeTabConfig?.conversationId
-            }
+            savedConversationId={activeTabConfig?.conversation_id}
             onSaved={() =>
               queryClient.invalidateQueries({
                 queryKey: ["saved-views", projectId],

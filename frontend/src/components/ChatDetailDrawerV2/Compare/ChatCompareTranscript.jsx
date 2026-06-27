@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
+import dayjs from "dayjs";
 import {
   Box,
   FormControlLabel,
@@ -65,8 +66,7 @@ const ROLE_LABELS = {
 
 const DiffToken = ({ part, side }) => {
   // Theme-aware foreground / background so diff spans stay readable in
-  // both modes. Same `.lighter`/`.darker` ↔ `.darker`/`.main` swap we
-  // already use for chip text (memory: feedback_use_theme_palette_mode).
+  // both light and dark modes.
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const isRemoval = side === "A" && part.removed;
@@ -198,11 +198,9 @@ const TurnCell = ({ turn, colors, content, isPlaceholder }) => {
             {speakerLabel}
           </Typography>
         </Box>
-        {turn.timeStamp && (
+        {turn.timeStamp && dayjs(turn.timeStamp).isValid() && (
           <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
-            {typeof turn.timeStamp === "string"
-              ? turn.timeStamp.slice(11, 19) // hh:mm:ss from ISO
-              : String(turn.timeStamp)}
+            {dayjs(turn.timeStamp).format("HH:mm:ss")}
           </Typography>
         )}
       </Stack>
@@ -588,7 +586,7 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
               const replayedContent = match.replayed?.content || "";
               return (
                 <Box
-                  key={i}
+                  key={match.baseline?.id || match.replayed?.id || `pair-${i}`}
                   sx={{
                     display: "grid",
                     gridTemplateColumns: "1fr 1fr",

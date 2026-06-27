@@ -134,9 +134,9 @@ KpiCell.propTypes = {
 
 /**
  * Compute chat KPIs from the detail payload. Multiple fallbacks because
- * the chat serializer (TH-4525) is in flux — different deployments ship
- * tokens/cost/latency on different keys. Every derived value can be null
- * and `KpiCell` renders "—" gracefully.
+ * the chat serializer ships tokens/cost/latency on different keys across
+ * deployments. Every derived value can be null and `KpiCell` renders "—"
+ * gracefully.
  */
 const useChatMetrics = (data) => {
   return useMemo(() => {
