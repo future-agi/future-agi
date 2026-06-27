@@ -380,6 +380,8 @@ class EvalLogger(BaseModel):
     )
     # sha256 of the resolved eval definition that produced this result.
     config_hash = models.CharField(max_length=64, null=True, blank=True)
+    # Reaper reclaim count; capped so a poison item can't block completion.
+    attempts = models.IntegerField(default=0)
 
     def __str__(self):
         return f"Eval Log {self.id}"

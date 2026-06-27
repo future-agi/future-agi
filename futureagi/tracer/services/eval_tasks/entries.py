@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+from django.db import transaction
 from django.utils import timezone
 
 from tracer.models.eval_task import RowType
@@ -75,6 +76,62 @@ def soft_delete_live(task: EvalTask) -> int:
     return EvalLogger.objects.filter(eval_task_id=str(task.id)).update(
         deleted=True, deleted_at=timezone.now()
     )
+
+
+def claim_pending_batch(task: EvalTask, n: int) -> list[EvalLogger]:
+    """Atomically claim up to ``n`` pending entries and mark them running.
+
+    ``FOR UPDATE SKIP LOCKED`` lets many workers pull disjoint batches without
+    blocking each other. ``updated_at`` is stamped to "now" so the reaper can
+    measure how long an entry has been running.
+    """
+    now = timezone.now()
+    with transaction.atomic():
+        entries = list(
+            EvalLogger.objects.filter(
+                eval_task_id=str(task.id), status=EvalEntryStatus.PENDING
+            )
+            .select_for_update(skip_locked=True)
+            .order_by("created_at", "id")[:n]
+        )
+        if entries:
+            EvalLogger.objects.filter(id__in=[e.id for e in entries]).update(
+                status=EvalEntryStatus.RUNNING, updated_at=now
+            )
+    for entry in entries:
+        entry.status = EvalEntryStatus.RUNNING
+        entry.updated_at = now
+    return entries
+
+
+def mark_terminal(
+    entry: EvalLogger,
+    status: str,
+    *,
+    config_hash: str,
+    error: bool | None = None,
+    error_message: str | None = None,
+    skipped_reason: str | None = None,
+) -> bool:
+    """Record an entry's terminal state (status + the hash that produced it).
+
+    No-op (returns False) if the entry was soft-deleted mid-run — a Delete &
+    rerun landing while it ran. error / error_message / skipped_reason are set
+    only when passed, so a result already written by the evaluator isn't
+    clobbered.
+    """
+    fields: dict[str, Any] = {
+        "status": status,
+        "config_hash": config_hash,
+        "updated_at": timezone.now(),
+    }
+    if error is not None:
+        fields["error"] = error
+    if error_message is not None:
+        fields["error_message"] = error_message
+    if skipped_reason is not None:
+        fields["skipped_reason"] = skipped_reason
+    return EvalLogger.objects.filter(id=entry.id).update(**fields) > 0
 
 
 def _resolve_entry_fks(
