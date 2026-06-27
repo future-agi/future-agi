@@ -1910,3 +1910,205 @@ class TestEvaluationOrganizationIsolation:
             status.HTTP_403_FORBIDDEN,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         ]
+
+
+from types import SimpleNamespace as _SN  # noqa: E402
+
+
+@pytest.fixture
+def _stamp():
+    from model_hub.services.evaluation import stamp_evaluation_axes
+
+    return stamp_evaluation_axes
+
+
+def _mk_eval(
+    *,
+    value,
+    output_type=None,
+    eval_template_id=None,
+    eval_template=None,
+    output_bool=None,
+    output_float=None,
+    output_str_list=None,
+    output_str=None,
+    eval_id="eval-1",
+):
+    return _SN(
+        id=eval_id,
+        value=value,
+        output_type=output_type,
+        eval_template_id=eval_template_id,
+        eval_template=eval_template,
+        output_bool=output_bool,
+        output_float=output_float,
+        output_str_list=output_str_list,
+        output_str=output_str,
+    )
+
+
+class TestStampEvaluationAxesRouting:
+    @pytest.mark.parametrize(
+        "value,output_type,axis,expected",
+        [
+            ("Passed", "Pass/Fail", "output_bool", True),
+            ("Failed", "Pass/Fail", "output_bool", False),
+            (0.7, "score", "output_float", 0.7),
+            ("frequently", "choices", "output_str_list", ["frequently"]),
+            ({"choices": ["a", "b"]}, "choices", "output_str_list", ["a", "b"]),
+            (42.0, "numeric", "output_float", 42.0),
+        ],
+    )
+    def test_value_routes_to_axis(self, _stamp, value, output_type, axis, expected):
+        e = _mk_eval(value=value, output_type=output_type)
+        _stamp(e)
+        assert getattr(e, axis) == expected
+
+    def test_score_zero_is_a_real_value(self, _stamp):
+        e = _mk_eval(value=0, output_type="score")
+        _stamp(e)
+        assert e.output_float == 0.0
+
+    def test_choice_scores_dict_populates_both_axes(self, _stamp):
+        e = _mk_eval(value={"score": 0.8, "choice": "good"}, output_type="score")
+        _stamp(e)
+        assert e.output_float == 0.8
+        assert e.output_str_list == ["good"]
+
+
+class TestStampEvaluationAxesOverwrite:
+    @pytest.mark.parametrize(
+        "value,output_type,kwarg,existing,expected",
+        [
+            ("Passed", "Pass/Fail", "output_bool", False, True),
+            (0.7, "score", "output_float", 0.1, 0.7),
+            (
+                ["new_choice"],
+                "choices",
+                "output_str_list",
+                ["pinned"],
+                ["new_choice"],
+            ),
+        ],
+    )
+    def test_existing_axis_value_is_overwritten_by_new_value(
+        self, _stamp, value, output_type, kwarg, existing, expected
+    ):
+        e = _mk_eval(value=value, output_type=output_type, **{kwarg: existing})
+        _stamp(e)
+        assert getattr(e, kwarg) == expected
+
+    def test_axis_not_populated_by_new_value_is_cleared(self, _stamp):
+        e = _mk_eval(
+            value="Passed",
+            output_type="Pass/Fail",
+            output_float=0.7,
+        )
+        _stamp(e)
+        assert e.output_bool is True
+        assert e.output_float is None
+
+    def test_empty_list_existing_is_overwritten_when_value_projects(self, _stamp):
+        e = _mk_eval(
+            value=["fresh"], output_type="choices", output_str_list=[]
+        )
+        _stamp(e)
+        assert e.output_str_list == ["fresh"]
+
+
+class TestStampEvaluationAxesFallback:
+    def test_none_value_is_noop(self, _stamp):
+        e = _mk_eval(value=None, output_type="score", output_float=0.5)
+        _stamp(e)
+        assert e.output_float == 0.5
+
+    def test_no_output_type_falls_back_to_score_axis(self, _stamp):
+        e = _mk_eval(value=0.5)
+        _stamp(e)
+        assert e.output_float == 0.5
+
+    def test_template_lookup_failure_falls_back_to_score_axis(self, _stamp):
+        from model_hub.models.evals_metric import EvalTemplate as _Tpl
+
+        class _BrokenEval:
+            id = "eval-broken"
+            value = 0.5
+            output_type = None
+            eval_template_id = "some-id"
+            output_bool = None
+            output_float = None
+            output_str_list = None
+            output_str = None
+
+            @property
+            def eval_template(self):
+                raise _Tpl.DoesNotExist()
+
+        e = _BrokenEval()
+        _stamp(e)
+        assert e.output_float == 0.5
+
+    def test_resolve_failure_falls_back_to_output_str(self, _stamp):
+        e = _mk_eval(value={"x": object()}, output_type="score")
+        with patch(
+            "tracer.utils.eval._dual_write_eval_value",
+            side_effect=TypeError("boom"),
+        ):
+            _stamp(e)
+        assert e.output_str is not None
+
+    def test_output_str_fallback_when_all_axes_empty(self, _stamp):
+        e = _mk_eval(value="unknown shape", output_type="reason")
+        _stamp(e)
+        assert e.output_str == "unknown shape"
+
+    def test_template_config_overrides_output_type(self, _stamp):
+        e = _mk_eval(
+            value=0.5,
+            output_type="choices",
+            eval_template_id="tpl-1",
+            eval_template=_SN(config={"output": "score"}, multi_choice=False),
+        )
+        _stamp(e)
+        assert e.output_float == 0.5
+        assert e.output_str_list is None
+
+
+class TestStampEvaluationAxesOutputStrMirror:
+    @pytest.mark.parametrize(
+        "value,output_type,expected_str",
+        [
+            ({"score": 1.0, "choice": "Good"}, "score", '{"score": 1.0, "choice": "Good"}'),
+            ({"score": 0.875, "choices": ["A", "B"]}, "choices", '{"score": 0.875, "choices": ["A", "B"]}'),
+            ([{"choice": "A"}, {"choice": "B"}], "choices", '[{"choice": "A"}, {"choice": "B"}]'),
+            ("excellent", "choices", "excellent"),
+        ],
+    )
+    def test_output_str_written(self, _stamp, value, output_type, expected_str):
+        e = _mk_eval(value=value, output_type=output_type)
+        _stamp(e)
+        assert e.output_str == expected_str
+
+    @pytest.mark.parametrize(
+        "value,output_type",
+        [
+            (["neutral"], "choices"),
+            (1.0, "score"),
+            ("Passed", "Pass/Fail"),
+        ],
+    )
+    def test_plain_scalar_leaves_output_str_null(self, _stamp, value, output_type):
+        e = _mk_eval(value=value, output_type=output_type)
+        _stamp(e)
+        assert e.output_str is None
+
+    def test_pre_set_output_str_is_overwritten_when_value_projects_to_json(
+        self, _stamp
+    ):
+        e = _mk_eval(
+            value={"score": 1.0, "choice": "Good"},
+            output_type="choices",
+            output_str="legacy-text",
+        )
+        _stamp(e)
+        assert e.output_str == '{"score": 1.0, "choice": "Good"}'

@@ -204,6 +204,113 @@ def test_call_execution_serializer_exposes_raw_simulation_metrics(call_execution
     assert data["customer_cost_cents"] == 123
 
 
+def _outputs(eval_outputs):
+    from types import SimpleNamespace
+
+    return CallExecutionDetailSerializer().get_eval_outputs(
+        SimpleNamespace(eval_outputs=eval_outputs)
+    )
+
+
+def _metrics(eval_outputs):
+    from types import SimpleNamespace
+
+    return CallExecutionDetailSerializer().get_eval_metrics(
+        SimpleNamespace(eval_outputs=eval_outputs, id=None)
+    )
+
+
+def test_outputs_carries_all_three_axes_for_choice_scores_dict():
+    out = _outputs(
+        {
+            "e1": {
+                "output_bool": None,
+                "output_float": 1.0,
+                "output_str_list": ["Good"],
+                "output": {"score": 1.0, "choice": "Good"},
+                "name": "cs-template",
+            }
+        }
+    )
+    assert out["e1"]["output_pass"] is None
+    assert out["e1"]["output_score"] == pytest.approx(1.0)
+    assert out["e1"]["output_choices"] == ["Good"]
+
+
+def test_outputs_pending_status_emits_canonical_none_payload():
+    out = _outputs({"e1": {"status": "pending"}})
+    assert out["e1"] == {
+        "output_pass": None,
+        "output_score": None,
+        "output_choices": None,
+        "status": "pending",
+    }
+
+
+def test_outputs_grouped_obj_with_count_returns_empty():
+    serializer = CallExecutionDetailSerializer()
+    assert serializer.get_eval_outputs({"eval_outputs": {"e1": {}}, "count": 3}) == {}
+
+
+def test_outputs_preserves_value_reason_name_type_status_skipped():
+    out = _outputs(
+        {
+            "e1": {
+                "output_float": 0.5,
+                "output": 0.5,
+                "reason": "ok",
+                "name": "score-template",
+                "output_type": "score",
+                "status": "completed",
+            }
+        }
+    )
+    entry = out["e1"]
+    assert entry["reason"] == "ok"
+    assert entry["name"] == "score-template"
+    assert entry["type"] == "score"
+    assert entry["status"] == "completed"
+    assert entry["skipped"] is False
+    assert entry["error"] is False
+
+
+def test_metrics_renames_axes():
+    metrics = _metrics(
+        {
+            "e1": {
+                "output_bool": False,
+                "output_float": 0.0,
+                "output_str_list": ["x"],
+                "output": "x",
+                "name": "n",
+            }
+        }
+    )
+    assert metrics["e1"]["output_pass"] is False
+    assert metrics["e1"]["output_score"] == 0.0
+    assert metrics["e1"]["output_choices"] == ["x"]
+    for storage_key in ("output_bool", "output_float", "output_str_list"):
+        assert storage_key not in metrics["e1"]
+
+
+@pytest.mark.parametrize(
+    "storage_key,api_key,value",
+    [
+        ("output_bool", "output_pass", True),
+        ("output_bool", "output_pass", False),
+        ("output_float", "output_score", 0.0),
+        ("output_float", "output_score", 1.0),
+        ("output_str_list", "output_choices", ["one"]),
+        ("output_str_list", "output_choices", ["a", "b"]),
+    ],
+)
+def test_outputs_rename_round_trip(storage_key, api_key, value):
+    eval_data = {storage_key: value, "output": value, "name": "n"}
+    out = _outputs({"e1": eval_data})
+    assert out["e1"][api_key] == value
+    assert storage_key not in out["e1"]
+
+
 def _fake_log_payload(body, severity="INFO", category="llm", ts_ms=1_700_000_000_000):
     """Build a VAPI-shaped log payload dict."""
     return {
@@ -537,3 +644,102 @@ class TestCallExecutionDetailView:
         payload = response.json()
         assert payload["provider"] == "livekit"
         assert payload["attributes"]["raw_log"]["room_sid"] == "RM_test"
+
+
+class TestSimulateWriterPattern:
+    @staticmethod
+    def _mk_eval_config(*, output: str, multi_choice: bool = False):
+        from types import SimpleNamespace
+
+        template = SimpleNamespace(
+            config={"output": output},
+            multi_choice=multi_choice,
+        )
+        return SimpleNamespace(
+            id="cfg-1",
+            name="dummy-eval",
+            eval_template=template,
+        )
+
+    @pytest.mark.parametrize(
+        "output,value,populated_axis,expected",
+        [
+            ("score", 0.7, "output_float", 0.7),
+            ("numeric", 0.42, "output_float", 0.42),
+            ("Pass/Fail", "Passed", "output_bool", True),
+            ("Pass/Fail", "Failed", "output_bool", False),
+            ("choices", "always", "output_str_list", ["always"]),
+        ],
+    )
+    def test_value_routes_to_correct_axis(
+        self, output, value, populated_axis, expected
+    ):
+        from evaluations.engine.normalize import eval_config_output
+        from simulate.utils.processing_outcomes import build_simulate_eval_payload
+
+        cfg = self._mk_eval_config(output=output)
+        payload = build_simulate_eval_payload(
+            value=value,
+            config_output=eval_config_output(cfg),
+            name=cfg.name,
+        )
+        assert payload[populated_axis] == expected
+
+    def test_choice_scores_dict_populates_both_axes(self):
+        from evaluations.engine.normalize import eval_config_output
+        from simulate.utils.processing_outcomes import build_simulate_eval_payload
+
+        cfg = self._mk_eval_config(output="score")
+        payload = build_simulate_eval_payload(
+            value={"score": 0.8, "choice": "good"},
+            config_output=eval_config_output(cfg),
+            name=cfg.name,
+        )
+        assert payload["output_float"] == pytest.approx(0.8)
+        assert payload["output_str_list"] == ["good"]
+
+    def test_choice_scores_list_of_dicts_populates_both_axes(self):
+        from evaluations.engine.normalize import eval_config_output
+        from simulate.utils.processing_outcomes import build_simulate_eval_payload
+
+        cfg = self._mk_eval_config(output="choices")
+        payload = build_simulate_eval_payload(
+            value=[{"score": 0.6, "choice": "a"}, {"score": 0.9, "choice": "b"}],
+            config_output=eval_config_output(cfg),
+            name=cfg.name,
+        )
+        assert payload["output_str_list"] == ["a", "b"]
+        assert payload["output_float"] == pytest.approx(0.75)
+
+    def test_none_value_yields_all_none_axes_and_preserves_error_metadata(self):
+        from evaluations.engine.normalize import eval_config_output
+        from simulate.utils.processing_outcomes import build_simulate_eval_payload
+
+        cfg = self._mk_eval_config(output="score")
+        payload = build_simulate_eval_payload(
+            value=None,
+            config_output=eval_config_output(cfg),
+            reason="missing transcript",
+            name=cfg.name,
+            error="error",
+            status="failed",
+        )
+        assert payload["output_bool"] is None
+        assert payload["output_float"] is None
+        assert payload["output_str_list"] is None
+        assert payload["error"] == "error"
+        assert payload["status"] == "failed"
+
+    def test_eval_config_output_defaults_to_score_on_missing_template(self):
+        from types import SimpleNamespace
+
+        from evaluations.engine.normalize import eval_config_output
+        from simulate.utils.processing_outcomes import build_simulate_eval_payload
+
+        cfg = SimpleNamespace(id="cfg-2", name="no-template", eval_template=None)
+        payload = build_simulate_eval_payload(
+            value=0.5,
+            config_output=eval_config_output(cfg),
+            name=cfg.name,
+        )
+        assert payload["output_float"] == 0.5

@@ -8376,7 +8376,7 @@ export type DatasetCellValueApiFeedbackInfo = { [key: string]: unknown };
 export interface DatasetCellValueApi {
   cell_value?: DatasetCellValueApiCellValue;
   status?: string;
-  value_infos?: DatasetCellValueApiValueInfos;
+  readonly value_infos?: DatasetCellValueApiValueInfos;
   feedback_info?: DatasetCellValueApiFeedbackInfo;
 }
 
@@ -8463,7 +8463,7 @@ export interface ExperimentRowDiffCellApi {
   cell_value?: ExperimentRowDiffCellApiCellValue;
   cell_diff_value?: ExperimentRowDiffCellApiCellDiffValue;
   status?: string;
-  value_infos?: ExperimentRowDiffCellApiValueInfos;
+  readonly value_infos?: ExperimentRowDiffCellApiValueInfos;
 }
 
 export type ExperimentRowDiffResponseApiResult = {[key: string]: {[key: string]: ExperimentRowDiffCellApi}};
@@ -10470,11 +10470,17 @@ export const ExperimentCreateV2ApiExperimentType = {
   image: 'image',
 } as const;
 
+/**
+ * Any valid JSON value.
+ */
 export type PromptConfigEntryApiModel = { [key: string]: unknown };
 
 export type PromptConfigEntryApiModelParams = {[key: string]: string};
 
-export type PromptConfigEntryApiConfiguration = {[key: string]: string};
+/**
+ * Any valid JSON value.
+ */
+export type PromptConfigEntryApiConfiguration = { [key: string]: unknown };
 
 export type PromptConfigEntryApiMessagesItem = {[key: string]: string};
 
@@ -10485,8 +10491,10 @@ export interface PromptConfigEntryApi {
   prompt_version?: string;
   agent_id?: string;
   agent_version?: string;
+  /** Any valid JSON value. */
   model?: PromptConfigEntryApiModel;
   model_params?: PromptConfigEntryApiModelParams;
+  /** Any valid JSON value. */
   configuration?: PromptConfigEntryApiConfiguration;
   /** @minLength 1 */
   output_format?: string;
@@ -16095,6 +16103,26 @@ export const CallExecutionDetailApiStatus = {
   cancelled: 'cancelled',
 } as const;
 
+export type CallExecutionEvalOutputApiValue = { [key: string]: unknown };
+
+export interface CallExecutionEvalOutputApi {
+  value?: CallExecutionEvalOutputApiValue;
+  reason?: string;
+  type?: string;
+  name?: string;
+  error?: boolean;
+  status?: string;
+  skipped?: boolean;
+  output_pass?: boolean;
+  output_score?: number;
+  output_choices?: string[];
+}
+
+/**
+ * Get evaluation outputs in a structured format
+ */
+export type CallExecutionDetailApiEvalOutputs = {[key: string]: CallExecutionEvalOutputApi};
+
 /**
  * number | bool | string | list[string] | null
  */
@@ -16125,6 +16153,9 @@ export interface CallExecutionEvalMetricApi {
   selected_input_key?: string;
   input_data?: CallExecutionEvalMetricApiInputData;
   input_types?: CallExecutionEvalMetricApiInputTypes;
+  output_pass?: boolean;
+  output_score?: number;
+  output_choices?: string[];
 }
 
 /**
@@ -16190,7 +16221,8 @@ export interface CallExecutionDetailApi {
   readonly audio_url?: string;
   /** @minLength 1 */
   readonly customer_name?: string;
-  readonly eval_outputs?: string;
+  /** Get evaluation outputs in a structured format */
+  readonly eval_outputs?: CallExecutionDetailApiEvalOutputs;
   /** Get evaluation metrics in a format suitable for the UI */
   readonly eval_metrics?: CallExecutionDetailApiEvalMetrics;
   readonly scenario_columns?: string;

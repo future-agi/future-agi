@@ -1,7 +1,9 @@
 # serializers.py
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+from evaluations.engine.normalize import rename_value_infos_axes
 from model_hub.models.choices import ProviderLogoUrls
 from model_hub.models.develop_dataset import Column, Dataset
 from model_hub.models.evals_metric import UserEvalMetric
@@ -12,6 +14,7 @@ from model_hub.models.experiments import (
     ExperimentsTable,
 )
 from tfc.middleware.workspace_context import get_current_organization
+from tfc.utils.serializer_fields import JsonValueField
 
 
 class ExperimentsTableSerializer(serializers.ModelSerializer):
@@ -257,7 +260,18 @@ class CellValueSerializer(serializers.Serializer):
     cell_value = serializers.CharField()
     status = serializers.CharField()
     metadata = serializers.DictField()
-    value_infos = serializers.DictField(required=False)
+    value_infos = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.JSONField(allow_null=True)
+    )
+    def get_value_infos(self, obj):
+        raw = (
+            obj.get("value_infos")
+            if isinstance(obj, dict)
+            else getattr(obj, "value_infos", None)
+        )
+        return rename_value_infos_axes(raw)
 
 
 class TableRowSerializer(serializers.Serializer):
@@ -409,10 +423,9 @@ class PromptConfigEntrySerializer(serializers.Serializer):
     agent_id = serializers.UUIDField(required=False, allow_null=True)
     agent_version = serializers.UUIDField(required=False, allow_null=True)
 
-    # Model config (prompt entries only — single string or ModelSpec dict)
-    model = serializers.JSONField(required=False, default=None)
+    model = JsonValueField(required=False, default=None)
     model_params = serializers.DictField(required=False, default=dict)
-    configuration = serializers.DictField(required=False, default=dict)
+    configuration = JsonValueField(required=False, default=dict)
     output_format = serializers.CharField(required=False, default="string")
 
     # Inline messages (tts/stt/image experiments)

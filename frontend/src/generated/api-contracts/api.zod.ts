@@ -20252,9 +20252,11 @@ export const ModelHubExperimentsV2CreateBody = zod.object({
   "agent_version": zod.string().uuid().optional(),
   "model": zod.object({
 
-}).passthrough().optional(),
+}).passthrough().optional().describe('Any valid JSON value.'),
   "model_params": zod.record(zod.string(), zod.string()).default(modelHubExperimentsV2CreateBodyPromptConfigItemModelParamsDefault),
-  "configuration": zod.record(zod.string(), zod.string()).default(modelHubExperimentsV2CreateBodyPromptConfigItemConfigurationDefault),
+  "configuration": zod.object({
+
+}).passthrough().default(modelHubExperimentsV2CreateBodyPromptConfigItemConfigurationDefault).describe('Any valid JSON value.'),
   "output_format": zod.string().min(1).default(modelHubExperimentsV2CreateBodyPromptConfigItemOutputFormatDefault),
   "messages": zod.array(zod.record(zod.string(), zod.string())).optional(),
   "voice_input_column_id": zod.string().uuid().optional()
@@ -20458,9 +20460,11 @@ export const ModelHubExperimentsV2UpdateBody = zod.object({
   "agent_version": zod.string().uuid().optional(),
   "model": zod.object({
 
-}).passthrough().optional(),
+}).passthrough().optional().describe('Any valid JSON value.'),
   "model_params": zod.record(zod.string(), zod.string()).default(modelHubExperimentsV2UpdateBodyPromptConfigItemModelParamsDefault),
-  "configuration": zod.record(zod.string(), zod.string()).default(modelHubExperimentsV2UpdateBodyPromptConfigItemConfigurationDefault),
+  "configuration": zod.object({
+
+}).passthrough().default(modelHubExperimentsV2UpdateBodyPromptConfigItemConfigurationDefault).describe('Any valid JSON value.'),
   "output_format": zod.string().min(1).default(modelHubExperimentsV2UpdateBodyPromptConfigItemOutputFormatDefault),
   "messages": zod.array(zod.record(zod.string(), zod.string())).optional(),
   "voice_input_column_id": zod.string().uuid().optional()
@@ -30215,7 +30219,20 @@ export const SimulateCallExecutionsReadResponse = zod.object({
   "response_time_ms": zod.number().min(simulateCallExecutionsReadResponseResponseTimeMsMin).max(simulateCallExecutionsReadResponseResponseTimeMsMax).optional().describe('Average response time in milliseconds'),
   "audio_url": zod.string().url().min(1).optional(),
   "customer_name": zod.string().min(1).optional(),
-  "eval_outputs": zod.string().optional(),
+  "eval_outputs": zod.record(zod.string(), zod.object({
+  "value": zod.object({
+
+}).passthrough().optional(),
+  "reason": zod.string().optional(),
+  "type": zod.string().optional(),
+  "name": zod.string().optional(),
+  "error": zod.boolean().optional(),
+  "status": zod.string().optional(),
+  "skipped": zod.boolean().optional(),
+  "output_pass": zod.boolean().optional(),
+  "output_score": zod.number().optional(),
+  "output_choices": zod.array(zod.string()).optional()
+})).optional().describe('Get evaluation outputs in a structured format'),
   "eval_metrics": zod.record(zod.string(), zod.object({
   "id": zod.string().optional(),
   "name": zod.string().optional(),
@@ -30241,7 +30258,10 @@ export const SimulateCallExecutionsReadResponse = zod.object({
 }).passthrough().optional(),
   "input_types": zod.object({
 
-}).passthrough().optional()
+}).passthrough().optional(),
+  "output_pass": zod.boolean().optional(),
+  "output_score": zod.number().optional(),
+  "output_choices": zod.array(zod.string()).optional()
 })).optional().describe('Get evaluation metrics in a format suitable for the UI'),
   "scenario_columns": zod.string().optional(),
   "ended_reason": zod.string().max(simulateCallExecutionsReadResponseEndedReasonMax).optional().describe('Reason why the call ended'),

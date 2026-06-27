@@ -111,30 +111,9 @@ class Evaluation(BaseModel):
         return f"Evaluation {self.id} - {template_name} ({self.status})"
 
     def save(self, *args, **kwargs):
-        """
-        Override save to automatically populate type-specific output fields
-        based on the value and output type, following the inline_evals logic.
-        """
-        if self.value is not None:
-            try:
-                data = self.value
+        from model_hub.services.evaluation import stamp_evaluation_axes
 
-                if isinstance(data, float) or isinstance(data, int):
-                    self.output_float = float(data)
-                elif isinstance(data, bool) or data in [["Passed"], ["Failed"]]:
-                    self.output_bool = (
-                        True if data == "Passed" or data is True else False
-                    )
-                elif isinstance(data, list):
-                    self.output_str_list = data
-                elif isinstance(data, str) and data in ["Passed", "Failed"]:
-                    self.output_bool = True if data == "Passed" else False
-                else:
-                    self.output_str = str(data)
-
-            except Exception:
-                self.output_str = str(self.value)
-
+        stamp_evaluation_axes(self)
         super().save(*args, **kwargs)
 
     def update_with_result(self, eval_result):

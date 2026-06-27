@@ -20,6 +20,7 @@ from model_hub.serializers.contracts import (
     DatasetTableQuerySerializer,
 )
 from model_hub.serializers.develop_dataset_contracts import (
+    DatasetCellValueSerializer,
     DatasetListQuerySerializer,
     DatasetTableResponseSerializer,
 )
@@ -711,3 +712,84 @@ def test_update_column_type_falls_back_to_sync_conversion_when_dispatch_fails():
     assert column.status == "Completed"
     assert cell.status == "pass"
     assert cell.value == "42"
+
+
+def _translate_value_infos(value_infos):
+    return DatasetCellValueSerializer().get_value_infos({"value_infos": value_infos})
+
+
+def test_value_infos_renames_all_three_axes_at_once():
+    out = _translate_value_infos(
+        {"output_bool": False, "output_float": 0.42, "output_str_list": ["a"]}
+    )
+    assert out == {
+        "output_pass": False,
+        "output_score": 0.42,
+        "output_choices": ["a"],
+    }
+
+
+def test_value_infos_preserves_non_axis_keys_untouched():
+    out = _translate_value_infos(
+        {
+            "output_float": 0.5,
+            "reason": "looks ok",
+            "name": "eval-x",
+            "output_type": "score",
+        }
+    )
+    assert out == {
+        "output_score": 0.5,
+        "reason": "looks ok",
+        "name": "eval-x",
+        "output_type": "score",
+    }
+
+
+def test_value_infos_axis_value_of_none_still_renamed():
+    assert _translate_value_infos(
+        {"output_bool": None, "output_float": None, "output_str_list": None}
+    ) == {"output_pass": None, "output_score": None, "output_choices": None}
+
+
+def test_value_infos_dict_without_axis_keys_passes_through_unchanged():
+    out = _translate_value_infos({"chip_color": "blue", "reason": "n/a"})
+    assert out == {"chip_color": "blue", "reason": "n/a"}
+
+
+def test_value_infos_json_string_input_is_decoded_then_renamed():
+    raw = json.dumps({"output_float": 0.9, "reason": "good"})
+    assert _translate_value_infos(raw) == {"output_score": 0.9, "reason": "good"}
+
+
+def test_value_infos_unparseable_string_returned_verbatim():
+    assert _translate_value_infos("not-json") == "not-json"
+
+
+def test_value_infos_reads_from_attribute_object():
+    class _Obj:
+        value_infos = {"output_bool": True}
+
+    assert DatasetCellValueSerializer().get_value_infos(_Obj()) == {"output_pass": True}
+
+
+def test_value_infos_does_not_mutate_input_dict():
+    original = {"output_bool": True, "reason": "ok"}
+    snapshot = dict(original)
+    _translate_value_infos(original)
+    assert original == snapshot
+
+
+@pytest.mark.parametrize(
+    "storage_key,api_key,value",
+    [
+        ("output_bool", "output_pass", True),
+        ("output_bool", "output_pass", False),
+        ("output_float", "output_score", 0.0),
+        ("output_float", "output_score", 1.0),
+        ("output_str_list", "output_choices", []),
+        ("output_str_list", "output_choices", ["one"]),
+    ],
+)
+def test_value_infos_rename_round_trip_for_each_axis(storage_key, api_key, value):
+    assert _translate_value_infos({storage_key: value}) == {api_key: value}

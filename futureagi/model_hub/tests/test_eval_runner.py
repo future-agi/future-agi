@@ -1613,3 +1613,117 @@ class TestTestEvaluationTemplateAPIView(EvalRunnerBaseTestCase):
         assert configuration.get("config", {}).get("keywords") == ["hello", "world"]
         assert configuration.get("config", {}).get("case_sensitive") is True
         assert "params" not in configuration
+
+
+import json as _json  # noqa: E402
+from types import SimpleNamespace as _SN  # noqa: E402
+
+from model_hub.views.eval_runner import EvaluationRunner as _Runner  # noqa: E402
+
+
+@pytest.fixture
+def _runner():
+    r = _Runner(user_eval_metric_id=uuid.uuid4(), format_output=True)
+    r.source_configs = {}
+    r.is_only_eval = False
+    r.replace_column_id = None
+    return r
+
+
+def _ids():
+    return _SN(id="ds-1"), _SN(id="col-1"), _SN(id="row-1")
+
+
+def _patch_runner_deps(*, cancelled=False, stopped=False):
+    return (
+        patch(
+            "model_hub.services.experiment_utils.is_experiment_cancelled",
+            return_value=cancelled,
+        ),
+        patch(
+            "model_hub.services.experiment_utils.is_user_eval_stopped",
+            return_value=stopped,
+        ),
+        patch("model_hub.views.eval_runner.Cell.objects.update_or_create"),
+    )
+
+
+def _captured_value_infos(mock_create):
+    assert mock_create.called
+    return _json.loads(mock_create.call_args.kwargs["defaults"]["value_infos"])
+
+
+class TestCreateCellAxisInjection:
+    @pytest.mark.parametrize(
+        "config_output,value,populated_axis,expected",
+        [
+            ("score", 0.7, "output_float", 0.7),
+            ("choices", "frequently", "output_str_list", ["frequently"]),
+            ("Pass/Fail", "Passed", "output_bool", True),
+        ],
+    )
+    def test_template_populates_correct_axis(
+        self, _runner, config_output, value, populated_axis, expected
+    ):
+        _runner.eval_template = _SN(config={"output": config_output}, multi_choice=False)
+        ds, col, row = _ids()
+        cancelled, stopped, mock_create = _patch_runner_deps()
+        with cancelled, stopped, mock_create as m:
+            _runner._create_cell(ds, col, row, {}, value, "completed")
+            assert _captured_value_infos(m)[populated_axis] == expected
+
+    def test_pre_stamped_axes_are_not_overwritten(self, _runner):
+        _runner.eval_template = _SN(config={"output": "score"}, multi_choice=False)
+        ds, col, row = _ids()
+        cancelled, stopped, mock_create = _patch_runner_deps()
+        with cancelled, stopped, mock_create as m:
+            _runner._create_cell(
+                ds,
+                col,
+                row,
+                {
+                    "reason": "hi",
+                    "output_float": 0.9,
+                    "output_bool": True,
+                    "output_str_list": ["forced"],
+                },
+                0.1,
+                "completed",
+            )
+            payload = _captured_value_infos(m)
+            assert payload["output_float"] == 0.9
+            assert payload["output_bool"] is True
+            assert payload["output_str_list"] == ["forced"]
+
+    def test_missing_template_defaults_to_score_axis(self, _runner):
+        _runner.eval_template = None
+        ds, col, row = _ids()
+        cancelled, stopped, mock_create = _patch_runner_deps()
+        with cancelled, stopped, mock_create as m:
+            _runner._create_cell(ds, col, row, {}, 0.5, "completed")
+            assert _captured_value_infos(m)["output_float"] == 0.5
+
+    def test_empty_template_config_defaults_to_score(self, _runner):
+        _runner.eval_template = _SN(config={}, multi_choice=False)
+        ds, col, row = _ids()
+        cancelled, stopped, mock_create = _patch_runner_deps()
+        with cancelled, stopped, mock_create as m:
+            _runner._create_cell(ds, col, row, {}, 0.5, "completed")
+            assert _captured_value_infos(m)["output_float"] == 0.5
+
+    def test_skips_when_experiment_cancelled(self, _runner):
+        _runner.eval_template = _SN(config={"output": "score"}, multi_choice=False)
+        _runner.source_configs = {"experiment_id": str(uuid.uuid4())}
+        ds, col, row = _ids()
+        cancelled, stopped, mock_create = _patch_runner_deps(cancelled=True)
+        with cancelled, stopped, mock_create as m:
+            _runner._create_cell(ds, col, row, {}, 0.5, "completed")
+            assert not m.called
+
+    def test_skips_when_user_eval_stopped(self, _runner):
+        _runner.eval_template = _SN(config={"output": "score"}, multi_choice=False)
+        ds, col, row = _ids()
+        cancelled, stopped, mock_create = _patch_runner_deps(stopped=True)
+        with cancelled, stopped, mock_create as m:
+            _runner._create_cell(ds, col, row, {}, 0.5, "completed")
+            assert not m.called

@@ -116,6 +116,7 @@ from model_hub.models.develop_dataset import (
 from model_hub.models.develop_optimisation import (
     OptimizationDataset,
 )
+from evaluations.engine.normalize import rename_value_infos_axes
 from model_hub.models.evals_metric import EvalTemplate, Feedback, UserEvalMetric
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
 from model_hub.models.optimize_dataset import OptimizeDataset
@@ -443,7 +444,7 @@ def _process_other_datasets_impl(
                 )
                 if col_obj.source in dynamic_sources:
                     return None
-                value_infos = json.loads(cell.value_infos) if cell.value_infos else {}
+                value_infos = rename_value_infos_axes(cell.value_infos) or {}
                 metadata = {}
                 if isinstance(value_infos, dict):
                     metadata = value_infos.get("metadata") or {}
@@ -545,11 +546,7 @@ def _prepare_compare_dataset_impl(
                 main_cells = data_by_dataset[main_ds_id][base_val]
                 main_cell = main_cells.get(base_column_name)
                 if main_cell:
-                    value_infos = (
-                        json.loads(main_cell.value_infos)
-                        if main_cell.value_infos
-                        else {}
-                    )
+                    value_infos = rename_value_infos_axes(main_cell.value_infos) or {}
                     metadata = value_infos.get("metadata") or {}
                     if isinstance(metadata, str):
                         metadata = json.loads(metadata)
@@ -2765,7 +2762,7 @@ class GetDatasetTableView(APIView):
                     if cell.value_infos:
                         try:
                             metadata = {}
-                            value_infos = json.loads(cell.value_infos)
+                            value_infos = rename_value_infos_axes(cell.value_infos) or {}
 
                             if isinstance(value_infos.get("metadata", "{}"), str):
                                 value_infos["metadata"] = json.loads(
@@ -2780,7 +2777,7 @@ class GetDatasetTableView(APIView):
                         except Exception:
                             response_time_ms = None
                             token_count = None
-                            value_infos = cell.value_infos
+                            value_infos = {}
 
                     # Handle special data types that need parsing
                     cell_value = cell.value
@@ -2808,7 +2805,7 @@ class GetDatasetTableView(APIView):
                             ),
                         },
                         "status": cell.status,
-                        "value_infos": value_infos if value_infos else cell.value_infos,
+                        "value_infos": value_infos if value_infos else rename_value_infos_axes(cell.value_infos),
                         "feedback_info": cell.feedback_info,
                     }
 
@@ -2904,11 +2901,7 @@ class GetDatasetTableView(APIView):
                 reasons = []
                 for cell in failed_cells:
                     try:
-                        value_infos = (
-                            json.loads(cell.value_infos)
-                            if cell.value_infos and isinstance(cell.value_infos, str)
-                            else cell.value_infos
-                        )
+                        value_infos = rename_value_infos_axes(cell.value_infos) or {}
                         reasons.append(value_infos.get("reason"))
                     except (json.JSONDecodeError, AttributeError):
                         reasons.append(None)
@@ -3048,7 +3041,7 @@ class GetRowDataView(APIView):
                 if cell.value_infos:
                     try:
                         metadata = {}
-                        value_infos = json.loads(cell.value_infos)
+                        value_infos = rename_value_infos_axes(cell.value_infos) or {}
                         if isinstance(value_infos.get("metadata", "{}"), str):
                             value_infos["metadata"] = json.loads(
                                 value_infos.get("metadata", "{}")
@@ -3062,7 +3055,7 @@ class GetRowDataView(APIView):
                     except Exception:
                         response_time_ms = None
                         token_count = None
-                        value_infos = cell.value_infos
+                        value_infos = {}
 
                 row_data[str(cell.column_id)] = {
                     "cell_id": str(cell.id),
@@ -3332,7 +3325,7 @@ class GetExperimentDatasetTableView(APIView):
                             metadata = {}
                             value_infos = {}
                             value_infos = (
-                                json.loads(cell.value_infos) if cell.value_infos else {}
+                                rename_value_infos_axes(cell.value_infos) or {}
                             )
 
                             if isinstance(value_infos.get("metadata", "{}"), str):
@@ -3926,10 +3919,10 @@ class GetCellDataView(APIView):
 
                 if cell.value_infos:
                     try:
-                        value_infos = json.loads(cell.value_infos)
+                        value_infos = rename_value_infos_axes(cell.value_infos) or {}
 
                     except Exception:
-                        value_infos = cell.value_infos
+                        value_infos = {}
 
                 result[row_id][column_id] = {
                     "cell_value": cell.value,
@@ -5504,7 +5497,7 @@ class UpdateCellValueView(APIView):
                             ),
                         )
                         value_infos = (
-                            json.loads(cell.value_infos) if cell.value_infos else {}
+                            rename_value_infos_axes(cell.value_infos) or {}
                         )
                         if not isinstance(value_infos, dict):
                             value_infos = {}
@@ -5543,7 +5536,7 @@ class UpdateCellValueView(APIView):
                             object_key=doc_key,
                         )
                         value_infos = (
-                            json.loads(cell.value_infos) if cell.value_infos else {}
+                            rename_value_infos_axes(cell.value_infos) or {}
                         )
                         if not isinstance(value_infos, dict):
                             value_infos = {}
@@ -12755,11 +12748,7 @@ class GetCompareDatasetRow(APIView):
                         )
                         # current_cell = cells.get(dataset=ds, column__name=dyn_col.name, row_id=row_info[str(ds.id)])
                         if current_cell:
-                            value_infos = (
-                                json.loads(current_cell.value_infos)
-                                if current_cell.value_infos
-                                else {}
-                            )
+                            value_infos = rename_value_infos_axes(current_cell.value_infos) or {}
                             current_cell_metadata = value_infos.get("metadata") or {}
                             if isinstance(metadata, str):
                                 current_cell_metadata = json.loads(
@@ -12934,9 +12923,7 @@ class CompareDatasetsView(APIView):
                     ) or Column.objects.get(dataset=ds, name=col_name)
                     if col_obj.source in dynamic_sources:
                         return None
-                    value_infos = (
-                        json.loads(cell.value_infos) if cell.value_infos else {}
-                    )
+                    value_infos = rename_value_infos_axes(cell.value_infos) or {}
                     metadata = {}
                     if isinstance(value_infos, dict):
                         metadata = value_infos.get("metadata") or {}
@@ -13157,11 +13144,7 @@ class CompareDatasetsView(APIView):
                     main_cells = data_by_dataset[main_ds_id][base_val]
                     main_cell = main_cells.get(base_column_name)
                     if main_cell:
-                        value_infos = (
-                            json.loads(main_cell.value_infos)
-                            if main_cell.value_infos
-                            else {}
-                        )
+                        value_infos = rename_value_infos_axes(main_cell.value_infos) or {}
                         metadata = value_infos.get("metadata") or {}
                         if isinstance(metadata, str):
                             metadata = json.loads(metadata)
@@ -13478,7 +13461,7 @@ class CompareDatasetsView(APIView):
                         value_infos = {}
                         if current_cell.value_infos:
                             try:
-                                value_infos = json.loads(current_cell.value_infos)
+                                value_infos = rename_value_infos_axes(current_cell.value_infos) or {}
                             except (json.JSONDecodeError, TypeError):
                                 value_infos = {}
 

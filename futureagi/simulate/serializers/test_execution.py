@@ -7,6 +7,7 @@ from django.db.models import Count, Q
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
+from evaluations.engine.normalize import project_storage_axes_to_api
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.services.error_localizer_service import error_localizer_enabled
 from simulate.models import (
@@ -146,12 +147,23 @@ class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
 
     # Return customer_call_id from parent CallExecution for frontend compatibility
     service_provider_call_id = serializers.SerializerMethodField()
+    eval_outputs = serializers.SerializerMethodField()
 
     def get_service_provider_call_id(self, obj):
         """Get customer_call_id from the parent CallExecution"""
         if obj.call_execution:
             return obj.call_execution.customer_call_id
         return None
+
+    def get_eval_outputs(self, obj):
+        raw = obj.eval_outputs or {}
+        out = {}
+        for eval_id, eval_data in raw.items():
+            if isinstance(eval_data, dict):
+                out[eval_id] = {**eval_data, **project_storage_axes_to_api(eval_data)}
+            else:
+                out[eval_id] = eval_data
+        return out
 
     class Meta:
         model = CallExecutionSnapshot
@@ -232,6 +244,30 @@ class CallExecutionEvalMetricSerializer(serializers.Serializer):
     )
     input_data = serializers.JSONField(required=False, allow_null=True)
     input_types = serializers.JSONField(required=False, allow_null=True)
+    output_pass = serializers.BooleanField(required=False, allow_null=True)
+    output_score = serializers.FloatField(required=False, allow_null=True)
+    output_choices = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+    )
+
+
+class CallExecutionEvalOutputSerializer(serializers.Serializer):
+    value = serializers.JSONField(required=False, allow_null=True)
+    reason = serializers.CharField(allow_blank=True, required=False)
+    type = serializers.CharField(allow_blank=True, required=False)
+    name = serializers.CharField(allow_blank=True, required=False)
+    error = serializers.BooleanField(required=False)
+    status = serializers.CharField(allow_blank=True, required=False)
+    skipped = serializers.BooleanField(required=False)
+    output_pass = serializers.BooleanField(required=False, allow_null=True)
+    output_score = serializers.FloatField(required=False, allow_null=True)
+    output_choices = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+    )
 
 
 class CallExecutionErrorLocalizerTaskSerializer(serializers.Serializer):
@@ -651,6 +687,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             return round(response_time_ms / 1000, 3)
         return None
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.DictField(
+            child=CallExecutionEvalOutputSerializer()
+        )
+    )
     def get_eval_outputs(self, obj):
         """Get evaluation outputs in a structured format"""
         # Handle both model instances and dictionaries (from grouping)
@@ -671,7 +712,10 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         for eval_id, eval_data in eval_outputs.items():
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
-                    structured_outputs[eval_id] = {}
+                    structured_outputs[eval_id] = {
+                        **project_storage_axes_to_api(eval_data),
+                        "status": "pending",
+                    }
                     continue
                 raw_error = eval_data.get("error")
                 is_error = bool(raw_error is True or raw_error == "error") or (
@@ -691,6 +735,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
+                    **project_storage_axes_to_api(eval_data),
                 }
 
         return structured_outputs
@@ -726,7 +771,10 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         for eval_id, eval_data in eval_outputs.items():
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
-                    metrics[eval_id] = {}
+                    metrics[eval_id] = {
+                        **project_storage_axes_to_api(eval_data),
+                        "status": "pending",
+                    }
                     continue
                 raw_error = eval_data.get("error")
                 is_error = bool(raw_error is True or raw_error == "error") or (
@@ -757,6 +805,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
                     "error_localizer": error_localizer_enabled(eval_config),
+                    **project_storage_axes_to_api(eval_data),
                 }
 
         call_execution_id = getattr(obj, "id", None)
