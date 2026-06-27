@@ -129,6 +129,23 @@ class TestTaskStateActivitySync:
 
 @pytest.mark.integration
 @pytest.mark.django_db(transaction=True)
+class TestWorkflowLabelsActivitySync:
+    def test_returns_sa_values_and_memo_context(self, eval_task):
+        from tfc.temporal.eval_tasks.activities import _get_workflow_labels_sync
+
+        out = _get_workflow_labels_sync(str(eval_task.id))
+        assert out["project_id"] == str(eval_task.project_id)
+        assert out["org_id"] == str(eval_task.project.organization_id)
+        assert out["run_type"] == "historical"
+        assert out["task_name"] == "WF Task"
+        assert out["project_name"] == "WF Test Project"
+        assert out["org_name"]  # org has a name
+        assert "evals=1" in out["config_summary"]
+        assert "row_type=spans" in out["config_summary"]
+
+
+@pytest.mark.integration
+@pytest.mark.django_db(transaction=True)
 class TestFinalizeActivitySync:
     def test_finalizes_when_drained(self, eval_task, make_pending_entries):
         make_pending_entries(eval_task, 2, status=EvalEntryStatus.COMPLETED)

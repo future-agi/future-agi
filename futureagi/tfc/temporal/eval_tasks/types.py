@@ -119,6 +119,25 @@ class FinalizeOutput:
     status: str
 
 
+@dataclass
+class WorkflowLabelsInput:
+    task_id: str
+
+
+@dataclass
+class WorkflowLabelsOutput:
+    """Values for the workflow's Search Attributes (org/project/run_type) and
+    memo (the display-only context)."""
+
+    org_id: str
+    project_id: str
+    run_type: str
+    task_name: str
+    project_name: str
+    org_name: str
+    config_summary: str
+
+
 __all__ = [
     "WF_STATUS_COMPLETED",
     "WF_STATUS_PAUSED",
@@ -137,4 +156,6 @@ __all__ = [
     "TaskStateOutput",
     "FinalizeInput",
     "FinalizeOutput",
+    "WorkflowLabelsInput",
+    "WorkflowLabelsOutput",
 ]

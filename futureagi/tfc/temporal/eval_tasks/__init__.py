@@ -25,6 +25,7 @@ def get_activities():
         fail_eval_entry_activity,
         finalize_eval_task_activity,
         get_eval_task_state_activity,
+        get_workflow_labels_activity,
         reap_stale_running_activity,
         reconcile_eval_task_activity,
         run_eval_entry_activity,
@@ -37,6 +38,7 @@ def get_activities():
         fail_eval_entry_activity,
         reap_stale_running_activity,
         get_eval_task_state_activity,
+        get_workflow_labels_activity,
         finalize_eval_task_activity,
     ]
 
