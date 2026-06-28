@@ -76,6 +76,7 @@ When a field has a "choices" list, you MUST pick the value from that list. Use t
    - user says "spearman correlation", choices include "spearman_correlation" → use "spearman_correlation"
    - user says "word error rate", choices include "word_error_rate" → use "word_error_rate"
    - user says "regex pii detection", choices include "regex_pii_detection" → use "regex_pii_detection"
+   - user says "prompt injection" or "jailbreak detection", choices include "prompt_injection_detection" → use "prompt_injection_detection"
    The backend will also normalize this server-side, so when in doubt, pick the closest choice and emit it.
 
 4. **Substring fallback.** If the user named a substring (e.g. "production" but the only choice is "production-eu"), use `contains` instead of `is`.
