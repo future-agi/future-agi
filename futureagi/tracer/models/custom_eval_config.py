@@ -52,6 +52,26 @@ class CustomEvalConfig(BaseModel):
     eval_group = models.ForeignKey(
         EvalGroup, on_delete=models.CASCADE, null=True, blank=True
     )
+    pinned_version = models.ForeignKey(
+        "model_hub.EvalTemplateVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pinned_custom_eval_configs",
+        help_text="Pin to a specific template version for runtime.",
+    )
+
+    @property
+    def pinned_version_number(self):
+        """Version number of the pinned version, or None if unpinned.
+
+        Safe even when the version is soft-deleted: resolve_version() filters
+        deleted=False and falls back to the default, so a stale pin doesn't
+        cause an incorrect version to run.
+        """
+        if self.pinned_version_id:
+            return self.pinned_version.version_number
+        return None
 
     def __str__(self):
         return f"Custom Eval Config {self.id}"

@@ -33483,7 +33483,8 @@ export const TracerCustomEvalConfigListResponse = zod.object({
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
   "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
-  "eval_group": zod.string().optional()
+  "eval_group": zod.string().optional(),
+  "pinned_version": zod.string().uuid().optional().describe('Pin to a specific template version for runtime.')
 }))
 })
 
@@ -33507,7 +33508,8 @@ export const TracerCustomEvalConfigCreateBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "pinned_version": zod.string().uuid().optional().describe('Pin to a specific template version for runtime.')
 })
 
 
@@ -33530,7 +33532,8 @@ export const TracerCustomEvalConfigCheckExistsBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "pinned_version": zod.string().uuid().optional().describe('Pin to a specific template version for runtime.')
 })
 
 
@@ -33553,7 +33556,8 @@ export const TracerCustomEvalConfigGetCustomEvalByNameBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "pinned_version": zod.string().uuid().optional().describe('Pin to a specific template version for runtime.')
 })
 
 
@@ -33590,7 +33594,8 @@ export const TracerCustomEvalConfigListCustomEvalConfigsResponse = zod.object({
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
   "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
-  "eval_group": zod.string().optional()
+  "eval_group": zod.string().optional(),
+  "pinned_version": zod.string().uuid().optional().describe('Pin to a specific template version for runtime.')
 }))
 })
 
@@ -33614,7 +33619,8 @@ export const TracerCustomEvalConfigRunEvaluationBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "pinned_version": zod.string().uuid().optional().describe('Pin to a specific template version for runtime.')
 })
 
 
@@ -33643,7 +33649,8 @@ export const TracerCustomEvalConfigReadResponse = zod.object({
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
   "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
-  "eval_group": zod.string().optional()
+  "eval_group": zod.string().optional(),
+  "pinned_version": zod.string().uuid().optional().describe('Pin to a specific template version for runtime.')
 })
 
 
@@ -33670,7 +33677,8 @@ export const TracerCustomEvalConfigUpdateBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "pinned_version": zod.string().uuid().optional().describe('Pin to a specific template version for runtime.')
 })
 
 export const tracerCustomEvalConfigUpdateResponseNameMax = 255;
@@ -33694,7 +33702,8 @@ export const TracerCustomEvalConfigUpdateResponse = zod.object({
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
   "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
-  "eval_group": zod.string().optional()
+  "eval_group": zod.string().optional(),
+  "pinned_version": zod.string().uuid().optional().describe('Pin to a specific template version for runtime.')
 })
 
 
@@ -33721,7 +33730,8 @@ export const TracerCustomEvalConfigPartialUpdateBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "pinned_version": zod.string().uuid().optional().describe('Pin to a specific template version for runtime.')
 })
 
 export const tracerCustomEvalConfigPartialUpdateResponseNameMax = 255;
@@ -33745,7 +33755,8 @@ export const TracerCustomEvalConfigPartialUpdateResponse = zod.object({
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
   "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
-  "eval_group": zod.string().optional()
+  "eval_group": zod.string().optional(),
+  "pinned_version": zod.string().uuid().optional().describe('Pin to a specific template version for runtime.')
 })
 
 

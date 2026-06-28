@@ -39,7 +39,8 @@ class EvalRequest:
     runtime_config: dict | None = None  # Per-run config overrides
     organization_id: str | None = None
     workspace_id: str | None = None
-    version_number: int | None = None  # Specific template version
+    version_number: int | None = None  # Specific template version (number-based lookup)
+    pinned_version: Any | None = None  # Pre-loaded typed version object; skips re-query
 
     # Advanced options
     config_overrides: dict = field(default_factory=dict)  # Extra config for instance
@@ -122,6 +123,7 @@ def run_eval(request: EvalRequest) -> EvalResult:
         organization_id=request.organization_id,
         workspace_id=request.workspace_id,
         version_number=request.version_number,
+        pinned_version=request.pinned_version,
         is_futureagi=is_futureagi,
     )
 
