@@ -10,7 +10,7 @@ from model_hub.serializers.optimize_dataset import (
 )
 from model_hub.serializers.performance_report import PerformanceReportSerializer
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
-from tfc.utils.serializer_fields import AnyValueDictField
+from tfc.utils.serializer_fields import AnyValueDictField, StringOrObjectField
 from tracer.serializers.filters import (
     SortParamField,
     StrictInputSerializer,
@@ -1748,10 +1748,21 @@ class EvalUsageFeedbackSerializer(serializers.Serializer):
 class EvalUsageLogItemDetailSerializer(serializers.Serializer):
     """Typed shape for the detail blob on each log row.
 
-    input_variables and mappings have string values (truncated by the view).
-    output and model are JSON-value fields — output can be float, string, or
-    a choice dict {label, score}; model can be a string or ModelSpec object.
-    Composite logs add children + aggregation fields.
+    Field-by-field rationale (closes Round-6 #4):
+    - ``input_variables``: typed ``Dict[str, str]`` — variable keys per
+      template, string values (truncated by the view).
+    - ``mappings``: typed ``Dict[str, str]`` — keys are the eval's
+      required_keys, values are the bound column id or literal string.
+      Both keys and values are strings; no JSON variance here.
+    - ``model``: ``StringOrObjectField`` — legitimate ``string | object``
+      union (bare model name or full ModelSpec dict).
+    - ``output``: stays ``JSONField``. Its *runtime* shape is per-eval-type
+      (boolean for pass_fail, float for regression, ``{label, score}`` for
+      choices). There is no single static schema that fits every template;
+      a per-eval-type discriminated ``oneOf`` lives in TH-6029 with the
+      wider prompt-config contract cleanup. JsonValueField was rejected
+      here because it maps to ``z.any()`` at runtime — that's strictly
+      worse than the current narrowing (no contract enforcement at all).
     """
     input_variables = serializers.DictField(
         child=serializers.CharField(allow_blank=True),
@@ -1759,8 +1770,11 @@ class EvalUsageLogItemDetailSerializer(serializers.Serializer):
     )
     output = serializers.JSONField(required=False, allow_null=True)
     warnings = serializers.ListField(required=False, default=list)
-    mappings = serializers.JSONField(required=False, allow_null=True)
-    model = serializers.JSONField(required=False, allow_null=True)
+    mappings = serializers.DictField(
+        child=serializers.CharField(allow_blank=True),
+        required=False, allow_null=True, default=dict,
+    )
+    model = StringOrObjectField(required=False, allow_null=True)
     # composite-only fields
     children = serializers.ListField(required=False, default=list)
     aggregation_function = serializers.CharField(
