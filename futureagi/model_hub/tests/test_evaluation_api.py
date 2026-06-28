@@ -1030,8 +1030,8 @@ class TestDeleteEvalsView:
         experiment.user_eval_template_ids.add(metric_to_delete, keep_metric)
 
         edt = ExperimentDatasetTable.objects.create(
+            name="Test EDT",
             experiment=experiment,
-            dataset=dataset,
         )
 
         # Scope the eval to the experiment via source_id (mirrors what the
