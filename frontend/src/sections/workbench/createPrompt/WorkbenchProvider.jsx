@@ -22,6 +22,7 @@ import {
   normalizeConfigurationForSave,
   runPromptOverSocket,
 } from "./common";
+import { WS_CLOSE_CODES } from "src/utils/constants";
 import logger from "src/utils/logger";
 import { usePromptStreamUrl } from "src/sections/workbench/createPrompt/hooks/usePromptStreamUrl";
 
@@ -375,6 +376,28 @@ const WorkbenchProvider = ({ children }) => {
         const wsData = event;
         const stoppedId = stoppedIds.current;
 
+        if (wsData?.type === "error") {
+          enqueueSnackbar(wsData?.message || "Something went wrong", {
+            variant: "error",
+          });
+          // Scope the spinner clear to the run that errored when session_uuid
+          // is present; fall back to clearing all in-flight runs otherwise.
+          const errorSession = wsData?.session_uuid;
+          const versionIndex = errorSession
+            ? runningVersionIndexMapping.current[
+                Object.keys(runningVersionIndexMapping.current).find(
+                  (v) => streamingIds.current[v] === errorSession,
+                )
+              ]
+            : undefined;
+          if (versionIndex !== undefined) {
+            setLoadingStatusByIndex(versionIndex, false);
+          } else {
+            setLoadingStatus((d) => d.map(() => false));
+          }
+          return;
+        }
+
         if (
           wsData?.type !== "run_prompt" ||
           stoppedId.includes(wsData?.session_uuid)
@@ -654,6 +677,11 @@ const WorkbenchProvider = ({ children }) => {
             onError: (err) => {
               closeSocketByIndex(`compare-${versionIndex}`);
               reject({ version, error: err });
+            },
+            onClose: (event) => {
+              if (event?.code === WS_CLOSE_CODES.PERMISSION_DENIED || event?.code === WS_CLOSE_CODES.NOT_FOUND) {
+                reject({ version, error: event?.reason || "Permission denied" });
+              }
             },
           });
           activeSocketsRef.current[`compare-${versionIndex}`] = socket;
@@ -1023,7 +1051,13 @@ const WorkbenchProvider = ({ children }) => {
                 reason: typeof err === "string" ? err : "prompt_stream_error",
               });
             },
-            onClose: () => {
+            onClose: (event) => {
+              // Permission denied / not found — server already sent an error
+              // message; don't fall back to polling a run that never started.
+              if (event?.code === WS_CLOSE_CODES.PERMISSION_DENIED || event?.code === WS_CLOSE_CODES.NOT_FOUND) {
+                setLoadingStatusByIndex(index, false);
+                return;
+              }
               if (!completed) {
                 fallbackToHttpPolling({
                   startRun: !receivedSocketMessage,

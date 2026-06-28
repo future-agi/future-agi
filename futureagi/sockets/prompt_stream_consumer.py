@@ -3,6 +3,11 @@ import uuid
 from urllib.parse import parse_qs
 from uuid import uuid4
 
+# WebSocket close codes — single source of truth for the BE.
+# Keep these in sync with WS_CLOSE_CODES in frontend/src/utils/constants.js.
+WS_CLOSE_CODE_PERMISSION_DENIED = 4003
+WS_CLOSE_CODE_NOT_FOUND = 4004
+
 import structlog
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
@@ -121,20 +126,19 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
 
     async def execute_template_async(self, content, template_id):
         try:
-            workspace_id = await self.get_workspace_id()
             if not await self.validate_template_access(template_id):
-                await self.send_json(
-                    {
-                        "type": "error",
-                        "message": "Template access denied or not found",
-                        "session_uuid": self.session_uuid,
-                    }
-                )
                 return
 
+            # Fetch the template and pin self.organization_id to its org BEFORE
+            # resolving the workspace — get_workspace_id() scopes its lookup to
+            # self.organization_id, so it must see the template's org, not the
+            # non-deterministic connect-time org.
             template = await database_sync_to_async(PromptTemplate.objects.get)(
                 id=template_id
             )
+            self.organization_id = template.organization_id
+            workspace_id = await self.get_workspace_id()
+
             version_to_run = content.get("version")
             execution = await database_sync_to_async(PromptVersion.objects.get)(
                 original_template=template, template_version=version_to_run
@@ -382,6 +386,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             membership = (
                 OrganizationMembership.objects.filter(user=self.user, is_active=True)
                 .select_related("organization")
+                .order_by("id")
                 .first()
             )
             if membership:
@@ -451,8 +456,10 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         @database_sync_to_async
         def check_template():
             try:
+                from accounts.services.template_access import user_can_access_template
+
                 template = PromptTemplate.objects.get(id=template_id)
-                if template.organization_id != self.organization_id:
+                if not user_can_access_template(self.user, template):
                     return "no_permission"
                 return "valid"
             except PromptTemplate.DoesNotExist:
@@ -465,13 +472,14 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
                 {
                     "type": "error",
                     "message": "You do not have permission to access this template.",
+                    "session_uuid": self.session_uuid,
                 }
             )
-            await self.close(code=4003)
+            await self.close(code=WS_CLOSE_CODE_PERMISSION_DENIED)
             return False
         elif result == "not_found":
-            await self.send_json({"type": "error", "message": "Template not found."})
-            await self.close(code=4004)
+            await self.send_json({"type": "error", "message": "Template not found.", "session_uuid": self.session_uuid})
+            await self.close(code=WS_CLOSE_CODE_NOT_FOUND)
             return False
 
         return True
