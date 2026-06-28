@@ -79,4 +79,19 @@ describe("ModelSelector — BYOK model logos", () => {
     // No raster logo should render — the component uses an Iconify <svg> cube.
     expect(document.querySelector("img")).toBeNull();
   });
+
+  it("treats a model with snake_case `is_available: false` as unavailable (no selection on click)", async () => {
+    mockModelList([
+      { model_name: "gpt-5.5", providers: "openai", is_available: false },
+    ]);
+    const onModelChange = vi.fn();
+    renderSelector({ onModelChange });
+
+    await userEvent.click(screen.getByText("Select model"));
+    const row = await screen.findByText("gpt-5.5");
+
+    // Clicking an unavailable model opens the keys drawer instead of selecting it.
+    await userEvent.click(row);
+    expect(onModelChange).not.toHaveBeenCalled();
+  });
 });

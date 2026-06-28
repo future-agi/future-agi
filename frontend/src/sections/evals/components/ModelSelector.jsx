@@ -1196,7 +1196,9 @@ const ModelSelector = ({
                 Your Models
               </Typography>
               {apiModels.map((m) => {
-                const available = m.isAvailable !== false;
+                // The models_list API returns snake_case `is_available`;
+                // read the camelCase form too in case the contract changes.
+                const available = (m.isAvailable ?? m.is_available) !== false;
                 // The models_list API returns snake_case `logo_url`; keep
                 // reading the camelCase form too in case the contract changes.
                 const logoUrl = m.logoUrl || m.logo_url;
