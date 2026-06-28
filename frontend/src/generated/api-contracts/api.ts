@@ -1083,6 +1083,7 @@ import type {
   TraceErrorTaskResponseApi,
   TraceErrorTaskUpdateRequestApi,
   TraceErrorTaskUpdateResponseApi,
+  TraceObserveListResponseApi,
   TraceSessionApi,
   TraceSessionGraphDataRequestApi,
   TraceTagsUpdateApi,
@@ -1190,7 +1191,6 @@ import type {
   TracerTraceList200,
   TracerTraceListParams,
   TracerTraceListTraces200,
-  TracerTraceListTracesOfSession200,
   TracerTraceListTracesOfSessionParams,
   TracerTraceListTracesParams,
   TracerTraceListVoiceCalls200,
@@ -66615,19 +66615,29 @@ export const tracerTraceListTraces = async (params: TracerTraceListTracesParams,
 
 
 export type tracerTraceListTracesOfSessionResponse200 = {
-  data: TracerTraceListTracesOfSession200
+  data: TraceObserveListResponseApi
   status: 200
+}
+
+export type tracerTraceListTracesOfSessionResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type tracerTraceListTracesOfSessionResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
 }
 
 export type tracerTraceListTracesOfSessionResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>
 }
 
 export type tracerTraceListTracesOfSessionResponseSuccess = (tracerTraceListTracesOfSessionResponse200) & {
   headers: Headers;
 };
-export type tracerTraceListTracesOfSessionResponseError = (tracerTraceListTracesOfSessionResponseDefault) & {
+export type tracerTraceListTracesOfSessionResponseError = (tracerTraceListTracesOfSessionResponse400 | tracerTraceListTracesOfSessionResponse500 | tracerTraceListTracesOfSessionResponseDefault) & {
   headers: Headers;
 };
 

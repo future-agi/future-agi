@@ -41716,39 +41716,19 @@ export const TracerTraceListTracesOfSessionQueryParams = zod.object({
   "interval": zod.string().optional()
 })
 
-export const tracerTraceListTracesOfSessionResponseResultsItemNameMax = 2000;
-
-export const tracerTraceListTracesOfSessionResponseResultsItemExternalIdMax = 255;
-
-
-
 export const TracerTraceListTracesOfSessionResponse = zod.object({
-  "count": zod.number(),
-  "next": zod.string().url().optional(),
-  "previous": zod.string().url().optional(),
-  "results": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "project_version": zod.string().uuid().optional(),
-  "name": zod.string().max(tracerTraceListTracesOfSessionResponseResultsItemNameMax).optional(),
+  "status": zod.boolean(),
+  "result": zod.object({
   "metadata": zod.object({
+  "total_rows": zod.number()
+}),
+  "table": zod.array(zod.record(zod.string(), zod.object({
 
-}).passthrough().optional(),
-  "input": zod.object({
+}).passthrough().describe('Any valid JSON value.'))),
+  "config": zod.array(zod.object({
 
-}).passthrough().optional(),
-  "output": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "session": zod.string().uuid().optional(),
-  "external_id": zod.string().max(tracerTraceListTracesOfSessionResponseResultsItemExternalIdMax).optional(),
-  "tags": zod.object({
-
-}).passthrough().optional()
-}))
+}).passthrough().describe('Any valid JSON value.'))
+})
 })
 
 

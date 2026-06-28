@@ -20816,6 +20816,28 @@ export interface TraceApi {
   tags?: TraceApiTags;
 }
 
+export interface TraceObserveListMetadataApi {
+  total_rows: number;
+}
+
+export type TraceObserveListResultApiTableItem = {[key: string]: { [key: string]: unknown }};
+
+/**
+ * Any valid JSON value.
+ */
+export type TraceObserveListResultApiConfigItem = { [key: string]: unknown };
+
+export interface TraceObserveListResultApi {
+  metadata: TraceObserveListMetadataApi;
+  table: TraceObserveListResultApiTableItem[];
+  config: TraceObserveListResultApiConfigItem[];
+}
+
+export interface TraceObserveListResponseApi {
+  status: boolean;
+  result: TraceObserveListResultApi;
+}
+
 export interface TraceTagsUpdateApi {
   tags: string[];
 }
@@ -26332,13 +26354,6 @@ page_number?: number;
  */
 page_size?: number;
 interval?: string;
-};
-
-export type TracerTraceListTracesOfSession200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: TraceApi[];
 };
 
 export type TracerTraceListVoiceCallsParams = {
