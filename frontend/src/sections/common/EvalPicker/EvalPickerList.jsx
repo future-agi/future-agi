@@ -845,12 +845,16 @@ const EvalPickerList = ({ onSelectEval }) => {
 
                     {/* Type */}
                     <TableCell sx={{ ...bodyCellSx, width: 80 }}>
-                      <TypeBadge type={evalItem.templateType} />
+                      <TypeBadge
+                        type={evalItem.template_type || evalItem.templateType}
+                      />
                     </TableCell>
 
                     {/* Eval Type */}
                     <TableCell sx={{ ...bodyCellSx, width: 80 }}>
-                      <EvalTypeBadge type={evalItem.evalType} />
+                      <EvalTypeBadge
+                        type={evalItem.eval_type || evalItem.evalType}
+                      />
                     </TableCell>
 
                     {/* Output */}
