@@ -249,30 +249,74 @@ def validate_file_url(
 
     # Get configuration for this file type
     config = FILE_TYPE_CONFIG[file_type]
-    valid_extensions = config["extensions"]
 
-    # Check file extension
-    url_lower = url.lower().split("?")[0]  # Remove query params
-    if not any(url_lower.endswith(ext) for ext in valid_extensions):
-        raise ValueError(
-            f"URL does not appear to be a {file_type}. Expected extensions: {', '.join(valid_extensions)}"
-        )
+    # Generic types that carry no useful file-type signal.
+    _GENERIC_CONTENT_TYPES = {"application/octet-stream", "binary/octet-stream"}
 
-    # Verify URL is accessible
+    # SSRF guard: resolve hostname and block private/loopback/link-local ranges.
+    import socket as _socket, ipaddress as _ipaddress
     try:
-        response = requests.head(url, timeout=5, allow_redirects=True)
+        _host = url.split("://", 1)[-1].split("/")[0].split(":")[0]
+        _ip = _ipaddress.ip_address(_socket.gethostbyname(_host))
+        if _ip.is_private or _ip.is_loopback or _ip.is_link_local:
+            raise ValueError("URL resolves to a private or reserved address — not allowed.")
+    except ValueError:
+        raise
+    except _socket.gaierror as _e:
+        raise ValueError(f"Cannot resolve {file_type} URL host: {_e}") from None
+
+    try:
+        response = requests.head(url, timeout=5, allow_redirects=False)
+        # Follow at most one redirect, re-validating each hop for SSRF.
+        if response.status_code in (301, 302, 303, 307, 308):
+            location = response.headers.get("Location", "")
+            if location and is_valid_url(location):
+                response = requests.head(location, timeout=5, allow_redirects=False)
         if response.status_code >= 400:
             raise ValueError(
                 f"{file_type.capitalize()} URL returned status code {response.status_code}"
             )
 
-        # Check content type if configured for this file type
         if config["check_content_type"]:
-            content_type = response.headers.get("Content-Type", "").lower()
+            # Content-Type is the primary signal. Extensions are used as a
+            # fallback only when the server returns a generic or missing type.
+            raw_ct = response.headers.get("Content-Type", "")
+            content_type = raw_ct.lower().split(";")[0].strip()
             expected_prefix = config["content_type_prefix"]
-            if content_type and not content_type.startswith(expected_prefix):
+            valid_extensions = config["extensions"]
+            url_path = url.lower().split("?")[0]
+
+            if content_type.startswith(expected_prefix):
+                pass  # explicit content-type match — accept
+            elif not content_type or content_type in _GENERIC_CONTENT_TYPES:
+                # Server returned no useful type signal (empty, octet-stream, etc.).
+                # Use extension as the signal:
+                #   - known good extension → accept
+                #   - no extension at all  → accept (S3/CDN URLs; magic-byte check downstream)
+                #   - explicit bad extension (.exe, .txt …) → reject
+                url_path_lower = url.lower().split("?")[0]
+                has_any_ext = "." in url_path_lower.rsplit("/", 1)[-1]
+                if has_any_ext and not any(url_path_lower.endswith(ext) for ext in valid_extensions):
+                    raise ValueError(
+                        f"URL has a non-{file_type} extension and no content-type signal."
+                    )
+            else:
+                # Server returned an explicit, non-generic content-type that
+                # doesn't match — reject outright, no extension fallback.
                 raise ValueError(
-                    f"URL content-type is '{content_type}', not a {file_type} type (expected {expected_prefix}*)"
+                    f"URL does not appear to be a {file_type}: "
+                    f"content-type '{content_type}' is not '{expected_prefix}*'"
+                )
+        else:
+            # No content-type check available for this file type (e.g. documents).
+            # Validate by extension instead — without this an arbitrary reachable
+            # URL would pass.
+            valid_extensions = config["extensions"]
+            url_path = url.lower().split("?")[0]
+            if not any(url_path.endswith(ext) for ext in valid_extensions):
+                raise ValueError(
+                    f"URL does not appear to be a {file_type}. "
+                    f"Expected extensions: {', '.join(valid_extensions)}"
                 )
     except requests.exceptions.RequestException as e:
         raise ValueError(f"Cannot access {file_type} URL: {str(e)}")
