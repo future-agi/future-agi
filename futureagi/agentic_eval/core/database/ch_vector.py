@@ -22,6 +22,17 @@ def get_clickhouse_client_kwargs() -> dict[str, str | int]:
     }
 
 
+def get_clickhouse_cluster_name() -> str:
+    """Cluster name used in `ON CLUSTER` / `clusterAllReplicas(...)` DDL and reads.
+
+    Default is `'cluster'`: every Future AGI deployment (US AWS, US GCP, EU GCP)
+    pins `name: "cluster"` in the ClickHouseInstallation manifest. Override per
+    environment via `CH_CLUSTER_NAME` if a future deployment uses a different
+    name in its `remote_servers` config.
+    """
+    return os.getenv("CH_CLUSTER_NAME") or "cluster"
+
+
 def sanitize_sql_value(value: str) -> str:
     """
     Sanitize and escape a string value to make it safe for SQL queries.
@@ -97,10 +108,39 @@ def sanitize_keys(keys: list[str]) -> list[str]:
 
 
 class ClickHouseVectorDB:
+    # Process-level cache: each Django/Celery process sees one CH cluster shape
+    # for its lifetime, so the probe can run once per process and re-use the
+    # answer across every instance.
+    _is_clustered_cached: bool | None = None
+
     def __init__(
         self,
     ):
         self.client = clickhouse_driver.Client(**get_clickhouse_client_kwargs())
+
+    def _is_clustered(self) -> bool:
+        """True iff CH has a genuinely multi-replica cluster; fails safe to False.
+
+        Checking `system.macros` for the `replica` macro was too lenient: a
+        single-node dev CH set up via Helm / docker-compose can have the macro
+        too (it's a 1-replica cluster with the macro pre-baked). Such a node
+        has no DDLWorker, so any `ON CLUSTER ...` query fails at runtime.
+
+        Using `system.clusters.replica_num` is the precise check: prod multi-
+        replica clusters have rows with `replica_num > 1`; a single-node
+        cluster only has `replica_num = 1`.
+        """
+        if ClickHouseVectorDB._is_clustered_cached is not None:
+            return ClickHouseVectorDB._is_clustered_cached
+        try:
+            rows = self.client.execute(
+                "SELECT count() FROM system.clusters WHERE replica_num > 1"
+            )
+            ClickHouseVectorDB._is_clustered_cached = bool(rows and rows[0][0])
+        except Exception:
+            logger.warning("ch_vector_cluster_detect_failed", exc_info=True)
+            ClickHouseVectorDB._is_clustered_cached = False
+        return ClickHouseVectorDB._is_clustered_cached
 
     def drop_table(self,table_name: str) -> None:
         """
@@ -115,12 +155,49 @@ class ClickHouseVectorDB:
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(f"create query took {elapsed_time:.2f} seconds to execute")
 
-    def create_table(self, table_name: str) -> None:
+    def create_table(
+        self,
+        table_name: str,
+        *,
+        cluster: str | None = None,
+        database: str | None = None,
+    ) -> None:
+        """Create a vector table. Replicated engine on clustered CH, plain otherwise.
+
+        `cluster` overrides the deployment-wide default returned by
+        `get_clickhouse_cluster_name()`. Migration paths pass it explicitly;
+        runtime callers (EmbeddingManager) use the env-driven default.
+
+        `database` qualifies the CREATE TABLE target and the Keeper path.
+        When unset the table lands in the connection's current database
+        (`CH_DATABASE`); passing it explicitly is the only way to create the
+        table in a different database on the same connection — the
+        `clickhouse-driver` HELLO-time database setting cannot be rebound by
+        mutating the connection attribute. Including the database in the
+        Keeper path matches the deployment-wide
+        `<default_replica_path>/clickhouse/tables/{shard}/{database}/{table}</default_replica_path>`
+        convention so two replicated tables with the same short name in
+        different databases do not coordinate on the same znode.
         """
-        Creates a table in ClickHouse if it does not already exist.
-        """
+        clustered = self._is_clustered()
+        cluster_name = cluster or get_clickhouse_cluster_name()
+        qualified = f"{database}.{table_name}" if database else table_name
+        zk_database_segment = f"{database}/" if database else ""
+
+        if clustered:
+            engine = (
+                f"ReplicatedReplacingMergeTree("
+                f"'/clickhouse/tables/{{shard}}/{zk_database_segment}{table_name}', "
+                f"'{{replica}}'"
+                f")"
+            )
+            on_cluster = f" ON CLUSTER '{cluster_name}'"
+        else:
+            engine = "ReplacingMergeTree()"
+            on_cluster = ""
+
         create_table_query = f"""
-        CREATE TABLE IF NOT EXISTS {table_name} (
+        CREATE TABLE IF NOT EXISTS {qualified}{on_cluster} (
             id UUID,
             eval_id UUID,
             vector Array(Float32),
@@ -129,7 +206,7 @@ class ClickHouseVectorDB:
                 value Nullable(String)
             ),
             deleted UInt8 DEFAULT 0
-        ) ENGINE = MergeTree()
+        ) ENGINE = {engine}
         ORDER BY id
         """
         start_time = datetime.now()
@@ -140,7 +217,13 @@ class ClickHouseVectorDB:
         )
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
-        logger.info(f"create query took {elapsed_time:.2f} seconds to execute")
+        logger.info(
+            "ch_vector_create_table_done",
+            table=qualified,
+            engine="ReplicatedReplacingMergeTree" if clustered else "ReplacingMergeTree",
+            cluster=cluster_name if clustered else None,
+            elapsed_sec=round(elapsed_time, 3),
+        )
 
     def get_or_create_collection(self, table_name: str) -> None:
         """
@@ -173,7 +256,6 @@ class ClickHouseVectorDB:
         Returns the ID of the newly inserted or updated entry.
         """
         new_id = str(uuid.uuid4())
-        # print( "metadata" ,metadata)
         metadata = sanitize_metadata(metadata)
         unique_keys = sanitize_keys(unique_keys)
         if exclude_keys:
@@ -443,13 +525,8 @@ class ClickHouseVectorDB:
         results = None
         # Execute the query
         try:
-
             results = self.client.execute(query)
-            # print("Executing success query:", query)
         except Exception:
-            #print traceback
-            # print("Executing broken query:", query)
-            # print("len of q vector:", len(query_vector))
             import traceback
             traceback.print_exc()
         end_time = datetime.now()
