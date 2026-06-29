@@ -1,6 +1,5 @@
 from rest_framework import serializers
 
-from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentVersion
 
 
@@ -49,12 +48,12 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
             for key in ["organization", "knowledge_base", "workspace", "id"]:
                 if key in snapshot and snapshot[key] is not None:
                     snapshot[key] = str(snapshot[key])
-            # Mask sensitive secret so frontend knows it's set but can't read it
-            if "api_key" in snapshot and snapshot["api_key"]:
-                snapshot["api_key"] = mask_key(snapshot["api_key"])
-            if "livekit_api_secret" in snapshot and snapshot["livekit_api_secret"]:
-                snapshot["livekit_api_secret"] = "********"
         data["configuration_snapshot"] = snapshot
+        try:
+            creds = instance.credentials
+            data["api_key"] = creds.get_masked_api_key()
+        except AgentVersion.credentials.RelatedObjectDoesNotExist:
+            pass
         return data
 
     def get_version_name_display(self, obj):

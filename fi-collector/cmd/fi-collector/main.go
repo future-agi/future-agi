@@ -15,7 +15,6 @@
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
-//   - /metrics (Prometheus exposition of chwriter.Stats)
 //   - Structured logs on stderr (JSON lines)
 package main
 
@@ -23,7 +22,6 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -31,17 +29,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/server"
+	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 )
 
 type rootConfig struct {
 	Writer chwriter.Config `yaml:"writer"`
 	Server server.Config   `yaml:"server"`
-	Admin  struct {
-		Addr string `yaml:"addr"` // :9464 default
-	} `yaml:"admin"`
+	Auth   auth.Config     `yaml:"auth"`
 }
 
 func main() {
@@ -61,24 +59,47 @@ func main() {
 	}
 	defer writer.Close()
 
-	srv := server.New(cfg.Server, writer)
-
-	// Admin HTTP server (health + metrics). Kept tiny so it can't share
-	// blast radius with the OTLP receiver — even if it deadlocks, OTLP
-	// keeps ingesting.
-	if cfg.Admin.Addr == "" {
-		cfg.Admin.Addr = ":9464"
+	if !cfg.Auth.IsEnabled() {
+		log.Error("FI_PG_WRITE is required — without it the collector cannot resolve API keys or project IDs")
+		os.Exit(1)
 	}
-	go runAdmin(cfg.Admin.Addr, writer, log)
+
+	var rdb *redis.Client
+	if cfg.Auth.RedisAddr != "" {
+		rdb = redis.NewClient(&redis.Options{Addr: cfg.Auth.RedisAddr})
+		defer rdb.Close()
+	} else {
+		log.Warn("FI_AUTH_REDIS_ADDR not set — quota enforcement and usage metering are disabled")
+	}
+
+	authenticator, err := auth.New(context.Background(), cfg.Auth, rdb, log)
+	if err != nil {
+		log.Error("auth init failed", "err", err)
+		os.Exit(1)
+	}
+	defer authenticator.Close()
+
+	var usageEmitter server.UsageEmitter = server.NoopUsageEmitter{}
+	var metering server.Metering = server.NoopMetering{}
+	if rdb != nil {
+		usageEmitter = auth.NewUsageEmitter(rdb, log)
+		metering = auth.NewMetering(rdb, authenticator.PGRead(), log)
+	}
+
+	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, server.WithLogger(log))
+
+	// Admin HTTP server — internal only, health check endpoint.
+	go runAdmin(":9464", writer, log)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	go authenticator.WatchRevocations(ctx)
 
 	log.Info("starting",
 		"grpc_addr", cfg.Server.GRPCAddr,
 		"http_addr", cfg.Server.HTTPAddr,
 		"ch_url", cfg.Writer.URL,
-		"admin_addr", cfg.Admin.Addr,
 	)
 	if err := srv.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Error("server exited with error", "err", err)
@@ -139,20 +160,23 @@ func applyEnvOverrides(c *rootConfig) {
 	if v := os.Getenv("FI_DEAD_LETTER_FILE"); v != "" {
 		c.Writer.DeadLetterFile = v
 	}
-	if v := os.Getenv("FI_ADMIN_ADDR"); v != "" {
-		c.Admin.Addr = v
+	// Auth overrides (auth is active when PG_WRITE is set)
+	if v := os.Getenv("FI_PG_WRITE"); v != "" {
+		c.Auth.PGWrite = v
+	}
+	if v := os.Getenv("FI_PG_READ"); v != "" {
+		c.Auth.PGRead = v
+	}
+	if v := os.Getenv("FI_AUTH_REDIS_ADDR"); v != "" {
+		c.Auth.RedisAddr = v
 	}
 }
 
-// runAdmin serves health + Prometheus-format metrics. Built without
-// pulling in github.com/prometheus/client_golang because the surface we
-// expose is two counters — handing back text is ~10 lines.
+// runAdmin serves /healthz for container health checks.
 func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
-		// We're healthy as long as we're not dead-lettering catastrophically.
-		// Threshold: > 50% of recently-inserted batches dead-lettered.
 		denom := s.BatchesInserted + s.BatchesFailed
 		if denom > 100 && s.BatchesFailed*2 > denom {
 			rw.WriteHeader(503)
@@ -161,19 +185,6 @@ func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
 		}
 		rw.WriteHeader(200)
 		_ = json.NewEncoder(rw).Encode(map[string]any{"status": "ok", "stats": s})
-	})
-	mux.HandleFunc("/metrics", func(rw http.ResponseWriter, r *http.Request) {
-		s := w.Snapshot()
-		rw.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		fmt.Fprintf(rw, "# TYPE ficollector_batches_inserted_total counter\nficollector_batches_inserted_total %d\n", s.BatchesInserted)
-		fmt.Fprintf(rw, "# TYPE ficollector_rows_inserted_total counter\nficollector_rows_inserted_total %d\n", s.RowsInserted)
-		fmt.Fprintf(rw, "# TYPE ficollector_batches_retried_total counter\nficollector_batches_retried_total %d\n", s.BatchesRetried)
-		fmt.Fprintf(rw, "# TYPE ficollector_rows_dead_lettered_total counter\nficollector_rows_dead_lettered_total %d\n", s.RowsDeadLettered)
-		fmt.Fprintf(rw, "# TYPE ficollector_batches_failed_total counter\nficollector_batches_failed_total %d\n", s.BatchesFailed)
-		// Curated-dimension (end_users / trace_sessions) best-effort path —
-		// tracked separately so it never affects /healthz (which is span-only).
-		fmt.Fprintf(rw, "# TYPE ficollector_curated_batches_inserted_total counter\nficollector_curated_batches_inserted_total %d\n", s.CuratedBatchesInserted)
-		fmt.Fprintf(rw, "# TYPE ficollector_curated_batches_failed_total counter\nficollector_curated_batches_failed_total %d\n", s.CuratedBatchesFailed)
 	})
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

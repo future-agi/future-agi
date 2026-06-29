@@ -339,3 +339,140 @@ func assertDateTime64(t *testing.T, label string, v any) {
 		t.Errorf("%s: %q is not DateTime64(6) text: %v", label, s, err)
 	}
 }
+
+// traces: the root-span-derived CH `traces` row (schema 015) so trace_dict
+// resolves project_id/name for direct-to-collector SDK & sim traffic.
+
+func TestBatch_TraceDedupWithinBatch(t *testing.T) {
+	b := NewBatch()
+	// Only the root span calls AddTrace; even if a producer emits two roots, the
+	// batch must collapse to one row.
+	b.AddTrace(Trace{ID: "t-1", ProjectID: "p", Name: "first"})
+	b.AddTrace(Trace{ID: "t-2", ProjectID: "p"})
+	b.AddTrace(Trace{ID: "t-1", ProjectID: "p", Name: "dup-loses"}) // dup id → dropped
+	b.AddTrace(Trace{ID: ""})                                       // blank id → ignored
+
+	if got := len(b.Traces()); got != 2 {
+		t.Fatalf("traces dedup: got %d want 2", got)
+	}
+	// First-occurrence wins → insertion order + first value preserved.
+	if b.Traces()[0].ID != "t-1" || b.Traces()[0].Name != "first" {
+		t.Errorf("first-occurrence-wins violated: %+v", b.Traces()[0])
+	}
+}
+
+func TestBatch_TraceContributesToNonEmpty(t *testing.T) {
+	b := NewBatch()
+	if !b.Empty() {
+		t.Fatal("fresh batch must be Empty")
+	}
+	// A trace-only batch (no end_user / session) must still flush.
+	b.AddTrace(Trace{ID: "t-1", ProjectID: "p"})
+	if b.Empty() {
+		t.Error("a batch with only a trace must NOT be Empty (else the trace never flushes)")
+	}
+}
+
+func TestBatch_Merge_FoldsTraces(t *testing.T) {
+	a := NewBatch()
+	a.AddTrace(Trace{ID: "t-1", ProjectID: "p"})
+	other := NewBatch()
+	other.AddTrace(Trace{ID: "t-1", ProjectID: "p"}) // dup across batches
+	other.AddTrace(Trace{ID: "t-2", ProjectID: "p"})
+	a.Merge(other)
+	if got := len(a.Traces()); got != 2 {
+		t.Errorf("Merge must dedup traces across batches: got %d want 2", got)
+	}
+}
+
+func TestWrite_Traces_ColumnMapping(t *testing.T) {
+	var sink []captured
+	srv := fakeCH(t, false, &sink)
+	defer srv.Close()
+	cw := New(newTestWriter(t, srv.URL))
+
+	b := NewBatch()
+	b.AddTrace(Trace{
+		ID:        "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+		ProjectID: "11111111-1111-4111-8111-111111111111",
+		Name:      "agent.run",
+		Input:     "hi",
+		Output:    "hello",
+		SessionID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		CreatedAt: "2026-06-01 12:30:45.123456",
+		Version:   1700000000000000000,
+	})
+	now := time.Date(2026, 6, 1, 12, 30, 46, 0, time.UTC)
+	if err := cw.Write(context.Background(), b, now); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	tCap, ok := find(sink, tableTraces)
+	if !ok {
+		t.Fatalf("no insert into %s; captured: %+v", tableTraces, sink)
+	}
+	if len(tCap.rows) != 1 {
+		t.Fatalf("traces rows: got %d want 1", len(tCap.rows))
+	}
+	row := tCap.rows[0]
+	wantStr := map[string]any{
+		"id":         "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+		"project_id": "11111111-1111-4111-8111-111111111111",
+		"name":       "agent.run",
+		"input":      "hi",
+		"output":     "hello",
+		"session_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		"created_at": "2026-06-01 12:30:45.123456",
+	}
+	for k, want := range wantStr {
+		if row[k] != want {
+			t.Errorf("traces[%s]: got %#v want %#v", k, row[k], want)
+		}
+	}
+	assertExactKeys(t, "traces", row, []string{
+		"id", "project_id", "name", "session_id", "input", "output",
+		"created_at", "updated_at", "is_deleted", "_version",
+	})
+	assertDateTime64(t, "traces.updated_at", row["updated_at"])
+	if f, _ := row["is_deleted"].(float64); f != 0 {
+		t.Errorf("traces.is_deleted: got %#v want 0", row["is_deleted"])
+	}
+	// _version (UInt64 → JSONEachRow → float64) must be the root span's start
+	// nanos, so the app mirror's later time.time_ns wins.
+	if f, _ := row["_version"].(float64); f != 1700000000000000000 {
+		t.Errorf("traces._version: got %#v want 1700000000000000000", row["_version"])
+	}
+}
+
+// TestWrite_Traces_NameSessionOmittedWhenEmpty: empty Name/SessionID must be
+// OMITTED so the Nullable columns land as SQL NULL, not an empty string that
+// would shadow it.
+func TestWrite_Traces_NameSessionOmittedWhenEmpty(t *testing.T) {
+	var sink []captured
+	srv := fakeCH(t, false, &sink)
+	defer srv.Close()
+	cw := New(newTestWriter(t, srv.URL))
+
+	b := NewBatch()
+	b.AddTrace(Trace{
+		ID:        "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+		ProjectID: "11111111-1111-4111-8111-111111111111",
+		CreatedAt: "2026-06-01 12:30:45.123456",
+		Version:   1700000000000000000,
+	})
+	if err := cw.Write(context.Background(), b, time.Now().UTC()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	tCap, _ := find(sink, tableTraces)
+	row := tCap.rows[0]
+	if _, present := row["name"]; present {
+		t.Errorf("empty Name must be omitted (→ SQL NULL), got %#v", row["name"])
+	}
+	if _, present := row["session_id"]; present {
+		t.Errorf("empty SessionID must be omitted (→ SQL NULL), got %#v", row["session_id"])
+	}
+	// input/output keep their non-null String DEFAULT '' (present, empty).
+	if row["input"] != "" || row["output"] != "" {
+		t.Errorf("input/output must be present empty strings: in=%#v out=%#v", row["input"], row["output"])
+	}
+}

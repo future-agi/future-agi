@@ -92,15 +92,16 @@ class TestListSessionsClickHouseOrgScope:
         return analytics
 
     def _patch_session_name_lookup(self):
-        """Patch the TraceSession.objects.filter().values_list() call used
-        to map session_id → session_name. With no rows in the page this
-        path is a no-op, but the patch shields against a real DB hit."""
-        chain = mock.MagicMock()
-        chain.filter.return_value = chain
-        chain.values_list.return_value = []
+        """Patch CH-backed session name lookup so these unit tests stay local."""
         return mock.patch(
-            "tracer.views.trace_session.TraceSession.objects.filter",
-            return_value=chain,
+            "tracer.views.trace_session.TraceSessionView._fetch_session_names",
+            return_value={},
+        )
+
+    def _patch_annotation_labels(self):
+        return mock.patch(
+            "tracer.views.trace_session.AnnotationsLabels.objects.filter",
+            return_value=[],
         )
 
     def test_runs_without_nameerror_when_user_id_set_org_scope(self):
@@ -178,6 +179,170 @@ class TestListSessionsClickHouseOrgScope:
         cfg = synthetic[0]["filter_config"]
         assert cfg["filter_op"] == "in"
         assert set(cfg["filter_value"]) == {str(_id) for _id in eu_ids}
+
+    def test_user_id_filter_preserves_multi_value_list(self):
+        from tracer.services.clickhouse.query_builders import (
+            SessionListQueryBuilder as RealBuilder,
+        )
+
+        view = self._make_view()
+        request = self._make_request()
+        analytics = self._patch_analytics()
+        captured = {}
+        alice_id = str(uuid.uuid4())
+        bob_id = str(uuid.uuid4())
+
+        def _capture_builder(*args, **kwargs):
+            captured["filters"] = list(kwargs.get("filters") or [])
+            return RealBuilder(*args, **kwargs)
+
+        filters = [
+            {
+                "column_id": "user_id",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": ["alice", "bob"],
+                    "col_type": "SYSTEM_METRIC",
+                },
+            }
+        ]
+
+        with (
+            mock.patch(
+                "tracer.views.trace_session._resolve_end_user_ids_for_user_id",
+                side_effect=[([alice_id], None), ([bob_id], None)],
+            ) as resolve_mock,
+            self._patch_session_name_lookup(),
+            self._patch_annotation_labels(),
+            mock.patch(
+                "tracer.services.clickhouse.query_builders." "SessionListQueryBuilder",
+                side_effect=_capture_builder,
+            ),
+        ):
+            view._list_sessions_clickhouse(
+                request,
+                project_id=uuid.uuid4(),
+                project=None,
+                analytics=analytics,
+                validated_data=self._make_validated_data(filters=filters),
+            )
+
+        assert [c.args[0] for c in resolve_mock.call_args_list] == ["alice", "bob"]
+        synthetic = [
+            f for f in captured["filters"] if f.get("column_id") == "end_user_id"
+        ]
+        assert len(synthetic) == 1
+        cfg = synthetic[0]["filter_config"]
+        assert cfg["filter_op"] == "in"
+        assert cfg["filter_value"] == [alice_id, bob_id]
+
+    def test_user_id_filter_preserves_negated_operator(self):
+        from tracer.services.clickhouse.query_builders import (
+            SessionListQueryBuilder as RealBuilder,
+        )
+
+        view = self._make_view()
+        request = self._make_request()
+        analytics = self._patch_analytics()
+        captured = {}
+        alice_id = str(uuid.uuid4())
+
+        def _capture_builder(*args, **kwargs):
+            captured["filters"] = list(kwargs.get("filters") or [])
+            return RealBuilder(*args, **kwargs)
+
+        filters = [
+            {
+                "column_id": "user_id",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "not_equals",
+                    "filter_value": "alice",
+                    "col_type": "SYSTEM_METRIC",
+                },
+            }
+        ]
+
+        with (
+            mock.patch(
+                "tracer.views.trace_session._resolve_end_user_ids_for_user_id",
+                return_value=([alice_id], None),
+            ),
+            self._patch_session_name_lookup(),
+            self._patch_annotation_labels(),
+            mock.patch(
+                "tracer.services.clickhouse.query_builders." "SessionListQueryBuilder",
+                side_effect=_capture_builder,
+            ),
+        ):
+            view._list_sessions_clickhouse(
+                request,
+                project_id=uuid.uuid4(),
+                project=None,
+                analytics=analytics,
+                validated_data=self._make_validated_data(filters=filters),
+            )
+
+        synthetic = [
+            f for f in captured["filters"] if f.get("column_id") == "end_user_id"
+        ]
+        assert len(synthetic) == 1
+        assert synthetic[0]["filter_config"]["filter_op"] == "not_in"
+        assert synthetic[0]["filter_config"]["filter_value"] == [alice_id]
+
+    def test_user_id_null_filter_preserves_null_operator_without_resolution(self):
+        from tracer.services.clickhouse.query_builders import (
+            SessionListQueryBuilder as RealBuilder,
+        )
+
+        view = self._make_view()
+        request = self._make_request()
+        analytics = self._patch_analytics()
+        captured = {}
+
+        def _capture_builder(*args, **kwargs):
+            captured["filters"] = list(kwargs.get("filters") or [])
+            return RealBuilder(*args, **kwargs)
+
+        filters = [
+            {
+                "column_id": "user_id",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "is_null",
+                    "col_type": "SYSTEM_METRIC",
+                },
+            }
+        ]
+
+        with (
+            mock.patch(
+                "tracer.views.trace_session._resolve_end_user_ids_for_user_id"
+            ) as resolve_mock,
+            self._patch_session_name_lookup(),
+            self._patch_annotation_labels(),
+            mock.patch(
+                "tracer.services.clickhouse.query_builders." "SessionListQueryBuilder",
+                side_effect=_capture_builder,
+            ),
+        ):
+            view._list_sessions_clickhouse(
+                request,
+                project_id=uuid.uuid4(),
+                project=None,
+                analytics=analytics,
+                validated_data=self._make_validated_data(filters=filters),
+            )
+
+        resolve_mock.assert_not_called()
+        synthetic = [
+            f for f in captured["filters"] if f.get("column_id") == "end_user_id"
+        ]
+        assert len(synthetic) == 1
+        cfg = synthetic[0]["filter_config"]
+        assert cfg["filter_op"] == "is_null"
+        assert "filter_value" not in cfg
 
     def test_end_user_display_injected_without_extra_db_call(self):
         """When ``user_id`` resolves, the EndUser display fields should be

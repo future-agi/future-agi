@@ -18,6 +18,10 @@ import {
 } from "date-fns";
 import logger from "src/utils/logger";
 import { canonicalEntries, formatMs } from "../../../utils/utils";
+import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
+
+export const buildUsersRequestFilters = (filters) =>
+  serializeFilterListForApi(filters || []);
 
 export const initialSessionVisibility = {
   session_id: true,

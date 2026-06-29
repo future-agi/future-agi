@@ -227,9 +227,9 @@ const CreateScenarioView = () => {
   const promptVersionOptions = useMemo(() => {
     const results = promptVersionsData?.results || promptVersionsData || [];
     return results.map((version) => {
-      const versionLabel = String(version.templateVersion).startsWith("v")
-        ? version.templateVersion
-        : `v${version.templateVersion}`;
+      const versionLabel = String(version.template_version).startsWith("v")
+        ? version.template_version
+        : `v${version.template_version}`;
       return {
         label: versionLabel,
         value: version.id,

@@ -1110,16 +1110,18 @@ export const normalizeRecordings = (recordings) => {
   if (!recordings)
     return { stereo: "", assistant: "", customer: "", combined: "", mono: "" };
 
-  // Check if it's nested format (has mono object or stereoUrl)
-  const isNestedFormat = recordings.mono || recordings.stereoUrl;
+  // Nested format: backend sends snake_case (stereo_url / mono.*_url);
+  // keep camelCase fallback for the aliased/main response shape.
+  const isNestedFormat =
+    recordings.mono || recordings.stereo_url || recordings.stereoUrl;
 
   if (isNestedFormat) {
     const mono = recordings.mono || {};
-    const combined = mono.combinedUrl || "";
+    const combined = mono.combined_url || mono.combinedUrl || "";
     return {
-      stereo: recordings.stereoUrl || "",
-      assistant: mono.assistantUrl || "",
-      customer: mono.customerUrl || "",
+      stereo: recordings.stereo_url || recordings.stereoUrl || "",
+      assistant: mono.assistant_url || mono.assistantUrl || "",
+      customer: mono.customer_url || mono.customerUrl || "",
       combined,
       mono: combined, // alias for AudioDownloadButton
     };

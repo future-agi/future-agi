@@ -5062,7 +5062,7 @@ class TestReleaseReservation:
 
 @pytest.mark.django_db
 class TestReservationConflict:
-    def test_reserve_true_conflict_returns_400(
+    def test_reserve_true_conflict_returns_409(
         self,
         auth_client,
         queue_with_items,
@@ -5092,7 +5092,8 @@ class TestReservationConflict:
             annotate_detail_url(queue_id, item_ids[0]),
             {"reserve": "true"},
         )
-        assert resp2.status_code == status.HTTP_400_BAD_REQUEST
+        assert resp2.status_code == status.HTTP_409_CONFLICT
+        assert resp2.json().get("code") == "item_reserved"
         item = QueueItem.objects.get(pk=item_ids[0])
         assert item.reserved_by == user
         assert item.reserved_at is not None

@@ -223,7 +223,7 @@ export const getMetricsListColumnDefs = (col) => {
   return {
     headerName: col.name,
     field: col.id,
-    hide: !col?.isVisible,
+    hide: !col?.is_visible,
     cellStyle: (params) => {
       const value = params.value;
       if (isCellValueEmpty(value)) {

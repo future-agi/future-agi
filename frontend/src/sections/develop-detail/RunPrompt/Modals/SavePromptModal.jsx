@@ -75,7 +75,7 @@ export default function SavePromptModal({
     mode: "onChange",
   });
   const { data: runPromptOptions } = useRunPromptOptions();
-  const availableTools = runPromptOptions?.availableTools;
+  const availableTools = runPromptOptions?.available_tools;
 
   const saveType = watch("saveType");
 

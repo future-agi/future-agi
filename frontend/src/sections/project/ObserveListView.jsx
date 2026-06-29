@@ -12,6 +12,7 @@ import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
+import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 import PropTypes from "prop-types";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import VolumeBarChart from "./VolumeBarChart";
@@ -22,7 +23,7 @@ import TagEditor from "./TagEditor";
 const SORT_FIELD_MAP = {
   name: "name",
   issues: "issues",
-  lastActive: "updated_at",
+  last_active: "updated_at",
 };
 
 function getHealthColor(lastActive, theme) {
@@ -59,7 +60,7 @@ const ObserveListView = forwardRef(
 
     const [page, setPage] = useState(0);
     const [pageSize, setPageSize] = useState(25);
-    const [sorting, setSorting] = useState([{ id: "lastActive", desc: true }]);
+    const [sorting, setSorting] = useState([{ id: "last_active", desc: true }]);
     const [rowSelection, setRowSelection] = useState({});
 
     useImperativeHandle(ref, () => ({
@@ -73,19 +74,22 @@ const ObserveListView = forwardRef(
       : "updated_at";
     const sortOrder = sorting[0]?.desc ? "desc" : "asc";
 
-    // Build filter params
-    const tagsFilter = useMemo(() => {
-      if (!filters) return null;
-      return (
-        filters
-          .filter((f) => f.field === "tags" && f.value)
-          .map((f) => f.value)
-          .join(",") || null
-      );
-    }, [filters]);
-    const nameFilter = useMemo(() => {
-      if (!filters) return null;
-      return filters.find((f) => f.field === "name" && f.value)?.value || null;
+    // Build the operator-based filters payload via the canonical contract
+    // builder (same one every other list uses), so the project list speaks the
+    // full { column_id, filter_config: { filter_type, filter_op, filter_value } }
+    // shape and gets the builder's operator validation.
+    const apiFilters = useMemo(() => {
+      if (!filters?.length) return null;
+      const out = filters
+        .filter((f) => f.value != null && f.value !== "")
+        .map((f) =>
+          buildApiFilterFromPanelRow({
+            field: f.field, // "name" | "tags"
+            operator: f.operator || "contains", // "contains" | "equals"
+            value: f.value,
+          }),
+        );
+      return out.length ? JSON.stringify(out) : null;
     }, [filters]);
 
     const { data: apiData, isLoading } = useQuery({
@@ -97,19 +101,18 @@ const ObserveListView = forwardRef(
           pageSize,
           sortBy,
           sortOrder,
-          tagsFilter,
-          nameFilter,
+          apiFilters,
         },
       ],
       queryFn: () =>
         fetchObserveProjects({
-          name: debouncedSearch || nameFilter || null,
+          name: debouncedSearch || null,
           page_number: page,
           page_size: pageSize,
           sort_by: sortBy,
           sort_direction: sortOrder,
           project_type: "observe",
-          ...(tagsFilter && { tags: tagsFilter }),
+          ...(apiFilters && { filters: apiFilters }),
         }),
       keepPreviousData: true,
       staleTime: 30_000,
@@ -151,7 +154,9 @@ const ObserveListView = forwardRef(
           ),
         },
         {
-          id: "alerts",
+          // id matches the data field so the grid's value accessor resolves
+          // (DataTable keys getValue off `id`); avoids reaching into row.original.
+          id: "issues",
           accessorKey: "issues",
           header: "Alerts",
           size: 80,
@@ -208,13 +213,15 @@ const ObserveListView = forwardRef(
           cell: ({ row }) => <TagEditor projectId={row.original.id} />,
         },
         {
-          id: "lastActive",
+          // id matches the data field so getValue() resolves; fall back to
+          // updated_at only when there's no activity yet.
+          id: "last_active",
           accessorKey: "last_active",
           header: "Last Active",
           size: 160,
           enableSorting: false,
           cell: ({ getValue, row }) => {
-            const val = getValue() || row.original.updated_at;
+            const val = getValue() || row.original?.updated_at;
             const color = getHealthColor(val, theme);
             if (!val) return null;
             return (
