@@ -26,6 +26,12 @@ from simulate.serializers.response.run_test_evals import (
     EvalSummaryResponseSerializer,
 )
 from simulate.serializers.test_execution import CallExecutionSerializer
+from simulate.services.agent_definition import (
+    is_masked,
+    resolve_api_key_for_version,
+    sync_provider_credentials,
+)
+from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,
@@ -129,10 +135,9 @@ class CreateAgentVersionView(APIView):
             validated = request.validated_data
             commit_message = validated.get("commit_message", "")
             observability_enabled = validated.get("observability_enabled", False)
-            from simulate.serializers.agent_definition import _is_masked
 
             incoming_api_key = validated.get("api_key")
-            preserve_existing_api_key = incoming_api_key is not None and _is_masked(
+            preserve_existing_api_key = incoming_api_key is not None and is_masked(
                 incoming_api_key
             )
 
@@ -159,36 +164,6 @@ class CreateAgentVersionView(APIView):
                 if field in validated:
                     setattr(agent, field, validated[field])
                     changed = True
-
-            # LiveKit fields are NOT model columns on AgentDefinition; they
-            # live on the related ProviderCredentials row. Route them
-            # through the same sync helper used by AgentDefinitionSerializer
-            # so changes (e.g. max_concurrency) are persisted before the
-            # version snapshot is taken below.
-            from simulate.serializers.agent_definition import (
-                AgentDefinitionSerializer,
-                ProviderCredentialsInput,
-            )
-
-            creds_input = ProviderCredentialsInput(
-                provider=validated.get("provider") or agent.provider or "",
-                api_key=None if preserve_existing_api_key else validated.get("api_key"),
-                assistant_id=validated.get("assistant_id"),
-                livekit_url=validated.get("livekit_url"),
-                livekit_api_key=validated.get("livekit_api_key"),
-                livekit_api_secret=validated.get("livekit_api_secret"),
-                livekit_agent_name=validated.get("livekit_agent_name"),
-                livekit_config_json=validated.get("livekit_config_json"),
-                livekit_max_concurrency=validated.get("livekit_max_concurrency"),
-                provider_was_provided="provider" in request.data,
-            )
-            AgentDefinitionSerializer._sync_provider_credentials(agent, creds_input)
-            # Drop the cached `credentials` related-object so the snapshot
-            # builder in create_version() reads the freshly-saved row.
-            try:
-                del agent.credentials
-            except AttributeError:
-                pass
 
             if "knowledge_base" in validated:
                 kb_id = validated["knowledge_base"]
@@ -241,12 +216,42 @@ class CreateAgentVersionView(APIView):
                     agent.observability_provider = provider
                     agent.save()
 
+            # Resolve the API key *before* creating the new version so we
+            # read from the active version rather than the brand-new one.
+            if preserve_existing_api_key:
+                active_version = agent.active_version or agent.latest_version
+                existing_api_key = (
+                    resolve_api_key_for_version(active_version) if active_version else None
+                )
+            else:
+                existing_api_key = None
+
             version = agent.create_version(
                 description=agent.description,
                 commit_message=commit_message,
                 status=AgentVersion.StatusChoices.ACTIVE,
             )
             version.activate()
+
+            creds_input = ProviderCredentialsInput(
+                provider=validated.get("provider") or agent.provider or "",
+                api_key=existing_api_key if preserve_existing_api_key else validated.get("api_key"),
+                assistant_id=validated.get("assistant_id"),
+                livekit_url=validated.get("livekit_url"),
+                livekit_api_key=validated.get("livekit_api_key"),
+                livekit_api_secret=validated.get("livekit_api_secret"),
+                livekit_agent_name=validated.get("livekit_agent_name"),
+                livekit_config_json=validated.get("livekit_config_json"),
+                livekit_max_concurrency=validated.get("livekit_max_concurrency"),
+                provider_was_provided="provider" in request.data,
+            )
+            sync_provider_credentials(version, creds_input)
+
+            # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
+            version.configuration_snapshot = version.create_snapshot(
+                commit_message=version.commit_message or ""
+            )
+            version.save(update_fields=["configuration_snapshot"])
 
             response_data = {
                 "message": "Agent version created successfully",

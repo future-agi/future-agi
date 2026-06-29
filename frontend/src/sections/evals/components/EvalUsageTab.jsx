@@ -43,6 +43,13 @@ import {
   normalizeRow,
   useColumns,
 } from "../Helpers/evalUsageColumns";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+
+// StatPill, DATE_OPTION_TO_PERIOD, ScoreCell, useColumns now live in
+// ../Helpers/evalUsageColumns (imported above). Keeping this comment so
+// future merges from dev know the local copies were removed deliberately.
+
 
 // ── Main ──
 const EvalUsageTab = ({
@@ -594,6 +601,10 @@ const DetailPanelContent = ({
   evalType = "llm",
   onFeedbackSubmitted,
 }) => {
+  const { role } = useAuthContext();
+  const canEditEvals = Boolean(
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role]
+  );
   const [viewMode, setViewMode] = useState("formatted");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
@@ -932,6 +943,7 @@ const DetailPanelContent = ({
                         )}
                         <IconButton
                           size="small"
+                          disabled={!canEditEvals}
                           onClick={() => setFeedbackOpen(true)}
                         >
                           <Iconify
@@ -973,6 +985,7 @@ const DetailPanelContent = ({
 
                 <Box
                   component="button"
+                  disabled={!canEditEvals}
                   onClick={() => setFeedbackOpen(true)}
                   sx={{
                     display: "flex",
@@ -985,17 +998,20 @@ const DetailPanelContent = ({
                     borderRadius: "8px",
                     backgroundColor: "transparent",
                     color: "text.primary",
-                    cursor: "pointer",
+                    cursor: canEditEvals ? "pointer" : "not-allowed",
+                    opacity: canEditEvals ? 1 : 0.5,
                     fontSize: "12px",
                     fontWeight: 500,
                     width: "100%",
-                    "&:hover": {
-                      borderColor: "primary.main",
-                      backgroundColor: (t) =>
-                        t.palette.mode === "dark"
-                          ? "rgba(124,77,255,0.06)"
-                          : "rgba(124,77,255,0.04)",
-                    },
+                    "&:hover": canEditEvals
+                      ? {
+                          borderColor: "primary.main",
+                          backgroundColor: (t) =>
+                            t.palette.mode === "dark"
+                              ? "rgba(124,77,255,0.06)"
+                              : "rgba(124,77,255,0.04)",
+                        }
+                      : {},
                   }}
                 >
                   <Iconify

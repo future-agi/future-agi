@@ -23,6 +23,9 @@ from typing import Any
 
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
+from tracer.services.clickhouse.v2.query_builders.filters import (
+    ClickHouseFilterBuilderV2,
+)
 
 
 class TraceListQueryBuilderV2(V2RewriteMixin, TraceListQueryBuilder):
@@ -36,6 +39,10 @@ class TraceListQueryBuilderV2(V2RewriteMixin, TraceListQueryBuilder):
     """
 
     _v2_rewrite_exclude = frozenset({"build_eval_query", "build_annotation_query"})
+
+    # Use the v2 filter compiler so filters read the v2 dimension tables
+    # (end_users, etc.) instead of the dropped legacy CDC tables.
+    _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
 
     def build_count_query(self) -> tuple[str, dict[str, Any]]:
         """Pagination count.

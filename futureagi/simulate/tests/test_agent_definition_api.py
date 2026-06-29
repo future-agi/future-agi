@@ -248,6 +248,9 @@ class TestCreateAgentDefinition:
         assert not ProviderCredentials.objects.filter(
             agent_definition_id=agent_id
         ).exists()
+        assert not ProviderCredentials.objects.filter(
+            agent_version__agent_definition_id=agent_id
+        ).exists()
 
     def test_missing_required_fields(self, auth_client):
         response = auth_client.post(
@@ -468,8 +471,7 @@ class TestEditAgentDefinition:
 
         assert response.status_code == status.HTTP_200_OK
         agent = AgentDefinition.objects.get(id=agent_id)
-        assert agent.api_key == raw_api_key
-        assert agent.credentials.get_api_key() == raw_api_key
+        assert agent.latest_version.credentials.get_api_key() == raw_api_key
         assert raw_api_key not in str(response.json())
 
     def test_partial_update(self, auth_client, agent_definition):

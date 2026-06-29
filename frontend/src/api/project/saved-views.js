@@ -131,11 +131,12 @@ const reorderCustomViewsInCache = (currentResult, order) => {
 export const useGetSavedViews = (projectId) => {
   return useQuery({
     queryKey: [SAVED_VIEWS_KEY, projectId],
-    queryFn: () =>
-      axios.get(endpoints.savedViews.list, {
+    queryFn: async () => {
+      const res = await axios.get(endpoints.savedViews.list, {
         params: { project_id: projectId },
-      }),
-    select: (d) => d.data?.result,
+      });
+      return res.data?.result;
+    },
     staleTime: 60_000,
     enabled: !!projectId,
   });
@@ -146,11 +147,12 @@ export const useGetSavedViews = (projectId) => {
 export const useGetWorkspaceSavedViews = (tabType) => {
   return useQuery({
     queryKey: [SAVED_VIEWS_KEY, "workspace", tabType],
-    queryFn: () =>
-      axios.get(endpoints.savedViews.list, {
+    queryFn: async () => {
+      const res = await axios.get(endpoints.savedViews.list, {
         params: { tab_type: tabType },
-      }),
-    select: (d) => d.data?.result,
+      });
+      return res.data?.result;
+    },
     staleTime: 60_000,
     enabled: !!tabType,
   });

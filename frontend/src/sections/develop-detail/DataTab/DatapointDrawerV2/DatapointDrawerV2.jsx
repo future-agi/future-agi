@@ -32,6 +32,7 @@ import Iconify from "src/components/iconify";
 import { LoadingButton } from "@mui/lab";
 import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
+import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import { useParams } from "react-router";
 import CellMarkdown from "src/sections/common/CellMarkdown";
@@ -1558,10 +1559,7 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
           </Box>
         </Box>
       ) : isSkipped ? (
-        <Typography variant="caption" color="text.secondary">
-          Error localization was skipped — input data isn&apos;t available to
-          localize on.
-        </Typography>
+        <SkippedLocalizationBanner message={pollData?.error_message} />
       ) : (
         <Box
           sx={{

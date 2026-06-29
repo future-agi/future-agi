@@ -173,6 +173,23 @@ AGGREGATIONS: dict[str, str] = {
     "sum": "sum({col})",
 }
 
+# Aggregations that require a numeric operand. ClickHouse raises "Illegal type
+# String of argument for aggregate function ..." when these are applied to a
+# text column (e.g. a string custom attribute). ``count`` / ``count_distinct``
+# work on any type, so they are NOT listed here.
+_NUMERIC_ONLY_AGGREGATIONS = frozenset(
+    {"avg", "sum", "median", "p25", "p50", "p75", "p90", "p95", "p99"}
+)
+
+
+class InvalidMetricCombinationError(ValueError):
+    """A metric's aggregation cannot be applied to its value type.
+
+    e.g. averaging a text custom attribute. The message is user-facing — callers
+    surface it per-widget so one nonsensical metric does not fail the whole
+    dashboard query.
+    """
+
 FILTER_OPERATORS: dict[str, str] = {
     "less_than": "< %({prefix}{idx}_val)s",
     "greater_than": "> %({prefix}{idx}_val)s",
@@ -1073,6 +1090,12 @@ class DashboardQueryBuilder:
         if attr_type == "number":
             col_expr = f"span_attr_num['{attr_key}']"
         else:
+            if aggregation in _NUMERIC_ONLY_AGGREGATIONS:
+                raise InvalidMetricCombinationError(
+                    f"'{aggregation}' can't be applied to the text attribute "
+                    f"'{attr_key}'. Use count or count distinct, or pick a "
+                    f"numeric attribute."
+                )
             col_expr = f"span_attr_str['{attr_key}']"
 
         agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
@@ -1129,16 +1152,24 @@ class DashboardQueryBuilder:
         results = []
         for metric in self.metrics:
             sql, params = self.build_metric_query(metric)
-            metric_info = {
-                "id": metric.get("id", ""),
-                "name": metric.get("display_name")
-                or metric.get("displayName")
-                or metric.get("name", ""),
-                "type": metric.get("type", "system_metric"),
-                "aggregation": metric.get("aggregation", "avg"),
-            }
-            results.append((sql, params, metric_info))
+            results.append((sql, params, self.metric_info(metric)))
         return results
+
+    def metric_info(self, metric: dict) -> dict:
+        """Build the response metadata for a single metric.
+
+        Exposed so callers can construct the metric's ``metric_info`` without
+        building its SQL — e.g. to attach a per-metric error when the build or
+        execution fails, keeping the rest of the dashboard's widgets intact.
+        """
+        return {
+            "id": metric.get("id", ""),
+            "name": metric.get("display_name")
+            or metric.get("displayName")
+            or metric.get("name", ""),
+            "type": metric.get("type", "system_metric"),
+            "aggregation": metric.get("aggregation", "avg"),
+        }
 
     # ------------------------------------------------------------------
     # Result formatting
@@ -1237,15 +1268,16 @@ class DashboardQueryBuilder:
                     )
                 series.append({"name": name, "data": filled})
 
-            formatted_metrics.append(
-                {
-                    "id": metric_info.get("id", ""),
-                    "name": metric_name,
-                    "aggregation": metric_info.get("aggregation", "avg"),
-                    "unit": unit,
-                    "series": series,
-                }
-            )
+            formatted_metric = {
+                "id": metric_info.get("id", ""),
+                "name": metric_name,
+                "aggregation": metric_info.get("aggregation", "avg"),
+                "unit": unit,
+                "series": series,
+            }
+            if metric_info.get("error"):
+                formatted_metric["error"] = metric_info["error"]
+            formatted_metrics.append(formatted_metric)
 
         return {
             "metrics": formatted_metrics,

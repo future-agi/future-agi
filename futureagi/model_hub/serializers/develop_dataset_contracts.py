@@ -99,9 +99,30 @@ class DatasetTableMetadataSerializer(serializers.Serializer):
     status = serializers.JSONField(required=False, allow_null=True)
 
 
+class DatasetTableColumnSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField(allow_blank=True)
+    data_type = serializers.CharField(allow_null=True)
+    is_visible = serializers.BooleanField()
+    is_frozen = serializers.BooleanField(allow_null=True)
+    source_type = serializers.CharField()
+    origin_type = serializers.CharField(allow_null=True)
+    source_id = serializers.CharField(allow_null=True)
+    order_index = serializers.IntegerField()
+    status = serializers.CharField(allow_null=True)
+    average_score = serializers.FloatField(allow_null=True)
+    reason_column = serializers.BooleanField()
+    is_numeric_eval = serializers.BooleanField()
+    is_numeric_eval_percentage = serializers.BooleanField()
+    eval_tag = serializers.JSONField()
+    metadata = serializers.JSONField()
+    choices_map = serializers.JSONField()
+
+
 class DatasetTableResultSerializer(serializers.Serializer):
     metadata = DatasetTableMetadataSerializer(required=False)
-    column_config = serializers.ListField(child=serializers.JSONField())
+    column_config = DatasetTableColumnSerializer(many=True)
+    # rows mix fixed keys with arbitrary cell keys, so left untyped for now
     table = serializers.ListField(child=serializers.JSONField(), required=False)
     dataset_config = serializers.JSONField(required=False)
     synthetic_dataset = serializers.BooleanField(required=False)

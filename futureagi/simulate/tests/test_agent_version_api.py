@@ -196,12 +196,50 @@ class TestCreateAgentVersion:
         assert response.status_code == status.HTTP_201_CREATED
         agent_definition.refresh_from_db()
         assert agent_definition.api_key == raw_api_key
-        assert agent_definition.credentials.get_api_key() == raw_api_key
+        version = agent_definition.latest_version
+        assert version.credentials.get_api_key() == raw_api_key
         serialized = response.json()
         assert raw_api_key not in str(serialized)
-        assert serialized["version"]["configuration_snapshot"]["api_key"] == mask_key(
+        assert serialized["version"]["api_key"] == mask_key(
             raw_api_key
         )
+
+    def test_create_with_masked_api_key_preserves_direct_version_creds(
+        self, auth_client, agent_definition, agent_version
+    ):
+        raw_api_key = "sk-version-direct-creds-789012"
+        # Setup: create credentials directly on the version FK
+        from simulate.services.agent_definition import sync_provider_credentials
+        from simulate.services.types.agent_definition import ProviderCredentialsInput
+
+        sync_provider_credentials(
+            agent_version,
+            ProviderCredentialsInput(
+                provider="vapi",
+                api_key=raw_api_key,
+                assistant_id="asst_direct_version",
+                provider_was_provided=True,
+            ),
+        )
+        assert agent_version.credentials.get_api_key() == raw_api_key
+
+        response = auth_client.post(
+            _url(agent_definition.id, "create/"),
+            {
+                "commit_message": "Masked key from version creds",
+                "api_key": mask_key(raw_api_key),
+                "description": "Should resolve from active version creds",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        new_version = agent_definition.latest_version
+        assert new_version.id != agent_version.id
+        assert new_version.credentials.get_api_key() == raw_api_key
+        serialized = response.json()
+        assert raw_api_key not in str(serialized)
+        assert serialized["version"]["api_key"] == mask_key(raw_api_key)
 
     def test_creates_snapshot(self, auth_client, agent_definition, agent_version):
         response = auth_client.post(
