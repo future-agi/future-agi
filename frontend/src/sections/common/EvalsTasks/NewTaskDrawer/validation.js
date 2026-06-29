@@ -1,8 +1,13 @@
 import { getNumberValidation } from "src/utils/validation";
 import { z } from "zod";
+import {
+  ANNOTATION_COLUMN_IDS,
+  FIELD_CATEGORY_TO_COL_TYPE,
+  RANGE_OPS,
+  LIST_OPS,
+  NO_VALUE_OPS,
+} from "src/sections/common/EvalsTasks/common";
 
-const RANGE_OPS = new Set(["between", "not_between"]);
-const LIST_OPS = new Set(["in", "not_in"]);
 const TASK_FILTER_PROPERTY_TO_API = {
   span_kind: "observation_type",
   observation_type: "observation_type",
@@ -11,96 +16,112 @@ const TASK_FILTER_PROPERTY_TO_API = {
 export const getTaskFilterApiKey = (property) =>
   TASK_FILTER_PROPERTY_TO_API[property] || property;
 
-// Group multiple form rows for the same (column_id, op) into a single wire
-// entry. Scalar rows for list ops collapse to array `filter_value`; multiple
-// scalar rows for a single-value op (legacy multi-value `equals` from saved
-// tasks) are promoted to `in` so the BE filter validator accepts them.
+// Form-row `property` → outer-filters sibling key the BE honors. `node_type`
+// is a FE alias for `observation_type` (the eval-task handler can't resolve
+// it directly), so route it via the dedicated sibling branch.
+const TOP_LEVEL_SIBLING_KEY_BY_PROPERTY = {
+  observation_type: "observation_type",
+  node_type: "observation_type",
+  span_kind: "observation_type",
+  session_id: "session_id",
+  trace_id: "trace_id",
+};
+
+// One form row → one wire entry. Cross-row composition is the BE's job —
+// merging same-column rows would collapse "not_contains A AND not_contains B"
+// into "in [A, B]" and invert intent. OR is expressed within a single multi-
+// value `in`/`not_in` row, not across rows.
 export const extractAttributeFilters = (filters) => {
-  const merged = new Map();
-  (filters || [])
-    .filter((f) => f?.property === "attributes")
-    .forEach((f) => {
-      const columnId = f.propertyId;
-      if (!columnId) return;
+  return (filters || [])
+    .filter((f) => {
+      if (!f) return false;
+      // Sibling keys are emitted separately by getNewTaskFilters.
+      if (f.property in TOP_LEVEL_SIBLING_KEY_BY_PROPERTY) return false;
+      // Legacy rows with neither apiColType nor propertyId are BE no-ops.
+      if (!f.propertyId && f.property !== "attributes") return false;
+      return true;
+    })
+    .map((f) => {
+      const columnId = f.propertyId || f.property;
       const op = f?.filterConfig?.filterOp || "equals";
       const filterType = f?.filterConfig?.filterType || "text";
-      const key = `${columnId}|${op}|${filterType}`;
-      if (!merged.has(key)) {
-        merged.set(key, {
-          columnId,
-          op,
-          filterType,
-          rangeValue: undefined,
-          values: [],
-        });
-      }
-      const entry = merged.get(key);
       const v = f?.filterConfig?.filterValue;
-      if (RANGE_OPS.has(op)) {
-        entry.rangeValue = Array.isArray(v) ? v : entry.rangeValue;
+
+      // Resolution: pinned ANNOTATION ids → row.apiColType (canonical) →
+      // fieldCategory fallback → SPAN_ATTRIBUTE default.
+      let apiColType;
+      if (ANNOTATION_COLUMN_IDS.has(columnId)) {
+        apiColType = "ANNOTATION";
+      } else if (f?.apiColType) {
+        apiColType = f.apiColType;
+      } else if (FIELD_CATEGORY_TO_COL_TYPE[f?.fieldCategory]) {
+        apiColType = FIELD_CATEGORY_TO_COL_TYPE[f.fieldCategory];
+      } else {
+        apiColType = "SPAN_ATTRIBUTE";
+      }
+
+      let filterValue;
+      if (NO_VALUE_OPS.has(op)) {
+        filterValue = "";
+      } else if (RANGE_OPS.has(op)) {
+        if (Array.isArray(v) && v.length > 0) filterValue = v;
       } else if (LIST_OPS.has(op)) {
         const arr = Array.isArray(v)
           ? v
           : v !== undefined && v !== null && v !== ""
             ? [v]
             : [];
-        entry.values.push(...arr);
+        if (arr.length > 0) filterValue = arr;
       } else if (v !== undefined && v !== null && v !== "") {
-        entry.values.push(v);
+        filterValue = v;
       }
-    });
 
-  return Array.from(merged.values()).map((entry) => {
-    let filterValue;
-    let filterOp = entry.op;
-    if (RANGE_OPS.has(filterOp)) {
-      filterValue = entry.rangeValue;
-    } else if (LIST_OPS.has(filterOp)) {
-      filterValue = entry.values;
-    } else if (entry.values.length > 1) {
-      // Multiple scalar rows under a single-value op → promote to `in`.
-      filterOp = "in";
-      filterValue = entry.values;
-    } else if (entry.values.length === 1) {
-      filterValue = entry.values[0];
-    }
-    return {
-      column_id: entry.columnId,
-      filter_config: {
-        filter_type: entry.filterType,
-        filter_op: filterOp,
-        col_type: "SPAN_ATTRIBUTE",
-        ...(filterValue !== undefined && { filter_value: filterValue }),
-      },
-    };
-  });
+      return {
+        column_id: columnId,
+        filter_config: {
+          filter_type: filterType,
+          filter_op: op,
+          col_type: apiColType,
+          ...(filterValue !== undefined && { filter_value: filterValue }),
+        },
+      };
+    })
+    // Drop value-less in/not_in (legacy/hand-edited)
+    .filter(
+      (entry) =>
+        !LIST_OPS.has(entry.filter_config.filter_op) ||
+        entry.filter_config.filter_value !== undefined,
+    );
 };
 
-export const getNewTaskFilters = (data, projectId, ignoreDate = false) => {
-  const filters = { project_id: projectId?.length ? projectId : null };
-
-  const attributeFilters = extractAttributeFilters(data?.filters);
-
-  // System filters: spread array `filterValue` (from canonical `in`/`not_in`
-  // or `between` rows) into the per-field array so the BE wire stays in the
-  // historical `{ field: [v1, v2, ...] }` shape it expects.
-  data?.filters?.forEach((filter) => {
-    if (filter?.property === "attributes") return;
-    const apiKey = getTaskFilterApiKey(filter?.property);
-    if (!apiKey) return;
-    const val = filter?.filterConfig?.filterValue;
+// Sibling-key extraction: rows whose property maps to a top-level BE key
+// (observation_type / node_type / session_id) → flat per-field array.
+const extractSiblingFilters = (filters) => {
+  const out = {};
+  (filters || []).forEach((f) => {
+    const beKey = TOP_LEVEL_SIBLING_KEY_BY_PROPERTY[f?.property];
+    if (!beKey) return;
+    const val = f?.filterConfig?.filterValue;
     const vals = Array.isArray(val)
       ? val
       : val !== undefined && val !== null && val !== ""
         ? [val]
         : [];
     if (vals.length === 0) return;
-    if (apiKey in filters) {
-      filters[apiKey].push(...vals);
+    if (out[beKey]) {
+      out[beKey].push(...vals);
     } else {
-      filters[apiKey] = [...vals];
+      out[beKey] = [...vals];
     }
   });
+  return out;
+};
+
+export const getNewTaskFilters = (data, projectId, ignoreDate = false) => {
+  const filters = { project_id: projectId?.length ? projectId : null };
+
+  const attributeFilters = extractAttributeFilters(data?.filters);
+  Object.assign(filters, extractSiblingFilters(data?.filters));
 
   if (data?.runType === "historical" && !ignoreDate) {
     filters["date_range"] = [
@@ -150,11 +171,15 @@ export const NewTaskValidationSchema = () =>
             id: z.string().optional(),
             propertyId: z.string().optional(),
             property: z.string().optional(),
+            fieldCategory: z.string().optional(),
+            fieldLabel: z.string().optional(),
+            apiColType: z.string().optional(),
             filterConfig: z
               .object({
                 filterType: z.string().optional(),
                 filterOp: z.any().optional(),
                 filterValue: z.any().optional(),
+                colType: z.string().optional(),
               })
               .optional(),
           }),
@@ -188,7 +213,7 @@ export const NewTaskValidationSchema = () =>
         filters: {
           ...filters,
           ...(attributeFilters && attributeFilters?.length > 0
-            ? { span_attributes_filters: attributeFilters }
+            ? { filters: attributeFilters }
             : {}),
         },
       };

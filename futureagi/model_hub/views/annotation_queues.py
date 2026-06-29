@@ -114,6 +114,7 @@ from model_hub.services.bulk_selection import (
     resolve_filtered_trace_ids,
 )
 from model_hub.utils.annotation_queue_helpers import (
+    CollectorSourceCache,
     assign_items_to_all_annotators,
     auto_assign_items,
     calculate_agreement,
@@ -1239,13 +1240,22 @@ def _reopen_items_missing_required_labels(queue):
 def _span_notes_target_for_queue_item(item):
     """Return the span that stores whole-item notes for queue annotation.
 
-    Span-source items return the FK-loaded Django ``ObservationSpan`` (writes
-    still live in PG). Trace-source items pick the trace's root span from
+    Span-source items return the PG ``ObservationSpan`` (writes still live in
+    PG), falling back to the CH span for collector data with no PG row.
+    Trace-source items pick the trace's root span from
     CH 25 — preference order is ``observation_type="conversation"`` root span
     (voice projects) → first root span by start_time → ``None``.
     """
     if item.source_type == "observation_span" and item.observation_span_id:
-        return item.observation_span
+        try:
+            return item.observation_span
+        except ObservationSpan.DoesNotExist:
+            # Collector span: no PG row. Resolve from CH — downstream only reads
+            # `.id` (CHSpan exposes it), same as the trace-root CH spans below.
+            from tracer.services.clickhouse.v2 import get_reader
+
+            with get_reader() as reader:
+                return reader.get(str(item.observation_span_id))
     if item.source_type != "trace" or not item.trace_id:
         return None
 
@@ -2289,7 +2299,10 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
         "evaluation_data",
         "customer_latency_metrics",
     )
-    sample_contents = [(item, resolve_source_content(item)) for item in sample_items]
+    ch_cache = CollectorSourceCache.for_items(sample_items)
+    sample_contents = [
+        (item, resolve_source_content(item, ch_cache=ch_cache)) for item in sample_items
+    ]
     source_types = {
         content.get("type") or item.source_type
         for item, content in sample_contents
@@ -2386,7 +2399,7 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
     }
 
 
-def _infer_attribute_field_data_type(field_id, sample_items):
+def _infer_attribute_field_data_type(field_id, sample_items, ch_cache=None):
     source_type, path = _parse_attribute_field_id(field_id)
     if not path:
         return DataTypeChoices.TEXT.value
@@ -2394,13 +2407,13 @@ def _infer_attribute_field_data_type(field_id, sample_items):
     for item in sample_items or []:
         if source_type and item.source_type != source_type:
             continue
-        value = _nested_get(resolve_source_content(item), path)
+        value = _nested_get(resolve_source_content(item, ch_cache=ch_cache), path)
         if value not in (None, ""):
             return _infer_dataset_type(value)
     return DataTypeChoices.TEXT.value
 
 
-def _custom_attribute_export_field(field_id, sample_items=None):
+def _custom_attribute_export_field(field_id, sample_items=None, ch_cache=None):
     if not field_id.startswith("attr:"):
         return None
     source_type, path = _parse_attribute_field_id(field_id)
@@ -2410,7 +2423,7 @@ def _custom_attribute_export_field(field_id, sample_items=None):
         field_id,
         path.replace("_", " "),
         path,
-        _infer_attribute_field_data_type(field_id, sample_items),
+        _infer_attribute_field_data_type(field_id, sample_items, ch_cache=ch_cache),
         f"From {_source_export_label(source_type)}" if source_type else "Attributes",
         False,
         path=path,
@@ -3371,10 +3384,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         scores_by_item = _scores_for_queue_items(items_list, queue_label_ids)
         item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
         eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
+        ch_source_cache = CollectorSourceCache.for_items(items_list)
 
         result = []
         for item in items_list:
-            content = resolve_source_content(item)
+            content = resolve_source_content(item, ch_cache=ch_source_cache)
             annotations = [
                 _serialize_score_for_export(score)
                 for score in scores_by_item.get(item.id, [])
@@ -3688,6 +3702,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         if status_filter:
             items_qs = items_qs.filter(status=status_filter)
         items_list = list(items_qs.order_by("order", "created_at"))
+        ch_source_cache = CollectorSourceCache.for_items(items_list)
 
         export_field_defs = _build_annotation_queue_export_fields(
             queue, sample_items=items_list[:100]
@@ -3704,7 +3719,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 continue
             field_id = entry.get("field") or entry.get("id")
             field_def = fields_by_id.get(field_id) or _custom_attribute_export_field(
-                field_id or "", items_list[:100]
+                field_id or "", items_list[:100], ch_cache=ch_source_cache
             )
             if not field_def:
                 continue
@@ -3785,7 +3800,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
         eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
         for i, item in enumerate(items_list):
-            content = resolve_source_content(item)
+            content = resolve_source_content(item, ch_cache=ch_source_cache)
             scores = scores_by_item.get(item.id, [])
             annotations_metadata = {}
             for score in scores:
@@ -4824,6 +4839,8 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 source_id,
                 organization=request.organization,
                 workspace=getattr(request, "workspace", None),
+                # stores the soft id below, so a CH-resolved collector source is fine
+                allow_ch_fallback=True,
             )
             if not source_obj:
                 errors.append(f"Not found: {source_type}={source_id}")
@@ -4836,9 +4853,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 errors.append(unavailable_reason)
                 continue
 
+            # Soft id, not the FK object (CH source isn't a Django instance;
+            # QueueItem FKs are db_constraint=False). Mirrors the serializer.
+            source_pk = getattr(source_obj, "pk", None) or getattr(
+                source_obj, "id", None
+            )
+
             dup_filter = {
                 "queue": queue,
-                fk_field: source_obj,
+                f"{fk_field}_id": source_pk,
                 "deleted": False,
             }
             if QueueItem.objects.filter(**dup_filter).exists():
@@ -4853,7 +4876,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     organization=request.organization,
                     workspace=getattr(request, "workspace", None) or queue.workspace,
                     order=max_order,
-                    **{fk_field: source_obj},
+                    **{f"{fk_field}_id": source_pk},
                 )
             )
 
@@ -5261,9 +5284,14 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         item_notes = data.get("item_notes")
         submitted = 0
 
-        # Resolve source FK for Score creation
+        # Score FK soft id: read the raw FK id column, NOT the related object —
+        # collector trace/span/session FKs (db_constraint=False) have no PG row,
+        # so getattr(item, source_fk_field) would raise DoesNotExist. The Score
+        # FK is db_constraint=False too, so the bare id persists.
         source_fk_field = SCORE_SOURCE_FK_MAP.get(item.source_type)
-        source_obj = getattr(item, source_fk_field) if source_fk_field else None
+        source_id = (
+            getattr(item, f"{source_fk_field}_id", None) if source_fk_field else None
+        )
         span_notes_target = _span_notes_target_for_queue_item(item)
         # Older clients sent one top-level `notes` field. For trace/span items that
         # can store whole-item notes, treat that legacy field as the item note so it
@@ -5312,12 +5340,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             # Use no_workspace_objects + _id fields to avoid the LEFT JOIN
             # on nullable workspace FK that triggers PostgreSQL's "FOR UPDATE
             # cannot be applied to the nullable side of an outer join".
-            if source_obj and source_fk_field:
+            if source_id and source_fk_field:
                 # Scope the upsert by queue_item so each queue review context
                 # owns its own Score row even when the same annotator scores
                 # the same label across multiple queues.
                 score, _ = Score.no_workspace_objects.update_or_create(
-                    **{f"{source_fk_field}_id": source_obj.pk},
+                    **{f"{source_fk_field}_id": source_id},
                     label_id=label.pk,
                     annotator_id=request.user.pk,
                     queue_item=item,
@@ -5814,7 +5842,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 )
             )
             if not updated:
-                return self._gm.bad_request("Item is reserved by another annotator.")
+                return self._gm.custom_error_response(
+                    status.HTTP_409_CONFLICT,
+                    "Item is reserved by another annotator.",
+                    code="item_reserved",
+                )
             item.refresh_from_db()
 
         labels = (
@@ -7212,9 +7244,14 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             except User.DoesNotExist:
                 return self._gm.bad_request("Annotator not found in this workspace.")
 
-        # Resolve source FK for Score creation
+        # Score FK soft id: read the raw FK id column, NOT the related object —
+        # collector trace/span/session FKs (db_constraint=False) have no PG row,
+        # so getattr(item, source_fk_field) would raise DoesNotExist. The Score
+        # FK is db_constraint=False too, so the bare id persists.
         source_fk_field = SCORE_SOURCE_FK_MAP.get(item.source_type)
-        source_obj = getattr(item, source_fk_field) if source_fk_field else None
+        source_id = (
+            getattr(item, f"{source_fk_field}_id", None) if source_fk_field else None
+        )
         queue_label_ids = set(
             item.queue.queue_labels.filter(deleted=False).values_list(
                 "label_id",
@@ -7251,14 +7288,14 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             except ValueError as exc:
                 return self._gm.bad_request(str(exc))
 
-            if source_obj and source_fk_field:
+            if source_id and source_fk_field:
                 # Scope the upsert by queue_item so an import lands in this
                 # queue's review context. Without queue_item in the lookup
                 # we'd hit the per-queue uniqueness constraint as soon as
                 # the same (source, label, annotator) is imported into a
                 # second queue.
                 score, _ = Score.no_workspace_objects.update_or_create(
-                    **{f"{source_fk_field}_id": source_obj.pk},
+                    **{f"{source_fk_field}_id": source_id},
                     label_id=label.pk,
                     annotator_id=annotator.pk,
                     queue_item=item,

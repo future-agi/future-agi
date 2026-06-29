@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.v2.query_builders import columns as cols
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
@@ -49,6 +50,24 @@ class TestRewriteV1SqlToV2:
         v2 = ("SELECT attrs_string['a'], attrs_number['b'] "
               "FROM spans WHERE is_deleted = 0")
         assert rewrite_v1_sql_to_v2(v1) == v2
+
+    # ─── Dictionary-name renames ─────────────────────────────────────────────
+    def test_legacy_enduser_dict_renamed(self):
+        # The legacy CDC dict (source `tracer_enduser`) → the v2 CH-native dict.
+        out = rewrite_v1_sql_to_v2(
+            "dictGetOrDefault('enduser_dict', 'user_id', any(end_user_id), '')"
+        )
+        assert "end_users_dict" in out
+        assert "'enduser_dict'" not in out
+
+    def test_enduser_dict_and_soft_delete_renamed_together(self):
+        v1 = (
+            "SELECT dictGetOrDefault('enduser_dict', 'user_id', any(end_user_id), '') "
+            "FROM spans WHERE _peerdb_is_deleted = 0"
+        )
+        out = rewrite_v1_sql_to_v2(v1)
+        assert "end_users_dict" in out and "'enduser_dict'" not in out
+        assert "is_deleted = 0" in out and "_peerdb_is_deleted" not in out
 
     # ─── Negative: don't rewrite substrings of unrelated identifiers ─────────
     def test_does_not_rewrite_substring_of_another_identifier(self):
@@ -140,6 +159,22 @@ class TestRewriteV1SqlToV2:
         assert "attributes_extra.a.:String" in v2
         assert "attrs_number['b']" in v2
 
+    # ─── Bare SELECT-list ref — the one NON-idempotent rewrite ───────────────
+    def test_bare_select_list_ref_wrapped_with_alias(self):
+        v1 = "SELECT span_attributes_raw FROM spans"
+        v2 = "SELECT toJSONString(attributes_extra) AS span_attributes_raw FROM spans"
+        assert rewrite_v1_sql_to_v2(v1) == v2
+
+    def test_bare_select_list_rewrite_is_not_idempotent(self):
+        # Re-running re-wraps the alias. This is WHY the v2 filter builder may
+        # only double-rewrite WHERE/ORDER fragments (which never carry a bare
+        # SELECT-list ref), never full statements — see _rewrite.py docstring
+        # and ClickHouseFilterBuilderV2.translate.
+        once = rewrite_v1_sql_to_v2("SELECT span_attributes_raw FROM spans")
+        twice = rewrite_v1_sql_to_v2(once)
+        assert once != twice
+        assert "AS toJSONString(attributes_extra) AS span_attributes_raw" in twice
+
 
 class TestClickHouseFilterBuilderV2:
     """End-to-end tests via the subclass — proves the rewrite happens at the
@@ -162,3 +197,149 @@ class TestClickHouseFilterBuilderV2:
         assert meta["text"][0]    == cols.ATTRS_STRING
         assert meta["number"][0]  == cols.ATTRS_NUMBER
         assert meta["boolean"][0] == cols.ATTRS_BOOL
+
+
+class TestEndUserDimensionSource:
+    """Pin the v1→v2 end-user dimension swap on the user/user_id filter path.
+
+    A `user` / `user_id` / `user_id_type` filter compiles a
+    `trace_id IN (SELECT ... FROM <enduser dim>)` subquery. v1 reads the
+    dropped legacy CDC table `tracer_enduser`; v2 must read the `end_users`
+    RMT. Distinct from the `enduser_dict` rename covered above.
+    """
+
+    @staticmethod
+    def _filter(col_id: str, filter_op: str, filter_value=None) -> list[dict]:
+        config: dict = {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": filter_op,
+        }
+        if filter_value is not None:
+            config["filter_value"] = filter_value
+        return [{"column_id": col_id, "filter_config": config}]
+
+    # ─── Value path: v1 legacy table vs v2 RMT ───────────────────────────────
+    def test_v1_in_targets_legacy_tracer_enduser(self):
+        sql, _ = ClickHouseFilterBuilder(table="spans").translate(
+            self._filter("user", "in", ["bob", "carol"])
+        )
+        assert "trace_id IN (" in sql
+        assert "SELECT id FROM tracer_enduser FINAL" in sql
+        assert "_peerdb_is_deleted = 0 AND deleted = 0" in sql
+
+    def test_v2_in_targets_end_users_rmt(self):
+        sql, _ = ClickHouseFilterBuilderV2(table="spans").translate(
+            self._filter("user", "in", ["bob", "carol"])
+        )
+        assert "trace_id IN (" in sql
+        assert "SELECT end_user_id FROM end_users FINAL" in sql
+        assert "is_deleted = 0" in sql
+        # The dropped legacy table must NOT appear on the v2 path.
+        assert "tracer_enduser" not in sql
+        assert "_peerdb_is_deleted" not in sql
+
+    def test_v2_user_id_type_column_also_targets_end_users(self):
+        # A second enduser column id must route through the same v2 dim swap.
+        sql, _ = ClickHouseFilterBuilderV2(table="spans").translate(
+            self._filter("user_id_type", "equals", "external")
+        )
+        assert "FROM end_users FINAL" in sql
+        assert "tracer_enduser" not in sql
+
+    def test_v2_negation_emits_not_in_against_end_users(self):
+        # not_in inverts the outer membership; the dim source is still end_users.
+        sql, _ = ClickHouseFilterBuilderV2(table="spans").translate(
+            self._filter("user", "not_in", ["bob"])
+        )
+        assert "trace_id NOT IN (" in sql
+        assert "FROM end_users FINAL" in sql
+        assert "tracer_enduser" not in sql
+
+    # ─── No-value path (is_null) — a different branch that skips the dim ──────
+    def test_v1_is_null_uses_legacy_soft_delete(self):
+        # is_null never queries the dim table; it checks end_user_id directly,
+        # gated by the legacy soft-delete column on v1.
+        sql, _ = ClickHouseFilterBuilder(table="spans").translate(
+            self._filter("user", "is_null")
+        )
+        assert "tracer_enduser" not in sql
+        assert "_peerdb_is_deleted = 0" in sql
+
+    def test_v2_is_null_rewrites_soft_delete(self):
+        sql, _ = ClickHouseFilterBuilderV2(table="spans").translate(
+            self._filter("user", "is_null")
+        )
+        assert "tracer_enduser" not in sql
+        assert "is_deleted = 0" in sql
+        assert "_peerdb_is_deleted" not in sql
+
+
+class TestFilterBuilderWiring:
+    """The in-scope v2 list builders must construct the v2 filter compiler so
+    the user filter reads `end_users`; the v1 builders keep the v1 compiler.
+    Asserts both the binding (class attribute) and the end-to-end emission
+    through ``build()`` — the latter catches an inherited build method that
+    constructs the v1 compiler directly instead of via ``_FILTER_BUILDER_CLS``.
+    """
+
+    USER_FILTER = [
+        {
+            "column_id": "user",
+            "filter_config": {
+                "col_type": "SYSTEM_METRIC",
+                "filter_type": "text",
+                "filter_op": "in",
+                "filter_value": ["bob", "carol"],
+            },
+        }
+    ]
+
+    def test_span_list_binds_filter_builder_by_generation(self):
+        from tracer.services.clickhouse.query_builders.span_list import (
+            SpanListQueryBuilder,
+        )
+        from tracer.services.clickhouse.v2.query_builders.span_list import (
+            SpanListQueryBuilderV2,
+        )
+
+        assert SpanListQueryBuilder._FILTER_BUILDER_CLS is ClickHouseFilterBuilder
+        assert SpanListQueryBuilderV2._FILTER_BUILDER_CLS is ClickHouseFilterBuilderV2
+
+    def test_trace_list_binds_filter_builder_by_generation(self):
+        from tracer.services.clickhouse.query_builders.trace_list import (
+            TraceListQueryBuilder,
+        )
+        from tracer.services.clickhouse.v2.query_builders.trace_list import (
+            TraceListQueryBuilderV2,
+        )
+
+        assert TraceListQueryBuilder._FILTER_BUILDER_CLS is ClickHouseFilterBuilder
+        assert TraceListQueryBuilderV2._FILTER_BUILDER_CLS is ClickHouseFilterBuilderV2
+
+    def test_span_list_v1_build_emits_legacy_table(self):
+        from tracer.services.clickhouse.query_builders.span_list import (
+            SpanListQueryBuilder,
+        )
+
+        sql, _ = SpanListQueryBuilder(project_id="p1", filters=self.USER_FILTER).build()
+        assert "tracer_enduser" in sql
+        assert "end_users" not in sql
+
+    def test_span_list_v2_build_emits_end_users(self):
+        from tracer.services.clickhouse.v2.query_builders.span_list import (
+            SpanListQueryBuilderV2,
+        )
+
+        sql, _ = SpanListQueryBuilderV2(project_id="p1", filters=self.USER_FILTER).build()
+        assert "end_users" in sql
+        assert "tracer_enduser" not in sql
+
+    def test_trace_list_v2_build_emits_end_users(self):
+        from tracer.services.clickhouse.v2.query_builders.trace_list import (
+            TraceListQueryBuilderV2,
+        )
+
+        sql, _ = TraceListQueryBuilderV2(project_id="p1", filters=self.USER_FILTER).build()
+        assert "end_users" in sql
+        assert "tracer_enduser" not in sql

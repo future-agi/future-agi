@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { Box } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import PropTypes from "prop-types";
@@ -23,6 +23,7 @@ import {
   SPAN_DEFAULT_COLUMNS,
   mergeCellStyle,
   generateAnnotationColumnsForTracing,
+  normalizeConfigKeys,
 } from "./common";
 import CustomTraceRenderer from "./Renderers/CustomTraceRenderer";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
@@ -40,16 +41,6 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
 
 const ROWS_LIMIT = 100;
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
 
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;
@@ -195,6 +186,7 @@ const SpanGrid = React.forwardRef(
       }));
 
     const agTheme = useAgTheme();
+    const theme = useTheme();
     const { observeId } = useParams();
     const { setSpanDetailDrawerOpen } = useLLMTracingStoreShallow((state) => ({
       setSpanDetailDrawerOpen: state.setSpanDetailDrawerOpen,
@@ -426,7 +418,10 @@ const SpanGrid = React.forwardRef(
                       .filter((cc) => newById.has(cc.id))
                       .map((cc) => {
                         seen.add(cc.id);
-                        return { ...newById.get(cc.id), isVisible: cc.isVisible };
+                        return {
+                          ...newById.get(cc.id),
+                          isVisible: cc.isVisible,
+                        };
                       });
                     const added = newCols.filter((nc) => !seen.has(nc.id));
                     finalNonCustom = [...kept, ...added];
@@ -594,9 +589,15 @@ const SpanGrid = React.forwardRef(
           rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
           theme={agTheme.withParams({
             columnBorder: false,
-            headerColumnBorder: { width: 0 },
+            headerColumnBorder: false,
             wrapperBorder: { width: 0 },
             wrapperBorderRadius: 0,
+            rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+            headerFontSize: "13px",
+            headerFontWeight: theme.typography.fontWeightMedium,
+            headerBackgroundColor: "transparent",
+            headerTextColor: theme.palette.text.primary,
+            rowHoverColor: "rgba(120,87,252,0.04)",
           })}
           ref={gridRef}
           columnDefs={columnDefs}

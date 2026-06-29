@@ -3,7 +3,7 @@ import {
   buildConditionsForRule,
   isScopeReady,
   ruleConditionsToFilters,
-} from "../create-rule-dialog";
+} from "../../utils/automation-rule-utils";
 
 vi.mock("src/api/annotation-queues/annotation-queues", () => ({
   extractErrorMessage: (_error, fallback) => fallback,

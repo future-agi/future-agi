@@ -16,7 +16,7 @@ import {
   pinCodeOptions,
 } from "src/components/agent-definitions/helper";
 import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
-import { useNavigate, useParams } from "react-router";
+import { useParams } from "react-router";
 import SwitchField from "src/components/Switch/SwitchField";
 import LanguageMultiSelect from "../CreateNewAgent/AgentBasicInfoStep/LanguageMultiSelect";
 import { useWatch } from "react-hook-form";
@@ -147,7 +147,6 @@ const EditAgentDetails = ({
         shouldDirty: true,
       });
       setValue("description", providerData?.prompt, { shouldDirty: true });
-      setValue("apiKey", providerData?.api_key, { shouldDirty: true });
       setLastFetchedAt(new Date());
       setShowSyncSuccess(true);
     },
@@ -206,6 +205,7 @@ const EditAgentDetails = ({
         api_key: apiKey,
         assistant_id: assistantId,
         provider: provider,
+        agent_id: agentDefinitionId,
       });
     }
   };
@@ -216,9 +216,7 @@ const EditAgentDetails = ({
   // meaning (nothing to call). Lock the toggle to inbound.
   const outboundLocked = selectedProvider === "others";
 
-  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null, {
-    status: true,
-  });
+  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null);
 
   const provider = useWatch({
     control,
@@ -471,6 +469,7 @@ const EditAgentDetails = ({
                           api_key: apiKey,
                           assistant_id: value,
                           provider: selectedProvider,
+                          agent_id: agentDefinitionId,
                         });
                       }
                     }}
@@ -593,6 +592,7 @@ const EditAgentDetails = ({
                       api_key: value,
                       assistant_id: assistantId,
                       provider: selectedProvider,
+                      agent_id: agentDefinitionId,
                     });
                   }
                 }}
@@ -1012,7 +1012,7 @@ const EditAgentDetails = ({
             </CustomTooltip>
             <Typography
               typography="s2"
-              color="text.disabled"
+              color="text.secondary"
               sx={{ marginLeft: 1 }}
               fontWeight="500"
             >

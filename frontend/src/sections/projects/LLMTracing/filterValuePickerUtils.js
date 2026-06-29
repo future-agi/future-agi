@@ -1,3 +1,10 @@
+export const OBSERVE_FILTER_SOURCES = ["traces", "sessions", "users"];
+
+export function usesFreeTextValue(fieldType, source) {
+  if (fieldType === "text") return true;
+  return fieldType === "string" && !OBSERVE_FILTER_SOURCES.includes(source);
+}
+
 export function getPickerOptionValue(option) {
   if (typeof option === "string") return option;
   return option?.value ?? option?.label ?? "";

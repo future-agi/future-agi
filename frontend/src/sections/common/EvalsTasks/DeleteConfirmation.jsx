@@ -80,7 +80,7 @@ const DeleteConfirmation = ({
       </DialogTitle>
 
       <DialogContent>
-        <Typography color="text.disabled">{confirmationMessage}</Typography>
+        <Typography color="text.secondary">{confirmationMessage}</Typography>
       </DialogContent>
 
       <DialogActions>

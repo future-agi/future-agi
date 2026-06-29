@@ -327,7 +327,7 @@ const MonitorsView = () => {
               }}
             >
               <Typography
-                color="text.disabled"
+                color="text.secondary"
                 typography="m3"
                 fontWeight="fontWeightSemiBold"
                 sx={{ marginBottom: theme.spacing(2) }}

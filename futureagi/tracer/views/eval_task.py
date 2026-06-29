@@ -262,9 +262,17 @@ from tracer.serializers.eval_task import (
     EvalTaskSerializer,
     PaginationQuerySerializer,
 )
-from tracer.utils.eval_tasks import parsing_evaltask_filters, run_for_processed_spans
+from tracer.utils.annotations import build_annotation_subqueries
+from tracer.utils.eval_tasks import (
+    annotation_source_q_for_row_type,
+    parsing_evaltask_filters,
+    run_for_processed_spans,
+)
 from tracer.utils.filters import FilterEngine
-from tracer.utils.helper import get_default_eval_task_config
+from tracer.utils.helper import (
+    get_annotation_labels_for_project,
+    get_default_eval_task_config,
+)
 
 
 class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
@@ -505,6 +513,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     "id": str(eval_task["id"]),
                     "name": eval_task["name"],
                     "status": eval_task["status"],
+                    "run_type": eval_task.get("run_type"),
                     "filters_applied": eval_task["filters"],
                     "created_at": eval_task["created_at"],
                     "evals_applied": eval_names,
@@ -573,7 +582,13 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # Pass/fail counts — cheap aggregate, two indexed COUNTs.
             counts = EvalLogger.objects.filter(eval_task_id=eval_task_id).aggregate(
                 errors_count=Count("id", filter=Q(error=True)),
-                success_count=Count("id", filter=Q(error=False)),
+                success_count=Count(
+                    "id", filter=Q(error=False, skipped_reason__isnull=True)
+                ),
+                # Skipped: the eval never ran (e.g. a mapped span attribute
+                # was absent). Counted separately so it stays out of the
+                # success and failure tallies.
+                skipped_count=Count("id", filter=Q(skipped_reason__isnull=False)),
                 # Partial-input warnings live in
                 # output_metadata.warnings as a JSON array. has_key on
                 # the JSONField gives us a cheap "any warnings?" filter
@@ -673,13 +688,18 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 reverse=True,
             )[: self._WARNING_GROUPS_LIMIT]
 
-            total_count = counts["errors_count"] + counts["success_count"]
+            total_count = (
+                counts["errors_count"]
+                + counts["success_count"]
+                + counts["skipped_count"]
+            )
 
             result = {
                 "start_time": eval_task.start_time,
                 "end_time": eval_task.end_time,
                 "errors_count": counts["errors_count"],
                 "success_count": counts["success_count"],
+                "skipped_count": counts["skipped_count"],
                 "warnings_count": counts["warnings_count"],
                 "total_count": total_count,
                 "error_groups": error_groups,
@@ -1313,6 +1333,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     "name": eval_task.name,
                     "project_name": eval_task.project.name,
                     "status": eval_task.status,
+                    "run_type": eval_task.run_type,
                     "filters_applied": eval_task.filters,
                     "created_at": eval_task.created_at,
                     "evals_applied": [eval.name for eval in eval_task.evals.all()],
@@ -1656,10 +1677,36 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             tenant_project_id = str(eval_task.project_id)
             if has_span_attr_filters:
                 # PG fallback (KEEP-PG until the v2 FilterEngine lands).
-                parsed_filters = parsing_evaltask_filters(filters)
+                # row_type + build_annotation_subqueries carried over from
+                # origin/main (TH-5645): per-label ANNOTATION filters
+                # reference columns the subqueries add (else FieldError),
+                # and parsing_evaltask_filters now requires row_type.
+                parsed_filters, parsed_filter_anns = parsing_evaltask_filters(
+                    filters, row_type=eval_task.row_type
+                )
                 parsed_filters &= Q(project_id=tenant_project_id)
-                total_spans = ObservationSpan.objects.filter(parsed_filters).count()
+                annotation_labels = get_annotation_labels_for_project(
+                    eval_task.project_id
+                )
+                span_qs = build_annotation_subqueries(
+                    ObservationSpan.objects.all(),
+                    annotation_labels,
+                    eval_task.project.organization,
+                    source_q=annotation_source_q_for_row_type(eval_task.row_type),
+                )
+                total_spans = (
+                    span_qs.annotate(**parsed_filter_anns)
+                    .filter(parsed_filters)
+                    .count()
+                )
             else:
+                # TODO(CH25 / TH-5645): the CH count path ignores row_type
+                # and annotation filters — parsing_evaltask_filters_for_ch
+                # only handles project_id/trace_ids/observation_type/
+                # session_id/created_at. origin/main's row_type-scoped
+                # annotation count does NOT apply here. Revisit once the v2
+                # FilterEngine lands CH annotation/row_type support so this
+                # branch matches the PG fallback's semantics.
                 ch_kwargs = CHSpanReader.parsing_evaltask_filters_for_ch(filters or {})
                 # Override any caller-supplied project_id with the
                 # eval_task's project_id — defense-in-depth against an

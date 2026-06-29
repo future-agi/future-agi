@@ -24,6 +24,17 @@ import AnnotationHeaderCellRenderer from "../../agents/CallLogs/AnnotationHeader
 import NewAnnotationCellRenderer from "../../agents/NewAnnotationCellRenderer";
 import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 
+// Normalize config object keys from snake_case to camelCase while preserving
+// id values as snake_case. Shared by the trace and span grids.
+export const normalizeConfigKeys = (config) =>
+  config?.map((obj) => {
+    const result = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
+    }
+    return result;
+  });
+
 export const AllowedGroups = [
   "Evaluation Metrics",
   "Annotation Metrics",

@@ -27,6 +27,7 @@ from accounts.serializers.contracts import (
     WorkspaceUpdateRequestSerializer,
     WorkspaceUpdateResponseSerializer,
 )
+from accounts.services.workspace_membership import create_workspace_membership
 from accounts.utils import generate_password, resolve_org, resolve_org_role
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
@@ -214,7 +215,7 @@ class WorkspaceManagementView(APIView):
             org_membership = OrganizationMembership.no_workspace_objects.filter(
                 user=user, organization=organization, is_active=True
             ).first()
-            WorkspaceMembership.no_workspace_objects.create(
+            create_workspace_membership(
                 workspace=workspace,
                 user=user,
                 role=OrganizationRoles.WORKSPACE_ADMIN,
@@ -245,7 +246,7 @@ class WorkspaceManagementView(APIView):
                             ).first()
                         )
                         ws_level = Level.STRING_TO_LEVEL.get(str(role))
-                        WorkspaceMembership.no_workspace_objects.create(
+                        create_workspace_membership(
                             workspace=workspace,
                             user=member,
                             role=role,
@@ -383,7 +384,7 @@ class WorkspaceManagementView(APIView):
                             new_member.save()
 
                             # Add user to workspace
-                            WorkspaceMembership.no_workspace_objects.create(
+                            create_workspace_membership(
                                 workspace=workspace,
                                 user=new_member,
                                 role=role,
@@ -899,7 +900,7 @@ class WorkspaceMembershipView(APIView):
                         )
                 else:
                     # Add user to workspace
-                    WorkspaceMembership.no_workspace_objects.create(
+                    create_workspace_membership(
                         workspace=workspace,
                         user=target_user,
                         role=user_role,

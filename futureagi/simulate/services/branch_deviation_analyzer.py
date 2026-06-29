@@ -7,6 +7,7 @@ import structlog
 from django.conf import settings
 from django.utils import timezone
 
+from agentic_eval.core.utils.json_utils import strip_code_fence
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -1050,17 +1051,8 @@ Return only the JSON response with no additional text.
     ) -> BranchAnalysis:
         """Parse LLM response and create BranchAnalysis object"""
         try:
-            # Clean the response
-            response = response.strip()
-            if response.startswith("```json"):
-                response = response[7:]
-            if response.startswith("```"):
-                response = response[3:]
-            if response.endswith("```"):
-                response = response[:-3]
-
-            # Parse JSON
-            analysis_data = json.loads(response)
+            # Unwrap any ```json ... ``` fence the model added, then parse.
+            analysis_data = json.loads(strip_code_fence(response))
 
             # Extract the new fields from the response
             new_nodes = analysis_data.get("newNodes", [])

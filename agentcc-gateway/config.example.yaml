@@ -250,7 +250,9 @@ providers:
 
 # Virtual API key authentication.
 # When enabled, all requests must include Authorization: Bearer sk-agentcc-xxx
-# When disabled (default), the gateway runs in open mode.
+# Setting AGENTCC_INTERNAL_API_KEY in the environment turns this on automatically
+# and registers that key. Running with no key and no auth block leaves the
+# gateway open — only do that on a trusted, non-public network.
 # auth:
 #   enabled: true
 #   keys:

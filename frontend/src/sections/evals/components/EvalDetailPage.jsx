@@ -29,6 +29,7 @@ import { useSearchParams } from "react-router-dom";
 import { useSnackbar } from "notistack";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
 
 import { useEvalDetail, useUpdateEval } from "../hooks/useEvalDetail";
@@ -58,6 +59,8 @@ import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const extract_selected_tools = (tools) => {
   if (Array.isArray(tools)) return tools;
@@ -114,6 +117,9 @@ const getEvalPromptText = (evalData, config = {}) =>
 const EvalDetailPage = () => {
   const { evalId } = useParams();
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditEvals =
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const [searchParams, setSearchParams] = useSearchParams();
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
@@ -647,6 +653,28 @@ const EvalDetailPage = () => {
 
   const evalType = evalData?.eval_type || "llm";
   const isSystemEval = evalData?.owner === "system";
+
+  const hasDataInjection =
+    evalType === "agent" &&
+    Array.isArray(contextOptions) &&
+    contextOptions.some((o) => o && o !== "variables_only");
+
+  const hasTemplateVariable =
+    templateFormat === "jinja"
+      ? extractJinjaVariables(instructions).length > 0
+      : /\{\{\s*[^{}]+?\s*\}\}/.test(instructions);
+
+  const needsTemplateVariable =
+    evalType !== "code" &&
+    !hasDataInjection &&
+    !isComposite &&
+    !hasTemplateVariable;
+
+  const variableTooltip = !instructions?.trim()
+    ? "Instructions are required"
+    : needsTemplateVariable
+      ? `Instructions must contain at least one ${templateFormat === "jinja" ? "Jinja" : "Mustache"} variable (e.g. {{input}})`
+      : "";
 
   // Fetch composite detail (children, weights) when viewing a composite
   const { data: compositeDetail } = useCompositeDetail(evalId, isComposite);
@@ -1228,13 +1256,14 @@ const EvalDetailPage = () => {
             open={Boolean(menuAnchor)}
             onClose={() => setMenuAnchor(null)}
           >
-            <MenuItem onClick={handleDuplicate}>
+            <MenuItem onClick={handleDuplicate} disabled={!canEditEvals}>
               <Iconify icon="solar:copy-bold" width={16} sx={{ mr: 1 }} />{" "}
               Duplicate
             </MenuItem>
             {!isSystemEval && (
               <MenuItem
                 onClick={handleDeleteClick}
+                disabled={!canEditEvals}
                 sx={{ color: "error.main" }}
               >
                 <Iconify
@@ -1836,6 +1865,7 @@ const EvalDetailPage = () => {
                     ref={testPlaygroundRef}
                     templateId={evalId}
                     model={model}
+                    evalName={evalData?.name || ""}
                     instructions={
                       evalType === "code"
                         ? ""
@@ -1848,6 +1878,7 @@ const EvalDetailPage = () => {
                     codeLanguage={codeLanguage}
                     isSystemEval={isSystemEval}
                     requiredKeys={variables}
+                    multiChoice={multiChoice}
                     showVersions={!(isSystemEval && evalType === "code")}
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     onTestResult={handleTestResult}
@@ -1937,9 +1968,10 @@ const EvalDetailPage = () => {
 
                   <Tooltip
                     title={
-                      !isPlaygroundReady && !isTesting
+                      variableTooltip ||
+                      (!isPlaygroundReady && !isTesting
                         ? "Map all required keys before running"
-                        : ""
+                        : "")
                     }
                     placement="top"
                   >
@@ -1948,7 +1980,12 @@ const EvalDetailPage = () => {
                         variant={isComposite ? "contained" : "outlined"}
                         size="small"
                         onClick={handleTestEvaluation}
-                        disabled={isTesting || !isPlaygroundReady}
+                        disabled={
+                          isTesting ||
+                          !isPlaygroundReady ||
+                          needsTemplateVariable ||
+                          !canEditEvals
+                        }
                         startIcon={
                           isTesting ? (
                             <CircularProgress size={14} />
@@ -1970,40 +2007,72 @@ const EvalDetailPage = () => {
                     </span>
                   </Tooltip>
                   {!isSystemEval && !isComposite && (
-                    <Button
-                      variant="contained"
+                    <CustomTooltip
+                      show={!!variableTooltip}
+                      title={variableTooltip}
+                      arrow
                       size="small"
-                      onClick={handleSaveVersion}
-                      disabled={isSaving || !isDirty}
-                      startIcon={
-                        isSaving ? (
-                          <CircularProgress size={14} />
-                        ) : (
-                          <Iconify icon="mdi:content-save-outline" width={16} />
-                        )
-                      }
-                      sx={{ textTransform: "none" }}
+                      type="black"
+                      placement="top"
                     >
-                      {isSaving ? "Saving..." : "Save Version"}
-                    </Button>
+                      <span>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          onClick={handleSaveVersion}
+                          disabled={
+                            isSaving ||
+                            !isDirty ||
+                            needsTemplateVariable ||
+                            !canEditEvals
+                          }
+                          startIcon={
+                            isSaving ? (
+                              <CircularProgress size={14} />
+                            ) : (
+                              <Iconify icon="mdi:content-save-outline" width={16} />
+                            )
+                          }
+                          sx={{ textTransform: "none" }}
+                        >
+                          {isSaving ? "Saving..." : "Save Version"}
+                        </Button>
+                      </span>
+                    </CustomTooltip>
                   )}
                   {!isSystemEval && isComposite && (
-                    <Button
-                      variant="contained"
+                    <CustomTooltip
+                      show={compositeChildren.length === 0}
+                      title="Select at least one child evaluation"
+                      arrow
                       size="small"
-                      onClick={handleSaveComposite}
-                      disabled={isSaving || !isDirty}
-                      startIcon={
-                        isSaving ? (
-                          <CircularProgress size={14} />
-                        ) : (
-                          <Iconify icon="mdi:content-save-outline" width={16} />
-                        )
-                      }
-                      sx={{ textTransform: "none" }}
+                      type="black"
+                      placement="top"
                     >
-                      {isSaving ? "Saving..." : "Save Changes"}
-                    </Button>
+                      <span>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          onClick={handleSaveComposite}
+                          disabled={
+                            isSaving ||
+                            !isDirty ||
+                            compositeChildren.length === 0 ||
+                            !canEditEvals
+                          }
+                          startIcon={
+                            isSaving ? (
+                              <CircularProgress size={14} />
+                            ) : (
+                              <Iconify icon="mdi:content-save-outline" width={16} />
+                            )
+                          }
+                          sx={{ textTransform: "none" }}
+                        >
+                          {isSaving ? "Saving..." : "Save Changes"}
+                        </Button>
+                      </span>
+                    </CustomTooltip>
                   )}
                 </Box>
               </Box>
@@ -2033,7 +2102,10 @@ const EvalDetailPage = () => {
       {/* ═══ Ground Truth Tab ═══ */}
       {activeTab === "ground_truth" && (
         <Box sx={{ flex: 1, minHeight: 0 }}>
-          <EvalGroundTruthTab templateId={evalId} />
+          <EvalGroundTruthTab
+            templateId={evalId}
+            onSwitchToDetails={() => setActiveTab("details")}
+          />
         </Box>
       )}
     </Box>

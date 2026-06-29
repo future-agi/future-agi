@@ -38,7 +38,7 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
     setValue,
     getValues,
     trigger,
-  } = useAgentConfigForm(createAgentDefinitionSchema(), agentDetails);
+  } = useAgentConfigForm(createAgentDefinitionSchema({ agentDefinitionId }), agentDetails);
 
   useEffect(() => {
     return () => resetAgentDetails();
@@ -125,7 +125,7 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
             </Typography> */}
             <Typography
               typography="s2_1"
-              color="text.disabled"
+              color="text.secondary"
               fontWeight={"fontWeightRegular"}
             >
               Edit this configuration to create as a new version{" "}

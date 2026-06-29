@@ -18,16 +18,20 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	chexp "github.com/future-agi/future-agi/fi-collector/exporter/clickhouse25exporter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Config is what main() passes us. Public fields = YAML wire format.
@@ -45,9 +49,13 @@ type Config struct {
 // the only difference: gRPC uses the generated stub; HTTP accepts
 // `application/x-protobuf` and `application/json` per the OTLP/HTTP spec.
 type Server struct {
-	cfg     Config
-	writer  *chwriter.Writer
-	curated *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
+	cfg      Config
+	writer   *chwriter.Writer
+	curated  *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
+	auth     *auth.Authenticator
+	usage    UsageEmitter
+	metering Metering
+	log      *slog.Logger
 	grpc    *grpc.Server
 	httpd   *http.Server
 
@@ -71,6 +79,12 @@ type Server struct {
 	wg     sync.WaitGroup
 }
 
+// Option configures optional Server dependencies.
+type Option struct{ log *slog.Logger }
+
+// WithLogger sets the server's logger.
+func WithLogger(l *slog.Logger) Option { return Option{log: l} }
+
 // New wires up the server but does NOT start serving. Call Run().
 //
 // Defaults:
@@ -81,7 +95,7 @@ type Server struct {
 // At least one of GRPCAddr / HTTPAddr must be non-empty or Run returns an
 // error. We default both ON because every supported SDK picks one of them;
 // disabling either is an opt-in deployment choice.
-func New(cfg Config, writer *chwriter.Writer) *Server {
+func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator, usage UsageEmitter, metering Metering, opts ...Option) *Server {
 	if cfg.GRPCAddr == "" {
 		cfg.GRPCAddr = ":4317"
 	}
@@ -95,9 +109,20 @@ func New(cfg Config, writer *chwriter.Writer) *Server {
 		cfg.BatchMaxAge = 5 * time.Second
 	}
 
+	log := slog.Default()
+	for _, o := range opts {
+		if o.log != nil {
+			log = o.log
+		}
+	}
+
 	s := &Server{
-		cfg:    cfg,
-		writer: writer,
+		cfg:      cfg,
+		writer:   writer,
+		auth:     authenticator,
+		usage:    usage,
+		metering: metering,
+		log:      log,
 		// Share the span writer's HTTP client (keep-alive) for the curated RMTs,
 		// but the curated path writes BEST-EFFORT (chwriter.InsertBestEffort:
 		// single POST, no retry, no dead-letter) so it can't stall the span flush
@@ -128,7 +153,11 @@ func (s *Server) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("listen grpc %s: %w", s.cfg.GRPCAddr, err)
 		}
-		s.grpc = grpc.NewServer()
+		var grpcOpts []grpc.ServerOption
+		if s.auth != nil {
+			grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(s.auth.GRPCInterceptor()))
+		}
+		s.grpc = grpc.NewServer(grpcOpts...)
 		ptraceotlp.RegisterGRPCServer(s.grpc, &otlpHandler{s: s})
 		go func() { serveErr <- s.grpc.Serve(lis) }()
 	}
@@ -143,9 +172,14 @@ func (s *Server) Run(ctx context.Context) error {
 		// Any other method or content-type is rejected with 415 / 405 per
 		// the spec.
 		mux.HandleFunc("/v1/traces", s.handleHTTPTraces)
+		mux.HandleFunc("/tracer/v1/traces", s.handleHTTPTraces)
+		var handler http.Handler = mux
+		if s.auth != nil {
+			handler = s.auth.HTTPMiddleware(mux)
+		}
 		s.httpd = &http.Server{
 			Addr:              s.cfg.HTTPAddr,
-			Handler:           mux,
+			Handler:           handler,
 			ReadHeaderTimeout: 10 * time.Second,
 		}
 		lis, err := net.Listen("tcp", s.cfg.HTTPAddr)
@@ -198,14 +232,31 @@ type otlpHandler struct {
 }
 
 func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) (ptraceotlp.ExportResponse, error) {
+	if check, ok := h.s.checkUsage(ctx); !ok {
+		return ptraceotlp.NewExportResponse(), status.Errorf(codes.ResourceExhausted, "quota exceeded: %s", check.Reason)
+	}
+
+	// Stamp auth-resolved org/project IDs onto resource attributes.
+	if result := auth.FromContext(ctx); result != nil {
+		ck := auth.CacheKeyFromContext(ctx)
+		dropped, err := auth.StampResourceAttrs(ctx, h.s.auth, ck, req.Traces(), result)
+		if err != nil {
+			return ptraceotlp.NewExportResponse(), status.Errorf(codes.InvalidArgument, "auth stamp: %v", err)
+		}
+		if dropped > 0 {
+			h.s.log.Warn("dropped ResourceSpans with unresolvable project", "dropped", dropped)
+		}
+	}
+
 	rows, ids, err := chexp.ConvertWithIdentities(req.Traces())
 	if err != nil {
-		// Conversion failure = malformed payload from producer; surface
-		// to the SDK so it retries to a different gateway if it has one.
 		return ptraceotlp.NewExportResponse(), err
 	}
 	h.s.enqueue(rows, ids)
-	// Per OTLP spec, ExportResponse is empty on full success.
+
+	payloadBytes, _ := req.MarshalProto()
+	h.s.emitUsage(ctx, req.Traces(), int64(len(payloadBytes)))
+
 	return ptraceotlp.NewExportResponse(), nil
 }
 
@@ -270,6 +321,24 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if check, ok := s.checkUsage(r.Context()); !ok {
+		http.Error(w, check.Reason, http.StatusTooManyRequests)
+		return
+	}
+
+	// Stamp auth-resolved org/project IDs onto resource attributes.
+	if result := auth.FromContext(r.Context()); result != nil {
+		ck := auth.CacheKeyFromContext(r.Context())
+		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
+		if err != nil {
+			http.Error(w, "auth stamp: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if dropped > 0 {
+			s.log.Warn("dropped ResourceSpans with unresolvable project", "dropped", dropped)
+		}
+	}
+
 	rows, ids, err := chexp.ConvertWithIdentities(req.Traces())
 	if err != nil {
 		// 4xx — the SDK shouldn't retry a malformed conversion.
@@ -277,6 +346,8 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.enqueue(rows, ids)
+
+	s.emitUsage(r.Context(), req.Traces(), int64(len(body)))
 
 	// Empty ExportTraceServiceResponse — same wire shape, encoded to match
 	// the request's content-type. The spec requires the response media type

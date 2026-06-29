@@ -16,7 +16,7 @@ from tfc.utils.general_methods import GeneralMethods
 from tracer.db_routing import DATABASE_FOR_DASHBOARD_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.dashboard import Dashboard, DashboardWidget
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
 from tracer.serializers.dashboard import (
     DashboardCreateUpdateSerializer,
     DashboardDetailSerializer,
@@ -35,6 +35,7 @@ from tracer.services.clickhouse.client import (
 from tracer.services.clickhouse.query_builders.dashboard import (
     METRIC_UNITS,
     DashboardQueryBuilder,
+    InvalidMetricCombinationError,
 )
 from tracer.services.clickhouse.query_builders.dataset_dashboard import (
     DATASET_FILTER_COLUMNS,
@@ -290,17 +291,27 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         )
         return 30000 if has_eval_metrics or has_project_breakdown else 10000
 
-    def _empty_simulation_metric_result(self, metric):
-        return (
-            {
-                "id": metric.get("id", ""),
-                "name": metric.get("display_name") or metric.get("name", ""),
-                "type": metric.get("type", "system_metric"),
-                "aggregation": metric.get("aggregation", "avg"),
-                "source": "simulation",
-            },
-            [],
-        )
+    @staticmethod
+    def _run_metric_queries(builder, source, fetch_rows):
+        """Build + execute each metric in isolation; return [(metric_info, rows)].
+
+        Only ``InvalidMetricCombinationError`` is caught per-metric (the metric
+        is non-sensical and a user-facing message is attached). All other
+        exceptions (connection, timeout, programming bugs) propagate so they
+        surface as real errors instead of being silently masked as per-widget
+        "could not be computed" text.
+        """
+        results = []
+        for metric in builder.metrics:
+            metric_info = builder.metric_info(metric)
+            metric_info["source"] = source
+            try:
+                sql, params = builder.build_metric_query(metric)
+                results.append((metric_info, fetch_rows(sql, params)))
+            except InvalidMetricCombinationError as e:
+                metric_info["error"] = str(e)
+                results.append((metric_info, []))
+        return results
 
     def _format_merged_metric_results(self, query_config, all_metric_results):
         formatter = DatasetQueryBuilder(
@@ -332,27 +343,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             "granularity": formatter.granularity,
         }
 
-    def _run_simulation_queries(self, simulation_config, fetch_rows):
-        results = []
-        for metric in simulation_config.get("metrics", []):
-            metric_config = {**simulation_config, "metrics": [metric]}
-            try:
-                builder = SimulationQueryBuilder(metric_config)
-                sql, params, metric_info = builder.build_all_queries()[0]
-                metric_info["source"] = "simulation"
-                results.append((metric_info, fetch_rows(sql, params)))
-            except Exception as e:
-                logger.warning(
-                    "Simulation query failed",
-                    metric_name=metric.get("id") or metric.get("name"),
-                    error=str(e),
-                )
-                results.append(self._empty_simulation_metric_result(metric))
-        return results
-
     def _run_simulation_analytics_queries(self, analytics, simulation_config):
-        return self._run_simulation_queries(
-            simulation_config,
+        builder = SimulationQueryBuilder(simulation_config)
+        return DashboardViewSet._run_metric_queries(
+            builder,
+            "simulation",
             lambda sql, params: (
                 analytics.execute_ch_query(sql, params, timeout_ms=10000).data
             ),
@@ -364,7 +359,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             col_names = [ct[0] for ct in column_types]
             return [dict(zip(col_names, row, strict=True)) for row in rows]
 
-        return self._run_simulation_queries(simulation_config, _fetch_rows)
+        builder = SimulationQueryBuilder(simulation_config)
+        return DashboardViewSet._run_metric_queries(builder, "simulation", _fetch_rows)
 
     def _normalize_metric_sources(self, metrics):
         """Route simulation-scoped trace attributes through the trace builder.
@@ -582,12 +578,15 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 _DashCls = get_query_builder_class("DASHBOARD")
                 builder = _DashCls(trace_config)
                 query_timeout = self._get_trace_query_timeout_ms(trace_config)
-                for sql, params, metric_info in builder.build_all_queries():
-                    metric_info["source"] = "traces"
-                    result = analytics.execute_ch_query(
-                        sql, params, timeout_ms=query_timeout
+                all_metric_results.extend(
+                    self._run_metric_queries(
+                        builder,
+                        "traces",
+                        lambda sql, params: analytics.execute_ch_query(
+                            sql, params, timeout_ms=query_timeout
+                        ).data,
                     )
-                    all_metric_results.append((metric_info, result.data))
+                )
 
             # --- Dataset metrics via DatasetQueryBuilder ---
             if dataset_metrics:
@@ -610,10 +609,15 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         )
 
                 builder = DatasetQueryBuilder(ds_config)
-                for sql, params, metric_info in builder.build_all_queries():
-                    metric_info["source"] = "datasets"
-                    result = analytics.execute_ch_query(sql, params, timeout_ms=10000)
-                    all_metric_results.append((metric_info, result.data))
+                all_metric_results.extend(
+                    self._run_metric_queries(
+                        builder,
+                        "datasets",
+                        lambda sql, params: analytics.execute_ch_query(
+                            sql, params, timeout_ms=10000
+                        ).data,
+                    )
+                )
 
             # --- Simulation metrics via SimulationQueryBuilder ---
             if simulation_metrics:
@@ -841,7 +845,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     },
                     {
                         "name": "service_name",
-                        "display_name": "Service / Trace Name",
+                        "display_name": "Service Name",
                         "category": "system_metric",
                         "source": "traces",
                         "type": "string",
@@ -1040,6 +1044,27 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             filter_by_project = bool(req_project_ids and project_ids)
 
+            if (
+                filter_by_project
+                and not Project.objects.filter(
+                    id__in=project_ids,
+                )
+                .exclude(
+                    source=ProjectSourceChoices.SIMULATOR.value,
+                )
+                .exists()
+            ):
+                metrics.append(
+                    {
+                        "name": "agent_talk_percentage",
+                        "display_name": "Agent Talk %",
+                        "category": "system_metric",
+                        "source": "traces",
+                        "type": "number",
+                        "unit": "%",
+                    }
+                )
+
             # 3. Eval metrics — scoped to project(s) when project_ids provided
             try:
                 from model_hub.models.evals_metric import EvalTemplate
@@ -1156,10 +1181,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 from model_hub.models.develop_annotations import AnnotationsLabels
 
                 if filter_by_project:
-                    # Find annotation labels used in the given project(s) via
-                    # the Score model (the current write target for annotations).
-                    # Score.project_id may be NULL — scores are linked to traces,
-                    # so also look up via trace__project_id.
+
                     from model_hub.models.score import Score
 
                     used_label_ids = list(
@@ -2131,6 +2153,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "observation_type": "observation_type",
                     "span_kind": "observation_type",  # span_kind maps to observation_type in CH
                     "service_name": "name",  # service_name maps to span name
+                    "name": "name",
+                    "span_name": "name",
                     "session": "toString(trace_session_id)",
                     "tag": "arrayJoin(trace_tags)",
                     "prompt_name": "dictGet('prompt_dict', 'prompt_name', prompt_version_id)",
@@ -2192,6 +2216,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     # type is non-nullable by default — the Nullable
                     # wrapper isn't always preserved through the MV chain.
                     null_uuid = "00000000-0000-0000-0000-000000000000"
+                    # Trace Name = root span name; restrict to root spans.
+                    root_only_clause = (
+                        "AND parent_span_id IS NULL " if metric_name == "name" else ""
+                    )
+
                     if metric_name == "session":
                         ts_remap_join = remap_left_join(
                             "sp.trace_session_id",
@@ -2219,6 +2248,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             f"WHERE project_id IN %(project_ids)s "
                             f"AND is_deleted = 0 "
                             f"AND {col_expr} NOT IN ('', '{null_uuid}') "
+                            f"{root_only_clause}"
                             f"ORDER BY val "
                             f"LIMIT 500"
                         )
@@ -2234,7 +2264,26 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     )
                     values = []
 
-                if metric_name == "project":
+                if metric_name == "session" and source == "sessions":
+                    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+                        resolve_session_fields,
+                    )
+
+                    session_fields = resolve_session_fields(values)
+                    values = [
+                        {
+                            "value": value,
+                            "label": str(
+                                session_fields.get(value, {}).get("display_name")
+                                or session_fields.get(value, {}).get(
+                                    "external_session_id"
+                                )
+                                or value
+                            ),
+                        }
+                        for value in values
+                    ]
+                elif metric_name == "project":
                     name_map = dict(
                         Project.objects.filter(
                             id__in=project_ids,
@@ -2663,14 +2712,6 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
     def _get_trace_query_timeout_ms(self, trace_config):
         return DashboardViewSet._get_trace_query_timeout_ms(self, trace_config)
 
-    def _empty_simulation_metric_result(self, metric):
-        return DashboardViewSet._empty_simulation_metric_result(self, metric)
-
-    def _run_simulation_queries(self, simulation_config, fetch_rows):
-        return DashboardViewSet._run_simulation_queries(
-            self, simulation_config, fetch_rows
-        )
-
     def _run_simulation_clickhouse_queries(self, ch_client, simulation_config):
         return DashboardViewSet._run_simulation_clickhouse_queries(
             self, ch_client, simulation_config
@@ -2873,25 +2914,31 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             _DashCls = get_query_builder_class("DASHBOARD")
             builder = _DashCls(trace_config)
             query_timeout = self._get_trace_query_timeout_ms(trace_config)
-            for sql, params, metric_info in builder.build_all_queries():
-                metric_info["source"] = "traces"
+
+            def _fetch_trace_rows(sql, params):
                 rows, column_types, _ = ch_client.execute_read(
                     sql, params, timeout_ms=query_timeout
                 )
                 col_names = [ct[0] for ct in column_types]
-                row_dicts = [dict(zip(col_names, row, strict=True)) for row in rows]
-                metric_results.append((metric_info, row_dicts))
+                return [dict(zip(col_names, row, strict=True)) for row in rows]
+
+            metric_results.extend(
+                DashboardViewSet._run_metric_queries(builder, "traces", _fetch_trace_rows)
+            )
 
         if dataset_metrics:
             ds_config = {**query_config, "metrics": dataset_metrics}
             ds_config["workspace_id"] = str(workspace.id)
             builder = DatasetQueryBuilder(ds_config)
-            for sql, params, metric_info in builder.build_all_queries():
-                metric_info["source"] = "datasets"
+
+            def _fetch_ds_rows(sql, params):
                 rows, column_types, _ = ch_client.execute_read(sql, params)
                 col_names = [ct[0] for ct in column_types]
-                row_dicts = [dict(zip(col_names, row, strict=True)) for row in rows]
-                metric_results.append((metric_info, row_dicts))
+                return [dict(zip(col_names, row, strict=True)) for row in rows]
+
+            metric_results.extend(
+                DashboardViewSet._run_metric_queries(builder, "datasets", _fetch_ds_rows)
+            )
 
         if simulation_metrics:
             sim_config = {**query_config, "metrics": simulation_metrics}

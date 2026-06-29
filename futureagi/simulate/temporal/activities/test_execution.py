@@ -14,10 +14,11 @@ import json
 import os
 from typing import Any
 
+from asgiref.sync import sync_to_async
 from django.db import close_old_connections
 from temporalio import activity
 
-from simulate.temporal.signals import SIGNAL_CANCEL_CALL
+from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.temporal.types.activities import (
     CancelPendingCallsInput,
     CancelPendingCallsOutput,
@@ -342,7 +343,6 @@ async def create_call_execution_records(
         snapshot = agent_version.configuration_snapshot if agent_version else {}
 
         call_ids = []
-        batch_size = 50  # Smaller batches due to extra processing per record
         total_to_create = sum(len(s.get("row_ids", [])) or 1 for s in input.scenarios)
 
         # Use heartbeat for long-running record creation
@@ -373,10 +373,9 @@ async def create_call_execution_records(
                             try:
                                 row = await Row.objects.aget(id=row_id)
                                 # Fetch cells for this row to build row_data dict
-                                cells = Cell.objects.filter(
+                                async for cell in Cell.objects.filter(
                                     row_id=row_id
-                                ).select_related("column")
-                                async for cell in cells:
+                                ).select_related("column").aiterator():
                                     if cell.column and cell.column.name:
                                         value = cell.value
                                         if (
@@ -439,7 +438,7 @@ async def create_call_execution_records(
                             "call_direction": call_direction,
                             "user_assistant_id": snapshot.get("assistant_id"),
                             "user_phone_number": call_execution_phone_number,
-                            "user_api_key": snapshot.get("api_key"),
+                            "user_api_key": await sync_to_async(resolve_api_key_for_version)(agent_version) if agent_version else None,
                         }
 
                         # Build call_metadata for CallExecution

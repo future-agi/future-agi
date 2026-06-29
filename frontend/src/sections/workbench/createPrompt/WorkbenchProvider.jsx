@@ -175,7 +175,7 @@ const WorkbenchProvider = ({ children }) => {
       const newPre = [...pre];
       const newValue =
         typeof valueOrUpdater === "function"
-          ? { id: pre[index]?.id, prompts: valueOrUpdater(pre[index]?.prompts) }
+          ? { id: pre[index]?.id, prompts: valueOrUpdater(pre[index]?.prompts ?? []) }
           : valueOrUpdater;
 
       newPre[index] = newValue;

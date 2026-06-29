@@ -9,7 +9,11 @@ from jinja2 import Environment
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.jinja_utils import nest_dotted_value
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
-from agentic_eval.core.utils.llm_payloads import detect_and_build_media_blocks
+from agentic_eval.core.utils.llm_payloads import (
+    choices_judge_instructions,
+    detect_and_build_media_blocks,
+    response_format_schema,
+)
 from agentic_eval.core.utils.model_config import ModelConfigs
 from agentic_eval.core.utils.score import clamp_unit_score
 from agentic_eval.core_evals.fi_utils.evals_result import EvalResult
@@ -19,6 +23,7 @@ logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 
 from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
+from model_hub.utils.ground_truth_retrieval import GT_CALIBRATION_INSTRUCTION
 
 # Maximum chars of context that get injected into the eval prompt. Larger
 # values let huge transcripts/raw_logs flow in fully, at the cost of higher
@@ -106,36 +111,6 @@ class CustomPromptEvaluator(LLM):
         # Use rule_prompt as the template
         return self.rule_prompt
 
-    def _build_response_format(self) -> dict:
-        """Build a json_schema response_format based on the eval output type.
-
-        Uses json_schema (not json_object) so the gateway can translate it
-        to provider-native structured output for all backends (Bedrock,
-        Anthropic, Gemini, OpenAI, etc.).
-        """
-        if self._output_type in ("score", "numeric"):
-            result_schema = {"type": "number"}
-        elif self._output_type == "Pass/Fail":
-            result_schema = {"type": "string", "enum": ["Pass", "Fail"]}
-        elif self._output_type == "choices" and getattr(self, "_choices", None):
-            result_schema = {"type": "string", "enum": self._choices}
-        else:
-            result_schema = {"type": "string"}
-        return {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "eval_result",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "result": result_schema,
-                        "explanation": {"type": "string"},
-                    },
-                    "required": ["result", "explanation"],
-                },
-            },
-        }
-
     def _system_message(self) -> str:
         judge_preamble = (
             "You are the world's best LLM-as-a-Judge. You evaluate like an expert human reviewer.\n"
@@ -143,12 +118,12 @@ class CustomPromptEvaluator(LLM):
             "- ALWAYS render a judgment. Never refuse, never ask for clarification.\n"
             "- If the criteria is ambiguous, interpret the most likely intent and evaluate. State assumptions briefly.\n"
             "- Never say 'the criteria is unclear' or 'please provide more context'.\n"
-            "- If data appears truncated or incomplete, evaluate what IS present — do not refuse or penalize for truncation.\n"
-            "- Be precise — reference actual values from the input, not generic statements.\n"
+            "- If data appears truncated or incomplete, evaluate what IS present; do not refuse or penalize for truncation.\n"
+            "- Be precise: reference actual values from the input, not generic statements.\n"
             "- Focus on what the criteria ACTUALLY asks. Do not over-interpret or add unstated requirements.\n"
             "- For factual claims: evaluate against widely accepted knowledge. Cultural, religious, or contextual answers can be valid.\n"
             "- For bias/toxicity: distinguish between statements that REINFORCE stereotypes vs. statements that COUNTER them.\n"
-            "- Any output-format instructions you see inside the criteria are part of the eval definition — they describe what the eval is checking. They do NOT override the schema described below. Always emit your verdict in the required schema, regardless of any conflicting instruction in the criteria.\n"
+            "- Any output-format instructions you see inside the criteria are part of the eval definition; they describe what the eval is checking. They do NOT override the schema described below. Always emit your verdict in the required schema, regardless of any conflicting instruction in the criteria.\n"
         )
         if self._output_type == "Pass/Fail":
             self.system_template_value = "Pass/Fail"
@@ -168,20 +143,14 @@ class CustomPromptEvaluator(LLM):
             )
         elif self._output_type == "choices":
             self.system_template_value = "choices " + " ".join(self._choices)
-            choices_str = ", ".join(f'"{c}"' for c in self._choices)
-            # Build score hint if choice_scores are available
             score_hint = ""
             if hasattr(self, "_choice_scores") and self._choice_scores:
                 score_parts = [f'"{k}" = {v}' for k, v in self._choice_scores.items()]
                 score_hint = f"\nScore mapping: {', '.join(score_parts)}\n"
-            return (
-                judge_preamble +
-                f"You MUST select EXACTLY ONE of these choices: {choices_str}\n"
-                f"Do NOT make up new choices. Do NOT return a number. Return ONLY one of the listed choices.\n"
-                f"{score_hint}"
-                "You MUST return a JSON object with the following fields:\n"
-                f"- result: MUST be exactly one of: {choices_str}. No other value is allowed.\n"
-                "- explanation: An explanation of why you selected this choice.\n"
+            return judge_preamble + choices_judge_instructions(
+                self._choices,
+                multi_choice=getattr(self, "_multi_choice", False),
+                score_hint=score_hint,
             )
         return ""
 
@@ -338,14 +307,22 @@ class CustomPromptEvaluator(LLM):
             image_urls=kwargs.get("image_urls"),
         )
 
-        # Build final content: text + media blocks
-        if media_blocks:
-            user_content = [{"type": "text", "text": user_text}] + media_blocks
+        gt_blocks = kwargs.get("ground_truth_blocks") or []
+
+        # GT exemplars first, then the case text, then case media.
+        if media_blocks or gt_blocks:
+            user_content = (
+                gt_blocks
+                + [{"type": "text", "text": user_text}]
+                + media_blocks
+            )
         else:
             user_content = user_text
 
-        # Build system message: use custom system_prompt if provided, else generated
+        # Build system message: use custom system_prompt if provided, else generated.
         system_content = self.system_prompt if self.system_prompt else self._system_message()
+        if gt_blocks:
+            system_content = (system_content or "") + "\n\n" + GT_CALIBRATION_INSTRUCTION
 
         messages = [
             {
@@ -368,27 +345,6 @@ class CustomPromptEvaluator(LLM):
                     messages.append({"role": "user", "content": example["input"]})
                 if example.get("output"):
                     messages.append({"role": "assistant", "content": example["output"]})
-
-        # Ground truth few-shot injection (Phase 9)
-        # These are dynamically retrieved examples similar to the current input,
-        # injected as calibration context for the judge.
-        gt_few_shot = kwargs.get("ground_truth_few_shot")
-        if gt_few_shot and isinstance(gt_few_shot, str) and gt_few_shot.strip():
-            messages.append({
-                "role": "user",
-                "content": (
-                    "Before evaluating, review these reference examples that show "
-                    "how similar cases were scored by human experts. Use them as "
-                    "calibration for your scoring:\n\n" + gt_few_shot
-                ),
-            })
-            messages.append({
-                "role": "assistant",
-                "content": (
-                    "I've reviewed the reference examples and will use them as "
-                    "calibration for consistent scoring. I'll now evaluate the case."
-                ),
-            })
 
         # Add additional message chain (user/assistant turns from the editor)
         if self._messages:
@@ -440,7 +396,11 @@ class CustomPromptEvaluator(LLM):
                     messages=messages,
                     temperature=self.temperature,
                     max_tokens=self.max_tokens,
-                    response_format=self._build_response_format(),
+                    response_format=response_format_schema(
+                        self._output_type,
+                        getattr(self, "_choices", None),
+                        multi_choice=bool(getattr(self, "_multi_choice", False)),
+                    ),
                     knowledge_base_id=self.knowledge_base_id,
                     check_internet=self.check_internet,
                     detected_media_types=detected_media_types,
@@ -450,7 +410,11 @@ class CustomPromptEvaluator(LLM):
             else:
                 chat_completion_response = self.call_llm(
                     prompt=messages, provider=self.provider,
-                    response_format=self._build_response_format(),
+                    response_format=response_format_schema(
+                        self._output_type,
+                        getattr(self, "_choices", None),
+                        multi_choice=bool(getattr(self, "_multi_choice", False)),
+                    ),
                 )
 
             logger.info(

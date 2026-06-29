@@ -19,28 +19,25 @@ import { getSessionListColumnDef } from "./common";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
+import { normalizeConfigKeys } from "src/sections/projects/LLMTracing/common";
 import { useSessionsGridStoreShallow } from "./ReplaySessions/store";
 import { APP_CONSTANTS } from "src/utils/constants";
 
-const SESSION_GRID_THEME_PARAMS = {
+const getSessionGridThemeParams = (theme) => ({
   columnBorder: false,
   rowVerticalPaddingScale: 2.6,
-  headerColumnBorder: { width: 0 },
+  headerColumnBorder: false,
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
-};
+  rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+  headerFontSize: "13px",
+  headerFontWeight: theme.typography.fontWeightMedium,
+  headerBackgroundColor: "transparent",
+  headerTextColor: theme.palette.text.primary,
+  rowHoverColor: "rgba(120,87,252,0.04)",
+});
 
 const DATASET_ROWS_LIMIT = 30;
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -66,7 +63,7 @@ const SessionGrid = React.forwardRef(
     const [open, setOpen] = useState(false);
     const [currentRowData, setCurrentRowData] = useState(null);
     const theme = useTheme();
-    const agTheme = useAgThemeWith(SESSION_GRID_THEME_PARAMS);
+    const agTheme = useAgThemeWith(getSessionGridThemeParams(theme));
     const handleDrawerClose = () => {
       setOpen(false);
     };
@@ -310,7 +307,7 @@ const SessionGrid = React.forwardRef(
                   return updateObjRef.current?.[column.field] ?? true;
                 }
 
-                const columnConfig = (res?.config || []).find(
+                const columnConfig = (newCols || []).find(
                   (config) => config.id === column.field,
                 );
                 return columnConfig ? columnConfig.isVisible : true;

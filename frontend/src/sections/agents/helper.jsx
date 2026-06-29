@@ -71,6 +71,7 @@ export const emptyAgentSteps = [
 // New schema including all fields in the accordions
 export const createAgentDefinitionSchema = (options) => {
   const keysRequired = options?.keysRequired || false;
+  const agentDefinitionId = options?.agentDefinitionId;
   return z
     .object({
       // Basic Information
@@ -288,6 +289,7 @@ export const createAgentDefinitionSchema = (options) => {
               await axios.post(endpoints.agentDefinitions.verifyApiKey, {
                 provider: data.provider,
                 api_key: data.apiKey,
+                ...(agentDefinitionId && { agent_id: agentDefinitionId }),
               });
             } catch (error) {
               ctx.addIssue({

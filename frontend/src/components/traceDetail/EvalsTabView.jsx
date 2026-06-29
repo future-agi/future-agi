@@ -118,26 +118,45 @@ const EvalTableRow = ({
   onFixWithFalcon,
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const hasError = ev?.error === true;
-  const sc = hasError
+  const isSkipped = ev?.skipped === true;
+  const hasError = ev?.error === true && !isSkipped;
+  const sc = isSkipped
     ? {
-        bg: (theme) => alpha(theme.palette.error.main, 0.08),
-        text: "error.main",
+        bg: (theme) => alpha(theme.palette.text.disabled, 0.08),
+        text: "text.disabled",
       }
-    : scoreColor(ev.score);
+    : hasError
+      ? {
+          bg: (theme) => alpha(theme.palette.error.main, 0.08),
+          text: "error.main",
+        }
+      : scoreColor(ev.score);
   const evalName = ev.eval_name || ev.eval_config_id || "Eval";
   const explanation = ev.explanation || ev.eval_explanation;
-  const scoreLabel = hasError
-    ? "Error"
-    : ev.score_label != null
-      ? ev.score_label
-      : ev.score != null
-        ? `${ev.score}%`
-        : "—";
+  // Pass/Fail evals
+  const isPassFail =
+    ev.output_type === "pass_fail" || ev.output_type === "Pass/Fail";
+  const passFailLabel =
+    isPassFail && typeof ev.result === "boolean"
+      ? ev.result
+        ? "Pass"
+        : "Fail"
+      : null;
+
+  const scoreLabel = isSkipped
+    ? "Skipped"
+    : hasError
+      ? "Error"
+      : (ev.score_label ??
+        passFailLabel ??
+        (ev.score != null ? `${ev.score}%` : "—"));
 
   // Error localization visibility — surfaced for every eval that has
   // enough identifiers to drive either the cell-based or trace-based
   // flow. Rows with just an explanation still expand without it.
+  // Composite evals have no localizable input of their own — skip the whole
+  // localization flow before computing any of its identifiers.
+  const isComposite = ev?.template_type === "composite";
   const initialAnalysis = ev.error_analysis || ev.errorAnalysis || null;
   const cellId = ev.cell_id || ev.cellId;
   const observationSpanId =
@@ -152,10 +171,11 @@ const EvalTableRow = ({
   const initialStatus =
     ev.error_localizer_status || ev.errorLocalizerStatus || null;
   const hasErrorLocalization =
-    !!initialAnalysis ||
-    !!cellId ||
-    !!initialStatus ||
-    !!(observationSpanId && customEvalConfigId);
+    !isComposite &&
+    (!!initialAnalysis ||
+      !!cellId ||
+      !!initialStatus ||
+      !!(observationSpanId && customEvalConfigId));
   const canExpand = !!explanation || hasErrorLocalization;
 
   return (
