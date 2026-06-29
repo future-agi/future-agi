@@ -109,7 +109,6 @@ from model_hub.serializers.eval_runner import (
     UpdateColumnConfigSerializer,
     UpdateEvalTemplateSerializer,
 )
-from model_hub.utils.contract_boundary import validate_response_contract
 from model_hub.utils.eval_playground_call_context import (
     build_eval_playground_scenario_context,
 )
@@ -429,147 +428,37 @@ class GetAPICallLogDetailsView(APIView):
         responses={200: EvalApiLogTableResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, *args, **kwargs):
-        try:
-            if APICallLog is None:
-                # OSS empty shape MUST match EvalApiLogTableResponseResultSerializer
-                # (table=[], column_config=[]) — returning `[]` here broke the
-                # contract and the FE consumer narrowed to `result.table || []`.
-                return self._gm.success_response(
-                    validate_response_contract(
-                        EvalApiLogTableResponseResultSerializer,
-                        {"table": [], "column_config": []},
-                        view_name="GetAPICallLogDetailsView",
-                    )
-                )
-            query = request.validated_query_data
-            eval_template_id = str(query["eval_template_id"])
-            page_size = query["page_size"]
-            current_page = query["current_page_index"]
-            source = query["source"]
-            search = query["search"]
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
+        from model_hub.services.eval_usage_service import (  # noqa: PLC0415
+            compute_api_call_log_details,
+            empty_api_call_log_details,
+        )
 
-            try:
-                eval_template = _get_accessible_eval_template(
-                    eval_template_id, organization
-                )
-            except EvalTemplate.DoesNotExist:
-                return self._gm.not_found(get_error_message("EVAL_TEMP_NOT_FOUND"))
-
-            logs = APICallLog.objects.filter(
-                source_id=eval_template_id,
-                organization=organization,
-                status__in=[
-                    APICallStatusChoices.SUCCESS.value,
-                    APICallStatusChoices.ERROR.value,
-                ],
-                deleted=False,
-            ).order_by("-created_at")
-
-            if source == "feedback":
-                logs = logs.filter(source="feedback")
-
-            if source == "eval_playground":
-                logs = logs.filter(source="eval_playground")
-
-            column_data = get_column_data(eval_template_id, source, request.user)
-
-            filters = query["filters"]
-            if filters:
-                logs, new_filters = apply_created_at_filters(logs, filters)
-            else:
-                new_filters = []
-
-            if not logs.exists():
-                return self._gm.success_response(
-                    validate_response_contract(
-                        EvalApiLogTableResponseResultSerializer,
-                        {"table": [], "column_config": column_data},
-                        view_name="GetAPICallLogDetailsView",
-                    )
-                )
-
-            key_map = {col.get("id"): col.get("name") for col in column_data}
-            table_data = {}
-            table_data["column_config"] = column_data
-            row_data = []
-
-            # Wrap function with OTel context propagation for thread safety
-            wrapped_populate_log_row_data = wrap_for_thread(populate_log_row_data)
-
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                futures = []
-                for batch in batch_queryset(logs, 10):
-                    future = executor.submit(
-                        wrapped_populate_log_row_data, eval_template, batch, key_map
-                    )
-                    futures.append(future)
-
-                # Preserve original batch order by iterating futures directly
-                # instead of using as_completed() which returns in completion order
-                for future in futures:
-                    row_data.extend(future.result())
-
-            if new_filters:
-                row_data = apply_filters(row_data, new_filters)
-
-            sort_config = query["sort"]
-            if sort_config and row_data and len(row_data) > 0:
-                for sort_item in sort_config:
-                    column_id = sort_item.get("column_id")
-                    sort_type = sort_item.get("type")
-                    reverse = sort_type == "descending"
-
-                    def get_sort_key(item, col_id=column_id):
-                        if not col_id:
-                            return (
-                                ""  # Default return value if column_id is not provided.
-                            )
-
-                        try:
-                            # If column_id is not nested, fetch the value directly
-                            value = item.get(col_id, {}).get("cell_value", "")
-                            if not isinstance(value, str):
-                                value = str(value)
-
-                            return (
-                                str(value).lower()
-                                if isinstance(value, str)
-                                else (value or 0)
-                            )
-
-                        except (AttributeError, TypeError):
-                            # If we can't get the value, return a default empty string
-                            return ""
-
-                    row_data.sort(key=get_sort_key, reverse=reverse)
-
-            if search:
-                row_data = apply_search(row_data, search, column_data)
-
-            total_rows = len(row_data) if row_data is not None else 0
-            start = current_page * page_size
-            end = start + page_size
-
-            table_data["table"] = row_data[start:end] if row_data is not None else []
-            metadata = {}
-            metadata["total_rows"] = total_rows
-            metadata["total_pages"] = (total_rows + page_size - 1) // page_size
-            table_data["metadata"] = metadata
-
+        if APICallLog is None:
+            result = empty_api_call_log_details()
             return self._gm.success_response(
-                validate_response_contract(
-                    EvalApiLogTableResponseResultSerializer,
-                    table_data,
-                    view_name="GetAPICallLogDetailsView",
-                )
+                EvalApiLogTableResponseResultSerializer(instance=result).data
             )
 
-        except Exception as e:
-            logger.exception(f"Error in GetAPICallLogs: {str(e)}")
-            return self._gm.internal_server_error_response(str(e))
+        organization = (
+            getattr(request, "organization", None) or request.user.organization
+        )
+        query = request.validated_query_data
+        try:
+            eval_template = _get_accessible_eval_template(
+                str(query["eval_template_id"]), organization
+            )
+        except EvalTemplate.DoesNotExist:
+            return self._gm.not_found(get_error_message("EVAL_TEMP_NOT_FOUND"))
+
+        result = compute_api_call_log_details(
+            eval_template=eval_template,
+            organization=organization,
+            user=request.user,
+            query=query,
+        )
+        return self._gm.success_response(
+            EvalApiLogTableResponseResultSerializer(instance=result).data
+        )
 
 
 class GetAPICallLogView(APIView):
@@ -4844,504 +4733,60 @@ class EvalUsageStatsView(APIView):
     GET /model-hub/eval-templates/<id>/usage/
 
     Returns usage stats, chart data, and paginated eval logs.
-    Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d)
+    Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d).
+
+    Logic lives in `model_hub.services.eval_usage_service`. The serializer
+    at the boundary (`EvalUsageStatsResponseResultSerializer(instance=...).data`)
+    is the response contract — drift would surface as a serializer error
+    at this call site rather than be silently shipped.
     """
 
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
-
-    PERIOD_MAP = {
-        "30m": timedelta(minutes=30),
-        "6h": timedelta(hours=6),
-        "1d": timedelta(days=1),
-        "7d": timedelta(days=7),
-        "30d": timedelta(days=30),
-        "90d": timedelta(days=90),
-        "180d": timedelta(days=180),
-        "365d": timedelta(days=365),
-    }
 
     @validated_request(
         query_serializer=EvalUsageQuerySerializer,
         responses={200: EvalUsageStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, template_id, *args, **kwargs):
-        try:
-            if APICallLog is None:
-                # OSS: return correct empty shape so frontend doesn't crash
-                return self._gm.success_response(
-                    validate_response_contract(
-                        EvalUsageStatsResponseResultSerializer,
-                        {
-                            "template_id": str(template_id),
-                            "is_composite": False,
-                            "stats": {
-                                "total_runs": 0,
-                                "runs_period": 0,
-                                "success_count": 0,
-                                "error_count": 0,
-                                "pass_rate": 0.0,
-                            },
-                            "chart": [],
-                            "table": [],
-                            "logs": {"total": 0, "page": 0, "page_size": 25},
-                        },
-                        view_name="EvalUsageStatsView",
-                    )
-                )
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
-            workspace = getattr(request, "workspace", None)
+        from model_hub.services.eval_usage_service import (  # noqa: PLC0415
+            compute_eval_usage_stats,
+            empty_eval_usage_stats,
+        )
 
-            # Scope template fetch to the active workspace to prevent cross-workspace reads.
-            try:
-                template_qs = EvalTemplate.objects.filter(
-                    id=template_id, deleted=False, organization=organization
-                )
-                if workspace:
-                    from django.db.models import Q
-                    template_qs = template_qs.filter(
-                        Q(workspace=workspace) | Q(workspace__isnull=True)
-                    )
-                template = template_qs.get()
-            except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
-
-            query = request.validated_query_data
-            page = query["page"]
-            page_size = query["page_size"]
-            period = query["period"]
-            start_date_param = query.get("start_date")
-            end_date_param = query.get("end_date")
-
-            end_date = timezone.now()
-            if start_date_param and end_date_param:
-                start_date = start_date_param
-                end_date = end_date_param
-            else:
-                period_delta = self.PERIOD_MAP.get(period, timedelta(days=30))
-                start_date = end_date - period_delta
-
-            # Scope logs to the active workspace so one workspace cannot read another's data.
-            base_qs = APICallLog.objects.filter(
-                organization=organization,
-                source_id=str(template_id),
-                deleted=False,
-            )
-            if workspace:
-                base_qs = base_qs.filter(workspace=workspace)
-            total_runs = base_qs.count()
-
-            # Period-filtered queryset
-            period_qs = base_qs.filter(created_at__gte=start_date, created_at__lte=end_date)
-            runs_period = period_qs.count()
-
-            success_count = period_qs.filter(
-                status=APICallStatusChoices.SUCCESS.value
-            ).count()
-            error_count = period_qs.filter(
-                status=APICallStatusChoices.ERROR.value
-            ).count()
-
-            # Chart data — aggregate by time bucket
-            from collections import defaultdict
-
-            chart_data = []
-            if runs_period > 0:
-                # Pick bucket size based on period
-                if period in ("30m", "6h", "1d"):
-                    bucket_minutes = (
-                        10 if period == "30m" else (60 if period == "6h" else 360)
-                    )
-                else:
-                    bucket_minutes = 1440  # 1 day
-
-                buckets_calls = defaultdict(int)
-                buckets_latency = defaultdict(list)
-                buckets_scores = defaultdict(list)
-                buckets_pass = defaultdict(int)
-                buckets_fail = defaultdict(int)
-
-                for log in period_qs.values("created_at", "config", "status"):
-                    ts = log["created_at"]
-                    # Round to bucket boundary.
-                    # For sub-hour buckets (10m): round minute, keep hour.
-                    # For multi-hour buckets (6h for 1d): ALSO round hour — without
-                    # this, a log at 14:35 gets key 14:00 while zero-fill emits
-                    # 0:00/6:00/12:00/18:00, so most logs never match any bucket.
-                    if bucket_minutes >= 1440:
-                        bucket_ts = ts.replace(hour=0, minute=0, second=0, microsecond=0)
-                    elif bucket_minutes >= 60:
-                        hour_size = bucket_minutes // 60
-                        rounded_hour = (ts.hour // hour_size) * hour_size
-                        bucket_ts = ts.replace(hour=rounded_hour, minute=0, second=0, microsecond=0)
-                    else:
-                        bucket_ts = ts.replace(
-                            minute=(ts.minute // bucket_minutes) * bucket_minutes,
-                            second=0, microsecond=0,
-                        )
-                    bucket_key = bucket_ts.isoformat()
-                    buckets_calls[bucket_key] += 1
-
-                    # Extract latency + score from config
-                    config = log.get("config")
-                    if isinstance(config, str):
-                        try:
-                            config = json.loads(config)
-                        except Exception:
-                            config = {}
-                    if isinstance(config, dict):
-                        duration = config.get("duration") or config.get("response_time")
-                        if duration:
-                            try:
-                                buckets_latency[bucket_key].append(float(duration))
-                            except (ValueError, TypeError):
-                                pass
-
-                        # Extract score/result from output
-                        output = config.get("output", {})
-                        if isinstance(output, dict):
-                            is_composite = config.get("composite") is True
-                            score = output.get("output")
-                            if isinstance(score, int | float):
-                                buckets_scores[bucket_key].append(float(score))
-                                # Composite logs carry aggregate_pass
-                                if is_composite:
-                                    agg_pass = output.get("aggregate_pass")
-                                    if agg_pass is True:
-                                        buckets_pass[bucket_key] += 1
-                                    elif agg_pass is False:
-                                        buckets_fail[bucket_key] += 1
-                            elif isinstance(score, dict):
-                                # Choice output: {"label": "Good", "score": 0.9}
-                                numeric = score.get("score")
-                                if isinstance(numeric, (int, float)):
-                                    buckets_scores[bucket_key].append(float(numeric))
-                                label = score.get("label", "")
-                                if label in ("Passed", "Pass"):
-                                    buckets_pass[bucket_key] += 1
-                                elif label in ("Failed", "Fail"):
-                                    buckets_fail[bucket_key] += 1
-                            elif score in ("Passed", "Pass"):
-                                buckets_pass[bucket_key] += 1
-                                buckets_scores[bucket_key].append(1.0)
-                            elif score in ("Failed", "Fail"):
-                                buckets_fail[bucket_key] += 1
-                                buckets_scores[bucket_key].append(0.0)
-
-                # Zero-fill: generate all buckets in the range.
-                # Must apply the same rounding as the per-log bucket_ts computation
-                # so that keys produced here match keys produced from log timestamps.
-                if bucket_minutes >= 1440:
-                    current_bucket = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-                elif bucket_minutes >= 60:
-                    _hour_size = bucket_minutes // 60
-                    _rounded_hour = (start_date.hour // _hour_size) * _hour_size
-                    current_bucket = start_date.replace(hour=_rounded_hour, minute=0, second=0, microsecond=0)
-                else:
-                    _rounded_minute = (start_date.minute // bucket_minutes) * bucket_minutes
-                    current_bucket = start_date.replace(minute=_rounded_minute, second=0, microsecond=0)
-                all_bucket_keys = []
-                while current_bucket <= end_date:
-                    all_bucket_keys.append(current_bucket.isoformat())
-                    if bucket_minutes >= 1440:
-                        current_bucket += timedelta(days=1)
-                    else:
-                        current_bucket += timedelta(minutes=bucket_minutes)
-
-                for ts_key in all_bucket_keys:
-                    latencies = buckets_latency.get(ts_key, [])
-                    scores = buckets_scores.get(ts_key, [])
-                    avg_latency = sum(latencies) / len(latencies) if latencies else 0
-                    avg_score = sum(scores) / len(scores) if scores else None
-                    chart_data.append(
-                        {
-                            "timestamp": ts_key,
-                            "calls": buckets_calls.get(ts_key, 0),
-                            "avg_latency_ms": (
-                                round(avg_latency * 1000)
-                                if avg_latency < 100
-                                else round(avg_latency)
-                            ),
-                            "avg_score": (
-                                round(avg_score, 3) if avg_score is not None else None
-                            ),
-                            "pass_count": buckets_pass.get(ts_key, 0),
-                            "fail_count": buckets_fail.get(ts_key, 0),
-                        }
-                    )
-
-            # Paginated logs
-            logs_qs = period_qs.order_by("-created_at")
-            total_logs = logs_qs.count()
-            logs_page = logs_qs[page * page_size : (page + 1) * page_size]
-
-            # Batch-fetch feedbacks for this page's log IDs
-            log_ids = [str(log.log_id) for log in logs_page]
-            feedbacks_qs = Feedback.objects.filter(
-                source_id__in=log_ids,
-                organization=organization,
-                deleted=False,
-            ).order_by("-created_at")
-            feedback_map = {}
-            for fb in feedbacks_qs:
-                if fb.source_id not in feedback_map:
-                    feedback_map[fb.source_id] = {
-                        "id": str(fb.id),
-                        "value": fb.value,
-                        "explanation": fb.explanation or "",
-                        "action_type": fb.action_type or "",
-                        "created_at": (
-                            fb.created_at.isoformat() if fb.created_at else ""
-                        ),
-                        "user": fb.user.email if fb.user else "",
-                    }
-
-            log_items = []
-            _skip_keys = {
-                "call_type",
-                "image_urls",
-                "input_data_types",
-                "config",
-                "params",
-                "model",
-                "choices",
-                "multi_choice",
-                "mapping",
-                "mappings",
-                "source",
-                "reference_id",
-                "is_futureagi_eval",
-                "required_keys",
-                "error_localizer",
-                "kb_id",
-                "row_context",
-                "result",
-            }
-
-            for log in logs_page:
-                config = log.config
-                if isinstance(config, str):
-                    try:
-                        config = json.loads(config)
-                    except Exception:
-                        config = {}
-
-                is_composite_log = (
-                    isinstance(config, dict) and config.get("composite") is True
-                )
-
-                output_data = (
-                    config.get("output", {}) if isinstance(config, dict) else {}
-                )
-                source = config.get("source", "") if isinstance(config, dict) else ""
-
-                # Extract mapped input variables (the actual eval inputs)
-                mappings = (
-                    config.get("mappings", {}) if isinstance(config, dict) else {}
-                )
-                input_vars = {}
-                if isinstance(mappings, dict):
-                    for k, v in mappings.items():
-                        if k not in _skip_keys and v is not None:
-                            val_str = str(v) if not isinstance(v, dict | list) else ""
-                            if not val_str or val_str.startswith("There seems to be"):
-                                continue
-                            # Truncate URLs to just show [image] or [url]
-                            if val_str.startswith("http"):
-                                val_str = (
-                                    "[image]"
-                                    if any(
-                                        ext in val_str.lower()
-                                        for ext in (
-                                            ".png",
-                                            ".jpg",
-                                            ".jpeg",
-                                            ".webp",
-                                            ".gif",
-                                            ".svg",
-                                        )
-                                    )
-                                    else "[url]"
-                                )
-                            input_vars[k] = val_str
-
-                # Build input summary: "key1: val1, key2: val2"
-                if input_vars:
-                    input_str = ", ".join(
-                        f"{k}: {v}" for k, v in list(input_vars.items())[:3]
-                    )
-                else:
-                    # Fallback to config.input
-                    input_data = (
-                        config.get("input", {}) if isinstance(config, dict) else {}
-                    )
-                    if isinstance(input_data, dict):
-                        parts = []
-                        for k, v in input_data.items():
-                            if v and k not in _skip_keys:
-                                parts.append(f"{k}: {str(v)}")
-                        input_str = ", ".join(parts[:3])
-                    elif isinstance(input_data, str):
-                        input_str = input_data
-                    else:
-                        input_str = ""
-
-                # Extract score and reason from output
-                score = None
-                reason = ""
-                result_label = ""
-                if isinstance(output_data, dict):
-                    raw_output = output_data.get("output")
-                    reason = output_data.get("reason", "")
-                    if isinstance(raw_output, dict):
-                        # Choice object
-                        result_label = raw_output.get("label", "")
-                        score = raw_output.get("score")
-                    elif isinstance(raw_output, int | float):
-                        score = raw_output
-                    elif isinstance(raw_output, str):
-                        result_label = raw_output
-                        if raw_output in ("Passed", "Pass"):
-                            score = 1.0
-                        elif raw_output in ("Failed", "Fail"):
-                            score = 0.0
-
-                # Composite-specific: derive result label from aggregate_pass
-                if is_composite_log and isinstance(output_data, dict):
-                    agg_pass = output_data.get("aggregate_pass")
-                    if agg_pass is True:
-                        result_label = "Passed"
-                    elif agg_pass is False:
-                        result_label = "Failed"
-
-                # Surface partial-input warnings stored on output_data.
-                # Set by every eval execution path (dataset/playground/
-                # tracing) when a custom eval ran with some inputs empty.
-                warnings = (
-                    output_data.get("warnings")
-                    if isinstance(output_data, dict)
-                    else None
-                )
-
-                # Build row: static fields + flattened input variables
-                row_data = {
-                    "row_id": str(log.log_id),
-                    "score": {"cell_value": score},
-                    "result": {"cell_value": result_label},
-                    "input": {"cell_value": input_str},
-                    "reason": {"cell_value": reason},
-                    "source": {"cell_value": source},
-                    "version": {
-                        "cell_value": (
-                            ""
-                            if template.owner == OwnerChoices.SYSTEM.value
-                            else config.get("version_number")
-                            if isinstance(config, dict)
-                            else None
-                        ),
-                    },
-                    "feedback": {
-                        "cell_value": feedback_map.get(str(log.log_id)),
-                    },
-                    "created_at": {
-                        "cell_value": (
-                            log.created_at.isoformat() if log.created_at else ""
-                        ),
-                    },
-                    "status": {"cell_value": log.status},
-                    "warnings": {"cell_value": warnings or []},
-                }
-
-                # Flatten input variables as individual columns
-                all_vars = input_vars or (config.get("input", {}) if isinstance(config, dict) else {})
-                if isinstance(all_vars, dict):
-                    for var_key, var_val in all_vars.items():
-                        row_data[f"input_var_{var_key}"] = {
-                            "cell_value": var_val,
-                        }
-
-                # Keep detail for the side panel
-                row_data["detail"] = {
-                    "input_variables": all_vars,
-                    "output": output_data,
-                    "warnings": warnings or [],
-                    "mappings": mappings,
-                    "model": (
-                        config.get("model")
-                        if isinstance(config, dict)
-                        else None
-                    ),
-                    "version_id": (
-                        config.get("version_id")
-                        if isinstance(config, dict)
-                        else None
-                    ),
-                    "version_number": (
-                        config.get("version_number")
-                        if isinstance(config, dict)
-                        else None
-                    ),
-                }
-
-                if is_composite_log:
-                    children = config.get("children", [])
-                    row_data["composite"] = True
-                    row_data["aggregate_pass"] = (
-                        output_data.get("aggregate_pass")
-                        if isinstance(output_data, dict)
-                        else None
-                    )
-                    row_data["detail"]["children"] = children
-                    row_data["detail"]["aggregation_function"] = config.get(
-                        "aggregation_function"
-                    )
-                    row_data["detail"]["total_children"] = config.get(
-                        "total_children"
-                    )
-                    row_data["detail"]["completed_children"] = config.get(
-                        "completed_children"
-                    )
-                    row_data["detail"]["failed_children"] = config.get(
-                        "failed_children"
-                    )
-
-                log_items.append(row_data)
-
-            response = {
-                "template_id": str(template_id),
-                "is_composite": template.template_type == "composite",
-                "stats": {
-                    "total_runs": total_runs,
-                    "runs_period": runs_period,
-                    "success_count": success_count,
-                    "error_count": error_count,
-                    "pass_rate": round(
-                        (success_count / runs_period * 100) if runs_period > 0 else 0, 2
-                    ),
-                },
-                "chart": chart_data,
-                "table": log_items,
-                "logs": {
-                    "total": total_logs,
-                    "page": page,
-                    "page_size": page_size,
-                },
-            }
+        if APICallLog is None:
+            result = empty_eval_usage_stats(str(template_id))
             return self._gm.success_response(
-                validate_response_contract(
-                    EvalUsageStatsResponseResultSerializer,
-                    response,
-                    view_name="EvalUsageStatsView",
-                )
+                EvalUsageStatsResponseResultSerializer(instance=result).data
             )
 
-        except Exception as e:
-            logger.error(
-                f"Error in EvalUsageStatsView: {str(e)}\n{traceback.format_exc()}"
+        organization = (
+            getattr(request, "organization", None) or request.user.organization
+        )
+        workspace = getattr(request, "workspace", None)
+
+        # Workspace-scope the template fetch — caller in workspace B must not
+        # be able to read workspace A's stats just by knowing the UUID.
+        template_qs = EvalTemplate.objects.filter(
+            id=template_id, deleted=False, organization=organization
+        )
+        if workspace:
+            template_qs = template_qs.filter(
+                Q(workspace=workspace) | Q(workspace__isnull=True)
             )
-            return self._gm.bad_request(str(e))
+        template = template_qs.first()
+        if template is None:
+            return self._gm.not_found("Eval template not found.")
+
+        result = compute_eval_usage_stats(
+            template=template,
+            organization=organization,
+            workspace=workspace,
+            query=request.validated_query_data,
+        )
+        return self._gm.success_response(
+            EvalUsageStatsResponseResultSerializer(instance=result).data
+        )
 
 
 class EvalFeedbackListView(APIView):
@@ -5360,115 +4805,38 @@ class EvalFeedbackListView(APIView):
         responses={200: EvalFeedbackListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, template_id, *args, **kwargs):
-        from model_hub.models.evals_metric import Feedback
+        from model_hub.services.eval_usage_service import (  # noqa: PLC0415
+            compute_eval_feedback_list,
+            empty_eval_feedback_list,
+        )
 
-        try:
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
-            workspace = getattr(request, "workspace", None)
+        organization = (
+            getattr(request, "organization", None) or request.user.organization
+        )
+        workspace = getattr(request, "workspace", None)
 
-            try:
-                if APICallLog is None:
-                    # OSS: return correct empty shape so frontend doesn't crash
-                    return self._gm.success_response(
-                        validate_response_contract(
-                            EvalFeedbackListResponseResultSerializer,
-                            {
-                                "template_id": str(template_id),
-                                "items": [],
-                                "total": 0,
-                                "page": 0,
-                                "page_size": 25,
-                            },
-                            view_name="EvalFeedbackListView",
-                        )
-                    )
-                _get_accessible_eval_template(template_id, organization)
-            except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
-
-            query = request.validated_query_data
-            page = query["page"]
-            page_size = query["page_size"]
-
-            # Join feedback via eval_template_id (direct) or source_id matching
-            # an APICallLog.log_id for this template.  Pass the queryset directly
-            # to __in so Django generates a SQL subquery — no hard cap, no memory
-            # load.  Cast log_id (UUID) to text explicitly to avoid implicit-cast
-            # type mismatches against source_id (CharField).
-            from django.db.models.functions import Cast
-            from django.db.models import TextField
-
-            log_id_qs = APICallLog.objects.filter(
-                source_id=str(template_id),
-                organization=organization,
-                deleted=False,
-            )
-            if workspace:
-                log_id_qs = log_id_qs.filter(workspace=workspace)
-            log_id_qs = (
-                log_id_qs
-                .annotate(log_id_str=Cast("log_id", TextField()))
-                .values("log_id_str")
-            )
-
-            base_qs = (
-                Feedback.objects.filter(
-                    organization=organization,
-                    deleted=False,
-                )
-                .filter(
-                    Q(eval_template_id=template_id)
-                    | Q(source_id__in=log_id_qs)
-                )
-                .select_related("user")
-                .order_by("-created_at")
-            )
-
-            total = base_qs.count()
-            feedbacks = base_qs[page * page_size : (page + 1) * page_size]
-
-            items = []
-            for fb in feedbacks:
-                user_name = ""
-                if fb.user:
-                    user_name = getattr(fb.user, "name", "") or fb.user.email
-
-                items.append(
-                    {
-                        "id": str(fb.id),
-                        "value": str(fb.value),
-                        "explanation": fb.explanation or "",
-                        "source": fb.source or "",
-                        "source_id": fb.source_id or "",
-                        "action_type": fb.action_type or "",
-                        "user_name": user_name,
-                        "created_at": (
-                            fb.created_at.isoformat() if fb.created_at else ""
-                        ),
-                    }
-                )
-
+        if APICallLog is None:
+            result = empty_eval_feedback_list(str(template_id))
             return self._gm.success_response(
-                validate_response_contract(
-                    EvalFeedbackListResponseResultSerializer,
-                    {
-                        "template_id": str(template_id),
-                        "items": items,
-                        "total": total,
-                        "page": page,
-                        "page_size": page_size,
-                    },
-                    view_name="EvalFeedbackListView",
-                )
+                EvalFeedbackListResponseResultSerializer(instance=result).data
             )
 
-        except Exception as e:
-            logger.error(
-                f"Error in EvalFeedbackListView: {str(e)}\n{traceback.format_exc()}"
-            )
-            return self._gm.bad_request(str(e))
+        # Authorise BEFORE computing — `_get_accessible_eval_template` raises
+        # DoesNotExist for cross-workspace / cross-org reads.
+        try:
+            _get_accessible_eval_template(template_id, organization)
+        except EvalTemplate.DoesNotExist:
+            return self._gm.not_found("Eval template not found.")
+
+        result = compute_eval_feedback_list(
+            template_id=str(template_id),
+            organization=organization,
+            workspace=workspace,
+            query=request.validated_query_data,
+        )
+        return self._gm.success_response(
+            EvalFeedbackListResponseResultSerializer(instance=result).data
+        )
 
 
 class TraceEvalView(APIView):

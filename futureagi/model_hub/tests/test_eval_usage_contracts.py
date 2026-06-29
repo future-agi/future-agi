@@ -270,73 +270,55 @@ class TestWorkspaceIsolation:
         assert resp.json()["result"]["logs"]["total"] == 1
 
 
-# ── Boundary validation helper ────────────────────────────────────────────────
+# ── Service layer — drift surfaces at the serializer boundary ────────────────
 
-class TestValidateResponseContract:
-    """validate_response_contract must raise on drift in test mode so CI
-    catches contract regressions instead of letting them ship silently."""
+class TestServiceShapeMatchesSerializer:
+    """The Usage views push response construction into
+    `model_hub.services.eval_usage_service` and run the result through
+    `Serializer(instance=result).data`. A missing required field would
+    raise a KeyError at the serializer boundary — these tests pin the
+    shape contract so drift can't silently re-emerge.
+    """
 
-    def test_drift_raises_in_test_mode(self):
-        from model_hub.utils.contract_boundary import validate_response_contract
-        from model_hub.serializers.contracts import EvalUsageStatsResponseResultSerializer
-
-        # `stats` is a required nested serializer — a missing key must surface
-        # as an AssertionError under TESTING/DEBUG.
-        broken = {
-            "template_id": str(uuid.uuid4()),
-            "is_composite": False,
-            # stats: MISSING
-            "chart": [],
-            "table": [],
-            "logs": {"total": 0, "page": 0, "page_size": 25},
-        }
-        with pytest.raises(AssertionError, match="contract drift"):
-            validate_response_contract(
-                EvalUsageStatsResponseResultSerializer,
-                broken,
-                view_name="EvalUsageStatsView",
-            )
-
-    def test_well_shaped_dict_passes(self):
-        from model_hub.utils.contract_boundary import validate_response_contract
-        from model_hub.serializers.contracts import EvalUsageStatsResponseResultSerializer
-
-        good = {
-            "template_id": str(uuid.uuid4()),
-            "is_composite": False,
-            "stats": {
-                "total_runs": 0, "runs_period": 0, "success_count": 0,
-                "error_count": 0, "pass_rate": 0.0,
-            },
-            "chart": [],
-            "table": [],
-            "logs": {"total": 0, "page": 0, "page_size": 25},
-        }
-        # Returns the dict unchanged, no exception.
-        result = validate_response_contract(
+    def test_empty_eval_usage_stats_renders(self):
+        from model_hub.services.eval_usage_service import empty_eval_usage_stats
+        from model_hub.serializers.contracts import (
             EvalUsageStatsResponseResultSerializer,
-            good,
-            view_name="EvalUsageStatsView",
         )
-        assert result is good
 
-    def test_drift_logs_in_prod(self, settings, caplog):
-        """In prod (DEBUG=False, TESTING=False) drift must log, not raise.
-        Fail-open: users still see their data even if the contract drifts."""
-        from model_hub.utils.contract_boundary import validate_response_contract
-        from model_hub.serializers.contracts import EvalUsageStatsResponseResultSerializer
+        rendered = EvalUsageStatsResponseResultSerializer(
+            instance=empty_eval_usage_stats("00000000-0000-0000-0000-000000000001")
+        ).data
+        assert rendered["template_id"] == "00000000-0000-0000-0000-000000000001"
+        assert rendered["is_composite"] is False
+        assert rendered["stats"]["total_runs"] == 0
+        assert rendered["chart"] == []
+        assert rendered["table"] == []
+        assert rendered["logs"] == {"total": 0, "page": 0, "page_size": 25}
 
-        settings.DEBUG = False
-        settings.TESTING = False
-        broken = {"template_id": str(uuid.uuid4())}  # missing everything else
-
-        # Must not raise.
-        result = validate_response_contract(
-            EvalUsageStatsResponseResultSerializer,
-            broken,
-            view_name="EvalUsageStatsView",
+    def test_empty_eval_feedback_list_renders(self):
+        from model_hub.services.eval_usage_service import empty_eval_feedback_list
+        from model_hub.serializers.contracts import (
+            EvalFeedbackListResponseResultSerializer,
         )
-        assert result is broken  # fail-open returns unchanged
+
+        rendered = EvalFeedbackListResponseResultSerializer(
+            instance=empty_eval_feedback_list("00000000-0000-0000-0000-000000000001")
+        ).data
+        assert rendered["items"] == []
+        assert rendered["total"] == 0
+
+    def test_empty_api_call_log_details_renders(self):
+        from model_hub.services.eval_usage_service import empty_api_call_log_details
+        from model_hub.serializers.contracts import (
+            EvalApiLogTableResponseResultSerializer,
+        )
+
+        rendered = EvalApiLogTableResponseResultSerializer(
+            instance=empty_api_call_log_details()
+        ).data
+        assert rendered["table"] == []
+        assert rendered["column_config"] == []
 
 
 # ── EvalApiLogTable + column_config contract ─────────────────────────────────
