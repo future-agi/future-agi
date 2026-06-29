@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useRef } from "react";
 import {
   Avatar,
   AvatarGroup,
@@ -143,7 +143,9 @@ function AssignedCellRenderer({ data, context }) {
   if (!data) return null;
 
   const assignedUsers = data.assigned_users || [];
-  const annotators = (context?.annotators || []).filter(isQueueAnnotatorRole);
+  const annotators = (context?.annotatorsRef?.current || []).filter(
+    isQueueAnnotatorRole,
+  );
   const assignItems = context?.onAssign;
   const isAutoAssign = Boolean(context?.autoAssign);
   const canAssign = Boolean(assignItems);
@@ -543,6 +545,9 @@ export default function QueueItemsTable({
 
   const [removeTarget, setRemoveTarget] = useState(null);
 
+  const annotatorsRef = useRef(annotators);
+  annotatorsRef.current = annotators;
+
   const columnDefs = useMemo(
     () =>
       [
@@ -566,6 +571,17 @@ export default function QueueItemsTable({
           flex: 1,
           minWidth: 130,
           cellRenderer: loading ? SkeletonCell : StatusCellRenderer,
+          valueGetter: (params) => {
+            const d = params.data;
+            return [
+              d.workflow_status,
+              d.review_status,
+              d.status,
+              d.workflow_status_label,
+              d.reserved_by,
+              d.reserved_by_name,
+            ].join("|");
+          },
         },
         {
           field: "assignedTo",
@@ -643,12 +659,12 @@ export default function QueueItemsTable({
   const gridContext = useMemo(
     () => ({
       onRemoveConfirm: canManageItems ? (item) => setRemoveTarget(item) : null,
-      annotators,
+      annotatorsRef,
       onAssign,
       autoAssign,
       gridRef,
     }),
-    [annotators, onAssign, autoAssign, gridRef, canManageItems],
+    [onAssign, autoAssign, gridRef, canManageItems],
   );
 
   const onCellClicked = useCallback(
