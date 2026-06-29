@@ -3,7 +3,6 @@ import json
 from rest_framework import serializers
 
 from model_hub.constants import MAX_EMPTY_DATASET_ROWS
-from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
 from model_hub.models.choices import ModelTypes
 from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetKbSerializer,
@@ -12,6 +11,7 @@ from model_hub.serializers.optimize_dataset import (
 from model_hub.serializers.performance_report import PerformanceReportSerializer
 from model_hub.services.ai_eval_writer_service import OUTPUT_FORMAT_PROMPTS
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
+from tfc.utils.serializer_fields import StringOrObjectField
 from tracer.serializers.filters import (
     SortParamField,
     StrictInputSerializer,

@@ -1,5 +1,4 @@
 from rest_framework import serializers
-from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
 
 from agent_playground.models.choices import (
     RESERVED_NAME_RE,
@@ -13,6 +12,7 @@ from agent_playground.serializers.port import (
     PortReadSerializer,
     PortWriteSerializer,
 )
+from tfc.utils.serializer_fields import StringOrObjectField
 
 
 class NodeReadSerializer(serializers.ModelSerializer):

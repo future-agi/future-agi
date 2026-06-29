@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from model_hub.models.api_key import ApiKey
-from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
+from tfc.utils.serializer_fields import StringOrObjectField
 
 
 class ApiKeyCreateSerializer(serializers.Serializer):
