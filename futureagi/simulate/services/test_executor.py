@@ -43,7 +43,9 @@ def build_eval_configs_map(call_execution) -> dict[str, "SimulateEvalConfig"]:
         return {}
     return {
         str(c.id): c
-        for c in SimulateEvalConfig.objects.filter(id__in=eval_config_ids)
+        for c in SimulateEvalConfig.objects.filter(
+            id__in=eval_config_ids, deleted=False
+        )
     }
 
 

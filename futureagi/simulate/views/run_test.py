@@ -2508,9 +2508,16 @@ class TestExecutionDetailView(APIView):
                 call_executions_serializer.data
             )
 
-            # Add column order and metadata to response
+            # Add column order and metadata to response. Drop evaluation
+            # columns whose config was soft-deleted from the run test —
+            # column_order is persisted and is not pruned on eval delete.
             response_data = paginated_response.data
-            response_data["column_order"] = column_order
+            response_data["column_order"] = [
+                col
+                for col in column_order
+                if col.get("type") != "evaluation"
+                or str(col.get("id")) in eval_configs_map
+            ]
             response_data["error_messages"] = error_messages
             response_data["status"] = test_execution.status
             response_data["provider"] = (

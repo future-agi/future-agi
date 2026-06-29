@@ -666,9 +666,20 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if not eval_outputs:
             return {}
 
+        # Drop outputs for soft-deleted eval configs. When an authoritative
+        # eval_configs map is provided in context, any eval_id missing from it
+        # is a deleted config and must not surface in the execution.
+        eval_configs = (
+            self.context.get("eval_configs", {})
+            if hasattr(self, "context") and self.context
+            else {}
+        )
+
         # Transform eval_outputs to a more structured format
         structured_outputs = {}
         for eval_id, eval_data in eval_outputs.items():
+            if eval_configs and eval_id not in eval_configs:
+                continue
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
                     structured_outputs[eval_id] = {}
@@ -724,6 +735,8 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
         metrics = {}
         for eval_id, eval_data in eval_outputs.items():
+            if eval_configs and eval_id not in eval_configs:
+                continue
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
                     metrics[eval_id] = {}
