@@ -1276,3 +1276,428 @@ class TestTraceSessionUserIdFilterValidation:
                 {"project_id": str(observe_project.id), "filters": filters},
             )
         assert response.status_code != status.HTTP_400_BAD_REQUEST
+
+
+# ===========================================================================
+# Benchmark: Session List Query Latency (requires running ClickHouse)
+# ===========================================================================
+
+
+@pytest.mark.benchmark
+class TestSessionListLatency:
+    """Wall-time benchmarks for /tracer/trace-session/list_sessions/.
+
+    These tests hit the real ClickHouse instance and measure end-to-end
+    latency for common filter combinations. They skip automatically when
+    CH is not reachable.
+
+    Run with: pytest -m benchmark futureagi/tracer/tests/test_trace_session.py -v
+    """
+
+    @staticmethod
+    def _ch_available():
+        try:
+            from tracer.services.clickhouse.client import (
+                ClickHouseClient,
+                is_clickhouse_enabled,
+            )
+
+            if not is_clickhouse_enabled():
+                return False
+            client = ClickHouseClient()
+            client.execute_read("SELECT 1", {})
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _get_test_project_id():
+        from tracer.services.clickhouse.client import ClickHouseClient
+
+        client = ClickHouseClient()
+        rows, _, _ = client.execute_read(
+            "SELECT toString(project_id), count() AS n "
+            "FROM spans WHERE is_deleted = 0 "
+            "GROUP BY project_id ORDER BY n DESC LIMIT 1",
+            {},
+        )
+        if rows:
+            return rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0].get("project_id")
+        return None
+
+    @pytest.fixture(autouse=True)
+    def skip_if_no_ch(self):
+        if not self._ch_available():
+            pytest.skip("ClickHouse not reachable for benchmark")
+        self.project_id = self._get_test_project_id()
+        if not self.project_id:
+            pytest.skip("No spans data in ClickHouse for benchmark")
+
+    @pytest.fixture(autouse=True)
+    def seed_benchmark_spans(self, skip_if_no_ch):
+        """Seed CH with spans that have trace_session_ids so session list has data."""
+        from datetime import timedelta
+
+        from tracer.services.clickhouse.client import ClickHouseClient
+
+        client = ClickHouseClient()
+        rows, _, _ = client.execute_read(
+            "SELECT count() FROM spans WHERE is_deleted = 0 "
+            "AND project_id = %(pid)s "
+            "AND trace_session_id IS NOT NULL",
+            {"pid": self.project_id},
+        )
+        row_count = rows[0][0] if rows and isinstance(rows[0], (list, tuple)) else (rows[0].get("count()", 0) if rows else 0)
+        if row_count >= 5:
+            return
+
+        now = datetime.now(timezone.utc) if hasattr(timezone, 'utc') else datetime.utcnow()
+        from tracer.tests._ch_seed import _get_ch_client
+
+        ch = _get_ch_client()
+        session_ids = [str(uuid.uuid4()) for _ in range(4)]
+        trace_ids = [str(uuid.uuid4()) for _ in range(8)]
+
+        for i in range(20):
+            sid = session_ids[i % 4]
+            tid = trace_ids[i % 8]
+            span_id = f"bench_{uuid.uuid4().hex[:16]}"
+            start = now - timedelta(hours=i)
+            end = start + timedelta(seconds=2)
+
+            ch.command(
+                "INSERT INTO spans "
+                "(id, trace_id, project_id, trace_session_id, observation_type, "
+                "start_time, end_time, latency_ms, cost, total_tokens, "
+                "prompt_tokens, completion_tokens, status, is_deleted, "
+                "parent_span_id, name, input, output) "
+                "VALUES ("
+                f"'{span_id}', '{tid}', '{self.project_id}', '{sid}', 'llm', "
+                f"'{start.strftime('%Y-%m-%d %H:%M:%S')}', "
+                f"'{end.strftime('%Y-%m-%d %H:%M:%S')}', "
+                f"{100 + i * 50}, {0.001 * (i + 1)}, {10 * (i + 1)}, "
+                f"{5 * (i + 1)}, {5 * (i + 1)}, "
+                f"'{'ERROR' if i == 3 else 'OK'}', 0, "
+                f"{'NULL' if i % 3 == 0 else repr(span_id + '_parent')}, "
+                f"'bench_span_{i}', 'hello {i}', 'world {i}')"
+            )
+
+    def _run_session_list_query(self, filters, project_id=None):
+        import time
+
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+        _Cls = get_query_builder_class("SESSION_LIST")
+        builder = _Cls(
+            project_id=project_id or self.project_id,
+            page_number=0,
+            page_size=30,
+            filters=filters,
+            sort_params=[],
+        )
+        analytics = AnalyticsQueryService()
+        query, params = builder.build()
+
+        t0 = time.time()
+        result = analytics.execute_ch_query(query, params, timeout_ms=15000)
+        main_ms = (time.time() - t0) * 1000
+
+        session_ids = [str(row.get("session_id", "")) for row in result.data[:30]]
+
+        enrichment_ms = 0
+        if session_ids:
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _content():
+                cq, cp = builder.build_content_query(session_ids)
+                if cq:
+                    analytics.execute_ch_query(cq, cp, timeout_ms=10000)
+
+            def _attrs():
+                aq, ap = builder.build_span_attributes_query(session_ids)
+                if aq:
+                    analytics.execute_ch_query(aq, ap, timeout_ms=5000)
+
+            t1 = time.time()
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                pool.submit(_content)
+                pool.submit(_attrs)
+            enrichment_ms = (time.time() - t1) * 1000
+
+        return main_ms, enrichment_ms, len(session_ids)
+
+    def test_latency_with_project_id_and_time_filter(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            }
+        ]
+        main_ms, enrich_ms, count = self._run_session_list_query(filters)
+        total = main_ms + enrich_ms
+        print(f"\n  [BENCHMARK] project_id + time: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
+        assert count > 0, "Benchmark should find seeded sessions"
+        assert total < 2000, f"Session list with project_id took {total:.0f}ms (threshold: 2000ms)"
+
+    def test_latency_with_project_id_and_cost_filter(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            },
+            {
+                "column_id": "total_cost",
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "greater_than",
+                    "filter_value": 0,
+                },
+            },
+        ]
+        main_ms, enrich_ms, count = self._run_session_list_query(filters)
+        total = main_ms + enrich_ms
+        print(f"\n  [BENCHMARK] project_id + time + cost>0: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
+        assert total < 3000, f"Session list with cost filter took {total:.0f}ms (threshold: 3000ms)"
+
+    def test_latency_without_project_id(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            }
+        ]
+        main_ms, enrich_ms, count = self._run_session_list_query(filters, project_id=None)
+        total = main_ms + enrich_ms
+        print(f"\n  [BENCHMARK] no project_id + time: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
+        assert total < 3000, f"Session list without project_id took {total:.0f}ms (threshold: 3000ms)"
+
+    def test_latency_with_sort_by_duration(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            }
+        ]
+        import time
+
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+        _Cls = get_query_builder_class("SESSION_LIST")
+        builder = _Cls(
+            project_id=self.project_id,
+            page_number=0,
+            page_size=30,
+            filters=filters,
+            sort_params=[{"column_id": "duration", "direction": "desc"}],
+        )
+        analytics = AnalyticsQueryService()
+        query, params = builder.build()
+
+        t0 = time.time()
+        result = analytics.execute_ch_query(query, params, timeout_ms=15000)
+        total = (time.time() - t0) * 1000
+        print(f"\n  [BENCHMARK] sort by duration DESC: {total:.0f}ms sessions={len(result.data[:30])}")
+        assert total < 2000, f"Session list sorted by duration took {total:.0f}ms (threshold: 2000ms)"
+
+    def test_latency_with_tokens_having_filter(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            },
+            {
+                "column_id": "total_tokens",
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "greater_than",
+                    "filter_value": 0,
+                },
+            },
+        ]
+        main_ms, enrich_ms, count = self._run_session_list_query(filters)
+        total = main_ms + enrich_ms
+        print(f"\n  [BENCHMARK] tokens>0 HAVING: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
+        assert total < 3000, f"Session list with tokens HAVING took {total:.0f}ms (threshold: 3000ms)"
+
+    def test_latency_with_traces_count_filter(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            },
+            {
+                "column_id": "traces_count",
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "greater_than_or_equal",
+                    "filter_value": 1,
+                },
+            },
+        ]
+        main_ms, enrich_ms, count = self._run_session_list_query(filters)
+        total = main_ms + enrich_ms
+        print(f"\n  [BENCHMARK] traces_count>=1 HAVING: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
+        assert total < 3000, f"Session list with traces_count HAVING took {total:.0f}ms (threshold: 3000ms)"
+
+    def test_latency_sort_by_cost_asc(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            }
+        ]
+        import time
+
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+        _Cls = get_query_builder_class("SESSION_LIST")
+        builder = _Cls(
+            project_id=self.project_id,
+            page_number=0,
+            page_size=30,
+            filters=filters,
+            sort_params=[{"column_id": "total_cost", "direction": "asc"}],
+        )
+        analytics = AnalyticsQueryService()
+        query, params = builder.build()
+
+        t0 = time.time()
+        result = analytics.execute_ch_query(query, params, timeout_ms=15000)
+        total = (time.time() - t0) * 1000
+        print(f"\n  [BENCHMARK] sort by cost ASC: {total:.0f}ms sessions={len(result.data[:30])}")
+        assert total < 2000, f"Session list sorted by cost took {total:.0f}ms (threshold: 2000ms)"
+
+    def test_latency_narrow_time_range_24h(self):
+        from datetime import timedelta
+
+        now = datetime.utcnow()
+        start = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        end = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [start, end],
+                },
+            }
+        ]
+        main_ms, enrich_ms, count = self._run_session_list_query(filters)
+        total = main_ms + enrich_ms
+        print(f"\n  [BENCHMARK] 24h window: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
+        assert total < 1500, f"Session list with 24h window took {total:.0f}ms (threshold: 1500ms)"
+
+    def test_latency_combined_filters_and_sort(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            },
+            {
+                "column_id": "total_tokens",
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "greater_than",
+                    "filter_value": 5,
+                },
+            },
+            {
+                "column_id": "total_cost",
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "greater_than",
+                    "filter_value": 0,
+                },
+            },
+        ]
+        import time
+
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+        _Cls = get_query_builder_class("SESSION_LIST")
+        builder = _Cls(
+            project_id=self.project_id,
+            page_number=0,
+            page_size=30,
+            filters=filters,
+            sort_params=[{"column_id": "duration", "direction": "desc"}],
+        )
+        analytics = AnalyticsQueryService()
+        query, params = builder.build()
+
+        t0 = time.time()
+        result = analytics.execute_ch_query(query, params, timeout_ms=15000)
+        total = (time.time() - t0) * 1000
+        count = len(result.data[:30])
+        print(f"\n  [BENCHMARK] tokens+cost+sort_duration: {total:.0f}ms sessions={count}")
+        assert total < 3000, f"Combined filters + sort took {total:.0f}ms (threshold: 3000ms)"
+
+    def test_latency_page_2(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            }
+        ]
+        import time
+
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+        _Cls = get_query_builder_class("SESSION_LIST")
+        builder = _Cls(
+            project_id=self.project_id,
+            page_number=1,
+            page_size=10,
+            filters=filters,
+            sort_params=[],
+        )
+        analytics = AnalyticsQueryService()
+        query, params = builder.build()
+
+        t0 = time.time()
+        result = analytics.execute_ch_query(query, params, timeout_ms=15000)
+        total = (time.time() - t0) * 1000
+        print(f"\n  [BENCHMARK] page 2 (offset 10): {total:.0f}ms sessions={len(result.data[:10])}")
+        assert total < 2000, f"Session list page 2 took {total:.0f}ms (threshold: 2000ms)"
