@@ -2187,6 +2187,18 @@ export default function WidgetEditorView() {
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
 
+  const aggColumnLabel = useMemo(() => {
+    if (!metrics.length) return "Average";
+    const uniqueAggs = [...new Set(metrics.map((m) => m.aggregation || "avg"))];
+    if (uniqueAggs.length === 1) {
+      return (
+        ALL_AGGREGATIONS.find((a) => a.value === uniqueAggs[0])?.label ??
+        "Average"
+      );
+    }
+    return "Agg.";
+  }, [metrics]);
+
   // Filtered series for chart — respects checkbox visibility, preserving original colors
   const chartSeries = useMemo(() => {
     if (visibleSeries === null) return previewSeries;
@@ -3055,7 +3067,7 @@ export default function WidgetEditorView() {
               if (!previewSeries.length) return;
               const header = [
                 "Metric",
-                "Average",
+                aggColumnLabel,
                 ...(previewSeries[0]?.data || []).map((pt) =>
                   format(new Date(pt.x), "yyyy-MM-dd"),
                 ),
@@ -3091,7 +3103,7 @@ export default function WidgetEditorView() {
               if (!previewSeries.length) return;
               const header = [
                 "Metric",
-                "Average",
+                aggColumnLabel,
                 ...(previewSeries[0]?.data || []).map((pt) =>
                   format(new Date(pt.x), "yyyy-MM-dd"),
                 ),
@@ -4403,7 +4415,7 @@ export default function WidgetEditorView() {
                                 zIndex: 2,
                               }}
                             >
-                              Average
+                              {aggColumnLabel}
                             </th>
                             {displayData.map((pt, ci) => (
                               <th
