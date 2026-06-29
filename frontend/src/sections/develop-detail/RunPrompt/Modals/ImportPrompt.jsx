@@ -308,9 +308,6 @@ export default function ImportPrompt({
       onSubmit={handleSubmit(handleImportPrompt)}
       isValid={Boolean(isValid && selectedVersionId)}
       actionBtnTitle="Apply"
-      actionBtnSx={{
-        widtd: "fit-content",
-      }}
     >
       <DialogContent
         sx={{

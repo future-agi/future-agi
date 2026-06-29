@@ -99,8 +99,11 @@ export default function PromptModalWrapper({
             onClick={onClose}
             variant="outlined"
             type="button"
+            size="small"
             sx={{
-              minWidth: "180px",
+              minWidth: "90px",
+              minHeight: "32px",
+              textTransform: "none",
               "&:hover": {
                 borderColor: "divider",
               },
@@ -121,10 +124,12 @@ export default function PromptModalWrapper({
           variant="contained"
           color="primary"
           type="submit"
+          size="small"
           onClick={onSubmit}
           sx={{
-            minWidth: "180px",
-            minHeight: "38px",
+            minWidth: "90px",
+            minHeight: "32px",
+            textTransform: "none",
             marginLeft: "0 !important",
             ...actionBtnSx,
           }}
