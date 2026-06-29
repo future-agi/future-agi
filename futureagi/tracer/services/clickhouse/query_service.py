@@ -116,6 +116,62 @@ class AnalyticsQueryService:
             columns=col_names,
         )
 
+    def get_span_attribute_keys_ch_for_projects(
+        self,
+        project_ids: list[str],
+        *,
+        recent_days: int | None = 7,
+        timeout_ms: int = 10000,
+        outer_limit: int = 1000,
+    ) -> list[dict]:
+        """Get distinct span attribute keys with types for one or more projects."""
+        if not project_ids:
+            return []
+
+        recent_filter = ""
+        params: dict[str, Any] = {
+            "project_ids": tuple(project_ids),
+        }
+        if recent_days is not None:
+            params["recent_days"] = int(recent_days)
+            recent_filter = "AND created_at >= now() - toIntervalDay(%(recent_days)s)"
+
+        query = f"""
+            SELECT key, argMax(type, cnt) AS type FROM (
+                SELECT key, 'text' AS type, count() AS cnt FROM (
+                    SELECT attrs_string FROM spans
+                    WHERE project_id IN %(project_ids)s
+                      AND is_deleted = 0
+                      {recent_filter}
+                    LIMIT 10000
+                ) ARRAY JOIN mapKeys(attrs_string) AS key
+                GROUP BY key
+                UNION ALL
+                SELECT key, 'number' AS type, count() AS cnt FROM (
+                    SELECT attrs_number FROM spans
+                    WHERE project_id IN %(project_ids)s
+                      AND is_deleted = 0
+                      {recent_filter}
+                    LIMIT 10000
+                ) ARRAY JOIN mapKeys(attrs_number) AS key
+                GROUP BY key
+                UNION ALL
+                SELECT key, 'boolean' AS type, count() AS cnt FROM (
+                    SELECT attrs_bool FROM spans
+                    WHERE project_id IN %(project_ids)s
+                      AND is_deleted = 0
+                      {recent_filter}
+                    LIMIT 10000
+                ) ARRAY JOIN mapKeys(attrs_bool) AS key
+                GROUP BY key
+            )
+            GROUP BY key
+            ORDER BY key
+            LIMIT {int(outer_limit)}
+        """
+        result = self.execute_ch_query(query, params, timeout_ms=timeout_ms)
+        return [{"key": row["key"], "type": row["type"]} for row in result.data]
+
     def get_span_attribute_keys_ch(self, project_id: str) -> list[dict]:
         """Get distinct span attribute keys with types from ClickHouse.
 
@@ -124,8 +180,7 @@ class AnalyticsQueryService:
         populated at ingest time by fi-collector, so they are the canonical
         attribute inventory — no CDC fallback needed post-CH25 close-out.
         """
-        # --- Try spans Maps first (fast, typed) ---
-        # This is a *discovery* query (populate a filter dropdown), not an
+        # This is a discovery query (populate a filter dropdown), not an
         # accounting one, so an approximate sample is semantically fine.
         # Two bounds keep it bounded even on very large projects:
         #   * 7-day window on `created_at` (the sort/partition key) so CH
@@ -134,58 +189,7 @@ class AnalyticsQueryService:
         #     ARRAY JOIN — without this, projects with millions of spans
         #     and wide `attrs_*` maps hit Code: 307 (max_bytes_to_read)
         #     because every row's Map gets exploded.
-        # Trade-off: `argMax(type, cnt)` type resolution is now on capped
-        # counts, and brand-new attribute keys added in the last hour on a
-        # high-volume project may not appear until older rows drop out of
-        # the LIMIT window.
-        # Use argMax(type, cnt) to pick the type with the highest row count.
-        # When a key exists in both attrs_string and attrs_number,
-        # the map with more rows wins (avoids phone numbers being typed as
-        # number when they appear in attrs_number for only a few rows).
-        query = """
-            SELECT key, argMax(type, cnt) AS type FROM (
-                SELECT key, 'text' AS type, count() AS cnt FROM (
-                    SELECT attrs_string FROM spans
-                    WHERE project_id = %(project_id)s
-                      AND is_deleted = 0
-                      AND created_at >= now() - INTERVAL 7 DAY
-                    LIMIT 10000
-                ) ARRAY JOIN mapKeys(attrs_string) AS key
-                GROUP BY key
-                UNION ALL
-                SELECT key, 'number' AS type, count() AS cnt FROM (
-                    SELECT attrs_number FROM spans
-                    WHERE project_id = %(project_id)s
-                      AND is_deleted = 0
-                      AND created_at >= now() - INTERVAL 7 DAY
-                    LIMIT 10000
-                ) ARRAY JOIN mapKeys(attrs_number) AS key
-                GROUP BY key
-                UNION ALL
-                SELECT key, 'boolean' AS type, count() AS cnt FROM (
-                    SELECT attrs_bool FROM spans
-                    WHERE project_id = %(project_id)s
-                      AND is_deleted = 0
-                      AND created_at >= now() - INTERVAL 7 DAY
-                    LIMIT 10000
-                ) ARRAY JOIN mapKeys(attrs_bool) AS key
-                GROUP BY key
-            )
-            GROUP BY key
-            ORDER BY key
-            LIMIT 1000
-        """
-        result = self.execute_ch_query(
-            query, {"project_id": project_id}, timeout_ms=10000
-        )
-        # CH25 close-out (2026-05-28): dropped the JSON-type-inference fallback
-        # that read `arrayJoin(JSONExtractKeysAndValuesRaw(span_attributes))`
-        # from the legacy `tracer_observation_span` CDC mirror. The v2 typed
-        # Maps (`attrs_string` / `attrs_number` / `attrs_bool`) are now the
-        # canonical attribute inventory — fi-collector splits attrs into them
-        # at ingest time, so the maps are always populated. If a project genuinely
-        # has fewer than 5 keys, returning whatever we have is correct.
-        return [{"key": row["key"], "type": row["type"]} for row in result.data]
+        return self.get_span_attribute_keys_ch_for_projects([project_id])
 
     @staticmethod
     def _eval_config_ids_query(scope_sql: str) -> str:

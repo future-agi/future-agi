@@ -86,30 +86,36 @@ def list_attribute_keys_for_project(project_id: str) -> list[AttributeKey]:
     query = """
         SELECT key, 'string' AS type, count() AS cnt
         FROM (
-            SELECT arrayJoin(mapKeys(attrs_string)) AS key
+            SELECT attrs_string
             FROM spans
             WHERE project_id = %(project_id)s
-        )
+              AND is_deleted = 0
+            LIMIT 10000
+        ) ARRAY JOIN mapKeys(attrs_string) AS key
         GROUP BY key
 
         UNION ALL
 
         SELECT key, 'number' AS type, count() AS cnt
         FROM (
-            SELECT arrayJoin(mapKeys(attrs_number)) AS key
+            SELECT attrs_number
             FROM spans
             WHERE project_id = %(project_id)s
-        )
+              AND is_deleted = 0
+            LIMIT 10000
+        ) ARRAY JOIN mapKeys(attrs_number) AS key
         GROUP BY key
 
         UNION ALL
 
         SELECT key, 'boolean' AS type, count() AS cnt
         FROM (
-            SELECT arrayJoin(mapKeys(attrs_bool)) AS key
+            SELECT attrs_bool
             FROM spans
             WHERE project_id = %(project_id)s
-        )
+              AND is_deleted = 0
+            LIMIT 10000
+        ) ARRAY JOIN mapKeys(attrs_bool) AS key
         GROUP BY key
 
         ORDER BY cnt DESC
