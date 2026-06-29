@@ -477,11 +477,17 @@ const AddExistingDataset = ({
                             value: "add_column",
                             alwaysVisible: true,
                             component: (
-                              <MenuItem key="add_column">
-                                <Box sx={{ color: "primary.main" }}>
-                                  + Add Column
-                                </Box>
-                              </MenuItem>
+                              <Box
+                                key="add_column"
+                                sx={{
+                                  color: "primary.main",
+                                  width: "100%",
+                                  px: 2,
+                                  py: 0.75,
+                                }}
+                              >
+                                + Add Column
+                              </Box>
                             ),
                           },
                         ]}
