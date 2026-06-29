@@ -439,9 +439,9 @@ class GetAPICallLogDetailsView(APIView):
                 EvalApiLogTableResponseResultSerializer(instance=result).data
             )
 
-        organization = (
-            getattr(request, "organization", None) or request.user.organization
-        )
+        # `request.organization` is set by RBAC middleware (§08). Per the team
+        # rule, do not fall back to `request.user.organization`.
+        organization = request.organization
         query = request.validated_query_data
         try:
             eval_template = _get_accessible_eval_template(
@@ -4760,9 +4760,8 @@ class EvalUsageStatsView(APIView):
                 EvalUsageStatsResponseResultSerializer(instance=result).data
             )
 
-        organization = (
-            getattr(request, "organization", None) or request.user.organization
-        )
+        # `request.organization` is set by RBAC middleware (§08).
+        organization = request.organization
         workspace = getattr(request, "workspace", None)
 
         # Workspace-scope the template fetch — caller in workspace B must not
@@ -4810,9 +4809,8 @@ class EvalFeedbackListView(APIView):
             empty_eval_feedback_list,
         )
 
-        organization = (
-            getattr(request, "organization", None) or request.user.organization
-        )
+        # `request.organization` is set by RBAC middleware (§08).
+        organization = request.organization
         workspace = getattr(request, "workspace", None)
 
         if APICallLog is None:
