@@ -9,7 +9,7 @@ import { paramsSerializer } from "src/utils/utils";
  * Map one raw eval from the old `getEvalsList(sourceId)` endpoint to the
  * picker row shape. The picker also consumes the typed
  * `eval-templates/list` endpoint whose serializer (EvalTemplateListItem)
- * emits snake_case, so this mapper emits the same snake_case shape — the
+ * emits snake_case, so this mapper emits the same snake_case shape; the
  * component then reads one canonical key set regardless of which endpoint
  * supplied the row.
  */
