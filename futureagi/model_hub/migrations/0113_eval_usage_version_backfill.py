@@ -28,24 +28,47 @@ def backfill_apicalllog_version_info(apps, schema_editor):
     # First: unwrap double-encoded JSON strings. Some entries have config
     # stored as a JSON string containing a JSON object (json.dumps was
     # called before saving to a JSONField). This makes JSONB operators
-    # like ->> unusable. Unwrap them to proper JSONB objects.
+    # like ->> unusable.
+    #
+    # Unwrap in batches so a single statement never holds a row-exclusive
+    # lock on the full usage_apicalllog table — a full-table UPDATE blocks
+    # every concurrent write for its duration, and with `atomic = False`
+    # there's no surrounding transaction to amortise that cost. Each batch
+    # is its own statement-level commit, so locks are released between
+    # batches and concurrent writes can interleave. The predicate is
+    # self-narrowing (an updated row's `jsonb_typeof(config)` becomes
+    # 'object'/'array' and falls out of the matching set), so we can loop
+    # on the same query until it stops finding rows.
     from django.db import connection
 
-    with connection.cursor() as cursor:
-        # Only unwrap rows whose inner text is a JSON object or array.
-        # A plain scalar string (e.g. "foo") would make (config #>> '{}')::jsonb
-        # raise a syntax error and abort the migration, so we guard with
-        # LEFT(..., 1) IN ('{', '[').
-        cursor.execute(
-            "UPDATE usage_apicalllog "
-            "SET config = (config #>> '{}')::jsonb "
-            "WHERE deleted = false "
-            "  AND jsonb_typeof(config) = 'string' "
-            "  AND LEFT(config #>> '{}', 1) IN ('{', '[')"
+    BATCH = 1000
+    total_unwrapped = 0
+    while True:
+        with connection.cursor() as cursor:
+            # Only unwrap rows whose inner text is a JSON object or array.
+            # A plain scalar string (e.g. "foo") would make
+            # ``(config #>> '{}')::jsonb`` raise a syntax error and abort
+            # the migration, so we guard with ``LEFT(..., 1) IN ('{', '[')``.
+            cursor.execute(
+                "UPDATE usage_apicalllog "
+                "SET config = (config #>> '{}')::jsonb "
+                "WHERE id IN ("
+                "  SELECT id FROM usage_apicalllog "
+                "  WHERE deleted = false "
+                "    AND jsonb_typeof(config) = 'string' "
+                "    AND LEFT(config #>> '{}', 1) IN ('{', '[') "
+                "  ORDER BY id LIMIT %s"
+                ")",
+                [BATCH],
+            )
+            updated = cursor.rowcount
+        if not updated:
+            break
+        total_unwrapped += updated
+    if total_unwrapped:
+        logger.info(
+            f"Unwrapped {total_unwrapped} double-encoded APICallLog configs."
         )
-        unwrapped = cursor.rowcount
-        if unwrapped:
-            logger.info(f"\n  Unwrapped {unwrapped} double-encoded APICallLog configs.")
 
     EvalTemplate = apps.get_model("model_hub", "EvalTemplate")
     EvalTemplateVersion = apps.get_model("model_hub", "EvalTemplateVersion")

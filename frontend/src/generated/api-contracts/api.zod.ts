@@ -19901,7 +19901,12 @@ export const ModelHubEvalTemplatesUpdateUpdateResponse = zod.object({
 
 /**
  * Returns usage stats, chart data, and paginated eval logs.
-Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d)
+Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d).
+
+Logic lives in `model_hub.services.eval_usage_service`. The serializer
+at the boundary (`EvalUsageStatsResponseResultSerializer(instance=...).data`)
+is the response contract — drift would surface as a serializer error
+at this call site rather than be silently shipped.
  * @summary GET /model-hub/eval-templates/<id>/usage/
  */
 export const ModelHubEvalTemplatesUsageListParams = zod.object({
