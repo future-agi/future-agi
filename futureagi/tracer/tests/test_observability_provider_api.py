@@ -487,3 +487,40 @@ def retell_signature(payload, api_key):
 
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
     return symmetric["sign"](body, api_key)
+
+
+@pytest.mark.parametrize(
+    "serializer_cls",
+    ["VerifyApiKeyRequestSerializer", "VerifyAssistantIdRequestSerializer"],
+)
+@pytest.mark.parametrize(
+    "provider",
+    [
+        ProviderChoices.BLAND,
+        ProviderChoices.TWILIO,
+        ProviderChoices.OTHERS,
+        ProviderChoices.ELEVEN_LABS,
+    ],
+)
+def test_verify_request_serializer_rejects_unsupported_providers(serializer_cls, provider):
+    """The verify request schema only advertises VAPI/RETELL, so an unsupported
+    provider is rejected at validation (discoverable to clients), not at runtime."""
+    import tracer.serializers.observability_provider as ser
+
+    s = getattr(ser, serializer_cls)(
+        data={"provider": provider, "api_key": "x", "assistant_id": "y", "agent_id": "z"}
+    )
+    assert not s.is_valid()
+    assert "provider" in s.errors
+
+
+@pytest.mark.parametrize(
+    "serializer_cls",
+    ["VerifyApiKeyRequestSerializer", "VerifyAssistantIdRequestSerializer"],
+)
+@pytest.mark.parametrize("provider", [ProviderChoices.VAPI, ProviderChoices.RETELL])
+def test_verify_request_serializer_accepts_supported_providers(serializer_cls, provider):
+    import tracer.serializers.observability_provider as ser
+
+    s = getattr(ser, serializer_cls)(data={"provider": provider, "api_key": "x"})
+    assert s.is_valid(), s.errors
