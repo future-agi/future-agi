@@ -1335,7 +1335,7 @@ class TestSessionListLatency:
 
     @pytest.fixture(autouse=True)
     def seed_benchmark_spans(self, skip_if_no_ch):
-        """Seed CH with spans that have trace_session_ids so session list has data."""
+        """Seed 1000 sessions × 5 spans = 5000 spans, 30-day spread, 200 end_users."""
         from datetime import timedelta
 
         from tracer.services.clickhouse.client import ClickHouseClient
@@ -1344,43 +1344,103 @@ class TestSessionListLatency:
         rows, _, _ = client.execute_read(
             "SELECT count() FROM spans WHERE is_deleted = 0 "
             "AND project_id = %(pid)s "
-            "AND trace_session_id IS NOT NULL",
+            "AND trace_session_id IS NOT NULL "
+            "AND (parent_span_id IS NULL OR parent_span_id = '')",
             {"pid": self.project_id},
         )
         row_count = rows[0][0] if rows and isinstance(rows[0], (list, tuple)) else (rows[0].get("count()", 0) if rows else 0)
-        if row_count >= 5:
+
+        eu_rows, _, _ = client.execute_read(
+            "SELECT count() FROM end_users WHERE project_id = %(pid)s AND is_deleted = 0",
+            {"pid": self.project_id},
+        )
+        eu_count = eu_rows[0][0] if eu_rows and isinstance(eu_rows[0], (list, tuple)) else (eu_rows[0].get("count()", 0) if eu_rows else 0)
+
+        if row_count >= 1000 and eu_count >= 100:
             return
 
         now = datetime.now(timezone.utc) if hasattr(timezone, 'utc') else datetime.utcnow()
-        from tracer.tests._ch_seed import _get_ch_client
+        import os
 
-        ch = _get_ch_client()
-        session_ids = [str(uuid.uuid4()) for _ in range(4)]
-        trace_ids = [str(uuid.uuid4()) for _ in range(8)]
+        import clickhouse_connect
 
-        for i in range(20):
-            sid = session_ids[i % 4]
-            tid = trace_ids[i % 8]
-            span_id = f"bench_{uuid.uuid4().hex[:16]}"
-            start = now - timedelta(hours=i)
-            end = start + timedelta(seconds=2)
+        from django.conf import settings
 
+        ch_settings = getattr(settings, "CLICKHOUSE", {})
+        ch = clickhouse_connect.get_client(
+            host=ch_settings.get("CH_HOST", "localhost"),
+            port=int(os.environ.get("CH_HTTP_PORT", 8123)),
+            username=ch_settings.get("CH_USERNAME", "default"),
+            password=ch_settings.get("CH_PASSWORD", "") or "",
+            database=ch_settings.get("CH_DATABASE", "test_tfc"),
+        )
+
+        num_sessions = 1000
+        spans_per_session = 5
+        session_ids = [str(uuid.uuid4()) for _ in range(num_sessions)]
+        end_user_ids = [str(uuid.uuid4()) for _ in range(200)]
+
+        batch_values = []
+        for s_idx, sid in enumerate(session_ids):
+            trace_id = str(uuid.uuid4())
+            session_start = now - timedelta(days=s_idx % 30, hours=s_idx % 24)
+
+            for sp_idx in range(spans_per_session):
+                span_id = f"bench_{uuid.uuid4().hex[:16]}"
+                start = session_start + timedelta(seconds=sp_idx * 3)
+                end = start + timedelta(seconds=2)
+                is_root = sp_idx == 0
+                euid = end_user_ids[s_idx % len(end_user_ids)]
+
+                batch_values.append(
+                    f"('{span_id}', '{trace_id}', '{self.project_id}', '{sid}', "
+                    f"'{euid}', 'llm', "
+                    f"'{start.strftime('%Y-%m-%d %H:%M:%S')}', "
+                    f"'{end.strftime('%Y-%m-%d %H:%M:%S')}', "
+                    f"{100 + sp_idx * 50}, {0.001 * (sp_idx + 1)}, "
+                    f"{10 * (sp_idx + 1)}, {5 * (sp_idx + 1)}, {5 * (sp_idx + 1)}, "
+                    f"'{'ERROR' if s_idx % 20 == 0 else 'OK'}', 0, "
+                    f"{'NULL' if is_root else repr(span_id + '_parent')}, "
+                    f"'bench_span_{s_idx}_{sp_idx}', "
+                    f"'hello session {s_idx}', 'response {s_idx}')"
+                )
+
+                if len(batch_values) >= 500:
+                    ch.command(
+                        "INSERT INTO spans "
+                        "(id, trace_id, project_id, trace_session_id, end_user_id, "
+                        "observation_type, start_time, end_time, latency_ms, cost, "
+                        "total_tokens, prompt_tokens, completion_tokens, status, "
+                        "is_deleted, parent_span_id, name, input, output) VALUES "
+                        + ", ".join(batch_values)
+                    )
+                    batch_values = []
+
+        if batch_values:
             ch.command(
                 "INSERT INTO spans "
-                "(id, trace_id, project_id, trace_session_id, observation_type, "
-                "start_time, end_time, latency_ms, cost, total_tokens, "
-                "prompt_tokens, completion_tokens, status, is_deleted, "
-                "parent_span_id, name, input, output) "
-                "VALUES ("
-                f"'{span_id}', '{tid}', '{self.project_id}', '{sid}', 'llm', "
-                f"'{start.strftime('%Y-%m-%d %H:%M:%S')}', "
-                f"'{end.strftime('%Y-%m-%d %H:%M:%S')}', "
-                f"{100 + i * 50}, {0.001 * (i + 1)}, {10 * (i + 1)}, "
-                f"{5 * (i + 1)}, {5 * (i + 1)}, "
-                f"'{'ERROR' if i == 3 else 'OK'}', 0, "
-                f"{'NULL' if i % 3 == 0 else repr(span_id + '_parent')}, "
-                f"'bench_span_{i}', 'hello {i}', 'world {i}')"
+                "(id, trace_id, project_id, trace_session_id, end_user_id, "
+                "observation_type, start_time, end_time, latency_ms, cost, "
+                "total_tokens, prompt_tokens, completion_tokens, status, "
+                "is_deleted, parent_span_id, name, input, output) VALUES "
+                + ", ".join(batch_values)
             )
+
+        org_id = "00000000-0000-0000-0000-000000000001"
+        eu_values = []
+        for i, euid in enumerate(end_user_ids):
+            eu_values.append(
+                f"('{self.project_id}', '{euid}', '{org_id}', "
+                f"'bench_user_{i}', 'email', '', '{{}}', "
+                f"'{now.strftime('%Y-%m-%d %H:%M:%S')}', "
+                f"'{now.strftime('%Y-%m-%d %H:%M:%S')}', 0)"
+            )
+        ch.command(
+            "INSERT INTO end_users "
+            "(project_id, end_user_id, organization_id, user_id, "
+            "user_id_type, user_id_hash, metadata, first_seen, version, is_deleted) "
+            "VALUES " + ", ".join(eu_values)
+        )
 
     def _run_session_list_query(self, filters, project_id=None):
         import time
@@ -1441,8 +1501,8 @@ class TestSessionListLatency:
         main_ms, enrich_ms, count = self._run_session_list_query(filters)
         total = main_ms + enrich_ms
         print(f"\n  [BENCHMARK] project_id + time: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
-        assert count > 0, "Benchmark should find seeded sessions"
-        assert total < 2000, f"Session list with project_id took {total:.0f}ms (threshold: 2000ms)"
+        assert count >= 30, f"Benchmark should find seeded sessions (got {count}, expected >=30)"
+        assert total < 3000, f"Session list with project_id took {total:.0f}ms (threshold: 3000ms)"
 
     def test_latency_with_project_id_and_cost_filter(self):
         filters = [
@@ -1701,3 +1761,208 @@ class TestSessionListLatency:
         total = (time.time() - t0) * 1000
         print(f"\n  [BENCHMARK] page 2 (offset 10): {total:.0f}ms sessions={len(result.data[:10])}")
         assert total < 2000, f"Session list page 2 took {total:.0f}ms (threshold: 2000ms)"
+
+
+class TestUserListLatency:
+
+    @staticmethod
+    def _ch_available():
+        try:
+            from tracer.services.clickhouse.client import (
+                ClickHouseClient,
+                is_clickhouse_enabled,
+            )
+
+            if not is_clickhouse_enabled():
+                return False
+            client = ClickHouseClient()
+            client.execute_read("SELECT 1", {})
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _get_test_project_id():
+        from tracer.services.clickhouse.client import ClickHouseClient
+
+        client = ClickHouseClient()
+        rows, _, _ = client.execute_read(
+            "SELECT toString(project_id), count() AS n "
+            "FROM spans WHERE is_deleted = 0 "
+            "AND end_user_id IS NOT NULL "
+            "GROUP BY project_id ORDER BY n DESC LIMIT 1",
+            {},
+        )
+        if rows:
+            return rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0].get("project_id")
+        return None
+
+    @pytest.fixture(autouse=True)
+    def skip_if_no_ch(self):
+        if not self._ch_available():
+            pytest.skip("ClickHouse not reachable for benchmark")
+        self.project_id = self._get_test_project_id()
+        if not self.project_id:
+            pytest.skip("No spans with end_user_id in ClickHouse for benchmark")
+
+    def _run_user_list_query(self, filters, sort_params=None):
+        import time
+
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+        from tracer.services.clickhouse.v2.query_builders.user_list import (
+            UserListQueryBuilderV2,
+        )
+
+        builder = UserListQueryBuilderV2(
+            organization_id="00000000-0000-0000-0000-000000000001",
+            project_ids=[self.project_id],
+            filters=filters,
+            sort_params=sort_params or [],
+            limit=30,
+            offset=0,
+        )
+        analytics = AnalyticsQueryService()
+        query, params = builder.build()
+
+        t0 = time.time()
+        result = analytics.execute_ch_query(query, params, timeout_ms=15000)
+        total_ms = (time.time() - t0) * 1000
+
+        return total_ms, len(result.data)
+
+    def test_latency_default_time_range(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            }
+        ]
+        ms, count = self._run_user_list_query(filters)
+        print(f"\n  [BENCHMARK] users default: {ms:.0f}ms users={count}")
+        assert count > 0, f"Expected users, got {count}"
+        assert ms < 3000, f"User list took {ms:.0f}ms (threshold: 3000ms)"
+
+    def test_latency_sort_by_cost(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            }
+        ]
+        ms, count = self._run_user_list_query(
+            filters, sort_params=[{"column_id": "total_cost", "direction": "desc"}]
+        )
+        print(f"\n  [BENCHMARK] users sort by cost: {ms:.0f}ms users={count}")
+        assert ms < 3000, f"User list sorted by cost took {ms:.0f}ms (threshold: 3000ms)"
+
+    def test_latency_sort_by_tokens(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            }
+        ]
+        ms, count = self._run_user_list_query(
+            filters, sort_params=[{"column_id": "total_tokens", "direction": "desc"}]
+        )
+        print(f"\n  [BENCHMARK] users sort by tokens: {ms:.0f}ms users={count}")
+        assert ms < 3000, f"User list sorted by tokens took {ms:.0f}ms (threshold: 3000ms)"
+
+    def test_latency_sort_by_trace_count(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            }
+        ]
+        ms, count = self._run_user_list_query(
+            filters, sort_params=[{"column_id": "trace_count", "direction": "desc"}]
+        )
+        print(f"\n  [BENCHMARK] users sort by trace_count: {ms:.0f}ms users={count}")
+        assert ms < 3000, f"User list sorted by trace_count took {ms:.0f}ms (threshold: 3000ms)"
+
+    def test_latency_narrow_24h_window(self):
+        from datetime import timedelta
+
+        now = datetime.utcnow()
+        start = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        end = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [start, end],
+                },
+            }
+        ]
+        ms, count = self._run_user_list_query(filters)
+        print(f"\n  [BENCHMARK] users 24h window: {ms:.0f}ms users={count}")
+        assert ms < 2000, f"User list 24h took {ms:.0f}ms (threshold: 2000ms)"
+
+    def test_latency_page_2(self):
+        import time
+
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+        from tracer.services.clickhouse.v2.query_builders.user_list import (
+            UserListQueryBuilderV2,
+        )
+
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                },
+            }
+        ]
+        builder = UserListQueryBuilderV2(
+            organization_id="00000000-0000-0000-0000-000000000001",
+            project_ids=[self.project_id],
+            filters=filters,
+            sort_params=[],
+            limit=10,
+            offset=10,
+        )
+        analytics = AnalyticsQueryService()
+        query, params = builder.build()
+
+        t0 = time.time()
+        result = analytics.execute_ch_query(query, params, timeout_ms=15000)
+        ms = (time.time() - t0) * 1000
+        print(f"\n  [BENCHMARK] users page 2: {ms:.0f}ms users={len(result.data)}")
+        assert ms < 3000, f"User list page 2 took {ms:.0f}ms (threshold: 3000ms)"
+
+    def test_latency_wide_6_month_range(self):
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2025-12-01T00:00:00.000Z", "2026-06-30T23:59:59.000Z"],
+                },
+            }
+        ]
+        ms, count = self._run_user_list_query(filters)
+        print(f"\n  [BENCHMARK] users 6-month range: {ms:.0f}ms users={count}")
+        assert ms < 5000, f"User list 6-month took {ms:.0f}ms (threshold: 5000ms)"
