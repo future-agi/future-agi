@@ -169,7 +169,7 @@ const EvaluationFeeback = ({
     watch,
   } = useForm({
     defaultValues: {
-      value: existingFeedback?.actionType || "",
+      value: existingFeedback?.action_type || "",
     },
     resolver: zodResolver(feedbackSubmittedValidationSchema),
   });

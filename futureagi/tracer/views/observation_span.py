@@ -1151,23 +1151,28 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             trace = Trace.objects.get(id=observation_span.trace.id)
-            trace_data = TraceSerializer(trace).data
+            trace_data = dict(TraceSerializer(trace).data)
 
-            # get_fewshots = RAG()
-            embedding_manager = EmbeddingManager()
+            mapping = custom_eval_config.mapping or {}
+            inputs = [
+                key for key in mapping.keys()
+                if key != "call_type" and key in trace_data
+            ]
 
-            embedding_manager.data_formatter(
-                eval_id=eval_template.id,
-                row_dict=trace_data,
-                inputs_formater=[observation_span.id],
-                organization_id=observation_span.project.organization.id,
-                workspace_id=(
-                    observation_span.project.workspace.id
-                    if observation_span.project.workspace
-                    else None
-                ),
-            )
-            embedding_manager.close()
+            if inputs:
+                embedding_manager = EmbeddingManager()
+                embedding_manager.data_formatter(
+                    eval_id=eval_template.id,
+                    row_dict=trace_data,
+                    inputs_formater=inputs,
+                    organization_id=observation_span.project.organization.id,
+                    workspace_id=(
+                        observation_span.project.workspace.id
+                        if observation_span.project.workspace
+                        else None
+                    ),
+                )
+                embedding_manager.close()
 
             return self._gm.success_response({"feedback_id": str(feedback.id)})
         except Exception as e:

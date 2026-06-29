@@ -133,7 +133,7 @@ const AddEvalsFeedbackDrawerChild = ({
       reset({
         value: parsedValue,
         explanation: existingFeedback.explanation || "",
-        actionType: existingFeedback.actionType || "",
+        actionType: existingFeedback.action_type || "",
       });
     }
   }, [existingFeedback, outputType, isPending, reset]);

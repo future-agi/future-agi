@@ -1133,6 +1133,8 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                             for cell in row_cells:
                                 column_id = str(cell.column.id)
                                 row_dict[column_id] = cell.value
+                                if cell.column.name:
+                                    row_dict[cell.column.name] = cell.value
 
                             # Get input fields from label settings
                             for label in annotation.labels.all():
