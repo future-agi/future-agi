@@ -32,9 +32,21 @@ func NewUsageEmitter(rdb *redis.Client, log *slog.Logger) *UsageEmitter {
 	return &UsageEmitter{rdb: rdb, log: log}
 }
 
-// EmitIngestion records trace and storage usage for a batch of spans.
-// Fire-and-forget — errors are logged but never returned.
-func (u *UsageEmitter) EmitIngestion(orgID string, numTraces, numSpans int, payloadBytes int64) {
+// Namespace for deterministic billing event_ids (re-poll → same id → consumer dedups).
+var billingDedupNS = uuid.MustParse("a7c3e1f0-5d29-4b6a-8c14-9f2b0e6d3a71")
+
+// billingEventID is deterministic per (dedupKey, eventType) so re-polls dedup;
+// empty dedupKey → random id (SDK batches don't re-poll).
+func billingEventID(dedupKey, eventType string) string {
+	if dedupKey == "" {
+		return uuid.New().String()
+	}
+	return uuid.NewSHA1(billingDedupNS, []byte(eventType+":"+dedupKey)).String()
+}
+
+// EmitIngestion records trace + storage usage. Non-empty dedupKey → deterministic
+// event_ids so re-exports bill once. Fire-and-forget; errors logged, not returned.
+func (u *UsageEmitter) EmitIngestion(orgID string, numTraces, numSpans int, payloadBytes int64, dedupKey string) {
 	if u == nil {
 		return
 	}
@@ -46,7 +58,7 @@ func (u *UsageEmitter) EmitIngestion(orgID string, numTraces, numSpans int, payl
 
 	if numTraces > 0 {
 		u.xadd(ctx, map[string]any{
-			"event_id":   uuid.New().String(),
+			"event_id":   billingEventID(dedupKey, "tracing_event"),
 			"org_id":     orgID,
 			"event_type": "tracing_event",
 			"timestamp":  now,
@@ -57,7 +69,7 @@ func (u *UsageEmitter) EmitIngestion(orgID string, numTraces, numSpans int, payl
 
 	if payloadBytes > 0 {
 		u.xadd(ctx, map[string]any{
-			"event_id":   uuid.New().String(),
+			"event_id":   billingEventID(dedupKey, "observe_add"),
 			"org_id":     orgID,
 			"event_type": "observe_add",
 			"timestamp":  now,

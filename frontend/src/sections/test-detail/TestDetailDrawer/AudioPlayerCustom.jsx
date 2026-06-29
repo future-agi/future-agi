@@ -124,7 +124,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
     );
   }
   if (isProjectModule) {
-    if (!data?.recordingAvailable) {
+    if (!data?.recording_available) {
       return (
         <Stack
           justifyContent="center"
@@ -139,7 +139,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
       );
     }
 
-    if (data?.callMetadata?.provider === "retell") {
+    if (data?.call_metadata?.provider === "retell") {
       return (
         <Stack
           height={50}
@@ -271,9 +271,9 @@ const areRecordingPropsEqual = (prev, next) => {
     p?.status === n?.status &&
     p?.simulation_call_type === n?.simulation_call_type &&
     p?.module === n?.module &&
-    p?.recordingAvailable === n?.recordingAvailable &&
+    p?.recording_available === n?.recording_available &&
     p?.ended_reason === n?.ended_reason &&
-    p?.callMetadata?.provider === n?.callMetadata?.provider &&
+    p?.call_metadata?.provider === n?.call_metadata?.provider &&
     p?.recording_url === n?.recording_url &&
     p?.recording === n?.recording &&
     p?.recordings === n?.recordings &&

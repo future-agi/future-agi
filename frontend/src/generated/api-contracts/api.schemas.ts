@@ -19458,6 +19458,8 @@ export const ObservabilityProviderApiProvider = {
   retell: 'retell',
   livekit: 'livekit',
   others: 'others',
+  bland: 'bland',
+  twilio: 'twilio',
 } as const;
 
 export type ObservabilityProviderApiMetadata = { [key: string]: unknown };
@@ -19477,6 +19479,40 @@ export interface ObservabilityProviderApi {
   metadata?: ObservabilityProviderApiMetadata;
   readonly created_at?: string;
   readonly updated_at?: string;
+}
+
+export type VerifyApiKeyRequestApiProvider = typeof VerifyApiKeyRequestApiProvider[keyof typeof VerifyApiKeyRequestApiProvider];
+
+
+export const VerifyApiKeyRequestApiProvider = {
+  vapi: 'vapi',
+  retell: 'retell',
+} as const;
+
+export interface VerifyApiKeyRequestApi {
+  provider: VerifyApiKeyRequestApiProvider;
+  api_key?: string;
+  agent_id?: string;
+}
+
+export interface VerifyResponseApi {
+  status?: boolean;
+  /** @minLength 1 */
+  result: string;
+}
+
+export type VerifyAssistantIdRequestApiProvider = typeof VerifyAssistantIdRequestApiProvider[keyof typeof VerifyAssistantIdRequestApiProvider];
+
+
+export const VerifyAssistantIdRequestApiProvider = {
+  vapi: 'vapi',
+  retell: 'retell',
+} as const;
+
+export interface VerifyAssistantIdRequestApi {
+  provider: VerifyAssistantIdRequestApiProvider;
+  assistant_id?: string;
+  api_key?: string;
 }
 
 export type ObservationSpanApiObservationType = typeof ObservationSpanApiObservationType[keyof typeof ObservationSpanApiObservationType];
@@ -20835,6 +20871,26 @@ export interface TraceApi {
   /** @maxLength 255 */
   external_id?: string;
   tags?: TraceApiTags;
+}
+
+export type TraceDetailResultApiTrace = { [key: string]: unknown };
+
+export type TraceDetailResultApiObservationSpansItem = { [key: string]: unknown };
+
+export type TraceDetailResultApiSummary = { [key: string]: unknown };
+
+export type TraceDetailResultApiGraph = { [key: string]: unknown };
+
+export interface TraceDetailResultApi {
+  trace: TraceDetailResultApiTrace;
+  observation_spans: TraceDetailResultApiObservationSpansItem[];
+  summary: TraceDetailResultApiSummary;
+  graph: TraceDetailResultApiGraph;
+}
+
+export interface TraceDetailResponseApi {
+  status?: boolean;
+  result: TraceDetailResultApi;
 }
 
 export interface TraceTagsUpdateApi {
