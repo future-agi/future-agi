@@ -356,6 +356,8 @@ const EvalTableRow = ({
                 fontSize: 11,
                 color: "text.secondary",
                 lineHeight: 1.6,
+                maxHeight: 300,
+                overflowY: "auto",
                 "& p": { m: 0, mb: 0.5 },
                 "& ul, & ol": { m: 0, pl: 2 },
                 "& li": { mb: 0.25 },

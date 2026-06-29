@@ -52,7 +52,7 @@ const FormattedValueReason = (valueReason) => {
         className="promptScroll"
         sx={{
           position: "relative",
-          maxHeight: !expanded ? "150px" : "300px",
+          maxHeight: !expanded ? "150px" : "none",
           display: expanded ? "block" : "-webkit-box",
           WebkitLineClamp: expanded ? "none" : 5,
           WebkitBoxOrient: "vertical",

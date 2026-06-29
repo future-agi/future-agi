@@ -374,6 +374,8 @@ const FormattedResult = ({ result }) => {
               borderRadius: "6px",
               border: "1px solid",
               borderColor: "divider",
+              maxHeight: 400,
+              overflowY: "auto",
               backgroundColor: (theme) =>
                 theme.palette.mode === "dark"
                   ? "rgba(255,255,255,0.03)"
