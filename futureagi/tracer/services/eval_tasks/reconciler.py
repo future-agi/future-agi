@@ -67,7 +67,10 @@ def _requeue_and_drop(task: EvalTask) -> tuple[int, int]:
         )
         if in_scope:
             if entry.status == EvalEntryStatus.COMPLETED:
-                if entry.config_hash != hashes[cfg_id]:
+                # Empty config_hash = a legacy row not yet baseline-stamped;
+                # treat as not-stale so a reconcile mid-backfill can't re-run
+                # all history.
+                if entry.config_hash and entry.config_hash != hashes[cfg_id]:
                     requeue_by_cfg[cfg_id].append(entry.id)  # stale result
             elif entry.status in (EvalEntryStatus.ERRORED, EvalEntryStatus.SKIPPED):
                 requeue_by_cfg[cfg_id].append(entry.id)
