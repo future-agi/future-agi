@@ -28,6 +28,15 @@ def _unix_microseconds(value: datetime) -> int:
     return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
 
 
+def _utc_isoformat(value: datetime) -> str:
+    """Serialize a ClickHouse timestamp with an explicit UTC offset."""
+
+    utc_value = (
+        value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    )
+    return utc_value.isoformat()
+
+
 @dataclass(frozen=True)
 class BoundedDateTimeRange:
     """One finite base window plus conjunctive exclusions inside it."""
@@ -580,13 +589,14 @@ class BaseQueryBuilder(ABC):
     def _normalize_timestamp(ts: date | datetime, interval: str) -> datetime:
         """Normalize *ts* to the start of its time bucket.
 
-        Strips timezone info and truncates to the start of the given
-        interval bucket.
+        Converts aware values to UTC before truncation. Bucket keys stay
+        timezone-naive to match ClickHouse's UTC-naive ``DateTime`` values;
+        graph responses reattach the UTC offset when serialized.
         """
         if isinstance(ts, date) and not isinstance(ts, datetime):
             ts = datetime(ts.year, ts.month, ts.day)
         if ts.tzinfo:
-            ts = ts.replace(tzinfo=None)
+            ts = ts.astimezone(UTC).replace(tzinfo=None)
 
         interval = interval.lower()
         if interval == "minute":
@@ -616,7 +626,7 @@ class BaseQueryBuilder(ABC):
         interval = interval.lower()
         current = BaseQueryBuilder._normalize_timestamp(start_date, interval)
         if end_date.tzinfo:
-            end_date = end_date.replace(tzinfo=None)
+            end_date = end_date.astimezone(UTC).replace(tzinfo=None)
 
         while current <= end_date:
             yield current
@@ -682,7 +692,7 @@ class BaseQueryBuilder(ABC):
             if ts is None:
                 continue
             normalized = self._normalize_timestamp(ts, interval)
-            point = {"timestamp": normalized.isoformat()}
+            point = {"timestamp": _utc_isoformat(normalized)}
             for i, col in enumerate(columns[1:], start=1):
                 if isinstance(row, dict):
                     val = row.get(col, 0)
@@ -697,7 +707,7 @@ class BaseQueryBuilder(ABC):
             if ts in existing:
                 result.append(existing[ts])
             else:
-                zero_point: dict[str, Any] = {"timestamp": ts.isoformat()}
+                zero_point: dict[str, Any] = {"timestamp": _utc_isoformat(ts)}
                 for key in value_keys:
                     zero_point[key] = 0
                 result.append(zero_point)
