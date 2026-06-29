@@ -101,4 +101,60 @@ describe("normalizeOldEndpointEval", () => {
     expect(out).not.toHaveProperty("currentVersion");
     expect(out).not.toHaveProperty("evalTemplateTags");
   });
+
+  // Realistic getEvalsList response shape captured from the wire. Asserts the
+  // mapper produces a row that lines up with the typed eval-templates/list
+  // contract (EvalTemplateListItemSerializer) so EvalPickerList renders both
+  // endpoints' rows through the same snake_case reads.
+  const OLD_ENDPOINT_FIXTURE = {
+    id: "uem-42",
+    template_id: "tpl-7",
+    name: "customer_agent_clarification_seeking",
+    template_type: "single",
+    eval_type: "agent",
+    output_type: "pass_fail",
+    owner: "user",
+    created_by_name: "Karthik Avinash",
+    current_version: "v3",
+    updated_at: "2026-06-28T12:34:56Z",
+    is_draft: false,
+    eval_required_keys: ["conversation"],
+    eval_template_tags: ["AGENT_EVAL"],
+    description: "Checks whether the agent asks for clarification.",
+    model: "gpt-4o-mini",
+  };
+
+  it("maps a realistic old-endpoint row to the snake_case picker shape", () => {
+    const out = normalizeOldEndpointEval(OLD_ENDPOINT_FIXTURE);
+    expect(out).toMatchObject({
+      id: "tpl-7",
+      templateId: "tpl-7",
+      userEvalId: "uem-42",
+      name: "customer_agent_clarification_seeking",
+      template_type: "single",
+      eval_type: "agent",
+      output_type: "pass_fail",
+      owner: "user",
+      created_by_name: "Karthik Avinash",
+      current_version: "v3",
+      last_updated: "2026-06-28T12:34:56Z",
+      is_draft: false,
+      required_keys: ["conversation"],
+      eval_template_tags: ["AGENT_EVAL"],
+      description: "Checks whether the agent asks for clarification.",
+      model: "gpt-4o-mini",
+    });
+    for (const camel of [
+      "templateType",
+      "evalType",
+      "outputType",
+      "lastUpdated",
+      "currentVersion",
+      "isDraft",
+      "requiredKeys",
+      "evalTemplateTags",
+    ]) {
+      expect(out).not.toHaveProperty(camel);
+    }
+  });
 });
