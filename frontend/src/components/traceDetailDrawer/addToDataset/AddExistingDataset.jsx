@@ -436,6 +436,7 @@ const AddExistingDataset = ({
                           ).map((col, i) => ({
                             label: col?.name,
                             value: col,
+                            disabled: isMenuItemDisabled(col, item),
                             component: (
                               <MenuItem
                                 key={i}
@@ -446,7 +447,7 @@ const AddExistingDataset = ({
                                   alignItems: "center",
                                   color: theme.palette.text.primary,
                                   "&.Mui-disabled": {
-                                    color: theme.palette.divider,
+                                    color: theme.palette.text.disabled,
                                   },
                                 }}
                               >
@@ -650,7 +651,7 @@ const AddExistingDataset = ({
             fontWeight: 600,
             "&.Mui-disabled": {
               bgcolor: theme.palette.divider,
-              color: theme.palette.background.paper,
+              color: theme.palette.text.disabled,
             },
           }}
         >
