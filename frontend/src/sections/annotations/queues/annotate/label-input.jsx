@@ -520,6 +520,13 @@ function CategoricalInput({ settings, value, onChange, focused }) {
   const options = rawOptions.map(getOptionLabel).filter(Boolean);
   const isMulti = settings.multi_choice || false;
 
+  const keyHintFor = (i) => {
+    if (options.length > 10) return null;
+    if (i < 9) return i + 1;
+    if (i === 9 && options.length === 10) return 0;
+    return null;
+  };
+
   if (isMulti) {
     return (
       <Stack spacing={0.25}>
@@ -562,7 +569,7 @@ function CategoricalInput({ settings, value, onChange, focused }) {
               />
               <Typography variant="body2">{opt}</Typography>
             </Box>
-            {focused && i < 9 && <Kbd>{i + 1}</Kbd>}
+            {focused && keyHintFor(i) !== null && <Kbd>{keyHintFor(i)}</Kbd>}
           </Box>
         ))}
       </Stack>
@@ -606,7 +613,7 @@ function CategoricalInput({ settings, value, onChange, focused }) {
               />
               <Typography variant="body2">{opt}</Typography>
             </Box>
-            {focused && i < 9 && <Kbd>{i + 1}</Kbd>}
+            {focused && keyHintFor(i) !== null && <Kbd>{keyHintFor(i)}</Kbd>}
           </Box>
         );
       })}
