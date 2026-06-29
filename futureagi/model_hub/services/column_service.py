@@ -311,6 +311,38 @@ def update_column_for_rerun(
             )
 
 
+def prune_dataset_columns(dataset, col_id_strs):
+    """Drop a set of column ids from a Dataset's ``column_order`` AND
+    ``column_config`` in a single row update.
+
+    ``column_config`` is keyed by column id — leaving stale soft-deleted ids
+    in it makes a client round-trip of the full config fail validation
+    against the (now smaller) live column set. ``column_order`` and
+    ``column_config`` must therefore be pruned together; any delete path
+    that touches one without the other re-introduces the staleness bug.
+
+    ``col_id_strs`` is an iterable of column ids as strings (the FE / JSON
+    side uses string ids, so we normalise here).
+    """
+    from model_hub.models.develop_dataset import Dataset
+
+    col_id_strs = {str(c) for c in col_id_strs}
+    if not col_id_strs:
+        return
+
+    updates = {}
+    if dataset.column_order:
+        updates["column_order"] = [
+            c for c in dataset.column_order if c not in col_id_strs
+        ]
+    if dataset.column_config:
+        updates["column_config"] = {
+            k: v for k, v in dataset.column_config.items() if k not in col_id_strs
+        }
+    if updates:
+        Dataset.objects.filter(id=dataset.id).update(**updates)
+
+
 def delete_eval_column_and_dependents(column, organization_id):
     """Soft-delete an eval column, its reason columns, their cells, and
     update any metrics that referenced the column.
@@ -331,9 +363,15 @@ def delete_eval_column_and_dependents(column, organization_id):
     from model_hub.models.develop_dataset import Cell, Column, Dataset
     from model_hub.models.evals_metric import UserEvalMetric
 
-    assert connection.in_atomic_block, (
-        "delete_eval_column_and_dependents requires transaction.atomic()"
-    )
+    # Explicit raise rather than ``assert`` — ``python -O`` /
+    # ``PYTHONOPTIMIZE=1`` strips ``assert`` statements, which would silently
+    # remove this fail-closed invariant. The service writes to four tables
+    # (Cell, Dataset, UserEvalMetric, Column); without an atomic surround,
+    # a mid-sequence failure leaves half-applied state.
+    if not connection.in_atomic_block:
+        raise RuntimeError(
+            "delete_eval_column_and_dependents requires transaction.atomic()"
+        )
 
     now = timezone.now()
 
@@ -353,21 +391,7 @@ def delete_eval_column_and_dependents(column, organization_id):
         ).update(deleted=True, deleted_at=now)
 
     # 3. Prune column_order AND column_config in one Dataset row update.
-    #    column_config is keyed by column id — leaving stale soft-deleted
-    #    ids in it makes a client round-trip of the full config fail
-    #    validation against the (now smaller) live column set.
-    dataset = column.dataset
-    dataset_updates = {}
-    if dataset.column_order and col_id_strs:
-        dataset_updates["column_order"] = [
-            c for c in dataset.column_order if c not in col_id_strs
-        ]
-    if dataset.column_config and col_id_strs:
-        dataset_updates["column_config"] = {
-            k: v for k, v in dataset.column_config.items() if k not in col_id_strs
-        }
-    if dataset_updates:
-        Dataset.objects.filter(id=dataset.id).update(**dataset_updates)
+    prune_dataset_columns(column.dataset, col_id_strs)
 
     # 4. Flag other metrics that referenced this column BEFORE deleting it
     #    (column must still be visible for get_metrics_using_column to find it).

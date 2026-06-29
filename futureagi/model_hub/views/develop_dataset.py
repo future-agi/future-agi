@@ -7720,6 +7720,20 @@ class DeleteEvalsView(APIView):
                     # Previously this branch only cleaned up columns + cells and
                     # left eval_metric.deleted=False — the eval lived on as a
                     # ghost record (still in the sidebar, broken on rerun).
+                    #
+                    # We can't call ``delete_eval_column_and_dependents`` here
+                    # because that service collects related columns by
+                    # ``source_id__startswith=f"{column.id}-sourceid-"`` —
+                    # experiment columns live under a different shape
+                    # (``source_id__endswith=f"-sourceid-{metric.id}"`` across
+                    # multiple sources). So we hand-roll the cell/column delete
+                    # but share ``prune_dataset_columns`` for the dataset config
+                    # update — that way ``column_order`` and ``column_config``
+                    # stay in sync on both delete paths (TH-5508 round-7 ask).
+                    from model_hub.services.column_service import (
+                        prune_dataset_columns,
+                    )
+
                     with transaction.atomic():
                         if per_edt_cols:
                             col_ids = [c.id for c in per_edt_cols]
@@ -7730,14 +7744,7 @@ class DeleteEvalsView(APIView):
                             Column.objects.filter(id__in=col_ids).update(
                                 deleted=True, deleted_at=now
                             )
-                            if snapshot_dataset.column_order:
-                                col_id_strs = {str(cid) for cid in col_ids}
-                                snapshot_dataset.column_order = [
-                                    cid
-                                    for cid in snapshot_dataset.column_order
-                                    if cid not in col_id_strs
-                                ]
-                                snapshot_dataset.save(update_fields=["column_order"])
+                            prune_dataset_columns(snapshot_dataset, col_ids)
                         eval_metric.deleted = True
                         eval_metric.deleted_at = now
                         eval_metric.save(update_fields=["deleted", "deleted_at"])

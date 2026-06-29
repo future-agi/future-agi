@@ -1123,16 +1123,32 @@ class TestDeleteEvalsView:
             with transaction.atomic():
                 delete_eval_column_and_dependents(eval_col, organization.id)
 
-        cell_queries = [
+        # ``Cell._meta.db_table`` is ``model_hub_cell`` (Django default for the
+        # ``model_hub.Cell`` model). Match against the real table name — a
+        # filter against a non-existent table would always yield an empty
+        # list and the loop below would silently pass.
+        cell_sql = [
             q["sql"] for q in ctx.captured_queries
-            if "develops_cell" in q["sql"].lower()
+            if "model_hub_cell" in q["sql"].lower()
         ]
-        for sql in cell_queries:
-            # Must not JOIN on develops_column to filter by source_id
-            assert "source_id" not in sql, (
-                "Cell delete must not use column__source_id JOIN; "
-                f"found full-scan query: {sql}"
-            )
+        # Positive assert: the cell delete must have actually run. Absence-only
+        # checks pass when the query disappears entirely (e.g. accidental
+        # early return) — guard against that explicitly.
+        assert cell_sql, (
+            "expected delete_eval_column_and_dependents to issue at least "
+            "one Cell query, captured none"
+        )
+        # The fix: every Cell query must filter on the indexed FK column
+        # (``column_id IN (...)``) and never on ``column__source_id`` which
+        # forces a JOIN + LIKE scan over the whole Cell table.
+        assert any("column_id" in s.lower() for s in cell_sql), (
+            "expected the cell delete to use the indexed column_id IN path; "
+            f"captured Cell queries: {cell_sql}"
+        )
+        assert not any("source_id" in s.lower() for s in cell_sql), (
+            "Cell delete must not use column__source_id JOIN; "
+            f"found full-scan query in: {cell_sql}"
+        )
 
     def test_delete_eval_service_requires_atomic_block(
         self, dataset, organization, workspace, eval_template
@@ -1167,7 +1183,10 @@ class TestDeleteEvalsView:
             source_id=str(metric.id),
         )
         with patch.object(connection, "in_atomic_block", False):
-            with pytest.raises(AssertionError, match="transaction.atomic"):
+            # ``RuntimeError`` rather than ``AssertionError`` — ``assert``s are
+            # stripped under ``python -O``, which would silently drop this
+            # invariant. The service now uses an explicit ``raise RuntimeError``.
+            with pytest.raises(RuntimeError, match="transaction.atomic"):
                 delete_eval_column_and_dependents(eval_col, organization.id)
 
     def test_delete_eval_prunes_column_config(
@@ -1228,6 +1247,98 @@ class TestDeleteEvalsView:
         assert str(eval_col.id) not in dataset.column_config
         assert str(reason_col.id) not in dataset.column_config
         assert str(other_col.id) in dataset.column_config
+
+    def test_delete_experiment_scoped_eval_prunes_column_config(
+        self, auth_client, dataset, organization, workspace, eval_template
+    ):
+        """Experiment-scoped delete must also prune ``column_config``, not
+        just ``column_order``.
+
+        Regression guard: the experiment-scoped branch can't call the shared
+        service (different ``source_id`` pattern), so it hand-rolls the
+        delete. An earlier version of this PR pruned only ``column_order``
+        and left soft-deleted ids in ``column_config``, recreating the
+        staleness bug the main path fixes. Both delete paths must share the
+        ``prune_dataset_columns`` helper so they can't diverge again.
+        """
+        from model_hub.models.experiments import (
+            ExperimentDatasetTable,
+            ExperimentsTable,
+        )
+
+        metric_to_delete = UserEvalMetric.objects.create(
+            name="Exp Eval Cfg A",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+        keep_metric = UserEvalMetric.objects.create(
+            name="Exp Eval Cfg B",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+
+        experiment = ExperimentsTable.objects.create(
+            name="Test Experiment Cfg",
+            dataset=dataset,
+            prompt_config=[],
+        )
+        experiment.user_eval_template_ids.add(metric_to_delete, keep_metric)
+        edt = ExperimentDatasetTable.objects.create(
+            name="Test EDT Cfg",
+            experiment=experiment,
+        )
+
+        metric_to_delete.source_id = str(experiment.id)
+        metric_to_delete.save(update_fields=["source_id"])
+
+        per_edt_col = Column.objects.create(
+            name="Exp Eval Cfg A",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EXPERIMENT_EVALUATION.value,
+            source_id=f"{edt.id}-coleval-sourceid-{metric_to_delete.id}",
+        )
+        other_col = Column.objects.create(
+            name="Untouched",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+        )
+
+        # Snapshot dataset = the column's dataset (same here as the experiment's
+        # working dataset). Seed both column_order AND column_config with the
+        # column id we expect pruned, and a sibling id that must be preserved.
+        snap = per_edt_col.dataset
+        snap.column_order = [str(per_edt_col.id), str(other_col.id)]
+        snap.column_config = {
+            str(per_edt_col.id): {"width": 200},
+            str(other_col.id): {"width": 100},
+        }
+        snap.save()
+
+        response = auth_client.delete(
+            f"/model-hub/develops/{dataset.id}/delete_user_eval/{metric_to_delete.id}/",
+            {"delete_column": True, "experiment_id": str(experiment.id)},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        snap.refresh_from_db()
+        # column_order pruned (the existing behaviour)…
+        assert str(per_edt_col.id) not in snap.column_order
+        # …AND column_config pruned (the regression this test guards)…
+        assert str(per_edt_col.id) not in snap.column_config
+        # …without touching unrelated entries.
+        assert str(other_col.id) in snap.column_order
+        assert str(other_col.id) in snap.column_config
 
     def test_delete_eval_atomic_rollback(
         self, dataset, organization, workspace, eval_template
