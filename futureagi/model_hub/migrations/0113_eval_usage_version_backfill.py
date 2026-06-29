@@ -1,11 +1,14 @@
 """Backfill version info on existing APICallLog entries.
 
-Tags each eval template's usage logs with the template's current
-default version (version_id + version_number in the config JSONField).
-This is imperfect for historical entries — they get the current default,
-not necessarily the version that actually ran — but it's the best we
-can do since version info was never tracked before. Going forward, all
-new entries will have the correct version.
+For every USER-created eval template:
+  1. If the template has no EvalTemplateVersion at all → create v1 first
+     (snapshotting its current config/criteria/model), marked is_default.
+  2. Stamp the template's untagged usage logs with the (now-guaranteed)
+     default version_id + version_number in config JSONField.
+
+System templates are intentionally left alone — their Usage tab shows
+a dash, which matches product expectation. Going forward, runtime
+version-stamping populates new entries.
 """
 
 import logging
@@ -47,15 +50,16 @@ def backfill_apicalllog_version_info(apps, schema_editor):
     EvalTemplate = apps.get_model("model_hub", "EvalTemplate")
     EvalTemplateVersion = apps.get_model("model_hub", "EvalTemplateVersion")
 
-    templates = EvalTemplate.objects.filter(deleted=False).values_list(
-        "id", flat=True
-    )
+    # Filter to user-owned templates only. System templates intentionally
+    # stay unversioned — their Usage tab shows a dash.
+    templates = EvalTemplate.objects.filter(deleted=False, owner="user")
 
+    versions_created = 0
     total_updated = 0
-    for template_id in templates:
+    for template in templates.iterator():
         default_version = (
             EvalTemplateVersion.objects.filter(
-                eval_template_id=template_id,
+                eval_template_id=template.id,
                 is_default=True,
                 deleted=False,
             )
@@ -63,24 +67,56 @@ def backfill_apicalllog_version_info(apps, schema_editor):
             .first()
         )
         if not default_version:
-            # Fall back to the first version
+            # Fall back to any non-deleted version with lowest number.
             default_version = (
                 EvalTemplateVersion.objects.filter(
-                    eval_template_id=template_id,
+                    eval_template_id=template.id,
                     deleted=False,
                 )
                 .order_by("version_number")
                 .first()
             )
+
         if not default_version:
-            continue
+            # No version exists at all — create v1 as the default. Snapshot
+            # the template's current config/criteria/model so the version
+            # actually describes what the template looks like today.
+            try:
+                default_version = EvalTemplateVersion.objects.create(
+                    eval_template_id=template.id,
+                    version_number=1,
+                    is_default=True,
+                    prompt_messages=[],
+                    config_snapshot=template.config or {},
+                    criteria=template.criteria or "",
+                    model=template.model or "",
+                    organization_id=template.organization_id,
+                    workspace_id=template.workspace_id,
+                    output_type_normalized=getattr(
+                        template, "output_type_normalized", None
+                    ),
+                    pass_threshold=getattr(template, "pass_threshold", None),
+                    choice_scores=getattr(template, "choice_scores", None),
+                    error_localizer_enabled=getattr(
+                        template, "error_localizer_enabled", False
+                    ),
+                    eval_tags=list(getattr(template, "eval_tags", []) or []),
+                )
+                versions_created += 1
+            except Exception as e:
+                logger.warning(
+                    "Failed to create v1 for template",
+                    template_id=str(template.id),
+                    error=str(e),
+                )
+                continue
 
         version_id = str(default_version.id)
         version_number = default_version.version_number
 
-        # Update logs that don't have version info yet
+        # Stamp untagged logs in 500-row batches.
         logs = APICallLog.objects.filter(
-            source_id=str(template_id),
+            source_id=str(template.id),
             deleted=False,
         )
         batch = []
@@ -102,6 +138,8 @@ def backfill_apicalllog_version_info(apps, schema_editor):
             APICallLog.objects.bulk_update(batch, ["config"])
             total_updated += len(batch)
 
+    if versions_created:
+        logger.info(f"Created v1 for {versions_created} user templates.")
     if total_updated:
         logger.info(
             f"Backfilled version info on {total_updated} APICallLog entries."
@@ -116,9 +154,9 @@ class Migration(migrations.Migration):
     atomic = False
 
     dependencies = [
-        # Chains after #772's pinned_version FK so both PRs produce a single
-        # migration leaf when merged to dev. #772 must land first (or simultaneously).
-        ("model_hub", "0111_userevalmetric_pinned_version"),
+        # Renumbered from 0112 → 0113 to resolve the leaf conflict with
+        # dev's 0112_eval_ground_truth_tenant_scope. Chain after that one.
+        ("model_hub", "0112_eval_ground_truth_tenant_scope"),
     ]
 
     operations = [
