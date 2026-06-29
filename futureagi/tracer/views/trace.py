@@ -62,6 +62,7 @@ from tracer.serializers.trace import (
     TraceListQuerySerializer,
     TraceObserveIndexQuerySerializer,
     TraceObserveListQuerySerializer,
+    TraceDetailResponseSerializer,
     TraceSerializer,
     TraceVoiceCallListQuerySerializer,
     UserCodeExampleResponseSerializer,
@@ -1103,6 +1104,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     def perform_destroy(self, instance):
         _soft_delete_trace_tree([instance])
 
+    @swagger_auto_schema(
+        responses={200: TraceDetailResponseSerializer, **ERROR_RESPONSES},
+    )
     def retrieve(self, request, *args, **kwargs):
         """
         Retrieve a trace by its ID.
@@ -1166,6 +1170,32 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             ),
         }
 
+    @staticmethod
+    def _recording_available(recording):
+        """True when the recording dict carries any playable URL. Collector pulls
+        drop raw_log so process_raw_logs can't infer this; derive it from the
+        recovered URLs (mirrors transcript_available)."""
+        rec = recording or {}
+        mono = rec.get("mono") or {}
+        return bool(
+            rec.get("stereo_url")
+            or mono.get("combined_url")
+            or mono.get("customer_url")
+            or mono.get("assistant_url")
+        )
+
+    @staticmethod
+    def _coerce_raw_log(value):
+        """raw_log rides in span attributes as a JSON string (collector path) or a
+        dict (legacy PG+CDC). Return a dict either way so process_raw_logs can
+        recompute status/duration/recording_available/transcript from it."""
+        if isinstance(value, str):
+            try:
+                return json.loads(value) or {}
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return value or {}
+
     def populate_call_logs_result(
         self, qs, eval_configs, annotation_labels=None, *, detail_mode=False
     ):
@@ -1216,8 +1246,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
             recording = self._build_recording_dict(attrs)
 
-            # Raw provider payload if present
-            raw_log = attrs.get("raw_log") or {}
+            # Raw provider payload if present (collector ships it as JSON string)
+            raw_log = self._coerce_raw_log(attrs.get("raw_log"))
             provider = trace.provider or "vapi"
 
             processed_log = ObservabilityService.process_raw_logs(
@@ -1242,6 +1272,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "trace_id": str(trace.id),
                 "call_metadata": metadata,
                 "recording": recording,
+                "recording_available": self._recording_available(recording),
                 "observation_span": observation_span,
                 "turn_count": voice_metrics.get("turn_count"),
                 "talk_ratio": voice_metrics.get("talk_ratio"),
@@ -2543,27 +2574,29 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             if not trace_id:
                 return self._gm.bad_request("trace_id is required")
 
-            # Validate ownership via a single PG query before any dispatch
-            trace = (
-                Trace.objects.select_related("project")
-                .filter(
-                    id=trace_id,
-                    project__organization_id=request.user.organization_id,
-                )
-                .first()
+            # Resolve the trace's project from CH and validate ownership. PG
+            # `tracer_trace` is dropped on CH25, so the project comes from the CH
+            # `traces` row and ownership is checked against the still-present
+            # `tracer_project`.
+            analytics = AnalyticsQueryService()
+            proj_result = analytics.execute_ch_query(
+                "SELECT toString(project_id) AS project_id FROM traces "
+                "WHERE id = toUUID(%(trace_id)s) AND is_deleted = 0 LIMIT 1",
+                {"trace_id": str(trace_id)},
+                timeout_ms=10000,
             )
-            if not trace:
+            if not proj_result.data:
+                return self._gm.not_found("trace_id not found")
+            project_id = proj_result.data[0]["project_id"]
+            if not Project.objects.filter(
+                id=project_id,
+                organization_id=request.user.organization_id,
+            ).exists():
                 return self._gm.not_found("trace_id not found")
 
-            # ClickHouse-only path. The legacy PG fallback (reading from
-            # the soon-deleted `ObservationSpan` ORM + `EvalLogger` rows)
-            # was removed as part of PLAN_V2_NO_CDC: span data lives in
-            # CH, not PG. CH_ROUTE_VOICE_CALL_DETAIL must be set to
-            # `clickhouse` (default in .env) — if it ever resolves to
-            # postgres, that's a config error, not a fallback opportunity.
-            analytics = AnalyticsQueryService()
+            # ClickHouse-only path: span data lives in CH, not PG (PLAN_V2_NO_CDC).
             return self._voice_call_detail_clickhouse(
-                request, trace_id, analytics, str(trace.project_id)
+                request, trace_id, analytics, project_id
             )
         except Exception as e:
             logger.exception("voice_call_detail_error", error=str(e))
@@ -2597,6 +2630,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             -- fallback, and that fallback resolves to {} on this path.
             attrs_string,
             attrs_number,
+            attrs_bool,
             toJSONString(metadata) AS metadata_json
         FROM spans
         WHERE project_id = toUUID(%(project_id)s)
@@ -2627,13 +2661,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
         except (json.JSONDecodeError, TypeError):
             span_attrs = {}
+        if not isinstance(span_attrs, dict):
+            span_attrs = {}
+        # Union typed Maps: voice spans keep call.* scalars in attrs_string/number while
+        # input/output.value overflow into attributes_extra; reading it alone drops call.* metrics.
+        for k, v in (row.get("attrs_string") or {}).items():
+            span_attrs.setdefault(k, v)
+        for k, v in (row.get("attrs_number") or {}).items():
+            span_attrs.setdefault(k, v)
+        for k, v in (row.get("attrs_bool") or {}).items():
+            span_attrs.setdefault(k, bool(v))
         # eval_attributes is not a top-level column on the CH `spans` table,
         # but the adapter merges it into `attributes_extra` under the key
         # "eval_attributes". Extract it so simulation_context can resolve
         # fi.simulator.call_execution_id and similar keys.
         eval_attrs = span_attrs.get("eval_attributes", {}) or {}
 
-        raw_log = span_attrs.get("raw_log") or {}
+        raw_log = self._coerce_raw_log(span_attrs.get("raw_log"))
         metadata_raw = row.get("metadata_json") or "{}"
         try:
             metadata = (
@@ -2647,6 +2691,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         processed_log = ObservabilityService.process_raw_logs(
             raw_log, provider, span_attributes=span_attrs
         )
+        # Collector-routed pulls carry no raw_log (OTLP); span start_time is the call start.
+        if not raw_log and not processed_log.get("started_at"):
+            _st = row.get("start_time")
+            if _st:
+                processed_log["started_at"] = (
+                    _st.isoformat() if hasattr(_st, "isoformat") else str(_st)
+                )
         simulation_context = _simulation_context_for_voice_call(
             organization_id=request.user.organization_id,
             span_attributes=span_attrs,
@@ -2782,17 +2833,45 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
+        # Collector-routed pulls drop raw_log (OTLP); recover the transcript from
+        # attrs_string (stored as a JSON string, not in attributes_extra).
+        if not processed_log.get("transcript"):
+            stored = attr_str.get("fi.conversation.transcript") or span_attrs.get(
+                "fi.conversation.transcript"
+            )
+            if isinstance(stored, str):
+                try:
+                    stored = json.loads(stored)
+                except (json.JSONDecodeError, TypeError):
+                    stored = None
+            if isinstance(stored, list) and stored:
+                processed_log["transcript"] = stored
+                processed_log["transcript_available"] = True
+                if not processed_log.get("message_count"):
+                    processed_log["message_count"] = len(stored)
+
         # Fetch ALL non-deleted eval configs for the project so the drawer
         # renders the same set of evals as the list columns. Missing scores
         # become placeholder entries with `output=None`.
-        eval_configs = CustomEvalConfig.objects.filter(
-            id__in=EvalLogger.objects.filter(
-                trace_id__in=Trace.objects.filter(project_id=project_id).values("id")
-            )
-            .values("custom_eval_config_id")
-            .distinct(),
-            deleted=False,
-        ).select_related("eval_template")
+        # Eval configs with results for this project's traces. CH25-safe: resolve
+        # via the CH eval table + trace_dict (PG `tracer_trace` is dropped),
+        # mirroring the trace-list path so the drawer shows the same eval set.
+        eval_table, eval_nd = eval_logger_source()
+        cfg_result = analytics.execute_ch_query(
+            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
+            f"FROM {eval_table} FINAL "
+            f"WHERE {eval_nd} "
+            "AND dictGet('trace_dict', 'project_id', trace_id) = toUUID(%(pid)s)",
+            {"pid": str(project_id)},
+            timeout_ms=30000,
+        )
+        cfg_ids = [r.get("cid", "") for r in cfg_result.data if r.get("cid")]
+        if cfg_ids:
+            eval_configs = CustomEvalConfig.objects.filter(
+                id__in=cfg_ids, deleted=False
+            ).select_related("eval_template")
+        else:
+            eval_configs = []
         eval_config_ids = [str(c.id) for c in eval_configs]
 
         eval_outputs = {}
@@ -2893,6 +2972,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "project_id": str(project_id),
             "provider_call_id": processed_log.get("call_id"),
             "recording": recording,
+            "recording_available": self._recording_available(recording),
             "call_metadata": metadata,
             "observation_span": observation_span,
             "eval_outputs": eval_outputs,
@@ -3768,17 +3848,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
                 except (json.JSONDecodeError, TypeError):
                     parsed = {}
-                # Fall back to the typed Maps when attributes_extra is empty
-                # (the common case for LLM spans, where everything is in
-                # attrs_string / attrs_number / attrs_bool).
-                if not parsed:
+                if not isinstance(parsed, dict):
                     parsed = {}
-                    for k, v in (arow.get("attrs_string") or {}).items():
-                        parsed[k] = v
-                    for k, v in (arow.get("attrs_number") or {}).items():
-                        parsed[k] = v
-                    for k, v in (arow.get("attrs_bool") or {}).items():
-                        parsed[k] = bool(v)
+                # Union typed Maps over attributes_extra: voice spans split call.* scalars
+                # into the Maps and overflow keys into attributes_extra, so never skip the Maps.
+                for k, v in (arow.get("attrs_string") or {}).items():
+                    parsed.setdefault(k, v)
+                for k, v in (arow.get("attrs_number") or {}).items():
+                    parsed.setdefault(k, v)
+                for k, v in (arow.get("attrs_bool") or {}).items():
+                    parsed.setdefault(k, bool(v))
                 attrs_map[sid] = {
                     "span_attributes": parsed,
                     "provider": arow.get("provider"),
@@ -3839,7 +3918,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             ):
                 continue
 
-            raw_log = span_attrs.get("raw_log") or {}
+            raw_log = self._coerce_raw_log(span_attrs.get("raw_log"))
             voice_metrics = self._extract_voice_turn_and_talk_metrics(
                 span_attrs, raw_log
             )
@@ -3848,6 +3927,24 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             processed_log = ObservabilityService.process_raw_logs(
                 raw_log, provider, span_attributes=span_attrs
             )
+            # Collector-routed pulls carry no raw_log (OTLP); span start/end times
+            # are the call start/duration.
+            if not raw_log:
+                if not processed_log.get("started_at"):
+                    _st = row.get("start_time")
+                    if _st:
+                        processed_log["started_at"] = (
+                            _st.isoformat() if hasattr(_st, "isoformat") else str(_st)
+                        )
+                if processed_log.get("duration_seconds") is None:
+                    _st, _et = row.get("start_time"), row.get("end_time")
+                    if _st and _et and hasattr(_st, "timestamp"):
+                        processed_log["duration_seconds"] = max(
+                            0, int(_et.timestamp() - _st.timestamp())
+                        )
+                # The list's date column binds created_at.
+                if not processed_log.get("created_at"):
+                    processed_log["created_at"] = processed_log.get("started_at")
 
             entry = {
                 **processed_log,
@@ -3878,7 +3975,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # the voice_call_detail endpoint.
             for key in self._VOICE_CALL_HEAVY_KEYS:
                 entry.pop(key, None)
-            entry.setdefault("observation_span", [])
+            # Heavy-key strip drops observation_span, which the drawer needs to route to
+            # voice; collector rows lack raw_log to fall back. Seed a stub (detail fetch replaces it).
+            entry["observation_span"] = (
+                [
+                    {
+                        "id": span_id,
+                        "observation_type": "conversation",
+                        "parent_span_id": None,
+                    }
+                ]
+                if span_id
+                else []
+            )
 
             # Include span attributes for custom columns (skip heavy/nested values)
             for key, value in span_attrs.items():
