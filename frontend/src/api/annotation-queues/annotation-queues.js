@@ -304,7 +304,6 @@ export const useArchiveAnnotationQueue = () => {
 export const useDeleteAnnotationQueue = useArchiveAnnotationQueue;
 
 export const useHardDeleteAnnotationQueue = () => {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, name }) =>
       axios.post(annotationQueueEndpoints.hardDelete(id), {
@@ -313,7 +312,6 @@ export const useHardDeleteAnnotationQueue = () => {
       }),
     onSuccess: () => {
       enqueueSnackbar("Queue permanently deleted.", { variant: "warning" });
-      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: (error) => {
       enqueueSnackbar(extractErrorMessage(error, "Failed to delete queue"), {
