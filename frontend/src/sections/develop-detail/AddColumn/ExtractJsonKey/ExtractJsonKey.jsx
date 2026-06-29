@@ -321,19 +321,31 @@ const ExtractJsonKey = ({ initialData, onFormSubmit }) => {
         },
       }}
     >
-      {isLoadingColumnConfig && (
-        <Box sx={{ minWidth: "510px", height: "100%" }}>
-          <DynamicColumnSkeleton />
-        </Box>
+      {/* Mount the child only while the drawer is open. The drawer is
+          variant="persistent" so it stays in the DOM, which means without
+          this gate the child + its useGetJsonColumnSchema hook would mount
+          once on first open and never refetch — newly-created API call
+          columns would stay invisible until a full page refresh. Gating
+          on openExtractJsonKey forces a fresh mount each open, which makes
+          the existing `refetchOnMount: "always"` on the schema hook actually
+          do its job. */}
+      {openExtractJsonKey && (
+        <>
+          {isLoadingColumnConfig && (
+            <Box sx={{ minWidth: "510px", height: "100%" }}>
+              <DynamicColumnSkeleton />
+            </Box>
+          )}
+          <ShowComponent condition={!isLoadingColumnConfig}>
+            <ExtractJsonKeyChild
+              initialData={columnConfig ?? initialData}
+              onFormSubmit={onFormSubmit}
+              onClose={onClose}
+              editId={editId}
+            />
+          </ShowComponent>
+        </>
       )}
-      <ShowComponent condition={!isLoadingColumnConfig}>
-        <ExtractJsonKeyChild
-          initialData={columnConfig ?? initialData}
-          onFormSubmit={onFormSubmit}
-          onClose={onClose}
-          editId={editId}
-        />
-      </ShowComponent>
     </Drawer>
   );
 };
