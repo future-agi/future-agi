@@ -174,6 +174,48 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
+    def build_id_query(self) -> tuple[str, dict[str, Any]]:
+        """Filtered session ids only — same grouped, remap-aware scan as build(),
+        no pagination/order. Lets the eval resolver select the same sessions this
+        list endpoint returns."""
+        self.start_date, self.end_date = self.parse_time_range(self.filters)
+        self.params["start_date"] = self.start_date
+        self.params["end_date"] = self.end_date
+
+        self._end_user_ids = self._extract_end_user_ids()
+        span_filters = self._extract_span_filters()
+        fb = ClickHouseFilterBuilder(
+            table=self.TABLE,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
+        extra_where, extra_params = fb.translate(span_filters)
+        self.params.update(extra_params)
+
+        having_clauses = self._build_having_clauses()
+        if self.user_id:
+            self.params["user_id"] = self.user_id
+
+        filter_fragment = f"AND {extra_where}" if extra_where else ""
+        having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
+        message_select = self._message_aggregate_select()
+        time_where = "AND start_time >= %(start_date)s AND start_time < %(end_date)s"
+        from_where = self._session_from_where(
+            self.params,
+            time_where=time_where,
+            filter_fragment=filter_fragment,
+        )
+
+        query = f"""
+        SELECT
+            trace_session_id AS session_id
+            {message_select}
+        {from_where}
+        GROUP BY trace_session_id
+        {having_fragment}
+        """
+        return query, self.params
+
     def build_content_query(self, session_ids: list[str]) -> tuple[str, dict[str, Any]]:
         """Fetch first/last messages for a page of session IDs.
 
@@ -492,10 +534,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         span_filters: list[dict] = []
         for f in self.filters:
             col_id = f.get("column_id") or f.get("columnId")
-            if (
-                col_id in self.SESSION_FILTER_MAP
-                or col_id in self.MESSAGE_FILTER_MAP
-            ):
+            if col_id in self.SESSION_FILTER_MAP or col_id in self.MESSAGE_FILTER_MAP:
                 continue
             if (
                 col_id in self._ENDUSER_ID_FILTER_COLS
@@ -595,9 +634,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         ts_join = remap_left_join(
             "us.trace_session_id", "trace_session_id_remap", "user_presence_ts_remap"
         )
-        resolved_ts = resolved_id_expr(
-            "us.trace_session_id", "user_presence_ts_remap"
-        )
+        resolved_ts = resolved_id_expr("us.trace_session_id", "user_presence_ts_remap")
         membership = f"""(
             SELECT trace_session_id
             FROM (
@@ -620,9 +657,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         op = "NOT IN" if null_op == "is_null" else "IN"
         return f"trace_session_id {op} {membership}"
 
-    def _build_session_user_membership_clause(
-        self, params: dict[str, Any]
-    ) -> str:
+    def _build_session_user_membership_clause(self, params: dict[str, Any]) -> str:
         null_op = self._user_null_filter_op()
         if null_op:
             return self._build_user_presence_clause(null_op)
@@ -637,9 +672,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         eu_join = remap_left_join(
             "us.end_user_id", "end_user_id_remap", "user_eu_remap"
         )
-        resolved_ts = resolved_id_expr(
-            "us.trace_session_id", "user_ts_remap"
-        )
+        resolved_ts = resolved_id_expr("us.trace_session_id", "user_ts_remap")
         resolved_eu = resolved_id_expr("us.end_user_id", "user_eu_remap")
         return f"""trace_session_id IN (
             SELECT trace_session_id
@@ -703,9 +736,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
           {filter_fragment}"""
 
         resolved_session_clause = self._build_resolved_session_clause(params)
-        user_membership_clause = self._build_session_user_membership_clause(
-            params
-        )
+        user_membership_clause = self._build_session_user_membership_clause(params)
 
         # `trace_session_id` resolution is UNCONDITIONAL (closes the browse split);
         # User membership is resolved in a separate session-id subquery so
@@ -723,17 +754,13 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             f"rs.{c} AS {c}" for c in scan_cols if c != "trace_session_id"
         ]
         outer_clauses = [
-            c
-            for c in (resolved_session_clause, user_membership_clause)
-            if c
+            c for c in (resolved_session_clause, user_membership_clause) if c
         ]
 
         inner_cols = ", ".join(scan_cols)
         outer_select_sql = ",\n                ".join(outer_select)
         where_clause = (
-            f"\n        WHERE {' AND '.join(outer_clauses)}"
-            if outer_clauses
-            else ""
+            f"\n        WHERE {' AND '.join(outer_clauses)}" if outer_clauses else ""
         )
         return f"""FROM (
             SELECT
@@ -763,8 +790,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             filter_op = config.get("filter_op") or config.get("filterOp")
             filter_value = config.get("filter_value", config.get("filterValue"))
             ch_col = (
-                self.SESSION_FILTER_MAP.get(col_id)
-                or self.MESSAGE_FILTER_MAP[col_id]
+                self.SESSION_FILTER_MAP.get(col_id) or self.MESSAGE_FILTER_MAP[col_id]
             )
 
             if col_id in self.MESSAGE_FILTER_MAP:

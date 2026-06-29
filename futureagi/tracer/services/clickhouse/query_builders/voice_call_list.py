@@ -17,7 +17,7 @@ The result sets are merged in Python, with raw_log processing delegated to
 the existing ``ObservabilityService.process_raw_logs()``.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
@@ -63,10 +63,10 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         project_id: str,
         page_number: int = 0,
         page_size: int = 10,
-        filters: Optional[List[Dict]] = None,
-        eval_config_ids: Optional[List[str]] = None,
+        filters: list[dict] | None = None,
+        eval_config_ids: list[str] | None = None,
         remove_simulation_calls: bool = False,
-        annotation_label_ids: Optional[List[str]] = None,
+        annotation_label_ids: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -81,7 +81,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
     # Phase 1: Paginated root conversation spans
     # ------------------------------------------------------------------
 
-    def build(self) -> Tuple[str, Dict[str, Any]]:
+    def build(self) -> tuple[str, dict[str, Any]]:
         """Build the Phase-1 query for paginated voice call data."""
         start_date, end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = start_date
@@ -133,7 +133,39 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def build_content_query(self, span_ids: List[str]) -> Tuple[str, Dict[str, Any]]:
+    def build_id_query(self) -> tuple[str, dict[str, Any]]:
+        """Filtered conversation-root span ids only — same predicate/window as
+        build(), no pagination/order. Lets the eval resolver select the same
+        voice calls this list endpoint returns."""
+        start_date, end_date = self.parse_time_range(self.filters)
+        self.params["start_date"] = start_date
+        self.params["end_date"] = end_date
+
+        fb = ClickHouseFilterBuilder(
+            table=self.TABLE,
+            annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
+        extra_where, extra_params = fb.translate(self.filters)
+        self.params.update(extra_params)
+        filter_fragment = f"AND {extra_where}" if extra_where else ""
+
+        query = f"""
+        SELECT id
+        FROM {self.TABLE}
+        {self.project_where()}
+          AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND observation_type = 'conversation'
+          AND created_at >= %(start_date)s - INTERVAL 1 DAY
+          AND start_time >= %(start_date)s
+          AND start_time < %(end_date)s
+          {filter_fragment}
+        LIMIT 1 BY trace_id
+        """
+        return query, self.params
+
+    def build_content_query(self, span_ids: list[str]) -> tuple[str, dict[str, Any]]:
         """Fetch heavy attribute columns for a page of voice call span IDs."""
         if not span_ids:
             return "", {}
@@ -146,7 +178,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
-    def build_count_query(self) -> Tuple[str, Dict[str, Any]]:
+    def build_count_query(self) -> tuple[str, dict[str, Any]]:
         """Build a query to count total matching voice calls."""
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
@@ -210,13 +242,13 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
 
     def build_eval_query(
         self,
-        trace_ids: List[str],
-    ) -> Tuple[str, Dict[str, Any]]:
+        trace_ids: list[str],
+    ) -> tuple[str, dict[str, Any]]:
         """Build eval-scores query for a page of trace IDs."""
         if not trace_ids or not self.eval_config_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "trace_ids": tuple(trace_ids),
             "eval_config_ids": tuple(self.eval_config_ids),
         }
@@ -268,9 +300,9 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
 
     def build_annotation_query(
         self,
-        trace_ids: List[str],
-        annotation_label_ids: Optional[List[str]] = None,
-    ) -> Tuple[str, Dict[str, Any]]:
+        trace_ids: list[str],
+        annotation_label_ids: list[str] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """Build annotation query for a page of trace IDs.
 
         Returns per-annotator rows so the view can build the structured
@@ -280,7 +312,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         if not trace_ids or not annotation_label_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "trace_ids": tuple(trace_ids),
             "label_ids": tuple(annotation_label_ids),
         }
@@ -318,13 +350,13 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
 
     def build_child_spans_query(
         self,
-        trace_ids: List[str],
-    ) -> Tuple[str, Dict[str, Any]]:
+        trace_ids: list[str],
+    ) -> tuple[str, dict[str, Any]]:
         """Build query to fetch child spans for voice call traces."""
         if not trace_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "project_id": self.project_id,
             "trace_ids": tuple(trace_ids),
         }

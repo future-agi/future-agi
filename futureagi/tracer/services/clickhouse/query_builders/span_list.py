@@ -237,6 +237,43 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
+    def build_id_query(self) -> tuple[str, dict[str, Any]]:
+        """Filtered span ids only — same filter/time window as build(), no
+        pagination/order/pivots. Lets the eval resolver select the same rows
+        this list endpoint returns."""
+        start_date, end_date = self.parse_time_range(self.filters)
+        self.params["start_date"] = start_date
+        self.params["end_date"] = end_date
+
+        fb = self._FILTER_BUILDER_CLS(
+            table=self.TABLE,
+            query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
+            annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
+        extra_where, extra_params = fb.translate(self.filters)
+        self.params.update(extra_params)
+        filter_fragment = f"AND {extra_where}" if extra_where else ""
+
+        pv_fragment = ""
+        if self.project_version_id:
+            pv_fragment = "AND project_version_id = %(project_version_id)s"
+            self.params["project_version_id"] = self.project_version_id
+
+        query = f"""
+        SELECT id
+        FROM {self.TABLE}
+        {self.project_where()}
+          AND created_at >= %(start_date)s - INTERVAL 1 DAY
+          AND start_time >= %(start_date)s
+          AND start_time < %(end_date)s
+          {pv_fragment}
+          {filter_fragment}
+        LIMIT 1 BY id
+        """
+        return query, self.params
+
     def build_content_query(self, span_ids: list) -> tuple[str, dict[str, Any]]:
         """Fetch input/output for a page of span IDs."""
         if not span_ids:
