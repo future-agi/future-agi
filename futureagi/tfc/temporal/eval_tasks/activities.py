@@ -25,6 +25,8 @@ from tfc.temporal.eval_tasks.types import (
     RunEntryOutput,
     TaskStateInput,
     TaskStateOutput,
+    WorkflowLabelsInput,
+    WorkflowLabelsOutput,
 )
 
 # =============================================================================
@@ -184,6 +186,40 @@ def _get_task_state_sync(task_id: str) -> dict:
         close_old_connections()
 
 
+def _get_workflow_labels_sync(task_id: str) -> dict:
+    """Fetch the task's Search-Attribute values (org/project/run_type) and memo
+    context (names + a config summary) for the workflow to upsert.
+
+    The workflow calls this at the start of every run, so the labels are
+    re-applied after each continue-as-new (run-scoped, the §13.5 gotcha).
+    """
+    close_old_connections()
+    try:
+        from tracer.models.eval_task import EvalTask
+
+        task = EvalTask.objects.select_related("project", "project__organization").get(
+            id=task_id
+        )
+        project = task.project
+        org = getattr(project, "organization", None)
+        eval_count = task.evals.count()
+        config_summary = (
+            f"row_type={task.row_type}, sampling={task.sampling_rate}, "
+            f"limit={task.spans_limit}, evals={eval_count}"
+        )
+        return {
+            "org_id": str(org.id) if org else "",
+            "project_id": str(project.id) if project else "",
+            "run_type": task.run_type or "",
+            "task_name": task.name or "",
+            "project_name": (project.name or "") if project else "",
+            "org_name": (org.name or "") if org else "",
+            "config_summary": config_summary,
+        }
+    finally:
+        close_old_connections()
+
+
 def _finalize_task_sync(task_id: str) -> dict:
     """Mark the task completed once the drain is fully done.
 
@@ -290,6 +326,17 @@ async def get_eval_task_state_activity(input: TaskStateInput) -> TaskStateOutput
 
 
 @activity.defn
+async def get_workflow_labels_activity(
+    input: WorkflowLabelsInput,
+) -> WorkflowLabelsOutput:
+    async with Heartbeater():
+        result = await otel_sync_to_async(
+            _get_workflow_labels_sync, thread_sensitive=False
+        )(input.task_id)
+    return WorkflowLabelsOutput(**result)
+
+
+@activity.defn
 async def finalize_eval_task_activity(input: FinalizeInput) -> FinalizeOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_finalize_task_sync, thread_sensitive=False)(
@@ -309,5 +356,6 @@ __all__ = [
     "fail_eval_entry_activity",
     "reap_stale_running_activity",
     "get_eval_task_state_activity",
+    "get_workflow_labels_activity",
     "finalize_eval_task_activity",
 ]
