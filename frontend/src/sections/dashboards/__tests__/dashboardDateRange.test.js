@@ -42,6 +42,20 @@ describe("getDateRange", () => {
     });
   });
 
+  it("30m → exactly 30 minutes before now, ending now", () => {
+    const r = getDateRange("30m", NOW);
+    expect(r.end).toBe(NOW.toISOString());
+    expect(NOW.getTime() - new Date(r.start).getTime()).toBe(30 * 60 * 1000);
+  });
+
+  it("6h → exactly 6 hours before now, ending now", () => {
+    const r = getDateRange("6h", NOW);
+    expect(r.end).toBe(NOW.toISOString());
+    expect(NOW.getTime() - new Date(r.start).getTime()).toBe(
+      6 * 60 * 60 * 1000,
+    );
+  });
+
   it("7D → exactly 7 days before now, ending now", () => {
     const r = getDateRange("7D", NOW);
     expect(r.end).toBe(NOW.toISOString());
@@ -74,7 +88,17 @@ describe("getDateRange", () => {
   });
 
   it("every preset returns start strictly before end", () => {
-    for (const p of ["today", "yesterday", "7D", "30D", "3M", "6M", "12M"]) {
+    for (const p of [
+      "30m",
+      "6h",
+      "today",
+      "yesterday",
+      "7D",
+      "30D",
+      "3M",
+      "6M",
+      "12M",
+    ]) {
       const r = getDateRange(p, NOW);
       expect(new Date(r.start).getTime()).toBeLessThan(
         new Date(r.end).getTime(),
@@ -209,7 +233,10 @@ describe("resolveInitialTimeRange", () => {
 describe("toTimeRangePayload", () => {
   it("maps { start, end } → { custom_start, custom_end }", () => {
     expect(
-      toTimeRangePayload({ start: "2026-01-01T00:00:00.000Z", end: "2026-02-01T00:00:00.000Z" }),
+      toTimeRangePayload({
+        start: "2026-01-01T00:00:00.000Z",
+        end: "2026-02-01T00:00:00.000Z",
+      }),
     ).toEqual({
       custom_start: "2026-01-01T00:00:00.000Z",
       custom_end: "2026-02-01T00:00:00.000Z",
