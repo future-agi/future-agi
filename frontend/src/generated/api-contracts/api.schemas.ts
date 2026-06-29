@@ -1934,7 +1934,7 @@ export interface MessageApi {
 /**
  * String or JSON object.
  */
-export type PromptTemplateDataApiResponseFormat = { [key: string]: unknown };
+export type PromptTemplateDataApiResponseFormat = string | { [key: string]: unknown };
 
 /**
  * JSON Schema (Draft 7) for structured outputs. Required when response_format='json_schema'. Example: {'type': 'object', 'properties': {...}, 'required': [...]}
@@ -6922,7 +6922,7 @@ export type ColumnConfigResultApiMessages = { [key: string]: unknown };
 /**
  * String or JSON object.
  */
-export type ColumnConfigResultApiResponseFormat = { [key: string]: unknown };
+export type ColumnConfigResultApiResponseFormat = string | { [key: string]: unknown };
 
 export type ColumnConfigResultApiOptimizedKPrompts = { [key: string]: unknown };
 
@@ -8149,7 +8149,7 @@ export type PromptConfigApiMessagesItem = {[key: string]: string};
 /**
  * String or JSON object.
  */
-export type PromptConfigApiResponseFormat = { [key: string]: unknown };
+export type PromptConfigApiResponseFormat = string | { [key: string]: unknown };
 
 export type PromptConfigApiToolsItem = {[key: string]: string};
 
@@ -12677,7 +12677,7 @@ export const LitellmApiOutputFormat = {
 /**
  * String or JSON object.
  */
-export type LitellmApiResponseFormat = { [key: string]: unknown };
+export type LitellmApiResponseFormat = string | { [key: string]: unknown };
 
 /**
  * Tool selection mode: 'auto' or 'required'.
