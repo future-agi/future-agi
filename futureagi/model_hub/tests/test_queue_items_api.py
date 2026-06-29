@@ -62,10 +62,36 @@ def demote_queue_creator_to_annotator(queue_id, user):
 # ---------------------------------------------------------------------------
 
 
+def _make_label(auth_client, name="Default Queue Label"):
+    auth_client.post(
+        "/model-hub/annotations-labels/",
+        {
+            "name": name,
+            "type": "categorical",
+            "settings": {
+                "options": [{"label": "A"}, {"label": "B"}],
+                "multi_choice": False,
+                "rule_prompt": "",
+                "auto_annotate": False,
+                "strategy": None,
+            },
+        },
+        format="json",
+    )
+    resp = auth_client.get("/model-hub/annotations-labels/", {"search": name})
+    return resp.data["results"][0]["id"]
+
+
 @pytest.fixture
 def queue(auth_client):
     """Create a queue and return its ID."""
-    resp = auth_client.post(QUEUE_URL, {"name": "Item Test Queue"}, format="json")
+    # A queue must have at least one label (serializer-enforced).
+    label_id = _make_label(auth_client, name="Item Test Label")
+    resp = auth_client.post(
+        QUEUE_URL,
+        {"name": "Item Test Queue", "label_ids": [str(label_id)]},
+        format="json",
+    )
     return resp.data["id"]
 
 

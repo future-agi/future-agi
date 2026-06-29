@@ -3947,7 +3947,6 @@ export interface ConversationCreateRequestApi {
   title?: string;
   /** @maxLength 500 */
   context_page?: string;
-  hidden?: boolean;
 }
 
 export type FalconMessageApiRole = typeof FalconMessageApiRole[keyof typeof FalconMessageApiRole];
@@ -5423,7 +5422,8 @@ export interface AnnotationQueueApi {
   readonly is_default?: boolean;
   readonly labels?: readonly QueueLabelNestedApi[];
   readonly annotators?: readonly QueueAnnotatorNestedApi[];
-  label_ids?: string[];
+  /** @minItems 1 */
+  label_ids: string[];
   annotator_ids?: string[];
   annotator_roles?: AnnotationQueueApiAnnotatorRoles;
   readonly label_count?: number;

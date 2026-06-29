@@ -58,12 +58,37 @@ def second_user(organization, workspace):
     )
 
 
+def _make_label(auth_client, name="Default Queue Label"):
+    auth_client.post(
+        "/model-hub/annotations-labels/",
+        {
+            "name": name,
+            "type": "categorical",
+            "settings": {
+                "options": [{"label": "A"}, {"label": "B"}],
+                "multi_choice": False,
+                "rule_prompt": "",
+                "auto_annotate": False,
+                "strategy": None,
+            },
+        },
+        format="json",
+    )
+    resp = auth_client.get("/model-hub/annotations-labels/", {"search": name})
+    return resp.data["results"][0]["id"]
+
+
 @pytest.fixture
 def manual_queue(auth_client):
     """Create a queue with manual assignment strategy."""
+    label_id = _make_label(auth_client, name="Manual Queue Label")
     resp = auth_client.post(
         QUEUE_URL,
-        {"name": "Manual Queue", "assignment_strategy": "manual"},
+        {
+            "name": "Manual Queue",
+            "assignment_strategy": "manual",
+            "label_ids": [str(label_id)],
+        },
         format="json",
     )
     return resp.data["id"]
@@ -72,9 +97,14 @@ def manual_queue(auth_client):
 @pytest.fixture
 def distributed_queue(auth_client):
     """Create a queue with round_robin assignment strategy."""
+    label_id = _make_label(auth_client, name="Distributed Queue Label")
     resp = auth_client.post(
         QUEUE_URL,
-        {"name": "Distributed Queue", "assignment_strategy": "round_robin"},
+        {
+            "name": "Distributed Queue",
+            "assignment_strategy": "round_robin",
+            "label_ids": [str(label_id)],
+        },
         format="json",
     )
     return resp.data["id"]

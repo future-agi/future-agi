@@ -78,7 +78,28 @@ LABEL_URL = "/model-hub/annotations-labels/"
 # ---------------------------------------------------------------------------
 
 
+def _create_label_via_api(auth_client, name="Default Queue Label"):
+    payload = {
+        "name": name,
+        "type": "categorical",
+        "settings": {
+            "options": [{"label": "A"}, {"label": "B"}],
+            "multi_choice": False,
+            "rule_prompt": "",
+            "auto_annotate": False,
+            "strategy": None,
+        },
+    }
+    auth_client.post(LABEL_URL, payload, format="json")
+    resp = auth_client.get(LABEL_URL, {"search": name})
+    return resp.data["results"][0]["id"]
+
+
 def _create_queue(auth_client, name="Test Queue", **extra):
+    # A queue must have at least one label (serializer-enforced); attach one
+    # by default unless the caller specifies label_ids.
+    if "label_ids" not in extra:
+        extra["label_ids"] = [str(_create_label_via_api(auth_client))]
     payload = {"name": name, **extra}
     resp = auth_client.post(QUEUE_URL, payload, format="json")
     assert resp.status_code == status.HTTP_201_CREATED, resp.data

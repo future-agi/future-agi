@@ -60,6 +60,12 @@ def queue_status_url(queue_id):
 
 
 def create_queue(auth_client, **overrides):
+    # A queue must have at least one label (enforced by the serializer), so
+    # default to a freshly-created label when the caller doesn't specify one.
+    if "label_ids" not in overrides:
+        overrides["label_ids"] = [
+            str(create_label_for_queue(auth_client, name="Default Queue Label"))
+        ]
     payload = {
         "name": overrides.pop("name", "Test Queue"),
         **overrides,

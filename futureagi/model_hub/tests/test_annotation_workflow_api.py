@@ -259,10 +259,36 @@ def allow_queue_creation_entitlement():
         yield check_can_create
 
 
+def _make_label(auth_client, name="Default Queue Label"):
+    auth_client.post(
+        "/model-hub/annotations-labels/",
+        {
+            "name": name,
+            "type": "categorical",
+            "settings": {
+                "options": [{"label": "A"}, {"label": "B"}],
+                "multi_choice": False,
+                "rule_prompt": "",
+                "auto_annotate": False,
+                "strategy": None,
+            },
+        },
+        format="json",
+    )
+    resp = auth_client.get("/model-hub/annotations-labels/", {"search": name})
+    return resp.data["results"][0]["id"]
+
+
 @pytest.fixture
 def queue_id(auth_client):
     """Create a queue and return its UUID."""
-    resp = auth_client.post(QUEUE_URL, {"name": "Workflow Test Queue"}, format="json")
+    # A queue must have at least one label (serializer-enforced).
+    label_id = _make_label(auth_client, name="Workflow Test Label")
+    resp = auth_client.post(
+        QUEUE_URL,
+        {"name": "Workflow Test Queue", "label_ids": [str(label_id)]},
+        format="json",
+    )
     return resp.data["id"]
 
 
@@ -1396,7 +1422,10 @@ class TestCompleteItem:
 
         queue_2_resp = auth_client.post(
             QUEUE_URL,
-            {"name": "Second queue with same source"},
+            {
+                "name": "Second queue with same source",
+                "label_ids": [str(label.id)],
+            },
             format="json",
         )
         assert queue_2_resp.status_code == status.HTTP_201_CREATED, queue_2_resp.data
