@@ -30,6 +30,7 @@ import {
   useTheme,
 } from "@mui/material";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useAuthContext } from "src/auth/hooks";
 import { paths } from "src/routes/paths";
 import {
   useDashboardDetail,
@@ -106,6 +107,7 @@ const InlineEdit = forwardRef(function InlineEdit(
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useImperativeHandle(ref, () => ({ startEdit }), [value]);
 
   const save = () => {
@@ -631,6 +633,7 @@ export default function DashboardDetailView() {
   const navigate = useNavigate();
   const { dashboardId } = useParams();
   const { enqueueSnackbar } = useSnackbar();
+  const { user } = useAuthContext();
 
   const { data: dashboard, isLoading } = useDashboardDetail(dashboardId);
   const updateDashboard = useUpdateDashboard();
@@ -1523,16 +1526,21 @@ export default function DashboardDetailView() {
           <ListItemText>Add Widget</ListItemText>
         </MenuItem>
         <Divider />
-        <MenuItem onClick={handleDeleteDashboard} sx={{ color: "error.main" }}>
-          <ListItemIcon>
-            <Iconify
-              icon="mdi:delete-outline"
-              width={18}
-              sx={{ color: "error.main" }}
-            />
-          </ListItemIcon>
-          <ListItemText>Delete Dashboard</ListItemText>
-        </MenuItem>
+        {dashboard?.created_by?.email === user?.email && (
+          <MenuItem
+            onClick={handleDeleteDashboard}
+            sx={{ color: "error.main" }}
+          >
+            <ListItemIcon>
+              <Iconify
+                icon="mdi:delete-outline"
+                width={18}
+                sx={{ color: "error.main" }}
+              />
+            </ListItemIcon>
+            <ListItemText>Delete Dashboard</ListItemText>
+          </MenuItem>
+        )}
       </Menu>
 
       <ConfirmDialog
