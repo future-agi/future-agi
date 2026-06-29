@@ -214,6 +214,14 @@ def get_kpi_eval_metrics_query(test_execution_id):
           AND jsonb_typeof(ce.eval_outputs) = 'object'
           AND e.value ? 'output'
           AND e.value ? 'output_type'
+          -- Exclude soft-deleted eval configs: eval_outputs is not pruned
+          -- when an eval is deleted, so its keys still linger here.
+          AND NOT EXISTS (
+              SELECT 1
+              FROM simulate_eval_config ec
+              WHERE ec.id::text = e.key
+                AND ec.deleted = true
+          )
     ),
 
     -- Pass/Fail and score: aggregate to a single avg per metric_name
