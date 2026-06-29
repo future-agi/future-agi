@@ -60,23 +60,101 @@ describe("normalizeOldEndpointEval", () => {
     expect(attached.userEvalId).toBe("uem-1");
   });
 
-  it("derives evalType from tags when eval_type is missing", () => {
+  it("derives eval_type from tags when eval_type is missing", () => {
     expect(
       normalizeOldEndpointEval({
         id: "e",
         name: "n",
         eval_template_tags: ["CODE_EVAL"],
-      }).evalType,
+      }).eval_type,
     ).toBe("code");
     expect(
       normalizeOldEndpointEval({
         id: "e",
         name: "n",
         eval_template_tags: ["AGENT_EVAL"],
-      }).evalType,
+      }).eval_type,
     ).toBe("agent");
     expect(
-      normalizeOldEndpointEval({ id: "e", name: "n" }).evalType,
+      normalizeOldEndpointEval({ id: "e", name: "n" }).eval_type,
     ).toBe("llm");
+  });
+
+  it("emits snake_case keys for template_type / output_type / last_updated / current_version", () => {
+    const out = normalizeOldEndpointEval({
+      id: "e1",
+      name: "my eval",
+      template_type: "composite",
+      output_type: "score",
+      updated_at: "2026-06-29T10:00:00Z",
+      current_version: "v2",
+      eval_template_tags: ["AGENT_EVAL"],
+    });
+    expect(out.template_type).toBe("composite");
+    expect(out.output_type).toBe("score");
+    expect(out.last_updated).toBe("2026-06-29T10:00:00Z");
+    expect(out.current_version).toBe("v2");
+    expect(out.eval_template_tags).toEqual(["AGENT_EVAL"]);
+    expect(out).not.toHaveProperty("templateType");
+    expect(out).not.toHaveProperty("outputType");
+    expect(out).not.toHaveProperty("lastUpdated");
+    expect(out).not.toHaveProperty("currentVersion");
+    expect(out).not.toHaveProperty("evalTemplateTags");
+  });
+
+  // Realistic getEvalsList response shape captured from the wire. Asserts the
+  // mapper produces a row that lines up with the typed eval-templates/list
+  // contract (EvalTemplateListItemSerializer) so EvalPickerList renders both
+  // endpoints' rows through the same snake_case reads.
+  const OLD_ENDPOINT_FIXTURE = {
+    id: "uem-42",
+    template_id: "tpl-7",
+    name: "customer_agent_clarification_seeking",
+    template_type: "single",
+    eval_type: "agent",
+    output_type: "pass_fail",
+    owner: "user",
+    created_by_name: "Karthik Avinash",
+    current_version: "v3",
+    updated_at: "2026-06-28T12:34:56Z",
+    is_draft: false,
+    eval_required_keys: ["conversation"],
+    eval_template_tags: ["AGENT_EVAL"],
+    description: "Checks whether the agent asks for clarification.",
+    model: "gpt-4o-mini",
+  };
+
+  it("maps a realistic old-endpoint row to the snake_case picker shape", () => {
+    const out = normalizeOldEndpointEval(OLD_ENDPOINT_FIXTURE);
+    expect(out).toMatchObject({
+      id: "tpl-7",
+      templateId: "tpl-7",
+      userEvalId: "uem-42",
+      name: "customer_agent_clarification_seeking",
+      template_type: "single",
+      eval_type: "agent",
+      output_type: "pass_fail",
+      owner: "user",
+      created_by_name: "Karthik Avinash",
+      current_version: "v3",
+      last_updated: "2026-06-28T12:34:56Z",
+      is_draft: false,
+      required_keys: ["conversation"],
+      eval_template_tags: ["AGENT_EVAL"],
+      description: "Checks whether the agent asks for clarification.",
+      model: "gpt-4o-mini",
+    });
+    for (const camel of [
+      "templateType",
+      "evalType",
+      "outputType",
+      "lastUpdated",
+      "currentVersion",
+      "isDraft",
+      "requiredKeys",
+      "evalTemplateTags",
+    ]) {
+      expect(out).not.toHaveProperty(camel);
+    }
   });
 });

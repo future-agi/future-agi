@@ -7,13 +7,15 @@ import { paramsSerializer } from "src/utils/utils";
 
 /**
  * Map one raw eval from the old `getEvalsList(sourceId)` endpoint to the
- * picker row shape. Extracted (and exported) so the field-mapping contract
- * — especially that `created_by_name` is preserved as snake_case — has a
- * regression test without rendering the whole hook (see TH-6125).
+ * picker row shape. The picker also consumes the typed
+ * `eval-templates/list` endpoint whose serializer (EvalTemplateListItem)
+ * emits snake_case, so this mapper emits the same snake_case shape; the
+ * component then reads one canonical key set regardless of which endpoint
+ * supplied the row.
  */
 export function normalizeOldEndpointEval(e) {
   const owner = e.owner || (e.type === "futureagi_built" ? "system" : "user");
-  const evalType =
+  const eval_type =
     e.eval_type ||
     (e.eval_template_tags?.includes("CODE_EVAL")
       ? "code"
@@ -39,18 +41,18 @@ export function normalizeOldEndpointEval(e) {
     // and 404 with "Eval not found" (TH-4533).
     userEvalId: e.template_id ? e.id : undefined,
     name: e.name || e.eval_template_name,
-    templateType: e.template_type || "single",
-    evalType,
-    outputType: e.output_type || e.output || "pass_fail",
+    template_type: e.template_type || "single",
+    eval_type,
+    output_type: e.output_type || e.output || "pass_fail",
     created_by_name,
-    lastUpdated: e.updated_at || e.created_at,
-    currentVersion: e.current_version || null,
-    isDraft: e.is_draft || false,
-    requiredKeys: e.eval_required_keys || e.required_keys || [],
+    last_updated: e.updated_at || e.created_at,
+    current_version: e.current_version || null,
+    is_draft: e.is_draft || false,
+    required_keys: e.eval_required_keys || e.required_keys || [],
     description: e.description,
     model: e.model || e.selected_model,
     owner,
-    evalTemplateTags: e.eval_template_tags,
+    eval_template_tags: e.eval_template_tags,
     // Keep original for pass-through
     _original: e,
   };
@@ -70,7 +72,7 @@ export function useEvalPickerData({
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  const [sorting, setSorting] = useState([{ id: "lastUpdated", desc: true }]);
+  const [sorting, setSorting] = useState([{ id: "last_updated", desc: true }]);
   const [filters, setFilters] = useState(null);
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
 
@@ -180,14 +182,14 @@ export function useEvalPickerData({
     const tags = filters?.tags;
     const nameMatch = filters?.search;
     return items.filter((it) => {
-      if (evalTypes?.length && !evalTypes.includes(it.evalType)) return false;
-      if (outputTypes?.length && !outputTypes.includes(it.outputType))
+      if (evalTypes?.length && !evalTypes.includes(it.eval_type)) return false;
+      if (outputTypes?.length && !outputTypes.includes(it.output_type))
         return false;
       if (owner && owner !== "all" && it.owner !== owner) return false;
-      if (templateTypes?.length && !templateTypes.includes(it.templateType))
+      if (templateTypes?.length && !templateTypes.includes(it.template_type))
         return false;
-      if (templateType && it.templateType !== templateType) return false;
-      if (tags?.length && !tags.some((t) => it.evalTemplateTags?.includes(t)))
+      if (templateType && it.template_type !== templateType) return false;
+      if (tags?.length && !tags.some((t) => it.eval_template_tags?.includes(t)))
         return false;
       if (
         nameMatch &&
