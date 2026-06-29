@@ -28,7 +28,7 @@ def _load_migration():
     import importlib
 
     return importlib.import_module(
-        "model_hub.migrations.0112_eval_usage_version_backfill"
+        "model_hub.migrations.0113_eval_usage_version_backfill"
     )
 
 
@@ -362,9 +362,9 @@ class TestEvalRunnerUsesResolveHelper:
 
     def _make_metric(self, organization, workspace, template, pinned_version=None):
         from model_hub.models.evals_metric import UserEvalMetric
-        from model_hub.models.develop_dataset import DevelopDataset
+        from model_hub.models.develop_dataset import Dataset
 
-        dataset = DevelopDataset.objects.create(
+        dataset = Dataset.objects.create(
             name=f"ds-{uuid.uuid4().hex[:6]}",
             organization=organization,
             workspace=workspace,

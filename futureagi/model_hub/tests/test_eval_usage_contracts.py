@@ -350,7 +350,7 @@ class TestEvalApiLogTableContract:
         from model_hub.serializers.contracts import EvalApiLogTableResponseSerializer
 
         resp = auth_client.get(
-            "/model-hub/get_eval_api_call_logs/",
+            "/model-hub/get-eval-logs-details",
             {
                 "eval_template_id": str(user_eval_template.id),
                 "page_size": 25,
@@ -373,7 +373,7 @@ class TestEvalApiLogTableContract:
         /status/source_type fields — Nikhil specifically asked for these to be
         typed (not bare JSONField) so consumers get a real contract."""
         resp = auth_client.get(
-            "/model-hub/get_eval_api_call_logs/",
+            "/model-hub/get-eval-logs-details",
             {
                 "eval_template_id": str(user_eval_template.id),
                 "page_size": 25,
