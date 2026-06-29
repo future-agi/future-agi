@@ -25,9 +25,8 @@ import json
 import time
 import uuid
 
-import pytest
-
 import clickhouse_connect
+import pytest
 
 from tracer.services.clickhouse.v2 import get_v2_config
 from tracer.tests._ch_seed import seed_ch_span, truncate_ch_spans
@@ -108,8 +107,16 @@ def _send_otlp_span_http(
                     "attributes": [
                         {"key": "service.name", "value": {"stringValue": "eval-e2e"}},
                         {"key": "fi.project_id", "value": {"stringValue": project_id}},
-                        {"key": "fi.org_id", "value": {"stringValue": "e2e00000-e2e0-4e2e-8e2e-e2e000000002"}},
-                        {"key": "fi.semconv", "value": {"stringValue": "openinference"}},
+                        {
+                            "key": "fi.org_id",
+                            "value": {
+                                "stringValue": "e2e00000-e2e0-4e2e-8e2e-e2e000000002"
+                            },
+                        },
+                        {
+                            "key": "fi.semconv",
+                            "value": {"stringValue": "openinference"},
+                        },
                     ]
                 },
                 "scopeSpans": [
@@ -188,7 +195,8 @@ def _seed_span_directly(
         cost=0.001,
         latency_ms=500,
         status="OK",
-        span_attributes=attributes or {
+        span_attributes=attributes
+        or {
             "input": "eval test",
             "output": "eval response",
             "model_name": "gpt-4o",
@@ -249,7 +257,7 @@ def _wait_for_ch_row(ch_client, span_id: str, timeout: float = 10) -> dict | Non
             parameters={"sid": span_id},
         )
         if result.row_count > 0:
-            return dict(zip(result.column_names, result.first_row))
+            return dict(zip(result.column_names, result.first_row, strict=False))
         time.sleep(0.5)
     return None
 
@@ -264,12 +272,11 @@ def _wait_for_eval_logger_row(
     while time.monotonic() < deadline:
         try:
             result = ch_client.query(
-                "SELECT * FROM eval_logger FINAL "
-                "WHERE span_id = {sid:String} LIMIT 1",
+                "SELECT * FROM eval_logger FINAL WHERE span_id = {sid:String} LIMIT 1",
                 parameters={"sid": span_id},
             )
             if result.row_count > 0:
-                return dict(zip(result.column_names, result.first_row))
+                return dict(zip(result.column_names, result.first_row, strict=False))
         except Exception:
             # eval_logger table may not exist yet in all environments
             pass
@@ -367,44 +374,3 @@ class TestE2EEvalLifecycle:
         # The populated fixture sets input/output in span_attributes
         assert "input" in result
         assert "output" in result
-
-
-@pytest.mark.django_db(transaction=True)
-class TestE2EEvalWithInlineExecution:
-    """Eval lifecycle with inline execution (no Temporal worker needed)."""
-
-    def test_eval_dispatch_inline(
-        self,
-        ch_client,
-        auth_client,
-        observe_project,
-        eval_template,
-        custom_eval_config,
-        eval_task,
-        stub_run_eval,
-        stub_cost_log,
-        inline_temporal,
-    ):
-        """Ingest span, run eval inline, verify task processes without error."""
-        span_id, trace_id = _ingest_span(
-            project=observe_project,
-            span_name="inline-eval-span",
-        )
-
-        # Confirm span in CH
-        if _collector_available():
-            row = _wait_for_ch_row(ch_client, span_id, timeout=10)
-            assert row is not None
-
-        # The eval_task fixture is already PENDING. Process it.
-        # Import here to avoid circular imports at module level.
-        from tracer.utils.eval_tasks import process_eval_task
-
-        # process_eval_task reads from CH, runs the eval (stubbed), writes
-        # EvalLogger row. We just verify it completes without error.
-        try:
-            process_eval_task(eval_task.id)
-        except Exception as exc:
-            # Some failures are expected in scaffold mode (missing CH data,
-            # eval engine stubs). Log but don't fail the scaffold test.
-            pytest.skip(f"process_eval_task raised (expected in scaffold): {exc}")

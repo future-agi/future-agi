@@ -3,10 +3,10 @@
 One workflow per task replaces the old global 60s cron: ``HistoricalEvalTask``
 reconciles once then drains every pending entry to completion;
 ``ContinuousEvalTask`` loops — reconcile-forward, drain, durable-sleep — forever
-via continue-as-new. Both bound in-flight work with a per-task semaphore (§9
-Layer 2) and honour a pause flipped on the task row between batches (§8).
+via continue-as-new. Both bound in-flight work with a per-task semaphore and
+honour a pause flipped on the task row between batches.
 
-Observability (§13): each workflow upserts Search Attributes (org/project/
+Observability: each workflow upserts Search Attributes (org/project/
 run_type/status) + memo at the start of every run (so labels survive
 continue-as-new), exposes a ``phase`` query, and accepts a ``request_recheck``
 signal that nudges the loop to re-check sooner (the DB stays the source of
@@ -74,7 +74,7 @@ async def _apply_labels(task_id: str) -> None:
     """Upsert the workflow's Search Attributes + memo from the task's DB row.
 
     Called at the start of every run so labels are re-applied after each
-    continue-as-new (§13.5 — SA/memo values are run-scoped).
+    continue-as-new (SA/memo values are run-scoped).
     """
     labels = await workflow.execute_activity(
         "get_workflow_labels_activity",
@@ -152,7 +152,7 @@ async def _finalize(task_id: str) -> None:
 
 async def _drain_batch(entry_ids: list[str], max_concurrent: int) -> None:
     """Run a claimed batch, capping concurrent eval activities at the per-task
-    bound (§9 Layer 2). run_entry self-converges to a terminal state, so retries
+    bound. run_entry self-converges to a terminal state, so retries
     here only cover worker/DB infra blips.
 
     Per-item isolation: an activity that exhausts its retries (a persistent infra
@@ -203,7 +203,7 @@ class _ObservableEvalWorkflow:
 
     @workflow.signal
     def request_recheck(self) -> None:
-        # The DB is the source of truth (§13.3); this only wakes the loop to
+        # The DB is the source of truth; this only wakes the loop to
         # re-check pause/edit sooner than its next poll boundary.
         self._recheck = True
 

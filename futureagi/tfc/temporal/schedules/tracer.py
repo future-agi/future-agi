@@ -4,12 +4,10 @@ Tracer Temporal schedules.
 These replace the Celery Beat schedules for tracer tasks.
 """
 
-from typing import List
-
 from tfc.temporal.schedules.config import ScheduleConfig
 
 # Tracer schedules (migrated from Celery Beat)
-TRACER_SCHEDULES: List[ScheduleConfig] = [
+TRACER_SCHEDULES: list[ScheduleConfig] = [
     ScheduleConfig(
         schedule_id="process-inline-evals",
         activity_name="process_in_line_evals",
@@ -17,13 +15,17 @@ TRACER_SCHEDULES: List[ScheduleConfig] = [
         queue="tasks_s",
         description="Process pending inline evaluations",
     ),
-    ScheduleConfig(
-        schedule_id="eval-task-cron",
-        activity_name="eval_task_cron",
-        interval_seconds=60,
-        queue="default",
-        description="Process evaluation tasks",
-    ),
+    # Retired at the eval-task workflow cutover: eval tasks now run as one
+    # Temporal workflow per task, started from the views. The cron round-robin
+    # is left here (disabled) for reference; do not re-enable alongside the
+    # workflows or tasks will be processed twice.
+    # ScheduleConfig(
+    #     schedule_id="eval-task-cron",
+    #     activity_name="eval_task_cron",
+    #     interval_seconds=60,
+    #     queue="default",
+    #     description="Process evaluation tasks",
+    # ),
     ScheduleConfig(
         schedule_id="check-alerts",
         activity_name="check_alerts",
