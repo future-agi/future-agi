@@ -222,6 +222,8 @@ const EvalDrawerSection = () => {
               border: "1px solid var(--border-default)",
               padding: "16px",
               borderRadius: "4px",
+              maxHeight: 300,
+              overflowY: "auto",
             }}
           >
             {reason?.trim() ? (
