@@ -106,7 +106,7 @@ const useColumns = () =>
         ),
       },
       {
-        id: "actionType",
+        id: "action_type",
         accessorKey: "action_type",
         header: "Action",
         size: 120,
@@ -154,7 +154,7 @@ const useColumns = () =>
         },
       },
       {
-        id: "userName",
+        id: "user_name",
         accessorKey: "user_name",
         header: "By",
         size: 120,
@@ -169,7 +169,7 @@ const useColumns = () =>
         ),
       },
       {
-        id: "createdAt",
+        id: "created_at",
         accessorKey: "created_at",
         header: "Date",
         size: 140,
