@@ -72,6 +72,7 @@ import {
   DEFAULT_DECIMALS,
   escapeHtml,
   formatValueWithConfig,
+  getAggColumnLabel,
   getAutoDecimals,
   getSeriesAverage,
   getSuggestedUnitConfig,
@@ -2187,17 +2188,10 @@ export default function WidgetEditorView() {
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
 
-  const aggColumnLabel = useMemo(() => {
-    if (!metrics.length) return "Average";
-    const uniqueAggs = [...new Set(metrics.map((m) => m.aggregation || "avg"))];
-    if (uniqueAggs.length === 1) {
-      return (
-        ALL_AGGREGATIONS.find((a) => a.value === uniqueAggs[0])?.label ??
-        "Average"
-      );
-    }
-    return "Agg.";
-  }, [metrics]);
+  const aggColumnLabel = useMemo(
+    () => getAggColumnLabel(metrics, ALL_AGGREGATIONS),
+    [metrics],
+  );
 
   // Filtered series for chart — respects checkbox visibility, preserving original colors
   const chartSeries = useMemo(() => {
