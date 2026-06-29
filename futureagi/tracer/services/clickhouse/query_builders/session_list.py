@@ -189,6 +189,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         if not session_ids:
             return "", {}
         params = {**self.params, "content_session_ids": tuple(session_ids)}
+        if "start_date" not in params or "end_date" not in params:
+            params["start_date"], params["end_date"] = self.parse_time_range(
+                self.filters
+            )
         ts_join = remap_left_join(
             "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
         )
@@ -209,6 +213,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 WHERE {self.project_filter_sql()}
                   AND is_deleted = 0
                   AND (parent_span_id IS NULL OR parent_span_id = '')
+                  AND start_time >= %(start_date)s
+                  AND start_time < %(end_date)s
             ) AS rs
             {ts_join}
         )
@@ -336,6 +342,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             return "", {}
 
         params = {**self.params, "attr_session_ids": tuple(session_ids)}
+        if "start_date" not in params or "end_date" not in params:
+            params["start_date"], params["end_date"] = self.parse_time_range(
+                self.filters
+            )
         # P3b step1.5 (DESIGN §3 / id_remap_sql): `session_ids` are OLD curated ids
         # from the resolved browse; resolve each span's `trace_session_id` new→old
         # so a straddler's NEW-id spans' attributes attach to the OLD session id
@@ -365,6 +375,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         WHERE {self.project_filter_sql()}
           AND is_deleted = 0
           AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND start_time >= %(start_date)s
+          AND start_time < %(end_date)s
           AND (
             (span_attributes_raw != '{{}}' AND span_attributes_raw != '')
             OR length(mapKeys(span_attr_str)) > 0

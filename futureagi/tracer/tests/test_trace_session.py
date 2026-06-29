@@ -5,7 +5,7 @@ Tests for /tracer/trace-session/ endpoints.
 """
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest import mock
 
 import pytest
@@ -872,6 +872,77 @@ class TestTraceSessionOverlayWritePath:
 
         assert response.status_code == status.HTTP_200_OK
         assert bound_session_ids == [survivor_id, survivor_id]
+
+    def test_retrieve_clickhouse_applies_time_window_to_span_scans(
+        self, observe_project
+    ):
+        requested_id = str(uuid.uuid4())
+        captured_span_scan_params = []
+        analytics = mock.Mock()
+
+        def execute_ch_query(query, params, timeout_ms):
+            if "WHERE any_id IN %(ids)s" in query:
+                return mock.Mock(data=[])
+            if "FROM spans" in query and (
+                "count(DISTINCT trace_id)" in query or "GROUP BY trace_id" in query
+            ):
+                assert "start_time >= %(start_date)s" in query
+                assert "start_time < %(end_date)s" in query
+                captured_span_scan_params.append(params)
+                if "count(DISTINCT trace_id)" in query:
+                    return mock.Mock(
+                        data=[
+                            {
+                                "start_time": None,
+                                "end_time": None,
+                                "total_cost": 0,
+                                "total_tokens": 0,
+                                "total_traces": 0,
+                            }
+                        ]
+                    )
+                return mock.Mock(data=[])
+            raise AssertionError(f"unexpected ClickHouse query: {query}")
+
+        analytics.execute_ch_query.side_effect = execute_ch_query
+
+        start = datetime(2026, 1, 1)
+        end = datetime(2026, 1, 31, 23, 59, 59)
+        query_data = {
+            "page_number": 0,
+            "page_size": 10,
+            "filters": [
+                {
+                    "column_id": "created_at",
+                    "filter_config": {
+                        "filter_type": "datetime",
+                        "filter_op": "between",
+                        "filter_value": [
+                            "2026-01-01T00:00:00Z",
+                            "2026-01-31T23:59:59Z",
+                        ],
+                    },
+                }
+            ],
+        }
+
+        with mock.patch(
+            "tracer.views.trace_session.get_session_navigation",
+            return_value=(None, None),
+        ):
+            response = TraceSessionView()._retrieve_clickhouse(
+                mock.Mock(),
+                requested_id,
+                observe_project.id,
+                analytics,
+                query_data,
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert len(captured_span_scan_params) == 2
+        for params in captured_span_scan_params:
+            assert params["start_date"] == start
+            assert params["end_date"] == end
 
     def test_overlay_write_composes_with_slice_2a_name_read(
         self, auth_client, observe_project, trace_session

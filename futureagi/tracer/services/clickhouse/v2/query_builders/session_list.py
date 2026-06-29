@@ -40,6 +40,10 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
             return "", {}
 
         params = {**self.params, "attr_session_ids": tuple(session_ids)}
+        if "start_date" not in params or "end_date" not in params:
+            params["start_date"], params["end_date"] = self.parse_time_range(
+                self.filters
+            )
         ts_join = remap_left_join(
             "s.trace_session_id", "trace_session_id_remap", "ts_remap"
         )
@@ -55,6 +59,8 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
         WHERE {self.project_filter_sql()}
           AND is_deleted = 0
           AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND start_time >= %(start_date)s
+          AND start_time < %(end_date)s
           AND (
             (attributes_extra != '{{}}' AND attributes_extra != '')
             OR length(mapKeys(attrs_string)) > 0

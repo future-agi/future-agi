@@ -2888,6 +2888,98 @@ class TestSessionListQueryBuilder:
         assert "span_attr_num" not in query
         assert "toJSONString(attributes_extra) AS span_attributes_raw" not in query
 
+    def test_content_query_reuses_session_time_window(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "created_at",
+                    "filter_config": {
+                        "filter_type": "datetime",
+                        "filter_op": "between",
+                        "filter_value": [
+                            "2026-01-01T00:00:00Z",
+                            "2026-01-31T23:59:59Z",
+                        ],
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+
+        query, params = builder.build_content_query(["session-1"])
+
+        assert "AND start_time >= %(start_date)s" in query
+        assert "AND start_time < %(end_date)s" in query
+        assert params["start_date"] == builder.start_date
+        assert params["end_date"] == builder.end_date
+
+    def test_span_attributes_query_reuses_session_time_window(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "created_at",
+                    "filter_config": {
+                        "filter_type": "datetime",
+                        "filter_op": "between",
+                        "filter_value": [
+                            "2026-02-01T00:00:00Z",
+                            "2026-02-28T23:59:59Z",
+                        ],
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+
+        query, params = builder.build_span_attributes_query(["session-1"])
+
+        assert "AND start_time >= %(start_date)s" in query
+        assert "AND start_time < %(end_date)s" in query
+        assert params["start_date"] == builder.start_date
+        assert params["end_date"] == builder.end_date
+
+    def test_v2_span_attributes_query_reuses_session_time_window(self):
+        from tracer.services.clickhouse.v2.query_builders.session_list import (
+            SessionListQueryBuilderV2,
+        )
+
+        builder = SessionListQueryBuilderV2(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "created_at",
+                    "filter_config": {
+                        "filter_type": "datetime",
+                        "filter_op": "between",
+                        "filter_value": [
+                            "2026-03-01T00:00:00Z",
+                            "2026-03-31T23:59:59Z",
+                        ],
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+        builder.build()
+
+        query, params = builder.build_span_attributes_query(["session-1"])
+
+        assert "AND start_time >= %(start_date)s" in query
+        assert "AND start_time < %(end_date)s" in query
+        assert params["start_date"] == builder.start_date
+        assert params["end_date"] == builder.end_date
+
     def test_build_uses_uniq_not_uniqExact(self):
         """build() should use approximate uniq() instead of expensive uniqExact()."""
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
@@ -3091,6 +3183,46 @@ class TestSessionListQueryBuilder:
         result = SessionListQueryBuilder.format_sessions(rows, columns)
         assert len(result) == 1
         assert result[0]["session_id"] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+@pytest.mark.unit
+class TestUserListQueryBuilder:
+    def test_eval_pass_rate_join_keeps_eval_trace_id_indexable(self):
+        from tracer.services.clickhouse.query_builders.user_list import (
+            UserListQueryBuilder,
+        )
+
+        builder = UserListQueryBuilder(
+            organization_id="00000000-0000-0000-0000-000000000001",
+            project_id="00000000-0000-0000-0000-000000000002",
+            filters=[],
+            limit=10,
+            offset=0,
+        )
+        builder.build()
+        query, _ = builder.build_eval_query(
+            ["00000000-0000-0000-0000-000000000003"]
+        )
+
+        assert "e.trace_id = toUUIDOrNull(ut.trace_id)" in query
+        assert "toString(e.trace_id)" not in query
+
+    def test_build_excludes_eval_pass_rate_cte(self):
+        from tracer.services.clickhouse.query_builders.user_list import (
+            UserListQueryBuilder,
+        )
+
+        query, _ = UserListQueryBuilder(
+            organization_id="00000000-0000-0000-0000-000000000001",
+            project_id="00000000-0000-0000-0000-000000000002",
+            filters=[],
+            limit=10,
+            offset=0,
+        ).build()
+
+        assert "eval_pass_rate AS" not in query
+        assert "eval_logger" not in query.lower()
+        assert "0 AS bool_eval_pass_rate" in query
 
 
 @pytest.mark.unit

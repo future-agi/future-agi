@@ -80,6 +80,9 @@ from tracer.services.clickhouse.query_builders import (
 )
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2.query_builders.user_list import (
+    UserListQueryBuilderV2,
+)
 from tracer.services.observability_providers import ObservabilityService
 from tracer.utils.annotations import (
     build_annotation_subqueries as _build_annotation_subqueries_impl,
@@ -166,7 +169,11 @@ def _users_attr_enrichment_query(project_id=None):
     )
     WHERE resolved_end_user_id IN %(eu_ids)s
     """
-    return sql, params
+    from tracer.services.clickhouse.v2.query_builders.filters import (
+        _append_v2_settings,
+    )
+
+    return _append_v2_settings(sql), params
 
 
 class TraceTagsUpdateSerializer(serializers.Serializer):
@@ -4266,7 +4273,7 @@ class UsersView(APIView):
                 empty_scope = not scoped_project_ids
 
             analytics = AnalyticsQueryService()
-            builder = UserListQueryBuilder(
+            builder = UserListQueryBuilderV2(
                 organization_id=str(organization_id),
                 project_ids=scoped_project_ids,
                 search=search_name,
@@ -4358,6 +4365,32 @@ class UsersView(APIView):
                                     entry[key] = values
                 except Exception as e:
                     logger.warning(f"User span attribute enrichment failed: {e}")
+
+            # Enrich with eval pass rate (deferred from main query for perf)
+            if end_user_ids:
+                try:
+                    eval_query, eval_params = builder.build_eval_query(
+                        [str(e) for e in end_user_ids]
+                    )
+                    if eval_query:
+                        eval_result = analytics.execute_ch_query(
+                            eval_query, eval_params, timeout_ms=10000
+                        )
+                        eval_map = {
+                            str(r.get("end_user_id", "")): r
+                            for r in eval_result.data
+                        }
+                        for entry in output:
+                            euid = str(entry.get("end_user_id", ""))
+                            ev = eval_map.get(euid, {})
+                            entry["bool_eval_pass_rate"] = ev.get(
+                                "bool_eval_pass_rate", 0
+                            )
+                            entry["avg_output_float"] = ev.get(
+                                "avg_output_float", 0
+                            )
+                except Exception as e:
+                    logger.warning(f"User eval enrichment failed: {e}")
 
             final_output = {
                 "table": output,
