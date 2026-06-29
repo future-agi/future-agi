@@ -1954,7 +1954,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: TRACE_ROWS_LIMIT,
-            filters: JSON.stringify(filtersRef.current || []),
+            filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -2606,7 +2606,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: SPAN_ROWS_LIMIT,
-            filters: JSON.stringify(filtersRef.current || []),
+            filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -3176,7 +3176,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(filtersRef.current || []),
+                filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
               },
             },
           );
