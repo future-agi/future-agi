@@ -344,6 +344,10 @@ def queue(db, auth_client, user, organization):
     )
     assert resp.status_code in (200, 201), resp.data
     qid = resp.data["id"]
+    # The bootstrap label only satisfies the "at least one label" creation rule.
+    # Mark it non-required so tests that annotate their own label can still
+    # complete items (a required, un-annotated label blocks completion).
+    AnnotationQueueLabel.objects.filter(queue_id=qid).update(required=False)
     # Creator (auth_client.user) was auto-added as MANAGER by the serializer
     # via AnnotationQueueSerializer.create(). No explicit insert needed.
     r = auth_client.post(_update_status_url(qid), {"status": "active"}, format="json")
@@ -845,7 +849,11 @@ class TestAutoCompleteQueueItems:
         # Pre-state
         item.refresh_from_db()
         assert item.status == QueueItemStatus.PENDING.value
-        baseline_qi_count = QueueItem.objects.filter(deleted=False).count()
+        # Scope to this span so the assertion is immune to default-queue items
+        # other tests may create for unrelated sources.
+        baseline_qi_count = QueueItem.objects.filter(
+            observation_span=observation_span, deleted=False
+        ).count()
 
         # Score one — should NOT complete. Pass queue_item_id explicitly so the
         # score lands in this queue's context (per-queue Score uniqueness).
@@ -883,7 +891,10 @@ class TestAutoCompleteQueueItems:
         # No spurious queue items created — we attributed the scores to the
         # test queue's item, so no default-queue item is auto-created.
         assert (
-            QueueItem.objects.filter(deleted=False).count() == baseline_qi_count
+            QueueItem.objects.filter(
+                observation_span=observation_span, deleted=False
+            ).count()
+            == baseline_qi_count
         )
 
 
@@ -1121,13 +1132,16 @@ class TestAnnotationLabelsCRUD:
 @pytest.mark.django_db
 @pytest.mark.integration
 class TestQueueCRUD:
-    def test_create_queue_db_verified(self, auth_client, organization, user):
+    def test_create_queue_db_verified(
+        self, auth_client, organization, user, star_label
+    ):
         resp = auth_client.post(
             QUEUE_URL,
             {
                 "name": "MyQueue",
                 "description": "x",
                 "assignment_strategy": "round_robin",
+                "label_ids": [str(star_label.id)],
             },
             format="json",
         )

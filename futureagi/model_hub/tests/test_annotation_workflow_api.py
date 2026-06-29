@@ -259,34 +259,17 @@ def allow_queue_creation_entitlement():
         yield check_can_create
 
 
-def _make_label(auth_client, name="Default Queue Label"):
-    auth_client.post(
-        "/model-hub/annotations-labels/",
-        {
-            "name": name,
-            "type": "categorical",
-            "settings": {
-                "options": [{"label": "A"}, {"label": "B"}],
-                "multi_choice": False,
-                "rule_prompt": "",
-                "auto_annotate": False,
-                "strategy": None,
-            },
-        },
-        format="json",
-    )
-    resp = auth_client.get("/model-hub/annotations-labels/", {"search": name})
-    return resp.data["results"][0]["id"]
-
-
 @pytest.fixture
-def queue_id(auth_client):
-    """Create a queue and return its UUID."""
-    # A queue must have at least one label (serializer-enforced).
-    label_id = _make_label(auth_client, name="Workflow Test Label")
+def queue_id(auth_client, label):
+    """Create a queue and return its UUID.
+
+    A queue must have at least one label (serializer-enforced). Use the shared
+    `label` fixture so the queue carries exactly the label the workflow tests
+    annotate — otherwise an extra (required) label would block item completion.
+    """
     resp = auth_client.post(
         QUEUE_URL,
-        {"name": "Workflow Test Queue", "label_ids": [str(label_id)]},
+        {"name": "Workflow Test Queue", "label_ids": [str(label.id)]},
         format="json",
     )
     return resp.data["id"]
@@ -350,14 +333,8 @@ def queue_with_items(auth_client, queue_id, dataset_rows, label, organization):
     ``status == ACTIVE``) work without each test having to opt in.
     """
     ds, rows = dataset_rows
-    # Attach label to queue
-    queue = AnnotationQueue.objects.get(pk=queue_id)
-    AnnotationQueueLabel.objects.create(
-        queue=queue,
-        label=label,
-        order=0,
-        required=True,
-    )
+    # The queue already has `label` attached (via the queue_id fixture), so
+    # don't re-attach it here (would violate unique_active_queue_label).
     # Add 3 items
     items_payload = [
         {"source_type": "dataset_row", "source_id": str(r.id)} for r in rows[:3]
@@ -1430,13 +1407,6 @@ class TestCompleteItem:
         )
         assert queue_2_resp.status_code == status.HTTP_201_CREATED, queue_2_resp.data
         queue_2_id = queue_2_resp.data["id"]
-        queue_2 = AnnotationQueue.objects.get(pk=queue_2_id)
-        AnnotationQueueLabel.objects.create(
-            queue=queue_2,
-            label=label,
-            order=0,
-            required=True,
-        )
         add_resp = auth_client.post(
             add_items_url(queue_2_id),
             {
@@ -5977,7 +5947,6 @@ class TestAutoCompleteQueue:
         """Queue auto-completes when all items are completed."""
         queue_id = active_queue_id
         queue = AnnotationQueue.objects.get(pk=queue_id)
-        AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
 
         _, rows = dataset_rows
         items = [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]
@@ -6001,7 +5970,6 @@ class TestAutoCompleteQueue:
         """Queue stays active when pending items remain."""
         queue_id = active_queue_id
         queue = AnnotationQueue.objects.get(pk=queue_id)
-        AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
 
         _, rows = dataset_rows
         items = [
@@ -6146,7 +6114,11 @@ class TestRoundRobinAssignment:
         """Create a round-robin queue with 2 annotators."""
         resp = auth_client.post(
             QUEUE_URL,
-            {"name": "RR Queue", "assignment_strategy": "round_robin"},
+            {
+                "name": "RR Queue",
+                "assignment_strategy": "round_robin",
+                "label_ids": [str(label.id)],
+            },
             format="json",
         )
         queue_id = resp.data["id"]
@@ -6154,7 +6126,6 @@ class TestRoundRobinAssignment:
             queue_status_url(queue_id), {"status": "active"}, format="json"
         )
         queue = AnnotationQueue.objects.get(pk=queue_id)
-        AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
         # Creator (user) is auto-added as manager by the queue-create serializer.
         # Use get_or_create to avoid violating unique_active_queue_annotator.
         AnnotationQueueAnnotator.objects.get_or_create(queue=queue, user=user)
@@ -6224,7 +6195,6 @@ class TestRoundRobinAssignment:
         queue = AnnotationQueue.objects.get(pk=queue_id)
         queue.assignment_strategy = "manual"
         queue.save(update_fields=["assignment_strategy"])
-        AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
         # Creator (user) is auto-added as manager by the queue-create serializer.
         AnnotationQueueAnnotator.objects.get_or_create(queue=queue, user=user)
 
@@ -6243,7 +6213,11 @@ class TestLoadBalancedAssignment:
         """Create a load-balanced queue with 3 annotators."""
         resp = auth_client.post(
             QUEUE_URL,
-            {"name": "LB Queue", "assignment_strategy": "load_balanced"},
+            {
+                "name": "LB Queue",
+                "assignment_strategy": "load_balanced",
+                "label_ids": [str(label.id)],
+            },
             format="json",
         )
         queue_id = resp.data["id"]
@@ -6251,7 +6225,6 @@ class TestLoadBalancedAssignment:
             queue_status_url(queue_id), {"status": "active"}, format="json"
         )
         queue = AnnotationQueue.objects.get(pk=queue_id)
-        AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
         # Creator (user) is auto-added as manager by the queue-create serializer.
         AnnotationQueueAnnotator.objects.get_or_create(queue=queue, user=user)
         AnnotationQueueAnnotator.objects.get_or_create(queue=queue, user=second_user)
