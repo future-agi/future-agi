@@ -607,9 +607,9 @@ const CreateScenarioView = () => {
     if (defaultSelectedAgent) {
       applySourceChange({
         value: defaultSelectedAgent.id,
-        label: defaultSelectedAgent.agentName,
+        label: defaultSelectedAgent.agent_name,
         sourceType: SourceType.AGENT_DEFINITION,
-        agentType: defaultSelectedAgent.agentType,
+        agentType: defaultSelectedAgent.agent_type,
       });
     }
   }, [defaultAgentDefinitionId, agentDefinitions]);
