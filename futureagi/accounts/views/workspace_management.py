@@ -605,6 +605,42 @@ class WorkspaceInviteAPIView(APIView):
                                         invited_by=user,
                                     )
 
+                            # Persist a PENDING OrganizationInvite so the
+                            # accept-invite flow (accept_invitation_mail) can
+                            # validate the link and, on accept, materialize the
+                            # org + workspace memberships from level/
+                            # workspace_access. Without this row the invite email
+                            # link always renders as "expired or invalid".
+                            from accounts.models.organization_invite import (
+                                InviteStatus,
+                                OrganizationInvite,
+                            )
+
+                            org_level = (
+                                Level.from_string(org_role)
+                                if org_role
+                                else Level.VIEWER
+                            )
+                            ws_level = Level.from_string(
+                                Level.normalize_ws_role(workspace_role)
+                            )
+                            OrganizationInvite.objects.update_or_create(
+                                organization=organization,
+                                target_email=email,
+                                status=InviteStatus.PENDING,
+                                defaults={
+                                    "level": org_level,
+                                    "workspace_access": [
+                                        {
+                                            "workspace_id": str(w.id),
+                                            "level": ws_level,
+                                        }
+                                        for w in workspaces
+                                    ],
+                                    "invited_by": user,
+                                },
+                            )
+
                             # Send invitation email with credentials
                             # ssl_context = ssl.create_default_context()
                             uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
@@ -2239,6 +2275,39 @@ class ManageTeamView(APIView):
                             workspace,
                             workspace_role,
                             request.user,
+                        )
+
+                        # Persist a PENDING OrganizationInvite. The accept-invite
+                        # flow (accept_invitation_mail) rejects any link that has
+                        # no pending invite, and its accept() materializes the
+                        # org + workspace memberships from level/workspace_access.
+                        # Without this row the invite email link always renders as
+                        # "expired or invalid".
+                        from accounts.models.organization_invite import (
+                            InviteStatus,
+                            OrganizationInvite,
+                        )
+
+                        org_level = (
+                            Level.from_string(org_role) if org_role else Level.VIEWER
+                        )
+                        ws_level = Level.from_string(
+                            Level.normalize_ws_role(workspace_role)
+                        )
+                        OrganizationInvite.objects.update_or_create(
+                            organization=organization,
+                            target_email=member_data["email"],
+                            status=InviteStatus.PENDING,
+                            defaults={
+                                "level": org_level,
+                                "workspace_access": [
+                                    {
+                                        "workspace_id": str(workspace.id),
+                                        "level": ws_level,
+                                    }
+                                ],
+                                "invited_by": request.user,
+                            },
                         )
 
                         token = default_token_generator.make_token(new_member)
