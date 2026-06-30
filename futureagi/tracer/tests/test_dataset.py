@@ -559,3 +559,39 @@ class TestAddToExistingDatasetAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
+def test_process_spans_chunk_task_trace_span_lineage(
+    db, dataset, dataset_columns, observe_spans
+):
+    """
+    Test that process_spans_chunk_task preserves source_trace_id
+    and source_span_id on Row models when generating a dataset.
+    """
+    from model_hub.models.develop_dataset import Row
+    from tracer.tasks.dataset import process_spans_chunk_task
+
+    span_ids = [span.id for span in observe_spans]
+
+    column_mapping_data = []
+    for col in dataset_columns:
+        column_mapping_data.append(
+            {"column_id": str(col.id), "span_field": col.name, "column_name": col.name}
+        )
+
+    result = process_spans_chunk_task(
+        span_ids=span_ids,
+        dataset_id=dataset.id,
+        column_span_mapping_data=column_mapping_data,
+    )
+
+    assert result["rows_created"] == len(span_ids)
+
+    rows = Row.objects.filter(dataset=dataset).order_by("order")
+    assert rows.count() == len(observe_spans)
+
+    for i, row in enumerate(rows):
+        original_span = observe_spans[i]
+        assert str(row.source_trace_id) == str(original_span.trace_id)
+        assert str(row.source_span_id) == str(original_span.id)
