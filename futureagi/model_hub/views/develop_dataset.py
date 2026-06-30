@@ -11297,6 +11297,8 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                 column_id = str(cell.column.id)
                 if column_id != str(eval_column.id):
                     row_dict[column_id] = cell.value
+                    if cell.column.name:
+                        row_dict[cell.column.name] = cell.value
 
             # Add feedback information
             row_dict["feedback_comment"] = feedback.explanation
