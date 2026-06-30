@@ -6,6 +6,59 @@ import { useEvalsList } from "src/sections/evals/hooks/useEvalsList";
 import { paramsSerializer } from "src/utils/utils";
 
 /**
+ * Map one raw eval from the old `getEvalsList(sourceId)` endpoint to the
+ * picker row shape. The picker also consumes the typed
+ * `eval-templates/list` endpoint whose serializer (EvalTemplateListItem)
+ * emits snake_case, so this mapper emits the same snake_case shape; the
+ * component then reads one canonical key set regardless of which endpoint
+ * supplied the row.
+ */
+export function normalizeOldEndpointEval(e) {
+  const owner = e.owner || (e.type === "futureagi_built" ? "system" : "user");
+  const eval_type =
+    e.eval_type ||
+    (e.eval_template_tags?.includes("CODE_EVAL")
+      ? "code"
+      : e.eval_template_tags?.includes("AGENT_EVAL")
+        ? "agent"
+        : "llm");
+  const created_by_name =
+    e.created_by_name || (owner === "system" ? "System" : "User");
+  const templateId = e.template_id || e.eval_template_id || e.id;
+  return {
+    // IMPORTANT: the picker's config/detail flow operates on eval
+    // TEMPLATE ids, not user-eval binding ids. Old getEvalsList
+    // returns both (`id` = user eval, `template_id` = template). Use
+    // templateId as the canonical row id so opening the config drawer
+    // fetches the correct eval detail and renders the right type.
+    id: templateId,
+    templateId,
+    // Only already-attached UserEvalMetric rows carry a distinct
+    // `template_id` from the backend; catalog rows (preset / custom
+    // templates) return `id = template.id` with no `template_id`.
+    // Forwarding `e.id` on catalog rows would cause EvaluationDrawer
+    // to route "Add" clicks to /edit_and_run_user_eval/<template_id>
+    // and 404 with "Eval not found" (TH-4533).
+    userEvalId: e.template_id ? e.id : undefined,
+    name: e.name || e.eval_template_name,
+    template_type: e.template_type || "single",
+    eval_type,
+    output_type: e.output_type || e.output || "pass_fail",
+    created_by_name,
+    last_updated: e.updated_at || e.created_at,
+    current_version: e.current_version || null,
+    is_draft: e.is_draft || false,
+    required_keys: e.eval_required_keys || e.required_keys || [],
+    description: e.description,
+    model: e.model || e.selected_model,
+    owner,
+    eval_template_tags: e.eval_template_tags,
+    // Keep original for pass-through
+    _original: e,
+  };
+}
+
+/**
  * Hook for fetching eval list data in the picker context.
  *
  * Uses the old getEvalsList endpoint (which returns ALL evals including system)
@@ -19,7 +72,7 @@ export function useEvalPickerData({
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  const [sorting, setSorting] = useState([{ id: "lastUpdated", desc: true }]);
+  const [sorting, setSorting] = useState([{ id: "last_updated", desc: true }]);
   const [filters, setFilters] = useState(null);
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
 
@@ -98,57 +151,11 @@ export function useEvalPickerData({
   const items = useMemo(() => {
     if (!rawData) return [];
     if (isUsingOldEndpoint) {
-      // Old endpoint: { evals: [...] }. As of the GetEvalsListView patch,
-      // the backend now returns evalType / outputType / createdByName /
-      // owner / updatedAt directly — we trust those fields. The old
-      // tag-based inference is kept as a last-resort fallback for any
-      // stale client/server version skew.
+      // Old endpoint: { evals: [...] }. See `normalizeOldEndpointEval` above
+      // for the field-mapping contract — backend returns snake_case and we
+      // preserve it as snake_case (TH-6125 regression).
       const evals = rawData?.evals || [];
-      return evals.map((e) => {
-        const owner =
-          e.owner || (e.type === "futureagi_built" ? "system" : "user");
-        const evalType =
-          e.eval_type ||
-          (e.eval_template_tags?.includes("CODE_EVAL")
-            ? "code"
-            : e.eval_template_tags?.includes("AGENT_EVAL")
-              ? "agent"
-              : "llm");
-        const createdByName =
-          e.created_by_name || (owner === "system" ? "System" : "User");
-        const templateId = e.template_id || e.eval_template_id || e.id;
-        return {
-          // IMPORTANT: the picker's config/detail flow operates on eval
-          // TEMPLATE ids, not user-eval binding ids. Old getEvalsList
-          // returns both (`id` = user eval, `template_id` = template). Use
-          // templateId as the canonical row id so opening the config drawer
-          // fetches the correct eval detail and renders the right type.
-          id: templateId,
-          templateId,
-          // Only already-attached UserEvalMetric rows carry a distinct
-          // `template_id` from the backend; catalog rows (preset / custom
-          // templates) return `id = template.id` with no `template_id`.
-          // Forwarding `e.id` on catalog rows would cause EvaluationDrawer
-          // to route "Add" clicks to /edit_and_run_user_eval/<template_id>
-          // and 404 with "Eval not found" (TH-4533).
-          userEvalId: e.template_id ? e.id : undefined,
-          name: e.name || e.eval_template_name,
-          templateType: e.template_type || "single",
-          evalType,
-          outputType: e.output_type || e.output || "pass_fail",
-          createdByName,
-          lastUpdated: e.updated_at || e.created_at,
-          currentVersion: e.current_version || null,
-          isDraft: e.is_draft || false,
-          requiredKeys: e.eval_required_keys || e.required_keys || [],
-          description: e.description,
-          model: e.model || e.selected_model,
-          owner,
-          evalTemplateTags: e.eval_template_tags,
-          // Keep original for pass-through
-          _original: e,
-        };
-      });
+      return evals.map(normalizeOldEndpointEval);
     }
     // New endpoint already returns normalized items; still ensure the
     // picker has a stable templateId alias for edit/config flows.
@@ -175,14 +182,14 @@ export function useEvalPickerData({
     const tags = filters?.tags;
     const nameMatch = filters?.search;
     return items.filter((it) => {
-      if (evalTypes?.length && !evalTypes.includes(it.evalType)) return false;
-      if (outputTypes?.length && !outputTypes.includes(it.outputType))
+      if (evalTypes?.length && !evalTypes.includes(it.eval_type)) return false;
+      if (outputTypes?.length && !outputTypes.includes(it.output_type))
         return false;
       if (owner && owner !== "all" && it.owner !== owner) return false;
-      if (templateTypes?.length && !templateTypes.includes(it.templateType))
+      if (templateTypes?.length && !templateTypes.includes(it.template_type))
         return false;
-      if (templateType && it.templateType !== templateType) return false;
-      if (tags?.length && !tags.some((t) => it.evalTemplateTags?.includes(t)))
+      if (templateType && it.template_type !== templateType) return false;
+      if (tags?.length && !tags.some((t) => it.eval_template_tags?.includes(t)))
         return false;
       if (
         nameMatch &&

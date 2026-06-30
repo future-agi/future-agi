@@ -40,6 +40,10 @@ import {
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ReactApexChart from "react-apexcharts";
 import ChartLegend from "./ChartLegend";
+import {
+  buildTimeRangePayload,
+  resolveInitialTimeRange,
+} from "./dashboardDateRange";
 import { paths } from "src/routes/paths";
 import {
   useDashboardDetail,
@@ -80,6 +84,8 @@ const escapeCsvField = (field) => {
   }
   return str;
 };
+
+const SAVED_NAV_DELAY_MS = 400;
 
 const TIME_PRESETS = [
   { label: "Custom", value: "custom" },
@@ -1176,6 +1182,8 @@ export default function WidgetEditorView() {
   const customDateAnchorRef = useRef(null);
   const pieChartRef = useRef(null);
   const lineChartRef = useRef(null);
+  const saveNavTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(saveNavTimerRef.current), []);
   const [pieConnectors, setPieConnectors] = useState([]);
 
   // Auto-set granularity when time preset changes
@@ -1381,12 +1389,13 @@ export default function WidgetEditorView() {
         setChartDescription(widget.description || "");
         const qc = widget.queryConfig || widget.query_config || {};
         const cc = widget.chartConfig || widget.chart_config || {};
-        setTimePreset(
-          searchParams.get("timePreset") ||
-            qc.timeRange?.preset ||
-            qc.time_range?.preset ||
-            "30D",
-        );
+        const { timePreset: initialPreset, customDateRange: initialRange } =
+          resolveInitialTimeRange(
+            qc.timeRange || qc.time_range,
+            searchParams.get("timePreset"),
+          );
+        setTimePreset(initialPreset);
+        if (initialRange) setCustomDateRange(initialRange);
         setGranularity(qc.granularity || "day");
         setChartType(cc.chartType || cc.chart_type || "line");
         // Restore axis config if saved
@@ -1788,13 +1797,7 @@ export default function WidgetEditorView() {
   };
 
   const buildQueryConfig = useCallback(() => {
-    const timeRange =
-      timePreset === "custom" && customDateRange
-        ? {
-            custom_start: customDateRange[0].toISOString(),
-            custom_end: customDateRange[1].toISOString(),
-          }
-        : { preset: timePreset };
+    const timeRange = buildTimeRangePayload(timePreset, customDateRange);
     return {
       project_ids: [],
       time_range: timeRange,
@@ -1821,7 +1824,8 @@ export default function WidgetEditorView() {
   // Auto-preview when config changes (debounced)
   const previewTimerRef = useRef(null);
   useEffect(() => {
-    if (metrics.length > 0) {
+    const customWithoutRange = timePreset === "custom" && !customDateRange;
+    if (metrics.length > 0 && !customWithoutRange) {
       clearTimeout(previewTimerRef.current);
       previewTimerRef.current = setTimeout(() => {
         queryMutation.mutate(buildQueryConfig());
@@ -2099,7 +2103,11 @@ export default function WidgetEditorView() {
         }
       }
       setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 2000);
+      clearTimeout(saveNavTimerRef.current);
+      saveNavTimerRef.current = setTimeout(() => {
+        navigate(paths.dashboard.dashboards.detail(dashboardId));
+        setSaveStatus("idle");
+      }, SAVED_NAV_DELAY_MS);
     } catch {
       setSaveStatus("idle");
       enqueueSnackbar(`Failed to ${isEditing ? "update" : "create"} widget`, {
@@ -3152,7 +3160,7 @@ export default function WidgetEditorView() {
         <Button
           variant="contained"
           onClick={handleSave}
-          disabled={saveStatus === "saving"}
+          disabled={saveStatus !== "idle"}
           color={saveStatus === "saved" ? "success" : "primary"}
           startIcon={
             saveStatus === "saved" ? (
@@ -3253,6 +3261,7 @@ export default function WidgetEditorView() {
               open={isDatePickerOpen}
               onClose={() => setIsDatePickerOpen(false)}
               anchorEl={customDateAnchorRef.current}
+              value={customDateRange}
               setDateFilter={(filter) => {
                 if (filter && filter[0] && filter[1]) {
                   setCustomDateRange([

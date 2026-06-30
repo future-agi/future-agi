@@ -32,7 +32,7 @@ export const getAgentFormValues = (agentDetails) => {
     assistantId: snapshot.assistant_id || "",
     // apiEndpoint: snapshot.api_endpoint || "",
     authenticationMethod: snapshot.authentication_method || "",
-    apiKey: snapshot.api_key || "",
+    apiKey: agentDetails?.api_key ?? "",
     observabilityEnabled: snapshot.observability_enabled ?? false,
     token: snapshot?.token || "",
     username: snapshot?.username || "",

@@ -25,11 +25,13 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from simulate.models import AgentDefinition, AgentVersion
 from simulate.repositories import (
     CallExecutionRepository,
     CallTranscriptRepository,
     PhoneNumberRepository,
 )
+from simulate.services.agent_definition import is_masked
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
@@ -538,8 +540,6 @@ class ValidateLiveKitCredentialsView(APIView):
             LiveKitAPI,
         )
 
-        from simulate.serializers.agent_definition import _is_masked
-
         data = request.validated_data
         livekit_url = (data.get("livekit_url") or "").strip()
         api_key = (data.get("api_key") or "").strip()
@@ -557,18 +557,20 @@ class ValidateLiveKitCredentialsView(APIView):
         # 401 because they aren't real credentials. Rehydrate any masked
         # field from the stored ProviderCredentials before validating. The
         # url is plaintext on read so it doesn't need this branch.
-        if agent_definition_id and (_is_masked(api_key) or _is_masked(api_secret)):
+        if agent_definition_id and (is_masked(api_key) or is_masked(api_secret)):
             try:
-                from simulate.models.agent_definition import ProviderCredentials
-
-                creds = ProviderCredentials.objects.get(
-                    agent_definition_id=agent_definition_id
-                )
-                if _is_masked(api_key):
-                    api_key = creds.get_api_key()
-                if _is_masked(api_secret):
-                    api_secret = creds.get_api_secret()
-            except ProviderCredentials.DoesNotExist:
+                agent = AgentDefinition.objects.get(id=agent_definition_id)
+                version = agent.active_version or agent.latest_version
+                if version:
+                    try:
+                        creds = version.credentials
+                        if is_masked(api_key):
+                            api_key = creds.get_api_key()
+                        if is_masked(api_secret):
+                            api_secret = creds.get_api_secret()
+                    except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                        pass
+            except AgentDefinition.DoesNotExist:
                 pass
 
         if not all([livekit_url, api_key, api_secret]):

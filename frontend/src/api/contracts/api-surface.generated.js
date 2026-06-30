@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 976,
+  "endpointCount": 968,
   "groups": {
     "accounts": {
       "/accounts/2fa/recovery-codes/": [
@@ -723,9 +723,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "get"
       ],
       "/api/public/ingestion": [
-        "post"
-      ],
-      "/api/public/otel/v1/traces": [
         "post"
       ],
       "/api/public/traces": [
@@ -1521,10 +1518,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/eval-templates/{template_id}/feedback-list/": [
         "get"
       ],
-      "/model-hub/eval-templates/{template_id}/ground-truth-config/": [
-        "get",
-        "put"
-      ],
       "/model-hub/eval-templates/{template_id}/ground-truth/": [
         "get"
       ],
@@ -1724,14 +1717,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/ground-truth/{ground_truth_id}/embed/": [
         "post"
       ],
-      "/model-hub/ground-truth/{ground_truth_id}/mapping/": [
+      "/model-hub/ground-truth/{ground_truth_id}/setup/": [
         "put"
-      ],
-      "/model-hub/ground-truth/{ground_truth_id}/role-mapping/": [
-        "put"
-      ],
-      "/model-hub/ground-truth/{ground_truth_id}/search/": [
-        "post"
       ],
       "/model-hub/ground-truth/{ground_truth_id}/status/": [
         "get"
@@ -2765,9 +2752,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "patch",
         "put"
       ],
-      "/tracer/otlp/v1/traces": [
-        "post"
-      ],
       "/tracer/project-version/": [
         "get",
         "post"
@@ -3042,12 +3026,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/v1/health": [
         "get"
       ],
-      "/tracer/v1/traces": [
-        "post"
-      ],
-      "/tracer/v1/traces/": [
-        "post"
-      ],
       "/tracer/webhook/": [
         "post"
       ]
@@ -3311,9 +3289,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
     "v1": {
       "/v1/health": [
         "get"
-      ],
-      "/v1/traces/": [
-        "post"
       ]
     }
   }
@@ -4027,9 +4002,6 @@ export const API_SURFACE_PATHS = Object.freeze({
     "get"
   ],
   "/api/public/ingestion": [
-    "post"
-  ],
-  "/api/public/otel/v1/traces": [
     "post"
   ],
   "/api/public/traces": [
@@ -4813,10 +4785,6 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/eval-templates/{template_id}/feedback-list/": [
     "get"
   ],
-  "/model-hub/eval-templates/{template_id}/ground-truth-config/": [
-    "get",
-    "put"
-  ],
   "/model-hub/eval-templates/{template_id}/ground-truth/": [
     "get"
   ],
@@ -5016,14 +4984,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/ground-truth/{ground_truth_id}/embed/": [
     "post"
   ],
-  "/model-hub/ground-truth/{ground_truth_id}/mapping/": [
+  "/model-hub/ground-truth/{ground_truth_id}/setup/": [
     "put"
-  ],
-  "/model-hub/ground-truth/{ground_truth_id}/role-mapping/": [
-    "put"
-  ],
-  "/model-hub/ground-truth/{ground_truth_id}/search/": [
-    "post"
   ],
   "/model-hub/ground-truth/{ground_truth_id}/status/": [
     "get"
@@ -6049,9 +6011,6 @@ export const API_SURFACE_PATHS = Object.freeze({
     "patch",
     "put"
   ],
-  "/tracer/otlp/v1/traces": [
-    "post"
-  ],
   "/tracer/project-version/": [
     "get",
     "post"
@@ -6326,12 +6285,6 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/v1/health": [
     "get"
   ],
-  "/tracer/v1/traces": [
-    "post"
-  ],
-  "/tracer/v1/traces/": [
-    "post"
-  ],
   "/tracer/webhook/": [
     "post"
   ],
@@ -6591,8 +6544,5 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/v1/health": [
     "get"
-  ],
-  "/v1/traces/": [
-    "post"
   ]
 });

@@ -173,9 +173,7 @@ const AgentPromptRenderer = ({
   // Mirror the selected version's draft flag + version label onto the
   // form item so the schema's superRefine can block "Next" when a draft
   // version is picked, and emit a per-item error naming the exact
-  // version the user needs to save or swap (TH-4334). The backend
-  // exposes `is_draft` / `template_version` on each version; axios'
-  // camelCase transform surfaces them as `isDraft` / `templateVersion`.
+  // version the user needs to save or swap (TH-4334).
   useEffect(() => {
     if (type !== PROMPT_CONFIG_TYPE.PROMPT) return;
     const selected = versionsOptions?.find(
@@ -185,10 +183,10 @@ const AgentPromptRenderer = ({
     // need to revalidate on it. isDraft drives the schema's draft guard,
     // so validate immediately: the card goes red the moment the user
     // picks a draft version, instead of waiting for the next Next-click.
-    setValue(`${fieldPrefix}.versionLabel`, selected?.templateVersion || "", {
+    setValue(`${fieldPrefix}.versionLabel`, selected?.template_version || "", {
       shouldValidate: false,
     });
-    setValue(`${fieldPrefix}.isDraft`, Boolean(selected?.isDraft), {
+    setValue(`${fieldPrefix}.isDraft`, Boolean(selected?.is_draft), {
       shouldValidate: true,
     });
   }, [type, watchedPromptVersion, versionsOptions, setValue, fieldPrefix]);
@@ -301,9 +299,9 @@ const AgentPromptRenderer = ({
               searchQuery={search}
               onSearchChange={setSearch}
               getOptionLabel={(v) =>
-                v?.isDefault === true
-                  ? `${v?.templateVersion} (default)`
-                  : v?.templateVersion ?? ""
+                v?.is_default === true
+                  ? `${v?.template_version} (default)`
+                  : v?.template_version ?? ""
               }
               getOptionValue={(v) => v?.id}
               placeholder="Select version"

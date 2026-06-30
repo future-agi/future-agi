@@ -44,100 +44,63 @@ import {
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
 import { ID_ONLY_FIELDS } from "src/sections/projects/LLMTracing/idFields";
-import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
 import {
   ANNOTATION_COLUMN_IDS,
   FIELD_CATEGORY_TO_COL_TYPE,
+  RANGE_OPS,
+  LIST_OPS,
+  NO_VALUE_OPS,
 } from "src/sections/common/EvalsTasks/common";
 
-// ───────────────────────────────────────────────────────────────
-// Helpers (ported from TracingTestMode)
-// ───────────────────────────────────────────────────────────────
-const RANGE_OPS = new Set(["between", "not_between"]);
-const LIST_OPS = new Set(["in", "not_in"]);
-const NO_VALUE_OPS = new Set(NULL_OPERATORS);
-
-// Merge multiple scalar rows for the same (field, op) into one wire entry
-// so the BE `in` validator receives a single array clause.
-function mergeRowsByFieldAndOp(rows) {
-  const merged = new Map();
-  rows.forEach((f) => {
-    const isAttribute = f.property === "attributes";
-    const columnId = isAttribute ? f.propertyId : f.property;
-    if (!columnId) return;
-    const op = f?.filterConfig?.filterOp || "equals";
-    const filterType = f?.filterConfig?.filterType || "text";
-    const key = `${columnId}|${op}|${f.fieldCategory || "system"}|${filterType}`;
-    if (!merged.has(key)) {
-      merged.set(key, {
-        columnId,
-        fieldCategory: f.fieldCategory,
-        apiColType: f.apiColType,
-        op,
-        filterType,
-        isAttribute,
-        value: undefined,
-        values: [],
-      });
-    }
-    const entry = merged.get(key);
-    const v = f?.filterConfig?.filterValue;
-    if (RANGE_OPS.has(op)) {
-      // Range rows already carry the [low, high] array.
-      entry.value = Array.isArray(v) ? v : entry.value;
-    } else if (LIST_OPS.has(op)) {
-      const arr = Array.isArray(v) ? v : v != null && v !== "" ? [v] : [];
-      entry.values.push(...arr);
-    } else if (v !== undefined && v !== null && v !== "") {
-      entry.values.push(v);
-    }
-  });
-  return Array.from(merged.values());
-}
-
+// One form row → one wire entry. No cross-row merging: it would collapse
+// "not_contains A AND not_contains B" into "in [A, B]" (inverting intent) and
+// is unsupported for numbers (the BE has no number `in`). OR is expressed
+// within a single multi-value `in`/`not_in` row.
 // eslint-disable-next-line react-refresh/only-export-components
 export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
-  const userFilters = mergeRowsByFieldAndOp(oldFormatFilters || []).map(
-    (entry) => {
-      const isIdColumn = ID_ONLY_FIELDS.has(entry.columnId);
+  const userFilters = (oldFormatFilters || [])
+    .map((f) => {
+      const isAttribute = f.property === "attributes";
+      const columnId = isAttribute ? f.propertyId : f.property;
+      if (!columnId) return null;
+      const op = f?.filterConfig?.filterOp || "equals";
+      const filterType = f?.filterConfig?.filterType || "text";
+      const v = f?.filterConfig?.filterValue;
+      const isIdColumn = ID_ONLY_FIELDS.has(columnId);
       // apiColType is source of truth; fieldCategory/isAttribute are UI hints.
-      const colType = ANNOTATION_COLUMN_IDS.has(entry.columnId)
+      const colType = ANNOTATION_COLUMN_IDS.has(columnId)
         ? "ANNOTATION"
-        : entry.apiColType ||
-          FIELD_CATEGORY_TO_COL_TYPE[entry.fieldCategory] ||
-          (entry.isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
+        : f.apiColType ||
+          FIELD_CATEGORY_TO_COL_TYPE[f.fieldCategory] ||
+          (isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
       let filterValue;
-      if (NO_VALUE_OPS.has(entry.op)) {
+      if (NO_VALUE_OPS.has(op)) {
         filterValue = "";
-      } else if (RANGE_OPS.has(entry.op)) {
-        filterValue = entry.value;
-      } else if (LIST_OPS.has(entry.op)) {
-        filterValue = entry.values;
-      } else if (entry.values.length > 1) {
-        // Multiple scalar rows under a single-value op — collapse to `in`.
-        filterValue = entry.values;
-      } else if (entry.values.length === 1) {
-        filterValue = entry.values[0];
-      } else {
-        filterValue = undefined;
+      } else if (RANGE_OPS.has(op)) {
+        if (Array.isArray(v) && v.length > 0) filterValue = v;
+      } else if (LIST_OPS.has(op)) {
+        const arr = Array.isArray(v) ? v : v != null && v !== "" ? [v] : [];
+        if (arr.length > 0) filterValue = arr;
+      } else if (v !== undefined && v !== null && v !== "") {
+        filterValue = v;
       }
-      const filterOp =
-        !RANGE_OPS.has(entry.op) &&
-        !LIST_OPS.has(entry.op) &&
-        Array.isArray(filterValue)
-          ? "in"
-          : entry.op;
       return {
-        column_id: entry.columnId,
+        column_id: columnId,
         filter_config: {
-          filter_type: entry.filterType,
-          filter_op: filterOp,
+          filter_type: filterType,
+          filter_op: op,
           ...(filterValue !== undefined && { filter_value: filterValue }),
           ...(!isIdColumn && { col_type: colType }),
         },
       };
-    },
-  );
+    })
+    // Drop value-less in/not_in (legacy/hand-edited)
+    .filter(
+      (entry) =>
+        entry &&
+        (!LIST_OPS.has(entry.filter_config.filter_op) ||
+          entry.filter_config.filter_value !== undefined),
+    );
 
   if (startDate && endDate) {
     userFilters.push({

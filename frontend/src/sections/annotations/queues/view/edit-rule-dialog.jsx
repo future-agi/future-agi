@@ -16,15 +16,16 @@ import { useUpdateAutomationRule } from "src/api/annotation-queues/annotation-qu
 import {
   SOURCE_OPTIONS,
   TRIGGER_FREQUENCY_OPTIONS,
-  RuleFilterSection,
-  RuleScopePicker,
+} from "../constants";
+import { RuleFilterSection, RuleScopePicker } from "./create-rule-dialog";
+import {
   buildConditionsForRule,
   defaultFiltersForSource,
   getRuleSubmitDisabledTooltipTitle,
   isScopeReady,
   ruleConditionsToFilters,
   ruleConditionsToScope,
-} from "./create-rule-dialog";
+} from "../utils/automation-rule-utils";
 
 export default function EditRuleDialog({
   open,

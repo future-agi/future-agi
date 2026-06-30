@@ -55,7 +55,6 @@ class TestAgentVersionSnapshot:
         )
         snapshot = version.configuration_snapshot
         expected_keys = {
-            "api_key",
             "inbound",
             "languages",
             "provider",
@@ -75,6 +74,11 @@ class TestAgentVersionSnapshot:
         for key in expected_keys:
             assert key in snapshot, f"Missing snapshot key: {key}"
 
+        # Credential fields must NOT be in the snapshot (refactor invariant)
+        forbidden_keys = {"api_key", "livekit_api_key", "livekit_api_secret"}
+        for key in forbidden_keys:
+            assert key not in snapshot, f"Credential field leaked into snapshot: {key}"
+
     def test_snapshot_reads_from_agent(self, agent_definition):
         version = agent_definition.create_version(
             description="Test",
@@ -85,7 +89,6 @@ class TestAgentVersionSnapshot:
         assert snapshot["agent_name"] == "Snapshot Test Agent"
         assert snapshot["agent_type"] == "voice"
         assert snapshot["provider"] == "vapi"
-        assert snapshot["api_key"] == "test-api-key"
         assert snapshot["assistant_id"] == "asst_test_123"
         assert snapshot["contact_number"] == "+12345678901"
         assert snapshot["inbound"] is True
