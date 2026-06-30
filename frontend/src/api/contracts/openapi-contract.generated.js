@@ -73845,6 +73845,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Api key",
           "type": "string",
           "x-nullable": true
+        },
+        "agent_id": {
+          "title": "Agent id",
+          "type": "string",
+          "x-nullable": true
         }
       }
     },
