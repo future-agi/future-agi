@@ -701,14 +701,21 @@ export const useAssignQueueItems = () => {
         queryKey: annotationQueueKeys.progress(variables.queueId),
       });
     },
-    onError: (_error, _variables, context) => {
+    onError: (error, _variables, context) => {
       context?.previousQueueItems?.forEach(([queryKey, data]) => {
         queryClient.setQueryData(queryKey, data);
       });
       context?.previousDetails?.forEach(([queryKey, data]) => {
         queryClient.setQueryData(queryKey, data);
       });
-      enqueueSnackbar("Failed to assign items", { variant: "error" });
+      // Surface the backend's specific message. The global mutation-cache
+      // handler shows the same string, so matching it lets SnackbarProvider's
+      // preventDuplicate collapse them into one toast instead of stacking a
+      // separate generic "failed" one beside it.
+      const msg = extractErrorMessage(error, "Failed to assign items");
+      enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
+        variant: "error",
+      });
     },
   });
 };
