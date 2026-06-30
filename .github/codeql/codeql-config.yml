@@ -1,0 +1,6 @@
+paths-ignore:
+  - frontend/node_modules
+  - frontend/dist
+  - agentcc-gateway/vendor
+  - "**/*_test.go"
+  - "futureagi/**/migrations/**"
