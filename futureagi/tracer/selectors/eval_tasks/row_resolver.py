@@ -15,6 +15,7 @@ the row limit. The entry FKs are batch-resolved by the materializer later.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from tracer.models.eval_task import RunType
@@ -46,12 +47,27 @@ def iter_desired_rows(
         sampling_rate=float(sampling_rate),
         filters=task.filters or {},
         limit=limit,
+        created_at_floor=_continuous_floor(task),
     )
     reader = get_reader()
     try:
         yield from reader.stream_query(sql, params, batch_size=batch_size)
     finally:
         reader.close()
+
+
+def _continuous_floor(task: EvalTask) -> datetime | None:
+    """Lower ``created_at`` bound for a continuous task's desired set.
+
+    A continuous task only evaluates rows that arrive after it starts — it must
+    never backfill the project history that pre-dates it. The floor is the
+    forward watermark once the reconciler has advanced it, falling back to the
+    task's start (then creation) on the first pass. Historical tasks have no
+    floor here (they carve their window from ``filters`` + ``spans_limit``).
+    """
+    if task.run_type != RunType.CONTINUOUS:
+        return None
+    return task.continuous_cursor or task.start_time or task.created_at
 
 
 def _build_sample_query(
@@ -62,6 +78,7 @@ def _build_sample_query(
     sampling_rate: float,
     filters: dict | None,
     limit: int | None,
+    created_at_floor: datetime | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Sampled-row-ids SQL for the row_type: take the UI list builder's filtered
     id set and wrap it with deterministic hash sampling, a stable order, and the
@@ -86,6 +103,22 @@ def _build_sample_query(
                     "filter_type": "datetime",
                     "filter_op": "between",
                     "filter_value": [dr[0], dr[1]],
+                },
+            }
+        )
+
+    # Continuous forward floor. Appended last so it wins the lower bound in
+    # parse_time_range over any date_range start above (a continuous task is
+    # anchored at its own start, not an earlier configured window) — and so the
+    # set isn't silently capped at parse_time_range's now-30d default.
+    if created_at_floor is not None:
+        ui_filters.append(
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "greater_than",
+                    "filter_value": created_at_floor,
                 },
             }
         )

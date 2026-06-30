@@ -7,18 +7,22 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from datetime import timedelta
 
 from django.utils import timezone
 
-from tracer.models.eval_task import RowType
+from tracer.models.eval_task import EvalTask, RowType, RunType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 from tracer.selectors.eval_tasks.row_resolver import iter_desired_rows
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 from tracer.services.eval_tasks.entries import materialize_pending
 
-if TYPE_CHECKING:
-    from tracer.models.eval_task import EvalTask
+# How far behind "now" the continuous cursor is parked after each pass: the
+# window each reconcile re-scans to catch rows whose CH arrival lagged their
+# created_at. The unique index makes the re-scan free of duplicates; this only
+# needs to exceed normal ingestion lag (pause/downtime gaps are covered by the
+# persisted cursor, not this overlap).
+_CONTINUOUS_CURSOR_OVERLAP = timedelta(minutes=15)
 
 
 @dataclass
@@ -33,16 +37,42 @@ def reconcile(task: EvalTask) -> ReconcileResult:
 
     Creates missing pending entries (streamed), re-queues stale / errored /
     skipped in-scope entries, and drops out-of-scope *pending* entries while
-    keeping out-of-scope *completed* results (paid data).
+    keeping out-of-scope *completed* results (paid data). For continuous tasks,
+    advances the forward cursor so the next pass scans only the new tail.
     """
     before = _live_count(task)
     materialize_pending(task)
     created = _live_count(task) - before
     if before == 0:
         # Pure create — nothing pre-existing to re-queue or drop.
-        return ReconcileResult(created=created)
-    requeued, dropped = _requeue_and_drop(task)
-    return ReconcileResult(created=created, requeued=requeued, dropped=dropped)
+        result = ReconcileResult(created=created)
+    else:
+        requeued, dropped = _requeue_and_drop(task)
+        result = ReconcileResult(created=created, requeued=requeued, dropped=dropped)
+    _advance_continuous_cursor(task)
+    return result
+
+
+def _advance_continuous_cursor(task: EvalTask) -> None:
+    """Park the continuous task's forward watermark just behind now().
+
+    Only ever moves forward, and never before the task's start floor — parking
+    at ``now() - overlap`` unclamped would, for a task younger than the overlap,
+    pull the floor back before its start and re-admit pre-start history. Advanced
+    after materialize/requeue so both read the same floor within a pass; the next
+    pass then floors its desired set here instead of re-scanning the whole
+    history.
+    """
+    if task.run_type != RunType.CONTINUOUS:
+        return
+    start_floor = task.start_time or task.created_at
+    parked = timezone.now() - _CONTINUOUS_CURSOR_OVERLAP
+    if start_floor is not None and parked < start_floor:
+        parked = start_floor
+    if task.continuous_cursor is not None and parked <= task.continuous_cursor:
+        return
+    task.continuous_cursor = parked
+    EvalTask.objects.filter(id=task.id).update(continuous_cursor=parked)
 
 
 def _live_count(task: EvalTask) -> int:

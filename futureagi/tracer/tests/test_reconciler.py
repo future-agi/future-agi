@@ -2,8 +2,10 @@
 live entries match its desired state (incl. edge cases)."""
 
 import uuid
+from datetime import timedelta
 
 import pytest
+from django.utils import timezone
 
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
@@ -66,6 +68,26 @@ def _make_spans(project, n, *, observation_type="llm", prefix="s"):
                 observation_type=observation_type,
             )
         )
+    seed_ch_spans(spans)
+    return spans
+
+
+def _make_spans_at(project, n, created_at, *, prefix="t"):
+    """Like ``_make_spans`` but stamps each span's ``created_at`` (the column the
+    continuous forward floor filters on) before seeding CH."""
+    spans = []
+    for i in range(n):
+        trace = Trace.objects.create(project=project, name=f"tr-{prefix}-{i}")
+        span = ObservationSpan.objects.create(
+            id=f"{prefix}-{i}-{uuid.uuid4().hex[:8]}",
+            project=project,
+            trace=trace,
+            name=f"sp-{prefix}-{i}",
+            observation_type="llm",
+        )
+        ObservationSpan.objects.filter(id=span.id).update(created_at=created_at)
+        span.refresh_from_db()
+        spans.append(span)
     seed_ch_spans(spans)
     return spans
 
@@ -336,13 +358,68 @@ class TestLifecycleFlows:
     def test_continuous_task_materializes_and_is_idempotent(
         self, project, custom_eval_config
     ):
-        # Continuous reconcile materializes the matching slice (no limit).
-        _make_spans(project, 5)
+        # Continuous reconcile materializes the matching slice (no limit). The
+        # spans land after the task's start, so the forward floor keeps them in.
+        start = timezone.now() - timedelta(hours=1)
+        _make_spans_at(project, 5, start + timedelta(minutes=5))
         task = _task(project, evals=[custom_eval_config], run_type=RunType.CONTINUOUS)
+        EvalTask.objects.filter(id=task.id).update(start_time=start)
+        task.refresh_from_db()
         reconcile(task)
         assert _live(task, status=EvalEntryStatus.PENDING).count() == 5
         result = reconcile(task)
         assert result.created == 0  # idempotent
+
+    def test_continuous_excludes_rows_created_before_start(
+        self, project, custom_eval_config
+    ):
+        # A continuous task starts from its own start point forward: rows that
+        # pre-date it are never backfilled, only rows that arrive after.
+        start = timezone.now() - timedelta(hours=1)
+        old = _make_spans_at(project, 2, start - timedelta(hours=2), prefix="old")
+        new = _make_spans_at(project, 3, start + timedelta(minutes=5), prefix="new")
+        task = _task(project, evals=[custom_eval_config], run_type=RunType.CONTINUOUS)
+        EvalTask.objects.filter(id=task.id).update(start_time=start)
+        task.refresh_from_db()
+
+        reconcile(task)
+
+        materialized = set(_live(task).values_list("observation_span_id", flat=True))
+        assert {s.id for s in new} <= materialized
+        assert not ({s.id for s in old} & materialized)
+
+    def test_continuous_reconcile_advances_cursor(self, project, custom_eval_config):
+        # A task older than the overlap parks its watermark just behind now() so
+        # the next pass scans only the new tail instead of the whole history.
+        start = timezone.now() - timedelta(hours=1)
+        task = _task(project, evals=[custom_eval_config], run_type=RunType.CONTINUOUS)
+        EvalTask.objects.filter(id=task.id).update(start_time=start)
+        task.refresh_from_db()
+        assert task.continuous_cursor is None
+
+        reconcile(task)
+
+        task.refresh_from_db()
+        assert task.continuous_cursor is not None
+        # Advanced forward (well past the hour-old start), but still behind now.
+        assert start < task.continuous_cursor < timezone.now()
+
+    def test_continuous_cursor_never_regresses_before_start(
+        self, project, custom_eval_config
+    ):
+        # For a task younger than the overlap, now()-overlap is before its start;
+        # the cursor must clamp to the start floor, never pulling pre-start
+        # history back into scope on the next pass.
+        start = timezone.now()
+        task = _task(project, evals=[custom_eval_config], run_type=RunType.CONTINUOUS)
+        EvalTask.objects.filter(id=task.id).update(start_time=start)
+        task.refresh_from_db()
+
+        reconcile(task)
+
+        task.refresh_from_db()
+        assert task.continuous_cursor is not None
+        assert task.continuous_cursor >= start
 
     def test_historical_to_continuous_keeps_entries(self, project, custom_eval_config):
         # Switching to continuous keeps existing entries (no wipe).
