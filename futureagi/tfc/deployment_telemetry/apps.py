@@ -6,10 +6,6 @@ class DeploymentTelemetryConfig(AppConfig):
     name = "tfc.deployment_telemetry"
     verbose_name = "Deployment telemetry"
 
-    def ready(self) -> None:
-        from tfc.deployment_telemetry.config import is_self_hosted_deployment
-
-        if is_self_hosted_deployment():
-            from tfc.deployment_telemetry.sender import _log_disclosure
-
-            _log_disclosure()
+    # No ``ready()``: the scheduled cycle calls ``_log_disclosure`` itself
+    # (deduped per process), and a boot-time call could kill Django startup
+    # on a half-installed EE.

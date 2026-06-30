@@ -66,7 +66,7 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "last_registration_error",
-                    models.CharField(blank=True, default="", max_length=100),
+                    models.TextField(blank=True, default=""),
                 ),
                 (
                     "last_heartbeat_attempt_at",
@@ -83,10 +83,6 @@ class Migration(migrations.Migration):
                 (
                     "last_heartbeat_window_end",
                     models.DateTimeField(blank=True, null=True),
-                ),
-                (
-                    "last_reported_version",
-                    models.CharField(blank=True, default="", max_length=100),
                 ),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("updated_at", models.DateTimeField(auto_now=True)),

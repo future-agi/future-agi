@@ -105,11 +105,9 @@ def test_cloud_deployment_does_not_send_telemetry():
 
 
 def test_ee_mode_detection_failure_assumes_self_hosted():
-    """A half-installed EE (the ``DeploymentMode`` symbol missing) used to
-    silently return False — a self-hosted install would then stop phoning
-    home with no log. Round-5 review on PR #891 asked for a consistent
-    default: log loudly and assume self-hosted so the install at least
-    registers, instead of going silently dark."""
+    """Half-installed EE (``DeploymentMode`` symbol missing) must default to
+    self-hosted so the install still phones home with a logged warning,
+    instead of silently going dark."""
     with (
         patch("tfc.ee_loader.has_ee", return_value=True),
         patch(

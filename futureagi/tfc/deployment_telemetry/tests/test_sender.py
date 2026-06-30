@@ -1,3 +1,4 @@
+import os
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -10,7 +11,8 @@ from accounts.models.user import User
 from accounts.utils import _fire_deployment_telemetry_registration
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
-from tfc.deployment_telemetry.buffer import store_window
+from tfc.deployment_telemetry.buffer import prune_expired_windows, store_window
+from tfc.deployment_telemetry.config import BUFFER_RETENTION_DAYS
 from tfc.deployment_telemetry.models import DeploymentTelemetryState
 from tfc.deployment_telemetry.payloads import (
     build_full_registration_payload,
@@ -677,3 +679,65 @@ def test_signup_hook_starts_non_daemon_registration_thread_without_joining():
     assert "daemon" not in thread.call_args.kwargs
     thread.return_value.start.assert_called_once()
     thread.return_value.join.assert_not_called()
+
+
+def test_prune_expired_windows_respects_retention_cap(telemetry_buffer_dir):
+    """A window older than BUFFER_RETENTION_DAYS is dropped; a fresh one
+    survives. Pins the 30-day cap so a regression that drops the constant
+    or inverts the comparison is caught."""
+    telemetry_buffer_dir.mkdir(parents=True, exist_ok=True)
+    old_window = telemetry_buffer_dir / "old.json"
+    fresh_window = telemetry_buffer_dir / "fresh.json"
+    old_window.write_text("{}", encoding="utf-8")
+    fresh_window.write_text("{}", encoding="utf-8")
+
+    now = datetime.now(UTC)
+    old_mtime = (now - timedelta(days=BUFFER_RETENTION_DAYS + 1)).timestamp()
+    fresh_mtime = (now - timedelta(days=BUFFER_RETENTION_DAYS - 1)).timestamp()
+    os.utime(old_window, (old_mtime, old_mtime))
+    os.utime(fresh_window, (fresh_mtime, fresh_mtime))
+
+    removed = prune_expired_windows(now=now)
+
+    assert removed == 1
+    assert not old_window.exists()
+    assert fresh_window.exists()
+
+
+def test_ch_counts_queries_use_final_and_is_deleted_predicate():
+    """The CH ``spans`` table is a ReplacingMergeTree; correctness depends
+    on ``FINAL`` and ``is_deleted = 0`` on every read. Pin the predicates
+    against the source so a future SQL edit can't quietly drop one."""
+    import inspect
+
+    from tfc.deployment_telemetry import ch_counts
+
+    source = inspect.getsource(ch_counts)
+    for fragment in ("FROM spans FINAL", "is_deleted = 0"):
+        # 3 = count_spans + count_traces + ingesting_project_ids
+        assert source.count(fragment) >= 3, fragment
+
+
+@pytest.mark.django_db
+def test_corrupt_buffer_window_logs_before_delete(telemetry_buffer_dir):
+    """A buffered window with a malformed ``instance_id`` is unsendable;
+    the flush path drops it but must log first so a later "missing window"
+    investigation has a trail."""
+    state = get_or_create_telemetry_state()
+    state.instance_secret = "test-secret"
+    state.save(update_fields=["instance_secret"])
+
+    telemetry_buffer_dir.mkdir(parents=True, exist_ok=True)
+    corrupt_window = telemetry_buffer_dir / "corrupt.json"
+    corrupt_window.write_text('{"instance_id": "not-a-uuid"}', encoding="utf-8")
+
+    with patch("tfc.deployment_telemetry.sender.logger.warning") as warning:
+        sent_count, flush_complete = _flush_buffer()
+
+    assert sent_count == 0
+    assert flush_complete is True
+    assert not corrupt_window.exists()
+    assert any(
+        call.args and call.args[0] == "deployment_telemetry_buffer_corrupt"
+        for call in warning.call_args_list
+    )

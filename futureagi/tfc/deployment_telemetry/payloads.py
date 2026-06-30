@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import TypedDict
 from uuid import UUID
 
 from django.db.models import F, Q
@@ -21,6 +22,46 @@ from tfc.deployment_telemetry.schema import (
 )
 
 
+class _RegistrationUser(TypedDict):
+    email: str
+    domain: str
+
+
+class MinimalRegistrationPayload(TypedDict):
+    """Wire shape sent when telemetry is disabled (census ping only)."""
+
+    schema_version: int
+    instance_id: str
+    version: str
+    deployment_type: str
+    timestamp: str
+    telemetry_disabled: bool
+
+
+class FullRegistrationPayload(TypedDict):
+    """Wire shape sent on enabled registration (with admin user emails)."""
+
+    schema_version: int
+    instance_id: str
+    version: str
+    deployment_type: str
+    timestamp: str
+    telemetry_disabled: bool
+    users: list[_RegistrationUser]
+
+
+class HeartbeatPayload(TypedDict, total=False):
+    """Wire shape for a heartbeat window. COUNT_FIELDS appear at top level
+    alongside the fixed metadata keys; total=False so a count missing from
+    a particular cycle's collectors doesn't trip the type."""
+
+    schema_version: int
+    instance_id: str
+    version: str
+    window_start: str
+    window_end: str
+
+
 def format_utc(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
@@ -34,7 +75,7 @@ def serialized_size(payload: dict) -> int:
 def build_minimal_registration_payload(
     instance_id: UUID,
     timestamp: datetime | None = None,
-) -> dict:
+) -> MinimalRegistrationPayload:
     return {
         "schema_version": SCHEMA_VERSION,
         "instance_id": str(instance_id),
@@ -48,8 +89,8 @@ def build_minimal_registration_payload(
 def build_full_registration_payload(
     instance_id: UUID,
     timestamp: datetime | None = None,
-) -> dict | None:
-    payload = {
+) -> FullRegistrationPayload | None:
+    payload: FullRegistrationPayload = {
         "schema_version": SCHEMA_VERSION,
         "instance_id": str(instance_id),
         "version": get_version(),
@@ -118,7 +159,7 @@ def build_heartbeat_payload(
     window_start: datetime,
     window_end: datetime,
     counts: dict[str, int | None],
-) -> dict:
+) -> HeartbeatPayload:
     return {
         "schema_version": SCHEMA_VERSION,
         "instance_id": str(instance_id),

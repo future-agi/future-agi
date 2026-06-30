@@ -101,33 +101,37 @@ def get_telemetry_buffer_dir() -> Path:
     return Path(tempfile.gettempdir()) / "futureagi-deployment-telemetry"
 
 
-def is_self_hosted_deployment() -> bool:
-    # Either side may raise on a half-installed EE. Treat both branches the
-    # same: log loudly (with the stack) and assume self-hosted so a broken
-    # install still phones home rather than silently going dark. The previous
-    # asymmetric defaults — True on the loader branch, False on the
-    # DeploymentMode branch — meant a missing ``DeploymentMode`` symbol
-    # silently stopped a self-hosted instance from registering with no log.
+def is_cloud_deployment() -> bool:
+    """True iff this process is running as the managed cloud receiver.
+
+    A half-installed EE (loader or ``DeploymentMode`` symbol missing) returns
+    False so /telemetry/ stays unmounted and a self-hosted install still
+    phones home rather than silently going dark.
+    """
     try:
         from tfc.ee_loader import has_ee
     except (ImportError, AttributeError):
         logger.warning(
             "deployment_telemetry_ee_detection_failed", exc_info=True
         )
-        return True
+        return False
 
     if not has_ee("ee.usage"):
-        return True
+        return False
 
     try:
         from ee.usage.deployment import DeploymentMode
 
-        return not DeploymentMode.is_cloud()
+        return DeploymentMode.is_cloud()
     except (ImportError, AttributeError):
         logger.warning(
             "deployment_telemetry_mode_detection_failed", exc_info=True
         )
-        return True
+        return False
+
+
+def is_self_hosted_deployment() -> bool:
+    return not is_cloud_deployment()
 
 
 def get_version() -> str:

@@ -119,13 +119,8 @@ def collect_counts(window_start: datetime, window_end: datetime) -> dict[str, in
         return result["total"] or 0
 
     def active_users() -> int:
-        """Distinct platform users active in the window.
-
-        Counts both app-entity creators (UI users) AND owners of projects
-        that ingested spans (SDK-only users who never touch the UI — the
-        bulk of real self-hosted usage). Without the ingest side, a user
-        who only instruments their app and ships traces is invisible.
-        """
+        """Distinct users active in the window: app-entity creators ∪ owners of
+        projects that ingested spans (so SDK-only users still count)."""
         from model_hub.models.develop_dataset import Dataset
         from model_hub.models.evaluation import Evaluation
         from model_hub.models.experiments import ExperimentsTable

@@ -226,15 +226,7 @@ _disclosure_logged = False
 
 
 def _log_disclosure() -> None:
-    """Emit a once-per-process, human-readable disclosure of what telemetry
-    sends.
-
-    An opt-out feature that ships user emails to a CRM must be visible in
-    the logs of any operator who reads them, not only in the docs. This is
-    driven from the scheduled telemetry cycle (so an install with no new
-    signups still logs it) as well as the signup path, and guarded so it's
-    logged exactly once per process rather than on every signup or cycle.
-    """
+    """Emit a once-per-process disclosure of what telemetry sends."""
     global _disclosure_logged
     with _disclosure_lock:
         if _disclosure_logged:
@@ -339,6 +331,13 @@ def _flush_buffer() -> tuple[int, bool]:
         try:
             instance_id = UUID(str(payload["instance_id"]))
         except (KeyError, TypeError, ValueError, AttributeError):
+            # A buffered window with a malformed instance_id can never resend,
+            # so we drop it — but log first so a later "missing window"
+            # investigation has a trail.
+            logger.warning(
+                "deployment_telemetry_buffer_corrupt",
+                path=str(path),
+            )
             delete_window(path)
             continue
 
