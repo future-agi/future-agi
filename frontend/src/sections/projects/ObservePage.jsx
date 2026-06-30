@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useEffect, useRef, startTransition } from "react";
+import React, { useMemo, useCallback, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
@@ -15,10 +15,7 @@ import {
 import { useTabStoreShallow } from "./LLMTracing/tabStore";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  useGetSavedViews,
-  SAVED_VIEWS_KEY,
-} from "src/api/project/saved-views";
+import { useGetSavedViews, SAVED_VIEWS_KEY } from "src/api/project/saved-views";
 import ReplayDrawer from "./ReplayDrawer/ReplayDrawer";
 import {
   resetReplaySessionsStore,
@@ -169,15 +166,7 @@ const ObservePage = React.memo(() => {
         viewTabType = view?.tab_type ?? view?.tabType ?? "traces";
       }
 
-      // Apply effects (activeViewConfig → apply effect → many setters) aren't
-      // urgent for tab responsiveness. Defer via startTransition so the
-      // navigation and URL update feel snappy while the filter apply runs as
-      // a non-blocking transition.
-      startTransition(() => {
-        setActiveViewConfig(activeConfig);
-      });
-
-      // Navigate to the appropriate route
+      let navTo = null;
       if (tabKey.startsWith("view-")) {
         const isUsersView =
           viewTabType === "users" || viewTabType === "user_detail";
@@ -202,10 +191,7 @@ const ObservePage = React.memo(() => {
         } else if (isSessionsView) {
           // Sessions uses sessionFilter / sessionDateFilter URL keys.
           if (activeConfig?.filters) {
-            params.set(
-              "sessionFilter",
-              JSON.stringify(activeConfig.filters),
-            );
+            params.set("sessionFilter", JSON.stringify(activeConfig.filters));
           }
           if (activeConfig?.display?.dateFilter) {
             params.set(
@@ -255,9 +241,7 @@ const ObservePage = React.memo(() => {
           }
         }
 
-        navigate(`${basePath}?${params.toString()}`, {
-          replace: true,
-        });
+        navTo = `${basePath}?${params.toString()}`;
       } else {
         const config = TAB_TO_ROUTE[tabKey];
         if (config) {
@@ -265,9 +249,14 @@ const ObservePage = React.memo(() => {
           const params = new URLSearchParams();
           params.set("tab", tabKey);
           Object.entries(config.params).forEach(([k, v]) => params.set(k, v));
-          navigate(`${basePath}?${params.toString()}`, { replace: true });
+          navTo = `${basePath}?${params.toString()}`;
         }
       }
+
+      // Set config + navigate together so React batches them into one render — a
+      // deferred config set left the URL naming a view while config was null.
+      setActiveViewConfig(activeConfig);
+      if (navTo) navigate(navTo, { replace: true });
     },
     [observeId, navigate, queryClient, setActiveViewConfig],
   );

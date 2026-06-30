@@ -31,6 +31,11 @@ import ObserveToolbar from "../LLMTracing/ObserveToolbar";
 import FilterChips from "../LLMTracing/FilterChips";
 import CustomColumnDialog from "../LLMTracing/CustomColumnDialog";
 import { useLLMTracingFilters } from "../LLMTracing/useLLMTracingFilters";
+import {
+  reorderColumns,
+  columnStateToOrder,
+  isColumnOrderDirty,
+} from "../LLMTracing/savedViewColumns";
 import ColumnConfigureDropDown from "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown";
 
 // Lazy-load graph
@@ -202,7 +207,6 @@ const UsersView = ({
     activeViewConfig: activeViewConfigCtx,
     setActiveViewConfig,
     registerGetViewConfig,
-    registerGetTabType,
   } = useObserveHeader();
   // Prefer prop (set by UserList for /dashboard/users) over context
   // (set by ObservePage for the Users fixed tab).
@@ -356,6 +360,11 @@ const UsersView = ({
 
   // Drained when gridApi becomes available (saved view arrived before grid mount).
   const pendingColumnStateRef = useRef(null);
+  // Saved visibility queued when `columns` isn't loaded yet at load; the
+  // [columns] effect re-applies it once they land (else it never hydrates).
+  const pendingVisibilityRef = useRef(null);
+  // Armed on switch-to-default; the [columns] effect resets order to the default.
+  const pendingDefaultReorderRef = useRef(false);
 
   const displayStorageKey = `observe-users-display-${observeId}`;
 
@@ -377,7 +386,8 @@ const UsersView = ({
       skipNextSaveRef.current = true;
       const saved = JSON.parse(raw);
       if (saved.cellHeight) setCellHeight(saved.cellHeight);
-      if (typeof saved.showErrors === "boolean") setShowErrors(saved.showErrors);
+      if (typeof saved.showErrors === "boolean")
+        setShowErrors(saved.showErrors);
       if (typeof saved.showNonAnnotated === "boolean") {
         setShowNonAnnotated(saved.showNonAnnotated);
       }
@@ -525,10 +535,18 @@ const UsersView = ({
       if (savedCustomCols.length > 0) {
         addCustomColumns(savedCustomCols);
       }
-      if (display.visibleColumns && columns?.length) {
-        updateColumnVisibility(display.visibleColumns);
+      if (display.visibleColumns) {
+        if (columns?.length) {
+          updateColumnVisibility(display.visibleColumns);
+        } else {
+          // Grid columns not loaded yet — re-apply once they land.
+          pendingVisibilityRef.current = display.visibleColumns;
+        }
       }
-      if (Array.isArray(display.columnState) && display.columnState.length > 0) {
+      if (
+        Array.isArray(display.columnState) &&
+        display.columnState.length > 0
+      ) {
         // Defer columnState when custom cols are being added — AG Grid's
         // columnDefs prop only flips next render, so applying this tick
         // would drop entries for the custom colIds. Drained by the
@@ -540,6 +558,10 @@ const UsersView = ({
             state: display.columnState,
             applyOrder: true,
           });
+          // Bake order into the array too (applyColumnState is clobbered on rebuild).
+          setColumns(
+            reorderColumns(columns, columnStateToOrder(display.columnState)),
+          );
         } else {
           pendingColumnStateRef.current = display.columnState;
         }
@@ -561,6 +583,7 @@ const UsersView = ({
       updateColumnVisibility,
       addCustomColumns,
       removeCustomColumns,
+      setColumns,
       columns,
       gridApi,
       displayStorageKey,
@@ -571,14 +594,32 @@ const UsersView = ({
   // available, or `columns` changing (custom cols just landed → AG Grid
   // columnDefs prop updated → safe to apply state for the custom colIds).
   useEffect(() => {
+    // Saved visibility queued before columns loaded — apply now they're here.
+    if (pendingVisibilityRef.current && columns?.length) {
+      updateColumnVisibility(pendingVisibilityRef.current);
+      pendingVisibilityRef.current = null;
+    }
     if (gridApi?.applyColumnState && pendingColumnStateRef.current) {
+      const order = columnStateToOrder(pendingColumnStateRef.current);
       gridApi.applyColumnState({
         state: pendingColumnStateRef.current,
         applyOrder: true,
       });
       pendingColumnStateRef.current = null;
+      // Bake order into the array too (applyColumnState is clobbered on rebuild).
+      setColumns(reorderColumns(columns, order));
     }
-  }, [gridApi, columns]);
+  }, [gridApi, columns, setColumns, updateColumnVisibility]);
+
+  // After switch-to-default, reset order to the config default (the view's order
+  // was baked into the store); disarms at the fixpoint so manual drags persist.
+  useEffect(() => {
+    if (!pendingDefaultReorderRef.current) return;
+    const canonical = (getUsersColumnConfig() || []).map((c) => c.field);
+    const next = reorderColumns(columns, canonical);
+    if (next !== columns) setColumns(next);
+    else pendingDefaultReorderRef.current = false;
+  }, [columns, setColumns]);
 
   // Keep the ref's handles in sync with the latest closures
   useEffect(() => {
@@ -596,8 +637,13 @@ const UsersView = ({
     const baselineFilters = activeViewConfig.filters || {};
     const baselineDisplay = activeViewConfig.display || {};
     const baselineExtraFilters = baselineFilters.extraFilters || [];
-    const baselineDateOption =
-      baselineFilters.dateFilter?.dateOption ?? null;
+    const baselineDateOption = baselineFilters.dateFilter?.dateOption ?? null;
+
+    // The `actions` column is an always-present UI column (not user data); its
+    // visibility/position must not count toward "modified" (TH-6119).
+    const comparableColumns = (columns || []).filter(
+      (c) => c?.id !== "actions",
+    );
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
     if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
@@ -632,7 +678,7 @@ const UsersView = ({
       baselineDisplay.visibleColumns &&
       typeof baselineDisplay.visibleColumns === "object"
     ) {
-      const currentVisibility = (columns || []).reduce((acc, col) => {
+      const currentVisibility = comparableColumns.reduce((acc, col) => {
         acc[col.id] = col.isVisible !== false;
         return acc;
       }, {});
@@ -663,6 +709,10 @@ const UsersView = ({
     for (let i = 0; i < currentCustomIds.length; i += 1) {
       if (currentCustomIds[i] !== baselineCustomIds[i]) return true;
     }
+    // Did the user reorder columns (or move the custom-columns group)?
+    if (isColumnOrderDirty(comparableColumns, baselineDisplay.columnState)) {
+      return true;
+    }
     return false;
   }, [
     activeViewConfig,
@@ -683,9 +733,7 @@ const UsersView = ({
 
   const activeViewTabId = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
-    const key = isObservePath
-      ? params.get("tab")
-      : params.get("usersTab");
+    const key = isObservePath ? params.get("tab") : params.get("usersTab");
     return key?.startsWith("view-") ? key.slice(5) : null;
   }, [activeViewConfig, isObservePath]);
 
@@ -723,11 +771,6 @@ const UsersView = ({
     return () => registerGetViewConfig(null);
   }, [registerGetViewConfig, getConfig]);
 
-  useEffect(() => {
-    registerGetTabType(() => "users");
-    return () => registerGetTabType(null);
-  }, [registerGetTabType]);
-
   // Deps watch only activeViewConfig — applyConfig's identity changes with
   // columns, and it mutates columns, so keeping it in deps would loop.
   // wasOnSavedViewRef gates the null-branch reset to genuine saved-view →
@@ -738,6 +781,7 @@ const UsersView = ({
       const wasOnSavedView = wasOnSavedViewRef.current;
       wasOnSavedViewRef.current = false;
       if (!wasOnSavedView) return;
+      pendingDefaultReorderRef.current = true;
       applyConfig(null);
       return;
     }

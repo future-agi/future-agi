@@ -43,15 +43,25 @@ import { useShallowToggleAnnotationsStore } from "../../agents/store";
 
 const ROWS_LIMIT = 100;
 
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
+// snake_case → camelCase keys (id preserved). Dedup by id: the spans config can
+// list a column twice → AG Grid would otherwise mint a phantom `<id>_1` column.
+const normalizeConfigKeys = (config) => {
+  if (!Array.isArray(config)) return config;
+  const seen = new Set();
+  const out = [];
+  for (const obj of config) {
     const result = {};
     for (const [key, value] of Object.entries(obj)) {
       result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
     }
-    return result;
-  });
+    if (result.id != null) {
+      if (seen.has(result.id)) continue;
+      seen.add(result.id);
+    }
+    out.push(result);
+  }
+  return out;
+};
 
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;
@@ -186,6 +196,7 @@ const SpanGrid = React.forwardRef(
       cellHeight,
       metricFilters,
       pendingCustomColumnsRef,
+      canonicalOrderRef,
       enabled = true,
     },
     gridRef,
@@ -277,7 +288,9 @@ const SpanGrid = React.forwardRef(
       const bottomRowObj = {};
 
       for (const eachCol of columns) {
-        if (eachCol?.groupBy) {
+        // Bucket each custom col alone so it stays flat in its store position
+        // (a shared bucket collapsed them together and oscillated the order).
+        if (eachCol?.groupBy && eachCol.groupBy !== "Custom Columns") {
           if (!grouping[eachCol?.groupBy]) {
             grouping[eachCol?.groupBy] = [eachCol];
           } else {
@@ -292,14 +305,28 @@ const SpanGrid = React.forwardRef(
         showMetricsIds,
       );
       delete grouping["Annotation Metrics"];
-      const columnDefsResult = Object.entries(grouping).map(([group, cols]) => {
-        if (!AllowedGroups.includes(group) && cols.length === 1) {
-          const c = cols[0];
-          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-          return getSpanListColumnDefs(c);
-        } else {
+      const columnDefsResult = Object.entries(grouping).flatMap(
+        ([group, cols]) => {
+          if (!AllowedGroups.includes(group) && cols.length === 1) {
+            const c = cols[0];
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            const colDef = getSpanListColumnDefs(c);
+            // Custom col: flat, but keep its width/style.
+            if (c?.groupBy === "Custom Columns") {
+              return {
+                ...colDef,
+                minWidth: 200,
+                flex: 1,
+                cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
+              };
+            }
+            return colDef;
+          }
+          // marryChildren + groupId keep the group movable across rebuilds.
           return {
             headerName: group,
+            groupId: group,
+            marryChildren: true,
             children: cols.map((c) => {
               bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
               const colDef = getSpanListColumnDefs(c);
@@ -311,8 +338,8 @@ const SpanGrid = React.forwardRef(
               };
             }),
           };
-        }
-      });
+        },
+      );
       if (annotationColumns?.length > 0) {
         columnDefsResult.push(annotationColumns[0]);
       }
@@ -376,6 +403,9 @@ const SpanGrid = React.forwardRef(
               // Use ref to get latest columns for comparison without triggering dataSource recreation
               // Compare only non-custom columns to avoid unnecessary re-renders
               if (newCols) {
+                // Canonical order, to restore default when leaving a saved view.
+                if (canonicalOrderRef)
+                  canonicalOrderRef.current = newCols.map((c) => c.id);
                 const currentNonCustom = (columnsRef.current || []).filter(
                   (c) => c.groupBy !== "Custom Columns",
                 );
@@ -407,7 +437,10 @@ const SpanGrid = React.forwardRef(
                       .filter((cc) => newById.has(cc.id))
                       .map((cc) => {
                         seen.add(cc.id);
-                        return { ...newById.get(cc.id), isVisible: cc.isVisible };
+                        return {
+                          ...newById.get(cc.id),
+                          isVisible: cc.isVisible,
+                        };
                       });
                     const added = newCols.filter((nc) => !seen.has(nc.id));
                     finalNonCustom = [...kept, ...added];
@@ -473,6 +506,8 @@ const SpanGrid = React.forwardRef(
     const onColumnMoved = useCallback(
       (params) => {
         if (!params.finished) return;
+        // User drags only; programmatic moves would feed back into setColumns.
+        if (params.source !== "uiColumnMoved") return;
         const newOrder = params.api
           .getColumnState()
           .map((s) => s.colId)
