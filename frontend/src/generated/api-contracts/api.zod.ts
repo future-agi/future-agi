@@ -9572,11 +9572,12 @@ export const falconAiConversationsCreateBodyTitleMax = 255;
 
 export const falconAiConversationsCreateBodyContextPageMax = 500;
 
-
+export const falconAiConversationsCreateBodyHiddenDefault = false;
 
 export const FalconAiConversationsCreateBody = zod.object({
   "title": zod.string().max(falconAiConversationsCreateBodyTitleMax).optional(),
-  "context_page": zod.string().max(falconAiConversationsCreateBodyContextPageMax).optional()
+  "context_page": zod.string().max(falconAiConversationsCreateBodyContextPageMax).optional(),
+  "hidden": zod.boolean().default(falconAiConversationsCreateBodyHiddenDefault)
 })
 
 
