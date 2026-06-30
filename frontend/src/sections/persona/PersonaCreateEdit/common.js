@@ -306,14 +306,16 @@ export const getPersonaDefaultValues = (editPersona) => {
             ? "true"
             : "false"
           : null,
-      finishedSpeakingSensitivity:
-        editPersona?.finishedSpeakingSensitivity !== null
-          ? parseInt(editPersona?.finishedSpeakingSensitivity?.[0])
-          : null,
-      interruptSensitivity:
-        editPersona?.interruptSensitivity !== null
-          ? parseInt(editPersona?.interruptSensitivity?.[0])
-          : null,
+      finishedSpeakingSensitivity: Number.isNaN(
+        parseInt(editPersona?.finishedSpeakingSensitivity?.[0]),
+      )
+        ? 1
+        : parseInt(editPersona?.finishedSpeakingSensitivity?.[0]),
+      interruptSensitivity: Number.isNaN(
+        parseInt(editPersona?.interruptSensitivity?.[0]),
+      )
+        ? 1
+        : parseInt(editPersona?.interruptSensitivity?.[0]),
       customProperties: Object.entries(editPersona?.metadata || {}).map(
         ([key, value]) => ({
           key,
@@ -347,8 +349,8 @@ export const getPersonaDefaultValues = (editPersona) => {
     language: [],
     conversationSpeed: [],
     backgroundSound: null,
-    finishedSpeakingSensitivity: null,
-    interruptSensitivity: null,
+    finishedSpeakingSensitivity: 1,
+    interruptSensitivity: 1,
     customProperties: [],
     additionalInstruction: null,
     multilingual: false,
