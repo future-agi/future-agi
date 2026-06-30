@@ -5,6 +5,9 @@ from django.utils import timezone
 
 from accounts.models import Organization
 
+# Import the new resource manager
+from common.resource_manager import get_resource_manager, ResourceType, ResourceExhaustedException
+
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from model_hub.services.derived_variable_service import (
@@ -160,14 +163,14 @@ async def run_template_async(
                         if emit is not None and UsageEvent is not None:
                             emit(
                                 UsageEvent(
-                                org_id=str(organization.id),
-                                event_type=APICallTypeChoices.PROMPT_BENCH.value,
-                                properties={
-                                    "source": "run_prompt_gen",
-                                    "source_id": str(template.id),
-                                },
+                                    org_id=str(organization.id),
+                                    event_type=APICallTypeChoices.PROMPT_BENCH.value,
+                                    properties={
+                                        "source": "run_prompt_gen",
+                                        "source_id": str(template.id),
+                                    },
+                                )
                             )
-                        )
                     except Exception:
                         pass  # Metering failure must not break the action
 

@@ -24,6 +24,9 @@ from agentic_eval.core.utils.functions import (
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
 from tfc.telemetry import wrap_for_thread
 
+# Import the new resource manager
+from common.resource_manager import get_resource_manager, ResourceType, ResourceExhaustedException
+
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from analytics.utils import (
@@ -356,78 +359,62 @@ class DevelopOptimizer:
         new_template = self.optimize_dataset.optimized_k_prompts[0]
 
         def process_row(row):
-            """Helper function to process a single row"""
-            close_old_connections()
-            if self.optimize_dataset.status != StatusType.FAILED.value:
-                old_messages = []
-                new_messages = []
-                for message in self.messages:
-                    value = " \n".join(
-                        message["content"][i].get("text")
-                        for i in range(len(message["content"]))
-                        if message["content"][i].get("text")
-                    )
-                    value, _, _ = self._process_variable_replacement(value, row)
-                    old_messages.append({"role": message["role"], "content": value})
-                    if message["role"] != "user":
-                        new_messages.append({"role": message["role"], "content": value})
-                    else:
-                        new_value, _, _ = self._process_variable_replacement(
-                            new_template, row
-                        )
-                        new_messages.append(
-                            {"role": message["role"], "content": new_value}
-                        )
-
-                old_content = client._get_completion_content(old_messages)
-                new_content = client._get_completion_content(new_messages)
-
-                Cell.objects.create(
-                    dataset=self.dataset,
-                    column=old_column,
-                    row=row,
-                    value=old_content,
-                    status=CellStatus.PASS.value,
+            """Helper function to process a single row with proper resource management"""
+            try:
+                # Use the resource manager for database connections
+                resource_manager = get_resource_manager()
+                org_id = str(self.optimize_dataset.dataset.organization_id)
+                
+                # Check if we can acquire a DB connection before proceeding
+                import asyncio
+                
+                # Since this is called from a thread, we need to handle the async context
+                async def process_with_resource_management():
+                    async with resource_manager.acquire(ResourceType.DB_CONNECTION, org_id):
+                        return await self._process_single_row(row, client, old_column, new_column, new_template)
+                
+                # Run the async function in a new event loop for this thread
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                return loop.run_until_complete(process_with_resource_management())
+                
+            except ResourceExhaustedException as e:
+                logger.warning(
+                    "Resource exhausted during optimization row processing",
+                    org_id=org_id,
+                    error=str(e)
                 )
-            else:
-                new_content = "Error"
-                old_content = "Error"
-                value_info = {"reason": self.optimize_dataset.optimized_k_prompts[0]}
-                status = CellStatus.ERROR.value
-
-            Cell.objects.create(
-                dataset=self.dataset,
-                column=new_column,
-                row=row,
-                value=new_content,
-                value_infos=(
-                    json.dumps(value_info)
-                    if "value_info" in locals()
-                    else json.dumps({})
-                ),
-                status=status if "status" in locals() else CellStatus.PASS.value,
-            )
-
-            if self.optimize_dataset.status == StatusType.FAILED.value:
-                Cell.objects.create(
-                    dataset=self.dataset,
-                    column=old_column,
-                    row=row,
-                    value=old_content,
-                    value_infos=(
-                        json.dumps(value_info)
-                        if "value_info" in locals()
-                        else json.dumps({})
-                    ),
-                    status=status if "status" in locals() else CellStatus.PASS.value,
-                )
-            close_old_connections()
+                # Create error cells instead of crashing
+                self._create_error_cells(row, old_column, new_column, "Resource temporarily unavailable")
+            except Exception as e:
+                logger.error(f"Error processing row: {str(e)}")
+                self._create_error_cells(row, old_column, new_column, str(e))
 
         # Wrap function with OTel context propagation for thread safety
         wrapped_process_row = wrap_for_thread(process_row)
 
-        # Process rows in parallel using ThreadPoolExecutor
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # Use resource-aware ThreadPoolExecutor
+        resource_manager = get_resource_manager()
+        org_id = str(self.optimize_dataset.dataset.organization_id)
+        quota = resource_manager.get_quota(org_id)
+        
+        # Use optimization worker quota instead of hardcoded max_workers=10
+        max_workers = min(quota.max_optimization_workers, len(rows))
+        
+        logger.info(
+            "Starting optimization with resource management",
+            org_id=org_id,
+            max_workers=max_workers,
+            total_rows=len(rows),
+            quota=quota.max_optimization_workers
+        )
+
+        # Process rows in parallel using ThreadPoolExecutor with proper resource limits
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all rows for processing
             futures = [executor.submit(wrapped_process_row, row) for row in rows]
 
@@ -445,6 +432,105 @@ class DevelopOptimizer:
             self.run_evaluation(self.old_column, self.new_column)
             self.optimize_dataset.status = StatusType.COMPLETED.value
             self.optimize_dataset.save()
+    
+    async def _process_single_row(self, row, client, old_column, new_column, new_template):
+        """Process a single row with proper async database handling"""
+        from django.db import close_old_connections
+        from channels.db import database_sync_to_async
+        
+        # Ensure we have a clean connection
+        await database_sync_to_async(close_old_connections)()
+        
+        if self.optimize_dataset.status != StatusType.FAILED.value:
+            old_messages = []
+            new_messages = []
+            for message in self.messages:
+                value = " \n".join(
+                    message["content"][i].get("text")
+                    for i in range(len(message["content"]))
+                    if message["content"][i].get("text")
+                )
+                value, _, _ = self._process_variable_replacement(value, row)
+                old_messages.append({"role": message["role"], "content": value})
+                if message["role"] != "user":
+                    new_messages.append({"role": message["role"], "content": value})
+                else:
+                    new_value, _, _ = self._process_variable_replacement(
+                        new_template, row
+                    )
+                    new_messages.append(
+                        {"role": message["role"], "content": new_value}
+                    )
+
+            old_content = client._get_completion_content(old_messages)
+            new_content = client._get_completion_content(new_messages)
+
+            # Use database_sync_to_async for database operations
+            await database_sync_to_async(Cell.objects.create)(
+                dataset=self.dataset,
+                column=old_column,
+                row=row,
+                value=old_content,
+                status=CellStatus.PASS.value,
+            )
+        else:
+            new_content = "Error"
+            old_content = "Error"
+            value_info = {"reason": self.optimize_dataset.optimized_k_prompts[0]}
+            status = CellStatus.ERROR.value
+
+        await database_sync_to_async(Cell.objects.create)(
+            dataset=self.dataset,
+            column=new_column,
+            row=row,
+            value=new_content,
+            value_infos=(
+                json.dumps(value_info)
+                if "value_info" in locals()
+                else json.dumps({})
+            ),
+            status=status if "status" in locals() else CellStatus.PASS.value,
+        )
+
+        if self.optimize_dataset.status == StatusType.FAILED.value:
+            await database_sync_to_async(Cell.objects.create)(
+                dataset=self.dataset,
+                column=old_column,
+                row=row,
+                value=old_content,
+                value_infos=(
+                    json.dumps(value_info)
+                    if "value_info" in locals()
+                    else json.dumps({})
+                ),
+                status=status if "status" in locals() else CellStatus.PASS.value,
+            )
+        
+        # Clean up connection
+        await database_sync_to_async(close_old_connections)()
+    
+    def _create_error_cells(self, row, old_column, new_column, error_message):
+        """Create error cells when resource management fails"""
+        error_content = f"Error: {error_message}"
+        value_info = {"reason": error_message, "resource_error": True}
+        
+        Cell.objects.create(
+            dataset=self.dataset,
+            column=old_column,
+            row=row,
+            value=error_content,
+            value_infos=json.dumps(value_info),
+            status=CellStatus.ERROR.value,
+        )
+        
+        Cell.objects.create(
+            dataset=self.dataset,
+            column=new_column,
+            row=row,
+            value=error_content,
+            value_infos=json.dumps(value_info),
+            status=CellStatus.ERROR.value,
+        )
 
     def create_criteria_text_prompt(self, metric):
         llm = self._create_llm_client()
@@ -540,33 +626,62 @@ class DevelopOptimizer:
         self._update_api_call_log_row()
 
     def run_evaluation(self, old_column, new_column):
-        """Run evaluation on result columns using multi-threading"""
+        """Run evaluation on result columns using multi-threading with resource management"""
 
         def run_column_evaluation(eval_template, column):
-            """Helper function to run evaluation for a single template-column combination"""
+            """Helper function to run evaluation for a single template-column combination with resource management"""
             try:
-                close_old_connections()
-                runner = EvaluationRunner(
-                    user_eval_metric_id=eval_template.id,
-                    optimize=self.optimize_dataset,
-                    column=column,
-                    source="optimization",
-                    source_configs={
-                        "dataset_id": str(self.optimize_dataset.id),
-                        "evaluation_id": str(eval_template.id),
-                        "source": "optimization",
-                    },
-                    source_id=eval_template.id,
+                resource_manager = get_resource_manager()
+                org_id = str(self.optimize_dataset.dataset.organization_id)
+                
+                # Check if we can acquire an evaluation worker before proceeding
+                import asyncio
+                
+                async def evaluate_with_resource_management():
+                    async with resource_manager.acquire(ResourceType.EVALUATION_WORKER, org_id):
+                        # Use database_sync_to_async for Django ORM operations
+                        from channels.db import database_sync_to_async
+                        await database_sync_to_async(close_old_connections)()
+                        
+                        runner = EvaluationRunner(
+                            user_eval_metric_id=eval_template.id,
+                            optimize=self.optimize_dataset,
+                            column=column,
+                            source="optimization",
+                            source_configs={
+                                "dataset_id": str(self.optimize_dataset.id),
+                                "evaluation_id": str(eval_template.id),
+                                "source": "optimization",
+                            },
+                            source_id=eval_template.id,
+                        )
+                        await database_sync_to_async(runner.run_prompt)()
+                        await database_sync_to_async(close_old_connections)()
+                        return True
+                
+                # Run the async function in a new event loop for this thread
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                return loop.run_until_complete(evaluate_with_resource_management())
+                
+            except ResourceExhaustedException as e:
+                logger.warning(
+                    "Resource exhausted during evaluation",
+                    org_id=org_id,
+                    eval_template_id=eval_template.id,
+                    column_id=column.id,
+                    error=str(e)
                 )
-                runner.run_prompt()
-                return True
+                return False
             except Exception as e:
                 logger.error(
                     f"Error evaluating template {eval_template.id} for column {column.id}: {str(e)}"
                 )
                 return False
-            finally:
-                close_old_connections()
 
         # Create tasks for parallel execution
         tasks = []
@@ -578,8 +693,24 @@ class DevelopOptimizer:
         # Wrap function with OTel context propagation for thread safety
         wrapped_run_column_evaluation = wrap_for_thread(run_column_evaluation)
 
+        # Use resource-aware ThreadPoolExecutor
+        resource_manager = get_resource_manager()
+        org_id = str(self.optimize_dataset.dataset.organization_id)
+        quota = resource_manager.get_quota(org_id)
+        
+        # Use evaluation worker quota instead of hardcoded max_workers=10
+        max_workers = min(quota.max_evaluation_workers, len(tasks))
+        
+        logger.info(
+            "Starting evaluations with resource management",
+            org_id=org_id,
+            max_workers=max_workers,
+            total_tasks=len(tasks),
+            quota=quota.max_evaluation_workers
+        )
+
         # Run evaluations in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks
             futures = [
                 executor.submit(wrapped_run_column_evaluation, template, column)
