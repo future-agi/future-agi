@@ -1090,8 +1090,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # 'choice': 'never'}") when output_float/output_str_list are empty.
         # Keyed by (trace_id, config_id); only the most recent row per pair.
         _str_lookup_configs = [
-            c for c in eval_configs
-            if ((getattr(getattr(c, "eval_template", None), "config", None) or {}).get("output"))
+            c
+            for c in eval_configs
+            if (
+                (getattr(getattr(c, "eval_template", None), "config", None) or {}).get(
+                    "output"
+                )
+            )
             in (EvalOutputType.CHOICES.value, EvalOutputType.SCORE.value)
         ]
         output_str_map: dict[tuple, "EvalLogger"] = {}
@@ -1218,11 +1223,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         else None
                     )
                     log = output_str_map.get((trace.id, config.id))
-                    if log and log.output_str and tpl_output in (
-                        EvalOutputType.CHOICES.value, EvalOutputType.SCORE.value,
+                    if (
+                        log
+                        and log.output_str
+                        and tpl_output
+                        in (
+                            EvalOutputType.CHOICES.value,
+                            EvalOutputType.SCORE.value,
+                        )
                     ):
                         try:
                             import ast as _ast_mod
+
                             parsed = _ast_mod.literal_eval(log.output_str)
                         except (ValueError, SyntaxError):
                             parsed = None
@@ -1231,7 +1243,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                                 choice = parsed.get("choice")
                                 if choice:
                                     metric_entry["output"] = [choice]
-                                    metric_entry["output_type"] = EvalOutputType.CHOICES.value
+                                    metric_entry["output_type"] = (
+                                        EvalOutputType.CHOICES.value
+                                    )
                                     # Mirror as top-level `score` so the
                                     # drawer's `e?.score ?? e?.output ?? e?.value`
                                     # lookup hits a string and renders verbatim
@@ -1246,7 +1260,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                                     metric_entry["output"] = round(
                                         float(score_val) * 100, 2
                                     )
-                                    metric_entry["output_type"] = EvalOutputType.SCORE.value
+                                    metric_entry["output_type"] = (
+                                        EvalOutputType.SCORE.value
+                                    )
 
                 metrics[str(config.id)] = metric_entry
             if metrics:
@@ -3800,14 +3816,22 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 if log.output_str_list:
                     # Legacy categorical eval — pre-agent-evaluator path
                     metric_entry["output"] = log.output_str_list
-                elif output_type == EvalOutputType.PASS_FAIL.value and log.output_bool is not None:
+                elif (
+                    output_type == EvalOutputType.PASS_FAIL.value
+                    and log.output_bool is not None
+                ):
                     metric_entry["output"] = "Pass" if log.output_bool else "Fail"
                 elif log.output_float is not None:
                     # Score evals on the legacy storage path.
                     metric_entry["output"] = round(log.output_float * 100, 2)
-                elif output_type in (
-                    EvalOutputType.CHOICES.value, EvalOutputType.SCORE.value,
-                ) and log.output_str:
+                elif (
+                    output_type
+                    in (
+                        EvalOutputType.CHOICES.value,
+                        EvalOutputType.SCORE.value,
+                    )
+                    and log.output_str
+                ):
                     # New agent-evaluator path: output_str holds a Python dict
                     # literal like "{'score': 0.0, 'choice': 'never'}". For
                     # choices evals, use `choice`; for score evals, use `score`.
@@ -3816,6 +3840,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     # verbatim without a frontend change.
                     try:
                         import ast as _ast_mod
+
                         parsed = _ast_mod.literal_eval(log.output_str)
                     except (ValueError, SyntaxError):
                         parsed = None
@@ -5902,6 +5927,36 @@ class UsersView(APIView):
         except Exception as e:
             logger.exception(f"ERROR {e}")
             return self._gm.bad_request(f"error fetching users: {str(e)}")
+
+    def get_users_export_data(self, request, *args, **kwargs):
+        """Export users filtered by project ID with active filters, no pagination."""
+        try:
+            request.query_params._mutable = True
+            request.query_params["page_size"] = "100000"
+            request.query_params["current_page_index"] = "0"
+            response = self.get(request, *args, **kwargs)
+            if response.status_code != 200:
+                return response
+            result = response.data.get("result", {}).get("table", [])
+            df = pd.DataFrame(result) if result else pd.DataFrame()
+            buffer = io.BytesIO()
+            df.to_csv(buffer, index=False, encoding="utf-8")
+            buffer.seek(0)
+            filename = "users.csv"
+            return FileResponse(
+                buffer, as_attachment=True, filename=filename, content_type="text/csv"
+            )
+        except Exception as e:
+            traceback.print_exc()
+            return self._gm.bad_request(f"Error exporting users: {str(e)}")
+
+
+class UsersExportView(APIView):
+    permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
+
+    def get(self, request, *args, **kwargs):
+        return UsersView().get_users_export_data(request, *args, **kwargs)
 
 
 class GetUserCodeExampleView(APIView):
