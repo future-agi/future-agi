@@ -324,6 +324,7 @@ export const createAgentDefinitionSchema = (options) => {
                   provider: data.provider,
                   api_key: data.apiKey,
                   assistant_id: data.assistantId,
+                  ...(agentDefinitionId && { agent_id: agentDefinitionId }),
                 });
               } catch (error) {
                 ctx.addIssue({
