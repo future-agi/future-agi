@@ -24,7 +24,7 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 		return nil
 	}
 
-	endpoint := baseURL + "/agentcc/org-configs/bulk/"
+	endpoint := baseURL + "/api/agentcc/org-configs/bulk/"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -40,7 +40,7 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 			"url", endpoint,
 			"error", err,
 		)
-		return fmt.Errorf("control plane unreachable: %w", err)
+		return nil // non-fatal: gateway starts with empty store, configs pushed later
 	}
 	defer resp.Body.Close()
 
@@ -51,7 +51,7 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 			"status", resp.StatusCode,
 			"body", string(body),
 		)
-		return fmt.Errorf("control plane returned status %d: %s", resp.StatusCode, body)
+		return nil // non-fatal: gateway starts with empty store, configs pushed later
 	}
 
 	// Django response format: {"status": true, "result": {"org_id": {...}, ...}}
@@ -68,7 +68,7 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 
 	if !envelope.Status {
 		slog.Warn("control plane sync: response status=false")
-		return fmt.Errorf("control plane sync: status=false")
+		return nil // non-fatal: treat as empty result, configs pushed later
 	}
 
 	// Build set of all org IDs in the response (including those that fail to parse).

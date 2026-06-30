@@ -91,6 +91,8 @@ func TestCreateImage_Success(t *testing.T) {
 }
 
 func TestCreateImage_ModelPrefixStripped(t *testing.T) {
+	// Prefix stripping is the routing layer's responsibility (registry.ModelOverride).
+	// The provider receives the already-stripped bare model name and passes it through.
 	var receivedModel string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req models.ImageRequest
@@ -103,7 +105,7 @@ func TestCreateImage_ModelPrefixStripped(t *testing.T) {
 
 	p := newTestProvider(t, ts.URL)
 	_, err := p.CreateImage(context.Background(), &models.ImageRequest{
-		Model:  "openai/dall-e-3",
+		Model:  "dall-e-3",
 		Prompt: "test",
 	})
 	if err != nil {
@@ -273,6 +275,8 @@ func TestCreateSpeech_Success(t *testing.T) {
 }
 
 func TestCreateSpeech_ModelPrefixStripped(t *testing.T) {
+	// Prefix stripping is the routing layer's responsibility (registry.ModelOverride).
+	// The provider receives the already-stripped bare model name and passes it through.
 	var receivedModel string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req models.SpeechRequest
@@ -285,7 +289,7 @@ func TestCreateSpeech_ModelPrefixStripped(t *testing.T) {
 
 	p := newTestProvider(t, ts.URL)
 	body, _, err := p.CreateSpeech(context.Background(), &models.SpeechRequest{
-		Model: "openai/tts-1-hd",
+		Model: "tts-1-hd",
 		Input: "test",
 		Voice: "nova",
 	})
@@ -496,6 +500,8 @@ func TestCreateTranscription_Success(t *testing.T) {
 }
 
 func TestCreateTranscription_ModelPrefixStripped(t *testing.T) {
+	// Prefix stripping is the routing layer's responsibility (registry.ModelOverride).
+	// The provider receives the already-stripped bare model name and passes it through.
 	var receivedModel string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mediaType, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -520,7 +526,7 @@ func TestCreateTranscription_ModelPrefixStripped(t *testing.T) {
 
 	p := newTestProvider(t, ts.URL)
 	_, err := p.CreateTranscription(context.Background(), &models.TranscriptionRequest{
-		Model:    "openai/whisper-1",
+		Model:    "whisper-1",
 		FileData: []byte("audio"),
 		FileName: "test.wav",
 	})
@@ -867,6 +873,8 @@ func TestCreateEmbedding_Success(t *testing.T) {
 }
 
 func TestCreateEmbedding_ModelPrefixStripped(t *testing.T) {
+	// Prefix stripping is the routing layer's responsibility (registry.ModelOverride).
+	// The provider receives the already-stripped bare model name and passes it through.
 	var receivedModel string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req models.EmbeddingRequest
@@ -879,7 +887,7 @@ func TestCreateEmbedding_ModelPrefixStripped(t *testing.T) {
 
 	p := newTestProvider(t, ts.URL)
 	_, err := p.CreateEmbedding(context.Background(), &models.EmbeddingRequest{
-		Model: "openai/text-embedding-3-large",
+		Model: "text-embedding-3-large",
 		Input: json.RawMessage(`"test"`),
 	})
 	if err != nil {
