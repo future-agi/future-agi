@@ -209,22 +209,35 @@ def _build_voice_settings(
     except ImportError:
         return {}
     from tracer.models.observability_provider import ProviderChoices
+    from simulate.utils.persona_utils import persona_first
 
     # Voice_id format is determined by the system voice provider (the
     # infrastructure hosting the simulator assistant), not by the user's
     # agent provider.
     system_provider = os.getenv("SYSTEM_VOICE_PROVIDER", ProviderChoices.LIVEKIT)
 
+    # Normalise multi-valued persona fields to a single string before use.
+    # persona_first logs a warning when multiple values are present so the
+    # silent truncation is visible in structured logs.
+    gender = persona_first(persona_data.get("gender"), "gender", "male")
+    accent = persona_first(persona_data.get("accent"), "accent", "")
+    language = persona_first(persona_data.get("language"), "language", "en")
+    age_group = persona_first(persona_data.get("age_group"), "age_group", "")
+
+    # Build a normalised copy so select_voice_id receives scalar strings.
+    normalised = {**persona_data, "gender": gender, "accent": accent,
+                  "language": language, "age_group": age_group}
+
     # Select voice name based on persona attributes (rule-based scoring)
-    selected_voice_name = select_voice_id(persona_data, provider=system_provider)
+    selected_voice_name = select_voice_id(normalised, provider=system_provider)
 
     # Build a provider-agnostic voice descriptor for future use
     voice_descriptor = {
         "name": selected_voice_name,
-        "gender": persona_data.get("gender", "male"),
-        "accent": persona_data.get("accent", ""),
-        "language": persona_data.get("language", "en"),
-        "age_group": persona_data.get("age_group", ""),
+        "gender": gender,
+        "accent": accent,
+        "language": language,
+        "age_group": age_group,
     }
 
     # Resolve the voice name to a provider-specific ID.
