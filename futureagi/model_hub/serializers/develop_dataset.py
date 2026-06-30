@@ -29,7 +29,7 @@ class ColumnSerializer(serializers.ModelSerializer):
 class RowSerializer(serializers.ModelSerializer):
     class Meta:
         model = Row
-        fields = ["id", "dataset", "order"]
+        fields = ["id", "dataset", "order", "source_trace_id", "source_span_id"]
 
 
 class CellSerializer(serializers.ModelSerializer):
