@@ -26,12 +26,16 @@ from tracer.models.trace_error_analysis import (
 )
 
 
+_DEFAULT_CENTROID_TTL_DAYS = 90
+
+
 class ErrorClusteringDB:
     """Database operations for append-only error clustering."""
 
-    def __init__(self, euclidean_threshold: float = 0.6):
+    def __init__(self, euclidean_threshold: float = 0.6, centroid_ttl_days: int = _DEFAULT_CENTROID_TTL_DAYS):
         self.euclidean_threshold = euclidean_threshold
         self.table_name = "error_embeddings"
+        self.centroid_ttl_days = centroid_ttl_days
 
     def ensure_centroid_table(self):
         """Ensure the cluster_centroids table exists in ClickHouse."""
@@ -41,7 +45,7 @@ class ErrorClusteringDB:
             # Array(...) can't sit inside Nullable; override server profiles
             # that set data_type_default_nullable=1 so unmodified types aren't
             # auto-wrapped.
-            query = """
+            query = f"""
                 CREATE TABLE IF NOT EXISTS cluster_centroids (
                     cluster_id String,
                     project_id UUID,
@@ -52,8 +56,29 @@ class ErrorClusteringDB:
                     PRIMARY KEY (cluster_id)
                 ) ENGINE = ReplacingMergeTree(last_updated)
                 ORDER BY (cluster_id)
+                TTL last_updated + INTERVAL {self.centroid_ttl_days} DAY DELETE
             """
             db.client.execute(query, settings={"data_type_default_nullable": 0})
+        finally:
+            db.close()
+
+    def expire_stale_centroids(self) -> None:
+        """Apply/update the TTL on an existing cluster_centroids table.
+
+        Called once per clustering run so that tables created before TTL was
+        introduced are retroactively covered.  ClickHouse ALTER TABLE MODIFY TTL
+        is idempotent and fast (metadata-only change).
+        """
+        db = ClickHouseVectorDB()
+        try:
+            db.client.execute(
+                f"ALTER TABLE cluster_centroids MODIFY TTL "
+                f"last_updated + INTERVAL {self.centroid_ttl_days} DAY DELETE",
+                settings={"data_type_default_nullable": 0},
+            )
+        except Exception:
+            # Non-fatal: table may not exist yet (first run) or be read-only in tests.
+            logger.warning("Could not modify cluster_centroids TTL; will retry next run")
         finally:
             db.close()
 
@@ -114,8 +139,9 @@ class ErrorClusteringDB:
         }
 
         try:
-            # Ensure centroid table exists
+            # Ensure centroid table exists and its TTL is current.
             self.ensure_centroid_table()
+            self.expire_stale_centroids()
 
             self.ensure_error_embeddings_table()
 
