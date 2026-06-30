@@ -15,6 +15,7 @@ from agentic_eval.core.utils.llm_payloads import (
     response_format_schema,
 )
 from agentic_eval.core.utils.model_config import ModelConfigs
+from agentic_eval.core_evals.fi_evals.base_evaluator import BaseEvaluator
 from agentic_eval.core_evals.fi_utils.evals_result import EvalResult
 import structlog
 
@@ -28,7 +29,7 @@ from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
 # TPM/cost per eval. Tuned for the 200K-window judge models. See TH-4905.
 _MAX_CONTEXT_CHARS = 200000
 
-class CustomPromptEvaluator(LLM):
+class CustomPromptEvaluator(BaseEvaluator, LLM):
     """
     This evaluator can be configured with custom examples and instructions.
     """
@@ -95,6 +96,18 @@ class CustomPromptEvaluator(LLM):
     def default_model(self):
         return self._model
 
+    @property
+    def metric_ids(self) -> list[str]:
+        return [LlmEvalTypeId.CUSTOM_PROMPT_EVAL.value]
+
+    @property
+    def required_args(self) -> list[str]:
+        # Required keys are template-specific and validated at runtime in _evaluate.
+        return []
+
+    @property
+    def examples(self):
+        return None
 
     def to_config(self) -> dict | None:
         return {
