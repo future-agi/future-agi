@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Future AGI — self-hosted installer for Windows / PowerShell.
+  Future AGI - self-hosted installer for Windows / PowerShell.
 
 .DESCRIPTION
   PowerShell counterpart of bin/install. Sets up .env (with rotated
@@ -51,7 +51,7 @@ function Append-Log {
 }
 
 Append-Log @(
-  "# Future AGI install log — $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))",
+  "# Future AGI install log - $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))",
   "# host: $(hostname), ps: $($PSVersionTable.PSVersion)",
   ""
 )
