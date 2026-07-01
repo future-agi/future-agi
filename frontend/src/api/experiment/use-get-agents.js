@@ -52,8 +52,7 @@ export const useGetAgentVersions = (id, search = null) => {
       );
       return result.data;
     },
-    getNextPageParam: (lastPage) =>
-      lastPage?.result?.metadata?.next_page ?? undefined,
+    getNextPageParam: (lastPage) => lastPage?.result?.metadata?.next_page,
     initialPageParam: 1,
   });
 };

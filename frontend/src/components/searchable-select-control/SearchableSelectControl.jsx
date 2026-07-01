@@ -13,6 +13,8 @@ import React, { useRef, useState } from "react";
 import { Controller } from "react-hook-form";
 import Iconify from "src/components/iconify";
 
+const SCROLL_END_THRESHOLD_PX = 5;
+
 const SearchableSelectContent = ({
   value,
   onChange,
@@ -41,7 +43,8 @@ const SearchableSelectContent = ({
 
   const handleListScroll = (e) => {
     const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
-    if (scrollTop + clientHeight < scrollHeight - 5) return;
+    if (scrollTop + clientHeight < scrollHeight - SCROLL_END_THRESHOLD_PX)
+      return;
     if (isPending || isFetchingNextPage || !hasNextPage) return;
     fetchNextPage?.();
   };
