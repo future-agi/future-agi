@@ -51,7 +51,10 @@ const getSpanListColumnDefs = (col) => {
     headerName: col.name,
     ...(isCustomColumn
       ? { colId: col.id, minWidth: 180, flex: 1 }
-      : { field: col.id }),
+      : {
+          field: col.id,
+          ...(colId === "total_tokens" ? { minWidth: 240 } : {}),
+        }),
     hide: !col?.isVisible,
     context: { sourceColumn: col },
     // Custom columns use valueGetter to handle dot-notation attribute keys

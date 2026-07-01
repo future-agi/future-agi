@@ -228,7 +228,8 @@ export const useAnnotationQueuesList = (filters = {}, options = {}) => {
     queryFn: () =>
       axios.get(annotationQueueEndpoints.list, { params: filters }),
     select: (d) => d.data,
-    staleTime: 1000 * 60 * 2,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -239,6 +240,8 @@ export const useAnnotationQueueDetail = (id, options = {}) => {
     queryFn: () => axios.get(annotationQueueEndpoints.detail(id)),
     select: (d) => extractData(d),
     enabled: !!id,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -269,6 +272,7 @@ export const useUpdateAnnotationQueue = () => {
       enqueueSnackbar("Queue updated successfully", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
       queryClient.invalidateQueries({
+
         queryKey: annotationQueueKeys.detail(variables.id),
       });
     },
@@ -420,7 +424,8 @@ export const useQueueItems = (queueId, filters = {}, options = {}) => {
       };
     },
     enabled: !!queueId,
-    staleTime: 1000 * 60 * 2,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
