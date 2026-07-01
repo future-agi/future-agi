@@ -175,7 +175,10 @@ const WorkbenchProvider = ({ children }) => {
       const newPre = [...pre];
       const newValue =
         typeof valueOrUpdater === "function"
-          ? { id: pre[index]?.id, prompts: valueOrUpdater(pre[index]?.prompts ?? []) }
+          ? {
+              id: pre[index]?.id,
+              prompts: valueOrUpdater(pre[index]?.prompts ?? []),
+            }
           : valueOrUpdater;
 
       newPre[index] = newValue;
@@ -554,18 +557,24 @@ const WorkbenchProvider = ({ children }) => {
       return;
     }
     setPromptName(data?.name);
-    setSelectedVersions([
-      {
-        isDraft: data?.is_draft,
-        version: data?.version,
-        lastSaved: data?.last_saved,
-        isDefault: data?.is_default,
-        labels: data?.labels || [],
-        originalTemplate: data?.original_template || id,
-        templateVersion: data?.template_version,
-        id: getRandomId(),
-      },
-    ]);
+    // Hydrate only when nothing is selected; a post-run refetch must not
+    // clobber the version the user is currently on.
+    setSelectedVersions((prev) =>
+      prev.length === 0
+        ? [
+            {
+              isDraft: data?.is_draft,
+              version: data?.version,
+              lastSaved: data?.last_saved,
+              isDefault: data?.is_default,
+              labels: data?.labels || [],
+              originalTemplate: data?.original_template || id,
+              templateVersion: data?.template_version,
+              id: getRandomId(),
+            },
+          ]
+        : prev,
+    );
     if (data?.is_draft) {
       setCurrentTab("Playground");
     }
