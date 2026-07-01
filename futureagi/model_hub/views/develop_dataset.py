@@ -154,6 +154,7 @@ from model_hub.serializers.contracts import (
     EmbeddingsResponseSerializer,
     EvalConfigQuerySerializer,
     EvalStructureQuerySerializer,
+    FeedbackDetailsResponseSerializer,
     HuggingFaceDatasetDetailRequestSerializer,
     HuggingFaceDatasetDetailResponseSerializer,
     HuggingFaceDatasetListRequestSerializer,
@@ -11350,6 +11351,8 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                 column_id = str(cell.column.id)
                 if column_id != str(eval_column.id):
                     row_dict[column_id] = cell.value
+                    if cell.column.name:
+                        row_dict[cell.column.name] = cell.value
 
             # Add feedback information
             row_dict["feedback_comment"] = feedback.explanation
@@ -11462,6 +11465,9 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                 get_error_message("FAILED_TO_CREATE_FEEDBACK")
             )
 
+    @swagger_auto_schema(
+        responses={200: FeedbackDetailsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     @action(detail=False, methods=["GET"], url_path="get-feedback-details")
     def get_feedback_details(self, request):
         """
