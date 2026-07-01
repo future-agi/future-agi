@@ -13,6 +13,12 @@ import PropTypes from "prop-types";
 import React from "react";
 import Iconify from "src/components/iconify";
 
+const actionBtnBaseSx = {
+  minWidth: "90px",
+  minHeight: "32px",
+  textTransform: "none",
+};
+
 export default function PromptModalWrapper({
   children,
   onSubmit,
@@ -101,9 +107,7 @@ export default function PromptModalWrapper({
             type="button"
             size="small"
             sx={{
-              minWidth: "90px",
-              minHeight: "32px",
-              textTransform: "none",
+              ...actionBtnBaseSx,
               "&:hover": {
                 borderColor: "divider",
               },
@@ -127,9 +131,7 @@ export default function PromptModalWrapper({
           size="small"
           onClick={onSubmit}
           sx={{
-            minWidth: "90px",
-            minHeight: "32px",
-            textTransform: "none",
+            ...actionBtnBaseSx,
             marginLeft: "0 !important",
             ...actionBtnSx,
           }}
