@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { describe, expect, it, vi } from "vitest";
-import { act, render, screen, userEvent, waitFor } from "src/utils/test-utils";
+import { render, screen, userEvent } from "src/utils/test-utils";
 import AutomationRulesTab from "../view/automation-rules-tab";
 
 const {
@@ -101,29 +101,26 @@ describe("AutomationRulesTab", () => {
         },
       ],
     });
-    mockUseEvaluateRule.mockReturnValue({ mutate: mockEvaluateRule });
+    const pendingByRow = [true, false];
+    let call = 0;
+    mockUseEvaluateRule.mockImplementation(() => ({
+      mutate: mockEvaluateRule,
+      isPending: pendingByRow[call++ % pendingByRow.length],
+    }));
 
     render(<AutomationRulesTab queueId="queue-1" queue={{ id: "queue-1" }} />);
 
-    const runButtons = screen.getAllByRole("button", { name: /run now/i });
-    await user.click(runButtons[0]);
-
-    expect(mockEvaluateRule).toHaveBeenCalledWith(
-      { queueId: "queue-1", ruleId: "rule-1" },
-      expect.objectContaining({ onSettled: expect.any(Function) }),
-    );
     expect(screen.getByRole("button", { name: /running/i })).toBeDisabled();
     expect(screen.getByText("Rule Two")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^run now$/i })).toBeEnabled();
 
-    act(() => {
-      mockEvaluateRule.mock.calls[0][1].onSettled();
-    });
+    const runNow = screen.getByRole("button", { name: /^run now$/i });
+    expect(runNow).toBeEnabled();
 
-    await waitFor(() => {
-      expect(
-        screen.getAllByRole("button", { name: /^run now$/i })[0],
-      ).toBeEnabled();
+    await user.click(runNow);
+
+    expect(mockEvaluateRule).toHaveBeenCalledWith({
+      queueId: "queue-1",
+      ruleId: "rule-2",
     });
   });
 });
